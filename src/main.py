@@ -2,7 +2,7 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Disable GPU usage
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN optimizations
 import json
-import numpy as np
+import numpy as np  # Correct the NumPy import statement
 import pandas as pd
 import yfinance as yf
 import gymnasium as gym  # Replace gym with gymnasium
@@ -30,8 +30,6 @@ STOP_LOSS_PCT = 0.02  # 2% stop loss
 TAKE_PROFIT_PCT = 0.04  # 4% take profit
 TRAINING_TIMESTEPS = 100000  # Increased from 50000
 BACKTEST_DAYS = 90  # Days for backtesting
-
-print(f"\n🚀 Starting ")
 
 
 # --- Technical indicators ---
@@ -130,28 +128,42 @@ class TradingEnv(gym.Env):  # Ensure compatibility with gymnasium.Env
         self.take_profit = None
         self.max_drawdown = 0
         self.peak_value = self.cash
-        return self._next_observation()
+        observation = self._next_observation()
+        
+        # Return only observation if used with SubprocVecEnv
+        if isinstance(self, SubprocVecEnv):
+            return observation
+        return observation, {}  # Return observation and an empty info dictionary
 
     def _next_observation(self) -> np.ndarray:
         """Get the next observation with expanded features."""
-        close_prices = self.df.loc[max(0, self.current_step-5):self.current_step, "Close"]
-        z_score = (self.df.loc[self.current_step, "Close"] - close_prices.mean()) / (close_prices.std() + 1e-10)
-        
-        obs = np.array([
-            float(self.df.loc[self.current_step, "Close"]),
-            float(self.df.loc[self.current_step, "RSI"]),
-            float(self.df.loc[self.current_step, "MACD"]),
-            float(self.df.loc[self.current_step, "MACD_signal"]),
-            float(self.df.loc[self.current_step, "Upper_Band"]),
-            float(self.df.loc[self.current_step, "Lower_Band"]),
-            float(self.shares),  # Current position
-            float(self.cash / INITIAL_BALANCE),  # Normalized cash
-            float(self.df.loc[self.current_step, "Volume"] / 1e6),  # Normalized volume
-            float(self.df.loc[self.current_step, "ATR"]),  # Volatility measure
-            float(z_score),  # Z-score
-            float(self.max_drawdown)  # Risk metric
-        ], dtype=np.float32)
-        return obs
+        try:
+            close_prices = self.df.loc[max(0, self.current_step-5):self.current_step, "Close"]
+            z_score = (self.df.loc[self.current_step, "Close"] - close_prices.mean()) / (close_prices.std() + 1e-10)
+            
+            obs = np.array([
+                float(np.nan_to_num(self.df.loc[self.current_step, "Close"].iloc[0], nan=0.0)),
+                float(np.nan_to_num(self.df.loc[self.current_step, "RSI"].iloc[0], nan=0.0)),
+                float(np.nan_to_num(self.df.loc[self.current_step, "MACD"].iloc[0], nan=0.0)),
+                float(np.nan_to_num(self.df.loc[self.current_step, "MACD_signal"].iloc[0], nan=0.0)),
+                float(np.nan_to_num(self.df.loc[self.current_step, "Upper_Band"].iloc[0], nan=0.0)),
+                float(np.nan_to_num(self.df.loc[self.current_step, "Lower_Band"].iloc[0], nan=0.0)),
+                float(self.shares),  # Current position
+                float(self.cash / INITIAL_BALANCE),  # Normalized cash
+                float(np.nan_to_num(self.df.loc[self.current_step, "Volume"].iloc[0] / 1e6, nan=0.0)),  # Normalized volume
+                float(np.nan_to_num(self.df.loc[self.current_step, "ATR"].iloc[0], nan=0.0)),  # Volatility measure
+                float(np.nan_to_num(z_score, nan=0.0)),  # Z-score, replace NaN with 0
+                float(self.max_drawdown)  # Risk metric
+            ], dtype=np.float32)
+            
+            # Log if any NaN values are detected
+            if np.any(np.isnan(obs)):
+                print(f"⚠️ NaN detected in observation at step {self.current_step}: {obs}")
+            
+            return obs
+        except Exception as e:
+            print(f"❌ Error in _next_observation at step {self.current_step}: {e}")
+            return np.zeros(self.observation_space.shape, dtype=np.float32)  # Return a safe default
 
     def _execute_trade(self, action: int, current_price: float):
         """Execute trade with position sizing and risk management."""
@@ -172,10 +184,11 @@ class TradingEnv(gym.Env):  # Ensure compatibility with gymnasium.Env
             self.stop_loss = None
             self.take_profit = None
 
-    def step(self, action: int):
-        """Execute one step in the environment."""
+def step(self, action: int):
+    """Execute one step in the environment."""
+    try:
         action = int(action)
-        current_price = float(self.df.loc[self.current_step, "Close"].item())
+        current_price = float(np.nan_to_num(self.df.loc[self.current_step, "Close"].item(), nan=0.0))
         
         # Execute trade based on action
         self._execute_trade(action, current_price)
@@ -199,11 +212,15 @@ class TradingEnv(gym.Env):  # Ensure compatibility with gymnasium.Env
 
         # Move to next step
         self.current_step += 1
-        done = self.current_step >= len(self.df) - 1
+        terminated = self.current_step >= len(self.df) - 1
+        truncated = False
         
         # Calculate portfolio value
-        next_price = float(self.df.loc[self.current_step, "Close"].item())
+        next_price = float(np.nan_to_num(self.df.loc[self.current_step, "Close"].item(), nan=0.0))
         portfolio_value = self.cash + self.shares * next_price
+        
+        if not isinstance(self.portfolio_history, list):
+            self.portfolio_history = list(self.portfolio_history)
         self.portfolio_history.append(portfolio_value)
         
         # Update max drawdown
@@ -212,11 +229,29 @@ class TradingEnv(gym.Env):  # Ensure compatibility with gymnasium.Env
         self.max_drawdown = max(self.max_drawdown, current_drawdown)
         
         # Calculate reward with risk adjustment
-        daily_return = (portfolio_value - self.portfolio_history[-2]) / (self.portfolio_history[-2] + 1e-10)
-        volatility = np.std(np.diff(self.portfolio_history[-10:]) / (self.portfolio_history[-10:-1] + 1e-10)) + 1e-10
-        reward = daily_return / volatility - 2 * current_drawdown
+        if len(self.portfolio_history) > 1:
+            daily_return = (portfolio_value - self.portfolio_history[-2]) / (self.portfolio_history[-2] + 1e-10)
+        else:
+            daily_return = 0.0
         
-        return self._next_observation(), reward, done, {}
+        recent_history = self.portfolio_history[-10:]
+        if len(recent_history) > 1:
+            denom = np.array(self.portfolio_history[-10:-1]) + 1e-10  # 🛠️ Fix applied here
+            volatility = np.std(np.diff(recent_history) / denom) + 1e-10
+        else:
+            volatility = 1e-10
+        
+        reward = np.nan_to_num(daily_return / volatility - 2 * current_drawdown, nan=0.0)
+        
+        if np.isnan(reward):
+            print(f"⚠️ NaN detected in reward at step {self.current_step}: daily_return={daily_return}, volatility={volatility}, current_drawdown={current_drawdown}")
+        
+        return self._next_observation(), reward, terminated, truncated, {}
+    
+    except Exception as e:
+        print(f"❌ Error in step at step {self.current_step}: {e}")
+        return self._next_observation(), 0.0, True, False, {"error": str(e)}
+
 
     def render(self, mode='human'):
         """Render the current state (for monitoring)."""
@@ -367,11 +402,12 @@ class TensorboardCallback(BaseCallback):
         self.portfolio_values = []
         
     def _on_step(self) -> bool:
-        # Log portfolio value
-        for env in self.training_env.envs:
-            if hasattr(env, 'portfolio_history'):
-                self.portfolio_values.append(env.portfolio_history[-1])
-                self.logger.record('portfolio/value', env.portfolio_history[-1])
+        # Log portfolio value using get_attr for SubprocVecEnv
+        portfolio_values = self.training_env.get_attr("portfolio_history")
+        for value in portfolio_values:
+            if value:
+                self.portfolio_values.append(value[-1])
+                self.logger.record('portfolio/value', value[-1])
         
         return True
 
@@ -440,7 +476,7 @@ def run_ticker_pipeline(ticker: str,
     os.makedirs("models", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
     
-    base_model_path = f"models/{ticker}_base_model.zip"
+    base_model_path = os.path.join("models", f"{ticker}_base_model.zip")  # Ensure correct file extension
     analytics_summary = []
     
     # Train on each timeframe
@@ -453,7 +489,7 @@ def run_ticker_pipeline(ticker: str,
             df_train = prepare_data(ticker, start_train, end_train)
             
             # Create vectorized environment
-            num_envs = max(multiprocessing.cpu_count() -1, 1)  # Use half the cores
+            num_envs = max(multiprocessing.cpu_count() // 2, 1)  # Use half the cores
             env = SubprocVecEnv([lambda: TradingEnv(df_train) for _ in range(num_envs)])
             
             # Train or load model
@@ -464,13 +500,14 @@ def run_ticker_pipeline(ticker: str,
                     ticker,
                     tensorboard_log=f"logs/{ticker}"
                 )
-                model.save(base_model_path)
+                model.save(base_model_path)  # Save model with correct path
             else:  # Subsequent timeframes - fine-tune existing model
                 print(f"\n🔄 Fine-tuning model for {ticker} (offset: {offset} days)")
                 if os.path.exists(base_model_path):
-                    model = PPO.load(base_model_path, env=env, device="cpu")
+                    model = PPO.load(base_model_path, env=env, device="cpu")  # Load model with correct path
                 else:
-                    raise FileNotFoundError(f"Model file not found: {base_model_path}")
+                    print(f"❌ Model file not found for {ticker} (offset {offset}). Skipping...")
+                    continue  # Skip this offset if the model file is missing
                 model.set_env(env)
                 model.learn(total_timesteps=TRAINING_TIMESTEPS//2)  # Half the timesteps for fine-tuning
             
@@ -479,7 +516,7 @@ def run_ticker_pipeline(ticker: str,
             metrics.update({
                 "Ticker": ticker,
                 "Offset Days": offset,
-                "Phase": "Training"
+                "Phase": "Training"  # Add Phase key for training
             })
             analytics_summary.append(metrics)
             
@@ -498,15 +535,19 @@ def run_ticker_pipeline(ticker: str,
         env_bt = DummyVecEnv([lambda: TradingEnv(df_bt)])  # Single env for backtest
         
         # Load best model
-        model = PPO.load(base_model_path, env=env_bt, device="cpu")
-        model.set_env(env_bt)
+        if os.path.exists(base_model_path):
+            model = PPO.load(base_model_path, env=env_bt, device="cpu")  # Load model with correct path
+            model.set_env(env_bt)
+        else:
+            print(f"❌ Model file not found for {ticker} during backtest. Skipping...")
+            return analytics_summary  # Skip backtest if the model file is missing
         
         # Evaluate
         metrics = evaluate_model(model, env_bt, render=True)
         metrics.update({
             "Ticker": ticker,
             "Offset Days": 999,  # Special code for backtest
-            "Phase": "Backtest"
+            "Phase": "Backtest"  # Add Phase key for backtesting
         })
         analytics_summary.append(metrics)
         
@@ -605,15 +646,21 @@ def main():
             except Exception as e:
                 print(f"❌ Failed to process {ticker}: {e}")
     
+    # Debug: Print analytics_summary to verify structure
+    print(f"🔍 Debug: analytics_summary = {analytics_summary}")
+    
     # Save and analyze results
     df_summary = pd.DataFrame(analytics_summary)
     df_summary.to_csv("logs/trade_analytics_summary.csv", index=False)
     
     # Print top performers
-    top_performers = df_summary[df_summary['Phase'] == 'Backtest'].sort_values(
-        'final_value', ascending=False)
-    print("\n🏆 Top Performing Models (Backtest):")
-    print(top_performers[['Ticker', 'final_value', 'win_rate', 'sharpe_ratio']].head())
+    if 'Phase' in df_summary.columns:
+        top_performers = df_summary[df_summary['Phase'] == 'Backtest'].sort_values(
+            'final_value', ascending=False)
+        print("\n🏆 Top Performing Models (Backtest):")
+        print(top_performers[['Ticker', 'final_value', 'win_rate', 'sharpe_ratio']].head())
+    else:
+        print("❌ 'Phase' column missing in df_summary. Check analytics_summary structure.")
     
     # Generate plots
     plot_results(df_summary)
