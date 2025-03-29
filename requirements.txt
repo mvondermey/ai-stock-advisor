@@ -1,0 +1,6 @@
+gym
+numpy
+yfinance
+pandas
+matplotlib
+scikit-learn
