@@ -38,7 +38,7 @@ TRANSACTION_COST = 0.001
 POSITION_SIZE = 1.0  # 💡 Use full capital for testing
 STOP_LOSS_PCT = 0.02
 TAKE_PROFIT_PCT = 0.04
-TRAINING_TIMESTEPS = 10000  # 🚀 Increase for better learning
+TRAINING_TIMESTEPS = 20000  # 🚀 Increase for better learning
 BACKTEST_DAYS = 90
 
 
@@ -527,6 +527,8 @@ def evaluate_model(model: PPO,
     trade_log = env.get_attr("trade_log")[0]
     prices = env.get_attr("df")[0]["Close"]
     metrics = analyze_trades(trade_log, prices)
+    print(f"🔎 Trades executed: {len(trade_log)}")
+    print(f"📋 Trade log: {trade_log if len(trade_log) > 0 else 'No trades recorded.'}")
     metrics['final_value'] = final_value
 
     return metrics
