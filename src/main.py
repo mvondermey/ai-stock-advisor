@@ -1,8 +1,9 @@
 import os
+import traceback
 os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Disable GPU usage
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN optimizations
 import json
-import numpy as np  # Correct the NumPy import statement
+
 import pandas as pd
 import yfinance as yf
 import gymnasium as gym  # Replace gym with gymnasium
@@ -21,6 +22,7 @@ from tqdm import tqdm
 from tqdm.auto import tqdm as auto_tqdm  # Use auto-tqdm for better compatibility
 from typing import Dict, List, Tuple, Optional
 import warnings
+import numpy as np  # Ensure NumPy is imported
 # warnings.filterwarnings('ignore')
 
 # Ensure proper closing of tqdm progress bars
@@ -360,7 +362,7 @@ def get_top_performing_stocks(n: int = 10) -> List[str]:
         try:
             result = run_ticker_pipeline(ticker)
         except Exception as e:
-            print(f"❌ Failed to process {ticker}: {e}")
+            print(f"❌ Failed to process 1 {ticker}: {e}")
     top_tickers = [t for t, _ in sorted(performances, key=lambda x: x[1], reverse=True)[:n]]
     
     # Update cache
@@ -397,8 +399,13 @@ def prepare_data(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         )
     else:
         df = yf.download(ticker, start=start, end=end, auto_adjust=True).dropna()
+        # Print the DataFrame after downloading
+        print(f"Downloaded data for {ticker}:\n{df.head()}")  # Print first 5 rows
         if df.empty:
             raise ValueError(f"No data available for {ticker} from {start} to {end}")
+        
+
+        print(df)
         
         # Ensure all relevant columns are numeric
         numeric_columns = ["Open", "High", "Low", "Close", "Volume"]
@@ -421,16 +428,31 @@ def prepare_data(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     # Drop rows with non-numeric values
     df.dropna(subset=numeric_columns, inplace=True)
     
+    # Validate that the DataFrame is not empty
+    if df.empty or len(df) < 20:  # Require at least 20 rows for indicators
+        raise ValueError(f"Insufficient data for {ticker} from {start} to {end}")
+    
     # Calculate technical indicators
-    prices = df["Close"]
-    df['RSI'] = calculate_rsi(prices)
-    df['MACD'], df['MACD_signal'] = calculate_macd(prices)
-    df['Upper_Band'], df['Lower_Band'] = calculate_bollinger_bands(prices)
-    df['ATR'] = calculate_atr(df)
-    df['OBV'] = calculate_obv(df)
+    try:
+        prices = df["Close"]
+        df['RSI'] = calculate_rsi(prices)
+        df['MACD'], df['MACD_signal'] = calculate_macd(prices)
+        df['Upper_Band'], df['Lower_Band'] = calculate_bollinger_bands(prices)
+        df['ATR'] = calculate_atr(df)
+        df['OBV'] = calculate_obv(df)
+    except Exception as e:
+        raise ValueError(f"Error calculating indicators for {ticker}: {e}")
     
     # Drop any remaining NA values
     df.dropna(inplace=True)
+    
+    # Print the DataFrame after cleaning
+    print(f"Cleaned data for {ticker}:\n{df.head()}")  # Print first 5 rows
+    
+    # Final validation
+    if df.empty or len(df) < 20:
+        raise ValueError(f"Data became insufficient after processing for {ticker} from {start} to {end}")
+    
     return df
 
 # --- Model training and evaluation ---
@@ -490,23 +512,23 @@ def evaluate_model(model: PPO,
     """Evaluate a trained model on the given environment."""
     obs = env.reset()
     done = False
-    
+
     while not done:
+        # Get the action from the model's prediction
         action, _ = model.predict(obs, deterministic=True)
-#        action = env.action_space.sample()  # 🔁 Force random actions
         obs, _, done_array, _ = env.step(action)
-        done = done_array[0]  # ✅ Fix: extract scalar from array
-        
+        done = done_array[0]  # Extract scalar from array
+
         if render:
             env.render()
-    
+
     # Get final metrics
     final_value = env.get_attr("cash")[0] + env.get_attr("shares")[0] * env.get_attr("df")[0]["Close"].iloc[-1]
     trade_log = env.get_attr("trade_log")[0]
     prices = env.get_attr("df")[0]["Close"]
     metrics = analyze_trades(trade_log, prices)
     metrics['final_value'] = final_value
-    
+
     return metrics
 
 # --- Pipeline functions ---
@@ -563,7 +585,8 @@ def run_ticker_pipeline(ticker: str,
             analytics_summary.append(metrics)
         
         except Exception as e:
-            print(f"❌ Failed to process {ticker} (offset {offset}): {e}")
+            print(f"❌ Failed to process 2 {ticker} (offset {offset}): {e}")
+            traceback.print_exc()  # Prints full stack trace including line number
             continue
     
     # Backtest on most recent data
