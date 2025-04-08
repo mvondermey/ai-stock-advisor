@@ -36,8 +36,8 @@ def safe_tqdm(iterable, **kwargs):
 INITIAL_BALANCE = 10000
 TRANSACTION_COST = 0.001
 POSITION_SIZE = 1.0  # 💡 Use full capital for testing
-STOP_LOSS_PCT = 0.02
-TAKE_PROFIT_PCT = 0.04
+STOP_LOSS_PCT = 0.00
+TAKE_PROFIT_PCT = 0.00
 TRAINING_TIMESTEPS = 20000  # 🚀 Increase for better learning
 BACKTEST_DAYS = 90
 
@@ -183,14 +183,15 @@ class TradingEnv(gym.Env):  # Ensure compatibility with gymnasium.Env
     def _execute_trade(self, action: int, current_price: float):
         """Execute trade with position sizing and risk management."""
         if action == 1:  # BUY
+            #print("\n BUY**************************************")
             if self.shares == 0:  # Only enter new position if none exists
                 max_shares = int((self.cash * self.position_size) / current_price)
                 if max_shares > 0:
-                    self.shares = max_shares
-                    self.cash -= max_shares * current_price * (1 + self.transaction_cost)
-                    self.stop_loss = current_price * (1 - self.stop_loss_pct)
-                    self.take_profit = current_price * (1 + self.take_profit_pct)
-                    self.trade_log.append((self.current_step, "BUY", current_price, self.shares))
+                 self.shares = max_shares
+                 self.cash -= max_shares * current_price * (1 + self.transaction_cost)
+                 self.stop_loss = current_price * (1 - self.stop_loss_pct)
+                 self.take_profit = current_price * (1 + self.take_profit_pct)
+                 self.trade_log.append((self.current_step, "BUY", current_price, self.shares))
                     
         elif action == 2 and self.shares > 0:  # SELL
             self.cash += self.shares * current_price * (1 - self.transaction_cost)
@@ -209,7 +210,7 @@ class TradingEnv(gym.Env):  # Ensure compatibility with gymnasium.Env
             self._execute_trade(action, current_price)
             
             # Comment out the action and portfolio value log
-            #print(f"Step {self.current_step}: Action={action}, Price={current_price:.2f}, "
+            #print(f"Step 1) {self.current_step}: Action={action}, Price={current_price:.2f}, "
             #       f"Shares={self.shares}, Cash={self.cash:.2f}, "
             #       f"Portfolio Value={self.cash + self.shares * current_price:.2f}")
             
@@ -256,12 +257,16 @@ class TradingEnv(gym.Env):  # Ensure compatibility with gymnasium.Env
             
             recent_history = self.portfolio_history[-10:]
             if len(self.portfolio_history) > 1:
-                daily_return = (portfolio_value - self.portfolio_history[-2]) / (self.portfolio_history[-2] + 1e-10)
+                daily_return = 100+(portfolio_value - self.portfolio_history[-2]) / (self.portfolio_history[-2] + 1e-10)
             else:
                 daily_return = 0.0
 
             reward = float(np.nan_to_num(daily_return, nan=0.0))  # 💡 Simplified reward: focus on returns
-
+            
+            #print(f"Step 2) {self.current_step}: Action={action}, Price={current_price:.2f}, "
+            #       f"Shares={self.shares}, Cash={self.cash:.2f}, "
+            #       f"Portfolio Value={self.cash + self.shares * current_price:.2f}, "
+            #       f"reward={reward}")
             
             if np.isnan(reward):
                 print(f"⚠️ NaN detected in reward at step {self.current_step}: daily_return={daily_return}, volatility={volatility}, current_drawdown={current_drawdown}")
@@ -399,6 +404,9 @@ def prepare_data(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         )
     else:
         df = yf.download(ticker, start=start, end=end, auto_adjust=True).dropna()
+        # Flatten MultiIndex columns (e.g. ('Close', 'SAP') → 'Close')
+        if isinstance(df.columns[0], tuple):
+            df.columns = [col[0] for col in df.columns]
         # Print the DataFrame after downloading
         print(f"Downloaded data for {ticker}:\n{df.head()}")  # Print first 5 rows
         if df.empty:
@@ -406,11 +414,14 @@ def prepare_data(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         
 
         print(df)
-        
+        print("📋 Columns:", df.columns.tolist())
+        print("🧪 Sample shape:", {col: df[col].shape for col in df.columns})
+    
         # Ensure all relevant columns are numeric
         numeric_columns = ["Open", "High", "Low", "Close", "Volume"]
         for col in numeric_columns:
             if col in df.columns:
+                print(f"col={df[col]}")
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         
         # Drop rows with non-numeric values
@@ -699,8 +710,8 @@ def main():
     
     # Get top performing stocks
     print("🔍 Identifying top performing S&P 500 stocks...")
-    #tickers = get_top_performing_stocks(n=5)  # Reduced to 5 for demo
-    tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA']  # For testing purposes
+    #tickers = get_top_performing_stocks(n=1)  # Reduced to 5 for demo
+    tickers = ['SAP']  # For testing purposes
     print(f"📈 Top tickers selected: {', '.join(tickers)}\n")
     
     # Run pipeline for each ticker in parallel
