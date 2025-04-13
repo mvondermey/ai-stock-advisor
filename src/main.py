@@ -1,105 +1,37 @@
 import os
-import traceback
-os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Disable GPU usage
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN optimizations
-import json
-
 import pandas as pd
 import yfinance as yf
-import gymnasium as gym  # Replace gym with gymnasium
-from gymnasium import spaces  # Update import for spaces
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
-from stable_baselines3.common.monitor import Monitor
-import torch
-import multiprocessing
-from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import time
+import matplotlib
+from datetime import datetime, timedelta
+from typing import List
 from tqdm import tqdm
-from tqdm.auto import tqdm as auto_tqdm  # Use auto-tqdm for better compatibility
-from typing import Dict, List, Tuple, Optional
-import warnings
-import numpy as np  # Ensure NumPy is imported
-# warnings.filterwarnings('ignore')
+import time  # Import time module for delay
 
-# Ensure proper closing of tqdm progress bars
-def safe_tqdm(iterable, **kwargs):
-    """Wrapper for tqdm to ensure proper closing."""
-    with tqdm(iterable, **kwargs) as pbar:
-        for item in pbar:
-            yield item
+# Set a non-interactive backend to avoid RuntimeError
+matplotlib.use("Agg")  # Use a non-interactive backend for rendering
 
 # --- Constants ---
-INITIAL_BALANCE = 10000
-TRANSACTION_COST = 0.001
-POSITION_SIZE = 1.0  # 💡 Use full capital for testing
-STOP_LOSS_PCT = 0.00
-TAKE_PROFIT_PCT = 0.00
-TRAINING_TIMESTEPS = 20000  # 🚀 Increase for better learning
-BACKTEST_DAYS = 90
+INITIAL_BALANCE = 20000  # Updated initial balance to 50000
+TRANSACTION_COST = 0.0015  # Adjusted transaction cost
+POSITION_SIZE = 1.0  # Use full capital for testing each trade
+BACKTEST_PERIOD = 90  # Backtest period in terms of steps (e.g., trading days)
+STOP_LOSS = 0.2  # 20% stop-loss
+TAKE_PROFIT = 0.2  # 20% take-profit
 
+# Define fixed stop-loss thresholds for specific stocks
+FIXED_STOP_LOSS = {
+}
 
-# --- Technical indicators ---
-def calculate_rsi(prices: pd.Series, period: int = 14) -> pd.Series:
-    """Calculate Relative Strength Index (RSI) using Wilder's smoothing."""
-    delta = prices.diff()
-    gain = (delta.where(delta > 0, 0)).fillna(0)
-    loss = (-delta.where(delta < 0, 0)).fillna(0)
-    
-    avg_gain = gain.ewm(alpha=1/period, min_periods=period).mean()
-    avg_loss = loss.ewm(alpha=1/period, min_periods=period).mean()
-    
-    rs = avg_gain / (avg_loss + 1e-10)  # Avoid division by zero
-    return 100 - (100 / (1 + rs))
-
-def calculate_macd(prices: pd.Series, 
-                 short_window: int = 12, 
-                 long_window: int = 26, 
-                 signal_window: int = 9) -> Tuple[pd.Series, pd.Series]:
-    """Calculate MACD and Signal line."""
-    ema_short = prices.ewm(span=short_window, adjust=False).mean()
-    ema_long = prices.ewm(span=long_window, adjust=False).mean()
-    macd = ema_short - ema_long
-    signal = macd.ewm(span=signal_window, adjust=False).mean()
-    return macd, signal
-
-def calculate_bollinger_bands(prices: pd.Series, window: int = 20) -> Tuple[pd.Series, pd.Series]:
-    """Calculate Bollinger Bands."""
-    sma = prices.rolling(window).mean()
-    std = prices.rolling(window).std()
-    return sma + (std * 2), sma - (std * 2)
-
-def calculate_atr(df: pd.DataFrame, window: int = 14) -> pd.Series:
-    """Calculate Average True Range (ATR)."""
-    high_low = df['High'] - df['Low']
-    high_close = (df['High'] - df['Close'].shift()).abs()
-    low_close = (df['Low'] - df['Close'].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    return tr.rolling(window).mean()
-
-def calculate_obv(df: pd.DataFrame) -> pd.Series:
-    """Calculate On-Balance Volume."""
-    obv = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
-    return obv
+# Define fixed take-profit thresholds for specific stocks
+FIXED_TAKE_PROFIT = {
+}
 
 # --- Trading environment ---
-class TradingEnv(gym.Env):  # Ensure compatibility with gymnasium.Env
-    """Custom trading environment for RL with enhanced features."""
+class TradingEnv:
+    """Custom trading environment for rule-based trading."""
     
-    metadata = {'render.modes': ['human']}
-    
-    def __init__(self, 
-                df: pd.DataFrame, 
-                initial_balance: float = INITIAL_BALANCE, 
-                transaction_cost: float = TRANSACTION_COST,
-                position_size: float = POSITION_SIZE,
-                stop_loss_pct: float = STOP_LOSS_PCT,
-                take_profit_pct: float = TAKE_PROFIT_PCT):
-        
-        super().__init__()
+    def __init__(self, df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE, transaction_cost: float = TRANSACTION_COST):
         self.df = df.reset_index(drop=True)
         self.current_step = 0
         self.cash = initial_balance
@@ -107,653 +39,271 @@ class TradingEnv(gym.Env):  # Ensure compatibility with gymnasium.Env
         self.transaction_cost = transaction_cost
         self.portfolio_history = [initial_balance]
         self.trade_log = []
-        self.position_size = position_size
-        self.stop_loss_pct = stop_loss_pct
-        self.take_profit_pct = take_profit_pct
-        self.stop_loss = None
-        self.take_profit = None
-        self.max_drawdown = 0
-        self.peak_value = initial_balance
+        self.stop_loss = STOP_LOSS  # Default stop-loss
+        self.take_profit = TAKE_PROFIT  # Default take-profit
 
-        # Action space: 0=Hold, 1=Buy, 2=Sell
-        self.action_space = spaces.Discrete(3)
-        
-        # Observation space: 12 features (expanded from 6)
-        self.observation_space = spaces.Box(
-            low=-np.inf, 
-            high=np.inf, 
-            shape=(12,), 
-            dtype=np.float32
-        )
-
-    def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
+    def reset(self):
         """Reset the environment to initial state."""
-        super().reset(seed=seed)  # Set the random seed if provided
         self.current_step = 0
-        self.cash = self.portfolio_history[0]
+        self.cash = INITIAL_BALANCE
         self.shares = 0
         self.portfolio_history = [self.cash]
         self.trade_log = []
-        self.stop_loss = None
-        self.take_profit = None
-        self.max_drawdown = 0
-        self.peak_value = self.cash
-        observation = self._next_observation()
-        
-        # Return only observation if used with DummyVecEnv
-        if isinstance(self, DummyVecEnv):
-            return observation
-        return observation, {}  # Return observation and an empty info dictionary
 
-    def _next_observation(self) -> np.ndarray:
-        """Get the next observation with expanded features."""
-        try:
-            close_prices = self.df.loc[max(0, self.current_step-5):self.current_step, "Close"]
-            z_score = (self.df.loc[self.current_step, "Close"] - close_prices.mean()) / (close_prices.std() + 1e-10)
-            z_score_scalar = float(np.nan_to_num(z_score.item() if hasattr(z_score, "item") else z_score, nan=0.0))  # Ensure z_score is a scalar
-            
-            # Extract ATR as a scalar
-            atr_value = self.df.loc[self.current_step, "ATR"]
-            atr_scalar = float(np.nan_to_num(atr_value.item() if hasattr(atr_value, "item") else atr_value, nan=0.0))
-            
-            obs = np.array([
-                float(np.nan_to_num(self.df.loc[self.current_step, "Close"].item() if hasattr(self.df.loc[self.current_step, "Close"], 'item') else self.df.loc[self.current_step, "Close"], nan=0.0)),
-                float(np.nan_to_num(self.df.loc[self.current_step, "RSI"].item() if hasattr(self.df.loc[self.current_step, "RSI"], 'item') else self.df.loc[self.current_step, "RSI"], nan=0.0)),
-                float(np.nan_to_num(self.df.loc[self.current_step, "MACD"].item() if hasattr(self.df.loc[self.current_step, "MACD"], 'item') else self.df.loc[self.current_step, "MACD"], nan=0.0)),
-                float(np.nan_to_num(self.df.loc[self.current_step, "MACD_signal"].item() if hasattr(self.df.loc[self.current_step, "MACD_signal"], 'item') else self.df.loc[self.current_step, "MACD_signal"], nan=0.0)),
-                float(np.nan_to_num(self.df.loc[self.current_step, "Upper_Band"].item() if hasattr(self.df.loc[self.current_step, "Upper_Band"], 'item') else self.df.loc[self.current_step, "Upper_Band"], nan=0.0)),
-                float(np.nan_to_num(self.df.loc[self.current_step, "Lower_Band"].item() if hasattr(self.df.loc[self.current_step, "Lower_Band"], 'item') else self.df.loc[self.current_step, "Lower_Band"], nan=0.0)),
-                float(self.shares),  # Current position
-                float(self.cash / INITIAL_BALANCE),  # Normalized cash
-                float(np.nan_to_num(self.df.loc[self.current_step, "Volume"].item() if hasattr(self.df.loc[self.current_step, "Volume"], 'item') else self.df.loc[self.current_step, "Volume"] / 1e6, nan=0.0)),  # Normalized volume
-                atr_scalar,  # ATR as a scalar
-                z_score_scalar,  # Z-score as a scalar
-                float(self.max_drawdown)  # Risk metric
-            ], dtype=np.float32)
-            
-            # Log if any NaN values are detected
-            if np.any(np.isnan(obs)):
-                print(f"⚠️ NaN detected in observation at step {self.current_step}: {obs}")
-            
-            return obs
-        except Exception as e:
-            print(f"❌ Error in _next_observation at step {self.current_step}: {e}")
-            return np.zeros(self.observation_space.shape, dtype=np.float32)  # Return a safe default
+    def step(self):
+        """Execute one step with buy-on-uptrend and sell-on-downtrend logic."""
+        # Ensure scalar values for current_price and previous_price
+        current_price = self.df["Close"].iloc[self.current_step]
+        if isinstance(current_price, pd.Series):
+            current_price = current_price.item()
 
-    def _execute_trade(self, action: int, current_price: float):
-        """Execute trade with position sizing and risk management."""
-        if action == 1:  # BUY
-            #print("\n BUY**************************************")
-            if self.shares == 0:  # Only enter new position if none exists
-                max_shares = int((self.cash * self.position_size) / current_price)
-                if max_shares > 0:
-                 self.shares = max_shares
-                 self.cash -= max_shares * current_price * (1 + self.transaction_cost)
-                 self.stop_loss = current_price * (1 - self.stop_loss_pct)
-                 self.take_profit = current_price * (1 + self.take_profit_pct)
-                 self.trade_log.append((self.current_step, "BUY", current_price, self.shares))
-                    
-        elif action == 2 and self.shares > 0:  # SELL
-            self.cash += self.shares * current_price * (1 - self.transaction_cost)
-            self.trade_log.append((self.current_step, "SELL", current_price, self.shares))
-            self.shares = 0
-            self.stop_loss = None
-            self.take_profit = None
+        previous_price = (
+            self.df["Close"].iloc[self.current_step - 1]
+            if self.current_step > 0
+            else current_price
+        )
+        if isinstance(previous_price, pd.Series):
+            previous_price = previous_price.item()
 
-    def step(self, action: int):
-        """Execute one step in the environment."""
-        try:
-            action = int(action)
-            current_price = float(np.nan_to_num(self.df.loc[self.current_step, "Close"].item(), nan=0.0))
-            
-            # Execute trade based on action
-            self._execute_trade(action, current_price)
-            
-            # Comment out the action and portfolio value log
-            #print(f"Step 1) {self.current_step}: Action={action}, Price={current_price:.2f}, "
-            #       f"Shares={self.shares}, Cash={self.cash:.2f}, "
-            #       f"Portfolio Value={self.cash + self.shares * current_price:.2f}")
-            
-            # Check stop loss/take profit
-            if self.shares > 0:
-                if current_price <= self.stop_loss:
-                    self.cash += self.shares * current_price * (1 - self.transaction_cost)
-                    self.trade_log.append((self.current_step, "SL", current_price, self.shares))
-                    self.shares = 0
-                    self.stop_loss = None
-                    self.take_profit = None
-                elif current_price >= self.take_profit:
-                    self.cash += self.shares * current_price * (1 - self.transaction_cost)
-                    self.trade_log.append((self.current_step, "TP", current_price, self.shares))
-                    self.shares = 0
-                    self.stop_loss = None
-                    self.take_profit = None
-            else:
-                self.trade_log.append((self.current_step, "HOLD", current_price, 0))
+        # Debug: Print current step, price, cash, and shares
+        #print(f"Step {self.current_step}: Current Price: {current_price:.2f}, Cash: {self.cash:.2f}, Shares: {self.shares}")
 
-            # Move to next step
-            self.current_step += 1
-            terminated = self.current_step >= len(self.df) - 1
-            truncated = False
-            
-            # Calculate portfolio value
-            next_price = float(np.nan_to_num(self.df.loc[self.current_step, "Close"].item(), nan=0.0))
-            portfolio_value = self.cash + self.shares * next_price
-            
-            if not isinstance(self.portfolio_history, list):
-                self.portfolio_history = list(self.portfolio_history)
-            self.portfolio_history.append(portfolio_value)
-            
-            # Update max drawdown
-            self.peak_value = max(self.peak_value, portfolio_value)
-            current_drawdown = (self.peak_value - portfolio_value) / self.peak_value
-            self.max_drawdown = max(self.max_drawdown, current_drawdown)
-            
-            # Calculate reward with risk adjustment
-            if len(self.portfolio_history) > 1:
-                daily_return = (portfolio_value - self.portfolio_history[-2]) / (self.portfolio_history[-2] + 1e-10)
-            else:
-                daily_return = 0.0
-            
-            recent_history = self.portfolio_history[-10:]
-            if len(self.portfolio_history) > 1:
-                daily_return = 100+(portfolio_value - self.portfolio_history[-2]) / (self.portfolio_history[-2] + 1e-10)
-            else:
-                daily_return = 0.0
+        # Buy logic: Buy if price is increasing and no shares are held
+        if self.shares == 0 and current_price > previous_price:
+            max_shares = int((self.cash * POSITION_SIZE) / current_price)  # Calculate max shares to buy
+            if max_shares > 0:
+                self.shares = max_shares
+                self.cash -= max_shares * current_price * (1 + self.transaction_cost)  # Deduct cash for the purchase
+                self.trade_log.append((self.current_step, "BUY", current_price, self.shares))  # Log the trade
+                print(f"Step {self.current_step}: Bought {max_shares} shares at {current_price:.2f}")
 
-            reward = float(np.nan_to_num(daily_return, nan=0.0))  # 💡 Simplified reward: focus on returns
-            
-            #print(f"Step 2) {self.current_step}: Action={action}, Price={current_price:.2f}, "
-            #       f"Shares={self.shares}, Cash={self.cash:.2f}, "
-            #       f"Portfolio Value={self.cash + self.shares * current_price:.2f}, "
-            #       f"reward={reward}")
-            
-            if np.isnan(reward):
-                print(f"⚠️ NaN detected in reward at step {self.current_step}: daily_return={daily_return}, volatility={volatility}, current_drawdown={current_drawdown}")
-            
-            return self._next_observation(), reward, terminated, truncated, {}
-        
-        except Exception as e:
-            print(f"❌ Error in step at step {self.current_step}: {e}")
-            return self._next_observation(), 0.0, True, False, {"error": str(e)}
+        # Sell logic: Sell if price is decreasing and shares are held
+        elif self.shares > 0 and current_price < previous_price:
+            self.cash += self.shares * current_price * (1 - self.transaction_cost)  # Add cash from the sale
+            self.trade_log.append((self.current_step, "SELL", current_price, self.shares))  # Log the trade
+            print(f"Step {self.current_step}: Sold {self.shares} shares at {current_price:.2f}")
+            self.shares = 0  # Reset shares to 0
 
-    def render(self, mode='human'):
-        """Render the current state (for monitoring)."""
-        if mode == 'human':
-            current_price = self.df.loc[self.current_step, "Close"]
-            print(f"Step: {self.current_step}, Price: {current_price:.2f}, "
-                 f"Shares: {self.shares}, Cash: {self.cash:.2f}, "
-                 f"Portfolio Value: {self.portfolio_history[-1]:.2f}")
-        else:
-            super().render(mode=mode)  # Ensure compatibility with gymnasium
+        # Update portfolio value
+        portfolio_value = self.cash + self.shares * current_price
+        self.portfolio_history.append(portfolio_value)
+        print(f"Step {self.current_step}: Portfolio value updated to {portfolio_value:.2f}")
 
-# --- Analytics ---
-def analyze_trades(trade_log: list, prices: pd.Series) -> dict:
-    """Enhanced trade analysis with more metrics."""
-    trades = pd.DataFrame(trade_log, columns=["Step", "Action", "Price", "Shares"])
-    trades['Date'] = prices.index[trades['Step']]
-    trades['Value'] = trades['Price'] * trades['Shares']
-    
-    results = {
-        'num_trades': len(trades[trades['Action'].isin(['BUY', 'SELL', 'SL', 'TP'])]),
-        'win_rate': 0.0,
-        'avg_profit': 0.0,
-        'profit_factor': 0.0,
-        'max_drawdown': 0.0,
-        'sharpe_ratio': 0.0,
-        'sortino_ratio': 0.0,
-        'avg_trade_duration': 0
-    }
-    
-    if len(trades) < 2:
-        return results
-    
-    # Calculate returns for each trade
-    positions = []
-    trade_returns = []
-    trade_durations = []
-    
-    for i, row in trades.iterrows():
-        if row['Action'] == 'BUY':
-            positions.append({'entry_step': row['Step'], 
-                             'entry_price': row['Price'],
-                             'entry_date': row['Date']})
-        elif row['Action'] in ['SELL', 'SL', 'TP'] and positions:
-            position = positions.pop(0)
-            duration = (row['Date'] - position['entry_date']).days
-            trade_return = (row['Price'] - position['entry_price']) / position['entry_price']
-            
-            trade_returns.append(trade_return)
-            trade_durations.append(duration)
-    
-    if trade_returns:
-        wins = [r for r in trade_returns if r > 0]
-        losses = [r for r in trade_returns if r <= 0]
-        
-        results.update({
-            'win_rate': len(wins) / len(trade_returns),
-            'avg_profit': np.mean(trade_returns),
-            'profit_factor': sum(wins) / (-sum(losses)) if losses else float('inf'),
-            'max_drawdown': min(trade_returns),
-            'sharpe_ratio': (np.mean(trade_returns) / (np.std(trade_returns) + 1e-10)) * np.sqrt(252),
-            'sortino_ratio': (np.mean(trade_returns) / (np.std(losses) + 1e-10)) * np.sqrt(252),
-            'avg_trade_duration': np.mean(trade_durations) if trade_durations else 0
-        })
-    
-    return results
+        # Move to the next step
+        self.current_step += 1
+
+    def run(self):
+        """Run the backtest."""
+        while self.current_step < len(self.df) - 1:
+            self.step()
+
+    def render(self):
+        """Render the portfolio value over time."""
+        plt.figure(figsize=(10, 5))
+        plt.plot(self.portfolio_history)
+        plt.title("Portfolio Value Over Time")
+        plt.xlabel("Steps")
+        plt.ylabel("Portfolio Value ($)")
+        plt.savefig(f"portfolio_{id(self)}.png")  # Save the plot to a file
+        plt.show()  # Display the plot
+        plt.close()  # Explicitly close the plot to avoid conflicts
 
 # --- Data fetching and preprocessing ---
-def get_top_performing_stocks(n: int = 10) -> List[str]:
-    """Get top n performing S&P 500 stocks with caching."""
-    cache_file = "logs/top_tickers_cache.json"
-    today = datetime.today().strftime("%Y-%m-%d")
-    
-    # Try to load from cache
-    if os.path.exists(cache_file):
-        with open(cache_file, "r") as f:
-            cache = json.load(f)
-            if cache.get("date") == today:
-                return cache.get("tickers", [])[:n]
-    
-    # Fetch fresh data
-    sp500 = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
-    tickers = [symbol.replace('.', '-') for symbol in sp500['Symbol'].tolist()]
-    
-    performances = []
-    end = datetime.today()
-    start = end - timedelta(days=365)
-    
-    for ticker in safe_tqdm(tickers, desc="Processing Tickers"):
-        try:
-            result = run_ticker_pipeline(ticker)
-        except Exception as e:
-            print(f"❌ Failed to process 1 {ticker}: {e}")
-    top_tickers = [t for t, _ in sorted(performances, key=lambda x: x[1], reverse=True)[:n]]
-    
-    # Update cache
-    os.makedirs("logs", exist_ok=True)
-    with open(cache_file, "w") as f:
-        json.dump({"date": today, "tickers": top_tickers}, f)
-    
-    return top_tickers
-
-def get_stock_performance(ticker: str, start: datetime, end: datetime) -> Optional[Tuple[str, float]]:
-    """Helper function to get single stock performance."""
-    try:
-        df = yf.download(ticker, start=start, end=end, progress=False)
-        if df.empty or len(df) < 20:  # Minimum 20 days of data
-            return None
-        
-        start_price = float(df["Close"].iloc[0].item())
-        end_price = float(df["Close"].iloc[-1].item())
-        growth = (end_price - start_price) / start_price
-        return (ticker, growth)
-    except Exception:
-        return None
-
 def prepare_data(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Download and preprocess data for a given ticker and date range."""
-    cache_file = f"logs/{ticker}_{start.strftime('%Y%m%d')}_{end.strftime('%Y%m%d')}.csv"
-    if os.path.exists(cache_file):
-        # Explicitly specify the date format to avoid parsing warnings
-        df = pd.read_csv(
-            cache_file,
-            index_col=0,
-            parse_dates=True,
-            date_parser=lambda x: pd.to_datetime(x, format='%Y-%m-%d', errors='coerce')
-        )
-    else:
-        df = yf.download(ticker, start=start, end=end, auto_adjust=True).dropna()
-        # Flatten MultiIndex columns (e.g. ('Close', 'SAP') → 'Close')
-        if isinstance(df.columns[0], tuple):
-            df.columns = [col[0] for col in df.columns]
-        # Print the DataFrame after downloading
-        print(f"Downloaded data for {ticker}:\n{df.head()}")  # Print first 5 rows
-        if df.empty:
-            raise ValueError(f"No data available for {ticker} from {start} to {end}")
-        
-
-        print(df)
-        print("📋 Columns:", df.columns.tolist())
-        print("🧪 Sample shape:", {col: df[col].shape for col in df.columns})
-    
-        # Ensure all relevant columns are numeric
-        numeric_columns = ["Open", "High", "Low", "Close", "Volume"]
-        for col in numeric_columns:
-            if col in df.columns:
-                print(f"col={df[col]}")
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-        
-        # Drop rows with non-numeric values
-        df.dropna(subset=numeric_columns, inplace=True)
-        
-        # Cache the cleaned data
-        df.to_csv(cache_file)
-    
-    # Ensure all relevant columns are numeric after reading from cache
-    numeric_columns = ["Open", "High", "Low", "Close", "Volume"]
-    for col in numeric_columns:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    
-    # Drop rows with non-numeric values
-    df.dropna(subset=numeric_columns, inplace=True)
-    
-    # Validate that the DataFrame is not empty
+    df = yf.download(ticker, start=start, end=end, auto_adjust=True).dropna()
     if df.empty or len(df) < 20:  # Require at least 20 rows for indicators
         raise ValueError(f"Insufficient data for {ticker} from {start} to {end}")
-    
-    # Calculate technical indicators
-    try:
-        prices = df["Close"]
-        df['RSI'] = calculate_rsi(prices)
-        df['MACD'], df['MACD_signal'] = calculate_macd(prices)
-        df['Upper_Band'], df['Lower_Band'] = calculate_bollinger_bands(prices)
-        df['ATR'] = calculate_atr(df)
-        df['OBV'] = calculate_obv(df)
-    except Exception as e:
-        raise ValueError(f"Error calculating indicators for {ticker}: {e}")
-    
-    # Drop any remaining NA values
-    df.dropna(inplace=True)
-    
-    # Print the DataFrame after cleaning
-    print(f"Cleaned data for {ticker}:\n{df.head()}")  # Print first 5 rows
-    
-    # Final validation
-    if df.empty or len(df) < 20:
-        raise ValueError(f"Data became insufficient after processing for {ticker} from {start} to {end}")
-    
     return df
 
-# --- Model training and evaluation ---
-class TensorboardCallback(BaseCallback):
-    """Custom callback for logging additional values to TensorBoard."""
-    
-    def __init__(self, verbose=0):
-        super().__init__(verbose)
-        self.portfolio_values = []
-        
-    def _on_step(self) -> bool:
-        # Log portfolio value using get_attr for DummyVecEnv
-        portfolio_values = self.training_env.get_attr("portfolio_history")
-        for value in portfolio_values:
-            if value:
-                self.portfolio_values.append(value[-1])
-                self.logger.record('portfolio/value', value[-1])
-        return True
+def calculate_volatility(df: pd.DataFrame) -> float:
+    """Calculate historical volatility for a stock."""
+    returns = df["Close"].pct_change().dropna()
+    return returns.std().item()  # Ensure the result is a scalar
 
-def train_model(env: gym.Env, 
-               ticker: str, 
-               timesteps: int = TRAINING_TIMESTEPS,
-               learning_rate: float = 3e-4,
-               tensorboard_log: Optional[str] = None) -> PPO:
-    """Train a PPO model on the given environment."""
-    model = PPO(
-        "MlpPolicy",  # Explicitly using MlpPolicy
-        env,
-        verbose=0,
-        device="cpu",  # Force CPU usage for better performance with MlpPolicy
-        learning_rate=learning_rate,
-        n_steps=2048,
-        batch_size=64,
-        n_epochs=10,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.01,
-        tensorboard_log=tensorboard_log
-    )
-    
-    # Create callbacks
-    callbacks = [TensorboardCallback()]
-    
-    # Train the model
-    model.learn(
-        total_timesteps=timesteps,
-        callback=callbacks,
-        progress_bar=True,
-    )
-    
-    return model
+def get_top_performing_stocks_ytd(sp500: bool = True, n: int = 10) -> List[str]:
+    """Get top n performing stocks YTD from S&P 500."""
+    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+    symbol_column = "Symbol"  # Column name for S&P 500
+    index_data = pd.read_html(url)[0]
+    if symbol_column not in index_data.columns:
+        raise KeyError(f"Column '{symbol_column}' not found in the table fetched from {url}")
 
-def evaluate_model(model: PPO, 
-                   env: gym.Env, 
-                   render: bool = False) -> dict:
-    """Evaluate a trained model on the given environment."""
-    obs = env.reset()
-    done = False
+    tickers = [symbol.replace('.', '-') for symbol in index_data[symbol_column].tolist()]
 
-    while not done:
-        # Get the action from the model's prediction
-        action, _ = model.predict(obs, deterministic=True)
-        obs, _, done_array, _ = env.step(action)
-        done = done_array[0]  # Extract scalar from array
-
-        if render:
-            env.render()
-
-    # Get final metrics
-    final_value = env.get_attr("cash")[0] + env.get_attr("shares")[0] * env.get_attr("df")[0]["Close"].iloc[-1]
-    trade_log = env.get_attr("trade_log")[0]
-    prices = env.get_attr("df")[0]["Close"]
-    metrics = analyze_trades(trade_log, prices)
-    print(f"🔎 Trades executed: {len(trade_log)}")
-    print(f"📋 Trade log: {trade_log if len(trade_log) > 0 else 'No trades recorded.'}")
-    metrics['final_value'] = final_value
-
-    return metrics
-
-# --- Pipeline functions ---
-def run_ticker_pipeline(ticker: str, 
-                       timeframes: List[int] = [0, 90, 180]) -> List[dict]:
-    """Complete pipeline for a single ticker across multiple timeframes."""
-    start_time = time.time()
-    os.makedirs("models", exist_ok=True)
-    os.makedirs("logs", exist_ok=True)
-    base_model_path = os.path.join("models", f"{ticker}_base_model.zip")  # Ensure correct file extension
-    
-    analytics_summary = []
-    
-    # Train on each timeframe
-    for offset in timeframes:
-        end_train = datetime.today() - timedelta(days=offset)
-        start_train = end_train - timedelta(days=365)
-        
-        try:
-            # Prepare data
-            df_train = prepare_data(ticker, start_train, end_train)
-            
-            # Create vectorized environment
-            num_envs = max(multiprocessing.cpu_count() // 2, 1)  # Use half the cores
-            env = DummyVecEnv([lambda: TradingEnv(df_train) for _ in range(num_envs)])
-            
-            # Train or load model
-            if offset == timeframes[0]:  # First timeframe - train new model
-                print(f"\n🚀 Training new model for {ticker} (offset: {offset} days)")
-                model = train_model(
-                    env,
-                    ticker,
-                    tensorboard_log=f"logs/{ticker}"
-                )
-                model.save(base_model_path)  # Save model with correct path
-            else:  # Subsequent timeframes - fine-tune existing model
-                print(f"\n🔄 Fine-tuning model for {ticker} (offset: {offset} days)")
-                if os.path.exists(base_model_path):
-                    model = PPO.load(base_model_path, env=env, device="cpu")  # Load model with correct path
-                else:
-                    print(f"❌ Model file not found for {ticker} (offset {offset}). Skipping...")
-                    continue  # Skip this offset if the model file is missing
-                
-                model.set_env(env)
-                model.learn(total_timesteps=TRAINING_TIMESTEPS//2)  # Half the timesteps for fine-tuning
-            
-            # Evaluate
-            metrics = evaluate_model(model, env)
-            metrics.update({
-                "Ticker": ticker,
-                "Offset Days": offset,
-                "Phase": "Training"  # Add Phase key for training
-            })
-            analytics_summary.append(metrics)
-        
-        except Exception as e:
-            print(f"❌ Failed to process 2 {ticker} (offset {offset}): {e}")
-            traceback.print_exc()  # Prints full stack trace including line number
+    performances = []
+    end_date = datetime.today()
+    start_date = datetime(end_date.year, 1, 1)  # Start of the current year
+    for ticker in tqdm(tickers[:50], desc="Processing S&P 500 Tickers"):
+        df = yf.download(ticker, start=start_date, end=end_date, progress=False)
+        if df.empty or len(df) < 20 or "Close" not in df.columns:
             continue
-    
-    # Backtest on most recent data
-    try:
-        print(f"\n🧪 Backtesting {ticker} on most recent {BACKTEST_DAYS} days")
-        end_bt = datetime.today()
-        start_bt = end_bt - timedelta(days=BACKTEST_DAYS)
-        df_bt = prepare_data(ticker, start_bt, end_bt)
-        
-        # Create backtest environment
-        env_bt = DummyVecEnv([lambda: TradingEnv(df_bt)])  # Single env for backtest
-        
-        # Load best model
-        if os.path.exists(base_model_path):
-            model = PPO.load(base_model_path, env=env_bt, device="cpu")  # Load model with correct path
-            model.set_env(env_bt)
-        else:
-            print(f"❌ Model file not found for {ticker} during backtest. Skipping...")
-            return analytics_summary  # Skip backtest if the model file is missing
-        
-        # Evaluate
-        metrics = evaluate_model(model, env_bt, render=True)
-        metrics.update({
-            "Ticker": ticker,
-            "Offset Days": 999,  # Special code for backtest
-            "Phase": "Backtest"  # Add Phase key for backtesting
-        })
-        analytics_summary.append(metrics)
-    
-    except Exception as e:
-        print(f"❌ Failed to backtest {ticker}: {e}")
-    
-    # Print summary
-    elapsed = time.time() - start_time
-    print(f"\n✅ Completed {ticker} in {elapsed:.2f} seconds")
-    
-    return analytics_summary
+        start_price = df["Close"].iloc[0].item()
+        end_price = df["Close"].iloc[-1].item()
+        growth = (end_price - start_price) / start_price
+        performances.append((ticker, growth))
 
-# --- Visualization ---
-def plot_results(df_summary: pd.DataFrame):
-    """Generate and save performance plots."""
-    os.makedirs("logs/plots", exist_ok=True)
-    
-    # Drop rows with NaN values to avoid sorting issues
-    df_summary = df_summary.dropna(subset=["final_value", "sharpe_ratio", "win_rate"])
-    
-    # Portfolio Value Comparison
-    plt.figure(figsize=(14, 7))
-    for ticker in df_summary['Ticker'].unique():
-        subset = df_summary[df_summary['Ticker'] == ticker]
-        training = subset[subset['Phase'] == 'Training'].sort_values('Offset Days')
-        backtest = subset[subset['Phase'] == 'Backtest']
-        
-        # Plot training performance
-        plt.plot(training['Offset Days'], training['final_value'], 
-                'o-', label=f"{ticker} (Training)")
-        
-        # Plot backtest performance
-        if not backtest.empty:
-            plt.plot([999], backtest['final_value'], 
-                    '^', markersize=10, label=f"{ticker} (Backtest)")
-    
-    plt.title("Portfolio Value Across Training Periods and Backtest")
-    plt.xlabel("Training End Date Offset (Days from Today)")
-    plt.ylabel("Final Portfolio Value ($)")
-    plt.xticks([0, 90, 180, 999], ['0 (Recent)', '90', '180', 'Backtest'])
-    plt.grid(True)
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.tight_layout()
-    plt.savefig("logs/plots/portfolio_value_comparison.png", bbox_inches='tight')
-    plt.show()
-    
-    # Risk-Return Scatter Plot
-    plt.figure(figsize=(12, 6))
-    for ticker in df_summary['Ticker'].unique():
-        subset = df_summary[df_summary['Ticker'] == ticker]
-        x = subset['sharpe_ratio']
-        y = subset['final_value'] / INITIAL_BALANCE - 1  # Return
-        s = subset['win_rate'] * 100  # Marker size
-        
-        plt.scatter(x, y, s=s, alpha=0.6, label=ticker)
-        plt.annotate(ticker, (x.iloc[-1], y.iloc[-1]), textcoords="offset points", 
-                    xytext=(0,5), ha='center', fontsize=8)
-    
-    plt.title("Risk-Return Profile (Size = Win Rate %)")
-    plt.xlabel("Sharpe Ratio")
-    plt.ylabel("Total Return")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig("logs/plots/risk_return_profile.png")
-    plt.show()
+    top_tickers = [ticker for ticker, _ in sorted(performances, key=lambda x: x[1], reverse=True)[:n]]
+    return top_tickers
+
+def analyze_trades(trade_log: List[tuple]):
+    """Analyze trade performance."""
+    buys = [trade for trade in trade_log if trade[1] == "BUY"]
+    sells = [trade for trade in trade_log if trade[1] == "SELL"]
+    profits = [sells[i][2] - buys[i][2] for i in range(min(len(buys), len(sells)))]
+    total_profit = sum(profits)
+    win_rate = len([p for p in profits if p > 0]) / len(profits) if profits else 0
+    avg_profit = total_profit / len(profits) if profits else 0
+    print(f"Total Profit: ${total_profit:.2f}, Win Rate: {win_rate:.2%}, Avg Profit: ${avg_profit:.2f}")
+
+def analyze_trades_per_stock(trade_log: List[tuple], ticker: str):
+    """Analyze trade performance for a specific stock."""
+    buys = [trade for trade in trade_log if trade[1] == "BUY"]
+    sells = [trade for trade in trade_log if trade[1] == "SELL"]
+    profits = [sells[i][2] - buys[i][2] for i in range(min(len(buys), len(sells)))]
+    total_profit = sum(profits)
+    win_rate = len([p for p in profits if p > 0]) / len(profits) if profits else 0
+    losses = len([p for p in profits if p <= 0])
+    print(f"\n📊 {ticker} Trade Analysis:")
+    print(f"  Total Profit: ${total_profit:.2f}")
+    print(f"  Wins: {len([p for p in profits if p > 0])}, Losses: {losses}")
+    print(f"  Win Rate: {win_rate:.2%}")
+
+def calculate_weights(trade_logs: dict) -> dict:
+    """Calculate weights for each stock based on their performance."""
+    weights = {}
+    total_profit = 0
+
+    # Calculate total profit across all stocks
+    for ticker, log in trade_logs.items():
+        buys = [trade for trade in log if trade[1] == "BUY"]
+        sells = [trade for trade in log if trade[1] == "SELL"]
+        profits = [sells[i][2] - buys[i][2] for i in range(min(len(buys), len(sells)))]
+        stock_profit = sum(profits)
+        weights[ticker] = max(stock_profit, 0)  # Only consider positive profits
+        total_profit += max(stock_profit, 0)
+
+    # Normalize weights
+    for ticker in weights:
+        weights[ticker] = weights[ticker] / total_profit if total_profit > 0 else 1 / len(trade_logs)
+
+    return weights
+
+def pad_portfolio_history(portfolio_history: List[float], max_steps: int) -> List[float]:
+    """Pad the portfolio history to ensure it matches the maximum number of steps."""
+    if len(portfolio_history) < max_steps:
+        last_value = portfolio_history[-1] if portfolio_history else 0
+        portfolio_history.extend([last_value] * (max_steps - len(portfolio_history)))
+    return portfolio_history
 
 # --- Main function ---
 def main():
     """Main execution function."""
+    # Ensure the 'plots' directory exists
+    os.makedirs("plots", exist_ok=True)
+
     print("\n" + "="*50)
-    print("🚀 Trading AI System - Enhanced Version")
+    print("🚀 Rule-Based Trading System")
     print("="*50 + "\n")
-    
-    # System info
-    print(f"✅ Using device: {'GPU (CUDA)' if torch.cuda.is_available() else 'CPU'}")
-    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-        print(f"CUDA device name: {torch.cuda.get_device_name(0)}")
-        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
-    else:
-        print("✅ Using CPU (no CUDA device available)")
-    print(f"📊 Available CPU cores: {multiprocessing.cpu_count()}\n")
-    
-    # Get top performing stocks
-    print("🔍 Identifying top performing S&P 500 stocks...")
-    #tickers = get_top_performing_stocks(n=1)  # Reduced to 5 for demo
-    tickers = ['SAP']  # For testing purposes
-    print(f"📈 Top tickers selected: {', '.join(tickers)}\n")
-    
-    # Run pipeline for each ticker in parallel
-    analytics_summary = []
-    with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
-        futures = {executor.submit(run_ticker_pipeline, ticker): ticker for ticker in tickers}
-        for future in as_completed(futures):
-            ticker = futures[future]
-            try:
-                result = future.result()
-                analytics_summary.extend(result)
-            except Exception as e:
-                print(f"❌ Failed to process {ticker}: {e}")
-    
-    # Debug: Print analytics_summary to verify structure
-    if not analytics_summary:
-        print("❌ No data collected in analytics_summary. Exiting...")
-        return
-    
-    print(f"🔍 Debug: analytics_summary = {analytics_summary}")
-    
-    # Save and analyze results
-    df_summary = pd.DataFrame(analytics_summary)
-    if df_summary.empty or 'Phase' not in df_summary.columns:
-        print("❌ 'Phase' column missing or df_summary is empty. Check analytics_summary structure.")
-        return
-    
-    df_summary.to_csv("logs/trade_analytics_summary.csv", index=False)
-    
-    # Print top performers
-    top_performers = df_summary[df_summary['Phase'] == 'Backtest'].sort_values(
-        'final_value', ascending=False)
-    if top_performers.empty:
-        print("❌ No backtest results found in df_summary.")
-    else:
-        print("\n🏆 Top Performing Models (Backtest):")
-        print(top_performers[['Ticker', 'final_value', 'win_rate', 'sharpe_ratio']].head())
-    
-    # Generate plots
-    plot_results(df_summary)
-    
-    print("\n✅ All tasks completed successfully!")
+
+    print("🔍 Fetching top-performing stocks from S&P 500...")
+    top_tickers = get_top_performing_stocks_ytd(sp500=True, n=5)  # Fetch top 5 performing stocks YTD
+    print(f"📈 Selected tickers: {', '.join(top_tickers)}\n")
+
+    # Define the backtest period
+    end_date = datetime.today()
+    start_date = end_date - timedelta(days=BACKTEST_PERIOD)
+
+    # Initialize combined portfolio value and individual stock contributions
+    combined_portfolio = [0] * BACKTEST_PERIOD  # Start with 0 for combined portfolio
+    buy_and_hold_portfolio = [0] * BACKTEST_PERIOD  # Start with 0 for buy-and-hold portfolio
+    individual_portfolios = {}  # Store individual stock portfolio histories
+    trade_logs = {}  # Store trade logs for each stock
+    stop_loss_thresholds = {}  # Store dynamic stop-loss thresholds for each stock
+
+    # Allocate the initial balance equally across all selected stocks
+    balance_per_stock = INITIAL_BALANCE / len(top_tickers)
+
+    for ticker in top_tickers:
+        print(f"\n📈 Fetching data for {ticker}...")
+        try:
+            df = prepare_data(ticker, start_date, end_date)
+
+            # Dynamically adjust stop-loss thresholds
+            volatility = calculate_volatility(df)
+            stop_loss_threshold = min(max(volatility * 2, 0.05), 0.5)  # Clamp between 5% and 50%
+            stop_loss_thresholds[ticker] = stop_loss_threshold
+            print(f"🔍 Adjusted stop-loss for {ticker}: {stop_loss_threshold:.2%}")
+
+            print(f"🔄 Running backtest for {ticker}...")
+            env = TradingEnv(df, initial_balance=balance_per_stock)  # Use allocated balance per stock
+            env.stop_loss = stop_loss_threshold  # Set dynamic stop-loss
+            env.run()
+
+            # Store the trade log and portfolio history for weight calculation and plotting
+            trade_logs[ticker] = env.trade_log
+            individual_portfolios[ticker] = pad_portfolio_history(env.portfolio_history, BACKTEST_PERIOD)
+
+            # Debug: Print trade log for the current stock
+            print(f"🔍 Trade log for {ticker}: {env.trade_log}")
+
+            # Render and save the individual stock portfolio plot
+            print(f"📊 Rendering portfolio plot for {ticker}...")
+            plt.figure(figsize=(10, 5))
+            plt.plot(individual_portfolios[ticker], label=f"{ticker} Portfolio")
+            plt.title(f"Portfolio Value Over Time for {ticker}")
+            plt.xlabel("Steps")
+            plt.ylabel("Portfolio Value ($)")
+            plt.legend()
+            plt.savefig(f"plots/portfolio_{ticker}.png")  # Save the plot for the stock in the 'plots' directory
+            plt.close()  # Explicitly close the plot to avoid conflicts
+
+            # Analyze trades for the current stock
+            analyze_trades_per_stock(env.trade_log, ticker)
+
+            # Add the portfolio history to the combined portfolio
+            for i in range(len(combined_portfolio)):
+                combined_portfolio[i] += individual_portfolios[ticker][i]
+
+            # Calculate buy-and-hold portfolio value for this stock
+            initial_price = float(df["Close"].iloc[0])  # Ensure scalar value
+            shares_held = balance_per_stock / initial_price
+            stock_buy_and_hold_value = [float(shares_held * df["Close"].iloc[i]) for i in range(len(df))]
+
+            # Pad the buy-and-hold portfolio to match BACKTEST_PERIOD
+            stock_buy_and_hold_value = pad_portfolio_history(stock_buy_and_hold_value, BACKTEST_PERIOD)
+
+            # Add this stock's buy-and-hold value to the combined buy-and-hold portfolio
+            buy_and_hold_portfolio = [
+                buy_and_hold_portfolio[i] + stock_buy_and_hold_value[i]
+                for i in range(len(buy_and_hold_portfolio))
+            ]
+
+        except Exception as e:
+            print(f"❌ Failed to process {ticker}: {e}")
+
+    # Ensure combined_portfolio and buy_and_hold_portfolio are lists of scalars
+    combined_portfolio = [float(value) for value in combined_portfolio]
+    buy_and_hold_portfolio = [float(value) for value in buy_and_hold_portfolio]
+
+    # Render the combined portfolio results with individual stock contributions
+    print("\n📊 Combined Portfolio Value Over Time with Individual Contributions")
+    plt.figure(figsize=(12, 6))
+    for ticker, portfolio in individual_portfolios.items():
+        plt.plot(portfolio, label=f"{ticker} Portfolio")
+    plt.plot(combined_portfolio, label="Combined Portfolio", linewidth=2, color="black")
+    plt.plot(buy_and_hold_portfolio, label="Buy-and-Hold Portfolio", linestyle="--", color="blue")
+    plt.title("Combined Portfolio Value Over Time with Individual Contributions")
+    plt.xlabel("Steps")
+    plt.ylabel("Portfolio Value ($)")
+    plt.legend(title="Portfolio Type")
+    plt.ylim(0, max(max(combined_portfolio), max(buy_and_hold_portfolio)) * 1.1)  # Adjust y-axis to fit the max value
+    plt.savefig("plots/combined_portfolio_with_individuals.png")  # Save the combined portfolio plot in the 'plots' directory
+    plt.close()  # Explicitly close the plot to avoid conflicts
+
+    # Add a delay to keep the plots open
+    print("⏳ Keeping plots open for 10 seconds...")
+    time.sleep(10)  # Delay for 10 seconds
 
 if __name__ == "__main__":
     main()
