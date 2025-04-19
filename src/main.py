@@ -1,4 +1,5 @@
 import os
+import sys
 import pandas as pd
 import yfinance as yf
 import matplotlib.pyplot as plt
@@ -6,31 +7,33 @@ import matplotlib
 from datetime import datetime, timedelta
 from typing import List
 from tqdm import tqdm
+from parameter_optimization import optimize_parameters
+from predictive_model import train_predictive_model, predict_next_price
+from reinforcement_learning import TradingEnvRL
 import time  # Import time module for delay
+from sklearn.dummy import DummyClassifier  # Import a simple classifier for demonstration
+from custom_strategy import CustomTradingStrategy  # Import the custom strategy
+# Add the src directory to the Python path
+sys.path.append(os.path.dirname(__file__))
 
 # Use an interactive backend for macOS
-matplotlib.use("MacOSX")  # Replace "Agg" with "MacOSX" for interactive plotting
+matplotlib.use("MacOSX")
 
 # --- Constants ---
-INITIAL_BALANCE = 20000  # Updated initial balance to 50000
-TRANSACTION_COST = 0.0015  # Adjusted transaction cost
-POSITION_SIZE = 0.5  # Use 50% of the capital for each trade
-BACKTEST_PERIOD = 60  # Backtest period in terms of steps (e.g., trading days)
-STOP_LOSS = 0.01  # 20% stop-loss stop-loss
-TAKE_PROFIT = 0.01  # 20% take-profit
+INITIAL_BALANCE = 20000
+TRANSACTION_COST = 0.0015
+POSITION_SIZE = 0.5
+BACKTEST_PERIOD = 60
+STOP_LOSS = 0.1
+TAKE_PROFIT = 0.1
 
-# Define fixed stop-loss thresholds for specific stocks
-FIXED_STOP_LOSS = {
-}
-
-# Define fixed take-profit thresholds for specific stocks
-FIXED_TAKE_PROFIT = {
-}
+# Define fixed stop-loss and take-profit thresholds
+FIXED_STOP_LOSS = {}
+FIXED_TAKE_PROFIT = {}
 
 # --- Trading environment ---
 class TradingEnv:
     """Custom trading environment for rule-based trading."""
-    
     def __init__(self, df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE, transaction_cost: float = TRANSACTION_COST):
         self.df = df.reset_index(drop=True)
         self.current_step = 0
@@ -73,10 +76,9 @@ class TradingEnv:
 
     def step(self):
         """Execute one step with dynamic adjustments based on market trends."""
-        # Ensure scalar values for current_price and previous_price
-        current_price = float(self.df["Close"].iloc[self.current_step])  # Convert to scalar
+        current_price = float(self.df["Close"].iloc[self.current_step])
         previous_price = (
-            float(self.df["Close"].iloc[self.current_step - 1])  # Convert to scalar
+            float(self.df["Close"].iloc[self.current_step - 1])
             if self.current_step > 0
             else current_price
         )
@@ -104,12 +106,12 @@ class TradingEnv:
 
         # Buy logic: Buy if price is increasing and no shares are held
         if self.shares == 0 and current_price > previous_price:
-            max_shares = int((self.cash * POSITION_SIZE) / current_price)  # Calculate max shares to buy
+            max_shares = int((self.cash * POSITION_SIZE) / current_price)
             if max_shares > 0:
                 self.shares = max_shares
-                self.cash -= max_shares * current_price * (1 + self.transaction_cost)  # Deduct cash for the purchase
-                self.trade_log.append((self.current_step, "BUY", current_price, self.shares))  # Log the trade
-                self.trailing_stop_price = current_price * (1 - self.dynamic_stop_loss)  # Set initial trailing stop price
+                self.cash -= max_shares * current_price * (1 + self.transaction_cost)
+                self.trade_log.append((self.current_step, "BUY", current_price, self.shares))
+                self.trailing_stop_price = current_price * (1 - self.dynamic_stop_loss)
                 print(f"Step {self.current_step}: Bought {max_shares} shares at {current_price:.2f}")
                 print(f"Step {self.current_step}: Initial Trailing Stop Price: {self.trailing_stop_price:.2f}")
 
@@ -122,11 +124,11 @@ class TradingEnv:
             # Sell logic: Sell if price drops below the trailing stop price
             if current_price <= self.trailing_stop_price:
                 print(f"Step {self.current_step}: Trailing Stop-Loss Triggered! Current Price: {current_price:.2f}, Trailing Stop Price: {self.trailing_stop_price:.2f}")
-                self.cash += self.shares * current_price * (1 - self.transaction_cost)  # Add cash from the sale
-                self.trade_log.append((self.current_step, "SELL", current_price, self.shares))  # Log the trade
+                self.cash += self.shares * current_price * (1 - self.transaction_cost)
+                self.trade_log.append((self.current_step, "SELL", current_price, self.shares))
                 print(f"Step {self.current_step}: Sold {self.shares} shares at {current_price:.2f} due to trailing stop-loss")
-                self.shares = 0  # Reset shares to 0
-                self.trailing_stop_price = None  # Reset trailing stop price
+                self.shares = 0
+                self.trailing_stop_price = None
 
         # Update portfolio value
         portfolio_value = self.cash + self.shares * current_price
@@ -148,34 +150,31 @@ class TradingEnv:
         plt.title("Portfolio Value Over Time")
         plt.xlabel("Steps")
         plt.ylabel("Portfolio Value ($)")
-        plt.savefig(f"portfolio_{id(self)}.png")  # Save the plot to a file
+        plt.savefig(f"portfolio_{id(self)}.png")
         plt.show()
-        plt.close()  # Explicitly close the plot to avoid conflicts
+        plt.close()
 
 # --- Data fetching and preprocessing ---
 def prepare_data(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
-    """Download and preprocess data for a given ticker and date range."""
     df = yf.download(ticker, start=start, end=end, auto_adjust=True).dropna()
-    if df.empty or len(df) < 20:  # Require at least 20 rows for indicators
+    if df.empty or len(df) < 20:
         raise ValueError(f"Insufficient data for {ticker} from {start} to {end}")
     return df
 
 def calculate_volatility(df: pd.DataFrame) -> float:
-    """Calculate historical volatility for a stock."""
     returns = df["Close"].pct_change().dropna()
-    return returns.std().item()  # Ensure the result is a scalar
+    return returns.std().item()
 
 def get_top_performing_stocks_ytd(sp500: bool = True, n: int = 10) -> List[str]:
-    """Get top n performing stocks YTD from S&P 500."""
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    symbol_column = "Symbol"  # Column name for S&P 500
+    symbol_column = "Symbol"
     index_data = pd.read_html(url)[0]
     if symbol_column not in index_data.columns:
         raise KeyError(f"Column '{symbol_column}' not found in the table fetched from {url}")
     tickers = [symbol.replace('.', '-') for symbol in index_data[symbol_column].tolist()]
     performances = []
     end_date = datetime.today()
-    start_date = datetime(end_date.year, 1, 1)  # Start of the current year
+    start_date = datetime(end_date.year, 1, 1)
     for ticker in tqdm(tickers[:50], desc="Processing S&P 500 Tickers"):
         df = yf.download(ticker, start=start_date, end=end_date, progress=False)
         if df.empty or len(df) < 20 or "Close" not in df.columns:
@@ -188,10 +187,8 @@ def get_top_performing_stocks_ytd(sp500: bool = True, n: int = 10) -> List[str]:
     return top_tickers
 
 def analyze_trades(trade_log: List[tuple]):
-    """Analyze trade performance."""
     buys = [trade for trade in trade_log if trade[1] == "BUY"]
     sells = [trade for trade in trade_log if trade[1] == "SELL"]
-    # Ensure we only calculate profits for completed trades
     completed_trades = min(len(buys), len(sells))
     profits = [sells[i][2] - buys[i][2] for i in range(completed_trades)]
     total_profit = sum(profits)
@@ -202,44 +199,36 @@ def analyze_trades(trade_log: List[tuple]):
     print(f"Win Rate: {win_rate:.2%}, Avg Profit: ${avg_profit:.2f}")
 
 def analyze_trades_per_stock(trade_log: List[tuple], ticker: str, final_price: float):
-    """Analyze trade performance for a specific stock, including unrealized profit/loss."""
     buys = [trade for trade in trade_log if trade[1] == "BUY"]
     sells = [trade for trade in trade_log if trade[1] == "SELL"]
     profits = [sells[i][2] - buys[i][2] for i in range(min(len(buys), len(sells)))]
-    # Check for open positions
     if len(buys) > len(sells):
-        last_buy = buys[len(sells)]  # Get the unmatched buy
-        unrealized_profit = (final_price - last_buy[2]) * last_buy[3]  # (final_price - buy_price) * shares
+        last_buy = buys[len(sells)]
+        unrealized_profit = (final_price - last_buy[2]) * last_buy[3]
         profits.append(unrealized_profit)
         print(f"  Unrealized Profit for Open Position: ${unrealized_profit:.2f}")
     total_profit = sum(profits)
     win_rate = len([p for p in profits if p > 0]) / len(profits) if profits else 0
-    losses = len([p for p in profits if p <= 0])
     print(f"\n📊 {ticker} Trade Analysis:")
-    print(f"  Total Profit: ${total_profit:.2f}")
-    print(f"  Wins: {len([p for p in profits if p > 0])}, Losses: {losses}")
+    print(f"  Wins: {len([p for p in profits if p > 0])}, Losses: {len([p for p in profits if p <= 0])}")
     print(f"  Win Rate: {win_rate:.2%}")
     print(f"  Final Price: ${final_price:.2f}")
 
 def calculate_weights(trade_logs: dict) -> dict:
-    """Calculate weights for each stock based on their performance."""
     weights = {}
     total_profit = 0
-    # Calculate total profit across all stocks
     for ticker, log in trade_logs.items():
         buys = [trade for trade in log if trade[1] == "BUY"]
         sells = [trade for trade in log if trade[1] == "SELL"]
         profits = [sells[i][2] - buys[i][2] for i in range(min(len(buys), len(sells)))]
         stock_profit = sum(profits)
-        weights[ticker] = max(stock_profit, 0)  # Only consider positive profits
+        weights[ticker] = max(stock_profit, 0)
         total_profit += max(stock_profit, 0)
-    # Normalize weights
     for ticker in weights:
         weights[ticker] = weights[ticker] / total_profit if total_profit > 0 else 1 / len(trade_logs)
     return weights
 
 def pad_portfolio_history(portfolio_history: List[float], max_steps: int) -> List[float]:
-    """Pad the portfolio history to ensure it matches the maximum number of steps."""
     if len(portfolio_history) < max_steps:
         last_value = portfolio_history[-1] if portfolio_history else 0
         portfolio_history.extend([last_value] * (max_steps - len(portfolio_history)))
@@ -248,66 +237,71 @@ def pad_portfolio_history(portfolio_history: List[float], max_steps: int) -> Lis
 # --- Main function ---
 def main():
     """Main execution function."""
-    # Ensure the 'plots' directory exists
     os.makedirs("plots", exist_ok=True)
     print("🚀 Rule-Based Trading System")
-    print("="*50 + "\n")
+    print("=" * 50 + "\n")
     print("🔍 Fetching top-performing stocks from S&P 500...")
-    top_tickers = get_top_performing_stocks_ytd(sp500=True, n=5)  # Fetch top 5 performing stocks YTD
+    top_tickers = get_top_performing_stocks_ytd(sp500=True, n=5)
     print(f"📈 Selected tickers: {', '.join(top_tickers)}\n")
-    # Define the backtest period
+
+    X_train = [[0.01, 0.02], [0.02, 0.03], [0.03, 0.04], [0.04, 0.05]]  # Add more samples
+    y_train = [1, 0, 1, 0]  # Ensure balanced classes with enough samples
+
+    # Define the custom strategy
+    strategy = CustomTradingStrategy()
+
+    # Optimize strategy parameters
+    param_grid = {
+        'STOP_LOSS': [0.01, 0.02, 0.05],
+        'TAKE_PROFIT': [0.01, 0.02, 0.05],
+    }
+    best_params = optimize_parameters(strategy, param_grid, X_train, y_train)  # Pass training data
+    print(f"🔧 Optimized Parameters: {best_params}")
+    global STOP_LOSS, TAKE_PROFIT
+    STOP_LOSS = best_params['STOP_LOSS']
+    TAKE_PROFIT = best_params['TAKE_PROFIT']
+
+    start_date = datetime.today() - timedelta(days=BACKTEST_PERIOD)
     end_date = datetime.today()
-    start_date = end_date - timedelta(days=BACKTEST_PERIOD)
-    # Initialize combined portfolio value and individual stock contributions
-    combined_portfolio = [0] * BACKTEST_PERIOD  # Start with 0 for combined portfolio
-    buy_and_hold_portfolio = [0] * BACKTEST_PERIOD  # Start with 0 for buy-and-hold portfolio
-    individual_portfolios = {}  # Store individual stock portfolio histories
-    trade_logs = {}  # Store trade logs for each stock
-    stop_loss_thresholds = {}  # Store dynamic stop-loss thresholds for each stock
+
+    # Initialize combined portfolio and individual stock contributions
+    combined_portfolio = [0] * BACKTEST_PERIOD
+    buy_and_hold_portfolio = [0] * BACKTEST_PERIOD
+    individual_portfolios = {}
+    trade_logs = {}
+
     # Allocate the initial balance equally across all selected stocks
     balance_per_stock = INITIAL_BALANCE / len(top_tickers)
     for ticker in top_tickers:
         print(f"\n📈 Fetching data for {ticker}...")
         df = prepare_data(ticker, start_date, end_date)
-        # Dynamically adjust stop-loss thresholds
-        stop_loss_threshold = min(max(calculate_volatility(df) * 2, 0.05), 0.5)  # Clamp between 5% and 50%
+        stop_loss_threshold = min(max(calculate_volatility(df) * 2, 0.05), 0.5)
         print(f"🔍 Adjusted stop-loss for {ticker}: {stop_loss_threshold:.2%}")
         print(f"🔄 Running backtest for {ticker}...")
-        env = TradingEnv(df, initial_balance=balance_per_stock)  # Use allocated balance per stock
-        env.stop_loss = stop_loss_threshold  # Set dynamic stop-loss
+        env = TradingEnv(df, initial_balance=balance_per_stock)
+        env.stop_loss = stop_loss_threshold
         env.run()
-        # Store the trade log and portfolio history for weight calculation and plotting
         trade_logs[ticker] = env.trade_log
         individual_portfolios[ticker] = pad_portfolio_history(env.portfolio_history, BACKTEST_PERIOD)
-        # Debug: Print trade log for the current stock
-        print(f"🔍 Trade log for {ticker}: {env.trade_log}")
-        # Render and save the individual stock portfolio plot
-        print(f"📊 Rendering portfolio plot for {ticker}...")
-        plt.figure(figsize=(10, 5))
-        plt.plot(individual_portfolios[ticker], label=f"{ticker} Portfolio")
-        plt.title(f"Portfolio Value Over Time for {ticker}")
-        plt.xlabel("Steps")
-        plt.ylabel("Portfolio Value ($)")
-        plt.legend()
-        plt.savefig(f"plots/portfolio_{ticker}.png")  # Save the plot for the stock in the 'plots' directory
-        plt.close()  # Explicitly close the plot to avoid conflicts
+
         # Analyze trades for the current stock
         analyze_trades_per_stock(env.trade_log, ticker, final_price=float(df["Close"].iloc[-1]))
+
         # Add the portfolio history to the combined portfolio
         for i in range(len(combined_portfolio)):
             combined_portfolio[i] += individual_portfolios[ticker][i]
+
         # Calculate buy-and-hold portfolio value for this stock
-        initial_price = float(df["Close"].iloc[0])  # Ensure scalar value
+        initial_price = float(df["Close"].iloc[0])
         shares_held = balance_per_stock / initial_price
         stock_buy_and_hold_value = [float(shares_held * df["Close"].iloc[i]) for i in range(len(df))]
-        # Pad the buy-and-hold portfolio to match BACKTEST_PERIOD
         stock_buy_and_hold_value = pad_portfolio_history(stock_buy_and_hold_value, BACKTEST_PERIOD)
-        # Add this stock's buy-and-hold value to the combined buy-and-hold portfolio
         buy_and_hold_portfolio = [
             buy_and_hold_portfolio[i] + stock_buy_and_hold_value[i]
             for i in range(len(buy_and_hold_portfolio))
         ]
-    # Render the combined portfolio results with individual stock contributions
+
+    # Render the combined portfolio results
     print("\n📊 Combined Portfolio Value Over Time with Individual Contributions")
     plt.figure(figsize=(12, 6))
     for ticker, portfolio in individual_portfolios.items():
@@ -331,22 +325,18 @@ def main():
     plt.title("Combined Portfolio Value Over Time with Individual Contributions")
     plt.xlabel("Steps")
     plt.ylabel("Portfolio Value ($)")
-    plt.ylim(0, max(max(combined_portfolio), max(buy_and_hold_portfolio)) * 1.1)  # Adjust y-axis to fit the max value
-    plt.savefig("plots/combined_portfolio_with_individuals.png")  # Save the combined portfolio plot in the 'plots' directory
+    plt.ylim(0, max(max(combined_portfolio), max(buy_and_hold_portfolio)) * 1.1)
+    plt.savefig("plots/combined_portfolio_with_individuals.png")
     plt.show()
 
-    # Return the combined portfolio
     return combined_portfolio, buy_and_hold_portfolio
 
 if __name__ == "__main__":
-    combined_portfolio, buy_and_hold_portfolio = main()  # Capture the returned portfolios
-
-    # Print the final portfolio values
+    combined_portfolio, buy_and_hold_portfolio = main()
     final_combined_value = combined_portfolio[-1]
     final_buy_and_hold_value = buy_and_hold_portfolio[-1]
     print(f"\n💰 Final Combined Portfolio Value: ${final_combined_value:.2f}")
     print(f"💰 Final Buy-and-Hold Portfolio Value: ${final_buy_and_hold_value:.2f}")
-
     # Plot the results
     plt.figure(figsize=(12, 6))
     plt.plot(combined_portfolio, label="Combined Portfolio", linewidth=2, color="black")
@@ -355,5 +345,5 @@ if __name__ == "__main__":
     plt.xlabel("Steps")
     plt.ylabel("Portfolio Value ($)")
     plt.legend()
-    plt.savefig("plots/final_portfolio_comparison.png")  # Save the final comparison plot
+    plt.savefig("plots/final_portfolio_comparison.png")
     plt.show()
