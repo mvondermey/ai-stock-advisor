@@ -36,7 +36,8 @@ FIXED_TAKE_PROFIT = {}
 class TradingEnv:
     """Custom trading environment for rule-based trading."""
     def __init__(self, df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE, transaction_cost: float = TRANSACTION_COST):
-        self.df = df.reset_index(drop=True)
+        self.df = df.reset_index(drop=True)  # Ensure the DataFrame is reset and uses only the passed data
+        print(f"Number of steps included in the backtest: {len(self.df)}")  # Print the number of steps
         self.current_step = 0
         self.cash = initial_balance
         self.shares = 0
@@ -93,16 +94,7 @@ class TradingEnv:
         market_trend = self.detect_market_trend()
         print(f"Step {self.current_step}: Market Trend: {market_trend}")
 
-        # Adjust strategy dynamically based on market trend
-        if market_trend == "uptrend":
-            self.dynamic_stop_loss = STOP_LOSS * 0.5  # Tighten stop-loss in uptrend
-            self.dynamic_take_profit = TAKE_PROFIT * 2  # Increase take-profit in uptrend
-        elif market_trend == "downtrend":
-            self.dynamic_stop_loss = STOP_LOSS * 2  # Widen stop-loss in downtrend
-            self.dynamic_take_profit = TAKE_PROFIT * 0.5  # Reduce take-profit in downtrend
-        else:
-            self.dynamic_stop_loss = STOP_LOSS  # Default stop-loss
-            self.dynamic_take_profit = TAKE_PROFIT  # Default take-profit
+
 
         # Debug: Print dynamic thresholds
         print(f"Step {self.current_step}: Adjusted Stop-Loss: {self.dynamic_stop_loss:.2%}, Adjusted Take-Profit: {self.dynamic_take_profit:.2%}")
@@ -241,6 +233,37 @@ def pad_portfolio_history(portfolio_history: List[float], max_steps: int) -> Lis
         portfolio_history.extend([last_value] * (max_steps - len(portfolio_history)))
     return portfolio_history
 
+def fetch_training_data(ticker: str) -> pd.DataFrame:
+    """Fetch historical stock data for the last 30 days to account for rolling calculations."""
+    end_date = datetime.today()
+    start_date = end_date - timedelta(days=60)  # Fetch data for the last 30 days
+
+    # Ensure end_date is not in the future
+    if end_date > datetime.now():
+        end_date = datetime.now()
+
+    df = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True).dropna()
+    if df.empty or len(df) < 30:  # Ensure at least 30 rows for rolling features
+        print(f"⚠️ Insufficient data for {ticker} from {start_date} to {end_date}. Returning empty DataFrame.")
+        return pd.DataFrame()  # Return an empty DataFrame if insufficient data
+
+    # Calculate additional features
+    df['Returns'] = df['Close'].pct_change()
+    df['SMA_10'] = df['Close'].rolling(window=10).mean()
+    df['SMA_30'] = df['Close'].rolling(window=30).mean()
+    df['Volatility'] = df['Close'].rolling(window=10).std()
+    df['Target'] = df['Close'].shift(-1)  # Predict the next day's price
+
+    # Debug: Check if all required columns exist
+    required_columns = ['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility', 'Target']
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        print(f"⚠️ Missing columns in DataFrame: {missing_columns}. Returning empty DataFrame.")
+        return pd.DataFrame()  # Return an empty DataFrame if columns are missing
+
+    print(f"✅ Fetched {len(df)} rows of data for {ticker} from {start_date} to {end_date}.")
+    return df
+
 # --- Main function ---
 def main():
     """Main execution function."""
@@ -251,10 +274,30 @@ def main():
     top_tickers = get_top_performing_stocks_ytd(sp500=True, n=5)
     print(f"📈 Selected tickers: {', '.join(top_tickers)}\n")
 
-    # Expand training data
-    X_train = [[0.01, 0.02], [0.02, 0.03], [0.03, 0.04], [0.04, 0.05], [0.05, 0.06], [0.06, 0.07]]
-    y_train = [1, 0, 1, 0, 1, 0]  # Ensure balanced classes with more samples
+    models = {}  # Dictionary to store trained models for each stock
 
+    for ticker in top_tickers:
+        print(f"\n🔄 Fetching training data for {ticker}...")
+        training_data = fetch_training_data(ticker).dropna()
+        if training_data.empty:
+            print(f"⚠️ Training data for {ticker} is empty. Skipping.")
+            continue
+        print(f"✅ Training data fetched with {len(training_data)} data points for {ticker}.\n")
+
+        print(f"🔄 Training predictive model for {ticker}...")
+        # Extract features and target for training
+        X_train = training_data[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].values
+        y_train = training_data['Target'].values
+
+        model = train_predictive_model(training_data)  # Train the model for the current stock
+        models[ticker] = model  # Store the trained model
+        print(f"✅ Predictive model training completed for {ticker}.\n")
+
+    if not models:
+        print("⚠️ No models were trained. Exiting program.")
+        return None, None  # Exit early if no models were trained
+
+    print("🔄 Starting parameter optimization...")
     # Define the custom strategy
     strategy = CustomTradingStrategy()
 
@@ -266,8 +309,15 @@ def main():
         'TRAILING_STOP': [0.01, 0.02, 0.03, 0.04, 0.05],  # Refined range for trailing stop
     }
 
-    # Add cross-validation during optimization
-    best_params = optimize_parameters(strategy, param_grid, X_train, y_train, cv=3)  # Use 3-fold cross-validation
+    # Example: Use the first stock's data for parameter optimization
+    first_ticker = next(iter(models.keys()))
+    training_data = fetch_training_data(first_ticker)
+    X_train = training_data[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].values
+    y_train = training_data['Target'].values
+
+    best_params = optimize_parameters(
+        strategy, param_grid, X_train, y_train, cv=3, scoring='neg_mean_squared_error'  # Use regression scoring
+    )
     print(f"🔧 Optimized Parameters: {best_params}")
     global STOP_LOSS, TAKE_PROFIT, POSITION_SIZE, TRAILING_STOP
     STOP_LOSS = best_params['STOP_LOSS']
@@ -275,12 +325,14 @@ def main():
     POSITION_SIZE = best_params['POSITION_SIZE']
     TRAILING_STOP = best_params['TRAILING_STOP']  # Update global variable for trailing stop
 
-    start_date = datetime.today() - timedelta(days=BACKTEST_PERIOD)
+    print("✅ Parameter optimization completed.\n")
+
+    start_date = datetime.today() - timedelta(days=BACKTEST_PERIOD + 365)  # Extend backtest period by 1 year
     end_date = datetime.today()
 
     # Initialize combined portfolio and individual stock contributions
-    combined_portfolio = [0] * BACKTEST_PERIOD
-    buy_and_hold_portfolio = [0] * BACKTEST_PERIOD
+    combined_portfolio = [0] * (BACKTEST_PERIOD + 365)
+    buy_and_hold_portfolio = [0] * (BACKTEST_PERIOD + 365)
     individual_portfolios = {}
     trade_logs = {}
 
@@ -295,11 +347,15 @@ def main():
         env = TradingEnv(df, initial_balance=balance_per_stock)
         env.stop_loss = stop_loss_threshold
         env.run()
+        print(f"✅ Backtest completed for {ticker}.")
+
         trade_logs[ticker] = env.trade_log
-        individual_portfolios[ticker] = pad_portfolio_history(env.portfolio_history, BACKTEST_PERIOD)
+        individual_portfolios[ticker] = pad_portfolio_history(env.portfolio_history, BACKTEST_PERIOD + 365)
 
         # Analyze trades for the current stock
+        print(f"🔍 Analyzing trades for {ticker}...")
         analyze_trades_per_stock(env.trade_log, ticker, final_price=float(df["Close"].iloc[-1]))
+        print(f"✅ Trade analysis completed for {ticker}.")
 
         # Add the portfolio history to the combined portfolio
         for i in range(len(combined_portfolio)):
@@ -309,14 +365,14 @@ def main():
         initial_price = float(df["Close"].iloc[0])
         shares_held = balance_per_stock / initial_price
         stock_buy_and_hold_value = [float(shares_held * df["Close"].iloc[i]) for i in range(len(df))]
-        stock_buy_and_hold_value = pad_portfolio_history(stock_buy_and_hold_value, BACKTEST_PERIOD)
+        stock_buy_and_hold_value = pad_portfolio_history(stock_buy_and_hold_value, BACKTEST_PERIOD + 365)
         buy_and_hold_portfolio = [
             buy_and_hold_portfolio[i] + stock_buy_and_hold_value[i]
             for i in range(len(buy_and_hold_portfolio))
         ]
 
     # Render the combined portfolio results
-    print("\n📊 Combined Portfolio Value Over Time with Individual Contributions")
+    print("\n📊 Rendering combined portfolio results...")
     plt.figure(figsize=(12, 6))
     for ticker, portfolio in individual_portfolios.items():
         plt.plot(portfolio, label=f"{ticker} Portfolio")
@@ -343,21 +399,23 @@ def main():
     plt.savefig("plots/combined_portfolio_with_individuals.png")
     plt.show()
 
+    print("✅ Combined portfolio rendering completed.\n")
     return combined_portfolio, buy_and_hold_portfolio
 
 if __name__ == "__main__":
     combined_portfolio, buy_and_hold_portfolio = main()
-    final_combined_value = combined_portfolio[-1]
-    final_buy_and_hold_value = buy_and_hold_portfolio[-1]
+    final_combined_value = combined_portfolio[-1] if combined_portfolio else 0
+    final_buy_and_hold_value = buy_and_hold_portfolio[-1] if buy_and_hold_portfolio else 0
     print(f"\n💰 Final Combined Portfolio Value: ${final_combined_value:.2f}")
     print(f"💰 Final Buy-and-Hold Portfolio Value: ${final_buy_and_hold_value:.2f}")
     # Plot the results
-    plt.figure(figsize=(12, 6))
-    plt.plot(combined_portfolio, label="Combined Portfolio", linewidth=2, color="black")
-    plt.plot(buy_and_hold_portfolio, label="Buy-and-Hold Portfolio", linestyle="--", color="blue")
-    plt.title("Portfolio Value Over Time")
-    plt.xlabel("Steps")
-    plt.ylabel("Portfolio Value ($)")
-    plt.legend()
-    plt.savefig("plots/final_portfolio_comparison.png")
-    plt.show()
+    if combined_portfolio and buy_and_hold_portfolio:
+        plt.figure(figsize=(12, 6))
+        plt.plot(combined_portfolio, label="Combined Portfolio", linewidth=2, color="black")
+        plt.plot(buy_and_hold_portfolio, label="Buy-and-Hold Portfolio", linestyle="--", color="blue")
+        plt.title("Portfolio Value Over Time")
+        plt.xlabel("Steps")
+        plt.ylabel("Portfolio Value ($)")
+        plt.legend()
+        plt.savefig("plots/final_portfolio_comparison.png")
+        plt.show()
