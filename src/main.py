@@ -14,7 +14,7 @@ matplotlib.use("MacOSX")  # Replace "Agg" with "MacOSX" for interactive plotting
 # --- Constants ---
 INITIAL_BALANCE = 20000  # Updated initial balance to 50000
 TRANSACTION_COST = 0.0015  # Adjusted transaction cost
-POSITION_SIZE = 1.0  # Use full capital for testing each trade
+POSITION_SIZE = 0.5  # Use 50% of the capital for each trade
 BACKTEST_PERIOD = 60  # Backtest period in terms of steps (e.g., trading days)
 STOP_LOSS = 0.01  # 20% stop-loss stop-loss
 TAKE_PROFIT = 0.01  # 20% take-profit
@@ -54,8 +54,25 @@ class TradingEnv:
         self.trade_log = []
         self.trailing_stop_price = None  # Reset the trailing stop price
 
+    def detect_market_trend(self):
+        """Detect market trend using moving averages."""
+        short_window = 10  # Short-term moving average window
+        long_window = 30  # Long-term moving average window
+
+        # Calculate moving averages
+        self.df['SMA_Short'] = self.df['Close'].rolling(window=short_window).mean()
+        self.df['SMA_Long'] = self.df['Close'].rolling(window=long_window).mean()
+
+        # Determine market trend
+        if self.df['SMA_Short'].iloc[self.current_step] > self.df['SMA_Long'].iloc[self.current_step]:
+            return "uptrend"
+        elif self.df['SMA_Short'].iloc[self.current_step] < self.df['SMA_Long'].iloc[self.current_step]:
+            return "downtrend"
+        else:
+            return "sideways"
+
     def step(self):
-        """Execute one step with buy-on-uptrend, sell-on-downtrend, and trailing stop-loss logic."""
+        """Execute one step with dynamic adjustments based on market trends."""
         # Ensure scalar values for current_price and previous_price
         current_price = float(self.df["Close"].iloc[self.current_step])  # Convert to scalar
         previous_price = (
@@ -67,12 +84,23 @@ class TradingEnv:
         # Debug: Print current step, price, cash, and shares
         print(f"Step {self.current_step}: Current Price: {current_price:.2f}, Previous Price: {previous_price:.2f}, Cash: {self.cash:.2f}, Shares: {self.shares}")
 
-        # Remove dynamic stop-loss and take-profit adjustments
-        self.dynamic_stop_loss = STOP_LOSS  # Use default stop-loss
-        self.dynamic_take_profit = TAKE_PROFIT  # Use default take-profit
+        # Detect market trend
+        market_trend = self.detect_market_trend()
+        print(f"Step {self.current_step}: Market Trend: {market_trend}")
+
+        # Adjust strategy dynamically based on market trend
+        if market_trend == "uptrend":
+            self.dynamic_stop_loss = STOP_LOSS * 0.5  # Tighten stop-loss in uptrend
+            self.dynamic_take_profit = TAKE_PROFIT * 2  # Increase take-profit in uptrend
+        elif market_trend == "downtrend":
+            self.dynamic_stop_loss = STOP_LOSS * 2  # Widen stop-loss in downtrend
+            self.dynamic_take_profit = TAKE_PROFIT * 0.5  # Reduce take-profit in downtrend
+        else:
+            self.dynamic_stop_loss = STOP_LOSS  # Default stop-loss
+            self.dynamic_take_profit = TAKE_PROFIT  # Default take-profit
 
         # Debug: Print dynamic thresholds
-        print(f"Step {self.current_step}: Dynamic Stop-Loss: {self.dynamic_stop_loss:.2%}, Dynamic Take-Profit: {self.dynamic_take_profit:.2%}")
+        print(f"Step {self.current_step}: Adjusted Stop-Loss: {self.dynamic_stop_loss:.2%}, Adjusted Take-Profit: {self.dynamic_take_profit:.2%}")
 
         # Buy logic: Buy if price is increasing and no shares are held
         if self.shares == 0 and current_price > previous_price:
@@ -121,7 +149,7 @@ class TradingEnv:
         plt.xlabel("Steps")
         plt.ylabel("Portfolio Value ($)")
         plt.savefig(f"portfolio_{id(self)}.png")  # Save the plot to a file
-        plt.show()  # Display the plot
+        plt.show()
         plt.close()  # Explicitly close the plot to avoid conflicts
 
 # --- Data fetching and preprocessing ---
@@ -222,8 +250,6 @@ def main():
     """Main execution function."""
     # Ensure the 'plots' directory exists
     os.makedirs("plots", exist_ok=True)
-    global combined_portfolio  # Declare combined_portfolio as global to access it outside the function
-    print("\n" + "="*50)
     print("🚀 Rule-Based Trading System")
     print("="*50 + "\n")
     print("🔍 Fetching top-performing stocks from S&P 500...")
@@ -314,13 +340,13 @@ def main():
 
 if __name__ == "__main__":
     combined_portfolio, buy_and_hold_portfolio = main()  # Capture the returned portfolios
-    
+
     # Print the final portfolio values
     final_combined_value = combined_portfolio[-1]
     final_buy_and_hold_value = buy_and_hold_portfolio[-1]
     print(f"\n💰 Final Combined Portfolio Value: ${final_combined_value:.2f}")
     print(f"💰 Final Buy-and-Hold Portfolio Value: ${final_buy_and_hold_value:.2f}")
-    
+
     # Plot the results
     plt.figure(figsize=(12, 6))
     plt.plot(combined_portfolio, label="Combined Portfolio", linewidth=2, color="black")
