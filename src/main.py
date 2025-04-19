@@ -288,17 +288,23 @@ def main():
     plt.plot(combined_portfolio, label="Combined Portfolio", linewidth=2, color="black")
     plt.plot(buy_and_hold_portfolio, label="Buy-and-Hold Portfolio", linestyle="--", color="blue")
 
-    # Highlight trailing stop-loss triggers
+    # Highlight trailing stop-loss triggers and buy/sell actions
     for ticker, log in trade_logs.items():
         for step, action, price, shares in log:
             if action == "SELL":
-                plt.scatter(step, combined_portfolio[step], color="red", label="Trailing Stop-Loss Trigger", zorder=5)
+                plt.scatter(step, combined_portfolio[step], color="red", label="Sell Action", zorder=5)
+            elif action == "BUY":
+                plt.scatter(step, combined_portfolio[step], color="green", label="Buy Action", zorder=5)
+
+    # Avoid duplicate labels in the legend
+    handles, labels = plt.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    plt.legend(by_label.values(), by_label.keys())
 
     plt.title("Combined Portfolio Value Over Time with Individual Contributions")
     plt.xlabel("Steps")
     plt.ylabel("Portfolio Value ($)")
     plt.ylim(0, max(max(combined_portfolio), max(buy_and_hold_portfolio)) * 1.1)  # Adjust y-axis to fit the max value
-    plt.legend()
     plt.savefig("plots/combined_portfolio_with_individuals.png")  # Save the combined portfolio plot in the 'plots' directory
     plt.show()
 
