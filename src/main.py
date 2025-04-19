@@ -8,8 +8,8 @@ from typing import List
 from tqdm import tqdm
 import time  # Import time module for delay
 
-# Set a non-interactive backend to avoid RuntimeError
-matplotlib.use("Agg")  # Use a non-interactive backend for rendering
+# Use an interactive backend for macOS
+matplotlib.use("MacOSX")  # Replace "Agg" with "MacOSX" for interactive plotting
 
 # --- Constants ---
 INITIAL_BALANCE = 20000  # Updated initial balance to 50000
@@ -65,18 +65,12 @@ class TradingEnv:
         # Debug: Print current step, price, cash, and shares
         print(f"Step {self.current_step}: Current Price: {current_price:.2f}, Previous Price: {previous_price:.2f}, Cash: {self.cash:.2f}, Shares: {self.shares}")
 
-        # Dynamically adjust stop-loss and take-profit thresholds based on volatility
-        if self.current_step >= 10:  # Ensure enough data for rolling window
-            volatility_series = self.df["Close"].pct_change().rolling(window=10).std()
-            volatility = volatility_series.iloc[self.current_step]  # Extract value for the current step
-            self.dynamic_stop_loss = STOP_LOSS  # Fallback to default
-            self.dynamic_take_profit = TAKE_PROFIT  # Fallback to default
-        else:
-            self.dynamic_stop_loss = STOP_LOSS  # Fallback to default
-            self.dynamic_take_profit = TAKE_PROFIT  # Fallback to default
+        # Remove dynamic stop-loss and take-profit adjustments
+        self.dynamic_stop_loss = STOP_LOSS  # Use default stop-loss
+        self.dynamic_take_profit = TAKE_PROFIT  # Use default take-profit
 
         # Debug: Print dynamic thresholds
-        #print(f"Step {self.current_step}: Dynamic Stop-Loss: {self.dynamic_stop_loss:.2%}, Dynamic Take-Profit: {self.dynamic_take_profit:.2%}")
+        print(f"Step {self.current_step}: Dynamic Stop-Loss: {self.dynamic_stop_loss:.2%}, Dynamic Take-Profit: {self.dynamic_take_profit:.2%}")
 
         # Buy logic: Buy if price is increasing and no shares are held
         if self.shares == 0 and current_price > previous_price:
@@ -123,14 +117,13 @@ class TradingEnv:
         plt.savefig(f"portfolio_{id(self)}.png")  # Save the plot to a file
         plt.show()  # Display the plot
         plt.close()  # Explicitly close the plot to avoid conflicts
-
 # --- Data fetching and preprocessing ---
 def prepare_data(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Download and preprocess data for a given ticker and date range."""
     df = yf.download(ticker, start=start, end=end, auto_adjust=True).dropna()
     if df.empty or len(df) < 20:  # Require at least 20 rows for indicators
         raise ValueError(f"Insufficient data for {ticker} from {start} to {end}")
-    return df
+    return df  # Ensure this return statement is inside the function
 
 def calculate_volatility(df: pd.DataFrame) -> float:
     """Calculate historical volatility for a stock."""
@@ -179,11 +172,19 @@ def analyze_trades(trade_log: List[tuple]):
     print(f"Wins: {len([p for p in profits if p > 0])}, Losses: {len([p for p in profits if p <= 0])}")
     print(f"Win Rate: {win_rate:.2%}, Avg Profit: ${avg_profit:.2f}")
 
-def analyze_trades_per_stock(trade_log: List[tuple], ticker: str):
-    """Analyze trade performance for a specific stock."""
+def analyze_trades_per_stock(trade_log: List[tuple], ticker: str, final_price: float):
+    """Analyze trade performance for a specific stock, including unrealized profit/loss."""
     buys = [trade for trade in trade_log if trade[1] == "BUY"]
     sells = [trade for trade in trade_log if trade[1] == "SELL"]
     profits = [sells[i][2] - buys[i][2] for i in range(min(len(buys), len(sells)))]
+
+    # Check for open positions
+    if len(buys) > len(sells):
+        last_buy = buys[len(sells)]  # Get the unmatched buy
+        unrealized_profit = (final_price - last_buy[2]) * last_buy[3]  # (final_price - buy_price) * shares
+        profits.append(unrealized_profit)
+        print(f"  Unrealized Profit for Open Position: ${unrealized_profit:.2f}")
+
     total_profit = sum(profits)
     win_rate = len([p for p in profits if p > 0]) / len(profits) if profits else 0
     losses = len([p for p in profits if p <= 0])
@@ -191,6 +192,7 @@ def analyze_trades_per_stock(trade_log: List[tuple], ticker: str):
     print(f"  Total Profit: ${total_profit:.2f}")
     print(f"  Wins: {len([p for p in profits if p > 0])}, Losses: {losses}")
     print(f"  Win Rate: {win_rate:.2%}")
+    print(f"  Final Price: ${final_price:.2f}")
 
 def calculate_weights(trade_logs: dict) -> dict:
     """Calculate weights for each stock based on their performance."""
@@ -249,28 +251,24 @@ def main():
 
     for ticker in top_tickers:
         print(f"\n📈 Fetching data for {ticker}...")
-   
         df = prepare_data(ticker, start_date, end_date)
 
-            # Dynamically adjust stop-loss thresholds
-        volatility = calculate_volatility(df)
-        stop_loss_threshold = min(max(volatility * 2, 0.05), 0.5)  # Clamp between 5% and 50%
-        stop_loss_thresholds[ticker] = stop_loss_threshold
+        # Dynamically adjust stop-loss thresholds
+        stop_loss_threshold = min(max(calculate_volatility(df) * 2, 0.05), 0.5)  # Clamp between 5% and 50%
         print(f"🔍 Adjusted stop-loss for {ticker}: {stop_loss_threshold:.2%}")
-
         print(f"🔄 Running backtest for {ticker}...")
         env = TradingEnv(df, initial_balance=balance_per_stock)  # Use allocated balance per stock
         env.stop_loss = stop_loss_threshold  # Set dynamic stop-loss
         env.run()
 
-            # Store the trade log and portfolio history for weight calculation and plotting
+        # Store the trade log and portfolio history for weight calculation and plotting
         trade_logs[ticker] = env.trade_log
         individual_portfolios[ticker] = pad_portfolio_history(env.portfolio_history, BACKTEST_PERIOD)
 
-            # Debug: Print trade log for the current stock
+        # Debug: Print trade log for the current stock
         print(f"🔍 Trade log for {ticker}: {env.trade_log}")
 
-            # Render and save the individual stock portfolio plot
+        # Render and save the individual stock portfolio plot
         print(f"📊 Rendering portfolio plot for {ticker}...")
         plt.figure(figsize=(10, 5))
         plt.plot(individual_portfolios[ticker], label=f"{ticker} Portfolio")
@@ -281,33 +279,25 @@ def main():
         plt.savefig(f"plots/portfolio_{ticker}.png")  # Save the plot for the stock in the 'plots' directory
         plt.close()  # Explicitly close the plot to avoid conflicts
 
-            # Analyze trades for the current stock
-        analyze_trades_per_stock(env.trade_log, ticker)
-
-            # Add the portfolio history to the combined portfolio
+        # Analyze trades for the current stock
+        analyze_trades_per_stock(env.trade_log, ticker, final_price=float(df["Close"].iloc[-1]))
+        # Add the portfolio history to the combined portfolio
         for i in range(len(combined_portfolio)):
-                combined_portfolio[i] += individual_portfolios[ticker][i]
-
-            # Calculate buy-and-hold portfolio value for this stock
-        initial_price = float(df["Close"].iloc[0])  # Ensure scalar value   
+            combined_portfolio[i] += individual_portfolios[ticker][i]
+        # Calculate buy-and-hold portfolio value for this stock
+        initial_price = float(df["Close"].iloc[0])  # Ensure scalar value
         shares_held = balance_per_stock / initial_price
         stock_buy_and_hold_value = [float(shares_held * df["Close"].iloc[i]) for i in range(len(df))]
-
-            # Pad the buy-and-hold portfolio to match BACKTEST_PERIOD
+        # Pad the buy-and-hold portfolio to match BACKTEST_PERIOD
         stock_buy_and_hold_value = pad_portfolio_history(stock_buy_and_hold_value, BACKTEST_PERIOD)
-
-            # Add this stock's buy-and-hold value to the combined buy-and-hold portfolio
+        # Add this stock's buy-and-hold value to the combined buy-and-hold portfolio
         buy_and_hold_portfolio = [
-                buy_and_hold_portfolio[i] + stock_buy_and_hold_value[i]
-                for i in range(len(buy_and_hold_portfolio))
-            ]
-
-
-
+            buy_and_hold_portfolio[i] + stock_buy_and_hold_value[i]
+            for i in range(len(buy_and_hold_portfolio))
+        ]
     # Ensure combined_portfolio and buy_and_hold_portfolio are lists of scalars
     combined_portfolio = [float(value) for value in combined_portfolio]
     buy_and_hold_portfolio = [float(value) for value in buy_and_hold_portfolio]
-
     # Render the combined portfolio results with individual stock contributions
     print("\n📊 Combined Portfolio Value Over Time with Individual Contributions")
     plt.figure(figsize=(12, 6))
@@ -318,14 +308,12 @@ def main():
     plt.title("Combined Portfolio Value Over Time with Individual Contributions")
     plt.xlabel("Steps")
     plt.ylabel("Portfolio Value ($)")
-    plt.legend(title="Portfolio Type")
     plt.ylim(0, max(max(combined_portfolio), max(buy_and_hold_portfolio)) * 1.1)  # Adjust y-axis to fit the max value
+    plt.legend()
     plt.savefig("plots/combined_portfolio_with_individuals.png")  # Save the combined portfolio plot in the 'plots' directory
-    plt.close()  # Explicitly close the plot to avoid conflicts
-
+    plt.show()  # Display the plot
     # Add a delay to keep the plots open
     print("⏳ Keeping plots open for 10 seconds...")
     time.sleep(10)  # Delay for 10 seconds
-
 if __name__ == "__main__":
     main()
