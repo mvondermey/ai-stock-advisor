@@ -7,12 +7,12 @@ import matplotlib
 from datetime import datetime, timedelta
 from typing import List
 from tqdm import tqdm
-from parameter_optimization import optimize_parameters
-from predictive_model import train_predictive_model, predict_next_price
-from reinforcement_learning import TradingEnvRL
 import time  # Import time module for delay
 from sklearn.dummy import DummyClassifier  # Import a simple classifier for demonstration
 from custom_strategy import CustomTradingStrategy  # Import the custom strategy
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import GridSearchCV
+
 # Add the src directory to the Python path
 sys.path.append(os.path.dirname(__file__))
 
@@ -152,6 +152,63 @@ class TradingEnv:
         plt.savefig(f"portfolio_{id(self)}.png")
         plt.show()
         plt.close()
+
+# --- Predictive Model Functions ---
+def train_predictive_model(df: pd.DataFrame):
+    """
+    Train a predictive model using the provided DataFrame.
+    :param df: DataFrame containing features and target variable.
+    :return: Trained model.
+    """
+    print(f"Initial dataset size: {len(df)} rows")
+    df['Returns'] = df['Close'].pct_change()
+    print(f"Dataset size after calculating 'Returns': {len(df)} rows")
+    df['SMA_10'] = df['Close'].rolling(window=10).mean()
+    print(f"Dataset size after calculating 'SMA_10': {len(df)} rows")
+    df['SMA_30'] = df['Close'].rolling(window=30).mean()
+    print(f"Dataset size after calculating 'SMA_30': {len(df)} rows")
+    df['Volatility'] = df['Close'].rolling(window=10).std()
+    print(f"Dataset size after calculating 'Volatility': {len(df)} rows")
+
+    X = df[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].values
+    y = df['Target'].values
+
+    print(f"Training dataset size: {len(X)} rows")
+    model = RandomForestRegressor(n_estimators=100, random_state=42)  # Increase estimators for better accuracy
+    model.fit(X, y)  # Train on all rows
+    return model
+
+def predict_next_price(model, df):
+    """Predict the next day's price."""
+    df['Returns'] = df['Close'].pct_change()
+    df['SMA_10'] = df['Close'].rolling(window=10).mean()
+    df['SMA_30'] = df['Close'].rolling(window=30).mean()
+    df['Volatility'] = df['Close'].rolling(window=10).std()
+
+    latest_data = df[['Returns', 'SMA_10', 'SMA_30', 'Volatility']].iloc[-1].values.reshape(1, -1)
+    return model.predict(latest_data)[0]
+
+# --- Parameter Optimization Function ---
+def optimize_parameters(strategy, param_grid, X_train, y_train, cv=3, scoring='neg_mean_squared_error'):
+    """
+    Optimize parameters for the given strategy using GridSearchCV.
+    :param strategy: The trading strategy to optimize.
+    :param param_grid: Dictionary of parameters to search.
+    :param X_train: Training features.
+    :param y_train: Training target.
+    :param cv: Number of cross-validation folds.
+    :param scoring: Scoring metric for optimization.
+    :return: Best parameters found by GridSearchCV.
+    """
+    grid_search = GridSearchCV(
+        estimator=strategy,
+        param_grid=param_grid,
+        cv=cv,
+        scoring=scoring,  # Use the scoring metric passed to the function
+        n_jobs=-1
+    )
+    grid_search.fit(X_train, y_train)
+    return grid_search.best_params_
 
 # --- Data fetching and preprocessing ---
 def prepare_data(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
