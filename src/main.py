@@ -162,6 +162,8 @@ def train_predictive_model(df: pd.DataFrame):
     :return: Trained model.
     """
     print(f"Initial dataset size: {len(df)} rows")
+    df['Momentum'] = df['Close'] - df['Close'].shift(10)
+    df['Volatility'] = df['Returns'].rolling(window=10).std()
     df['Returns'] = df['Close'].pct_change()
     print(f"Dataset size after calculating 'Returns': {len(df)} rows")
     df['SMA_10'] = df['Close'].rolling(window=10).mean()
@@ -181,6 +183,8 @@ def train_predictive_model(df: pd.DataFrame):
 
 def predict_next_price(model, df):
     """Predict the next day's price."""
+    df['Momentum'] = df['Close'] - df['Close'].shift(10)
+    df['Volatility'] = df['Returns'].rolling(window=10).std()
     df['Returns'] = df['Close'].pct_change()
     df['SMA_10'] = df['Close'].rolling(window=10).mean()
     df['SMA_30'] = df['Close'].rolling(window=30).mean()
@@ -306,10 +310,11 @@ def fetch_training_data(ticker: str) -> pd.DataFrame:
         return pd.DataFrame()  # Return an empty DataFrame if insufficient data
 
     # Calculate additional features
-    df['Returns'] = df['Close'].pct_change()
+    df['Returns'] = df['Close'].pct_change()  # Ensure 'Returns' is created first
+    df['Momentum'] = df['Close'] - df['Close'].shift(10)
+    df['Volatility'] = df['Returns'].rolling(window=10).std()
     df['SMA_10'] = df['Close'].rolling(window=10).mean()
     df['SMA_30'] = df['Close'].rolling(window=30).mean()
-    df['Volatility'] = df['Close'].rolling(window=10).std()
     df['Target'] = df['Close'].shift(-1)  # Predict the next day's price
 
     # Debug: Check if all required columns exist
