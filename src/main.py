@@ -16,8 +16,8 @@ INITIAL_BALANCE = 20000  # Updated initial balance to 50000
 TRANSACTION_COST = 0.0015  # Adjusted transaction cost
 POSITION_SIZE = 1.0  # Use full capital for testing each trade
 BACKTEST_PERIOD = 60  # Backtest period in terms of steps (e.g., trading days)
-STOP_LOSS = 0.1  # 20% stop-loss stop-loss
-TAKE_PROFIT = 0.2  # 20% take-profit
+STOP_LOSS = 0.01  # 20% stop-loss stop-loss
+TAKE_PROFIT = 0.01  # 20% take-profit
 
 # Define fixed stop-loss thresholds for specific stocks
 FIXED_STOP_LOSS = {
@@ -222,6 +222,7 @@ def main():
     """Main execution function."""
     # Ensure the 'plots' directory exists
     os.makedirs("plots", exist_ok=True)
+    global combined_portfolio  # Declare combined_portfolio as global to access it outside the function
     print("\n" + "="*50)
     print("🚀 Rule-Based Trading System")
     print("="*50 + "\n")
@@ -308,5 +309,25 @@ def main():
     plt.savefig("plots/combined_portfolio_with_individuals.png")  # Save the combined portfolio plot in the 'plots' directory
     plt.show()
 
+    # Return the combined portfolio
+    return combined_portfolio, buy_and_hold_portfolio
+
 if __name__ == "__main__":
-    main()
+    combined_portfolio, buy_and_hold_portfolio = main()  # Capture the returned portfolios
+    
+    # Print the final portfolio values
+    final_combined_value = combined_portfolio[-1]
+    final_buy_and_hold_value = buy_and_hold_portfolio[-1]
+    print(f"\n💰 Final Combined Portfolio Value: ${final_combined_value:.2f}")
+    print(f"💰 Final Buy-and-Hold Portfolio Value: ${final_buy_and_hold_value:.2f}")
+    
+    # Plot the results
+    plt.figure(figsize=(12, 6))
+    plt.plot(combined_portfolio, label="Combined Portfolio", linewidth=2, color="black")
+    plt.plot(buy_and_hold_portfolio, label="Buy-and-Hold Portfolio", linestyle="--", color="blue")
+    plt.title("Portfolio Value Over Time")
+    plt.xlabel("Steps")
+    plt.ylabel("Portfolio Value ($)")
+    plt.legend()
+    plt.savefig("plots/final_portfolio_comparison.png")  # Save the final comparison plot
+    plt.show()
