@@ -22,10 +22,11 @@ matplotlib.use("MacOSX")
 # --- Constants ---
 INITIAL_BALANCE = 20000
 TRANSACTION_COST = 0.0015
-POSITION_SIZE = 0.5
+POSITION_SIZE = 0.2  # Reduced position size for more conservative trading
 BACKTEST_PERIOD = 60
-STOP_LOSS = 0.1
-TAKE_PROFIT = 0.1
+STOP_LOSS = 0.2  # Increased stop-loss threshold
+TAKE_PROFIT = 0.2  # Increased take-profit threshold
+MIN_HOLDING_PERIOD = 5  # Minimum holding period in steps
 
 # Define fixed stop-loss and take-profit thresholds
 FIXED_STOP_LOSS = {}
@@ -47,6 +48,7 @@ class TradingEnv:
         self.dynamic_stop_loss = STOP_LOSS  # Dynamic stop-loss
         self.dynamic_take_profit = TAKE_PROFIT  # Dynamic take-profit
         self.trailing_stop_price = None  # Add a variable to track the trailing stop price
+        self.holding_period = 0  # Track the holding period for shares
 
     def reset(self):
         """Reset the environment to initial state."""
@@ -56,6 +58,7 @@ class TradingEnv:
         self.portfolio_history = [self.cash]
         self.trade_log = []
         self.trailing_stop_price = None  # Reset the trailing stop price
+        self.holding_period = 0  # Reset holding period
 
     def detect_market_trend(self):
         """Detect market trend using moving averages."""
@@ -121,14 +124,18 @@ class TradingEnv:
                 self.trailing_stop_price = current_price * (1 - self.dynamic_stop_loss)
                 print(f"Step {self.current_step}: Updated Trailing Stop Price: {self.trailing_stop_price:.2f}")
 
-            # Sell logic: Sell if price drops below the trailing stop price
-            if current_price <= self.trailing_stop_price:
+            # Update holding period if shares are held
+            self.holding_period += 1
+
+            # Modify sell logic to enforce minimum holding period
+            if self.holding_period >= MIN_HOLDING_PERIOD and current_price <= self.trailing_stop_price:
                 print(f"Step {self.current_step}: Trailing Stop-Loss Triggered! Current Price: {current_price:.2f}, Trailing Stop Price: {self.trailing_stop_price:.2f}")
                 self.cash += self.shares * current_price * (1 - self.transaction_cost)
                 self.trade_log.append((self.current_step, "SELL", current_price, self.shares))
                 print(f"Step {self.current_step}: Sold {self.shares} shares at {current_price:.2f} due to trailing stop-loss")
                 self.shares = 0
                 self.trailing_stop_price = None
+                self.holding_period = 0  # Reset holding period after selling
 
         # Update portfolio value
         portfolio_value = self.cash + self.shares * current_price
@@ -244,22 +251,29 @@ def main():
     top_tickers = get_top_performing_stocks_ytd(sp500=True, n=5)
     print(f"📈 Selected tickers: {', '.join(top_tickers)}\n")
 
-    X_train = [[0.01, 0.02], [0.02, 0.03], [0.03, 0.04], [0.04, 0.05]]  # Add more samples
-    y_train = [1, 0, 1, 0]  # Ensure balanced classes with enough samples
+    # Expand training data
+    X_train = [[0.01, 0.02], [0.02, 0.03], [0.03, 0.04], [0.04, 0.05], [0.05, 0.06], [0.06, 0.07]]
+    y_train = [1, 0, 1, 0, 1, 0]  # Ensure balanced classes with more samples
 
     # Define the custom strategy
     strategy = CustomTradingStrategy()
 
-    # Optimize strategy parameters
+    # Refine parameter grid
     param_grid = {
-        'STOP_LOSS': [0.01, 0.02, 0.05],
-        'TAKE_PROFIT': [0.01, 0.02, 0.05],
+        'STOP_LOSS': [0.05, 0.1, 0.15],
+        'TAKE_PROFIT': [0.05, 0.1, 0.15],
+        'POSITION_SIZE': [0.1, 0.15, 0.2],  # Narrowed range for POSITION_SIZE
+        'TRAILING_STOP': [0.01, 0.02, 0.03, 0.04, 0.05],  # Refined range for trailing stop
     }
-    best_params = optimize_parameters(strategy, param_grid, X_train, y_train)  # Pass training data
+
+    # Add cross-validation during optimization
+    best_params = optimize_parameters(strategy, param_grid, X_train, y_train, cv=3)  # Use 3-fold cross-validation
     print(f"🔧 Optimized Parameters: {best_params}")
-    global STOP_LOSS, TAKE_PROFIT
+    global STOP_LOSS, TAKE_PROFIT, POSITION_SIZE, TRAILING_STOP
     STOP_LOSS = best_params['STOP_LOSS']
     TAKE_PROFIT = best_params['TAKE_PROFIT']
+    POSITION_SIZE = best_params['POSITION_SIZE']
+    TRAILING_STOP = best_params['TRAILING_STOP']  # Update global variable for trailing stop
 
     start_date = datetime.today() - timedelta(days=BACKTEST_PERIOD)
     end_date = datetime.today()
