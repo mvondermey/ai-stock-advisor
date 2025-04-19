@@ -15,7 +15,7 @@ matplotlib.use("MacOSX")  # Replace "Agg" with "MacOSX" for interactive plotting
 INITIAL_BALANCE = 20000  # Updated initial balance to 50000
 TRANSACTION_COST = 0.0015  # Adjusted transaction cost
 POSITION_SIZE = 1.0  # Use full capital for testing each trade
-BACKTEST_PERIOD = 90  # Backtest period in terms of steps (e.g., trading days)
+BACKTEST_PERIOD = 60  # Backtest period in terms of steps (e.g., trading days)
 STOP_LOSS = 0.1  # 20% stop-loss stop-loss
 TAKE_PROFIT = 0.2  # 20% take-profit
 
