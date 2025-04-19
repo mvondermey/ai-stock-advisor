@@ -132,6 +132,7 @@ class TradingEnv:
         # Update portfolio value
         portfolio_value = self.cash + self.shares * current_price
         self.portfolio_history.append(portfolio_value)
+        self.prev_portfolio_value = portfolio_value
         print(f"Step {self.current_step}: Portfolio value updated to {portfolio_value:.2f}")
 
         # Move to the next step
