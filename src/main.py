@@ -92,7 +92,7 @@ matplotlib.use("MacOSX")
 # --- Constants ---
 INITIAL_BALANCE = 20000
 TRANSACTION_COST = 0.0015
-POSITION_SIZE = 0.2  # Reduced position size for more conservative trading
+POSITION_SIZE = 1.0  # Fixierte Positionsgröße auf 1
 BACKTEST_PERIOD = 60
 STOP_LOSS = 0.2  # Increased stop-loss threshold
 TAKE_PROFIT = 0.2  # Increased take-profit threshold
@@ -459,7 +459,7 @@ def main():
     param_grid = {
         'STOP_LOSS': [0.05, 0.1, 0.15],
         'TAKE_PROFIT': [0.05, 0.1, 0.15],
-        'POSITION_SIZE': [0.1, 0.15, 0.2],  # Narrowed range for POSITION_SIZE
+        # Entferne POSITION_SIZE aus der Optimierung
         'TRAILING_STOP': [0.01, 0.02, 0.03, 0.04, 0.05],  # Refined range for trailing stop
     }
 
@@ -473,10 +473,9 @@ def main():
         strategy, param_grid, X_train, y_train, cv=3, scoring='neg_mean_squared_error'  # Use regression scoring
     )
     print(f"🔧 Optimized Parameters: {best_params}")
-    global STOP_LOSS, TAKE_PROFIT, POSITION_SIZE, TRAILING_STOP
+    global STOP_LOSS, TAKE_PROFIT, TRAILING_STOP
     STOP_LOSS = best_params['STOP_LOSS']
     TAKE_PROFIT = best_params['TAKE_PROFIT']
-    POSITION_SIZE = best_params['POSITION_SIZE']
     TRAILING_STOP = best_params['TRAILING_STOP']  # Update global variable for trailing stop
 
     print("✅ Parameter optimization completed.\n")
