@@ -173,6 +173,18 @@ class TradingEnv:
         if DEBUG_STEPS:
             print(f"Step {self.current_step}: Adjusted Stop-Loss: {self.dynamic_stop_loss:.2%}, Adjusted Take-Profit: {self.dynamic_take_profit:.2%}")
 
+        # Take Profit Logic
+        if self.shares > 0:
+            take_profit_price = self.trailing_stop_price / (1 - TAKE_PROFIT)
+            if current_price >= take_profit_price:
+                if DEBUG_STEPS:
+                    print(f"Step {self.current_step}: Take Profit Triggered! Current Price: {current_price:.2f}, Take Profit Price: {take_profit_price:.2f}")
+                self.cash += self.shares * current_price * (1 - self.transaction_cost)
+                self.trade_log.append((self.current_step, "SELL", current_price, self.shares))
+                self.shares = 0
+                self.trailing_stop_price = None
+                self.holding_period = 0  # Reset holding period after selling
+
         # Buy logic: Buy if price is increasing and no shares are held
         if self.shares == 0 and current_price > previous_price:
             max_shares = int((self.cash * POSITION_SIZE) / current_price)
