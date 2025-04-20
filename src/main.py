@@ -30,16 +30,24 @@ class TradingEnv(gym.Env):
         self.done = False
         return self._next_observation()
 
+        
     def _next_observation(self):
         row = self.df.iloc[self.current_step]
+        rsi = row.get('RSI', 0.0)
+        hour = self.df.index[self.current_step].hour if hasattr(self.df.index[self.current_step], 'hour') else 0
+        weekday = self.df.index[self.current_step].weekday() if hasattr(self.df.index[self.current_step], 'weekday') else 0
         obs = np.array([
-            row['Close'],
-            row['SMA_Short'],
-            row['SMA_Long'],
-            row['Return'],
-            row['Volatility']
+            row.get('Close', 0.0),
+            row.get('SMA_Short', 0.0),
+            row.get('SMA_Long', 0.0),
+            row.get('Return', 0.0),
+            row.get('Volatility', 0.0),
+            rsi,
+            hour / 23.0,
+            weekday / 6.0
         ], dtype=np.float32)
         return obs
+
 
     def step(self, action):
         price = self.df.iloc[self.current_step]['Close']
@@ -65,7 +73,7 @@ class TradingEnv(gym.Env):
 def train_ppo_agent(df):
     env = DummyVecEnv([lambda: TradingEnv(df)])
     model = PPO("MlpPolicy", env, verbose=1)
-    model.learn(total_timesteps=10000)
+    model.learn(total_timesteps=100000)
     return model
 
 
@@ -561,3 +569,10 @@ if __name__ == "__main__":
         plt.legend()
         plt.savefig("plots/final_portfolio_comparison.png")
         plt.show()
+# --- RSI Calculation ---
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
