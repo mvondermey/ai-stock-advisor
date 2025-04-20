@@ -18,7 +18,7 @@ class TradingEnv(gym.Env):
         self.done = False
 
         # Define action and observation space
-        self.action_space = spaces.Discrete(3)  # Buy, Sell, Hold
+        self.action_space = spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32)  # Buy, Sell, Hold
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(5,), dtype=np.float32
         )
@@ -49,19 +49,9 @@ class TradingEnv(gym.Env):
         return obs
 
 
-    def step(self, action):
-        price = self.df.iloc[self.current_step]['Close']
+    
+    
 
-        if action == 1:  # Buy
-            if self.cash >= price:
-                self.shares += 1
-                self.cash -= price * (1 + self.transaction_cost)
-        elif action == 2:  # Sell
-            if self.shares > 0:
-                self.shares -= 1
-                self.cash += price * (1 - self.transaction_cost)
-
-        self.current_step += 1
         self.done = self.current_step >= len(self.df) - 1
         next_obs = self._next_observation()
         portfolio_value = self.cash + self.shares * price
@@ -578,3 +568,48 @@ def calculate_rsi(series, period=14):
     loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
+
+
+
+    def determine_trend_signal(self, row):
+        if row["MACD"] > row["MACD_signal"] and row["RSI"] < 70:
+            return 1  # Aufwärtstrend
+        elif row["MACD"] < row["MACD_signal"] and row["RSI"] > 30:
+            return -1  # Abwärtstrend
+        return 0  # neutral
+
+    def determine_volatility_signal(self, row):
+        if row["Volatility"] > self.df["Volatility"].quantile(0.7):
+            return -1  # Risiko zu hoch -> Vorsicht
+        elif row["Volatility"] < self.df["Volatility"].quantile(0.3):
+            return 1  # Stabilität -> mehr investieren
+        return 0
+
+    def step(self, action):
+        row = self.df.iloc[self.current_step]
+        trend_signal = self.determine_trend_signal(row)
+        volatility_signal = self.determine_volatility_signal(row)
+        strategy_signal = trend_signal + volatility_signal
+
+        position_fraction = np.clip(action[0], 0.0, 1.0)
+        current_price = float(row["Close"])
+        total_value = self.cash + self.shares * current_price
+        target_shares = (position_fraction * total_value) / current_price
+        delta_shares = target_shares - self.shares
+
+        if strategy_signal > 0 and delta_shares > 0:
+            buy_cost = delta_shares * current_price * (1 + self.transaction_cost)
+            if self.cash >= buy_cost:
+                self.cash -= buy_cost
+                self.shares += delta_shares
+                self.trade_log.append((self.current_step, "BUY", current_price, delta_shares))
+        elif strategy_signal < 0 and delta_shares < 0:
+            sell_shares = min(-delta_shares, self.shares)
+            sell_value = sell_shares * current_price * (1 - self.transaction_cost)
+            self.cash += sell_value
+            self.shares -= sell_shares
+            self.trade_log.append((self.current_step, "SELL", current_price, sell_shares))
+        else:
+            self.trade_log.append((self.current_step, "HOLD", current_price, 0))
+
+        self.current_step += 1
