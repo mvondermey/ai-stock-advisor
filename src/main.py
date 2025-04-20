@@ -125,6 +125,7 @@ class TradingEnv:
         self.transaction_cost = transaction_cost
         self.portfolio_history = [initial_balance]
         self.trade_log = []
+        self.returns = []
         self.stop_loss = STOP_LOSS  # Default stop-loss
         self.take_profit = TAKE_PROFIT  # Default take-profit
         self.dynamic_stop_loss = STOP_LOSS  # Dynamic stop-loss
@@ -139,6 +140,7 @@ class TradingEnv:
         self.shares = 0
         self.portfolio_history = [self.cash]
         self.trade_log = []
+        self.returns = []
         self.trailing_stop_price = None  # Reset the trailing stop price
         self.holding_period = 0  # Reset holding period
 
