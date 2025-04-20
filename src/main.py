@@ -1,3 +1,75 @@
+import gym
+
+# === PPO & Gym Integration ===
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv
+from gym import spaces
+
+# Extend your existing TradingEnv to be gym-compatible
+class TradingEnv(gym.Env):
+    def __init__(self, df):
+        super(TradingEnv, self).__init__()
+        self.df = df.reset_index(drop=True)
+        self.current_step = 0
+        self.cash = 10000
+        self.shares = 0
+        self.initial_cash = 10000
+        self.transaction_cost = 0.001
+        self.done = False
+
+        # Define action and observation space
+        self.action_space = spaces.Discrete(3)  # Buy, Sell, Hold
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(5,), dtype=np.float32
+        )
+
+    def reset(self):
+        self.current_step = 0
+        self.cash = self.initial_cash
+        self.shares = 0
+        self.done = False
+        return self._next_observation()
+
+    def _next_observation(self):
+        row = self.df.iloc[self.current_step]
+        obs = np.array([
+            row['Close'],
+            row['SMA_Short'],
+            row['SMA_Long'],
+            row['Return'],
+            row['Volatility']
+        ], dtype=np.float32)
+        return obs
+
+    def step(self, action):
+        price = self.df.iloc[self.current_step]['Close']
+
+        if action == 1:  # Buy
+            if self.cash >= price:
+                self.shares += 1
+                self.cash -= price * (1 + self.transaction_cost)
+        elif action == 2:  # Sell
+            if self.shares > 0:
+                self.shares -= 1
+                self.cash += price * (1 - self.transaction_cost)
+
+        self.current_step += 1
+        self.done = self.current_step >= len(self.df) - 1
+        next_obs = self._next_observation()
+        portfolio_value = self.cash + self.shares * price
+        reward = portfolio_value - self.initial_cash
+
+        return next_obs, reward, self.done, {}
+
+# Train PPO agent
+def train_ppo_agent(df):
+    env = DummyVecEnv([lambda: TradingEnv(df)])
+    model = PPO("MlpPolicy", env, verbose=1)
+    model.learn(total_timesteps=10000)
+    return model
+
+
+# === Original Code Below ===
 import os
 import sys
 import pandas as pd
