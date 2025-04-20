@@ -27,6 +27,7 @@ BACKTEST_PERIOD = 60
 STOP_LOSS = 0.2  # Increased stop-loss threshold
 TAKE_PROFIT = 0.2  # Increased take-profit threshold
 MIN_HOLDING_PERIOD = 5  # Minimum holding period in steps
+DEBUG_STEPS = False  # Debug switch for step method
 
 # Define fixed stop-loss and take-profit thresholds
 FIXED_STOP_LOSS = {}
@@ -88,16 +89,17 @@ class TradingEnv:
         )
 
         # Debug: Print current step, price, cash, and shares
-        print(f"Step {self.current_step}: Current Price: {current_price:.2f}, Previous Price: {previous_price:.2f}, Cash: {self.cash:.2f}, Shares: {self.shares}")
+        if DEBUG_STEPS:
+            print(f"Step {self.current_step}: Current Price: {current_price:.2f}, Previous Price: {previous_price:.2f}, Cash: {self.cash:.2f}, Shares: {self.shares}")
 
         # Detect market trend
         market_trend = self.detect_market_trend()
-        print(f"Step {self.current_step}: Market Trend: {market_trend}")
-
-
+        if DEBUG_STEPS:
+            print(f"Step {self.current_step}: Market Trend: {market_trend}")
 
         # Debug: Print dynamic thresholds
-        print(f"Step {self.current_step}: Adjusted Stop-Loss: {self.dynamic_stop_loss:.2%}, Adjusted Take-Profit: {self.dynamic_take_profit:.2%}")
+        if DEBUG_STEPS:
+            print(f"Step {self.current_step}: Adjusted Stop-Loss: {self.dynamic_stop_loss:.2%}, Adjusted Take-Profit: {self.dynamic_take_profit:.2%}")
 
         # Buy logic: Buy if price is increasing and no shares are held
         if self.shares == 0 and current_price > previous_price:
@@ -107,24 +109,28 @@ class TradingEnv:
                 self.cash -= max_shares * current_price * (1 + self.transaction_cost)
                 self.trade_log.append((self.current_step, "BUY", current_price, self.shares))
                 self.trailing_stop_price = current_price * (1 - self.dynamic_stop_loss)
-                print(f"Step {self.current_step}: Bought {max_shares} shares at {current_price:.2f}")
-                print(f"Step {self.current_step}: Initial Trailing Stop Price: {self.trailing_stop_price:.2f}")
+                if DEBUG_STEPS:
+                    print(f"Step {self.current_step}: Bought {max_shares} shares at {current_price:.2f}")
+                    print(f"Step {self.current_step}: Initial Trailing Stop Price: {self.trailing_stop_price:.2f}")
 
         # Update trailing stop-loss price if the price increases
         elif self.shares > 0:
             if current_price > self.trailing_stop_price / (1 - self.dynamic_stop_loss):
                 self.trailing_stop_price = current_price * (1 - self.dynamic_stop_loss)
-                print(f"Step {self.current_step}: Updated Trailing Stop Price: {self.trailing_stop_price:.2f}")
+                if DEBUG_STEPS:
+                    print(f"Step {self.current_step}: Updated Trailing Stop Price: {self.trailing_stop_price:.2f}")
 
             # Update holding period if shares are held
             self.holding_period += 1
 
             # Modify sell logic to enforce minimum holding period
             if self.holding_period >= MIN_HOLDING_PERIOD and current_price <= self.trailing_stop_price:
-                print(f"Step {self.current_step}: Trailing Stop-Loss Triggered! Current Price: {current_price:.2f}, Trailing Stop Price: {self.trailing_stop_price:.2f}")
+                if DEBUG_STEPS:
+                    print(f"Step {self.current_step}: Trailing Stop-Loss Triggered! Current Price: {current_price:.2f}, Trailing Stop Price: {self.trailing_stop_price:.2f}")
                 self.cash += self.shares * current_price * (1 - self.transaction_cost)
                 self.trade_log.append((self.current_step, "SELL", current_price, self.shares))
-                print(f"Step {self.current_step}: Sold {self.shares} shares at {current_price:.2f} due to trailing stop-loss")
+                if DEBUG_STEPS:
+                    print(f"Step {self.current_step}: Sold {self.shares} shares at {current_price:.2f} due to trailing stop-loss")
                 self.shares = 0
                 self.trailing_stop_price = None
                 self.holding_period = 0  # Reset holding period after selling
@@ -133,7 +139,8 @@ class TradingEnv:
         portfolio_value = self.cash + self.shares * current_price
         self.portfolio_history.append(portfolio_value)
         self.prev_portfolio_value = portfolio_value
-        print(f"Step {self.current_step}: Portfolio value updated to {portfolio_value:.2f}")
+        if DEBUG_STEPS:
+            print(f"Step {self.current_step}: Portfolio value updated to {portfolio_value:.2f}")
 
         # Move to the next step
         self.current_step += 1
