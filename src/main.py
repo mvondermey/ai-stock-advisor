@@ -63,7 +63,7 @@ class TradingEnv(gym.Env):
 def train_ppo_agent(df):
     env = DummyVecEnv([lambda: TradingEnv(df)])
     model = PPO("MlpPolicy", env, verbose=1)
-    model.learn(total_timesteps=100000)
+    model.learn(total_timesteps=1000000)
     return model
 
 
@@ -308,16 +308,30 @@ def optimize_parameters(strategy, param_grid, X_train, y_train, cv=3, scoring='n
 
 # --- Data fetching and preprocessing ---
 def prepare_data(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
-    df = yf.download(ticker, start=start, end=end, auto_adjust=True).dropna()
-    if df.empty or len(df) < 20:
-        raise ValueError(f"Insufficient data for {ticker} from {start} to {end}")
-    return df
+    """Fetch historical stock data with retry mechanism to handle rate limits."""
+    max_retries = 5
+    retry_delay = 10  # seconds
+    for attempt in range(max_retries):
+        try:
+            df = yf.download(ticker, start=start, end=end, auto_adjust=True).dropna()
+            if df.empty or len(df) < 20:
+                raise ValueError(f"Insufficient data for {ticker} from {start} to {end}")
+            return df
+        except Exception as e:
+            if "Too Many Requests" in str(e):
+                print(f"⚠️ Rate limit hit for {ticker}. Retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{max_retries})")
+                time.sleep(retry_delay)
+            else:
+                print(f"⚠️ Failed to fetch data for {ticker}: {e}")
+                break
+    raise ValueError(f"Failed to fetch data for {ticker} after {max_retries} attempts.")
 
 def calculate_volatility(df: pd.DataFrame) -> float:
     returns = df["Close"].pct_change().dropna()
     return returns.std().item()
 
 def get_top_performing_stocks_ytd(sp500: bool = True, n: int = 10) -> List[str]:
+    """Fetch top-performing stocks from the S&P 500 or another index."""
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
     symbol_column = "Symbol"
     index_data = pd.read_html(url)[0]
@@ -328,13 +342,18 @@ def get_top_performing_stocks_ytd(sp500: bool = True, n: int = 10) -> List[str]:
     end_date = datetime.today()
     start_date = datetime(end_date.year, 1, 1)
     for ticker in tqdm(tickers[:50], desc="Processing S&P 500 Tickers"):
-        df = yf.download(ticker, start=start_date, end=end_date, progress=False)
-        if df.empty or len(df) < 20 or "Close" not in df.columns:
+        try:
+            df = yf.download(ticker, start=start_date, end=end_date, progress=False)
+            if df.empty or len(df) < 20 or "Close" not in df.columns:
+                print(f"⚠️ Skipping {ticker}: Insufficient data.")
+                continue
+            start_price = df["Close"].iloc[0].item()
+            end_price = df["Close"].iloc[-1].item()
+            growth = (end_price - start_price) / start_price
+            performances.append((ticker, growth))
+        except Exception as e:
+            print(f"⚠️ Failed to process {ticker}: {e}")
             continue
-        start_price = df["Close"].iloc[0].item()
-        end_price = df["Close"].iloc[-1].item()
-        growth = (end_price - start_price) / start_price
-        performances.append((ticker, growth))
     top_tickers = [ticker for ticker, _ in sorted(performances, key=lambda x: x[1], reverse=True)[:n]]
     return top_tickers
 
