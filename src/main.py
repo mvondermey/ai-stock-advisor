@@ -96,7 +96,7 @@ POSITION_SIZE = 1.0  # Fixierte Positionsgröße auf 1
 BACKTEST_PERIOD = 60
 STOP_LOSS = 0.2  # Increased stop-loss threshold
 TAKE_PROFIT = 0.2  # Increased take-profit threshold
-MIN_HOLDING_PERIOD = 5  # Minimum holding period in steps
+MIN_HOLDING_PERIOD = 10000000  # Minimum holding period in steps
 DEBUG_STEPS = False  # Debug switch for step method
 
 # Define fixed stop-loss and take-profit thresholds
