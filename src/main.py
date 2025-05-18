@@ -30,7 +30,6 @@ class TradingEnv(gym.Env):
         self.done = False
         return self._next_observation()
 
-        
     def _next_observation(self):
         row = self.df.iloc[self.current_step]
         rsi = row.get('RSI', 0.0)
@@ -48,16 +47,46 @@ class TradingEnv(gym.Env):
         ], dtype=np.float32)
         return obs
 
+    def step(self, action):
+        """Execute one step with AI-based Buy/Sell/Hold logic."""
+        row = self.df.iloc[self.current_step]
+        current_price = float(row["Close"])
 
-    
-    
+        # AI-based decision logic
+        position_fraction = np.clip(action[0], 0.0, 1.0)  # Action is a continuous value between 0 and 1
+        total_value = self.cash + self.shares * current_price
+        target_shares = (position_fraction * total_value) / current_price
+        delta_shares = target_shares - self.shares
 
+        if delta_shares > 0:  # BUY
+            buy_cost = delta_shares * current_price * (1 + self.transaction_cost)
+            if self.cash >= buy_cost:
+                self.cash -= buy_cost
+                self.shares += delta_shares
+                self.trade_log.append((self.current_step, "BUY", current_price, delta_shares))
+        elif delta_shares < 0:  # SELL
+            sell_shares = min(-delta_shares, self.shares)
+            sell_value = sell_shares * current_price * (1 - self.transaction_cost)
+            self.cash += sell_value
+            self.shares -= sell_shares
+            self.trade_log.append((self.current_step, "SELL", current_price, sell_shares))
+        else:  # HOLD
+            self.trade_log.append((self.current_step, "HOLD", current_price, 0))
+
+        # Update portfolio value and progress to the next step
+        portfolio_value = self.cash + self.shares * current_price
+        self.portfolio_history.append(portfolio_value)
+        self.current_step += 1
         self.done = self.current_step >= len(self.df) - 1
-        next_obs = self._next_observation()
-        portfolio_value = self.cash + self.shares * price
+
+        # Calculate reward as the change in portfolio value
         reward = portfolio_value - self.initial_cash
 
-        return next_obs, reward, self.done, {}
+        # Prepare observation and additional info
+        obs = self._next_observation()
+        info = {"portfolio_value": portfolio_value}
+
+        return obs, reward, self.done, info
 
 # Train PPO agent
 def train_ppo_agent(df):
@@ -579,48 +608,3 @@ def calculate_rsi(series, period=14):
     loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
-
-
-
-    def determine_trend_signal(self, row):
-        if row["MACD"] > row["MACD_signal"] and row["RSI"] < 70:
-            return 1  # Aufwärtstrend
-        elif row["MACD"] < row["MACD_signal"] and row["RSI"] > 30:
-            return -1  # Abwärtstrend
-        return 0  # neutral
-
-    def determine_volatility_signal(self, row):
-        if row["Volatility"] > self.df["Volatility"].quantile(0.7):
-            return -1  # Risiko zu hoch -> Vorsicht
-        elif row["Volatility"] < self.df["Volatility"].quantile(0.3):
-            return 1  # Stabilität -> mehr investieren
-        return 0
-
-    def step(self, action):
-        row = self.df.iloc[self.current_step]
-        trend_signal = self.determine_trend_signal(row)
-        volatility_signal = self.determine_volatility_signal(row)
-        strategy_signal = trend_signal + volatility_signal
-
-        position_fraction = np.clip(action[0], 0.0, 1.0)
-        current_price = float(row["Close"])
-        total_value = self.cash + self.shares * current_price
-        target_shares = (position_fraction * total_value) / current_price
-        delta_shares = target_shares - self.shares
-
-        if strategy_signal > 0 and delta_shares > 0:
-            buy_cost = delta_shares * current_price * (1 + self.transaction_cost)
-            if self.cash >= buy_cost:
-                self.cash -= buy_cost
-                self.shares += delta_shares
-                self.trade_log.append((self.current_step, "BUY", current_price, delta_shares))
-        elif strategy_signal < 0 and delta_shares < 0:
-            sell_shares = min(-delta_shares, self.shares)
-            sell_value = sell_shares * current_price * (1 - self.transaction_cost)
-            self.cash += sell_value
-            self.shares -= sell_shares
-            self.trade_log.append((self.current_step, "SELL", current_price, sell_shares))
-        else:
-            self.trade_log.append((self.current_step, "HOLD", current_price, 0))
-
-        self.current_step += 1
