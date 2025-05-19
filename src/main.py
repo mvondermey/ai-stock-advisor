@@ -1,4 +1,5 @@
 import gym
+import pandas as pd
 
 # === PPO & Gym Integration ===
 from stable_baselines3 import PPO
@@ -7,86 +8,72 @@ from gym import spaces
 
 # Extend your existing TradingEnv to be gym-compatible
 class TradingEnv(gym.Env):
-    def __init__(self, df):
+    def __init__(self, df: pd.DataFrame, initial_balance=10000, transaction_cost=0.001):
         super(TradingEnv, self).__init__()
         self.df = df.reset_index(drop=True)
-        self.current_step = 0
-        self.cash = 10000
-        self.shares = 0
-        self.initial_cash = 10000
-        self.transaction_cost = 0.001
-        self.done = False
+        self.initial_balance = initial_balance
+        self.transaction_cost = transaction_cost
 
-        # Define action and observation space
-        self.action_space = spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32)  # Buy, Sell, Hold
-        self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(5,), dtype=np.float32
-        )
+        self.action_space = spaces.Discrete(3)  # 0 = Hold, 1 = Buy, 2 = Sell
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.df.shape[1] + 1,), dtype=np.float32)
+
+        self.reset()
 
     def reset(self):
         self.current_step = 0
-        self.cash = self.initial_cash
+        self.cash = self.initial_balance
         self.shares = 0
-        self.done = False
+        self.portfolio_value = self.initial_balance
+        self.portfolio_history = [self.portfolio_value]
+        self.trade_log = []
         return self._next_observation()
 
     def _next_observation(self):
-        row = self.df.iloc[self.current_step]
-        rsi = row.get('RSI', 0.0)
-        hour = self.df.index[self.current_step].hour if hasattr(self.df.index[self.current_step], 'hour') else 0
-        weekday = self.df.index[self.current_step].weekday() if hasattr(self.df.index[self.current_step], 'weekday') else 0
-        obs = np.array([
-            row.get('Close', 0.0),
-            row.get('SMA_Short', 0.0),
-            row.get('SMA_Long', 0.0),
-            row.get('Return', 0.0),
-            row.get('Volatility', 0.0),
-            rsi,
-            hour / 23.0,
-            weekday / 6.0
-        ], dtype=np.float32)
-        return obs
+        row = self.df.iloc[self.current_step].values
+        return np.append(row, [self.shares])
 
     def step(self, action):
-        """Execute one step with AI-based Buy/Sell/Hold logic."""
-        row = self.df.iloc[self.current_step]
-        current_price = float(row["Close"])
+        current_price = self.df.iloc[self.current_step]['Close']
+        prev_portfolio_value = self.portfolio_value
 
-        # AI-based decision logic
-        position_fraction = np.clip(action[0], 0.0, 1.0)  # Action is a continuous value between 0 and 1
-        total_value = self.cash + self.shares * current_price
-        target_shares = (position_fraction * total_value) / current_price
-        delta_shares = target_shares - self.shares
+        reward_penalty = 0
 
-        if delta_shares > 0:  # BUY
-            buy_cost = delta_shares * current_price * (1 + self.transaction_cost)
-            if self.cash >= buy_cost:
-                self.cash -= buy_cost
-                self.shares += delta_shares
-                self.trade_log.append((self.current_step, "BUY", current_price, delta_shares))
-        elif delta_shares < 0:  # SELL
-            sell_shares = min(-delta_shares, self.shares)
-            sell_value = sell_shares * current_price * (1 - self.transaction_cost)
-            self.cash += sell_value
-            self.shares -= sell_shares
-            self.trade_log.append((self.current_step, "SELL", current_price, sell_shares))
-        else:  # HOLD
-            self.trade_log.append((self.current_step, "HOLD", current_price, 0))
+        if action == 1 and self.cash > 0:  # BUY
+            shares_bought = int(self.cash / (current_price * (1 + self.transaction_cost)))
+            if shares_bought > 0:
+                cost = shares_bought * current_price * (1 + self.transaction_cost)
+                self.cash -= cost
+                self.shares += shares_bought
+                self.trade_log.append((self.current_step, 'BUY', current_price, shares_bought))
+                reward_penalty -= 1.0  # discourage excessive trades
 
-        # Update portfolio value and progress to the next step
-        portfolio_value = self.cash + self.shares * current_price
-        self.portfolio_history.append(portfolio_value)
+        elif action == 2 and self.shares > 0:  # SELL
+            revenue = self.shares * current_price * (1 - self.transaction_cost)
+            self.cash += revenue
+            self.trade_log.append((self.current_step, 'SELL', current_price, self.shares))
+            self.shares = 0
+            reward_penalty -= 1.0
+
+        self.portfolio_value = self.cash + self.shares * current_price
+        self.portfolio_history.append(self.portfolio_value)
         self.current_step += 1
-        self.done = self.current_step >= len(self.df) - 1
 
-        # Calculate reward as the change in portfolio value
-        reward = portfolio_value - self.initial_cash
+        done = self.current_step >= len(self.df) - 1
 
-        # Prepare observation and additional info
-        obs = self._next_observation()
-        info = {"portfolio_value": portfolio_value}
+        if len(self.portfolio_history) > 10:
+            returns = np.diff(self.portfolio_history[-11:]) / (np.array(self.portfolio_history[-11:-1]) + 1e-8)
+            sharpe = np.mean(returns) / (np.std(returns) + 1e-8)
+            reward = sharpe + reward_penalty
+        else:
+            reward = self.portfolio_value - prev_portfolio_value + reward_penalty
 
-        return obs, reward, self.done, info
+        return self._next_observation(), reward, done, {}
+
+    def render(self, mode='human'):
+        print(f'Step: {self.current_step}')
+        print(f'Portfolio Value: {self.portfolio_value:.2f}')
+        print(f'Cash: {self.cash:.2f}')
+        print(f'Shares: {self.shares}')
 
 # Train PPO agent
 def train_ppo_agent(df):
