@@ -465,7 +465,7 @@ def main():
 
     if not models:
         print("⚠️ No models were trained. Exiting program.")
-        return None, None  # Exit early if no models were trained
+        return None, None, None  # Exit early if no models were trained
 
     print("🔄 Starting parameter optimization...")
     # Define the custom strategy
@@ -569,10 +569,10 @@ def main():
     plt.show()
 
     print("✅ Combined portfolio rendering completed.\n")
-    return combined_portfolio, buy_and_hold_portfolio
+    return combined_portfolio, buy_and_hold_portfolio, models
 
 if __name__ == "__main__":
-    combined_portfolio, buy_and_hold_portfolio = main()
+    combined_portfolio, buy_and_hold_portfolio, models = main()  # Capture models from main()
     final_combined_value = combined_portfolio[-1] if combined_portfolio else 0
     final_buy_and_hold_value = buy_and_hold_portfolio[-1] if buy_and_hold_portfolio else 0
     print(f"\n💰 Final Combined Portfolio Value: ${final_combined_value:.2f}")
@@ -588,6 +588,22 @@ if __name__ == "__main__":
         plt.legend()
         plt.savefig("plots/final_portfolio_comparison.png")
         plt.show()
+
+    # Ensure models dictionary is accessible
+    if models:
+        print("\n📊 Predictions for Trained Stocks:")
+        for ticker, model in models.items():
+            latest_data = fetch_training_data(ticker).iloc[-1:]  # Fetch the latest data
+            if latest_data.empty:
+                print(f"⚠️ No data available for {ticker}. Skipping prediction.")
+                continue
+            prediction = float(model.predict(latest_data[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].values)[0])  # Ensure scalar value
+            latest_close = float(latest_data['Close'].iloc[0])  # Ensure scalar value
+            action = "BUY" if prediction > latest_close else "SELL"
+            print(f"🔮 {ticker}: Predicted Action = {action}")
+    else:
+        print("⚠️ No trained models found. Skipping predictions.")
+
 # --- RSI Calculation ---
 def calculate_rsi(series, period=14):
     delta = series.diff()
