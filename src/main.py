@@ -1,5 +1,8 @@
-import gym
+
+
 import pandas as pd
+import gym
+import numpy as np
 
 # === PPO & Gym Integration ===
 from stable_baselines3 import PPO
@@ -7,9 +10,9 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from gym import spaces
 
 # Extend your existing TradingEnv to be gym-compatible
-class TradingEnv(gym.Env):
+class RLTradingEnv(gym.Env):
     def __init__(self, df: pd.DataFrame, initial_balance=10000, transaction_cost=0.001):
-        super(TradingEnv, self).__init__()
+        super(RLTradingEnv, self).__init__()
         self.df = df.reset_index(drop=True)
         self.initial_balance = initial_balance
         self.transaction_cost = transaction_cost
@@ -77,7 +80,7 @@ class TradingEnv(gym.Env):
 
 # Train PPO agent
 def train_ppo_agent(df):
-    env = DummyVecEnv([lambda: TradingEnv(df)])
+    env = DummyVecEnv([lambda: RLTradingEnv(df)])
     model = PPO("MlpPolicy", env, verbose=1)
     model.learn(total_timesteps=100000)
     return model
@@ -102,8 +105,8 @@ from sklearn.model_selection import GridSearchCV
 # Add the src directory to the Python path
 sys.path.append(os.path.dirname(__file__))
 
-# Use an interactive backend for macOS
-matplotlib.use("MacOSX")
+# Use a cross-platform interactive backend
+matplotlib.use("Agg")  # Or use "Agg" for non-interactive environments
 
 # --- Constants ---
 INITIAL_BALANCE = 20000
@@ -112,6 +115,7 @@ POSITION_SIZE = 1.0  # Fixierte Positionsgröße auf 1
 BACKTEST_PERIOD = 60
 STOP_LOSS = 0.2  # Increased stop-loss threshold
 TAKE_PROFIT = 0.2  # Increased take-profit threshold
+TRAILING_STOP = 0.02 # Default trailing stop
 MIN_HOLDING_PERIOD = 10000000  # Minimum holding period in steps
 DEBUG_STEPS = False  # Debug switch for step method
 
@@ -120,9 +124,9 @@ FIXED_STOP_LOSS = {}
 FIXED_TAKE_PROFIT = {}
 
 # --- Trading environment ---
-class TradingEnv:
+class RuleBasedTradingEnv:
     """Custom trading environment for rule-based trading."""
-    def __init__(self, df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE, transaction_cost: float = TRANSACTION_COST):
+    def __init__(self, df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE, transaction_cost: float = TRANSACTION_COST, stop_loss: float = STOP_LOSS, take_profit: float = TAKE_PROFIT, trailing_stop: float = TRAILING_STOP):
         self.df = df.reset_index(drop=True)  # Ensure the DataFrame is reset and uses only the passed data
         print(f"Number of steps included in the backtest: {len(self.df)}")  # Print the number of steps
         self.current_step = 0
@@ -132,10 +136,11 @@ class TradingEnv:
         self.portfolio_history = [initial_balance]
         self.trade_log = []
         self.returns = []
-        self.stop_loss = STOP_LOSS  # Default stop-loss
-        self.take_profit = TAKE_PROFIT  # Default take-profit
-        self.dynamic_stop_loss = STOP_LOSS  # Dynamic stop-loss
-        self.dynamic_take_profit = TAKE_PROFIT  # Dynamic take-profit
+        self.stop_loss = stop_loss
+        self.take_profit = take_profit
+        self.trailing_stop = trailing_stop
+        self.dynamic_stop_loss = stop_loss
+        self.dynamic_take_profit = take_profit
         self.trailing_stop_price = None  # Add a variable to track the trailing stop price
         self.holding_period = 0  # Track the holding period for shares
 
@@ -169,9 +174,9 @@ class TradingEnv:
 
     def step(self):
         """Execute one step with dynamic adjustments based on market trends."""
-        current_price = float(self.df["Close"].iloc[self.current_step])
+        current_price = self.df["Close"].iloc[self.current_step].item()
         previous_price = (
-            float(self.df["Close"].iloc[self.current_step - 1])
+            self.df["Close"].iloc[self.current_step - 1].item()
             if self.current_step > 0
             else current_price
         )
@@ -190,8 +195,8 @@ class TradingEnv:
             print(f"Step {self.current_step}: Adjusted Stop-Loss: {self.dynamic_stop_loss:.2%}, Adjusted Take-Profit: {self.dynamic_take_profit:.2%}")
 
         # Take Profit Logic
-        if self.shares > 0:
-            take_profit_price = self.trailing_stop_price / (1 - TAKE_PROFIT)
+        if self.shares > 0 and self.trailing_stop_price is not None:
+            take_profit_price = self.trailing_stop_price / (1 - self.dynamic_take_profit)
             if current_price >= take_profit_price:
                 if DEBUG_STEPS:
                     print(f"Step {self.current_step}: Take Profit Triggered! Current Price: {current_price:.2f}, Take Profit Price: {take_profit_price:.2f}")
@@ -262,42 +267,37 @@ class TradingEnv:
         plt.close()
 
 # --- Predictive Model Functions ---
+def _add_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add technical indicator features to the DataFrame."""
+    df = df.copy()
+    df['Returns'] = df['Close'].pct_change()
+    df['Momentum'] = df['Close'] - df['Close'].shift(10)
+    df['SMA_10'] = df['Close'].rolling(window=10).mean()
+    df['SMA_30'] = df['Close'].rolling(window=30).mean()
+    df['Volatility'] = df['Returns'].rolling(window=10).std()
+    df['Target'] = df['Close'].shift(-1)
+    return df
+
 def train_predictive_model(df: pd.DataFrame):
     """
     Train a predictive model using the provided DataFrame.
+    Assumes the DataFrame already has features and has been cleaned.
     :param df: DataFrame containing features and target variable.
     :return: Trained model.
     """
-    print(f"Initial dataset size: {len(df)} rows")
-    df['Momentum'] = df['Close'] - df['Close'].shift(10)
-    df['Volatility'] = df['Returns'].rolling(window=10).std()
-    df['Returns'] = df['Close'].pct_change()
-    print(f"Dataset size after calculating 'Returns': {len(df)} rows")
-    df['SMA_10'] = df['Close'].rolling(window=10).mean()
-    print(f"Dataset size after calculating 'SMA_10': {len(df)} rows")
-    df['SMA_30'] = df['Close'].rolling(window=30).mean()
-    print(f"Dataset size after calculating 'SMA_30': {len(df)} rows")
-    df['Volatility'] = df['Close'].rolling(window=10).std()
-    print(f"Dataset size after calculating 'Volatility': {len(df)} rows")
-
+    print(f"Training dataset size: {len(df)} rows")
+    
     X = df[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].values
     y = df['Target'].values
 
-    print(f"Training dataset size: {len(X)} rows")
-    model = RandomForestRegressor(n_estimators=100, random_state=42)  # Increase estimators for better accuracy
-    model.fit(X, y)  # Train on all rows
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X, y)
     return model
 
 def predict_next_price(model, df):
     """Predict the next day's price."""
-    df['Momentum'] = df['Close'] - df['Close'].shift(10)
-    df['Volatility'] = df['Returns'].rolling(window=10).std()
-    df['Returns'] = df['Close'].pct_change()
-    df['SMA_10'] = df['Close'].rolling(window=10).mean()
-    df['SMA_30'] = df['Close'].rolling(window=30).mean()
-    df['Volatility'] = df['Close'].rolling(window=10).std()
-
-    latest_data = df[['Returns', 'SMA_10', 'SMA_30', 'Volatility']].iloc[-1].values.reshape(1, -1)
+    df_features = _add_features(df)
+    latest_data = df_features[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].iloc[-1].values.reshape(1, -1)
     return model.predict(latest_data)[0]
 
 # --- Parameter Optimization Function ---
@@ -317,7 +317,7 @@ def optimize_parameters(strategy, param_grid, X_train, y_train, cv=3, scoring='n
         param_grid=param_grid,
         cv=cv,
         scoring=scoring,  # Use the scoring metric passed to the function
-        n_jobs=-1
+        n_jobs=1
     )
     grid_search.fit(X_train, y_train)
     return grid_search.best_params_
@@ -344,7 +344,7 @@ def get_top_performing_stocks_ytd(sp500: bool = True, n: int = 10) -> List[str]:
     end_date = datetime.today()
     start_date = datetime(end_date.year, 1, 1)
     for ticker in tqdm(tickers[:50], desc="Processing S&P 500 Tickers"):
-        df = yf.download(ticker, start=start_date, end=end_date, progress=False)
+        df = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
         if df.empty or len(df) < 20 or "Close" not in df.columns:
             continue
         start_price = df["Close"].iloc[0].item()
@@ -416,13 +416,9 @@ def fetch_training_data(ticker: str) -> pd.DataFrame:
         print(f"⚠️ Insufficient data for {ticker} from {start_date} to {end_date}. Returning empty DataFrame.")
         return pd.DataFrame()  # Return an empty DataFrame if insufficient data
 
-    # Calculate additional features
-    df['Returns'] = df['Close'].pct_change()  # Ensure 'Returns' is created first
-    df['Momentum'] = df['Close'] - df['Close'].shift(10)
-    df['Volatility'] = df['Returns'].rolling(window=10).std()
-    df['SMA_10'] = df['Close'].rolling(window=10).mean()
-    df['SMA_30'] = df['Close'].rolling(window=30).mean()
-    df['Target'] = df['Close'].shift(-1)  # Predict the next day's price
+    # Calculate additional features and clean data
+    df = _add_features(df)
+    df = df.dropna()
 
     # Debug: Check if all required columns exist
     required_columns = ['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility', 'Target']
@@ -447,20 +443,16 @@ def main():
     models = {}  # Dictionary to store trained models for each stock
 
     for ticker in top_tickers:
-        print(f"\n🔄 Fetching training data for {ticker}...")
-        training_data = fetch_training_data(ticker).dropna()
+        print(f"\n🔄 Fetching and preparing training data for {ticker}...")
+        training_data = fetch_training_data(ticker)
         if training_data.empty:
             print(f"⚠️ Training data for {ticker} is empty. Skipping.")
             continue
-        print(f"✅ Training data fetched with {len(training_data)} data points for {ticker}.\n")
+        print(f"✅ Training data prepared with {len(training_data)} data points for {ticker}.\n")
 
         print(f"🔄 Training predictive model for {ticker}...")
-        # Extract features and target for training
-        X_train = training_data[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].values
-        y_train = training_data['Target'].values
-
-        model = train_predictive_model(training_data)  # Train the model for the current stock
-        models[ticker] = model  # Store the trained model
+        model = train_predictive_model(training_data)
+        models[ticker] = model
         print(f"✅ Predictive model training completed for {ticker}.\n")
 
     if not models:
@@ -481,18 +473,19 @@ def main():
 
     # Example: Use the first stock's data for parameter optimization
     first_ticker = next(iter(models.keys()))
-    training_data = fetch_training_data(first_ticker)
-    X_train = training_data[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].values
-    y_train = training_data['Target'].values
+    optimization_data = fetch_training_data(first_ticker)
+    X_opt = optimization_data[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].values
+    y_opt = optimization_data['Target'].values
 
     best_params = optimize_parameters(
-        strategy, param_grid, X_train, y_train, cv=3, scoring='neg_mean_squared_error'  # Use regression scoring
+        strategy, param_grid, X_opt, y_opt, cv=3, scoring='neg_mean_squared_error'  # Use regression scoring
     )
     print(f"🔧 Optimized Parameters: {best_params}")
-    global STOP_LOSS, TAKE_PROFIT, TRAILING_STOP
-    STOP_LOSS = best_params['STOP_LOSS']
-    TAKE_PROFIT = best_params['TAKE_PROFIT']
-    TRAILING_STOP = best_params['TRAILING_STOP']  # Update global variable for trailing stop
+    
+    # Use optimized parameters for the backtest
+    stop_loss_opt = best_params['STOP_LOSS']
+    take_profit_opt = best_params['TAKE_PROFIT']
+    trailing_stop_opt = best_params['TRAILING_STOP']
 
     print("✅ Parameter optimization completed.\n")
 
@@ -510,11 +503,14 @@ def main():
     for ticker in top_tickers:
         print(f"\n📈 Fetching data for {ticker}...")
         df = prepare_data(ticker, start_date, end_date)
-        stop_loss_threshold = min(max(calculate_volatility(df) * 2, 0.05), 0.5)
-        print(f"🔍 Adjusted stop-loss for {ticker}: {stop_loss_threshold:.2%}")
         print(f"🔄 Running backtest for {ticker}...")
-        env = TradingEnv(df, initial_balance=balance_per_stock)
-        env.stop_loss = stop_loss_threshold
+        env = RuleBasedTradingEnv(
+            df, 
+            initial_balance=balance_per_stock,
+            stop_loss=stop_loss_opt,
+            take_profit=take_profit_opt,
+            trailing_stop=trailing_stop_opt
+        )
         env.run()
         print(f"✅ Backtest completed for {ticker}.")
 
@@ -523,7 +519,7 @@ def main():
 
         # Analyze trades for the current stock
         print(f"🔍 Analyzing trades for {ticker}...")
-        analyze_trades_per_stock(env.trade_log, ticker, final_price=float(df["Close"].iloc[-1]))
+        analyze_trades_per_stock(env.trade_log, ticker, final_price=df["Close"].iloc[-1].item())
         print(f"✅ Trade analysis completed for {ticker}.")
 
         # Add the portfolio history to the combined portfolio
@@ -531,9 +527,9 @@ def main():
             combined_portfolio[i] += individual_portfolios[ticker][i]
 
         # Calculate buy-and-hold portfolio value for this stock
-        initial_price = float(df["Close"].iloc[0])
+        initial_price = df["Close"].iloc[0].item()
         shares_held = balance_per_stock / initial_price
-        stock_buy_and_hold_value = [float(shares_held * df["Close"].iloc[i]) for i in range(len(df))]
+        stock_buy_and_hold_value = [(shares_held * df["Close"].iloc[i].item()) for i in range(len(df))]
         stock_buy_and_hold_value = pad_portfolio_history(stock_buy_and_hold_value, BACKTEST_PERIOD + 365)
         buy_and_hold_portfolio = [
             buy_and_hold_portfolio[i] + stock_buy_and_hold_value[i]
@@ -572,37 +568,44 @@ def main():
     return combined_portfolio, buy_and_hold_portfolio, models
 
 if __name__ == "__main__":
-    combined_portfolio, buy_and_hold_portfolio, models = main()  # Capture models from main()
-    final_combined_value = combined_portfolio[-1] if combined_portfolio else 0
-    final_buy_and_hold_value = buy_and_hold_portfolio[-1] if buy_and_hold_portfolio else 0
-    print(f"\n💰 Final Combined Portfolio Value: ${final_combined_value:.2f}")
-    print(f"💰 Final Buy-and-Hold Portfolio Value: ${final_buy_and_hold_value:.2f}")
-    # Plot the results
-    if combined_portfolio and buy_and_hold_portfolio:
-        plt.figure(figsize=(12, 6))
-        plt.plot(combined_portfolio, label="Combined Portfolio", linewidth=2, color="black")
-        plt.plot(buy_and_hold_portfolio, label="Buy-and-Hold Portfolio", linestyle="--", color="blue")
-        plt.title("Portfolio Value Over Time")
-        plt.xlabel("Steps")
-        plt.ylabel("Portfolio Value ($)")
-        plt.legend()
-        plt.savefig("plots/final_portfolio_comparison.png")
-        plt.show()
+    main_result = main()
+    if main_result:
+        combined_portfolio, buy_and_hold_portfolio, models = main_result
+        final_combined_value = combined_portfolio[-1] if combined_portfolio else 0
+        final_buy_and_hold_value = buy_and_hold_portfolio[-1] if buy_and_hold_portfolio else 0
+        print(f"\n💰 Final Combined Portfolio Value: ${final_combined_value:.2f}")
+        print(f"💰 Final Buy-and-Hold Portfolio Value: ${final_buy_and_hold_value:.2f}")
 
-    # Ensure models dictionary is accessible
-    if models:
-        print("\n📊 Predictions for Trained Stocks:")
-        for ticker, model in models.items():
-            latest_data = fetch_training_data(ticker).iloc[-1:]  # Fetch the latest data
-            if latest_data.empty:
-                print(f"⚠️ No data available for {ticker}. Skipping prediction.")
-                continue
-            prediction = float(model.predict(latest_data[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].values)[0])  # Ensure scalar value
-            latest_close = float(latest_data['Close'].iloc[0])  # Ensure scalar value
-            action = "BUY" if prediction > latest_close else "SELL"
-            print(f"🔮 {ticker}: Predicted Action = {action}")
+        # Plot the results
+        if combined_portfolio and buy_and_hold_portfolio:
+            plt.figure(figsize=(12, 6))
+            plt.plot(combined_portfolio, label="Combined Portfolio", linewidth=2, color="black")
+            plt.plot(buy_and_hold_portfolio, label="Buy-and-Hold Portfolio", linestyle="--", color="blue")
+            plt.title("Portfolio Value Over Time")
+            plt.xlabel("Steps")
+            plt.ylabel("Portfolio Value ($)")
+            plt.legend()
+            plt.savefig("plots/final_portfolio_comparison.png")
+            plt.show()
+
+        # Ensure models dictionary is accessible
+        if models:
+            print("\n📊 Predictions for Trained Stocks:")
+            for ticker, model in models.items():
+                latest_data = fetch_training_data(ticker) # Fetch the latest data
+                if latest_data.empty:
+                    print(f"⚠️ No data available for {ticker}. Skipping prediction.")
+                    continue
+                
+                # Ensure the dataframe passed to predict_next_price has enough data for feature calculation
+                prediction = predict_next_price(model, latest_data)
+                latest_close = latest_data['Close'].iloc[-1].item()
+                action = "BUY" if prediction > latest_close else "SELL"
+                print(f"🔮 {ticker}: Predicted Action = {action}")
+        else:
+            print("⚠️ No trained models found. Skipping predictions.")
     else:
-        print("⚠️ No trained models found. Skipping predictions.")
+        print("Program exited without generating results.")
 
 # --- RSI Calculation ---
 def calculate_rsi(series, period=14):
