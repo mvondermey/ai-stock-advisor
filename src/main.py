@@ -130,7 +130,7 @@ def _fetch_from_stooq(ticker: str, start: datetime, end: datetime) -> pd.DataFra
 # ============================
 
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
-    """Load from cache; then provider-specific fetch; then optional fallback; write back to cache."""
+    """Load from cache or download, ensuring all data is cleaned before returning."""
     _ensure_dir(DATA_CACHE_DIR)
     cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
 
@@ -138,6 +138,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     start_utc = _to_utc(start)
     end_utc   = _to_utc(end)
 
+    # 1. Load from cache
     df_cached = pd.DataFrame()
     if cache_file.exists():
         try:
@@ -146,84 +147,76 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         except Exception:
             df_cached = pd.DataFrame()
 
+    # 2. Check if cache is sufficient
     if not df_cached.empty and df_cached.index.max() >= (end_utc - timedelta(days=2)):
-        out = df_cached.loc[(df_cached.index >= start_utc) & (df_cached.index <= end_utc)].copy()
-        if not out.empty:
-            return out
-
-    dl_start = (df_cached.index.max() + timedelta(days=1)) if not df_cached.empty else start_utc
-    new_df = pd.DataFrame()
-    provider = DATA_PROVIDER.lower()
-
-    if provider == 'stooq':
-        stooq_df = _fetch_from_stooq(ticker, dl_start, end_utc)
-        if stooq_df.empty and not ticker.upper().endswith('.US'):
-            stooq_df = _fetch_from_stooq(f"{ticker}.US", dl_start, end_utc)
-        if not stooq_df.empty:
-            new_df = stooq_df.copy()
-        elif USE_YAHOO_FALLBACK:
-            try:
-                downloaded_df = yf.download(ticker, start=dl_start, end=end_utc, auto_adjust=True, progress=False)
-                if downloaded_df is not None:
-                    new_df = downloaded_df.dropna()
-            except Exception as e:
-                print(f"⚠️ yfinance fallback failed for {ticker}: {e}")
+        final_df = df_cached
     else:
-        try:
-            downloaded_df = yf.download(ticker, start=dl_start, end=end_utc, auto_adjust=True, progress=False)
-            if downloaded_df is not None:
-                new_df = downloaded_df.dropna()
-        except Exception as e:
-            print(f"⚠️ yfinance failed for {ticker}: {e}")
-        if new_df.empty and pdr is not None:
+        # 3. If not sufficient, download new data
+        dl_start = (df_cached.index.max() + timedelta(days=1)) if not df_cached.empty else start_utc
+        new_df = pd.DataFrame()
+        provider = DATA_PROVIDER.lower()
+
+        if provider == 'stooq':
             stooq_df = _fetch_from_stooq(ticker, dl_start, end_utc)
             if stooq_df.empty and not ticker.upper().endswith('.US'):
                 stooq_df = _fetch_from_stooq(f"{ticker}.US", dl_start, end_utc)
             if not stooq_df.empty:
                 new_df = stooq_df.copy()
-
-    if not new_df.empty:
-        new_df = new_df.copy()
-
-        # Flatten MultiIndex columns, which can occur with yfinance
-        if isinstance(new_df.columns, pd.MultiIndex):
-            new_df.columns = new_df.columns.get_level_values(0)
-
-        # Normalize column names to handle provider inconsistencies (e.g., 'close' vs 'Close')
-        new_df.columns = [str(col).capitalize() for col in new_df.columns]
-
-        # Ensure a 'Close' column exists, using 'Adj close' as a fallback
-        if "Close" not in new_df.columns and "Adj close" in new_df.columns:
-            new_df = new_df.rename(columns={"Adj close": "Close"})
-
-    # If 'Close' column now exists, process and save the data.
-    if "Close" in new_df.columns:
-        # Ensure 'Close' is numeric before processing
-        new_df["Close"] = pd.to_numeric(new_df["Close"], errors="coerce")
-        new_df = new_df.dropna(subset=["Close"])
-
-        new_df.index = pd.to_datetime(new_df.index, utc=True)
-        new_df.index.name = "Date"
-        # Fill missing values in other columns if necessary
-        new_df = new_df.ffill().bfill()
-        if not df_cached.empty:
-            combined = pd.concat([df_cached, new_df])
-            combined = combined[~combined.index.duplicated(keep="last")].sort_index()
-            combined.index = pd.to_datetime(combined.index, utc=True)
+            elif USE_YAHOO_FALLBACK:
+                try:
+                    downloaded_df = yf.download(ticker, start=dl_start, end=end_utc, auto_adjust=True, progress=False)
+                    if downloaded_df is not None:
+                        new_df = downloaded_df.dropna()
+                except Exception as e:
+                    print(f"⚠️ yfinance fallback failed for {ticker}: {e}")
         else:
-            combined = new_df
-        try:
-            combined.reset_index().to_csv(cache_file, index=False)
-        except Exception:
-            pass
-        return combined.loc[(combined.index >= start_utc) & (combined.index <= end_utc)].copy()
+            try:
+                downloaded_df = yf.download(ticker, start=dl_start, end=end_utc, auto_adjust=True, progress=False)
+                if downloaded_df is not None:
+                    new_df = downloaded_df.dropna()
+            except Exception as e:
+                print(f"⚠️ yfinance failed for {ticker}: {e}")
+            if new_df.empty and pdr is not None:
+                stooq_df = _fetch_from_stooq(ticker, dl_start, end_utc)
+                if stooq_df.empty and not ticker.upper().endswith('.US'):
+                    stooq_df = _fetch_from_stooq(f"{ticker}.US", dl_start, end_utc)
+                if not stooq_df.empty:
+                    new_df = stooq_df.copy()
 
-    if not df_cached.empty:
-        df_filtered = df_cached.loc[(df_cached.index >= start_utc) & (df_cached.index <= end_utc)].copy()
-        if "Close" in df_filtered.columns:
-            return df_filtered.dropna(subset=["Close"])
-        return df_filtered
-    return pd.DataFrame()
+        # 4. Combine cached and new data
+        if not new_df.empty:
+            new_df = new_df.copy()
+            if isinstance(new_df.columns, pd.MultiIndex):
+                new_df.columns = new_df.columns.get_level_values(0)
+            new_df.columns = [str(col).capitalize() for col in new_df.columns]
+            if "Close" not in new_df.columns and "Adj close" in new_df.columns:
+                new_df = new_df.rename(columns={"Adj close": "Close"})
+            
+            if not df_cached.empty:
+                combined = pd.concat([df_cached, new_df])
+                final_df = combined[~combined.index.duplicated(keep="last")].sort_index()
+            else:
+                final_df = new_df
+        else:
+            final_df = df_cached
+
+    # 5. Centralized Cleaning and Saving
+    if final_df.empty or "Close" not in final_df.columns:
+        return pd.DataFrame()
+
+    final_df.index = pd.to_datetime(final_df.index, utc=True)
+    final_df.index.name = "Date"
+    final_df["Close"] = pd.to_numeric(final_df["Close"], errors="coerce")
+    final_df = final_df.dropna(subset=["Close"])
+    final_df = final_df.ffill().bfill()
+
+    try:
+        final_df.reset_index().to_csv(cache_file, index=False)
+    except Exception:
+        pass
+
+    # 6. Return the requested slice
+    return final_df.loc[(final_df.index >= start_utc) & (final_df.index <= end_utc)].copy()
 
 # ============================
 # Ticker discovery
@@ -548,9 +541,12 @@ class RuleTradingEnv:
         if any(pd.isna(row.get(f)) for f in feature_names):
             return False
         
-        # Prepare feature vector and scale it
-        X_raw = np.array([[row[f] for f in feature_names]], dtype=float)
-        X = self.scaler.transform(X_raw)
+        # Prepare feature vector as a DataFrame and scale it
+        X_df = pd.DataFrame([[row[f] for f in feature_names]], columns=feature_names)
+        X_scaled_np = self.scaler.transform(X_df)
+        
+        # Reconstruct DataFrame for the model to avoid warnings
+        X = pd.DataFrame(X_scaled_np, columns=feature_names)
         
         try:
             proba_up = float(self.model.predict_proba(X)[0][1])
@@ -758,8 +754,10 @@ def main():
 
     print("🔄 Running rule-based backtest...\n")
     capital_per_stock = INITIAL_BALANCE / max(len(top_tickers), 1)
-    combined_value = 0.0
-    buy_hold_value = 0.0
+    
+    strategy_results = []
+    buy_hold_results = []
+    processed_tickers = []
 
     for ticker in top_tickers:
         print(f"▶ {ticker}: preparing data...")
@@ -768,8 +766,8 @@ def main():
         for attempt in range(max_retries):
             try:
                 df = load_prices(ticker, bt_start, bt_end)
-                if df.empty or len(df) < STRAT_SMA_LONG + 5:
-                    print(f"  ⚠️ Not enough data for backtest. Skipping {ticker}.")
+                if df.empty or len(df) < STRAT_SMA_SHORT + 5:
+                    print(f"  ⚠️ Not enough data for backtest (need >{STRAT_SMA_SHORT + 5}, got {len(df)}). Skipping {ticker}.")
                     df = None
                 break
             except Exception as e:
@@ -781,8 +779,8 @@ def main():
                     print(f"  ⚠️ Data load failed for {ticker}: {e}. Skipping.")
                     df = None
                     break
-        if df is None or df.empty or len(df) < STRAT_SMA_LONG + 5:
-            print(f"  ⚠️ Skipping {ticker}: Insufficient or invalid data.")
+        if df is None or df.empty or len(df) < STRAT_SMA_SHORT + 5:
+            print(f"  ⚠️ Skipping {ticker}: Insufficient or invalid data after loading.")
             continue
 
         # Ensure no NaN values in critical columns
@@ -807,23 +805,35 @@ def main():
         print(f"  ✅ Final strategy value: ${final_val:,.2f} | Buy&Hold: ${bh_val:,.2f}")
         analyze_performance(log, strategy_history, buy_hold_history, ticker)
 
-        combined_value += final_val
-        buy_hold_value += bh_val
+        strategy_results.append(final_val)
+        buy_hold_results.append(bh_val)
+        processed_tickers.append(ticker)
 
-    if combined_value > 0:
-        print("\n💰 Final Combined Portfolio Value: ${:,.2f}".format(combined_value))
-        print("💰 Final Buy-and-Hold Portfolio Value: ${:,.2f}".format(buy_hold_value))
+    # --- Final Portfolio Summary ---
+    num_processed = len(processed_tickers)
+    num_skipped = len(top_tickers) - num_processed
+    skipped_capital = num_skipped * capital_per_stock
+
+    final_strategy_value = sum(strategy_results) + skipped_capital
+    final_buy_hold_value = sum(buy_hold_results) + skipped_capital
+
+    if final_strategy_value > 0:
+        print(f"\n--- PORTFOLIO SUMMARY ({num_processed}/{len(top_tickers)} stocks processed) ---")
+        print("💰 Final Combined Portfolio Value: ${:,.2f}".format(final_strategy_value))
+        print("💰 Final Buy-and-Hold Portfolio Value: ${:,.2f}".format(final_buy_hold_value))
+        if skipped_capital > 0:
+            print(f"   (Includes ${skipped_capital:,.2f} of unprocessed capital for {num_skipped} skipped stock(s))")
     
         if SAVE_PLOTS:
             _ensure_dir(Path("plots"))
             fig = plt.figure(figsize=(8, 4))
             plt.title("Combined Portfolio (placeholder)")
-            plt.plot([0, 1], [INITIAL_BALANCE, combined_value])
+            plt.plot([0, 1], [INITIAL_BALANCE, final_strategy_value])
             plt.xlabel("Period"); plt.ylabel("Value ($)")
             fig.savefig("plots/combined_portfolio.png")
             plt.close(fig)
     
-        return combined_value, buy_hold_value, models
+        return final_strategy_value, final_buy_hold_value, models
     
 if __name__ == "__main__":
     main()
