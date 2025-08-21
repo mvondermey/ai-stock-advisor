@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-
-
-=======
 # -*- coding: utf-8 -*-
 """
 Trading AI — Improved Rule-Based System with Optional ML Gate
@@ -22,28 +18,16 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
 import numpy as np
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
 import pandas as pd
-import gym
-import numpy as np
+import gymnasium as gym
 
 # ---------- Matplotlib (headless-safe) ----------
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-<<<<<<< HEAD
-# Extend your existing TradingEnv to be gym-compatible
-class RLTradingEnv(gym.Env):
-    def __init__(self, df: pd.DataFrame, initial_balance=10000, transaction_cost=0.001):
-        super(RLTradingEnv, self).__init__()
-        self.df = df.reset_index(drop=True)
-        self.initial_balance = initial_balance
-        self.transaction_cost = transaction_cost
-=======
 import yfinance as yf
 from tqdm import tqdm
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
 
 # Optional Stooq provider
 try:
@@ -80,8 +64,8 @@ TRAIN_LOOKBACK_DAYS     = 360        # more data for model
 STRAT_SMA_SHORT         = 20
 STRAT_SMA_LONG          = 100
 ATR_PERIOD              = 14
-ATR_MULT_TRAIL          = 3.0
-ATR_MULT_TP             = 4.0
+ATR_MULT_TRAIL          = 4.0
+ATR_MULT_TP             = 6.0
 RISK_PER_TRADE          = 0.01       # 1% of capital
 TRANSACTION_COST        = 0.001      # 0.1%
 
@@ -90,7 +74,7 @@ FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
 CLASS_HORIZON           = 5          # days ahead for classification target
-MIN_PROBA_UP            = 0.60       # ML gate threshold
+MIN_PROBA_UP            = 0.55       # ML gate threshold
 USE_MODEL_GATE          = True       # require model proba >= threshold for buys
 
 # --- Misc
@@ -179,12 +163,16 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             new_df = stooq_df.copy()
         elif USE_YAHOO_FALLBACK:
             try:
-                new_df = yf.download(ticker, start=dl_start, end=end_utc, auto_adjust=True, progress=False).dropna()
+                downloaded_df = yf.download(ticker, start=dl_start, end=end_utc, auto_adjust=True, progress=False)
+                if downloaded_df is not None:
+                    new_df = downloaded_df.dropna()
             except Exception as e:
                 print(f"⚠️ yfinance fallback failed for {ticker}: {e}")
     else:
         try:
-            new_df = yf.download(ticker, start=dl_start, end=end_utc, auto_adjust=True, progress=False).dropna()
+            downloaded_df = yf.download(ticker, start=dl_start, end=end_utc, auto_adjust=True, progress=False)
+            if downloaded_df is not None:
+                new_df = downloaded_df.dropna()
         except Exception as e:
             print(f"⚠️ yfinance failed for {ticker}: {e}")
         if new_df.empty and pdr is not None:
@@ -196,12 +184,28 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
     if not new_df.empty:
         new_df = new_df.copy()
+
+        # Flatten MultiIndex columns, which can occur with yfinance
+        if isinstance(new_df.columns, pd.MultiIndex):
+            new_df.columns = new_df.columns.get_level_values(0)
+
+        # Normalize column names to handle provider inconsistencies (e.g., 'close' vs 'Close')
+        new_df.columns = [str(col).capitalize() for col in new_df.columns]
+
+        # Ensure a 'Close' column exists, using 'Adj close' as a fallback
+        if "Close" not in new_df.columns and "Adj close" in new_df.columns:
+            new_df = new_df.rename(columns={"Adj close": "Close"})
+
+    # If 'Close' column now exists, process and save the data.
+    if "Close" in new_df.columns:
+        # Ensure 'Close' is numeric before processing
+        new_df["Close"] = pd.to_numeric(new_df["Close"], errors="coerce")
+        new_df = new_df.dropna(subset=["Close"])
+
         new_df.index = pd.to_datetime(new_df.index, utc=True)
         new_df.index.name = "Date"
-        # Drop rows with NaN values in critical columns
-        new_df = new_df.dropna(subset=["Close"])
         # Fill missing values in other columns if necessary
-        new_df = new_df.fillna(method="ffill").fillna(method="bfill")
+        new_df = new_df.ffill().bfill()
         if not df_cached.empty:
             combined = pd.concat([df_cached, new_df])
             combined = combined[~combined.index.duplicated(keep="last")].sort_index()
@@ -215,7 +219,10 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         return combined.loc[(combined.index >= start_utc) & (combined.index <= end_utc)].copy()
 
     if not df_cached.empty:
-        return df_cached.loc[(df_cached.index >= start_utc) & (df_cached.index <= end_utc)].dropna(subset=["Close"]).copy()
+        df_filtered = df_cached.loc[(df_cached.index >= start_utc) & (df_cached.index <= end_utc)].copy()
+        if "Close" in df_filtered.columns:
+            return df_filtered.dropna(subset=["Close"])
+        return df_filtered
     return pd.DataFrame()
 
 # ============================
@@ -371,7 +378,7 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
     df = df.dropna(subset=["Close"])
 
     # Fill missing values in other columns
-    df = df.fillna(method="ffill").fillna(method="bfill")
+    df = df.ffill().bfill()
 
     df["Returns"]    = df["Close"].pct_change(fill_method=None)
     df["SMA_F_S"]    = df["Close"].rolling(FEAT_SMA_SHORT).mean()
@@ -389,12 +396,22 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
     print(f"   ↳ rows after features available: {len(ready)}")
     return df
 
-def train_predictive_model(df: pd.DataFrame):
-    """Binary classifier predicting probability of +1% over next H days."""
+def train_and_evaluate_models(df: pd.DataFrame):
+    """Train and compare multiple classifiers, returning the best one."""
     from sklearn.ensemble import RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.svm import SVC
+    from sklearn.model_selection import cross_val_score, StratifiedKFold
+    from sklearn.preprocessing import StandardScaler
+
+    try:
+        from lightgbm import LGBMClassifier
+    except ImportError:
+        print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
+        LGBMClassifier = None
 
     df = df.copy()
-    # Ensure features exist
+    # Feature generation (same as before)
     if "Returns" not in df.columns and "Close" in df.columns:
         df["Returns"] = df["Close"].pct_change()
     if "SMA_F_S" not in df.columns and "Close" in df.columns:
@@ -407,22 +424,59 @@ def train_predictive_model(df: pd.DataFrame):
         fwd = df["Close"].shift(-CLASS_HORIZON)
         df["TargetClass"] = ((fwd / df["Close"] - 1.0) > 0.01).astype(float)
 
-    req = ["Close","Returns","SMA_F_S","SMA_F_L","Volatility","TargetClass"]
+    req = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "TargetClass"]
     if any(c not in df.columns for c in req):
-        print("⚠️ Missing columns for model. Skipping.")
+        print("⚠️ Missing columns for model comparison. Skipping.")
         return None
 
     d = df[req].dropna()
-    if len(d) < 30:
-        print("⚠️ Not enough rows after feature prep to train classifier (need ≥ 30). Skipping model.")
+    if len(d) < 50:  # Increased requirement for cross-validation
+        print("⚠️ Not enough rows after feature prep to compare models (need ≥ 50). Skipping.")
         return None
 
-    X = d[["Close","Returns","SMA_F_S","SMA_F_L","Volatility"]].values
+    feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility"]
+    X_df = d[feature_names]
     y = d["TargetClass"].values
 
-    clf = RandomForestClassifier(n_estimators=400, random_state=SEED, class_weight="balanced", min_samples_leaf=2)
-    clf.fit(X, y)
-    return clf
+    # Scale features for models that are sensitive to scale (like Logistic Regression and SVC)
+    scaler = StandardScaler()
+    X = pd.DataFrame(scaler.fit_transform(X_df), columns=feature_names, index=X_df.index)
+
+    models = {
+        "Logistic Regression": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
+        "Random Forest": RandomForestClassifier(n_estimators=100, random_state=SEED, class_weight="balanced", min_samples_leaf=2),
+        "SVM": SVC(probability=True, random_state=SEED, class_weight="balanced")
+    }
+    if LGBMClassifier:
+        models["LightGBM"] = LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1)
+
+    results = {}
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+
+    print("  🔬 Comparing classifier performance (AUC score via 5-fold cross-validation):")
+    for name, model in models.items():
+        try:
+            # Set n_jobs=1 to avoid multiprocessing issues on Windows
+            scores = cross_val_score(model, X, y, cv=cv, scoring='roc_auc', n_jobs=1)
+            results[name] = np.mean(scores)
+            print(f"    - {name}: {results[name]:.4f} (std: {np.std(scores):.4f})")
+        except Exception as e:
+            print(f"    - {name}: Failed evaluation. Error: {e}")
+            results[name] = 0.0
+
+    if not any(results.values()):
+        print("  ⚠️ All models failed evaluation. No model will be used.")
+        return None
+
+    best_model_name = max(results, key=results.get)
+    print(f"  🏆 Best model: {best_model_name} with AUC = {results[best_model_name]:.4f}")
+
+    # Train the best model on all available data and return it
+    best_model_instance = models[best_model_name]
+    best_model_instance.fit(X, y)
+    
+    # We need to return the scaler as well to process live data
+    return best_model_instance, scaler
 
 # ============================
 # Rule-based backtester (ATR & ML gate)
@@ -431,15 +485,16 @@ def train_predictive_model(df: pd.DataFrame):
 class RuleTradingEnv:
     """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
     def __init__(self, df: pd.DataFrame, initial_balance: float, transaction_cost: float,
-                 model=None, min_proba: float = MIN_PROBA_UP, use_gate: bool = USE_MODEL_GATE):
+                 model=None, scaler=None, min_proba: float = MIN_PROBA_UP, use_gate: bool = USE_MODEL_GATE):
         if "Close" not in df.columns:
             raise ValueError("DataFrame must contain 'Close' column.")
         self.df = df.reset_index()
         self.initial_balance = float(initial_balance)
         self.transaction_cost = float(transaction_cost)
         self.model = model
+        self.scaler = scaler
         self.min_proba = float(min_proba)
-        self.use_gate = bool(use_gate) and (model is not None)
+        self.use_gate = bool(use_gate) and (model is not None) and (scaler is not None)
 
         self.reset()
 
@@ -475,38 +530,33 @@ class RuleTradingEnv:
             self.df["ATR"] = (ret.rolling(ATR_PERIOD).std() * close).rolling(2).mean()
 
         # Feature columns for ML gate (align with training)
-        self.df["RET_F"]   = close.pct_change(fill_method=None)
-        self.df["SMA_F_S"] = close.rolling(FEAT_SMA_SHORT).mean()
-        self.df["SMA_F_L"] = close.rolling(FEAT_SMA_LONG).mean()
-        self.df["VOL_F"]   = self.df["RET_F"].rolling(FEAT_VOL_WINDOW).std()
+        self.df["Returns"]    = close.pct_change(fill_method=None)
+        self.df["SMA_F_S"]    = close.rolling(FEAT_SMA_SHORT).mean()
+        self.df["SMA_F_L"]    = close.rolling(FEAT_SMA_LONG).mean()
+        self.df["Volatility"] = self.df["Returns"].rolling(FEAT_VOL_WINDOW).std()
 
     def _date_at(self, i: int) -> str:
         if "Date" in self.df.columns:
             return str(self.df.loc[i, "Date"])
         return str(i)
 
-<<<<<<< HEAD
-# Train PPO agent
-def train_ppo_agent(df):
-    env = DummyVecEnv([lambda: RLTradingEnv(df)])
-    model = PPO("MlpPolicy", env, verbose=1)
-    model.learn(total_timesteps=100000)
-    return model
-=======
     def _allow_buy_by_model(self, i: int) -> bool:
         if not self.use_gate:
             return True
         row = self.df.loc[i]
-        feats = ["Close", "RET_F", "SMA_F_S", "SMA_F_L", "VOL_F"]
-        if any(pd.isna(row.get(f)) for f in feats):
+        feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility"]
+        if any(pd.isna(row.get(f)) for f in feature_names):
             return False
-        X = np.array([[row["Close"], row["RET_F"], row["SMA_F_S"], row["SMA_F_L"], row["VOL_F"]]], dtype=float)
+        
+        # Prepare feature vector and scale it
+        X_raw = np.array([[row[f] for f in feature_names]], dtype=float)
+        X = self.scaler.transform(X_raw)
+        
         try:
             proba_up = float(self.model.predict_proba(X)[0][1])
         except Exception:
             return False
         return proba_up >= self.min_proba
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
 
     def _position_size_from_atr(self, price: float, atr: float) -> int:
         if atr is None or np.isnan(atr) or atr <= 0 or price <= 0:
@@ -541,83 +591,6 @@ def train_ppo_agent(df):
         self.holding_bars = 0
         self.trade_log.append((date, "BUY", price, qty, "TICKER", {"fee": fee}, fee))
 
-<<<<<<< HEAD
-# Use a cross-platform interactive backend
-matplotlib.use("Agg")  # Or use "Agg" for non-interactive environments
-
-# --- Constants ---
-INITIAL_BALANCE = 20000
-TRANSACTION_COST = 0.0015
-POSITION_SIZE = 1.0  # Fixierte Positionsgröße auf 1
-BACKTEST_PERIOD = 60
-STOP_LOSS = 0.2  # Increased stop-loss threshold
-TAKE_PROFIT = 0.2  # Increased take-profit threshold
-TRAILING_STOP = 0.02 # Default trailing stop
-MIN_HOLDING_PERIOD = 10000000  # Minimum holding period in steps
-DEBUG_STEPS = False  # Debug switch for step method
-
-# Define fixed stop-loss and take-profit thresholds
-FIXED_STOP_LOSS = {}
-FIXED_TAKE_PROFIT = {}
-
-# --- Trading environment ---
-class RuleBasedTradingEnv:
-    """Custom trading environment for rule-based trading."""
-    def __init__(self, df: pd.DataFrame, initial_balance: float = INITIAL_BALANCE, transaction_cost: float = TRANSACTION_COST, stop_loss: float = STOP_LOSS, take_profit: float = TAKE_PROFIT, trailing_stop: float = TRAILING_STOP):
-        self.df = df.reset_index(drop=True)  # Ensure the DataFrame is reset and uses only the passed data
-        print(f"Number of steps included in the backtest: {len(self.df)}")  # Print the number of steps
-        self.current_step = 0
-        self.cash = initial_balance
-        self.shares = 0
-        self.transaction_cost = transaction_cost
-        self.portfolio_history = [initial_balance]
-        self.trade_log = []
-        self.returns = []
-        self.stop_loss = stop_loss
-        self.take_profit = take_profit
-        self.trailing_stop = trailing_stop
-        self.dynamic_stop_loss = stop_loss
-        self.dynamic_take_profit = take_profit
-        self.trailing_stop_price = None  # Add a variable to track the trailing stop price
-        self.holding_period = 0  # Track the holding period for shares
-
-    def reset(self):
-        """Reset the environment to initial state."""
-        self.current_step = 0
-        self.cash = INITIAL_BALANCE
-        self.shares = 0
-        self.portfolio_history = [self.cash]
-        self.trade_log = []
-        self.returns = []
-        self.trailing_stop_price = None  # Reset the trailing stop price
-        self.holding_period = 0  # Reset holding period
-
-    def detect_market_trend(self):
-        """Detect market trend using moving averages."""
-        short_window = 10  # Short-term moving average window
-        long_window = 30  # Long-term moving average window
-
-        # Calculate moving averages
-        self.df['SMA_Short'] = self.df['Close'].rolling(window=short_window).mean()
-        self.df['SMA_Long'] = self.df['Close'].rolling(window=long_window).mean()
-
-        # Determine market trend
-        if self.df['SMA_Short'].iloc[self.current_step] > self.df['SMA_Long'].iloc[self.current_step]:
-            return "uptrend"
-        elif self.df['SMA_Short'].iloc[self.current_step] < self.df['SMA_Long'].iloc[self.current_step]:
-            return "downtrend"
-        else:
-            return "sideways"
-
-    def step(self):
-        """Execute one step with dynamic adjustments based on market trends."""
-        current_price = self.df["Close"].iloc[self.current_step].item()
-        previous_price = (
-            self.df["Close"].iloc[self.current_step - 1].item()
-            if self.current_step > 0
-            else current_price
-        )
-=======
     def _sell(self, price: float, date: str):
         if self.shares <= 0:
             return
@@ -635,7 +608,6 @@ class RuleBasedTradingEnv:
     def step(self):
         if self.current_step >= len(self.df):
             return True
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
 
         row = self.df.iloc[self.current_step]
         price = float(row["Close"])
@@ -644,33 +616,10 @@ class RuleBasedTradingEnv:
         sma_l = float(row["SMA_L"]) if pd.notna(row["SMA_L"]) else None
         atr   = float(row["ATR"]) if pd.notna(row.get("ATR", np.nan)) else None
 
-<<<<<<< HEAD
-        # Detect market trend
-        market_trend = self.detect_market_trend()
-        if DEBUG_STEPS:
-            print(f"Step {self.current_step}: Market Trend: {market_trend}")
-
-        # Debug: Print dynamic thresholds
-        if DEBUG_STEPS:
-            print(f"Step {self.current_step}: Adjusted Stop-Loss: {self.dynamic_stop_loss:.2%}, Adjusted Take-Profit: {self.dynamic_take_profit:.2%}")
-
-        # Take Profit Logic
-        if self.shares > 0 and self.trailing_stop_price is not None:
-            take_profit_price = self.trailing_stop_price / (1 - self.dynamic_take_profit)
-            if current_price >= take_profit_price:
-                if DEBUG_STEPS:
-                    print(f"Step {self.current_step}: Take Profit Triggered! Current Price: {current_price:.2f}, Take Profit Price: {take_profit_price:.2f}")
-                self.cash += self.shares * current_price * (1 - self.transaction_cost)
-                self.trade_log.append((self.current_step, "SELL", current_price, self.shares))
-                self.shares = 0
-                self.trailing_stop_price = None
-                self.holding_period = 0  # Reset holding period after selling
-=======
         if self.shares > 0:
             if self.highest_since_entry is None or price > self.highest_since_entry:
                 self.highest_since_entry = price
             self.holding_bars += 1
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
 
         # Entry: SMA cross AND (optional) ML gate
         if sma_s is not None and sma_l is not None:
@@ -710,114 +659,15 @@ class RuleBasedTradingEnv:
 # Analytics
 # ============================
 
-<<<<<<< HEAD
-# --- Predictive Model Functions ---
-def _add_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add technical indicator features to the DataFrame."""
-    df = df.copy()
-    df['Returns'] = df['Close'].pct_change()
-    df['Momentum'] = df['Close'] - df['Close'].shift(10)
-    df['SMA_10'] = df['Close'].rolling(window=10).mean()
-    df['SMA_30'] = df['Close'].rolling(window=30).mean()
-    df['Volatility'] = df['Returns'].rolling(window=10).std()
-    df['Target'] = df['Close'].shift(-1)
-    return df
-
-def train_predictive_model(df: pd.DataFrame):
-    """
-    Train a predictive model using the provided DataFrame.
-    Assumes the DataFrame already has features and has been cleaned.
-    :param df: DataFrame containing features and target variable.
-    :return: Trained model.
-    """
-    print(f"Training dataset size: {len(df)} rows")
-    
-    X = df[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].values
-    y = df['Target'].values
-
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X, y)
-    return model
-
-def predict_next_price(model, df):
-    """Predict the next day's price."""
-    df_features = _add_features(df)
-    latest_data = df_features[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].iloc[-1].values.reshape(1, -1)
-    return model.predict(latest_data)[0]
-
-# --- Parameter Optimization Function ---
-def optimize_parameters(strategy, param_grid, X_train, y_train, cv=3, scoring='neg_mean_squared_error'):
-    """
-    Optimize parameters for the given strategy using GridSearchCV.
-    :param strategy: The trading strategy to optimize.
-    :param param_grid: Dictionary of parameters to search.
-    :param X_train: Training features.
-    :param y_train: Training target.
-    :param cv: Number of cross-validation folds.
-    :param scoring: Scoring metric for optimization.
-    :return: Best parameters found by GridSearchCV.
-    """
-    grid_search = GridSearchCV(
-        estimator=strategy,
-        param_grid=param_grid,
-        cv=cv,
-        scoring=scoring,  # Use the scoring metric passed to the function
-        n_jobs=1
-    )
-    grid_search.fit(X_train, y_train)
-    return grid_search.best_params_
-
-# --- Data fetching and preprocessing ---
-def prepare_data(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
-    df = yf.download(ticker, start=start, end=end, auto_adjust=True).dropna()
-    if df.empty or len(df) < 20:
-        raise ValueError(f"Insufficient data for {ticker} from {start} to {end}")
-    return df
-
-def calculate_volatility(df: pd.DataFrame) -> float:
-    returns = df["Close"].pct_change().dropna()
-    return returns.std().item()
-
-def get_top_performing_stocks_ytd(sp500: bool = True, n: int = 10) -> List[str]:
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    symbol_column = "Symbol"
-    index_data = pd.read_html(url)[0]
-    if symbol_column not in index_data.columns:
-        raise KeyError(f"Column '{symbol_column}' not found in the table fetched from {url}")
-    tickers = [symbol.replace('.', '-') for symbol in index_data[symbol_column].tolist()]
-    performances = []
-    end_date = datetime.today()
-    start_date = datetime(end_date.year, 1, 1)
-    for ticker in tqdm(tickers[:50], desc="Processing S&P 500 Tickers"):
-        df = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
-        if df.empty or len(df) < 20 or "Close" not in df.columns:
-            continue
-        start_price = df["Close"].iloc[0].item()
-        end_price = df["Close"].iloc[-1].item()
-        growth = (end_price - start_price) / start_price
-        performances.append((ticker, growth))
-    top_tickers = [ticker for ticker, _ in sorted(performances, key=lambda x: x[1], reverse=True)[:n]]
-    return top_tickers
-
-def analyze_trades(trade_log: List[tuple]):
-    buys = [trade for trade in trade_log if trade[1] == "BUY"]
-    sells = [trade for trade in trade_log if trade[1] == "SELL"]
-    completed_trades = min(len(buys), len(sells))
-    profits = [sells[i][2] - buys[i][2] for i in range(completed_trades)]
-    total_profit = sum(profits)
-    win_rate = len([p for p in profits if p > 0]) / len(profits) if profits else 0
-    avg_profit = total_profit / len(profits) if profits else 0
-    print(f"Total Profit: ${total_profit:.2f}")
-    print(f"Wins: {len([p for p in profits if p > 0])}, Losses: {len([p for p in profits if p <= 0])}")
-    print(f"Win Rate: {win_rate:.2%}, Avg Profit: ${avg_profit:.2f}")
-
-def analyze_trades_per_stock(trade_log: List[tuple], ticker: str, final_price: float):
-    buys = [trade for trade in trade_log if trade[1] == "BUY"]
-    sells = [trade for trade in trade_log if trade[1] == "SELL"]
-    profits = [sells[i][2] - buys[i][2] for i in range(min(len(buys), len(sells)))]
-=======
-def analyze_trades_per_stock(trade_log: List[tuple], ticker: str, final_price: float) -> Dict[str, float]:
-    buys  = [t for t in trade_log if t[1] == "BUY"]
+def analyze_performance(
+    trade_log: List[tuple],
+    strategy_history: List[float],
+    buy_hold_history: List[float],
+    ticker: str
+) -> Dict[str, float]:
+    """Analyzes trades and calculates key performance metrics."""
+    # --- Trade Analysis ---
+    buys = [t for t in trade_log if t[1] == "BUY"]
     sells = [t for t in trade_log if t[1] == "SELL"]
     profits = []
     n = min(len(buys), len(sells))
@@ -825,67 +675,48 @@ def analyze_trades_per_stock(trade_log: List[tuple], ticker: str, final_price: f
         pb, sb = float(buys[i][2]), float(sells[i][2])
         qb, qs = float(buys[i][3]), float(sells[i][3])
         qty = min(qb, qs)
-        fee_b = float(buys[i][6]) if len(buys[i])>6 else 0.0
-        fee_s = float(sells[i][6]) if len(sells[i])>6 else 0.0
+        fee_b = float(buys[i][6]) if len(buys[i]) > 6 else 0.0
+        fee_s = float(sells[i][6]) if len(sells[i]) > 6 else 0.0
         profits.append((sb - pb) * qty - (fee_b + fee_s))
-
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
-    if len(buys) > len(sells):
-        last_buy = buys[len(sells)]
-        unreal = (float(final_price) - float(last_buy[2])) * float(last_buy[3])
-        profits.append(unreal)
-        print(f"  Unrealized Profit for Open Position: ${unreal:.2f}")
 
     total_pnl = float(sum(profits))
     win_rate = (sum(1 for p in profits if p > 0) / len(profits)) if profits else 0.0
     print(f"\n📊 {ticker} Trade Analysis:")
-    print(f"  Wins: {sum(1 for p in profits if p > 0)}, Losses: {sum(1 for p in profits if p <= 0)}")
-    print(f"  Win Rate: {win_rate:.2%}")
-    print(f"  Final Price: ${float(final_price):.2f}")
-    return {"trades": n, "win_rate": win_rate, "total_pnl": total_pnl}
+    print(f"  - Trades: {n}, Win Rate: {win_rate:.2%}")
+    print(f"  - Total PnL: ${total_pnl:,.2f}")
+
+    # --- Performance Metrics ---
+    strat_returns = pd.Series(strategy_history).pct_change().dropna()
+    bh_returns = pd.Series(buy_hold_history).pct_change().dropna()
+
+    # Sharpe Ratio (annualized, assuming 252 trading days)
+    sharpe_strat = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252) if strat_returns.std() > 0 else 0
+    sharpe_bh = (bh_returns.mean() / bh_returns.std()) * np.sqrt(252) if bh_returns.std() > 0 else 0
+
+    # Max Drawdown
+    strat_series = pd.Series(strategy_history)
+    strat_cummax = strat_series.cummax()
+    strat_drawdown = ((strat_series - strat_cummax) / strat_cummax).min()
+
+    bh_series = pd.Series(buy_hold_history)
+    bh_cummax = bh_series.cummax()
+    bh_drawdown = ((bh_series - bh_cummax) / bh_cummax).min()
+
+    print(f"\n📈 {ticker} Performance Metrics:")
+    print(f"  | Metric         | Strategy      | Buy & Hold    |")
+    print(f"  |----------------|---------------|---------------|")
+    print(f"  | Sharpe Ratio   | {sharpe_strat:13.2f} | {sharpe_bh:13.2f} |")
+    print(f"  | Max Drawdown   | {strat_drawdown:12.2%} | {bh_drawdown:12.2%} |")
+
+    return {
+        "trades": n, "win_rate": win_rate, "total_pnl": total_pnl,
+        "sharpe_ratio": sharpe_strat, "max_drawdown": strat_drawdown
+    }
 
 # ============================
 # Main
 # ============================
 
-<<<<<<< HEAD
-def pad_portfolio_history(portfolio_history: List[float], max_steps: int) -> List[float]:
-    if len(portfolio_history) < max_steps:
-        last_value = portfolio_history[-1] if portfolio_history else 0
-        portfolio_history.extend([last_value] * (max_steps - len(portfolio_history)))
-    return portfolio_history
-
-def fetch_training_data(ticker: str) -> pd.DataFrame:
-    """Fetch historical stock data for the last 30 days to account for rolling calculations."""
-    end_date = datetime.today()
-    start_date = end_date - timedelta(days=60)  # Fetch data for the last 30 days
-
-    # Ensure end_date is not in the future
-    if end_date > datetime.now():
-        end_date = datetime.now()
-
-    df = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True).dropna()
-    if df.empty or len(df) < 30:  # Ensure at least 30 rows for rolling features
-        print(f"⚠️ Insufficient data for {ticker} from {start_date} to {end_date}. Returning empty DataFrame.")
-        return pd.DataFrame()  # Return an empty DataFrame if insufficient data
-
-    # Calculate additional features and clean data
-    df = _add_features(df)
-    df = df.dropna()
-
-    # Debug: Check if all required columns exist
-    required_columns = ['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility', 'Target']
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        print(f"⚠️ Missing columns in DataFrame: {missing_columns}. Returning empty DataFrame.")
-        return pd.DataFrame()  # Return an empty DataFrame if columns are missing
-
-    print(f"✅ Fetched {len(df)} rows of data for {ticker} from {start_date} to {end_date}.")
-    return df
-
-# --- Main function ---
-=======
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
 def main():
     if pdr is None and DATA_PROVIDER.lower() == 'stooq':
         print("⚠️ pandas-datareader not installed; run: pip install pandas-datareader")
@@ -904,91 +735,23 @@ def main():
     train_end = bt_start - timedelta(days=1)
     train_start = train_end - timedelta(days=TRAIN_LOOKBACK_DAYS)
 
+    scalers: Dict[str, object] = {}
     for ticker in top_tickers:
-<<<<<<< HEAD
-        print(f"\n🔄 Fetching and preparing training data for {ticker}...")
-        training_data = fetch_training_data(ticker)
-=======
         print(f"🔄 Fetching training data for {ticker}...")
         training_data = fetch_training_data(ticker, train_start, train_end)
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
         if training_data.empty:
             print(f"⚠️ Training data for {ticker} is empty. Skipping.\n")
             continue
-<<<<<<< HEAD
-        print(f"✅ Training data prepared with {len(training_data)} data points for {ticker}.\n")
-
-        print(f"🔄 Training predictive model for {ticker}...")
-        model = train_predictive_model(training_data)
-        models[ticker] = model
-        print(f"✅ Predictive model training completed for {ticker}.\n")
-
-    if not models:
-        print("⚠️ No models were trained. Exiting program.")
-        return None, None, None  # Exit early if no models were trained
-
-    print("🔄 Starting parameter optimization...")
-    # Define the custom strategy
-    strategy = CustomTradingStrategy()
-
-    # Refine parameter grid
-    param_grid = {
-        'STOP_LOSS': [0.05, 0.1, 0.15],
-        'TAKE_PROFIT': [0.05, 0.1, 0.15],
-        # Entferne POSITION_SIZE aus der Optimierung
-        'TRAILING_STOP': [0.01, 0.02, 0.03, 0.04, 0.05],  # Refined range for trailing stop
-    }
-
-    # Example: Use the first stock's data for parameter optimization
-    first_ticker = next(iter(models.keys()))
-    optimization_data = fetch_training_data(first_ticker)
-    X_opt = optimization_data[['Close', 'Returns', 'SMA_10', 'SMA_30', 'Volatility']].values
-    y_opt = optimization_data['Target'].values
-
-    best_params = optimize_parameters(
-        strategy, param_grid, X_opt, y_opt, cv=3, scoring='neg_mean_squared_error'  # Use regression scoring
-    )
-    print(f"🔧 Optimized Parameters: {best_params}")
-    
-    # Use optimized parameters for the backtest
-    stop_loss_opt = best_params['STOP_LOSS']
-    take_profit_opt = best_params['TAKE_PROFIT']
-    trailing_stop_opt = best_params['TRAILING_STOP']
-
-    print("✅ Parameter optimization completed.\n")
-
-    start_date = datetime.today() - timedelta(days=BACKTEST_PERIOD + 365)  # Extend backtest period by 1 year
-    end_date = datetime.today()
-
-    # Initialize combined portfolio and individual stock contributions
-    combined_portfolio = [0] * (BACKTEST_PERIOD + 365)
-    buy_and_hold_portfolio = [0] * (BACKTEST_PERIOD + 365)
-    individual_portfolios = {}
-    trade_logs = {}
-
-    # Allocate the initial balance equally across all selected stocks
-    balance_per_stock = INITIAL_BALANCE / len(top_tickers)
-    for ticker in top_tickers:
-        print(f"\n📈 Fetching data for {ticker}...")
-        df = prepare_data(ticker, start_date, end_date)
-        print(f"🔄 Running backtest for {ticker}...")
-        env = RuleBasedTradingEnv(
-            df, 
-            initial_balance=balance_per_stock,
-            stop_loss=stop_loss_opt,
-            take_profit=take_profit_opt,
-            trailing_stop=trailing_stop_opt
-        )
-        env.run()
-        print(f"✅ Backtest completed for {ticker}.")
-=======
         print(f"✅ Training data fetched with {len(training_data)} rows for {ticker}.")
-        model = train_predictive_model(training_data)
-        if model is not None:
+        
+        model_and_scaler = train_and_evaluate_models(training_data)
+        if model_and_scaler is not None:
+            model, scaler = model_and_scaler
             models[ticker] = model
-            print(f"✅ Classifier trained for {ticker}.\n")
+            scalers[ticker] = scaler
+            print(f"✅ Best model selected and trained for {ticker}.\n")
         else:
-            print(f"⚠️ Skipped model for {ticker} due to insufficient data.\n")
+            print(f"⚠️ Skipped model for {ticker} due to insufficient data or evaluation failure.\n")
 
     if not models and USE_MODEL_GATE:
         print("⚠️ No models were trained. Model-gating will be disabled for this run.\n")
@@ -1021,122 +784,33 @@ def main():
         if df is None or df.empty or len(df) < STRAT_SMA_LONG + 5:
             print(f"  ⚠️ Skipping {ticker}: Insufficient or invalid data.")
             continue
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
 
         # Ensure no NaN values in critical columns
         if df["Close"].isna().any():
             print(f"  ⚠️ Skipping {ticker}: 'Close' column contains NaN values.")
             continue
 
-<<<<<<< HEAD
-        # Analyze trades for the current stock
-        print(f"🔍 Analyzing trades for {ticker}...")
-        analyze_trades_per_stock(env.trade_log, ticker, final_price=df["Close"].iloc[-1].item())
-        print(f"✅ Trade analysis completed for {ticker}.")
-=======
         model = models.get(ticker) if USE_MODEL_GATE else None
+        scaler = scalers.get(ticker) if USE_MODEL_GATE else None
         env = RuleTradingEnv(df, initial_balance=capital_per_stock, transaction_cost=TRANSACTION_COST,
-                             model=model, min_proba=MIN_PROBA_UP, use_gate=USE_MODEL_GATE)
+                             model=model, scaler=scaler, min_proba=MIN_PROBA_UP, use_gate=USE_MODEL_GATE)
         final_val, log = env.run()
-        final_price = float(df["Close"].iloc[-1])
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
+        strategy_history = env.portfolio_history
 
         # Buy & Hold baseline
         start_price = float(df["Close"].iloc[0])
         shares_bh = int(capital_per_stock / start_price) if start_price > 0 else 0
         cash_bh = capital_per_stock - shares_bh * start_price
-        bh_val = cash_bh + shares_bh * final_price
+        buy_hold_history = (cash_bh + shares_bh * df["Close"]).tolist()
+        bh_val = buy_hold_history[-1]
 
-<<<<<<< HEAD
-        # Calculate buy-and-hold portfolio value for this stock
-        initial_price = df["Close"].iloc[0].item()
-        shares_held = balance_per_stock / initial_price
-        stock_buy_and_hold_value = [(shares_held * df["Close"].iloc[i].item()) for i in range(len(df))]
-        stock_buy_and_hold_value = pad_portfolio_history(stock_buy_and_hold_value, BACKTEST_PERIOD + 365)
-        buy_and_hold_portfolio = [
-            buy_and_hold_portfolio[i] + stock_buy_and_hold_value[i]
-            for i in range(len(buy_and_hold_portfolio))
-        ]
-=======
         print(f"  ✅ Final strategy value: ${final_val:,.2f} | Buy&Hold: ${bh_val:,.2f}")
-        analyze_trades_per_stock(log, ticker, final_price)
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
+        analyze_performance(log, strategy_history, buy_hold_history, ticker)
 
         combined_value += final_val
         buy_hold_value += bh_val
 
-<<<<<<< HEAD
-    # Highlight trailing stop-loss triggers and buy/sell actions
-    for ticker, log in trade_logs.items():
-        for step, action, price, shares in log:
-            if action == "SELL":
-                plt.scatter(step, combined_portfolio[step], color="red", label="Sell Action", zorder=5)
-            elif action == "BUY":
-                plt.scatter(step, combined_portfolio[step], color="green", label="Buy Action", zorder=5)
-
-    # Avoid duplicate labels in the legend
-    handles, labels = plt.gca().get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    plt.legend(by_label.values(), by_label.keys())
-
-    plt.title("Combined Portfolio Value Over Time with Individual Contributions")
-    plt.xlabel("Steps")
-    plt.ylabel("Portfolio Value ($)")
-    plt.ylim(0, max(max(combined_portfolio), max(buy_and_hold_portfolio)) * 1.1)
-    plt.savefig("plots/combined_portfolio_with_individuals.png")
-    plt.show()
-
-    print("✅ Combined portfolio rendering completed.\n")
-    return combined_portfolio, buy_and_hold_portfolio, models
-
-if __name__ == "__main__":
-    main_result = main()
-    if main_result:
-        combined_portfolio, buy_and_hold_portfolio, models = main_result
-        final_combined_value = combined_portfolio[-1] if combined_portfolio else 0
-        final_buy_and_hold_value = buy_and_hold_portfolio[-1] if buy_and_hold_portfolio else 0
-        print(f"\n💰 Final Combined Portfolio Value: ${final_combined_value:.2f}")
-        print(f"💰 Final Buy-and-Hold Portfolio Value: ${final_buy_and_hold_value:.2f}")
-
-        # Plot the results
-        if combined_portfolio and buy_and_hold_portfolio:
-            plt.figure(figsize=(12, 6))
-            plt.plot(combined_portfolio, label="Combined Portfolio", linewidth=2, color="black")
-            plt.plot(buy_and_hold_portfolio, label="Buy-and-Hold Portfolio", linestyle="--", color="blue")
-            plt.title("Portfolio Value Over Time")
-            plt.xlabel("Steps")
-            plt.ylabel("Portfolio Value ($)")
-            plt.legend()
-            plt.savefig("plots/final_portfolio_comparison.png")
-            plt.show()
-
-        # Ensure models dictionary is accessible
-        if models:
-            print("\n📊 Predictions for Trained Stocks:")
-            for ticker, model in models.items():
-                latest_data = fetch_training_data(ticker) # Fetch the latest data
-                if latest_data.empty:
-                    print(f"⚠️ No data available for {ticker}. Skipping prediction.")
-                    continue
-                
-                # Ensure the dataframe passed to predict_next_price has enough data for feature calculation
-                prediction = predict_next_price(model, latest_data)
-                latest_close = latest_data['Close'].iloc[-1].item()
-                action = "BUY" if prediction > latest_close else "SELL"
-                print(f"🔮 {ticker}: Predicted Action = {action}")
-        else:
-            print("⚠️ No trained models found. Skipping predictions.")
-    else:
-        print("Program exited without generating results.")
-
-# --- RSI Calculation ---
-def calculate_rsi(series, period=14):
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-=======
+    if combined_value > 0:
         print("\n💰 Final Combined Portfolio Value: ${:,.2f}".format(combined_value))
         print("💰 Final Buy-and-Hold Portfolio Value: ${:,.2f}".format(buy_hold_value))
     
@@ -1151,6 +825,5 @@ def calculate_rsi(series, period=14):
     
         return combined_value, buy_hold_value, models
     
-    if __name__ == "__main__":
-        main()
->>>>>>> 7268e6c556c182b7683acc981e04cbf88771aaff
+if __name__ == "__main__":
+    main()
