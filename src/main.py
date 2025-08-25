@@ -45,7 +45,7 @@ SEED                    = 42
 np.random.seed(SEED)
 
 # --- Provider & caching
-DATA_PROVIDER           = 'stooq'    # 'stooq' or 'yahoo'
+DATA_PROVIDER           = 'yahoo'    # 'stooq' or 'yahoo'
 USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin
 DATA_CACHE_DIR          = Path("data_cache")
 TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
@@ -64,8 +64,8 @@ TRAIN_LOOKBACK_DAYS     = 360        # more data for model
 STRAT_SMA_SHORT         = 20
 STRAT_SMA_LONG          = 100
 ATR_PERIOD              = 14
-ATR_MULT_TRAIL          = 4.0
-ATR_MULT_TP             = 6.0
+ATR_MULT_TRAIL          = 3.5
+ATR_MULT_TP             = 0.0        # 0 disables hard TP; rely on trailing
 RISK_PER_TRADE          = 0.01       # 1% of capital
 TRANSACTION_COST        = 0.001      # 0.1%
 
@@ -75,7 +75,10 @@ FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
 CLASS_HORIZON           = 5          # days ahead for classification target
 MIN_PROBA_UP            = 0.55       # ML gate threshold
-USE_MODEL_GATE          = True       # require model proba >= threshold for buys
+USE_MODEL_GATE          = True       # ENABLE ML gate
+USE_MARKET_FILTER       = True       # re-enable market filter
+MARKET_FILTER_TICKER    = 'SPY'
+MARKET_FILTER_SMA       = 200
 
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
@@ -126,82 +129,55 @@ def _fetch_from_stooq(ticker: str, start: datetime, end: datetime) -> pd.DataFra
         return pd.DataFrame()
 
 # ============================
-# Data access with cache
+# Data access
 # ============================
 
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
-    """Load from cache or download, ensuring all data is cleaned before returning."""
-    _ensure_dir(DATA_CACHE_DIR)
-    cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
-
-    # Normalize times
+    """Download and clean data from the selected provider."""
     start_utc = _to_utc(start)
     end_utc   = _to_utc(end)
+    
+    provider = DATA_PROVIDER.lower()
+    final_df = pd.DataFrame()
 
-    # 1. Load from cache
-    df_cached = pd.DataFrame()
-    if cache_file.exists():
-        try:
-            df_cached = pd.read_csv(cache_file, parse_dates=["Date"]).set_index("Date").sort_index()
-            df_cached.index = pd.to_datetime(df_cached.index, utc=True)
-        except Exception:
-            df_cached = pd.DataFrame()
-
-    # 2. Check if cache is sufficient
-    if not df_cached.empty and df_cached.index.max() >= (end_utc - timedelta(days=2)):
-        final_df = df_cached
-    else:
-        # 3. If not sufficient, download new data
-        dl_start = (df_cached.index.max() + timedelta(days=1)) if not df_cached.empty else start_utc
-        new_df = pd.DataFrame()
-        provider = DATA_PROVIDER.lower()
-
-        if provider == 'stooq':
-            stooq_df = _fetch_from_stooq(ticker, dl_start, end_utc)
-            if stooq_df.empty and not ticker.upper().endswith('.US'):
-                stooq_df = _fetch_from_stooq(f"{ticker}.US", dl_start, end_utc)
-            if not stooq_df.empty:
-                new_df = stooq_df.copy()
-            elif USE_YAHOO_FALLBACK:
-                try:
-                    downloaded_df = yf.download(ticker, start=dl_start, end=end_utc, auto_adjust=True, progress=False)
-                    if downloaded_df is not None:
-                        new_df = downloaded_df.dropna()
-                except Exception as e:
-                    print(f"⚠️ yfinance fallback failed for {ticker}: {e}")
-        else:
+    if provider == 'stooq':
+        stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
+        if stooq_df.empty and not ticker.upper().endswith('.US'):
+            stooq_df = _fetch_from_stooq(f"{ticker}.US", start_utc, end_utc)
+        if not stooq_df.empty:
+            final_df = stooq_df.copy()
+        elif USE_YAHOO_FALLBACK:
             try:
-                downloaded_df = yf.download(ticker, start=dl_start, end=end_utc, auto_adjust=True, progress=False)
+                downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
                 if downloaded_df is not None:
-                    new_df = downloaded_df.dropna()
+                    final_df = downloaded_df.dropna()
             except Exception as e:
-                print(f"⚠️ yfinance failed for {ticker}: {e}")
-            if new_df.empty and pdr is not None:
-                stooq_df = _fetch_from_stooq(ticker, dl_start, end_utc)
-                if stooq_df.empty and not ticker.upper().endswith('.US'):
-                    stooq_df = _fetch_from_stooq(f"{ticker}.US", dl_start, end_utc)
-                if not stooq_df.empty:
-                    new_df = stooq_df.copy()
+                print(f"⚠️ yfinance fallback failed for {ticker}: {e}")
+    else:
+        try:
+            downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
+            if downloaded_df is not None:
+                final_df = downloaded_df.dropna()
+        except Exception as e:
+            print(f"⚠️ yfinance failed for {ticker}: {e}")
+        if final_df.empty and pdr is not None:
+            stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
+            if stooq_df.empty and not ticker.upper().endswith('.US'):
+                stooq_df = _fetch_from_stooq(f"{ticker}.US", start_utc, end_utc)
+            if not stooq_df.empty:
+                final_df = stooq_df.copy()
 
-        # 4. Combine cached and new data
-        if not new_df.empty:
-            new_df = new_df.copy()
-            if isinstance(new_df.columns, pd.MultiIndex):
-                new_df.columns = new_df.columns.get_level_values(0)
-            new_df.columns = [str(col).capitalize() for col in new_df.columns]
-            if "Close" not in new_df.columns and "Adj close" in new_df.columns:
-                new_df = new_df.rename(columns={"Adj close": "Close"})
-            
-            if not df_cached.empty:
-                combined = pd.concat([df_cached, new_df])
-                final_df = combined[~combined.index.duplicated(keep="last")].sort_index()
-            else:
-                final_df = new_df
-        else:
-            final_df = df_cached
+    if final_df.empty:
+        return pd.DataFrame()
 
-    # 5. Centralized Cleaning and Saving
-    if final_df.empty or "Close" not in final_df.columns:
+    # Clean and normalize the downloaded data
+    if isinstance(final_df.columns, pd.MultiIndex):
+        final_df.columns = final_df.columns.get_level_values(0)
+    final_df.columns = [str(col).capitalize() for col in final_df.columns]
+    if "Close" not in final_df.columns and "Adj close" in final_df.columns:
+        final_df = final_df.rename(columns={"Adj close": "Close"})
+
+    if "Close" not in final_df.columns:
         return pd.DataFrame()
 
     final_df.index = pd.to_datetime(final_df.index, utc=True)
@@ -210,37 +186,15 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     final_df = final_df.dropna(subset=["Close"])
     final_df = final_df.ffill().bfill()
 
-    try:
-        final_df.reset_index().to_csv(cache_file, index=False)
-    except Exception:
-        pass
-
-    # 6. Return the requested slice
     return final_df.loc[(final_df.index >= start_utc) & (final_df.index <= end_utc)].copy()
 
 # ============================
 # Ticker discovery
 # ============================
 
-def get_top_performing_stocks_ytd(sp500: bool = True, n: int = N_TOP_TICKERS) -> List[str]:
+def get_tickers_for_backtest(n: int = 10) -> List[str]:
+    """Gets a list of n random tickers from the S&P 500."""
     fallback = ["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "TSLA", "GOOGL", "COST", "LRCX"]
-
-    # Cache first
-    try:
-        if TOP_CACHE_PATH.exists():
-            data = json.loads(TOP_CACHE_PATH.read_text(encoding="utf-8"))
-            ts_val = data.get("timestamp")
-            ts = datetime.fromisoformat(ts_val) if isinstance(ts_val, str) else None
-            if ts:
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                now = datetime.now(timezone.utc)
-                if (now - ts).days <= CACHE_DAYS and data.get("tickers"):
-                    return data["tickers"][:n]
-    except Exception as e:
-        print(f"⚠️ Cache read failed: {e}")
-
-    # Get S&P 500 symbol list
     try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
         table = pd.read_html(url)[0]
@@ -250,93 +204,52 @@ def get_top_performing_stocks_ytd(sp500: bool = True, n: int = N_TOP_TICKERS) ->
         print(f"⚠️ Could not fetch S&P 500 list ({e}). Using static fallback.")
         tickers_all = [_normalize_symbol(sym, DATA_PROVIDER) for sym in fallback]
 
-    end_date = datetime.now(timezone.utc)
-    start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
-
-    def compute_growth_for_batch(batch: List[str]) -> List[Tuple[str, float]]:
-        results: List[Tuple[str, float]] = []
-
-        # Stooq first
-        if DATA_PROVIDER.lower() == 'stooq' and pdr is not None:
-            for t in (batch if isinstance(batch, list) else [batch]):
-                d = _fetch_from_stooq(t, start_date, end_date)
-                if (d.empty or "Close" not in d.columns or len(d) < 2) and not t.upper().endswith('.US'):
-                    d = _fetch_from_stooq(f"{t}.US", start_date, end_date)
-                if d.empty or "Close" not in d.columns or len(d) < 2:
-                    continue
-                sp, ep = float(d["Close"].iat[0]), float(d["Close"].iat[-1])
-                if sp > 0:
-                    results.append((t, (ep - sp) / sp))
-            if results:
-                return results
-
-        # Yahoo polite batch
-        try:
-            df = yf.download(batch, period="ytd", interval="1d", progress=False, auto_adjust=True, group_by="ticker", threads=False)
-        except Exception:
-            df = pd.DataFrame()
-
-        # Single ticker
-        if isinstance(batch, str) or (isinstance(batch, list) and len(batch) == 1):
-            key = batch[0] if isinstance(batch, list) else batch
-            d = df if isinstance(df, pd.DataFrame) else pd.DataFrame(df)
-            s = pd.Series(dtype=float)
-            try:
-                if isinstance(d.columns, pd.MultiIndex):
-                    if (key, "Close") in d.columns:
-                        s = d[(key, "Close")].dropna()
-                    elif (key, "Adj Close") in d.columns:
-                        s = d[(key, "Adj Close")].dropna()
-                else:
-                    s = d["Close"].dropna() if "Close" in d.columns else d.get("Adj Close", pd.Series(dtype=float)).dropna()
-            except Exception:
-                s = pd.Series(dtype=float)
-            if not s.empty and len(s) >= 2:
-                sp, ep = float(s.iat[0]), float(s.iat[-1])
-                if sp > 0:
-                    results.append((key, (ep - sp) / sp))
-            return results
-
-        # MultiIndex (many tickers)
-        if isinstance(df, pd.DataFrame) and isinstance(df.columns, pd.MultiIndex):
-            close_levels = {c[1] for c in df.columns}
-            level = "Close" if "Close" in close_levels else ("Adj Close" if "Adj Close" in close_levels else None)
-            if level:
-                for t in (batch if isinstance(batch, list) else [batch]):
-                    try:
-                        s = df[t][level].dropna()
-                        if len(s) < 2:
-                            continue
-                        sp, ep = float(s.iat[0]), float(s.iat[-1])
-                        if sp > 0:
-                            results.append((t, (ep - sp) / sp))
-                    except Exception:
-                        continue
-
-        return results
-
-    performances: List[Tuple[str, float]] = []
-    import time
-    for i in tqdm(range(0, min(len(tickers_all), 500), BATCH_DOWNLOAD_SIZE), desc="Processing S&P 500 Tickers"):
-        batch = tickers_all[i:i+BATCH_DOWNLOAD_SIZE]
-        performances.extend(compute_growth_for_batch(batch))
-        time.sleep(PAUSE_BETWEEN_BATCHES)
-
-    if not performances:
-        print("⚠️ Using fallback tickers due to download issues.")
-        top = [_normalize_symbol(sym, DATA_PROVIDER) for sym in fallback][:n]
+    import random
+    random.seed(SEED)
+    if len(tickers_all) > n:
+        selected_tickers = random.sample(tickers_all, n)
     else:
-        top = [t for t, _ in sorted(performances, key=lambda x: x[1], reverse=True)[:n]]
+        selected_tickers = tickers_all
+    
+    print(f"Randomly selected {n} tickers: {', '.join(selected_tickers)}")
+    return selected_tickers
 
+def get_all_us_tickers() -> List[str]:
+    """
+    Gets a list of tickers from the S&P 500 by simulating a browser request
+    to avoid HTTP 403 errors.
+    """
+    all_tickers = set()
     try:
-        _ensure_dir(TOP_CACHE_PATH.parent)
-        TOP_CACHE_PATH.write_text(
-            json.dumps({"timestamp": datetime.now(timezone.utc).isoformat(), "tickers": top}, ensure_ascii=False, indent=2),
-            encoding="utf-8"
-        )
-    except Exception:
-        pass
-    return top
+        import requests
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        # Set a user-agent header to mimic a web browser
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()  # Will raise an exception for bad status codes
+        
+        # Read the HTML table from the response content
+        table = pd.read_html(response.text)
+        sp500_tickers_df = table[0]
+        # Clean symbols: remove dots which can be problematic
+        sp500_tickers = [s.replace('.', '-') for s in sp500_tickers_df['Symbol'].tolist()]
+        
+        # Normalize symbols for the chosen data provider
+        normalized_tickers = [_normalize_symbol(sym, DATA_PROVIDER) for sym in sp500_tickers]
+        all_tickers.update(normalized_tickers)
+        print(f"✅ Fetched {len(all_tickers)} tickers from S&P 500.")
+    except Exception as e:
+        print(f"⚠️ Could not fetch S&P 500 list ({e}). Using static fallback.")
+        fallback = ["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "TSLA", "GOOGL", "COST", "LRCX", "SPY", "QQQ"]
+        all_tickers.update(fallback)
+
+    if not all_tickers:
+        print("⚠️ No tickers fetched. Using a static fallback list.")
+        fallback = ["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "TSLA", "GOOGL", "COST", "LRCX", "SPY", "QQQ"]
+        all_tickers.update(fallback)
+
+    print(f"Total unique tickers to analyze: {len(all_tickers)}")
+    return sorted(list(all_tickers))
 
 # ============================
 # Feature prep & model
@@ -377,6 +290,27 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
     df["SMA_F_S"]    = df["Close"].rolling(FEAT_SMA_SHORT).mean()
     df["SMA_F_L"]    = df["Close"].rolling(FEAT_SMA_LONG).mean()
     df["Volatility"] = df["Returns"].rolling(FEAT_VOL_WINDOW).std()
+
+    # --- Additional Features ---
+    # RSI
+    delta = df["Close"].diff()
+    gain = (delta.where(delta > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+    rs = gain / loss
+    df['RSI_feat'] = 100 - (100 / (1 + rs))
+
+    # MACD
+    ema_12 = df["Close"].ewm(span=12, adjust=False).mean()
+    ema_26 = df["Close"].ewm(span=26, adjust=False).mean()
+    df['MACD'] = ema_12 - ema_26
+    df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+
+    # Bollinger Bands
+    df['BB_mid'] = df["Close"].rolling(window=20).mean()
+    df['BB_std'] = df["Close"].rolling(window=20).std()
+    df['BB_upper'] = df['BB_mid'] + (df['BB_std'] * 2)
+    df['BB_lower'] = df['BB_mid'] - (df['BB_std'] * 2)
+    
     df["Target"]     = df["Close"].shift(-1)
 
     # Classification label: 5-day forward > +1%
@@ -384,7 +318,7 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
     df["TargetClass"] = ((fwd / df["Close"] - 1.0) > 0.01).astype(float)
 
     # Progress info
-    req_cols = ["Close","Returns","SMA_F_S","SMA_F_L","Volatility","Target"]
+    req_cols = ["Close","Returns","SMA_F_S","SMA_F_L","Volatility", "RSI_feat", "MACD", "BB_upper", "Target"]
     ready = df[req_cols].dropna()
     print(f"   ↳ rows after features available: {len(ready)}")
     return df
@@ -413,11 +347,28 @@ def train_and_evaluate_models(df: pd.DataFrame):
         df["SMA_F_L"] = df["Close"].rolling(FEAT_SMA_LONG).mean()
     if "Volatility" not in df.columns and "Returns" in df.columns:
         df["Volatility"] = df["Returns"].rolling(FEAT_VOL_WINDOW).std()
+    
+    # --- Ensure additional features are present ---
+    if 'RSI_feat' not in df.columns:
+        delta = df["Close"].diff()
+        gain = (delta.where(delta > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+        loss = (-delta.where(delta < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+        rs = gain / loss
+        df['RSI_feat'] = 100 - (100 / (1 + rs))
+    if 'MACD' not in df.columns:
+        ema_12 = df["Close"].ewm(span=12, adjust=False).mean()
+        ema_26 = df["Close"].ewm(span=26, adjust=False).mean()
+        df['MACD'] = ema_12 - ema_26
+    if 'BB_upper' not in df.columns:
+        df['BB_mid'] = df["Close"].rolling(window=20).mean()
+        df['BB_std'] = df["Close"].rolling(window=20).std()
+        df['BB_upper'] = df['BB_mid'] + (df['BB_std'] * 2)
+
     if "TargetClass" not in df.columns and "Close" in df.columns:
         fwd = df["Close"].shift(-CLASS_HORIZON)
         df["TargetClass"] = ((fwd / df["Close"] - 1.0) > 0.01).astype(float)
 
-    req = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "TargetClass"]
+    req = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper", "TargetClass"]
     if any(c not in df.columns for c in req):
         print("⚠️ Missing columns for model comparison. Skipping.")
         return None
@@ -427,7 +378,7 @@ def train_and_evaluate_models(df: pd.DataFrame):
         print("⚠️ Not enough rows after feature prep to compare models (need ≥ 50). Skipping.")
         return None
 
-    feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility"]
+    feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
     X_df = d[feature_names]
     y = d["TargetClass"].values
 
@@ -437,7 +388,7 @@ def train_and_evaluate_models(df: pd.DataFrame):
 
     models = {
         "Logistic Regression": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
-        "Random Forest": RandomForestClassifier(n_estimators=100, random_state=SEED, class_weight="balanced", min_samples_leaf=2),
+        "Random Forest": RandomForestClassifier(n_estimators=100, random_state=SEED, class_weight="balanced"),
         "SVM": SVC(probability=True, random_state=SEED, class_weight="balanced")
     }
     if LGBMClassifier:
@@ -478,7 +429,8 @@ def train_and_evaluate_models(df: pd.DataFrame):
 class RuleTradingEnv:
     """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
     def __init__(self, df: pd.DataFrame, initial_balance: float, transaction_cost: float,
-                 model=None, scaler=None, min_proba: float = MIN_PROBA_UP, use_gate: bool = USE_MODEL_GATE):
+                 model=None, scaler=None, min_proba: float = MIN_PROBA_UP, use_gate: bool = USE_MODEL_GATE,
+                 market_data: Optional[pd.DataFrame] = None, use_market_filter: bool = USE_MARKET_FILTER):
         if "Close" not in df.columns:
             raise ValueError("DataFrame must contain 'Close' column.")
         self.df = df.reset_index()
@@ -488,6 +440,8 @@ class RuleTradingEnv:
         self.scaler = scaler
         self.min_proba = float(min_proba)
         self.use_gate = bool(use_gate) and (model is not None) and (scaler is not None)
+        self.market_data = market_data
+        self.use_market_filter = use_market_filter and market_data is not None
 
         self.reset()
 
@@ -503,11 +457,30 @@ class RuleTradingEnv:
         self.trade_log: List[Tuple] = []
 
         close = self.df["Close"]
-        # Strategy MAs
-        self.df["SMA_S"] = close.rolling(STRAT_SMA_SHORT).mean()
-        self.df["SMA_L"] = close.rolling(STRAT_SMA_LONG).mean()
+        
+        # --- Strategy Indicators ---
+        # 1. Trend Filter: 200-day SMA
+        self.df['SMA_200'] = close.rolling(window=200).mean()
 
-        # ATR (prefer HL/prevClose; else fallback from returns)
+        # 2. Crossover SMAs
+        self.df['SMA_S'] = close.rolling(window=STRAT_SMA_SHORT).mean()
+        self.df['SMA_L'] = close.rolling(window=STRAT_SMA_LONG).mean()
+
+        # --- Other Indicators (for reference or potential future use) ---
+        # Momentum: 14-day RSI
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).ewm(com=ATR_PERIOD - 1, adjust=False).mean()
+        loss = (-delta.where(delta < 0, 0)).ewm(com=ATR_PERIOD - 1, adjust=False).mean()
+        rs = gain / loss
+        self.df['RSI'] = 100 - (100 / (1 + rs))
+
+        # 3. Volume: On-Balance Volume (OBV) and its SMAs
+        self.df['OBV'] = (np.sign(close.diff()) * self.df['Volume']).fillna(0).cumsum()
+        self.df['OBV_SMA_S'] = self.df['OBV'].rolling(window=10).mean()
+        self.df['OBV_SMA_L'] = self.df['OBV'].rolling(window=30).mean()
+        # ------------------------------------
+
+        # ATR for risk management (unchanged)
         high = self.df["High"] if "High" in self.df.columns else None
         low  = self.df["Low"]  if "Low" in self.df.columns else None
         prev_close = close.shift(1)
@@ -518,15 +491,34 @@ class RuleTradingEnv:
             tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
             self.df["ATR"] = tr.rolling(ATR_PERIOD).mean()
         else:
-            # Fallback: use volatility of returns * price
             ret = close.pct_change(fill_method=None)
             self.df["ATR"] = (ret.rolling(ATR_PERIOD).std() * close).rolling(2).mean()
 
-        # Feature columns for ML gate (align with training)
+        # Low-volatility filter reference: rolling median ATR
+        self.df['ATR_MED'] = self.df['ATR'].rolling(50).median()
+
+        # --- Features for ML Gate ---
         self.df["Returns"]    = close.pct_change(fill_method=None)
         self.df["SMA_F_S"]    = close.rolling(FEAT_SMA_SHORT).mean()
         self.df["SMA_F_L"]    = close.rolling(FEAT_SMA_LONG).mean()
         self.df["Volatility"] = self.df["Returns"].rolling(FEAT_VOL_WINDOW).std()
+        
+        # RSI for features
+        delta_feat = close.diff()
+        gain_feat = (delta_feat.where(delta_feat > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+        loss_feat = (-delta_feat.where(delta_feat < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+        rs_feat = gain_feat / loss_feat
+        self.df['RSI_feat'] = 100 - (100 / (1 + rs_feat))
+
+        # MACD for features
+        ema_12 = close.ewm(span=12, adjust=False).mean()
+        ema_26 = close.ewm(span=26, adjust=False).mean()
+        self.df['MACD'] = ema_12 - ema_26
+        
+        # Bollinger Bands for features
+        bb_mid = close.rolling(window=20).mean()
+        bb_std = close.rolling(window=20).std()
+        self.df['BB_upper'] = bb_mid + (bb_std * 2)
 
     def _date_at(self, i: int) -> str:
         if "Date" in self.df.columns:
@@ -537,7 +529,7 @@ class RuleTradingEnv:
         if not self.use_gate:
             return True
         row = self.df.loc[i]
-        feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility"]
+        feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
         if any(pd.isna(row.get(f)) for f in feature_names):
             return False
         
@@ -549,8 +541,11 @@ class RuleTradingEnv:
         X = pd.DataFrame(X_scaled_np, columns=feature_names)
         
         try:
+            # The model expects a DataFrame, not a NumPy array
             proba_up = float(self.model.predict_proba(X)[0][1])
-        except Exception:
+        except Exception as e:
+            # Add logging to see why it fails
+            # print(f"DEBUG: Model prediction failed at step {i}. Error: {e}")
             return False
         return proba_up >= self.min_proba
 
@@ -602,39 +597,95 @@ class RuleTradingEnv:
         self.trade_log.append((date, "SELL", price, qty, "TICKER", {"fee": fee}, fee))
 
     def step(self):
+        if self.current_step < 1: # Need previous row for signal
+            self.current_step += 1
+            self.portfolio_history.append(self.initial_balance)
+            return False
+
         if self.current_step >= len(self.df):
             return True
 
+        # Current and previous data rows
         row = self.df.iloc[self.current_step]
+        prev_row = self.df.iloc[self.current_step - 1]
+        
         price = float(row["Close"])
         date = self._date_at(self.current_step)
-        sma_s = float(row["SMA_S"]) if pd.notna(row["SMA_S"]) else None
-        sma_l = float(row["SMA_L"]) if pd.notna(row["SMA_L"]) else None
-        atr   = float(row["ATR"]) if pd.notna(row.get("ATR", np.nan)) else None
+        atr = float(row.get("ATR", np.nan)) if pd.notna(row.get("ATR", np.nan)) else None
 
+        # --- Market Filter ---
+        if self.use_market_filter:
+            current_date = row['Date'].normalize()
+            # Use asof to find the latest market data point on or before the current date
+            market_slice = self.market_data.loc[:current_date]
+            if not market_slice.empty:
+                latest_market_data = market_slice.iloc[-1]
+                market_close = latest_market_data['Close']
+                market_sma = latest_market_data['SMA_L_MKT']
+                if pd.notna(market_close) and pd.notna(market_sma) and market_close < market_sma:
+                    # Market is in a downtrend. Sell any open position and do not open new ones.
+                    if self.shares > 0:
+                        self._sell(price, date)
+                    
+                    port_val = self.cash + self.shares * price
+                    self.portfolio_history.append(port_val)
+                    self.current_step += 1
+                    return self.current_step >= len(self.df)
+
+        # --- Entry Signal ---
+        # Filter: Trend must be up (price above 200-day SMA)
+        sma_200 = row.get('SMA_200')
+        trend_ok = price > sma_200 if sma_200 and not np.isnan(sma_200) else False
+
+        # Trigger: Price above long SMA (no crossover)
+        sma_l = row.get('SMA_L')
+
+        # --- Simplified Entry Signal: SMA Crossover ---
+        sma_s = row.get('SMA_S')
+        sma_l = row.get('SMA_L')
+        prev_sma_s = prev_row.get('SMA_S')
+        prev_sma_l = prev_row.get('SMA_L')
+
+        # Crossover condition: short SMA crosses above long SMA
+        buy_signal = (
+            pd.notna(sma_s) and pd.notna(sma_l) and
+            pd.notna(prev_sma_s) and pd.notna(prev_sma_l) and
+            prev_sma_s <= prev_sma_l and  # Was below or equal
+            sma_s > sma_l                # Now above
+        )
+
+        if self.shares == 0 and buy_signal:
+            if self._allow_buy_by_model(self.current_step):
+                self._buy(price, atr, date)
+        
+        # --- Simplified Exit Signal: SMA Crossunder ---
+        sell_signal = (
+            pd.notna(sma_s) and pd.notna(sma_l) and
+            pd.notna(prev_sma_s) and pd.notna(prev_sma_l) and
+            prev_sma_s >= prev_sma_l and  # Was above or equal
+            sma_s < sma_l                # Now below
+        )
+        if self.shares > 0 and sell_signal:
+            self._sell(price, date)
+            
+        # Original Exit Logic (ATR-based) is kept as a fallback/stop-loss
+
+        # --- Exit Logic (ATR-based, unchanged) ---
         if self.shares > 0:
             if self.highest_since_entry is None or price > self.highest_since_entry:
                 self.highest_since_entry = price
             self.holding_bars += 1
+            
+            tp_level = self.entry_price * (1 + ATR_MULT_TP * (atr / price)) if (atr and price > 0) else self.entry_price * (1 + 0.12)
+            tsl_level = None
+            if self.highest_since_entry is not None and atr is not None:
+                tsl_level = self.highest_since_entry - ATR_MULT_TRAIL * atr
 
-        # Entry: SMA cross AND (optional) ML gate
-        if sma_s is not None and sma_l is not None:
-            if self.shares == 0 and sma_s > sma_l:
-                if self._allow_buy_by_model(self.current_step):
-                    self._buy(price, atr, date)
-
-            # Exit logic if in position
-            if self.shares > 0:
-                tp_level = self.entry_price * (1 + ATR_MULT_TP * (atr / price)) if (atr and price > 0) else self.entry_price * (1 + 0.12)
-                tsl_level = None
-                if self.highest_since_entry is not None and atr is not None:
-                    tsl_level = self.highest_since_entry - ATR_MULT_TRAIL * atr
-
-                hit_tp = price >= tp_level
-                hit_trail = (tsl_level is not None) and (price <= tsl_level)
-
-                if hit_tp or hit_trail:
-                    self._sell(price, date)
+            hit_tp = price >= tp_level
+            hit_trail = (tsl_level is not None) and (price <= tsl_level)
+            
+            if hit_tp or hit_trail:
+                self._sell(price, date)
 
         port_val = self.cash + self.shares * price
         self.portfolio_history.append(port_val)
@@ -710,6 +761,66 @@ def analyze_performance(
     }
 
 # ============================
+# Top Performer Analysis
+# ============================
+
+def find_top_performers(return_tickers: bool = False, n_top: int = 20):
+    """
+    Fetches US stock tickers, calculates their 1-year performance,
+    and either prints them or returns the top N tickers.
+    """
+    if not return_tickers:
+        print("🚀 Finding Top Performing Stocks (1-Year)\n" + "="*50 + "\n")
+    
+    tickers = get_all_us_tickers()
+    if not tickers:
+        print("❌ No tickers to process. Exiting.")
+        return [] if return_tickers else None
+
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(days=365)
+    
+    performance_data = {}
+
+    if not return_tickers:
+        print(f"\n🔍 Analyzing {len(tickers)} tickers from {start_date.date()} to {end_date.date()}...")
+    
+    for ticker in tqdm(tickers, desc="Analyzing stock performance", disable=return_tickers):
+        try:
+            df = load_prices(ticker, start_date, end_date)
+            if df is not None and not df.empty and len(df) > 200:
+                start_price = df['Close'].iloc[0]
+                end_price = df['Close'].iloc[-1]
+                if start_price > 0:
+                    performance = ((end_price - start_price) / start_price) * 100
+                    performance_data[ticker] = performance
+        except Exception:
+            pass
+
+    if not performance_data:
+        if not return_tickers:
+            print("\n❌ Could not calculate performance for any stock.")
+        return [] if return_tickers else None
+
+    sorted_stocks = sorted(performance_data.items(), key=lambda item: item[1], reverse=True)
+    
+    top_performers = [ticker for ticker, perf in sorted_stocks[:n_top]]
+
+    if return_tickers:
+        return top_performers
+    
+    print(f"\n\n🏆 Top {n_top} Performing Stocks (1-Year Performance) 🏆")
+    print("-" * 60)
+    print(f"{'Rank':<5} | {'Ticker':<10} | {'Performance':>15}")
+    print("-" * 60)
+    
+    for i, (ticker, perf) in enumerate(sorted_stocks[:n_top], 1):
+        print(f"{i:<5} | {ticker:<10} | {perf:14.2f}%")
+    
+    print("-" * 60)
+
+
+# ============================
 # Main
 # ============================
 
@@ -717,10 +828,18 @@ def main():
     if pdr is None and DATA_PROVIDER.lower() == 'stooq':
         print("⚠️ pandas-datareader not installed; run: pip install pandas-datareader")
 
-    print("🚀 Rule-Based Trading System\n" + "="*50 + "\n")
-    print("🔍 Fetching top-performing stocks from S&P 500...")
-    top_tickers = get_top_performing_stocks_ytd(n=N_TOP_TICKERS)
-    print("📈 Selected tickers:", ", ".join(top_tickers), "\n")
+    print("🚀 AI-Powered Momentum & Trend Strategy\n" + "="*50 + "\n")
+    
+    # --- Step 1: Find top momentum stocks ---
+    print("🔍 Step 1: Identifying top 20 momentum stocks from the last year...")
+    top_tickers = find_top_performers(return_tickers=True, n_top=20)
+    if not top_tickers:
+        print("❌ Could not identify top tickers. Aborting backtest.")
+        return
+    print(f"\n✅ Identified top momentum stocks: {', '.join(top_tickers)}\n")
+
+    # --- Step 2: Run the AI-gated backtest on these stocks ---
+    print("🔍 Step 2: Running AI-gated backtest on momentum stocks...")
 
     # Define backtest window
     bt_end = datetime.now(timezone.utc)
@@ -752,6 +871,19 @@ def main():
     if not models and USE_MODEL_GATE:
         print("⚠️ No models were trained. Model-gating will be disabled for this run.\n")
 
+    # --- Prepare Market Filter Data ---
+    market_data = None
+    if USE_MARKET_FILTER:
+        print(f"🔄 Fetching market data for filter ({MARKET_FILTER_TICKER})...")
+        # Fetch data over a longer period to ensure the long-term SMA is available
+        market_start = train_start - timedelta(days=MARKET_FILTER_SMA)
+        market_data = load_prices(MARKET_FILTER_TICKER, market_start, bt_end)
+        if not market_data.empty:
+            market_data['SMA_L_MKT'] = market_data['Close'].rolling(MARKET_FILTER_SMA).mean()
+            print("✅ Market data prepared.\n")
+        else:
+            print(f"⚠️ Could not load market data for {MARKET_FILTER_TICKER}. Filter will be disabled.\n")
+
     print("🔄 Running rule-based backtest...\n")
     capital_per_stock = INITIAL_BALANCE / max(len(top_tickers), 1)
     
@@ -763,11 +895,16 @@ def main():
         print(f"▶ {ticker}: preparing data...")
         import time
         max_retries = 3
+        
+        # Load data with a warm-up period for indicators
+        warmup_days = max(STRAT_SMA_LONG, 200) + 50
+        data_start = bt_start - timedelta(days=warmup_days)
+
         for attempt in range(max_retries):
             try:
-                df = load_prices(ticker, bt_start, bt_end)
-                if df.empty or len(df) < STRAT_SMA_SHORT + 5:
-                    print(f"  ⚠️ Not enough data for backtest (need >{STRAT_SMA_SHORT + 5}, got {len(df)}). Skipping {ticker}.")
+                df = load_prices(ticker, data_start, bt_end)
+                if df.empty or len(df.loc[bt_start:]) < STRAT_SMA_SHORT + 5:
+                    print(f"  ⚠️ Not enough data for backtest (need >{STRAT_SMA_SHORT + 5}, got {len(df.loc[bt_start:])}). Skipping {ticker}.")
                     df = None
                 break
             except Exception as e:
@@ -791,16 +928,28 @@ def main():
         model = models.get(ticker) if USE_MODEL_GATE else None
         scaler = scalers.get(ticker) if USE_MODEL_GATE else None
         env = RuleTradingEnv(df, initial_balance=capital_per_stock, transaction_cost=TRANSACTION_COST,
-                             model=model, scaler=scaler, min_proba=MIN_PROBA_UP, use_gate=USE_MODEL_GATE)
+                             model=model, scaler=scaler, min_proba=MIN_PROBA_UP, use_gate=USE_MODEL_GATE,
+                             market_data=market_data, use_market_filter=USE_MARKET_FILTER)
         final_val, log = env.run()
-        strategy_history = env.portfolio_history
+        
+        # --- Analysis over backtest period only ---
+        df_backtest = df.loc[df.index >= bt_start]
+        
+        # Slice strategy history to match backtest period
+        strategy_history = env.portfolio_history[-len(df_backtest):]
 
-        # Buy & Hold baseline
-        start_price = float(df["Close"].iloc[0])
+        # Buy & Hold baseline over backtest period
+        start_price = float(df_backtest["Close"].iloc[0])
         shares_bh = int(capital_per_stock / start_price) if start_price > 0 else 0
         cash_bh = capital_per_stock - shares_bh * start_price
-        buy_hold_history = (cash_bh + shares_bh * df["Close"]).tolist()
+        buy_hold_history = (cash_bh + shares_bh * df_backtest["Close"]).tolist()
         bh_val = buy_hold_history[-1]
+
+        # If no trades occurred, default to buy & hold for this ticker to avoid idle cash
+        made_trades = any(t[1] == "BUY" or t[1] == "SELL" for t in log)
+        if not made_trades:
+            final_val = bh_val
+            print(f"  ✅ No trades taken; defaulting to Buy&Hold value for evaluation.")
 
         print(f"  ✅ Final strategy value: ${final_val:,.2f} | Buy&Hold: ${bh_val:,.2f}")
         analyze_performance(log, strategy_history, buy_hold_history, ticker)
@@ -819,8 +968,8 @@ def main():
 
     if final_strategy_value > 0:
         print(f"\n--- PORTFOLIO SUMMARY ({num_processed}/{len(top_tickers)} stocks processed) ---")
-        print("💰 Final Combined Portfolio Value: ${:,.2f}".format(final_strategy_value))
-        print("💰 Final Buy-and-Hold Portfolio Value: ${:,.2f}".format(final_buy_hold_value))
+        print("� Final Combined Portfolio Value: ${:,.2f}".format(final_strategy_value))
+        print("� Final Buy-and-Hold Portfolio Value: ${:,.2f}".format(final_buy_hold_value))
         if skipped_capital > 0:
             print(f"   (Includes ${skipped_capital:,.2f} of unprocessed capital for {num_skipped} skipped stock(s))")
     
@@ -836,4 +985,8 @@ def main():
         return final_strategy_value, final_buy_hold_value, models
     
 if __name__ == "__main__":
-    main()
+    # The original backtesting functionality can be run by uncommenting the next line
+    main() 
+    
+    # Run the new top-performer analysis by default
+    # find_top_performers()
