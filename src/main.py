@@ -216,40 +216,46 @@ def get_tickers_for_backtest(n: int = 10) -> List[str]:
 
 def get_all_us_tickers() -> List[str]:
     """
-    Gets a list of tickers from the S&P 500 by simulating a browser request
-    to avoid HTTP 403 errors.
+    Gets a combined list of tickers from the S&P 500 and NASDAQ 100
+    by simulating a browser request to avoid HTTP 403 errors.
     """
     all_tickers = set()
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
+    
+    # --- S&P 500 ---
     try:
         import requests
-        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        # Set a user-agent header to mimic a web browser
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()  # Will raise an exception for bad status codes
-        
-        # Read the HTML table from the response content
-        table = pd.read_html(response.text)
-        sp500_tickers_df = table[0]
-        # Clean symbols: remove dots which can be problematic
-        sp500_tickers = [s.replace('.', '-') for s in sp500_tickers_df['Symbol'].tolist()]
-        
-        # Normalize symbols for the chosen data provider
-        normalized_tickers = [_normalize_symbol(sym, DATA_PROVIDER) for sym in sp500_tickers]
-        all_tickers.update(normalized_tickers)
-        print(f"✅ Fetched {len(all_tickers)} tickers from S&P 500.")
+        url_sp500 = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        response_sp500 = requests.get(url_sp500, headers=headers)
+        response_sp500.raise_for_status()
+        table_sp500 = pd.read_html(response_sp500.text)[0]
+        sp500_tickers = [s.replace('.', '-') for s in table_sp500['Symbol'].tolist()]
+        all_tickers.update(sp500_tickers)
+        print(f"✅ Fetched {len(sp500_tickers)} tickers from S&P 500.")
     except Exception as e:
-        print(f"⚠️ Could not fetch S&P 500 list ({e}). Using static fallback.")
-        fallback = ["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "TSLA", "GOOGL", "COST", "LRCX", "SPY", "QQQ"]
-        all_tickers.update(fallback)
+        print(f"⚠️ Could not fetch S&P 500 list ({e}).")
+
+    # --- NASDAQ 100 ---
+    try:
+        import requests
+        url_nasdaq = 'https://en.wikipedia.org/wiki/NASDAQ-100'
+        response_nasdaq = requests.get(url_nasdaq, headers=headers)
+        response_nasdaq.raise_for_status()
+        table_nasdaq = pd.read_html(response_nasdaq.text)[4]
+        nasdaq_tickers = [s.replace('.', '-') for s in table_nasdaq['Ticker'].tolist()]
+        all_tickers.update(nasdaq_tickers)
+        print(f"✅ Fetched {len(nasdaq_tickers)} tickers from NASDAQ 100.")
+    except Exception as e:
+        print(f"⚠️ Could not fetch NASDAQ 100 list ({e}).")
 
     if not all_tickers:
-        print("⚠️ No tickers fetched. Using a static fallback list.")
+        print("⚠️ No tickers fetched. Using static fallback.")
         fallback = ["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "TSLA", "GOOGL", "COST", "LRCX", "SPY", "QQQ"]
         all_tickers.update(fallback)
 
-    print(f"Total unique tickers to analyze: {len(all_tickers)}")
-    return sorted(list(all_tickers))
+    normalized_tickers = [_normalize_symbol(sym, DATA_PROVIDER) for sym in all_tickers]
+    print(f"Total unique tickers to analyze: {len(normalized_tickers)}")
+    return sorted(list(normalized_tickers))
 
 # ============================
 # Feature prep & model
@@ -766,26 +772,45 @@ def analyze_performance(
 
 def find_top_performers(return_tickers: bool = False, n_top: int = 20):
     """
-    Fetches US stock tickers, calculates their 1-year performance,
-    and either prints them or returns the top N tickers.
+    Fetches S&P 500 & NASDAQ 100 tickers, and returns a list of those
+    that outperformed the higher of the two indices.
     """
-    if not return_tickers:
-        print("🚀 Finding Top Performing Stocks (1-Year)\n" + "="*50 + "\n")
-    
     tickers = get_all_us_tickers()
     if not tickers:
         print("❌ No tickers to process. Exiting.")
-        return [] if return_tickers else None
+        return []
 
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=365)
     
-    performance_data = {}
-
-    if not return_tickers:
-        print(f"\n🔍 Analyzing {len(tickers)} tickers from {start_date.date()} to {end_date.date()}...")
+    # --- Step 1: Calculate Benchmark Performances ---
+    print("- Calculating 1-Year Performance Benchmarks...")
+    benchmark_perfs = {}
+    for bench_ticker in ['QQQ', 'SPY']:
+        try:
+            df = load_prices(bench_ticker, start_date, end_date)
+            if df is not None and not df.empty:
+                start_price = df['Close'].iloc[0]
+                end_price = df['Close'].iloc[-1]
+                if start_price > 0:
+                    perf = ((end_price - start_price) / start_price) * 100
+                    benchmark_perfs[bench_ticker] = perf
+                    print(f"  ✅ {bench_ticker} 1-Year Performance: {perf:.2f}%")
+        except Exception as e:
+            print(f"⚠️ Could not calculate {bench_ticker} performance: {e}.")
     
-    for ticker in tqdm(tickers, desc="Analyzing stock performance", disable=return_tickers):
+    if not benchmark_perfs:
+        print("❌ Could not calculate any benchmark performance. Cannot proceed.")
+        return []
+        
+    # Determine the higher of the two benchmarks
+    high_benchmark_perf = max(benchmark_perfs.values())
+    high_benchmark_ticker = max(benchmark_perfs, key=benchmark_perfs.get)
+    print(f"  📈 Using higher benchmark: {high_benchmark_ticker} at {high_benchmark_perf:.2f}%")
+
+    # --- Step 2: Find stocks that beat the higher benchmark ---
+    performance_data = {}
+    for ticker in tqdm(tickers, desc="Analyzing stock performance vs benchmark"):
         try:
             df = load_prices(ticker, start_date, end_date)
             if df is not None and not df.empty and len(df) > 200:
@@ -798,26 +823,31 @@ def find_top_performers(return_tickers: bool = False, n_top: int = 20):
             pass
 
     if not performance_data:
-        if not return_tickers:
-            print("\n❌ Could not calculate performance for any stock.")
-        return [] if return_tickers else None
+        print("\n❌ Could not calculate performance for any stock.")
+        return []
 
-    sorted_stocks = sorted(performance_data.items(), key=lambda item: item[1], reverse=True)
+    # Filter for stocks that beat the high benchmark
+    strong_performers = {t: p for t, p in performance_data.items() if p > high_benchmark_perf}
     
-    top_performers = [ticker for ticker, perf in sorted_stocks[:n_top]]
+    sorted_strong_performers = sorted(strong_performers.items(), key=lambda item: item[1], reverse=True)
+    final_tickers = [ticker for ticker, perf in sorted_strong_performers]
+
+    print(f"  ✅ Found {len(final_tickers)} stocks outperforming the {high_benchmark_ticker} benchmark.")
 
     if return_tickers:
-        return top_performers
+        return final_tickers
     
-    print(f"\n\n🏆 Top {n_top} Performing Stocks (1-Year Performance) 🏆")
+    # If not returning for backtest, just print the list
+    print(f"\n\n🏆 Stocks Outperforming {high_benchmark_ticker} ({high_benchmark_perf:.2f}%) 🏆")
     print("-" * 60)
     print(f"{'Rank':<5} | {'Ticker':<10} | {'Performance':>15}")
     print("-" * 60)
     
-    for i, (ticker, perf) in enumerate(sorted_stocks[:n_top], 1):
+    for i, (ticker, perf) in enumerate(sorted_strong_performers, 1):
         print(f"{i:<5} | {ticker:<10} | {perf:14.2f}%")
     
     print("-" * 60)
+    return final_tickers
 
 
 # ============================
@@ -831,12 +861,12 @@ def main():
     print("🚀 AI-Powered Momentum & Trend Strategy\n" + "="*50 + "\n")
     
     # --- Step 1: Find top momentum stocks ---
-    print("🔍 Step 1: Identifying top 20 momentum stocks from the last year...")
-    top_tickers = find_top_performers(return_tickers=True, n_top=20)
+    print("🔍 Step 1: Identifying stocks outperforming market benchmarks...")
+    top_tickers = find_top_performers(return_tickers=True)
     if not top_tickers:
         print("❌ Could not identify top tickers. Aborting backtest.")
         return
-    print(f"\n✅ Identified top momentum stocks: {', '.join(top_tickers)}\n")
+    print(f"\n✅ Identified {len(top_tickers)} stocks for backtesting.\n")
 
     # --- Step 2: Run the AI-gated backtest on these stocks ---
     print("🔍 Step 2: Running AI-gated backtest on momentum stocks...")
