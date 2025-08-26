@@ -357,26 +357,15 @@ def get_all_tickers() -> List[str]:
 
     # --- Italian Tickers ---
     if MARKET_SELECTION.get("FTSE_MIB"):
-        try:
-            import requests
-            url_mib = "https://en.wikipedia.org/wiki/FTSE_MIB"
-            response_mib = requests.get(url_mib, headers=headers)
-            response_mib.raise_for_status()
-            table_mib = pd.read_html(response_mib.text)[2]
-            # Find the correct column for tickers by checking for a known Italian ticker
-            ticker_col = None
-            for col in table_mib.columns:
-                if table_mib[col].astype(str).str.contains('ENI.MI').any():
-                    ticker_col = col
-                    break
-            if ticker_col:
-                mib_tickers = [s for s in table_mib[ticker_col].tolist()]
-                all_tickers.update(mib_tickers)
-                print(f"✅ Fetched {len(mib_tickers)} tickers from FTSE MIB.")
-            else:
-                print("⚠️ Could not find ticker column for FTSE MIB.")
-        except Exception as e:
-            print(f"⚠️ Could not fetch FTSE MIB list ({e}).")
+        # Using a hardcoded list for reliability
+        mib_tickers = [
+            "A2A.MI", "AMP.MI", "AZM.MI", "BGN.MI", "BAMI.MI", "BPER.MI", "CPR.MI", "CNHI.MI", "DIA.MI", "ENEL.MI",
+            "ENI.MI", "ERG.MI", "RACE.MI", "FINE.MI", "G.MI", "HER.MI", "INT.MI", "ISP.MI", "INW.MI", "IG.MI",
+            "IVG.MI", "LDO.MI", "MB.MI", "MONC.MI", "NEXI.MI", "PIRC.MI", "PST.MI", "PRY.MI", "REC.MI", "SAI.MI",
+            "SRG.MI", "SNA.MI", "STLAM.MI", "STMMI.MI", "TEN.MI", "TRN.MI", "UCG.MI", "UNI.MI", "IP.MI"
+        ]
+        all_tickers.update(mib_tickers)
+        print(f"✅ Loaded {len(mib_tickers)} tickers from FTSE MIB list.")
 
     if not all_tickers:
         print("⚠️ No tickers fetched. Using static fallback.")
@@ -386,6 +375,10 @@ def get_all_tickers() -> List[str]:
     string_tickers = {str(s) for s in all_tickers if pd.notna(s)}
     cleaned_tickers = {s.strip() for s in string_tickers if '$' not in s}
     
+    print("\n--- Full Ticker List ---")
+    print(sorted(list(cleaned_tickers)))
+    print("--- End Ticker List ---\n")
+
     normalized_tickers = [_normalize_symbol(sym, DATA_PROVIDER) for sym in cleaned_tickers]
     print(f"Total unique tickers to analyze: {len(normalized_tickers)}")
     return sorted(list(normalized_tickers))
