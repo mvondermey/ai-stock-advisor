@@ -20,6 +20,14 @@ from typing import List, Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
 import gymnasium as gym
+import sys
+import codecs
+
+# --- Force UTF-8 output on Windows ---
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+if sys.stderr.encoding != 'utf-8':
+    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
 # ---------- Matplotlib (headless-safe) ----------
 import matplotlib
@@ -52,7 +60,15 @@ TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
 CACHE_DAYS              = 7
 
 # --- Universe / selection
-N_TOP_TICKERS           = 6
+MARKET_SELECTION = {
+    "NASDAQ_ALL": False,
+    "SP500": False,
+    "DAX": False,
+    "MDAX": False,
+    "SMI": False,
+    "FTSE_MIB": True,
+}
+N_TOP_TICKERS           = 0          # Set to 0 to disable the limit and run on all performers
 BATCH_DOWNLOAD_SIZE     = 10
 PAUSE_BETWEEN_BATCHES   = 1.5
 
@@ -132,10 +148,53 @@ def _fetch_from_stooq(ticker: str, start: datetime, end: datetime) -> pd.DataFra
 # Data access
 # ============================
 
+def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
+    """A wrapper for load_prices that handles rate limiting with retries."""
+    import time
+    max_retries = 5
+    base_wait_time = 10  # seconds
+
+    for attempt in range(max_retries):
+        try:
+            return load_prices(ticker, start, end)
+        except Exception as e:
+            # This is a simplistic check; a more robust solution would inspect the exception type/message
+            if "YFRateLimitError" in str(e) or "rate limit" in str(e).lower():
+                wait_time = base_wait_time * (attempt + 1)
+                print(f"  ⚠️ Rate limited trying to fetch {ticker}. Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                # For other errors, fail immediately
+                print(f"  ⚠️ Data load failed for {ticker}: {e}. No more retries for this ticker.")
+                return pd.DataFrame()
+    
+    print(f"  ❌ Failed to load data for {ticker} after {max_retries} retries.")
+    return pd.DataFrame()
+
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
-    """Download and clean data from the selected provider."""
-    start_utc = _to_utc(start)
-    end_utc   = _to_utc(end)
+    """Download and clean data from the selected provider, with an improved local caching mechanism."""
+    _ensure_dir(DATA_CACHE_DIR)
+    cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
+    
+    # --- Check cache first ---
+    if cache_file.exists():
+        file_mod_time = datetime.fromtimestamp(cache_file.stat().st_mtime, timezone.utc)
+        if (datetime.now(timezone.utc) - file_mod_time) < timedelta(days=1):
+            try:
+                cached_df = pd.read_csv(cache_file, index_col='Date', parse_dates=True)
+                if cached_df.index.tzinfo is None:
+                    cached_df.index = cached_df.index.tz_localize('UTC')
+                else:
+                    cached_df.index = cached_df.index.tz_convert('UTC')
+                return cached_df.loc[(cached_df.index >= _to_utc(start)) & (cached_df.index <= _to_utc(end))].copy()
+            except Exception as e:
+                print(f"⚠️ Could not read or slice cache file for {ticker}: {e}. Refetching.")
+
+    # --- If not in cache or cache is old, fetch a broad range of data ---
+    fetch_start = datetime.now(timezone.utc) - timedelta(days=1000) # Fetch a generous amount of data
+    fetch_end = datetime.now(timezone.utc)
+    start_utc = _to_utc(fetch_start)
+    end_utc   = _to_utc(fetch_end)
     
     provider = DATA_PROVIDER.lower()
     final_df = pd.DataFrame()
@@ -186,7 +245,15 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     final_df = final_df.dropna(subset=["Close"])
     final_df = final_df.ffill().bfill()
 
-    return final_df.loc[(final_df.index >= start_utc) & (final_df.index <= end_utc)].copy()
+    # --- Save the entire fetched data to cache ---
+    if not final_df.empty:
+        try:
+            final_df.to_csv(cache_file)
+        except Exception as e:
+            print(f"⚠️ Could not write cache file for {ticker}: {e}")
+            
+    # Return the specifically requested slice
+    return final_df.loc[(final_df.index >= _to_utc(start)) & (final_df.index <= _to_utc(end))].copy()
 
 # ============================
 # Ticker discovery
@@ -214,46 +281,112 @@ def get_tickers_for_backtest(n: int = 10) -> List[str]:
     print(f"Randomly selected {n} tickers: {', '.join(selected_tickers)}")
     return selected_tickers
 
-def get_all_us_tickers() -> List[str]:
+def get_all_tickers() -> List[str]:
     """
-    Gets a combined list of tickers from the S&P 500 and NASDAQ 100
-    by simulating a browser request to avoid HTTP 403 errors.
+    Gets a list of tickers from the markets selected in the configuration.
     """
     all_tickers = set()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
-    
-    # --- S&P 500 ---
-    try:
-        import requests
-        url_sp500 = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        response_sp500 = requests.get(url_sp500, headers=headers)
-        response_sp500.raise_for_status()
-        table_sp500 = pd.read_html(response_sp500.text)[0]
-        sp500_tickers = [s.replace('.', '-') for s in table_sp500['Symbol'].tolist()]
-        all_tickers.update(sp500_tickers)
-        print(f"✅ Fetched {len(sp500_tickers)} tickers from S&P 500.")
-    except Exception as e:
-        print(f"⚠️ Could not fetch S&P 500 list ({e}).")
 
-    # --- NASDAQ 100 ---
-    try:
-        import requests
-        url_nasdaq = 'https://en.wikipedia.org/wiki/NASDAQ-100'
-        response_nasdaq = requests.get(url_nasdaq, headers=headers)
-        response_nasdaq.raise_for_status()
-        table_nasdaq = pd.read_html(response_nasdaq.text)[4]
-        nasdaq_tickers = [s.replace('.', '-') for s in table_nasdaq['Ticker'].tolist()]
-        all_tickers.update(nasdaq_tickers)
-        print(f"✅ Fetched {len(nasdaq_tickers)} tickers from NASDAQ 100.")
-    except Exception as e:
-        print(f"⚠️ Could not fetch NASDAQ 100 list ({e}).")
+    # --- US Tickers ---
+    if MARKET_SELECTION.get("NASDAQ_ALL"):
+        try:
+            url = 'ftp://ftp.nasdaqtrader.com/symboldirectory/nasdaqlisted.txt'
+            df = pd.read_csv(url, sep='|')
+            df_clean = df.iloc[:-1]
+            nasdaq_tickers = df_clean[(df_clean['Test Issue'] == 'N') & (df_clean['ETF'] == 'N')]['Symbol'].tolist()
+            all_tickers.update(nasdaq_tickers)
+            print(f"✅ Fetched {len(nasdaq_tickers)} tickers from NASDAQ.")
+        except Exception as e:
+            print(f"⚠️ Could not fetch full NASDAQ list ({e}).")
+
+    if MARKET_SELECTION.get("SP500"):
+        try:
+            import requests
+            url_sp500 = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+            response_sp500 = requests.get(url_sp500, headers=headers)
+            response_sp500.raise_for_status()
+            table_sp500 = pd.read_html(response_sp500.text)[0]
+            col = "Symbol" if "Symbol" in table_sp500.columns else table_sp500.columns[0]
+            sp500_tickers = [s.replace('.', '-') for s in table_sp500[col].tolist()]
+            all_tickers.update(sp500_tickers)
+            print(f"✅ Fetched {len(sp500_tickers)} tickers from S&P 500.")
+        except Exception as e:
+            print(f"⚠️ Could not fetch S&P 500 list ({e}).")
+
+    # --- German Tickers ---
+    if MARKET_SELECTION.get("DAX"):
+        try:
+            import requests
+            url_dax = "https://en.wikipedia.org/wiki/DAX"
+            response_dax = requests.get(url_dax, headers=headers)
+            response_dax.raise_for_status()
+            table_dax = pd.read_html(response_dax.text)[4]
+            dax_tickers = [f"{s}.DE" for s in table_dax['Ticker'].tolist()]
+            all_tickers.update(dax_tickers)
+            print(f"✅ Fetched {len(dax_tickers)} tickers from DAX.")
+        except Exception as e:
+            print(f"⚠️ Could not fetch DAX list ({e}).")
+
+    if MARKET_SELECTION.get("MDAX"):
+        try:
+            import requests
+            url_mdax = "https://en.wikipedia.org/wiki/MDAX"
+            response_mdax = requests.get(url_mdax, headers=headers)
+            response_mdax.raise_for_status()
+            table_mdax = pd.read_html(response_mdax.text)[3]
+            mdax_tickers = [f"{s}.DE" for s in table_mdax['Ticker'].tolist()]
+            all_tickers.update(mdax_tickers)
+            print(f"✅ Fetched {len(mdax_tickers)} tickers from MDAX.")
+        except Exception as e:
+            print(f"⚠️ Could not fetch MDAX list ({e}).")
+
+    # --- Swiss Tickers ---
+    if MARKET_SELECTION.get("SMI"):
+        try:
+            import requests
+            url_smi = "https://en.wikipedia.org/wiki/Swiss_Market_Index"
+            response_smi = requests.get(url_smi, headers=headers)
+            response_smi.raise_for_status()
+            table_smi = pd.read_html(response_smi.text)[2]
+            smi_tickers = [s for s in table_smi['Ticker'].tolist()]
+            all_tickers.update(smi_tickers)
+            print(f"✅ Fetched {len(smi_tickers)} tickers from SMI.")
+        except Exception as e:
+            print(f"⚠️ Could not fetch SMI list ({e}).")
+
+    # --- Italian Tickers ---
+    if MARKET_SELECTION.get("FTSE_MIB"):
+        try:
+            import requests
+            url_mib = "https://en.wikipedia.org/wiki/FTSE_MIB"
+            response_mib = requests.get(url_mib, headers=headers)
+            response_mib.raise_for_status()
+            table_mib = pd.read_html(response_mib.text)[2]
+            # Find the correct column for tickers by checking for a known Italian ticker
+            ticker_col = None
+            for col in table_mib.columns:
+                if table_mib[col].astype(str).str.contains('ENI.MI').any():
+                    ticker_col = col
+                    break
+            if ticker_col:
+                mib_tickers = [s for s in table_mib[ticker_col].tolist()]
+                all_tickers.update(mib_tickers)
+                print(f"✅ Fetched {len(mib_tickers)} tickers from FTSE MIB.")
+            else:
+                print("⚠️ Could not find ticker column for FTSE MIB.")
+        except Exception as e:
+            print(f"⚠️ Could not fetch FTSE MIB list ({e}).")
 
     if not all_tickers:
         print("⚠️ No tickers fetched. Using static fallback.")
         fallback = ["NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "TSLA", "GOOGL", "COST", "LRCX", "SPY", "QQQ"]
         all_tickers.update(fallback)
 
-    normalized_tickers = [_normalize_symbol(sym, DATA_PROVIDER) for sym in all_tickers]
+    string_tickers = {str(s) for s in all_tickers if pd.notna(s)}
+    cleaned_tickers = {s.strip() for s in string_tickers if '$' not in s}
+    
+    normalized_tickers = [_normalize_symbol(sym, DATA_PROVIDER) for sym in cleaned_tickers]
     print(f"Total unique tickers to analyze: {len(normalized_tickers)}")
     return sorted(list(normalized_tickers))
 
@@ -382,6 +515,11 @@ def train_and_evaluate_models(df: pd.DataFrame):
     d = df[req].dropna()
     if len(d) < 50:  # Increased requirement for cross-validation
         print("⚠️ Not enough rows after feature prep to compare models (need ≥ 50). Skipping.")
+        return None
+
+    # --- Check for class balance ---
+    if d["TargetClass"].nunique() < 2:
+        print("⚠️ Not enough class diversity for training (e.g., only 'up' or 'down' days). Skipping model.")
         return None
 
     feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
@@ -646,18 +784,16 @@ class RuleTradingEnv:
         # Trigger: Price above long SMA (no crossover)
         sma_l = row.get('SMA_L')
 
-        # --- Simplified Entry Signal: SMA Crossover ---
+        # --- Trend-Following Entry Signal ---
         sma_s = row.get('SMA_S')
         sma_l = row.get('SMA_L')
-        prev_sma_s = prev_row.get('SMA_S')
-        prev_sma_l = prev_row.get('SMA_L')
+        sma_200 = row.get('SMA_200')
 
-        # Crossover condition: short SMA crosses above long SMA
+        # Condition: Enter if the medium-term trend is positive (20 SMA > 100 SMA).
+        # The stricter long-term trend filter (price > 200 SMA) has been removed to make the system more responsive.
         buy_signal = (
             pd.notna(sma_s) and pd.notna(sma_l) and
-            pd.notna(prev_sma_s) and pd.notna(prev_sma_l) and
-            prev_sma_s <= prev_sma_l and  # Was below or equal
-            sma_s > sma_l                # Now above
+            sma_s > sma_l
         )
 
         if self.shares == 0 and buy_signal:
@@ -665,6 +801,8 @@ class RuleTradingEnv:
                 self._buy(price, atr, date)
         
         # --- Simplified Exit Signal: SMA Crossunder ---
+        prev_sma_s = prev_row.get('SMA_S')
+        prev_sma_l = prev_row.get('SMA_L')
         sell_signal = (
             pd.notna(sma_s) and pd.notna(sma_l) and
             pd.notna(prev_sma_s) and pd.notna(prev_sma_l) and
@@ -770,12 +908,12 @@ def analyze_performance(
 # Top Performer Analysis
 # ============================
 
-def find_top_performers(return_tickers: bool = False, n_top: int = 20):
+def find_top_performers(return_tickers: bool = False, n_top: int = N_TOP_TICKERS, fcf_min_threshold: float = 0.0):
     """
-    Fetches S&P 500 & NASDAQ 100 tickers, and returns a list of those
-    that outperformed the higher of the two indices.
+    Fetches S&P 500 & NASDAQ tickers, screens for the top N performers,
+    and returns a list of (ticker, performance) tuples.
     """
-    tickers = get_all_us_tickers()
+    tickers = get_all_tickers()
     if not tickers:
         print("❌ No tickers to process. Exiting.")
         return []
@@ -788,7 +926,7 @@ def find_top_performers(return_tickers: bool = False, n_top: int = 20):
     benchmark_perfs = {}
     for bench_ticker in ['QQQ', 'SPY']:
         try:
-            df = load_prices(bench_ticker, start_date, end_date)
+            df = load_prices_robust(bench_ticker, start_date, end_date)
             if df is not None and not df.empty:
                 start_price = df['Close'].iloc[0]
                 end_price = df['Close'].iloc[-1]
@@ -804,21 +942,57 @@ def find_top_performers(return_tickers: bool = False, n_top: int = 20):
         return []
         
     # Determine the higher of the two benchmarks
-    high_benchmark_perf = max(benchmark_perfs.values())
-    high_benchmark_ticker = max(benchmark_perfs, key=benchmark_perfs.get)
-    print(f"  📈 Using higher benchmark: {high_benchmark_ticker} at {high_benchmark_perf:.2f}%")
+    market_benchmark_perf = max(benchmark_perfs.values()) if benchmark_perfs else 0.0
+    final_benchmark_perf = max(market_benchmark_perf, 50.0)
+    print(f"  📈 Using final 1-Year performance benchmark of {final_benchmark_perf:.2f}% (max of market and 50%)")
 
-    # --- Step 2: Find stocks that beat the higher benchmark ---
-    performance_data = {}
-    for ticker in tqdm(tickers, desc="Analyzing stock performance vs benchmark"):
+    # --- Step 2: Calculate YTD Benchmarks ---
+    print("- Calculating YTD Performance Benchmarks...")
+    ytd_start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
+    ytd_benchmark_perfs = {}
+    for bench_ticker in ['QQQ', 'SPY']:
         try:
-            df = load_prices(ticker, start_date, end_date)
-            if df is not None and not df.empty and len(df) > 200:
+            df = load_prices_robust(bench_ticker, ytd_start_date, end_date)
+            if df is not None and not df.empty:
                 start_price = df['Close'].iloc[0]
                 end_price = df['Close'].iloc[-1]
                 if start_price > 0:
-                    performance = ((end_price - start_price) / start_price) * 100
-                    performance_data[ticker] = performance
+                    perf = ((end_price - start_price) / start_price) * 100
+                    ytd_benchmark_perfs[bench_ticker] = perf
+                    print(f"  ✅ {bench_ticker} YTD Performance: {perf:.2f}%")
+        except Exception as e:
+            print(f"⚠️ Could not calculate {bench_ticker} YTD performance: {e}.")
+    
+    if not ytd_benchmark_perfs:
+        print("❌ Could not calculate any YTD benchmark performance. Cannot proceed.")
+        return []
+    ytd_benchmark_perf = max(ytd_benchmark_perfs.values())
+    print(f"  📈 Using YTD performance benchmark of {ytd_benchmark_perf:.2f}%")
+
+    # --- Step 3: Find stocks that beat both benchmarks ---
+    performance_data = {}
+    for ticker in tqdm(tickers, desc="Analyzing stock performance vs benchmarks"):
+        try:
+            # 1-Year Performance
+            df_1y = load_prices_robust(ticker, start_date, end_date)
+            perf_1y = -np.inf
+            if df_1y is not None and not df_1y.empty and len(df_1y) > 200:
+                start_price = df_1y['Close'].iloc[0]
+                end_price = df_1y['Close'].iloc[-1]
+                if start_price > 0:
+                    perf_1y = ((end_price - start_price) / start_price) * 100
+            
+            # YTD Performance
+            df_ytd = load_prices_robust(ticker, ytd_start_date, end_date)
+            perf_ytd = -np.inf
+            if df_ytd is not None and not df_ytd.empty:
+                start_price = df_ytd['Close'].iloc[0]
+                end_price = df_ytd['Close'].iloc[-1]
+                if start_price > 0:
+                    perf_ytd = ((end_price - start_price) / start_price) * 100
+
+            if perf_1y > final_benchmark_perf and perf_ytd > ytd_benchmark_perf:
+                performance_data[ticker] = perf_1y
         except Exception:
             pass
 
@@ -827,15 +1001,52 @@ def find_top_performers(return_tickers: bool = False, n_top: int = 20):
         return []
 
     # Filter for stocks that beat the high benchmark
-    strong_performers = {t: p for t, p in performance_data.items() if p > high_benchmark_perf}
+    strong_performers = performance_data
     
     sorted_strong_performers = sorted(strong_performers.items(), key=lambda item: item[1], reverse=True)
-    final_tickers = [ticker for ticker, perf in sorted_strong_performers]
+    
+    if n_top > 0 and len(sorted_strong_performers) > n_top:
+        print(f"  ✅ Found {len(sorted_strong_performers)} stocks outperforming the benchmark. Selecting top {n_top}.")
+        sorted_strong_performers = sorted_strong_performers[:n_top]
+    else:
+        print(f"  ✅ Found {len(sorted_strong_performers)} stocks outperforming the benchmark.")
 
-    print(f"  ✅ Found {len(final_tickers)} stocks outperforming the {high_benchmark_ticker} benchmark.")
+    final_performers = sorted_strong_performers
+
+    # --- Step 3: Fundamental Screen (Optional Free Cash Flow for the last fiscal year) ---
+    if fcf_min_threshold is not None:
+        print(f"  🔍 Screening {len(final_performers)} strong performers for positive FCF (if available)...")
+        screened_performers = []
+        
+        pbar = tqdm(final_performers, desc="Applying FCF screen")
+        
+        for ticker, perf in pbar:
+            try:
+                cashflow = yf.Ticker(ticker).cashflow
+                if not cashflow.empty:
+                    latest_cashflow = cashflow.iloc[:, 0]
+                    fcf_keys = ['Free Cash Flow', 'freeCashflow']
+                    fcf = None
+                    for key in fcf_keys:
+                        if key in latest_cashflow.index:
+                            fcf = latest_cashflow[key]
+                            break
+                    
+                    # If FCF is found, it must be positive. If not found, we assume it's not applicable (e.g., a bank).
+                    if fcf is None or fcf > 0:
+                        screened_performers.append((ticker, perf))
+                else:
+                    # If no cashflow statement is available, we let it pass
+                    screened_performers.append((ticker, perf))
+            except Exception:
+                # If there's any error fetching financials, we let it pass
+                screened_performers.append((ticker, perf))
+
+        print(f"  ✅ Found {len(screened_performers)} stocks passing the FCF screen.")
+        final_performers = screened_performers
 
     if return_tickers:
-        return final_tickers
+        return final_performers
     
     # If not returning for backtest, just print the list
     print(f"\n\n🏆 Stocks Outperforming {high_benchmark_ticker} ({high_benchmark_perf:.2f}%) 🏆")
@@ -854,18 +1065,20 @@ def find_top_performers(return_tickers: bool = False, n_top: int = 20):
 # Main
 # ============================
 
-def main():
+def main(fcf_threshold: float = 0.0):
     if pdr is None and DATA_PROVIDER.lower() == 'stooq':
         print("⚠️ pandas-datareader not installed; run: pip install pandas-datareader")
 
-    print("🚀 AI-Powered Momentum & Trend Strategy\n" + "="*50 + "\n")
+    print(f"🚀 AI-Powered Momentum & Trend Strategy (FCF > ${fcf_threshold:,.0f})\n" + "="*50 + "\n")
     
     # --- Step 1: Find top momentum stocks ---
     print("🔍 Step 1: Identifying stocks outperforming market benchmarks...")
-    top_tickers = find_top_performers(return_tickers=True)
-    if not top_tickers:
+    top_performers_data = find_top_performers(return_tickers=True, fcf_min_threshold=fcf_threshold)
+    if not top_performers_data:
         print("❌ Could not identify top tickers. Aborting backtest.")
-        return
+        return None, None, None, None, None, None, None, None
+    
+    top_tickers = [ticker for ticker, _ in top_performers_data]
     print(f"\n✅ Identified {len(top_tickers)} stocks for backtesting.\n")
 
     # --- Step 2: Run the AI-gated backtest on these stocks ---
@@ -907,7 +1120,7 @@ def main():
         print(f"🔄 Fetching market data for filter ({MARKET_FILTER_TICKER})...")
         # Fetch data over a longer period to ensure the long-term SMA is available
         market_start = train_start - timedelta(days=MARKET_FILTER_SMA)
-        market_data = load_prices(MARKET_FILTER_TICKER, market_start, bt_end)
+        market_data = load_prices_robust(MARKET_FILTER_TICKER, market_start, bt_end)
         if not market_data.empty:
             market_data['SMA_L_MKT'] = market_data['Close'].rolling(MARKET_FILTER_SMA).mean()
             print("✅ Market data prepared.\n")
@@ -920,6 +1133,7 @@ def main():
     strategy_results = []
     buy_hold_results = []
     processed_tickers = []
+    performance_metrics = []
 
     for ticker in top_tickers:
         print(f"▶ {ticker}: preparing data...")
@@ -932,7 +1146,7 @@ def main():
 
         for attempt in range(max_retries):
             try:
-                df = load_prices(ticker, data_start, bt_end)
+                df = load_prices_robust(ticker, data_start, bt_end)
                 if df.empty or len(df.loc[bt_start:]) < STRAT_SMA_SHORT + 5:
                     print(f"  ⚠️ Not enough data for backtest (need >{STRAT_SMA_SHORT + 5}, got {len(df.loc[bt_start:])}). Skipping {ticker}.")
                     df = None
@@ -977,16 +1191,21 @@ def main():
 
         # If no trades occurred, default to buy & hold for this ticker to avoid idle cash
         made_trades = any(t[1] == "BUY" or t[1] == "SELL" for t in log)
+        
+        # Use B&H history for analysis if no trades were made, otherwise use the actual strategy history
+        strategy_history_for_analysis = strategy_history
         if not made_trades:
             final_val = bh_val
-            print(f"  ✅ No trades taken; defaulting to Buy&Hold value for evaluation.")
+            strategy_history_for_analysis = buy_hold_history
+            print(f"  ✅ No trades taken; defaulting to Buy&Hold value for performance analysis.")
 
         print(f"  ✅ Final strategy value: ${final_val:,.2f} | Buy&Hold: ${bh_val:,.2f}")
-        analyze_performance(log, strategy_history, buy_hold_history, ticker)
+        perf_data = analyze_performance(log, strategy_history_for_analysis, buy_hold_history, ticker)
 
         strategy_results.append(final_val)
         buy_hold_results.append(bh_val)
         processed_tickers.append(ticker)
+        performance_metrics.append(perf_data)
 
     # --- Final Portfolio Summary ---
     num_processed = len(processed_tickers)
@@ -997,26 +1216,263 @@ def main():
     final_buy_hold_value = sum(buy_hold_results) + skipped_capital
 
     if final_strategy_value > 0:
-        print(f"\n--- PORTFOLIO SUMMARY ({num_processed}/{len(top_tickers)} stocks processed) ---")
-        print("� Final Combined Portfolio Value: ${:,.2f}".format(final_strategy_value))
-        print("� Final Buy-and-Hold Portfolio Value: ${:,.2f}".format(final_buy_hold_value))
+        print(f"\n--- PORTFOLIO SUMMARY (FCF > ${fcf_threshold:,.0f}) ---")
+        print(f"  Processed {num_processed}/{len(top_tickers)} stocks.")
+        print("  Final Combined Portfolio Value: ${:,.2f}".format(final_strategy_value))
+        print("  Final Buy-and-Hold Portfolio Value: ${:,.2f}".format(final_buy_hold_value))
         if skipped_capital > 0:
-            print(f"   (Includes ${skipped_capital:,.2f} of unprocessed capital for {num_skipped} skipped stock(s))")
+            print(f"  (Includes ${skipped_capital:,.2f} of unprocessed capital for {num_skipped} skipped stock(s))")
     
         if SAVE_PLOTS:
             _ensure_dir(Path("plots"))
             fig = plt.figure(figsize=(8, 4))
-            plt.title("Combined Portfolio (placeholder)")
-            plt.plot([0, 1], [INITIAL_BALANCE, final_strategy_value])
-            plt.xlabel("Period"); plt.ylabel("Value ($)")
-            fig.savefig("plots/combined_portfolio.png")
+            plt.title(f"Combined Portfolio (FCF > ${fcf_threshold:,.0f})")
+            plt.plot([0, 1], [INITIAL_BALANCE, final_strategy_value], label="Strategy")
+            plt.plot([0, 1], [INITIAL_BALANCE, final_buy_hold_value], label="Buy & Hold")
+            plt.xlabel("Period"); plt.ylabel("Value ($)"); plt.legend()
+            fig.savefig(f"plots/combined_portfolio_fcf_{fcf_threshold}.png")
             plt.close(fig)
     
-        return final_strategy_value, final_buy_hold_value, models
+    return final_strategy_value, final_buy_hold_value, models, scalers, top_performers_data, strategy_results, processed_tickers, performance_metrics
+
+# ============================
+# AI Recommendation Engine
+# ============================
+
+def get_ai_recommendations():
+    """
+    Identifies top-performing stocks and uses the AI model to generate
+    a list of current "buy" recommendations based on the latest data.
+    """
+    print("🚀 AI Recommendation Engine\n" + "="*50 + "\n")
+
+    # --- Step 1: Find top momentum stocks ---
+    print("🔍 Step 1: Identifying stocks outperforming market benchmarks...")
+    top_tickers = find_top_performers(return_tickers=True)
+    if not top_tickers:
+        print("❌ Could not identify top tickers. Aborting.")
+        return
+    print(f"\n✅ Identified {len(top_tickers)} stocks for analysis.\n")
+
+    # --- Step 2: Train models for each stock ---
+    print("🔍 Step 2: Training AI models on recent historical data...")
+    models: Dict[str, object] = {}
+    scalers: Dict[str, object] = {}
+    train_end = datetime.now(timezone.utc)
+    train_start = train_end - timedelta(days=TRAIN_LOOKBACK_DAYS)
+
+    for ticker in top_tickers:
+        print(f"🔄 Fetching training data for {ticker}...")
+        training_data = fetch_training_data(ticker, train_start, train_end)
+        if training_data.empty:
+            print(f"⚠️ Training data for {ticker} is empty. Skipping.\n")
+            continue
+        
+        model_and_scaler = train_and_evaluate_models(training_data)
+        if model_and_scaler is not None:
+            model, scaler = model_and_scaler
+            models[ticker] = model
+            scalers[ticker] = scaler
+            print(f"✅ Model trained for {ticker}.\n")
+        else:
+            print(f"⚠️ Skipped model for {ticker} due to insufficient data.\n")
+
+    if not models:
+        print("❌ No models could be trained. Cannot generate recommendations.")
+        return
+
+    # --- Step 3: Analyze latest data for buy signals ---
+    print("🔍 Step 3: Analyzing latest market data for AI-approved buy signals...")
+    recommendations = []
+    analysis_end = datetime.now(timezone.utc)
+    analysis_start = analysis_end - timedelta(days=max(STRAT_SMA_LONG, 200) + 50) # Need warmup
+
+    for ticker in tqdm(models.keys(), desc="Scanning for recommendations"):
+        df = load_prices_robust(ticker, analysis_start, analysis_end)
+        if df.empty or len(df) < STRAT_SMA_LONG + 2:
+            continue
+
+        # Calculate all necessary indicators and features
+        env = RuleTradingEnv(df.copy(), 1, 1, models[ticker], scalers[ticker])
+        df_processed = env.df # Get the df with all indicators calculated
+
+        if len(df_processed) < 2:
+            continue
+
+        # Check for buy signal on the last day
+        last_row = df_processed.iloc[-1]
+        prev_row = df_processed.iloc[-2]
+
+        buy_signal = (
+            pd.notna(last_row['SMA_S']) and pd.notna(last_row['SMA_L']) and
+            pd.notna(prev_row['SMA_S']) and pd.notna(prev_row['SMA_L']) and
+            prev_row['SMA_S'] <= prev_row['SMA_L'] and
+            last_row['SMA_S'] > last_row['SMA_L']
+        )
+
+        if buy_signal:
+            # Now, check if the AI model approves this signal
+            if env._allow_buy_by_model(len(df_processed) - 1):
+                recommendations.append(ticker)
+
+    # --- Step 4: Print recommendations ---
+    print("\n\n" + "="*50)
+    if recommendations:
+        print("✅ AI-Approved Buy Recommendations for Today:")
+        for i, ticker in enumerate(recommendations, 1):
+            print(f"  {i}. {ticker}")
+    else:
+        print("ℹ️ No AI-approved buy signals found among top performers for today.")
+    print("="*50)
+
+
+# ============================
+# Final Analysis & Recommendations
+# ============================
+
+def print_final_summary(sorted_results, models, scalers):
+    """
+    Analyzes the latest data for the sorted list of stocks and prints a final
+    summary table with performance, Sharpe ratio, and a detailed AI recommendation.
+    """
+    print("\n\n🔍 Final AI Recommendations for Screened Stock List 🔍\n" + "="*115)
     
+    recommendation_details = {}
+    analysis_end = datetime.now(timezone.utc)
+    analysis_start = analysis_end - timedelta(days=max(STRAT_SMA_LONG, 200) + 50)
+
+    tickers_to_check = [res['ticker'] for res in sorted_results]
+
+    for ticker in tqdm(tickers_to_check, desc="Generating final recommendations"):
+        model = models.get(ticker)
+        scaler = scalers.get(ticker)
+        
+        # Default values
+        recommendation_details[ticker] = {'trend_signal': 'No', 'ai_prob': 'N/A', 'recommendation': 'HOLD / SELL'}
+
+        if not model or not scaler:
+            recommendation_details[ticker]['ai_prob'] = 'No Model'
+            continue
+
+        df = load_prices_robust(ticker, analysis_start, analysis_end)
+        if df.empty or len(df) < STRAT_SMA_LONG + 2:
+            recommendation_details[ticker]['ai_prob'] = 'Data Error'
+            continue
+
+        env = RuleTradingEnv(df.copy(), 1, 1, model, scaler)
+        df_processed = env.df
+
+        if len(df_processed) < 2:
+            recommendation_details[ticker]['ai_prob'] = 'Data Error'
+            continue
+
+        last_row = df_processed.iloc[-1]
+
+        # --- Condition 1: Check for Trend-Following Signal ---
+        sma_s = last_row.get('SMA_S')
+        sma_l = last_row.get('SMA_L')
+
+        trend_signal_active = (
+            pd.notna(sma_s) and pd.notna(sma_l) and
+            sma_s > sma_l
+        )
+        recommendation_details[ticker]['trend_signal'] = "Yes" if trend_signal_active else "No"
+
+        # --- Condition 2: Get AI Model's Probability ---
+        feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
+        if any(pd.isna(last_row.get(f)) for f in feature_names):
+            recommendation_details[ticker]['ai_prob'] = 'Missing Feat.'
+            ai_approved = False
+        else:
+            X_df = pd.DataFrame([[last_row[f] for f in feature_names]], columns=feature_names)
+            X_scaled = scaler.transform(X_df)
+            X = pd.DataFrame(X_scaled, columns=feature_names)
+            proba_up = float(model.predict_proba(X)[0][1])
+            recommendation_details[ticker]['ai_prob'] = f"{proba_up:.2%}"
+            ai_approved = proba_up >= MIN_PROBA_UP
+        
+        # --- Final Recommendation ---
+        if trend_signal_active and ai_approved:
+            recommendation_details[ticker]['recommendation'] = "BUY"
+        else:
+            recommendation_details[ticker]['recommendation'] = "HOLD / SELL"
+
+    print("\n" + "="*115)
+    header = (f"{'Ticker':<10} | {'1Y Performance':>18} | {'Backtest Performance':>22} | {'Sharpe Ratio':>15} | {'Trend Signal?':>15} | {'AI Confidence':>15} | {'Recommendation':>15}")
+    print(header)
+    print("-" * len(header))
+    for res in sorted_results:
+        ticker = res['ticker']
+        value = res['performance']
+        sharpe = res['sharpe']
+        one_year_perf = res['one_year_perf']
+        
+        rec_data = recommendation_details.get(ticker, {})
+        trend_signal = rec_data.get('trend_signal', 'N/A')
+        ai_prob = rec_data.get('ai_prob', 'N/A')
+        recommendation = rec_data.get('recommendation', 'N/A')
+        
+        print(f"{ticker:<10} | {one_year_perf:>17.2f}% | ${value:>21,.2f} | {sharpe:15.2f} | {trend_signal:>15} | {ai_prob:>15} | {recommendation:>15}")
+    print("="*115)
+
+# ============================
+# FCF Optimization & Main Execution
+# ============================
+
+def run_backtest_and_optimize():
+    """
+    Runs the backtest with a positive FCF threshold, sorts results by Sharpe Ratio,
+    and prints a final summary with AI recommendations.
+    """
+    import time
+    start_time = time.time()
+    print("⚙️  Starting Backtest for Stocks with Positive FCF...\n" + "="*50)
+    
+    fcf_threshold = 0.0
+    
+    print(f"\n--- Running backtest for FCF > ${fcf_threshold:,.0f} ---")
+    res = main(fcf_threshold=fcf_threshold)
+    
+    if res is None or res[0] is None:
+        print("\n❌ Backtest could not be completed as no tickers were found or processed.")
+        return
+
+    final_strategy_val, final_buy_hold_val, models, scalers, top_performers_data, strategy_results, processed_tickers, performance_metrics = res
+
+    print("\n\n🏆 Backtest Results 🏆\n" + "="*50)
+    print(f"   - Final Portfolio Value: ${final_strategy_val:,.2f}")
+    print(f"   - Equivalent Buy & Hold Value: ${final_buy_hold_val:,.2f}")
+    
+    if processed_tickers:
+        # Combine results into a list of dictionaries for easy sorting and processing
+        perf_map = dict(top_performers_data)
+        combined_results = []
+        for i, ticker in enumerate(processed_tickers):
+            combined_results.append({
+                'ticker': ticker,
+                'performance': strategy_results[i],
+                'sharpe': performance_metrics[i].get('sharpe_ratio', 0.0),
+                'one_year_perf': perf_map.get(ticker, 0.0)
+            })
+
+        # Sort by Sharpe Ratio in descending order
+        combined_results.sort(key=lambda x: x['sharpe'], reverse=True)
+        
+        # Call the final summary function with the sorted results
+        print_final_summary(combined_results, models, scalers)
+
+    print("="*50)
+    end_time = time.time()
+    duration = end_time - start_time
+    print(f"\n⏱️  Total Execution Time: {duration:.2f} seconds ({duration/60:.2f} minutes)")
+
+
 if __name__ == "__main__":
     # The original backtesting functionality can be run by uncommenting the next line
-    main() 
+    # main() 
     
-    # Run the new top-performer analysis by default
-    # find_top_performers()
+    # Run the backtest, optimization, and recommendation flow
+    run_backtest_and_optimize()
+
+    # The standalone AI recommendation engine can be run by uncommenting the next line
+    # get_ai_recommendations()
