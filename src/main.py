@@ -1352,118 +1352,6 @@ def main(fcf_threshold: float = 0.0, min_proba_buy: float = MIN_PROBA_BUY, min_p
 # AI Recommendation Engine
 # ============================
 
-def get_ai_recommendations():
-    """
-    Identifies top-performing stocks and uses the AI model to generate
-    a table of recommendations based on the latest data.
-    """
-    print("🚀 AI Recommendation Engine\n" + "="*50 + "\n")
-
-    # --- Step 1: Find top momentum stocks ---
-    print("🔍 Step 1: Identifying stocks outperforming market benchmarks...")
-    top_performers_data = find_top_performers(return_tickers=True)
-    if not top_performers_data:
-        print("❌ Could not identify top tickers. Aborting.")
-        return
-    
-    top_tickers = [ticker for ticker, _, _ in top_performers_data]
-    print(f"\n✅ Identified {len(top_tickers)} stocks for analysis.\n")
-
-    # --- Step 2: Train models for each stock ---
-    print("🔍 Step 2: Training AI models on recent historical data...")
-    models: Dict[str, object] = {}
-    scalers: Dict[str, object] = {}
-    train_end = datetime.now(timezone.utc)
-    train_start = train_end - timedelta(days=TRAIN_LOOKBACK_DAYS)
-
-    for ticker in top_tickers:
-        print(f"🔄 Fetching training data for {ticker}...")
-        training_data = fetch_training_data(ticker, train_start, train_end)
-        if training_data.empty:
-            print(f"⚠️ Training data for {ticker} is empty. Skipping.\n")
-            continue
-        
-        model_and_scaler = train_and_evaluate_models(training_data)
-        if model_and_scaler is not None:
-            model, scaler = model_and_scaler
-            models[ticker] = model
-            scalers[ticker] = scaler
-            print(f"✅ Model trained for {ticker}.\n")
-        else:
-            print(f"⚠️ Skipped model for {ticker} due to insufficient data.\n")
-
-    if not models:
-        print("❌ No models could be trained. Cannot generate recommendations.")
-        return
-
-    # --- Step 3: Analyze latest data for signals ---
-    print("🔍 Step 3: Analyzing latest market data for AI signals...")
-    recommendation_details = {}
-    analysis_end = datetime.now(timezone.utc)
-    analysis_start = analysis_end - timedelta(days=max(STRAT_SMA_LONG, 200) + 50)
-
-    for ticker in tqdm(models.keys(), desc="Scanning for recommendations"):
-        model = models.get(ticker)
-        scaler = scalers.get(ticker)
-        
-        recommendation_details[ticker] = {'trend_signal': 'No', 'ai_prob': 'N/A', 'recommendation': 'HOLD / SELL'}
-
-        if not model or not scaler:
-            recommendation_details[ticker]['ai_prob'] = 'No Model'
-            continue
-
-        df = load_prices_robust(ticker, analysis_start, analysis_end)
-        if df.empty or len(df) < STRAT_SMA_LONG + 2:
-            recommendation_details[ticker]['ai_prob'] = 'Data Error'
-            continue
-
-        env = RuleTradingEnv(df.copy(), 1, 1, model, scaler)
-        df_processed = env.df
-
-        if len(df_processed) < 2:
-            recommendation_details[ticker]['ai_prob'] = 'Data Error'
-            continue
-
-        last_row = df_processed.iloc[-1]
-
-        sma_s = last_row.get('SMA_S')
-        sma_l = last_row.get('SMA_L')
-        trend_signal_active = (pd.notna(sma_s) and pd.notna(sma_l) and sma_s > sma_l)
-        recommendation_details[ticker]['trend_signal'] = "Yes" if trend_signal_active else "No"
-
-        feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
-        if any(pd.isna(last_row.get(f)) for f in feature_names):
-            recommendation_details[ticker]['ai_prob'] = 'Missing Feat.'
-            ai_approved = False
-        else:
-            X_df = pd.DataFrame([[last_row[f] for f in feature_names]], columns=feature_names)
-            X_scaled = scaler.transform(X_df)
-            X = pd.DataFrame(X_scaled, columns=feature_names)
-            proba_up = float(model.predict_proba(X)[0][1])
-            recommendation_details[ticker]['ai_prob'] = f"{proba_up:.2%}"
-            ai_approved = proba_up >= MIN_PROBA_BUY
-        
-        if ai_approved:
-            recommendation_details[ticker]['recommendation'] = "BUY"
-        else:
-            recommendation_details[ticker]['recommendation'] = "HOLD / SELL"
-
-    # --- Step 4: Print recommendation table ---
-    print("\n\n" + "="*105)
-    header = (f"{'Ticker':<10} | {'1Y Performance':>18} | {'YTD Performance':>18} | {'Trend Signal?':>15} | "
-              f"{'AI Confidence':>15} | {'Recommendation':>15}")
-    print(header)
-    print("-" * len(header))
-    
-    for ticker, perf_1y, perf_ytd in top_performers_data:
-        if ticker in recommendation_details:
-            rec_data = recommendation_details.get(ticker, {})
-            trend_signal = rec_data.get('trend_signal', 'N/A')
-            ai_prob = rec_data.get('ai_prob', 'N/A')
-            recommendation = rec_data.get('recommendation', 'N/A')
-            
-            print(f"{ticker:<10} | {perf_1y:>17.2f}% | {perf_ytd:>17.2f}% | {trend_signal:>15} | {ai_prob:>15} | {recommendation:>15}")
-    print("="*105)
 
 
 # ============================
@@ -1651,10 +1539,10 @@ def run_backtest_and_optimize():
 
 if __name__ == "__main__":
     # The original backtesting functionality can be run by uncommenting the next line
-    # main() 
+    main() 
     
     # Run the backtest, optimization, and recommendation flow
     #run_backtest_and_optimize()
 
     # The standalone AI recommendation engine can be run by uncommenting the next line
-    get_ai_recommendations()
+    # get_ai_recommendations()
