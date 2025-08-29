@@ -531,7 +531,7 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
     print(f"   ↳ rows after features available: {len(ready)}")
     return df
 
-def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy"):
+def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None):
     """Train and compare multiple classifiers for a given target, returning the best one."""
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.linear_model import LogisticRegression
@@ -591,7 +591,11 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
         print(f"⚠️ Not enough class diversity for training on '{target_col}'. Skipping model.")
         return None
 
-    feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
+    if feature_set is None:
+        feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
+    else:
+        feature_names = feature_set
+        
     X_df = d[feature_names]
     y = d[target_col].values
 
@@ -643,7 +647,7 @@ class RuleTradingEnv:
     """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
     def __init__(self, df: pd.DataFrame, initial_balance: float, transaction_cost: float,
                  model_buy=None, model_sell=None, scaler=None, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, use_gate: bool = USE_MODEL_GATE,
-                 market_data: Optional[pd.DataFrame] = None, use_market_filter: bool = USE_MARKET_FILTER):
+                 market_data: Optional[pd.DataFrame] = None, use_market_filter: bool = USE_MARKET_FILTER, feature_set: Optional[List[str]] = None):
         if "Close" not in df.columns:
             raise ValueError("DataFrame must contain 'Close' column.")
         self.df = df.reset_index()
@@ -657,6 +661,7 @@ class RuleTradingEnv:
         self.use_gate = bool(use_gate) and (scaler is not None)
         self.market_data = market_data
         self.use_market_filter = use_market_filter and market_data is not None
+        self.feature_set = feature_set
 
         self.reset()
 
@@ -740,12 +745,17 @@ class RuleTradingEnv:
             return str(self.df.loc[i, "Date"])
         return str(i)
 
-    def _get_model_prediction(self, i: int, model) -> float:
+    def _get_model_prediction(self, i: int, model, feature_set: Optional[List[str]] = None) -> float:
         """Helper to get a single model's prediction probability."""
         if not self.use_gate or model is None:
             return 0.0
         row = self.df.loc[i]
-        feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
+        
+        if feature_set is None:
+            feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
+        else:
+            feature_names = feature_set
+
         if any(pd.isna(row.get(f)) for f in feature_names):
             return 0.0
         
@@ -758,11 +768,11 @@ class RuleTradingEnv:
         except Exception:
             return 0.0
 
-    def _allow_buy_by_model(self, i: int) -> bool:
-        return self._get_model_prediction(i, self.model_buy) >= self.min_proba_buy
+    def _allow_buy_by_model(self, i: int, feature_set: Optional[List[str]] = None) -> bool:
+        return self._get_model_prediction(i, self.model_buy, feature_set) >= self.min_proba_buy
 
-    def _allow_sell_by_model(self, i: int) -> bool:
-        return self._get_model_prediction(i, self.model_sell) >= self.min_proba_sell
+    def _allow_sell_by_model(self, i: int, feature_set: Optional[List[str]] = None) -> bool:
+        return self._get_model_prediction(i, self.model_sell, feature_set) >= self.min_proba_sell
 
     def _position_size_from_atr(self, price: float, atr: float) -> int:
         if atr is None or np.isnan(atr) or atr <= 0 or price <= 0:
@@ -861,11 +871,11 @@ class RuleTradingEnv:
         sma_200 = row.get('SMA_200')
 
         # Condition: AI model is now the primary buy signal generator.
-        if self.shares == 0 and self._allow_buy_by_model(self.current_step):
+        if self.shares == 0 and self._allow_buy_by_model(self.current_step, feature_set=self.feature_set if hasattr(self, 'feature_set') else None):
             self._buy(price, atr, date)
         
         # --- AI-driven Exit Signal ---
-        if self.shares > 0 and self._allow_sell_by_model(self.current_step):
+        if self.shares > 0 and self._allow_sell_by_model(self.current_step, feature_set=self.feature_set if hasattr(self, 'feature_set') else None):
             self._sell(price, date)
             
         # Original Exit Logic (ATR-based) is kept as a fallback/stop-loss
@@ -1138,7 +1148,7 @@ def find_top_performers(return_tickers: bool = False, n_top: int = N_TOP_TICKERS
 # Main
 # ============================
 
-def main(fcf_threshold: float = 0.0, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, target_percentage: float = 0.05, top_performers_data=None):
+def main(fcf_threshold: float = 0.0, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, target_percentage: float = 0.05, top_performers_data=None, feature_set: Optional[List[str]] = None):
     if top_performers_data is None:
         # This block is for standalone runs of main()
         if pdr is None and DATA_PROVIDER.lower() == 'stooq':
@@ -1179,7 +1189,7 @@ def main(fcf_threshold: float = 0.0, min_proba_buy: float = MIN_PROBA_BUY, min_p
         print(f"✅ Training data fetched with {len(training_data)} rows for {ticker}.")
         
         print(f"  - Training BUY model for {ticker}...")
-        model_buy_and_scaler = train_and_evaluate_models(training_data, target_col="TargetClassBuy")
+        model_buy_and_scaler = train_and_evaluate_models(training_data, target_col="TargetClassBuy", feature_set=feature_set)
         if model_buy_and_scaler is not None:
             model_buy, scaler = model_buy_and_scaler
             models_buy[ticker] = model_buy
@@ -1189,7 +1199,7 @@ def main(fcf_threshold: float = 0.0, min_proba_buy: float = MIN_PROBA_BUY, min_p
             print(f"⚠️ Skipped BUY model for {ticker}.\n")
 
         print(f"  - Training SELL model for {ticker}...")
-        model_sell_and_scaler = train_and_evaluate_models(training_data, target_col="TargetClassSell")
+        model_sell_and_scaler = train_and_evaluate_models(training_data, target_col="TargetClassSell", feature_set=feature_set)
         if model_sell_and_scaler is not None:
             models_sell[ticker] = model_sell_and_scaler[0]
             if ticker not in scalers: # In case buy model failed but sell model succeeded
@@ -1263,7 +1273,8 @@ def main(fcf_threshold: float = 0.0, min_proba_buy: float = MIN_PROBA_BUY, min_p
                              model_buy=model_buy, model_sell=model_sell, scaler=scaler, 
                              min_proba_buy=min_proba_buy, min_proba_sell=min_proba_sell, 
                              use_gate=USE_MODEL_GATE,
-                             market_data=market_data, use_market_filter=USE_MARKET_FILTER)
+                             market_data=market_data, use_market_filter=USE_MARKET_FILTER,
+                             feature_set=feature_set)
         final_val, log = env.run()
         
         # --- Analysis over backtest period only ---
@@ -1319,11 +1330,17 @@ def main(fcf_threshold: float = 0.0, min_proba_buy: float = MIN_PROBA_BUY, min_p
         if SAVE_PLOTS:
             _ensure_dir(Path("plots"))
             fig = plt.figure(figsize=(8, 4))
-            plt.title(f"Combined Portfolio (FCF > ${fcf_threshold:,.0f})")
+            if fcf_threshold is not None:
+                plt.title(f"Combined Portfolio (FCF > ${fcf_threshold:,.0f})")
+                filename = f"plots/combined_portfolio_fcf_{fcf_threshold}.png"
+            else:
+                plt.title(f"Combined Portfolio (FCF check disabled)")
+                filename = f"plots/combined_portfolio_no_fcf.png"
+            
             plt.plot([0, 1], [INITIAL_BALANCE, final_strategy_value], label="Strategy")
             plt.plot([0, 1], [INITIAL_BALANCE, final_buy_hold_value], label="Buy & Hold")
             plt.xlabel("Period"); plt.ylabel("Value ($)"); plt.legend()
-            fig.savefig(f"plots/combined_portfolio_fcf_{fcf_threshold}.png")
+            fig.savefig(filename)
             plt.close(fig)
 
     # Prepare data for the final summary table
@@ -1412,7 +1429,7 @@ def print_final_summary(sorted_results, models, scalers):
         recommendation_details[ticker]['trend_signal'] = "Yes" if trend_signal_active else "No"
 
         # --- Condition 2: Get AI Model's Probability ---
-        feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
+        feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper", "Trend"]
         if any(pd.isna(last_row.get(f)) for f in feature_names):
             recommendation_details[ticker]['ai_prob'] = 'Missing Feat.'
             ai_approved = False
@@ -1561,6 +1578,42 @@ def run_backtest_and_optimize(fcf_threshold: Optional[float] = 0.0):
         print_final_summary(sorted_final_results, models_buy, scalers)
 
 
+def run_feature_selection():
+    """Iterates through features one by one to evaluate their individual performance."""
+    print("⚙️  Starting Feature Selection Analysis...\n" + "="*50)
+    
+    all_features = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
+    feature_results = []
+
+    for feature in all_features:
+        print(f"\n--- Testing Feature: {feature} ---")
+        feature_set = [feature]
+        
+        # Run a full backtest with just this one feature
+        final_strategy_val, final_buy_hold_val, _, _, _, _, _, _ = main(
+            fcf_threshold=None,  # Disable FCF for speed
+            feature_set=feature_set
+        )
+        
+        if final_strategy_val is not None:
+            feature_results.append({
+                "feature": feature,
+                "final_value": final_strategy_val,
+                "buy_hold_value": final_buy_hold_val
+            })
+
+    print("\n\n🏆 Feature Selection Results 🏆\n" + "="*60)
+    print(f"{'Feature':<20} | {'Final Value':>15} | {'Buy & Hold':>15}")
+    print("-" * 60)
+    
+    # Sort results by final value
+    sorted_results = sorted(feature_results, key=lambda x: x['final_value'], reverse=True)
+    
+    for res in sorted_results:
+        print(f"{res['feature']:<20} | ${res['final_value']:>14,.2f} | ${res['buy_hold_value']:>14,.2f}")
+    print("="*60)
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -1577,14 +1630,22 @@ if __name__ == "__main__":
         action='store_true',
         help='Disable the Free Cash Flow (FCF) screening for faster results.'
     )
+    parser.add_argument(
+        '--feature-selection',
+        action='store_true',
+        help='Run a feature selection process to evaluate individual features.'
+    )
     args = parser.parse_args()
 
     fcf_threshold = 0.0 if not args.no_fcf else None
 
     if args.optimize:
         run_backtest_and_optimize(fcf_threshold=fcf_threshold)
+    elif args.feature_selection:
+        run_feature_selection()
     else:
         # Run a single analysis with the default (or pre-optimized) parameters
         print("🚀 Running AI Stock Advisor with default parameters...")
         # You can replace these with the best parameters found during optimization
         main(fcf_threshold=fcf_threshold, min_proba_buy=0.8, min_proba_sell=0.8, target_percentage=0.05)
+
