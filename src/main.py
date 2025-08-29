@@ -460,7 +460,7 @@ def get_all_tickers() -> List[str]:
 # Feature prep & model
 # ============================
 
-def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Optional[datetime] = None) -> pd.DataFrame:
+def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Optional[datetime] = None, target_percentage: float = 0.05) -> pd.DataFrame:
     """Fetch prices and compute ML features. Default window is TRAIN_LOOKBACK_DAYS up to 'end' (now if None)."""
     if end is None:
         end = datetime.now(timezone.utc)
@@ -518,12 +518,12 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
     
     df["Target"]     = df["Close"].shift(-1)
 
-    # Classification label for BUY model: 5-day forward > +5%
+    # Classification label for BUY model: 5-day forward > +target_percentage
     fwd = df["Close"].shift(-CLASS_HORIZON)
-    df["TargetClassBuy"] = ((fwd / df["Close"] - 1.0) > 0.05).astype(float)
+    df["TargetClassBuy"] = ((fwd / df["Close"] - 1.0) > target_percentage).astype(float)
 
-    # Classification label for SELL model: 5-day forward < -5%
-    df["TargetClassSell"] = ((fwd / df["Close"] - 1.0) < -0.05).astype(float)
+    # Classification label for SELL model: 5-day forward < -target_percentage
+    df["TargetClassSell"] = ((fwd / df["Close"] - 1.0) < -target_percentage).astype(float)
 
     # Progress info
     req_cols = ["Close","Returns","SMA_F_S","SMA_F_L","Volatility", "RSI_feat", "MACD", "BB_upper", "Target"]
@@ -1138,15 +1138,17 @@ def find_top_performers(return_tickers: bool = False, n_top: int = N_TOP_TICKERS
 # Main
 # ============================
 
-def main(fcf_threshold: float = 0.0, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL):
-    if pdr is None and DATA_PROVIDER.lower() == 'stooq':
-        print("⚠️ pandas-datareader not installed; run: pip install pandas-datareader")
-
-    print(f"🚀 AI-Powered Momentum & Trend Strategy (FCF > ${fcf_threshold:,.0f})\n" + "="*50 + "\n")
-    
-    # --- Step 1: Find top momentum stocks ---
-    print("🔍 Step 1: Identifying stocks outperforming market benchmarks...")
-    top_performers_data = find_top_performers(return_tickers=True, fcf_min_threshold=fcf_threshold)
+def main(fcf_threshold: float = 0.0, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, target_percentage: float = 0.05, top_performers_data=None):
+    if top_performers_data is None:
+        # This block is for standalone runs of main()
+        if pdr is None and DATA_PROVIDER.lower() == 'stooq':
+            print("⚠️ pandas-datareader not installed; run: pip install pandas-datareader")
+        if fcf_threshold is not None:
+            print(f"🚀 AI-Powered Momentum & Trend Strategy (FCF > ${fcf_threshold:,.0f})\n" + "="*50 + "\n")
+        else:
+            print(f"🚀 AI-Powered Momentum & Trend Strategy (FCF check disabled)\n" + "="*50 + "\n")
+        print("🔍 Step 1: Identifying stocks outperforming market benchmarks...")
+        top_performers_data = find_top_performers(return_tickers=True, fcf_min_threshold=fcf_threshold)
     if not top_performers_data:
         print("❌ Could not identify top tickers. Aborting backtest.")
         return None, None, None, None, None, None, None, None
@@ -1170,7 +1172,7 @@ def main(fcf_threshold: float = 0.0, min_proba_buy: float = MIN_PROBA_BUY, min_p
 
     for ticker in top_tickers:
         print(f"🔄 Fetching training data for {ticker}...")
-        training_data = fetch_training_data(ticker, train_start, train_end)
+        training_data = fetch_training_data(ticker, train_start, train_end, target_percentage=target_percentage)
         if training_data.empty:
             print(f"⚠️ Training data for {ticker} is empty. Skipping.\n")
             continue
@@ -1304,7 +1306,10 @@ def main(fcf_threshold: float = 0.0, min_proba_buy: float = MIN_PROBA_BUY, min_p
     final_buy_hold_value = sum(buy_hold_results) + skipped_capital
 
     if final_strategy_value > 0:
-        print(f"\n--- PORTFOLIO SUMMARY (FCF > ${fcf_threshold:,.0f}) ---")
+        if fcf_threshold is not None:
+            print(f"\n--- PORTFOLIO SUMMARY (FCF > ${fcf_threshold:,.0f}) ---")
+        else:
+            print(f"\n--- PORTFOLIO SUMMARY (FCF check disabled) ---")
         print(f"  Processed {num_processed}/{len(top_tickers)} stocks.")
         print("  Final Combined Portfolio Value: ${:,.2f}".format(final_strategy_value))
         print("  Final Buy-and-Hold Portfolio Value: ${:,.2f}".format(final_buy_hold_value))
@@ -1451,32 +1456,43 @@ def print_final_summary(sorted_results, models, scalers):
 
 def worker(params):
     """Wrapper function for multiprocessing."""
-    buy_thresh, sell_thresh = params
+    buy_thresh, sell_thresh, target_perc, top_performers = params
     # This function will be executed in a separate process, so we need to re-seed
     np.random.seed()
-    res = main(fcf_threshold=0.0, min_proba_buy=buy_thresh, min_proba_sell=sell_thresh)
+    # Pass the pre-fetched top performers to each worker
+    res = main(fcf_threshold=0.0, min_proba_buy=buy_thresh, min_proba_sell=sell_thresh, target_percentage=target_perc, top_performers_data=top_performers)
     if res is not None and res[0] is not None:
         final_strategy_val, final_buy_hold_val, _, _, _, _, _, _ = res
         return {
             'buy_thresh': buy_thresh,
             'sell_thresh': sell_thresh,
+            'target_perc': target_perc,
             'final_value': final_strategy_val,
             'buy_hold_value': final_buy_hold_val
         }
     return None
 
-def run_backtest_and_optimize():
+def run_backtest_and_optimize(fcf_threshold: Optional[float] = 0.0):
     """
     Runs a grid search over different buy and sell thresholds to find the optimal combination using parallel processing.
     """
     import time
     start_time = time.time()
-    print("⚙️  Starting Parallel Threshold Optimization...\n" + "="*50)
+    print("⚙️  Starting Parallel Threshold & Target Percentage Optimization...\n" + "="*70)
 
-    buy_thresholds = np.arange(0.1, 1.0, 0.1)
-    sell_thresholds = np.arange(0.1, 1.0, 0.1)
+    # --- Step 1: Find top momentum stocks (run once, in the main process) ---
+    print("🔍 Step 1: Identifying stocks outperforming market benchmarks...")
+    top_performers_data = find_top_performers(return_tickers=True, fcf_min_threshold=fcf_threshold)
+    if not top_performers_data:
+        print("❌ Could not identify top tickers. Aborting optimization.")
+        return
+
+    buy_thresholds = np.arange(0.6, 1.0, 0.1)  # Reduced range for faster optimization
+    sell_thresholds = np.arange(0.6, 1.0, 0.1) # Reduced range for faster optimization
+    target_percentages = np.arange(0.01, 0.11, 0.01) # 1% to 10% in 1% steps
     
-    param_grid = [(b, s) for b in buy_thresholds for s in sell_thresholds]
+    # Pass the found tickers to each worker to avoid re-fetching
+    param_grid = [(b, s, p, top_performers_data) for b in buy_thresholds for s in sell_thresholds for p in target_percentages]
     
     num_processes = max(1, cpu_count() - 2)
     print(f"Using {num_processes} processes for optimization.")
@@ -1484,31 +1500,39 @@ def run_backtest_and_optimize():
     with Pool(processes=num_processes) as pool:
         results = list(tqdm(pool.imap(worker, param_grid), total=len(param_grid)))
 
-    print("\n\n🏆 Optimization Results 🏆\n" + "="*50)
+    # Filter out None results if any worker failed
+    valid_results = [r for r in results if r is not None]
+    if not valid_results:
+        print("❌ All optimization workers failed. Aborting.")
+        return
+
+    print("\n\n🏆 Optimization Results 🏆\n" + "="*85)
     
     # Sort results by the final portfolio value in descending order
-    sorted_results = sorted(results, key=lambda x: x['final_value'], reverse=True)
+    sorted_results = sorted(valid_results, key=lambda x: x['final_value'], reverse=True)
     
-    print(f"{'Rank':<5} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Final Value':>15} | {'Buy & Hold':>15}")
-    print("-" * 70)
+    print(f"{'Rank':<5} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10} | {'Final Value':>15} | {'Buy & Hold':>15}")
+    print("-" * 85)
     
-    for i, res in enumerate(sorted_results, 1):
-        print(f"{i:<5} | {res['buy_thresh']:>11.2f} | {res['sell_thresh']:>11.2f} | ${res['final_value']:>14,.2f} | ${res['buy_hold_value']:>14,.2f}")
+    for i, res in enumerate(sorted_results[:20], 1): # Print top 20
+        print(f"{i:<5} | {res['buy_thresh']:>11.2f} | {res['sell_thresh']:>11.2f} | {res['target_perc']:>9.2%} | ${res['final_value']:>14,.2f} | ${res['buy_hold_value']:>14,.2f}")
 
-    print("="*70)
+    print("="*85)
     end_time = time.time()
     duration = end_time - start_time
     print(f"\n⏱️  Total Execution Time: {duration:.2f} seconds ({duration/60:.2f} minutes)")
 
     if sorted_results:
         best_params = sorted_results[0]
-        print(f"\n🏆 Best Parameters Found: Buy Threshold = {best_params['buy_thresh']:.2f}, Sell Threshold = {best_params['sell_thresh']:.2f}")
+        print(f"\n🏆 Best Parameters Found: Buy Threshold = {best_params['buy_thresh']:.2f}, Sell Threshold = {best_params['sell_thresh']:.2f}, Target = {best_params['target_perc']:.2%}")
         
         # Rerun with best parameters to get the models and scalers for the final summary
+        print("\n🔄 Re-running backtest with optimal parameters to generate final report...")
         _, _, models_buy, scalers, top_performers_data, strategy_results, processed_tickers, performance_metrics = main(
             fcf_threshold=0.0, 
             min_proba_buy=best_params['buy_thresh'], 
-            min_proba_sell=best_params['sell_thresh']
+            min_proba_sell=best_params['sell_thresh'],
+            target_percentage=best_params['target_perc']
         )
         
         # Prepare data for the final summary table
@@ -1538,11 +1562,29 @@ def run_backtest_and_optimize():
 
 
 if __name__ == "__main__":
-    # The original backtesting functionality can be run by uncommenting the next line
-    main() 
-    
-    # Run the backtest, optimization, and recommendation flow
-    #run_backtest_and_optimize()
+    import argparse
 
-    # The standalone AI recommendation engine can be run by uncommenting the next line
-    # get_ai_recommendations()
+    parser = argparse.ArgumentParser(
+        description="AI Stock Advisor: Run backtests, optimizations, or get recommendations."
+    )
+    parser.add_argument(
+        '--optimize', 
+        action='store_true', 
+        help='Run the parallel optimization process to find the best parameters.'
+    )
+    parser.add_argument(
+        '--no-fcf',
+        action='store_true',
+        help='Disable the Free Cash Flow (FCF) screening for faster results.'
+    )
+    args = parser.parse_args()
+
+    fcf_threshold = 0.0 if not args.no_fcf else None
+
+    if args.optimize:
+        run_backtest_and_optimize(fcf_threshold=fcf_threshold)
+    else:
+        # Run a single analysis with the default (or pre-optimized) parameters
+        print("🚀 Running AI Stock Advisor with default parameters...")
+        # You can replace these with the best parameters found during optimization
+        main(fcf_threshold=fcf_threshold, min_proba_buy=0.8, min_proba_sell=0.8, target_percentage=0.05)
