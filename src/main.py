@@ -913,6 +913,7 @@ class RuleTradingEnv:
         self.portfolio_history: List[float] = [self.initial_balance]
         self.trade_log: List[Tuple] = []
         self.ticker = self.df.iloc[0]['ticker'] if 'ticker' in self.df.columns else "UNKNOWN" # Store ticker for logging
+        self.last_ai_action: str = "HOLD" # New: Track last AI action
 
         close = self.df["Close"]
         
@@ -1055,6 +1056,7 @@ class RuleTradingEnv:
         self.highest_since_entry = price
         self.holding_bars = 0
         self.trade_log.append((date, "BUY", price, qty, self.ticker, {"fee": fee}, fee))
+        self.last_ai_action = "BUY" # Update last AI action
         # print(f"  [{self.ticker}] BUY: {date}, Price: {price:.2f}, Qty: {qty}, Cash: {self.cash:,.2f}, Shares: {self.shares:.2f}")
 
     def _sell(self, price: float, date: str):
@@ -1070,6 +1072,7 @@ class RuleTradingEnv:
         self.highest_since_entry = None
         self.holding_bars = 0
         self.trade_log.append((date, "SELL", price, qty, self.ticker, {"fee": fee}, fee))
+        self.last_ai_action = "SELL" # Update last AI action
         # print(f"  [{self.ticker}] SELL: {price:.2f}, Qty: {qty}, Cash: {self.cash:,.2f}, Shares: {self.shares:.2f}")
 
     def step(self):
@@ -1088,9 +1091,6 @@ class RuleTradingEnv:
         price = float(row["Close"])
         date = self._date_at(self.current_step)
         atr = float(row.get("ATR", np.nan)) if pd.notna(row.get("ATR", np.nan)) else None
-
-        # Debugging: Print current state
-        # print(f"  [{self.ticker}] Step {self.current_step}: Date={date}, Price={price:.2f}, Cash={self.cash:,.2f}, Shares={self.shares:.2f}, Portfolio={self.cash + self.shares * price:,.2f}")
 
         # --- Market Filter ---
         if self.use_market_filter:
@@ -1112,50 +1112,22 @@ class RuleTradingEnv:
                     return self.current_step >= len(self.df)
 
         # --- Entry Signal ---
-        # Filter: Trend must be up (price above 200-day SMA)
-        sma_200 = row.get('SMA_200')
-        # trend_ok = price > sma_200 if sma_200 and not np.isnan(sma_200) else False # Not used, can remove
-
-        # Trigger: Price above long SMA (no crossover)
-        # sma_l = row.get('SMA_L') # Not used, can remove
-
-        # --- Trend-Following Entry Signal ---
-        # sma_s = row.get('SMA_S') # Not used, can remove
-        # sma_l = row.get('SMA_L') # Not used, can remove
-        # sma_200 = row.get('SMA_200') # Already fetched above
-
         # Condition: AI model is now the primary buy signal generator.
         if self.shares == 0 and self._allow_buy_by_model(self.current_step):
             self._buy(price, atr, date)
         
         # --- AI-driven Exit Signal ---
-        if self.shares > 0 and self._allow_sell_by_model(self.current_step):
+        elif self.shares > 0 and self._allow_sell_by_model(self.current_step): # Changed to elif to prioritize buy
             self._sell(price, date)
-            
-        # Original Exit Logic (ATR-based) is kept as a fallback/stop-loss
-        # --- This section has been disabled to rely solely on the AI sell model ---
-        # if self.shares > 0:
-        #     if self.highest_since_entry is None or price > self.highest_since_entry:
-        #         self.highest_since_entry = price
-        #     self.holding_bars += 1
-            
-        #     tp_level = self.entry_price * (1 + ATR_MULT_TP * (atr / price)) if (atr and price > 0) else self.entry_price * (1 + 0.12)
-        #     tsl_level = None
-        #     if self.highest_since_entry is not None and atr is not None:
-        #         tsl_level = self.highest_since_entry - ATR_MULT_TRAIL * atr
-
-        #     hit_tp = price >= tp_level
-        #     hit_trail = (tsl_level is not None) and (price <= tsl_level)
-            
-        #     if hit_tp or hit_trail:
-        #         self._sell(price, date)
+        else:
+            self.last_ai_action = "HOLD" # No action taken by AI
 
         port_val = self.cash + self.shares * price
         self.portfolio_history.append(port_val)
         self.current_step += 1
         return self.current_step >= len(self.df)
 
-    def run(self) -> Tuple[float, List[Tuple]]:
+    def run(self) -> Tuple[float, List[Tuple], str]: # Added str for last_ai_action
         done = False
         while not done:
             done = self.step()
@@ -1163,7 +1135,7 @@ class RuleTradingEnv:
             last_price = float(self.df.iloc[-1]["Close"])
             self._sell(last_price, self._date_at(len(self.df)-1))
             self.portfolio_history[-1] = self.cash
-        return self.portfolio_history[-1], self.trade_log
+        return self.portfolio_history[-1], self.trade_log, self.last_ai_action # Return last_ai_action
 
 # ============================
 # Analytics
@@ -1531,7 +1503,7 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
                          use_gate=USE_MODEL_GATE,
                          market_data=market_data, use_market_filter=USE_MARKET_FILTER,
                          feature_set=feature_set)
-    final_val, log = env.run()
+    final_val, log, last_ai_action = env.run() # Capture last_ai_action
     
     df_backtest = df.loc[df.index >= bt_start]
     strategy_history = env.portfolio_history[-len(df_backtest):]
@@ -1547,8 +1519,11 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
         final_val = capital_per_stock
 
     perf_data = analyze_performance(log, strategy_history_for_analysis, buy_hold_history, ticker)
+    
+    # Calculate individual buy and hold return for the backtest period
+    individual_bh_return = ((bh_val - capital_per_stock) / capital_per_stock) * 100 if capital_per_stock > 0 else 0
 
-    return {'ticker': ticker, 'final_val': final_val, 'bh_val': bh_val, 'perf_data': perf_data}
+    return {'ticker': ticker, 'final_val': final_val, 'bh_val': bh_val, 'perf_data': perf_data, 'individual_bh_return': individual_bh_return, 'last_ai_action': last_ai_action}
 
 def optimize_thresholds_worker(params: Tuple) -> Dict:
     """Worker function to optimize thresholds for a single ticker."""
@@ -1583,7 +1558,7 @@ def optimize_thresholds_worker(params: Tuple) -> Dict:
                                  use_gate=USE_MODEL_GATE,
                                  market_data=market_data, use_market_filter=USE_MARKET_FILTER,
                                  feature_set=feature_set)
-            final_val, log = env.run()
+            final_val, log, _ = env.run() # Don't need last_ai_action for optimization
 
             if len(env.portfolio_history) > 1:
                 strat_returns = pd.Series(env.portfolio_history).pct_change().dropna()
@@ -1853,7 +1828,20 @@ def main(
     # --- Prepare data for the final summary table (using 1-Year results for the table) ---
     final_results = []
     for i, ticker in enumerate(processed_tickers_1y):
-        perf_data = performance_metrics_1y[i]
+        # The performance_metrics_1y list contains the dictionaries returned by backtest_worker
+        # Each dictionary has 'perf_data', 'individual_bh_return', and 'last_ai_action'
+        backtest_result_for_ticker = next((res for res in performance_metrics_1y if res['ticker'] == ticker), None)
+        
+        if backtest_result_for_ticker:
+            perf_data = backtest_result_for_ticker['perf_data']
+            individual_bh_return = backtest_result_for_ticker['individual_bh_return']
+            last_ai_action = backtest_result_for_ticker['last_ai_action']
+        else:
+            # Fallback if ticker not found in backtest_results (should not happen if processed_tickers_1y is accurate)
+            perf_data = {'sharpe_ratio': 0.0}
+            individual_bh_return = 0.0
+            last_ai_action = "N/A"
+
         # Find the corresponding performance data (1Y and YTD from find_top_performers)
         perf_1y_benchmark, perf_ytd_benchmark = -np.inf, -np.inf
         for t, p1y, pytd in top_performers_data:
@@ -1867,7 +1855,9 @@ def main(
             'performance': strategy_results_1y[i],
             'sharpe': perf_data['sharpe_ratio'],
             'one_year_perf': perf_1y_benchmark,
-            'ytd_perf': pytd # Use pytd here for consistency
+            'ytd_perf': perf_ytd_benchmark, # Use perf_ytd_benchmark here for consistency
+            'individual_bh_return': individual_bh_return,
+            'last_ai_action': last_ai_action
         })
     
     # Sort by 1Y performance for the final table
@@ -1975,7 +1965,7 @@ def _run_portfolio_backtest(
 
     final_strategy_value = sum(res['final_val'] for res in backtest_results) + (len(top_tickers) - len(processed_tickers)) * capital_per_stock
     strategy_results = [res['final_val'] for res in backtest_results]
-    performance_metrics = [res['perf_data'] for res in backtest_results]
+    performance_metrics = [res for res in backtest_results] # Return full backtest_results for main to access individual_bh_return and last_ai_action
 
     print(f"\n--- {period_name} Backtest Summary ---")
     print(f"  Total Initial Capital: ${INITIAL_BALANCE:,.2f}")
@@ -2018,15 +2008,16 @@ def print_final_summary(
     print(f"  Minimum Sell Probability: {MIN_PROBA_SELL:.2f}")
 
     print("\nIndividual Ticker Performance (1-Year Backtest):")
-    print(f"{'Rank':<5} | {'Ticker':<10} | {'1Y Perf (%)':>12} | {'YTD Perf (%)':>12} | {'Strategy Value':>18} | {'Sharpe Ratio':>14} | {'Min Buy Proba':>13} | {'Min Sell Proba':>14} | {'Recommendation':<30}")
-    print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+    print(f"{'Rank':<5} | {'Ticker':<10} | {'1Y Perf (%)':>12} | {'BH Perf (%)':>12} | {'Strategy Value':>18} | {'Sharpe Ratio':>14} | {'Min Buy Proba':>13} | {'Min Sell Proba':>14} | {'AI Action':<10}")
+    print("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
 
     for i, res in enumerate(sorted_final_results, 1):
         ticker = res['ticker']
         strategy_value = res['performance']
         sharpe = res['sharpe']
         one_year_perf = res['one_year_perf']
-        ytd_perf = res['ytd_perf']
+        individual_bh_return = res['individual_bh_return'] # Get individual BH return
+        last_ai_action = res['last_ai_action'] # Get last AI action
 
         # Get per-ticker thresholds or use global defaults
         min_proba_buy_ticker = MIN_PROBA_BUY
@@ -2037,18 +2028,9 @@ def print_final_summary(
             if 'min_proba_sell' in optimized_params_per_ticker[ticker]:
                 min_proba_sell_ticker = optimized_params_per_ticker[ticker]['min_proba_sell']
         
-        # Determine individual ticker recommendation
-        individual_strategy_return = ((strategy_value - (INITIAL_BALANCE / len(sorted_final_results))) / (INITIAL_BALANCE / len(sorted_final_results))) * 100
-        
-        action_recommendation = "HOLD" # Default to HOLD
-        if individual_strategy_return > one_year_perf and individual_strategy_return > 0:
-            action_recommendation = "BUY"
-        elif individual_strategy_return < 0:
-            action_recommendation = "SELL"
+        print(f"{i:<5} | {ticker:<10} | {one_year_perf:>12.2f} | {individual_bh_return:>12.2f} | {strategy_value:>18,.2f} | {sharpe:>14.2f} | {min_proba_buy_ticker:>13.2f} | {min_proba_sell_ticker:>14.2f} | {last_ai_action:<10}")
 
-        print(f"{i:<5} | {ticker:<10} | {one_year_perf:>12.2f} | {ytd_perf:>12.2f} | {strategy_value:>18,.2f} | {sharpe:>14.2f} | {min_proba_buy_ticker:>13.2f} | {min_proba_sell_ticker:>14.2f} | {action_recommendation:<30}")
-
-    print("====================================================================================================================================================================================")
+    print("==================================================================================================================================================================================================")
     
     print("\nOverall Recommendation:")
     if ai_1y_return > ((final_buy_hold_value_1y - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:
