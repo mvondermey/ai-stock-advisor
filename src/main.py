@@ -26,6 +26,7 @@ import sys
 import codecs
 from io import StringIO
 from multiprocessing import Pool, cpu_count
+import joblib # Added for model saving/loading
 
 # --- Force UTF-8 output on Windows ---
 if sys.stdout.encoding != 'utf-8':
@@ -64,18 +65,18 @@ CACHE_DAYS              = 7
 
 # --- Universe / selection
 MARKET_SELECTION = {
-    "NASDAQ_ALL": False,
+    "NASDAQ_ALL": True,
     "NASDAQ_100": True,
-    "SP500": False,
-    "DOW_JONES": False,
+    "SP500": True,
+    "DOW_JONES": True,
     "POPULAR_ETFS": False,
     "CRYPTO": False,
-    "DAX": False,
-    "MDAX": False,
+    "DAX": True,
+    "MDAX": True,
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 0          # Set to 0 to disable the limit and run on all performers
+N_TOP_TICKERS           = 10          # Set to 0 to disable the limit and run on all performers
 BATCH_DOWNLOAD_SIZE     = 500
 PAUSE_BETWEEN_BATCHES   = 5.0
 
@@ -1713,7 +1714,7 @@ def main(
         print("⚠️ No models were trained for YTD backtest. Model-gating will be disabled for this run.\n")
 
     # --- Run YTD Backtest ---
-    final_strategy_value_ytd, strategy_results_ytd, processed_tickers_ytd, performance_metrics_ytd = _run_portfolio_backtest(
+    final_strategy_value_ytd, strategy_results_ytd, processed_tickers_ytd_local, performance_metrics_ytd = _run_portfolio_backtest(
         start_date=ytd_start_date,
         end_date=bt_end,
         top_tickers=top_tickers,
@@ -1729,6 +1730,19 @@ def main(
     )
     ai_ytd_return = ((final_strategy_value_ytd - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
 
+    # --- Calculate Buy & Hold for YTD ---
+    buy_hold_results_ytd = []
+    for ticker in processed_tickers_ytd_local: # Use processed_tickers_ytd_local here
+        df_bh = load_prices_robust(ticker, ytd_start_date, bt_end)
+        if not df_bh.empty:
+            start_price = float(df_bh["Close"].iloc[0])
+            shares_bh = int(capital_per_stock / start_price) if start_price > 0 else 0
+            cash_bh = capital_per_stock - shares_bh * start_price
+            buy_hold_results_ytd.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
+        else:
+            buy_hold_results_ytd.append(capital_per_stock) # If no data, assume initial capital
+    final_buy_hold_value_ytd = sum(buy_hold_results_ytd) + (len(top_tickers) - len(processed_tickers_ytd_local)) * capital_per_stock
+
     # --- Prepare data for the final summary table (using 1-Year results for the table) ---
     final_results = []
     for i, ticker in enumerate(processed_tickers_1y):
@@ -1737,7 +1751,7 @@ def main(
         perf_1y_benchmark, perf_ytd_benchmark = -np.inf, -np.inf
         for t, p1y, pytd in top_performers_data:
             if t == ticker:
-                perf_1y_benchmark = p1_y
+                perf_1y_benchmark = p1y
                 perf_ytd_benchmark = pytd
                 break
         
@@ -1752,9 +1766,197 @@ def main(
     # Sort by 1Y performance for the final table
     sorted_final_results = sorted(final_results, key=lambda x: x['one_year_perf'], reverse=True)
     
-    print_final_summary(sorted_final_results, models_buy, models_sell, scalers, optimized_params_per_ticker)
+    print_final_summary(sorted_final_results, models_buy, models_sell, scalers, optimized_params_per_ticker,
+                        final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
+                        final_strategy_value_ytd, final_buy_hold_value_ytd, ai_ytd_return)
     
     return final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return
+
+def _run_portfolio_backtest(
+    start_date: datetime,
+    end_date: datetime,
+    top_tickers: List[str],
+    models_buy: Dict,
+    models_sell: Dict,
+    scalers: Dict,
+    market_data: Optional[pd.DataFrame],
+    optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]],
+    capital_per_stock: float,
+    target_percentage: float,
+    run_parallel: bool,
+    period_name: str
+) -> Tuple[float, List[float], List[str], List[Dict]]:
+    """
+    Orchestrates the backtesting of a portfolio of tickers, handling model loading/saving
+    and parallel execution.
+    """
+    import joblib
+    _ensure_dir(Path("logs/models"))
+    _ensure_dir(Path("logs"))
+
+    backtest_params = []
+    processed_tickers = []
+    
+    for ticker in top_tickers:
+        model_buy = models_buy.get(ticker)
+        model_sell = models_sell.get(ticker)
+        scaler = scalers.get(ticker)
+
+        # Load optimized parameters if available, otherwise use global defaults
+        per_ticker_min_proba_buy = MIN_PROBA_BUY
+        per_ticker_min_proba_sell = MIN_PROBA_SELL
+        if optimized_params_per_ticker and ticker in optimized_params_per_ticker:
+            if 'min_proba_buy' in optimized_params_per_ticker[ticker]:
+                per_ticker_min_proba_buy = optimized_params_per_ticker[ticker]['min_proba_buy']
+            if 'min_proba_sell' in optimized_params_per_ticker[ticker]:
+                per_ticker_min_proba_sell = optimized_params_per_ticker[ticker]['min_proba_sell']
+
+        # If models are not in memory, try to load them from disk
+        if model_buy is None and scaler is None:
+            try:
+                model_buy = joblib.load(f"logs/models/{ticker}_model_buy.joblib")
+                model_sell = joblib.load(f"logs/models/{ticker}_model_sell.joblib")
+                scaler = joblib.load(f"logs/models/{ticker}_scaler.joblib")
+                # Re-add to in-memory dicts for subsequent use
+                models_buy[ticker] = model_buy
+                models_sell[ticker] = model_sell
+                scalers[ticker] = scaler
+            except FileNotFoundError:
+                # print(f"  ⚠️ No saved models found for {ticker}. Skipping backtest for this ticker.")
+                continue
+            except Exception as e:
+                print(f"  ⚠️ Error loading models for {ticker}: {e}. Skipping backtest for this ticker.")
+                continue
+        
+        # Ensure scaler has feature_names_in_ attribute for consistent use in RuleTradingEnv
+        if scaler is not None and not hasattr(scaler, 'feature_names_in_'):
+            # This is a fallback, ideally feature_names_in_ is set during training
+            # For now, we'll use a default set, but this might need to be more robust
+            scaler.feature_names_in_ = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper", 
+                                        'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA']
+
+        # Only add to backtest_params if we have a model and scaler
+        if model_buy and scaler:
+            # Pass the feature_set from the scaler to the RuleTradingEnv
+            feature_set_for_env = scaler.feature_names_in_ if hasattr(scaler, 'feature_names_in_') else None
+            backtest_params.append((ticker, start_date, end_date, capital_per_stock, model_buy, model_sell, scaler, market_data, feature_set_for_env, per_ticker_min_proba_buy, per_ticker_min_proba_sell))
+            processed_tickers.append(ticker)
+        else:
+            print(f"  ⚠️ Skipping backtest for {ticker} due to missing model or scaler.")
+
+    if not backtest_params:
+        print(f"❌ No tickers with valid models/scalers to backtest for {period_name} period.")
+        return INITIAL_BALANCE, [], [], []
+
+    print(f"\n🔍 Step 4: Running {period_name} backtest for {len(processed_tickers)} tickers...")
+    num_processes = max(1, cpu_count() - 2)
+
+    if run_parallel:
+        print(f"📈 Running {period_name} backtests in parallel using {num_processes} processes...")
+        with Pool(processes=num_processes) as pool:
+            backtest_results = list(tqdm(pool.imap(backtest_worker, backtest_params), total=len(backtest_params), desc=f"Backtesting {period_name}"))
+    else:
+        print(f"📈 Running {period_name} backtests sequentially...")
+        backtest_results = [backtest_worker(p) for p in tqdm(backtest_params, desc=f"Backtesting {period_name}")]
+
+    # Filter out None results (e.g., from tickers with insufficient data)
+    backtest_results = [res for res in backtest_results if res is not None]
+
+    if not backtest_results:
+        print(f"❌ No successful backtest results for {period_name} period.")
+        return INITIAL_BALANCE, [], [], []
+
+    final_strategy_value = sum(res['final_val'] for res in backtest_results) + (len(top_tickers) - len(processed_tickers)) * capital_per_stock
+    strategy_results = [res['final_val'] for res in backtest_results]
+    performance_metrics = [res['perf_data'] for res in backtest_results]
+
+    print(f"\n--- {period_name} Backtest Summary ---")
+    print(f"  Total Initial Capital: ${INITIAL_BALANCE:,.2f}")
+    print(f"  Final Strategy Value:  ${final_strategy_value:,.2f}")
+    print(f"  Strategy Return:       {((final_strategy_value - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:.2f}%")
+    print("-" * 30)
+
+    return final_strategy_value, strategy_results, processed_tickers, performance_metrics
+
+def print_final_summary(
+    sorted_final_results: List[Dict],
+    models_buy: Dict,
+    models_sell: Dict,
+    scalers: Dict,
+    optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]],
+    final_strategy_value_1y: float,
+    final_buy_hold_value_1y: float,
+    ai_1y_return: float,
+    final_strategy_value_ytd: float,
+    final_buy_hold_value_ytd: float,
+    ai_ytd_return: float
+):
+    """Prints the final summary table and saves models."""
+    import joblib
+    
+    print("\n\n====================================================================================================")
+    print("                                 🚀 AI-Powered Momentum & Trend Strategy Results                               ")
+    print("====================================================================================================")
+    print("                                 🚀 AI-Powered Momentum & Trend Strategy Results                               ")
+    print("====================================================================================================")
+    
+    print(f"\nOverall Portfolio Performance (1-Year):")
+    print(f"  Strategy Final Value: ${final_strategy_value_1y:,.2f} (Return: {ai_1y_return:.2f}%)")
+    print(f"  Buy & Hold Final Value: ${final_buy_hold_value_1y:,.2f} (Return: {((final_buy_hold_value_1y - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:.2f}%)")
+
+    print(f"\nOverall Portfolio Performance (YTD):")
+    print(f"  Strategy Final Value: ${final_strategy_value_ytd:,.2f} (Return: {ai_ytd_return:.2f}%)")
+    print(f"  Buy & Hold Final Value: ${final_buy_hold_value_ytd:,.2f} (Return: {((final_buy_hold_value_ytd - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:.2f}%)")
+
+    print(f"\nML Model Thresholds:")
+    print(f"  Minimum Buy Probability: {MIN_PROBA_BUY:.2f}")
+    print(f"  Minimum Sell Probability: {MIN_PROBA_SELL:.2f}")
+
+    print("\nIndividual Ticker Performance (1-Year Backtest):")
+    print(f"{'Rank':<5} | {'Ticker':<10} | {'1Y Perf (%)':>12} | {'YTD Perf (%)':>12} | {'Strategy Value':>18} | {'Sharpe Ratio':>14}")
+    print("----------------------------------------------------------------------------------------------------")
+
+    for i, res in enumerate(sorted_final_results, 1):
+        ticker = res['ticker']
+        strategy_value = res['performance']
+        sharpe = res['sharpe']
+        one_year_perf = res['one_year_perf']
+        ytd_perf = res['ytd_perf']
+        
+        print(f"{i:<5} | {ticker:<10} | {one_year_perf:>12.2f} | {ytd_perf:>12.2f} | {strategy_value:>18,.2f} | {sharpe:>14.2f}")
+
+    print("====================================================================================================")
+    
+    print("\nRecommendation:")
+    if ai_1y_return > ((final_buy_hold_value_1y - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:
+        print(f"The AI strategy outperformed a simple Buy & Hold strategy over the 1-Year period. Consider deploying this strategy.")
+    else:
+        print(f"The AI strategy did not outperform a simple Buy & Hold strategy over the 1-Year period. Further optimization may be needed.")
+    
+    if sorted_final_results:
+        top_ticker = sorted_final_results[0]['ticker']
+        top_perf = sorted_final_results[0]['one_year_perf']
+        print(f"The top performing ticker in the backtest was {top_ticker} with a 1-Year benchmark performance of {top_perf:.2f}%.")
+
+    print("\nSaving trained models and scalers...")
+    for ticker, model_buy in models_buy.items():
+        try:
+            joblib.dump(model_buy, f"logs/models/{ticker}_model_buy.joblib")
+            joblib.dump(models_sell[ticker], f"logs/models/{ticker}_model_sell.joblib")
+            joblib.dump(scalers[ticker], f"logs/models/{ticker}_scaler.joblib")
+            print(f"  ✅ Saved models for {ticker}")
+        except Exception as e:
+            print(f"  ⚠️ Could not save models for {ticker}: {e}")
+            
+    if optimized_params_per_ticker:
+        try:
+            with open(TOP_CACHE_PATH.parent / "optimized_per_ticker_params.json", 'w') as f:
+                json.dump(optimized_params_per_ticker, f, indent=4)
+            print(f"  ✅ Saved optimized parameters to {TOP_CACHE_PATH.parent / 'optimized_per_ticker_params.json'}")
+        except Exception as e:
+            print(f"  ⚠️ Could not save optimized parameters: {e}")
+
+    print("\nAnalysis complete. Check 'logs/models/' for saved models and 'logs/optimized_per_ticker_params.json' for optimized parameters.")
 
 if __name__ == "__main__":
     main()
