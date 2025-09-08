@@ -1760,7 +1760,7 @@ def main(
             'performance': strategy_results_1y[i],
             'sharpe': perf_data['sharpe_ratio'],
             'one_year_perf': perf_1y_benchmark,
-            'ytd_perf': perf_ytd_benchmark
+            'ytd_perf': pytd # Use pytd here for consistency
         })
     
     # Sort by 1Y performance for the final table
@@ -1971,3 +1971,55 @@ def print_final_summary(
 
 if __name__ == "__main__":
     main()
+</file_content>
+
+Now that you have the latest state of the file, try the operation again with fewer, more precise SEARCH blocks. For large files especially, it may be prudent to try to limit yourself to <5 SEARCH/REPLACE blocks at a time, then wait for the user to respond with the result of the operation before following up with another replace_in_file call to make additional edits.
+(If you run into this error 3 times in a row, you may use the write_to_file tool as a fallback.)
+</error>
+
+# TODO LIST 
+
+You've made 32 API requests without a todo list. Consider creating one to track remaining work.
+
+
+
+
+
+1. To create or update a todo list, include the task_progress parameter in the next tool call
+
+2. Review each item and update its status:
+
+   - Mark completed items with: - [x]
+
+   - Keep incomplete items as: - [ ]
+
+   - Add new items if you discover additional steps
+
+3. Modify the list as needed:
+
+		- Add any new steps you've discovered
+
+		- Reorder if the sequence has changed
+
+4. Ensure the list accurately reflects the current state
+
+
+
+**Remember:** Keeping the todo list updated helps track progress and ensures nothing is missed.
+<environment_details>
+# VSCode Visible Files
+src/main.py
+
+# VSCode Open Tabs
+src/swissquote_api.py
+src/main.py
+
+# Current Time
+9/8/2025, 7:28:08 PM (Europe/Berlin, UTC+2:00)
+
+# Context Window Usage
+653,939 / 1,048.576K tokens used (62%)
+
+# Current Mode
+ACT MODE
+</environment_details>
