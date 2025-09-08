@@ -1897,8 +1897,6 @@ def print_final_summary(
     print("\n\n====================================================================================================")
     print("                                 🚀 AI-Powered Momentum & Trend Strategy Results                               ")
     print("====================================================================================================")
-    print("                                 🚀 AI-Powered Momentum & Trend Strategy Results                               ")
-    print("====================================================================================================")
     
     print(f"\nOverall Portfolio Performance (1-Year):")
     print(f"  Strategy Final Value: ${final_strategy_value_1y:,.2f} (Return: {ai_1y_return:.2f}%)")
@@ -1913,8 +1911,8 @@ def print_final_summary(
     print(f"  Minimum Sell Probability: {MIN_PROBA_SELL:.2f}")
 
     print("\nIndividual Ticker Performance (1-Year Backtest):")
-    print(f"{'Rank':<5} | {'Ticker':<10} | {'1Y Perf (%)':>12} | {'YTD Perf (%)':>12} | {'Strategy Value':>18} | {'Sharpe Ratio':>14}")
-    print("----------------------------------------------------------------------------------------------------")
+    print(f"{'Rank':<5} | {'Ticker':<10} | {'1Y Perf (%)':>12} | {'YTD Perf (%)':>12} | {'Strategy Value':>18} | {'Sharpe Ratio':>14} | {'Min Buy Proba':>13} | {'Min Sell Proba':>14} | {'Recommendation':<30}")
+    print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
 
     for i, res in enumerate(sorted_final_results, 1):
         ticker = res['ticker']
@@ -1922,12 +1920,25 @@ def print_final_summary(
         sharpe = res['sharpe']
         one_year_perf = res['one_year_perf']
         ytd_perf = res['ytd_perf']
-        
-        print(f"{i:<5} | {ticker:<10} | {one_year_perf:>12.2f} | {ytd_perf:>12.2f} | {strategy_value:>18,.2f} | {sharpe:>14.2f}")
 
-    print("====================================================================================================")
+        # Get per-ticker thresholds or use global defaults
+        min_proba_buy_ticker = MIN_PROBA_BUY
+        min_proba_sell_ticker = MIN_PROBA_SELL
+        if optimized_params_per_ticker and ticker in optimized_params_per_ticker:
+            if 'min_proba_buy' in optimized_params_per_ticker[ticker]:
+                min_proba_buy_ticker = optimized_params_per_ticker[ticker]['min_proba_buy']
+            if 'min_proba_sell' in optimized_params_per_ticker[ticker]:
+                min_proba_sell_ticker = optimized_params_per_ticker[ticker]['min_proba_sell']
+        
+        # Determine individual ticker recommendation
+        individual_strategy_return = ((strategy_value - (INITIAL_BALANCE / len(sorted_final_results))) / (INITIAL_BALANCE / len(sorted_final_results))) * 100
+        individual_recommendation = "Outperformed B&H" if individual_strategy_return > one_year_perf else "Underperformed B&H"
+
+        print(f"{i:<5} | {ticker:<10} | {one_year_perf:>12.2f} | {ytd_perf:>12.2f} | {strategy_value:>18,.2f} | {sharpe:>14.2f} | {min_proba_buy_ticker:>13.2f} | {min_proba_sell_ticker:>14.2f} | {individual_recommendation:<30}")
+
+    print("====================================================================================================================================================================================")
     
-    print("\nRecommendation:")
+    print("\nOverall Recommendation:")
     if ai_1y_return > ((final_buy_hold_value_1y - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:
         print(f"The AI strategy outperformed a simple Buy & Hold strategy over the 1-Year period. Consider deploying this strategy.")
     else:
