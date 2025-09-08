@@ -1642,3 +1642,8 @@ def find_top_performers(return_tickers: bool = False, n_top: int = N_TOP_TICKERS
     
     print("-" * 60)
     return list(final_tickers)
+
+if __name__ == "__main__":
+    print("Starting AI Stock Advisor...")
+    find_top_performers(n_top=N_TOP_TICKERS)
+    print("AI Stock Advisor finished.")
