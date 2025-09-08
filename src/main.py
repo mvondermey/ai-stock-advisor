@@ -26,7 +26,7 @@ import sys
 import codecs
 from io import StringIO
 from multiprocessing import Pool, cpu_count
-from tqdm.contrib.concurrent import process_map # Re-import process_map for parallel progress bars
+import joblib # Added for model saving/loading
 
 # --- Force UTF-8 output on Windows ---
 if sys.stdout.encoding != 'utf-8':
@@ -42,12 +42,6 @@ import matplotlib.pyplot as plt
 import yfinance as yf
 from tqdm import tqdm
 from datetime import datetime, timedelta, timezone
-
-import joblib # New: Import joblib for model serialization
-
-def _process_ticker_wrapper(args):
-    """Wrapper function to unpack arguments for process_ticker."""
-    return process_ticker(*args)
 
 # Optional Stooq provider
 try:
@@ -67,8 +61,6 @@ DATA_PROVIDER           = 'yahoo'    # 'stooq' or 'yahoo'
 USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin
 DATA_CACHE_DIR          = Path("data_cache")
 TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
-OPTIMIZED_PARAMS_PATH   = Path("logs/optimized_per_ticker_params.json") # New: Path for optimized params
-MODEL_CACHE_DIR         = Path("logs/models") # New: Directory for cached models
 CACHE_DAYS              = 7
 
 # --- Universe / selection
@@ -106,14 +98,14 @@ FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
 CLASS_HORIZON           = 5          # days ahead for classification target
-MIN_PROBA_BUY           = 0.8       # ML gate threshold for buy model
-MIN_PROBA_SELL          = 0.8       # ML gate threshold for sell model
+MIN_PROBA_BUY           = 0.5       # ML gate threshold for buy model
+MIN_PROBA_SELL          = 0.5       # ML gate threshold for sell model
 TARGET_PERCENTAGE       = 0.01       # 1% target for buy/sell classification
 USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # re-enable market filter
 MARKET_FILTER_TICKER    = 'SPY'
 MARKET_FILTER_SMA       = 200
-USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering
+USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
 
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
@@ -126,9 +118,8 @@ SAVE_PLOTS              = False
 def _ensure_dir(p: Path) -> None:
     try:
         p.mkdir(parents=True, exist_ok=True)
-        print(f"  ✅ Directory ensured: {p}")
-    except Exception as e:
-        print(f"  ⚠️ Could not ensure directory {p}: {e}")
+    except Exception:
+        pass
 
 
 def _to_utc(ts):
@@ -157,14 +148,6 @@ def _fetch_from_stooq(ticker: str, start: datetime, end: datetime) -> pd.DataFra
         return df
     except Exception:
         return pd.DataFrame()
-
-def _normalize_symbol(symbol: str, provider: str) -> str:
-    """Normalizes ticker symbols for different data providers."""
-    if provider.lower() == 'stooq':
-        return symbol
-    elif provider.lower() == 'yahoo':
-        return symbol.replace('.', '-')
-    return symbol
 
 # ============================
 # Data access
@@ -690,13 +673,9 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
         start = end - timedelta(days=TRAIN_LOOKBACK_DAYS)
 
     df = load_prices(ticker, start, end)
-    if df.empty:
-        print(f"⚠️ No data fetched for {ticker} from {start.date()} to {end.date()}. Returning empty DataFrame.")
+    if df.empty or len(df) < FEAT_SMA_LONG + 10:
+        print(f"⚠️ Insufficient data for {ticker} from {start.date()} to {end.date()}. Returning empty DataFrame.")
         return pd.DataFrame(), []
-
-    # Ensure enough data for basic SMA calculations, otherwise warn but proceed
-    if len(df) < FEAT_SMA_LONG + 10:
-        print(f"  ℹ️ Potentially insufficient data for all features for {ticker} (only {len(df)} rows). Proceeding with available data.")
 
     df = df.copy()
     if "Close" not in df.columns and "Adj Close" in df.columns:
@@ -729,7 +708,7 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
     loss = (-delta.where(delta < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
     rs = gain / loss
     df['RSI_feat'] = 100 - (100 / (1 + rs))
-    
+
     # MACD
     ema_12 = df["Close"].ewm(span=12, adjust=False).mean()
     ema_26 = df["Close"].ewm(span=26, adjust=False).mean()
@@ -741,37 +720,6 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
     df['BB_std'] = df["Close"].rolling(window=20).std()
     df['BB_upper'] = df['BB_mid'] + (df['BB_std'] * 2)
     df['BB_lower'] = df['BB_mid'] - (df['BB_std'] * 2)
-
-    # Stochastic Oscillator
-    df['%K'] = ((df['Close'] - df['Low'].rolling(window=14).min()) / 
-                (df['High'].rolling(window=14).max() - df['Low'].rolling(window=14).min())) * 100
-    df['%D'] = df['%K'].rolling(window=3).mean()
-
-    # Williams %R
-    df['%R'] = ((df['High'].rolling(window=14).max() - df['Close']) / 
-                (df['High'].rolling(window=14).max() - df['Low'].rolling(window=14).min())) * -100
-
-    # Average Directional Index (ADX)
-    # Calculate True Range (TR)
-    high_low = df['High'] - df['Low']
-    high_prev_close = abs(df['High'] - df['Close'].shift(1))
-    low_prev_close = abs(df['Low'] - df['Close'].shift(1))
-    df['TR'] = pd.concat([high_low, high_prev_close, low_prev_close], axis=1).max(axis=1)
-
-    # Calculate Directional Movement (DM)
-    df['+DM'] = df['High'] - df['High'].shift(1)
-    df['-DM'] = df['Low'].shift(1) - df['Low']
-
-    df['+DM'] = df['+DM'].where( (df['+DM'] > 0) & (df['+DM'] > df['-DM']), 0)
-    df['-DM'] = df['-DM'].where( (df['-DM'] > 0) & (df['-DM'] > df['+DM']), 0)
-
-    # Calculate Smoothed True Range (ATR) and Directional Movement (ADX components)
-    df['ATR_ADX'] = df['TR'].ewm(span=14, adjust=False).mean()
-    df['+DI'] = (df['+DM'].ewm(span=14, adjust=False).mean() / df['ATR_ADX']) * 100
-    df['-DI'] = (df['-DM'].ewm(span=14, adjust=False).mean() / df['ATR_ADX']) * 100
-
-    df['DX'] = (abs(df['+DI'] - df['-DI']) / (df['+DI'] + df['-DI'])) * 100
-    df['ADX'] = df['DX'].ewm(span=14, adjust=False).mean()
     
     # --- Additional Financial Features (from _fetch_financial_data) ---
     financial_features = [col for col in df.columns if col.startswith('Fin_')]
@@ -779,9 +727,6 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
     # Ensure these are numeric and fill NaNs if any remain
     for col in financial_features:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
-    # Fill any remaining NaNs after all feature calculations to ensure columns are present
-    df = df.fillna(0)
 
     df["Target"]     = df["Close"].shift(-1)
 
@@ -792,38 +737,16 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
     # Classification label for SELL model: 5-day forward < -target_percentage
     df["TargetClassSell"] = ((fwd / df["Close"] - 1.0) < -target_percentage).astype(float)
 
-    # New: Regression target for 1-year price change
-    fwd_1y = df["Close"].shift(-252) # Approximately 252 trading days in a year
-    df["Target1YChange"] = (fwd_1y / df["Close"] - 1.0) * 100 # Percentage change
-
-    # Define core technical features
-    core_tech_features = ["Close","Returns","SMA_F_S","SMA_F_L","Volatility", "RSI_feat", "MACD", "BB_upper", "%K", "%D", "%R", "ADX"]
+    # Progress info
+    req_cols = ["Close","Returns","SMA_F_S","SMA_F_L","Volatility", "RSI_feat", "MACD", "BB_upper"] + financial_features + ["Target", "TargetClassBuy", "TargetClassSell"]
     
-    # Combine core technical features with dynamically found financial features
-    all_potential_features = core_tech_features + financial_features
+    # Filter req_cols to only include those present in df.columns
+    available_req_cols = [col for col in req_cols if col in df.columns]
     
-    # Filter to include only features actually present in the DataFrame
-    available_features = [col for col in all_potential_features if col in df.columns]
-
-    # Add target columns
-    target_cols = ["Target", "TargetClassBuy", "TargetClassSell", "Target1YChange"]
-    available_target_cols = [col for col in target_cols if col in df.columns]
-
-    # Combine available features and target columns
-    req_cols = available_features + available_target_cols
-    
-    # Create 'ready' DataFrame, ensuring all required columns are present and filled
-    ready = df[req_cols].copy()
+    ready = df[available_req_cols].dropna()
     
     # The actual features used for training will be all columns in 'ready' except the target columns
-    final_training_features = [col for col in available_features if col in ready.columns] # Use available_features as base
-    
-    # Drop rows with NaN values in the final feature set, but only if they are critical
-    # For now, rely on fillna(0) to keep all rows. If models require no NaNs, this might need adjustment.
-    # ready = ready.dropna() # Removed this line as fillna(0) should handle it.
-    
-    # The actual features used for training will be all columns in 'ready' except the target columns
-    final_training_features = [col for col in ready.columns if col not in ["Target", "TargetClassBuy", "TargetClassSell", "Target1YChange"]]
+    final_training_features = [col for col in ready.columns if col not in ["Target", "TargetClassBuy", "TargetClassSell"]]
 
     print(f"   ↳ rows after features available: {len(ready)}")
     return ready, final_training_features
@@ -843,7 +766,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
         LGBMClassifier = None
 
     df = df.copy()
-    # Ensure features are present (same logic as in classification models)
+    # Feature generation (same as before)
     if "Returns" not in df.columns and "Close" in df.columns:
         df["Returns"] = df["Close"].pct_change()
     if "SMA_F_S" not in df.columns and "Close" in df.columns:
@@ -853,6 +776,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     if "Volatility" not in df.columns and "Returns" in df.columns:
         df["Volatility"] = df["Returns"].rolling(FEAT_VOL_WINDOW).std()
     
+    # --- Ensure additional features are present ---
     if 'RSI_feat' not in df.columns:
         delta = df["Close"].diff()
         gain = (delta.where(delta > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
@@ -868,47 +792,47 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
         df['BB_std'] = df["Close"].rolling(window=20).std()
         df['BB_upper'] = df['BB_mid'] + (df['BB_std'] * 2)
 
+    # --- Ensure additional financial features are present and numeric ---
     financial_features_present = [col for col in df.columns if col.startswith('Fin_')]
     for col in financial_features_present:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
-    # df is already the 'ready' DataFrame from fetch_training_data, so it's already cleaned and has features.
-    # No need for redundant feature generation or another dropna() here.
 
     if target_col not in df.columns:
         print(f"⚠️ Target column '{target_col}' not found in DataFrame. Skipping model training.")
         return None
 
-    if feature_set is None:
-        print("⚠️ feature_set is None in train_and_evaluate_models. Skipping model training.")
-        return None
-    
-    actual_features = [f for f in feature_set if f in df.columns]
-
-    if not actual_features:
-        print(f"⚠️ No valid features available for training on '{target_col}'. Skipping model training.")
+    req = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"] + financial_features_present + [target_col]
+    if any(c not in df.columns for c in req):
+        print(f"⚠️ Missing columns for model comparison (target: {target_col}). Skipping.")
         return None
 
-    # Check if target_col is present and has enough diversity
-    if df[target_col].nunique() < 2:
+    d = df[req].dropna()
+    if len(d) < 50:  # Increased requirement for cross-validation
+        print("⚠️ Not enough rows after feature prep to compare models (need ≥ 50). Skipping.")
+        return None
+
+    # --- Check for class balance ---
+    if d[target_col].nunique() < 2:
         print(f"⚠️ Not enough class diversity for training on '{target_col}'. Skipping model.")
         return None
 
-    # Use the already cleaned and prepared DataFrame 'df' directly
-    X_df = df[actual_features]
-    y = df[target_col].values
-
-    if len(X_df) < 50:  # Increased requirement for cross-validation
-        print("⚠️ Not enough rows after feature prep to compare models (need ≥ 50). Skipping.")
-        return None
+    # Use the provided feature_set directly, as it's already filtered and ready
+    if feature_set is None:
+        # Fallback if feature_set is unexpectedly None, should not happen with new train_worker
+        final_feature_names = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper"]
+    else:
+        final_feature_names = feature_set
+    
+    X_df = d[final_feature_names]
+    y = d[target_col].values
 
     # Scale features for models that are sensitive to scale (like Logistic Regression and SVC)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_df)
-    X = pd.DataFrame(X_scaled, columns=actual_features, index=X_df.index)
+    X = pd.DataFrame(X_scaled, columns=final_feature_names, index=X_df.index)
     
     # Store feature names for consistent use during prediction
-    scaler.feature_names_in_ = list(actual_features) 
+    scaler.feature_names_in_ = list(final_feature_names) 
 
     models = {
         "Logistic Regression": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
@@ -945,111 +869,6 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     best_model_instance.fit(X, y)
     
     # We need to return the scaler as well to process live data
-    return best_model_instance, scaler
-
-def train_and_evaluate_regression_model(df: pd.DataFrame, target_col: str = "Target1YChange", feature_set: Optional[List[str]] = None):
-    """Train and compare multiple regression models for a given target, returning the best one."""
-    from sklearn.ensemble import RandomForestRegressor
-    from sklearn.linear_model import LinearRegression
-    from sklearn.svm import SVR
-    from sklearn.model_selection import cross_val_score, KFold
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.metrics import mean_absolute_error, r2_score
-
-    try:
-        from lightgbm import LGBMRegressor
-    except ImportError:
-        print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
-        LGBMRegressor = None
-
-    df = df.copy()
-    # Ensure features are present (same logic as in classification models)
-    if "Returns" not in df.columns and "Close" in df.columns:
-        df["Returns"] = df["Close"].pct_change()
-    if "SMA_F_S" not in df.columns and "Close" in df.columns:
-        df["SMA_F_S"] = df["Close"].rolling(FEAT_SMA_SHORT).mean()
-    if "SMA_F_L" not in df.columns and "Close" in df.columns:
-        df["SMA_F_L"] = df["Close"].rolling(FEAT_SMA_LONG).mean()
-    if "Volatility" not in df.columns and "Returns" in df.columns:
-        df["Volatility"] = df["Returns"].rolling(FEAT_VOL_WINDOW).std()
-    
-    if 'RSI_feat' not in df.columns:
-        delta = df["Close"].diff()
-        gain = (delta.where(delta > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
-        loss = (-delta.where(delta < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
-        rs = gain / loss
-        df['RSI_feat'] = 100 - (100 / (1 + rs))
-    if 'MACD' not in df.columns:
-        ema_12 = df["Close"].ewm(span=12, adjust=False).mean()
-        ema_26 = df["Close"].ewm(span=26, adjust=False).mean()
-        df['MACD'] = ema_12 - ema_26
-    if 'BB_upper' not in df.columns:
-        df['BB_mid'] = df["Close"].rolling(window=20).mean()
-        df['BB_std'] = df["Close"].rolling(window=20).std()
-        df['BB_upper'] = df['BB_mid'] + (df['BB_std'] * 2)
-
-    financial_features_present = [col for col in df.columns if col.startswith('Fin_')]
-    for col in financial_features_present:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
-    if target_col not in df.columns:
-        print(f"⚠️ Target column '{target_col}' not found in DataFrame. Skipping regression model training.")
-        return None
-
-    if feature_set is None:
-        print("⚠️ feature_set is None in train_and_evaluate_regression_model. Skipping regression model training.")
-        return None
-    
-    actual_features = [f for f in feature_set if f in df.columns]
-
-    if not actual_features:
-        print(f"⚠️ No valid features available for training regression model on '{target_col}'. Skipping.")
-        return None
-
-    X_df = df[actual_features]
-    y = df[target_col].values
-
-    if len(X_df) < 50:
-        print("⚠️ Not enough rows after feature prep to compare regression models (need ≥ 50). Skipping.")
-        return None
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_df)
-    X = pd.DataFrame(X_scaled, columns=actual_features, index=X_df.index)
-    scaler.feature_names_in_ = list(actual_features)
-
-    models = {
-        "Linear Regression": LinearRegression(),
-        "Random Forest Regressor": RandomForestRegressor(n_estimators=100, random_state=SEED),
-        "SVM Regressor": SVR()
-    }
-
-    if LGBMRegressor:
-        models["LightGBM Regressor"] = LGBMRegressor(random_state=SEED, verbosity=-1)
-
-    results = {}
-    cv = KFold(n_splits=5, shuffle=True, random_state=SEED)
-
-    print("  🔬 Comparing regression model performance (R2 score via 5-fold cross-validation):")
-    for name, model in models.items():
-        try:
-            scores = cross_val_score(model, X, y, cv=cv, scoring='r2', n_jobs=1)
-            results[name] = np.mean(scores)
-            print(f"    - {name}: {results[name]:.4f} (std: {np.std(scores):.4f})")
-        except Exception as e:
-            print(f"    - {name}: Failed evaluation. Error: {e}")
-            results[name] = -np.inf # Assign a very low score for failed models
-
-    if not any(results.values()) or all(v == -np.inf for v in results.values()):
-        print("  ⚠️ All regression models failed evaluation. No regression model will be used.")
-        return None
-
-    best_model_name = max(results, key=results.get)
-    print(f"  🏆 Best regression model: {best_model_name} with R2 = {results[best_model_name]:.4f}")
-
-    best_model_instance = models[best_model_name]
-    best_model_instance.fit(X, y)
-    
     return best_model_instance, scaler
 
 # ============================
@@ -1123,12 +942,6 @@ class RuleTradingEnv:
         high = self.df["High"] if "High" in self.df.columns else None
         low  = self.df["Low"]  if "Low" in self.df.columns else None
         prev_close = close.shift(1)
-
-        hl = None # Initialize to None
-        h_pc = None # Initialize to None
-        l_pc = None # Initialize to None
-        tr = None # Initialize to None
-
         if high is not None and low is not None:
             hl = (high - low).abs()
             h_pc = (high - prev_close).abs()
@@ -1414,249 +1227,11 @@ def analyze_performance(
 # Top Performer Analysis
 # ============================
 
-# ============================
-# Optimization & Backtesting
-# ============================
-
-def _process_ticker_wrapper(args):
-    """Wrapper function to unpack arguments for process_ticker."""
-    return process_ticker(*args)
-
-def process_ticker(ticker: str, start_date: datetime, end_date: datetime,
-                   market_data: Optional[pd.DataFrame] = None) -> Dict: # Changed return type to Dict
+def find_top_performers(return_tickers: bool = False, n_top: int = N_TOP_TICKERS, fcf_min_threshold: float = 0.0, ebitda_min_threshold: float = 0.0):
     """
-    Processes a single ticker: fetches data, conditionally trains/loads models,
-    performs backtesting, and returns performance metrics and recommendations.
+    Fetches S&P 500 & NASDAQ tickers, screens for the top N performers,
+    and returns a list of (ticker, performance) tuples.
     """
-    _ensure_dir(MODEL_CACHE_DIR)
-    model_buy_path = MODEL_CACHE_DIR / f"{ticker}_model_buy.joblib"
-    model_sell_path = MODEL_CACHE_DIR / f"{ticker}_model_sell.joblib"
-    scaler_path = MODEL_CACHE_DIR / f"{ticker}_scaler.joblib"
-    optimized_params_path = OPTIMIZED_PARAMS_PATH
-
-    model_buy, model_sell, scaler = None, None, None
-    per_ticker_min_proba_buy, per_ticker_min_proba_sell = MIN_PROBA_BUY, MIN_PROBA_SELL
-    feature_set = [] # Initialize feature_set here
-
-    # Initialize result dictionary with default values
-    result = {
-        "ticker": ticker,
-        "1y_performance": 0.0,
-        "ytd_performance": 0.0,
-        "strategy_final_value": INITIAL_BALANCE,
-        "buy_hold_return": 0.0,
-        "recommendation": "HOLD",
-        "min_proba_buy": MIN_PROBA_BUY,  # Include default buy threshold
-        "min_proba_sell": MIN_PROBA_SELL # Include default sell threshold
-    }
-
-    # --- Conditional Model Loading/Training ---
-    if USE_MODEL_GATE:
-        if model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
-            print(f"  [{ticker}] Loading existing models and scaler...")
-            try:
-                model_buy = joblib.load(model_buy_path)
-                model_sell = joblib.load(model_sell_path)
-                scaler = joblib.load(scaler_path)
-                feature_set = scaler.feature_names_in_ if hasattr(scaler, 'feature_names_in_') else []
-                # Load optimized thresholds if they exist
-                if optimized_params_path.exists():
-                    with open(optimized_params_path, 'r') as f:
-                        optimized_params = json.load(f)
-                    if ticker in optimized_params:
-                        per_ticker_min_proba_buy = optimized_params[ticker].get('min_proba_buy', MIN_PROBA_BUY)
-                        per_ticker_min_proba_sell = optimized_params[ticker].get('min_proba_sell', MIN_PROBA_SELL)
-                        print(f"  [{ticker}] Loaded optimized thresholds: Buy={per_ticker_min_proba_buy:.2f}, Sell={per_ticker_min_proba_sell:.2f}")
-                        result["min_proba_buy"] = per_ticker_min_proba_buy
-                        result["min_proba_sell"] = per_ticker_min_proba_sell
-            except Exception as e:
-                print(f"  ⚠️ [{ticker}] Error loading models/scaler: {e}. Retraining.")
-                model_buy, model_sell, scaler = None, None, None # Reset to force retraining
-        
-        if model_buy is None or model_sell is None or scaler is None:
-            print(f"  [{ticker}] Training new models...")
-            df_train, feature_set = fetch_training_data(ticker, start=start_date - timedelta(days=TRAIN_LOOKBACK_DAYS), end=end_date)
-            if df_train.empty:
-                print(f"  ⚠️ [{ticker}] Skipping model training due to insufficient training data.")
-                model_buy, scaler_buy = None, None
-                model_sell, scaler_sell = None, None
-            else:
-                model_buy_result = train_and_evaluate_models(df_train, target_col="TargetClassBuy", feature_set=feature_set)
-                if model_buy_result is not None:
-                    model_buy, scaler_buy = model_buy_result
-                else:
-                    model_buy, scaler_buy = None, None # Explicitly set to None if training failed
-
-                model_sell_result = train_and_evaluate_models(df_train, target_col="TargetClassSell", feature_set=feature_set)
-                if model_sell_result is not None:
-                    model_sell, scaler_sell = model_sell_result
-                else:
-                    model_sell, scaler_sell = None, None # Explicitly set to None if training failed
-                
-                # Ensure scalers are consistent; ideally, they should be the same if feature_set is identical
-                if scaler_buy and scaler_sell and all(f in scaler_buy.feature_names_in_ for f in scaler_sell.feature_names_in_) and all(f in scaler_sell.feature_names_in_ for f in scaler_buy.feature_names_in_):
-                    scaler = scaler_buy # Use one consistent scaler
-                elif scaler_buy:
-                    scaler = scaler_buy
-                elif scaler_sell:
-                    scaler = scaler_sell
-                
-                if model_buy and model_sell and scaler:
-                    try:
-                        joblib.dump(model_buy, model_buy_path)
-                        joblib.dump(model_sell, model_sell_path)
-                        joblib.dump(scaler, scaler_path)
-                        print(f"  [{ticker}] Models and scaler saved.")
-                    except Exception as e:
-                        print(f"  ⚠️ [{ticker}] Could not save models/scaler: {e}")
-                else:
-                    print(f"  ⚠️ [{ticker}] Model training failed or resulted in no valid models. Skipping ML gate.")
-                    # USE_MODEL_GATE = False # Temporarily disable ML gate for this ticker if models fail
-
-    # Update thresholds in result dictionary after potential training/loading
-    result["min_proba_buy"] = per_ticker_min_proba_buy
-    result["min_proba_sell"] = per_ticker_min_proba_sell
-
-    # Determine if ML gate can be used for this ticker
-    use_ml_gate_for_ticker = USE_MODEL_GATE and (model_buy is not None) and (model_sell is not None) and (scaler is not None) and (feature_set is not None)
-
-    # --- Backtesting ---
-    df_backtest = load_prices(ticker, start_date, end_date)
-    if df_backtest.empty or len(df_backtest) < STRAT_SMA_LONG:
-        print(f"  ⚠️ [{ticker}] Insufficient data for backtest. Skipping.")
-        return result # Return default result if backtest data is insufficient
-
-    # Calculate buy & hold performance for comparison
-    buy_hold_initial = float(df_backtest["Close"].iloc[0])
-    buy_hold_final = float(df_backtest["Close"].iloc[-1])
-    buy_hold_return = ((buy_hold_final - buy_hold_initial) / buy_hold_initial) * 100 if buy_hold_initial > 0 else 0.0
-    buy_hold_history = [INITIAL_BALANCE * (1 + (c - buy_hold_initial) / buy_hold_initial) for c in df_backtest["Close"]]
-
-    env = RuleTradingEnv(df_backtest, INITIAL_BALANCE, TRANSACTION_COST,
-                         model_buy=model_buy, model_sell=model_sell, scaler=scaler,
-                         min_proba_buy=per_ticker_min_proba_buy, min_proba_sell=per_ticker_min_proba_sell,
-                         use_gate=use_ml_gate_for_ticker, market_data=market_data, use_market_filter=USE_MARKET_FILTER,
-                         feature_set=feature_set) # Pass feature_set to env
-    
-    final_portfolio_value, trade_log = env.run()
-    
-    # Calculate 1-year and YTD performance for the current ticker
-    perf_1y = ((df_backtest['Close'].iloc[-1] - df_backtest['Close'].iloc[0]) / df_backtest['Close'].iloc[0]) * 100 if df_backtest['Close'].iloc[0] > 0 else 0.0
-    
-    ytd_start_price = df_backtest.loc[df_backtest.index.year == end_date.year, 'Close'].iloc[0] if not df_backtest.loc[df_backtest.index.year == end_date.year, 'Close'].empty else df_backtest['Close'].iloc[0]
-    perf_ytd = ((df_backtest['Close'].iloc[-1] - ytd_start_price) / ytd_start_price) * 100 if ytd_start_price > 0 else 0.0
-
-    # Update result dictionary
-    result.update({
-        "1y_performance": perf_1y,
-        "ytd_performance": perf_ytd,
-        "strategy_final_value": final_portfolio_value,
-        "buy_hold_return": buy_hold_return
-    })
-
-    # Get today's recommendation
-    if use_ml_gate_for_ticker: # Use the local flag here
-        # To get the latest data for prediction, we need to ensure it has all features
-        # We'll fetch a small window of data ending today to calculate features
-        prediction_end_date = datetime.now(timezone.utc)
-        prediction_start_date = prediction_end_date - timedelta(days=FEAT_SMA_LONG + 10) # Enough data for all features
-        
-        df_predict, _ = fetch_training_data(ticker, start=prediction_start_date, end=prediction_end_date)
-        
-        if df_predict.empty:
-            print(f"  ⚠️ [{ticker}] Insufficient data for latest prediction. Skipping recommendation.")
-        else:
-            latest_data_for_prediction = df_predict.iloc[[-1]].copy() # Get the last row as a DataFrame
-            
-            # Ensure feature_set is available and consistent
-            # The fetch_training_data function already ensures all required columns are present and filled with 0
-            X_latest = latest_data_for_prediction[feature_set]
-            
-            # Check if scaler has feature_names_in_ and align columns
-            if hasattr(scaler, 'feature_names_in_') and list(X_latest.columns) != list(scaler.feature_names_in_):
-                # Reindex X_latest to match scaler's feature order, filling missing with 0
-                X_latest = X_latest.reindex(columns=scaler.feature_names_in_, fill_value=0)
-
-            X_scaled_latest = scaler.transform(X_latest)
-            
-            buy_proba = model_buy.predict_proba(X_scaled_latest)[0][1]
-            sell_proba = model_sell.predict_proba(X_scaled_latest)[0][1]
-
-            if buy_proba >= per_ticker_min_proba_buy:
-                result["recommendation"] = "BUY"
-            elif sell_proba >= per_ticker_min_proba_sell:
-                result["recommendation"] = "SELL"
-
-    return result
-
-    # Calculate buy & hold performance for comparison
-    buy_hold_initial = float(df_backtest["Close"].iloc[0])
-    buy_hold_final = float(df_backtest["Close"].iloc[-1])
-    buy_hold_return = ((buy_hold_final - buy_hold_initial) / buy_hold_initial) * 100 if buy_hold_initial > 0 else 0.0
-    buy_hold_history = [INITIAL_BALANCE * (1 + (c - buy_hold_initial) / buy_hold_initial) for c in df_backtest["Close"]]
-
-    env = RuleTradingEnv(df_backtest, INITIAL_BALANCE, TRANSACTION_COST,
-                         model_buy=model_buy, model_sell=model_sell, scaler=scaler,
-                         min_proba_buy=per_ticker_min_proba_buy, min_proba_sell=per_ticker_min_proba_sell,
-                         use_gate=USE_MODEL_GATE, market_data=market_data, use_market_filter=USE_MARKET_FILTER,
-                         feature_set=feature_set) # Pass feature_set to env
-    
-    final_portfolio_value, trade_log = env.run()
-    
-    # Calculate 1-year and YTD performance for the current ticker
-    perf_1y = ((df_backtest['Close'].iloc[-1] - df_backtest['Close'].iloc[0]) / df_backtest['Close'].iloc[0]) * 100 if df_backtest['Close'].iloc[0] > 0 else 0.0
-    
-    ytd_start_price = df_backtest.loc[df_backtest.index.year == end_date.year, 'Close'].iloc[0] if not df_backtest.loc[df_backtest.index.year == end_date.year, 'Close'].empty else df_backtest['Close'].iloc[0]
-    perf_ytd = ((df_backtest['Close'].iloc[-1] - ytd_start_price) / ytd_start_price) * 100 if ytd_start_price > 0 else 0.0
-
-    # Update result dictionary
-    result.update({
-        "1y_performance": perf_1y,
-        "ytd_performance": perf_ytd,
-        "strategy_final_value": final_portfolio_value,
-        "buy_hold_return": buy_hold_return
-    })
-
-    # Get today's recommendation
-    if USE_MODEL_GATE and model_buy and model_sell and scaler and feature_set:
-        # To get the latest data for prediction, we need to ensure it has all features
-        # We'll fetch a small window of data ending today to calculate features
-        prediction_end_date = datetime.now(timezone.utc)
-        prediction_start_date = prediction_end_date - timedelta(days=FEAT_SMA_LONG + 10) # Enough data for all features
-        
-        df_predict, _ = fetch_training_data(ticker, start=prediction_start_date, end=prediction_end_date)
-        
-        if df_predict.empty:
-            print(f"  ⚠️ [{ticker}] Insufficient data for latest prediction. Skipping recommendation.")
-        else:
-            latest_data_for_prediction = df_predict.iloc[[-1]].copy() # Get the last row as a DataFrame
-            
-            # Ensure feature_set is available and consistent
-            # The fetch_training_data function already ensures all required columns are present and filled with 0
-            X_latest = latest_data_for_prediction[feature_set]
-            
-            # Check if scaler has feature_names_in_ and align columns
-            if hasattr(scaler, 'feature_names_in_') and list(X_latest.columns) != list(scaler.feature_names_in_):
-                # Reindex X_latest to match scaler's feature order, filling missing with 0
-                X_latest = X_latest.reindex(columns=scaler.feature_names_in_, fill_value=0)
-
-            X_scaled_latest = scaler.transform(X_latest)
-            
-            buy_proba = model_buy.predict_proba(X_scaled_latest)[0][1]
-            sell_proba = model_sell.predict_proba(X_scaled_latest)[0][1]
-
-            if buy_proba >= per_ticker_min_proba_buy:
-                result["recommendation"] = "BUY"
-            elif sell_proba >= per_ticker_min_proba_sell:
-                result["recommendation"] = "SELL"
-
-    return result
-
-def find_top_performers(n_top: int = N_TOP_TICKERS, fcf_min_threshold: float = 0.0, ebitda_min_threshold: float = 0.0):
-    """
-    Fetches tickers, processes them, and prints a table of recommendations.
-    """
-    global USE_MARKET_FILTER # Declare global here
     all_available_tickers = get_all_tickers()
     if not all_available_tickers:
         print("❌ No tickers to process. Exiting.")
@@ -1666,64 +1241,733 @@ def find_top_performers(n_top: int = N_TOP_TICKERS, fcf_min_threshold: float = 0
     if n_top > 0 and len(all_available_tickers) > n_top:
         import random
         random.seed(SEED)
-        tickers_to_process = random.sample(all_available_tickers, n_top)
-        print(f"✅ Selected top {n_top} tickers for analysis: {', '.join(tickers_to_process)}")
+        tickers = random.sample(all_available_tickers, n_top)
+        print(f"✅ Selected top {n_top} tickers for analysis: {', '.join(tickers)}")
     else:
-        tickers_to_process = all_available_tickers
-        print(f"✅ Analyzing all {len(tickers_to_process)} available tickers.")
+        tickers = all_available_tickers
+        print(f"✅ Analyzing all {len(tickers)} available tickers.")
 
     end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=BACKTEST_DAYS)
+    start_date = end_date - timedelta(days=365)
     
-    # Fetch market data once if market filter is enabled
-    market_data = None
-    if USE_MARKET_FILTER:
-        print(f"- Fetching market data for {MARKET_FILTER_TICKER}...")
-        market_data = load_prices_robust(MARKET_FILTER_TICKER, start_date - timedelta(days=MARKET_FILTER_SMA), end_date)
-        if market_data.empty:
-            print(f"  ⚠️ Could not fetch market data for {MARKET_FILTER_TICKER}. Disabling market filter.")
-            # Note: USE_MARKET_FILTER is a global variable, modifying it here will affect subsequent calls.
-            # For a more robust solution, consider passing it as a parameter or making it a class member.
-            USE_MARKET_FILTER = False
-        else:
-            market_data['SMA_L_MKT'] = market_data['Close'].rolling(window=MARKET_FILTER_SMA).mean()
-            market_data = market_data.dropna()
+    if USE_PERFORMANCE_BENCHMARK:
+        # --- Step 1: Calculate Benchmark Performances ---
+        print("- Calculating 1-Year Performance Benchmarks...")
+        benchmark_perfs = {}
+        for bench_ticker in ['QQQ', 'SPY']:
+            try:
+                df = load_prices_robust(bench_ticker, start_date, end_date)
+                if df is not None and not df.empty:
+                    start_price = df['Close'].iloc[0]
+                    end_price = df['Close'].iloc[-1]
+                    if start_price > 0:
+                        perf = ((end_price - start_price) / start_price) * 100
+                        benchmark_perfs[bench_ticker] = perf
+                        print(f"  ✅ {bench_ticker} 1-Year Performance: {perf:.2f}%")
+            except Exception as e:
+                print(f"⚠️ Could not calculate {bench_ticker} performance: {e}.")
+            time.sleep(2) # Add a pause to avoid rate limiting
+        
+        if not benchmark_perfs:
+            print("❌ Could not calculate any benchmark performance. Cannot proceed.")
+            return []
+            
+        # Determine the higher of the two benchmarks
+        market_benchmark_perf = max(benchmark_perfs.values()) if benchmark_perfs else 0.0
+        final_benchmark_perf = market_benchmark_perf
+        print(f"  📈 Using final 1-Year performance benchmark of {final_benchmark_perf:.2f}%")
 
-    results = []
-    # Use process_map for parallel processing with a progress bar
-    # Pass market_data to each worker if needed
-    func_args = [(ticker, start_date, end_date, market_data) for ticker in tickers_to_process]
+        # --- Step 2: Calculate YTD Benchmarks ---
+        print("- Calculating YTD Performance Benchmarks...")
+        ytd_start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
+        ytd_benchmark_perfs = {}
+        for bench_ticker in ['QQQ', 'SPY']:
+            try:
+                df = load_prices_robust(bench_ticker, ytd_start_date, end_date)
+                if df is not None and not df.empty:
+                    start_price = df['Close'].iloc[0]
+                    end_price = df['Close'].iloc[-1]
+                    if start_price > 0:
+                        perf = ((end_price - start_price) / start_price) * 100
+                        ytd_benchmark_perfs[bench_ticker] = perf
+                        print(f"  ✅ {bench_ticker} YTD Performance: {perf:.2f}%")
+            except Exception as e:
+                print(f"⚠️ Could not calculate {bench_ticker} YTD performance: {e}.")
+            time.sleep(2) # Add a pause to avoid rate limiting
+        
+        if not ytd_benchmark_perfs:
+            print("❌ Could not calculate any YTD benchmark performance. Cannot proceed.")
+            return []
+        ytd_benchmark_perf = max(ytd_benchmark_perfs.values())
+        print(f"  📈 Using YTD performance benchmark of {ytd_benchmark_perf:.2f}%")
+    else:
+        print("ℹ️ Performance benchmark is disabled. All tickers will be considered.")
+        final_benchmark_perf = -np.inf
+        ytd_benchmark_perf = -np.inf
+        ytd_start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
+
+    # --- Step 3: Find stocks that beat both benchmarks ---
+    performance_data = {}
+    num_batches = (len(tickers) + BATCH_DOWNLOAD_SIZE - 1) // BATCH_DOWNLOAD_SIZE
     
-    # Use process_map for a progress bar with multiprocessing
-    processed_results = process_map(_process_ticker_wrapper, func_args, max_workers=cpu_count())
+    for i in range(num_batches):
+        start_idx = i * BATCH_DOWNLOAD_SIZE
+        end_idx = start_idx + BATCH_DOWNLOAD_SIZE
+        batch_tickers = tickers[start_idx:end_idx]
+        
+        if not batch_tickers:
+            continue
 
-    for res in processed_results:
-        if res:
-            results.append(res)
+        print(f"\n--- Processing Batch {i+1}/{num_batches} ---")
+        
+        # Batch download for 1-Year Performance
+        data_1y = _download_batch_robust(batch_tickers, start=start_date, end=end_date)
 
-    if not results:
-        print("  ⚠️ No strong performers found after analysis.")
+        # Batch download for YTD Performance
+        data_ytd = _download_batch_robust(batch_tickers, start=ytd_start_date, end=end_date)
+
+        for ticker in tqdm(batch_tickers, desc=f"Analyzing Batch {i+1}/{num_batches}"):
+            try:
+                # 1-Year Performance
+                perf_1y = -np.inf
+                if not data_1y.empty:
+                    close_series = None
+                    if len(batch_tickers) > 1:
+                        # Multi-ticker download, columns are MultiIndex
+                        if 'Close' in data_1y.columns and ticker in data_1y['Close'].columns:
+                            close_series = data_1y['Close'][ticker]
+                    else:
+                        # Single-ticker download, columns are flat
+                        if 'Close' in data_1y.columns:
+                            close_series = data_1y['Close']
+                    
+                    if close_series is not None:
+                        df_1y_close = close_series.dropna()
+                        if not df_1y_close.empty and len(df_1y_close) > 200:
+                            start_price = df_1y_close.iloc[0]
+                            end_price = df_1y_close.iloc[-1]
+                            if start_price > 0:
+                                perf_1y = ((end_price - start_price) / start_price) * 100
+                
+                # YTD Performance
+                perf_ytd = -np.inf
+                if not data_ytd.empty:
+                    close_series = None
+                    if len(batch_tickers) > 1:
+                        if 'Close' in data_ytd.columns and ticker in data_ytd['Close'].columns:
+                            close_series = data_ytd['Close'][ticker]
+                    else:
+                        if 'Close' in data_ytd.columns:
+                            close_series = data_ytd['Close']
+
+                    if close_series is not None:
+                        df_ytd_close = close_series.dropna()
+                        if not df_ytd_close.empty:
+                            start_price = df_ytd_close.iloc[0]
+                            end_price = df_ytd_close.iloc[-1]
+                            if start_price > 0:
+                                perf_ytd = ((end_price - start_price) / start_price) * 100
+
+                # Only add to performance_data if performance is valid
+                if perf_1y != -np.inf and perf_ytd != -np.inf:
+                    if USE_PERFORMANCE_BENCHMARK:
+                        if perf_1y > final_benchmark_perf and perf_ytd > ytd_benchmark_perf:
+                            performance_data[ticker] = perf_1y
+                    else:
+                        performance_data[ticker] = perf_1y # Add all valid performers when benchmark is disabled
+            except Exception:
+                pass
+        
+        if i < num_batches - 1:
+            print(f"--- Pausing for {PAUSE_BETWEEN_BATCHES} seconds before next batch ---")
+            time.sleep(PAUSE_BETWEEN_BATCHES)
+
+    if USE_PERFORMANCE_BENCHMARK:
+        print(f"\n✅ Found {len(performance_data)} stocks that passed the performance benchmarks.")
+    else:
+        print(f"\n✅ Found {len(performance_data)} stocks for analysis (performance benchmark disabled).")
+        
+    if not performance_data:
         return []
 
-    # Sort results by 1-year performance
-    sorted_results = sorted(results, key=lambda x: x['1y_performance'], reverse=True)
+    # Filter for stocks that beat the high benchmark
+    strong_performers = performance_data
     
-    print(f"\n\n🏆 Top Stock Recommendations ({len(sorted_results)} stocks) 🏆")
-    print("-" * 110)
-    print(f"{'Rank':<5} | {'Ticker':<10} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Recommendation':<15} | {'Buy Threshold':<15} | {'Sell Threshold':<15}")
-    print("-" * 110)
+    sorted_strong_performers = sorted(strong_performers.items(), key=lambda item: item[1], reverse=True)
     
-    for i, res in enumerate(sorted_results, 1):
-        print(f"{i:<5} | {res['ticker']:<10} | {res['1y_performance']:>9.2f}% | {res['ytd_performance']:>9.2f}% | {res['recommendation']:<15} | {res['min_proba_buy']:>13.2f} | {res['min_proba_sell']:>14.2f}")
+    # The n_top limit is already applied to the 'tickers' list, so this check is redundant here
+    # if n_top > 0 and len(sorted_strong_performers) > n_top:
+    #     print(f"  ✅ Found {len(sorted_strong_performers)} stocks outperforming the benchmark. Selecting top {n_top}.")
+    #     sorted_strong_performers = sorted_strong_performers[:n_top]
+    # else:
+    #     print(f"  ✅ Found {len(sorted_strong_performers)} stocks outperforming the benchmark.")
+
+    final_performers = sorted_strong_performers
     
-    print("-" * 110)
-    return sorted_results
+    # Add YTD performance to the final list
+    final_performers_with_ytd = []
+    for ticker, perf_1y in final_performers:
+        df_ytd = load_prices_robust(ticker, ytd_start_date, end_date)
+        perf_ytd = -np.inf
+        if df_ytd is not None and not df_ytd.empty:
+            start_price = df_ytd['Close'].iloc[0]
+            end_price = df_ytd['Close'].iloc[-1]
+            if start_price > 0:
+                perf_ytd = ((end_price - start_price) / start_price) * 100
+        final_performers_with_ytd.append((ticker, perf_1y, perf_ytd))
+    
+    final_performers = final_performers_with_ytd
+
+    # --- Step 3: Fundamental Screen (Optional Free Cash Flow & EBITDA for the last fiscal year) ---
+    if fcf_min_threshold is not None or ebitda_min_threshold is not None:
+        print(f"  🔍 Screening {len(final_performers)} strong performers for fundamental metrics...")
+        screened_performers = []
+        
+        pbar = tqdm(final_performers, desc="Applying fundamental screens")
+        
+        for ticker, perf_1y, perf_ytd in pbar:
+            try:
+                yf_ticker = yf.Ticker(ticker)
+                
+                # FCF Check
+                fcf_ok = True
+                if fcf_min_threshold is not None:
+                    cashflow = yf_ticker.cashflow
+                    if not cashflow.empty:
+                        latest_cashflow = cashflow.iloc[:, 0]
+                        fcf_keys = ['Free Cash Flow', 'freeCashflow']
+                        fcf = None
+                        for key in fcf_keys:
+                            if key in latest_cashflow.index:
+                                fcf = latest_cashflow[key]
+                                break
+                        if fcf is not None and fcf <= fcf_min_threshold:
+                            fcf_ok = False
+                
+                # EBITDA Check
+                ebitda_ok = True
+                if ebitda_min_threshold is not None:
+                    financials = yf_ticker.financials
+                    if not financials.empty:
+                        latest_financials = financials.iloc[:, 0]
+                        ebitda_keys = ['EBITDA', 'ebitda']
+                        ebitda = None
+                        for key in ebitda_keys:
+                            if key in latest_financials.index:
+                                ebitda = latest_financials[key]
+                                break
+                        if ebitda is not None and ebitda <= ebitda_min_threshold:
+                            ebitda_ok = False
+
+                if fcf_ok and ebitda_ok:
+                    screened_performers.append((ticker, perf_1y, perf_ytd))
+
+            except Exception:
+                # If there's any error fetching financials, we let it pass
+                pbar.set_description(f"Applying screens ({ticker}: fetch error)")
+                screened_performers.append((ticker, perf_1y, perf_ytd))
+
+        print(f"  ✅ Found {len(screened_performers)} stocks passing the fundamental screens.")
+        final_performers = screened_performers
+
+    if return_tickers:
+        return final_performers
+    
+    # If not returning for backtest, just print the list
+    print(f"\n\n🏆 Stocks Outperforming {final_benchmark_perf:.2f}%) 🏆") # Removed high_benchmark_ticker
+    print("-" * 60)
+    print(f"{'Rank':<5} | {'Ticker':<10} | {'Performance':>15}")
+    print("-" * 60)
+    
+    for i, (ticker, perf, _) in enumerate(final_performers, 1): # Iterate over final_performers which now includes YTD
+        print(f"{i:<5} | {ticker:<10} | {perf:14.2f}%")
+    
+    print("-" * 60)
+    return list(final_tickers)
+
+
+# ============================
+# Main
+# ============================
+
+def train_worker(params: Tuple) -> Dict:
+    """Worker function to train models for a single ticker."""
+    ticker, train_start, train_end, target_percentage, _ = params # feature_set is now derived from fetch_training_data
+    
+    training_data_df, final_training_features = fetch_training_data(ticker, train_start, train_end, target_percentage=target_percentage)
+    if training_data_df.empty or not final_training_features:
+        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None}
+    
+    model_buy, model_sell, scaler = None, None, None
+
+    model_buy_and_scaler = train_and_evaluate_models(training_data_df, target_col="TargetClassBuy", feature_set=final_training_features)
+    if model_buy_and_scaler is not None:
+        model_buy, scaler = model_buy_and_scaler
+
+    model_sell_and_scaler = train_and_evaluate_models(training_data_df, target_col="TargetClassSell", feature_set=final_training_features)
+    if model_sell_and_scaler is not None:
+        model_sell = model_sell_and_scaler[0]
+        if scaler is None:
+            scaler = model_sell_and_scaler[1]
+            
+    return {'ticker': ticker, 'model_buy': model_buy, 'model_sell': model_sell, 'scaler': scaler}
+
+def backtest_worker(params: Tuple) -> Optional[Dict]:
+    """Worker function to run backtest for a single ticker."""
+    ticker, bt_start, bt_end, capital_per_stock, model_buy, model_sell, scaler, market_data, feature_set, min_proba_buy, min_proba_sell = params
+    
+    warmup_days = max(STRAT_SMA_LONG, 200) + 50
+    data_start = bt_start - timedelta(days=warmup_days)
+    df = load_prices_robust(ticker, data_start, bt_end)
+    
+    if df.empty or len(df.loc[bt_start:]) < STRAT_SMA_SHORT + 5:
+        return None
+    if df.isna().all().all() or "Close" not in df.columns or df["Close"].isna().any():
+        return None
+
+    env = RuleTradingEnv(df, initial_balance=capital_per_stock, transaction_cost=TRANSACTION_COST,
+                         model_buy=model_buy, model_sell=model_sell, scaler=scaler, 
+                         min_proba_buy=min_proba_buy, min_proba_sell=min_proba_sell, 
+                         use_gate=USE_MODEL_GATE,
+                         market_data=market_data, use_market_filter=USE_MARKET_FILTER,
+                         feature_set=feature_set)
+    final_val, log = env.run()
+    
+    df_backtest = df.loc[df.index >= bt_start]
+    strategy_history = env.portfolio_history[-len(df_backtest):]
+    start_price = float(df_backtest["Close"].iloc[0])
+    shares_bh = int(capital_per_stock / start_price) if start_price > 0 else 0
+    cash_bh = capital_per_stock - shares_bh * start_price
+    buy_hold_history = (cash_bh + shares_bh * df_backtest["Close"]).tolist()
+    bh_val = buy_hold_history[-1]
+
+    made_trades = any(t[1] in ["BUY", "SELL"] for t in log)
+    strategy_history_for_analysis = strategy_history if made_trades else [capital_per_stock] * len(df_backtest)
+    if not made_trades:
+        final_val = capital_per_stock
+
+    perf_data = analyze_performance(log, strategy_history_for_analysis, buy_hold_history, ticker)
+
+    return {'ticker': ticker, 'final_val': final_val, 'bh_val': bh_val, 'perf_data': perf_data}
+
+def main(
+    fcf_threshold: float = 0.0,
+    ebitda_threshold: float = 0.0,
+    min_proba_buy: float = MIN_PROBA_BUY,
+    min_proba_sell: float = MIN_PROBA_SELL,
+    target_percentage: float = TARGET_PERCENTAGE,
+    top_performers_data=None,
+    feature_set: Optional[List[str]] = None,
+    run_parallel: bool = True,
+    single_ticker: Optional[str] = None,
+    optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None
+) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float]]:
+    
+    end_date = datetime.now(timezone.utc)
+    bt_end = end_date
+    
+    # --- Handle single ticker case for initial performance calculation ---
+    if single_ticker:
+        print(f"🔍 Running analysis for single ticker: {single_ticker}")
+        start_date_1y = end_date - timedelta(days=365)
+        ytd_start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
+        
+        df_1y = load_prices_robust(single_ticker, start_date_1y, end_date)
+        perf_1y = -np.inf
+        if df_1y is not None and not df_1y.empty:
+            start_price = df_1y['Close'].iloc[0]
+            end_price = df_1y['Close'].iloc[-1]
+            if start_price > 0:
+                perf_1y = ((end_price - start_price) / start_price) * 100
+
+        df_ytd = load_prices_robust(single_ticker, ytd_start_date, end_date)
+        perf_ytd = -np.inf
+        if df_ytd is not None and not df_ytd.empty:
+            start_price = df_ytd['Close'].iloc[0]
+            end_price = df_ytd['Close'].iloc[-1]
+            if start_price > 0:
+                perf_ytd = ((end_price - start_price) / start_price) * 100
+        
+        top_performers_data = [(single_ticker, perf_1y, perf_ytd)]
+    
+    # --- Identify top performers if not provided ---
+    if top_performers_data is None:
+        if pdr is None and DATA_PROVIDER.lower() == 'stooq':
+            print("⚠️ pandas-datareader not installed; run: pip install pandas-datareader")
+        
+        title = "🚀 AI-Powered Momentum & Trend Strategy"
+        filters = []
+        if fcf_threshold is not None:
+            filters.append(f"FCF > ${fcf_threshold:,.0f}")
+        if ebitda_threshold is not None:
+            filters.append(f"EBITDA > ${ebitda_threshold:,.0f}")
+        if filters:
+            title += f" ({', '.join(filters)})"
+        print(title + "\n" + "="*50 + "\n")
+
+        print("🔍 Step 1: Identifying stocks outperforming market benchmarks...")
+        top_performers_data = find_top_performers(return_tickers=True, fcf_min_threshold=fcf_threshold, ebitda_min_threshold=ebitda_threshold)
+    
+    if not top_performers_data:
+        print("❌ Could not identify top tickers. Aborting backtest.")
+        return None, None, None, None, None, None, None, None, None, None, None # Return 11 Nones
+    
+    top_tickers = [ticker for ticker, _, _ in top_performers_data]
+    print(f"\n✅ Identified {len(top_tickers)} stocks for backtesting.\n")
+
+    # --- Training Models (for 1-Year Backtest) ---
+    print("🔍 Step 2: Training AI models for 1-Year backtest...")
+    bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)
+    train_end_1y = bt_start_1y - timedelta(days=1)
+    train_start_1y = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
+    num_processes = max(1, cpu_count() - 2)
+
+    training_params_1y = [(ticker, train_start_1y, train_end_1y, target_percentage, feature_set) for ticker in top_tickers]
+    models_buy, models_sell, scalers = {}, {}, {}
+
+    if run_parallel:
+        print(f"🤖 Training 1-Year models in parallel for {len(top_tickers)} tickers using {num_processes} processes...")
+        with Pool(processes=num_processes) as pool:
+            training_results_1y = list(tqdm(pool.imap(train_worker, training_params_1y), total=len(training_params_1y), desc="Training 1-Year Models"))
+    else:
+        print(f"🤖 Training 1-Year models sequentially for {len(top_tickers)} tickers...")
+        training_results_1y = [train_worker(p) for p in tqdm(training_params_1y, desc="Training 1-Year Models")]
+
+    for res in training_results_1y:
+        if res and res.get('model_buy'):
+            models_buy[res['ticker']] = res['model_buy']
+            models_sell[res['ticker']] = res['model_sell']
+            scalers[res['ticker']] = res['scaler']
+
+    if not models_buy and USE_MODEL_GATE:
+        print("⚠️ No models were trained for 1-Year backtest. Model-gating will be disabled for this run.\n")
+
+    # --- Fetch Market Data (if enabled) ---
+    market_data = None
+    if USE_MARKET_FILTER:
+        print(f"🔄 Fetching market data for filter ({MARKET_FILTER_TICKER})...")
+        market_start = train_start_1y - timedelta(days=MARKET_FILTER_SMA)
+        market_data = load_prices_robust(MARKET_FILTER_TICKER, market_start, bt_end)
+        if not market_data.empty:
+            market_data['SMA_L_MKT'] = market_data['Close'].rolling(MARKET_FILTER_SMA).mean()
+            print("✅ Market data prepared.\n")
+        else:
+            print(f"⚠️ Could not load market data for {MARKET_FILTER_TICKER}. Filter will be disabled.\n")
+
+    capital_per_stock = INITIAL_BALANCE / max(len(top_tickers), 1)
+
+    # --- Run 1-Year Backtest ---
+    final_strategy_value_1y, strategy_results_1y, processed_tickers_1y, performance_metrics_1y = _run_portfolio_backtest(
+        start_date=bt_start_1y,
+        end_date=bt_end,
+        top_tickers=top_tickers,
+        models_buy=models_buy,
+        models_sell=models_sell,
+        scalers=scalers,
+        market_data=market_data,
+        optimized_params_per_ticker=optimized_params_per_ticker,
+        capital_per_stock=capital_per_stock,
+        target_percentage=target_percentage,
+        run_parallel=run_parallel,
+        period_name="1-Year"
+    )
+    ai_1y_return = ((final_strategy_value_1y - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
+
+    # --- Calculate Buy & Hold for 1-Year ---
+    buy_hold_results_1y = []
+    for ticker in processed_tickers_1y:
+        df_bh = load_prices_robust(ticker, bt_start_1y, bt_end)
+        if not df_bh.empty:
+            start_price = float(df_bh["Close"].iloc[0])
+            shares_bh = int(capital_per_stock / start_price) if start_price > 0 else 0
+            cash_bh = capital_per_stock - shares_bh * start_price
+            buy_hold_results_1y.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
+        else:
+            buy_hold_results_1y.append(capital_per_stock) # If no data, assume initial capital
+    final_buy_hold_value_1y = sum(buy_hold_results_1y) + (len(top_tickers) - len(processed_tickers_1y)) * capital_per_stock
+
+
+    # --- Training Models (for YTD Backtest) ---
+    print("\n🔍 Step 3: Training AI models for YTD backtest...")
+    ytd_start_date = datetime(bt_end.year, 1, 1, tzinfo=timezone.utc)
+    train_end_ytd = ytd_start_date - timedelta(days=1)
+    train_start_ytd = train_end_ytd - timedelta(days=TRAIN_LOOKBACK_DAYS)
+    
+    training_params_ytd = [(ticker, train_start_ytd, train_end_ytd, target_percentage, feature_set) for ticker in top_tickers]
+    models_buy_ytd, models_sell_ytd, scalers_ytd = {}, {}, {}
+
+    if run_parallel:
+        print(f"🤖 Training YTD models in parallel for {len(top_tickers)} tickers using {num_processes} processes...")
+        with Pool(processes=num_processes) as pool:
+            training_results_ytd = list(tqdm(pool.imap(train_worker, training_params_ytd), total=len(training_params_ytd), desc="Training YTD Models"))
+    else:
+        print(f"🤖 Training YTD models sequentially for {len(top_tickers)} tickers...")
+        training_results_ytd = [train_worker(p) for p in tqdm(training_params_ytd, desc="Training YTD Models")]
+
+    for res in training_results_ytd:
+        if res and res.get('model_buy'):
+            models_buy_ytd[res['ticker']] = res['model_buy']
+            models_sell_ytd[res['ticker']] = res['model_sell']
+            scalers_ytd[res['ticker']] = res['scaler']
+
+    if not models_buy_ytd and USE_MODEL_GATE:
+        print("⚠️ No models were trained for YTD backtest. Model-gating will be disabled for this run.\n")
+
+    # --- Run YTD Backtest ---
+    final_strategy_value_ytd, strategy_results_ytd, processed_tickers_ytd_local, performance_metrics_ytd = _run_portfolio_backtest(
+        start_date=ytd_start_date,
+        end_date=bt_end,
+        top_tickers=top_tickers,
+        models_buy=models_buy_ytd,
+        models_sell=models_sell_ytd,
+        scalers=scalers_ytd,
+        market_data=market_data, # Use the same market data as 1-year backtest
+        optimized_params_per_ticker=optimized_params_per_ticker,
+        capital_per_stock=capital_per_stock,
+        target_percentage=target_percentage,
+        run_parallel=run_parallel,
+        period_name="YTD"
+    )
+    ai_ytd_return = ((final_strategy_value_ytd - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
+
+    # --- Calculate Buy & Hold for YTD ---
+    buy_hold_results_ytd = []
+    for ticker in processed_tickers_ytd_local: # Use processed_tickers_ytd_local here
+        df_bh = load_prices_robust(ticker, ytd_start_date, bt_end)
+        if not df_bh.empty:
+            start_price = float(df_bh["Close"].iloc[0])
+            shares_bh = int(capital_per_stock / start_price) if start_price > 0 else 0
+            cash_bh = capital_per_stock - shares_bh * start_price
+            buy_hold_results_ytd.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
+        else:
+            buy_hold_results_ytd.append(capital_per_stock) # If no data, assume initial capital
+    final_buy_hold_value_ytd = sum(buy_hold_results_ytd) + (len(top_tickers) - len(processed_tickers_ytd_local)) * capital_per_stock
+
+    # --- Prepare data for the final summary table (using 1-Year results for the table) ---
+    final_results = []
+    for i, ticker in enumerate(processed_tickers_1y):
+        perf_data = performance_metrics_1y[i]
+        # Find the corresponding performance data (1Y and YTD from find_top_performers)
+        perf_1y_benchmark, perf_ytd_benchmark = -np.inf, -np.inf
+        for t, p1y, pytd in top_performers_data:
+            if t == ticker:
+                perf_1y_benchmark = p1y
+                perf_ytd_benchmark = pytd
+                break
+        
+        final_results.append({
+            'ticker': ticker,
+            'performance': strategy_results_1y[i],
+            'sharpe': perf_data['sharpe_ratio'],
+            'one_year_perf': perf_1y_benchmark,
+            'ytd_perf': pytd # Use pytd here for consistency
+        })
+    
+    # Sort by 1Y performance for the final table
+    sorted_final_results = sorted(final_results, key=lambda x: x['one_year_perf'], reverse=True)
+    
+    print_final_summary(sorted_final_results, models_buy, models_sell, scalers, optimized_params_per_ticker,
+                        final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
+                        final_strategy_value_ytd, final_buy_hold_value_ytd, ai_ytd_return)
+    
+    return final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return
+
+def _run_portfolio_backtest(
+    start_date: datetime,
+    end_date: datetime,
+    top_tickers: List[str],
+    models_buy: Dict,
+    models_sell: Dict,
+    scalers: Dict,
+    market_data: Optional[pd.DataFrame],
+    optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]],
+    capital_per_stock: float,
+    target_percentage: float,
+    run_parallel: bool,
+    period_name: str
+) -> Tuple[float, List[float], List[str], List[Dict]]:
+    """
+    Orchestrates the backtesting of a portfolio of tickers, handling model loading/saving
+    and parallel execution.
+    """
+    import joblib
+    _ensure_dir(Path("logs/models"))
+    _ensure_dir(Path("logs"))
+
+    backtest_params = []
+    processed_tickers = []
+    
+    for ticker in top_tickers:
+        model_buy = models_buy.get(ticker)
+        model_sell = models_sell.get(ticker)
+        scaler = scalers.get(ticker)
+
+        # Load optimized parameters if available, otherwise use global defaults
+        per_ticker_min_proba_buy = MIN_PROBA_BUY
+        per_ticker_min_proba_sell = MIN_PROBA_SELL
+        if optimized_params_per_ticker and ticker in optimized_params_per_ticker:
+            if 'min_proba_buy' in optimized_params_per_ticker[ticker]:
+                per_ticker_min_proba_buy = optimized_params_per_ticker[ticker]['min_proba_buy']
+            if 'min_proba_sell' in optimized_params_per_ticker[ticker]:
+                per_ticker_min_proba_sell = optimized_params_per_ticker[ticker]['min_proba_sell']
+
+        # If models are not in memory, try to load them from disk
+        if model_buy is None and scaler is None:
+            try:
+                model_buy = joblib.load(f"logs/models/{ticker}_model_buy.joblib")
+                model_sell = joblib.load(f"logs/models/{ticker}_model_sell.joblib")
+                scaler = joblib.load(f"logs/models/{ticker}_scaler.joblib")
+                # Re-add to in-memory dicts for subsequent use
+                models_buy[ticker] = model_buy
+                models_sell[ticker] = model_sell
+                scalers[ticker] = scaler
+            except FileNotFoundError:
+                # print(f"  ⚠️ No saved models found for {ticker}. Skipping backtest for this ticker.")
+                continue
+            except Exception as e:
+                print(f"  ⚠️ Error loading models for {ticker}: {e}. Skipping backtest for this ticker.")
+                continue
+        
+        # Ensure scaler has feature_names_in_ attribute for consistent use in RuleTradingEnv
+        if scaler is not None and not hasattr(scaler, 'feature_names_in_'):
+            # This is a fallback, ideally feature_names_in_ is set during training
+            # For now, we'll use a default set, but this might need to be more robust
+            scaler.feature_names_in_ = ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper", 
+                                        'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA']
+
+        # Only add to backtest_params if we have a model and scaler
+        if model_buy and scaler:
+            # Pass the feature_set from the scaler to the RuleTradingEnv
+            feature_set_for_env = scaler.feature_names_in_ if hasattr(scaler, 'feature_names_in_') else None
+            backtest_params.append((ticker, start_date, end_date, capital_per_stock, model_buy, model_sell, scaler, market_data, feature_set_for_env, per_ticker_min_proba_buy, per_ticker_min_proba_sell))
+            processed_tickers.append(ticker)
+        else:
+            print(f"  ⚠️ Skipping backtest for {ticker} due to missing model or scaler.")
+
+    if not backtest_params:
+        print(f"❌ No tickers with valid models/scalers to backtest for {period_name} period.")
+        return INITIAL_BALANCE, [], [], []
+
+    print(f"\n🔍 Step 4: Running {period_name} backtest for {len(processed_tickers)} tickers...")
+    num_processes = max(1, cpu_count() - 2)
+
+    if run_parallel:
+        print(f"📈 Running {period_name} backtests in parallel using {num_processes} processes...")
+        with Pool(processes=num_processes) as pool:
+            backtest_results = list(tqdm(pool.imap(backtest_worker, backtest_params), total=len(backtest_params), desc=f"Backtesting {period_name}"))
+    else:
+        print(f"📈 Running {period_name} backtests sequentially...")
+        backtest_results = [backtest_worker(p) for p in tqdm(backtest_params, desc=f"Backtesting {period_name}")]
+
+    # Filter out None results (e.g., from tickers with insufficient data)
+    backtest_results = [res for res in backtest_results if res is not None]
+
+    if not backtest_results:
+        print(f"❌ No successful backtest results for {period_name} period.")
+        return INITIAL_BALANCE, [], [], []
+
+    final_strategy_value = sum(res['final_val'] for res in backtest_results) + (len(top_tickers) - len(processed_tickers)) * capital_per_stock
+    strategy_results = [res['final_val'] for res in backtest_results]
+    performance_metrics = [res['perf_data'] for res in backtest_results]
+
+    print(f"\n--- {period_name} Backtest Summary ---")
+    print(f"  Total Initial Capital: ${INITIAL_BALANCE:,.2f}")
+    print(f"  Final Strategy Value:  ${final_strategy_value:,.2f}")
+    print(f"  Strategy Return:       {((final_strategy_value - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:.2f}%")
+    print("-" * 30)
+
+    return final_strategy_value, strategy_results, processed_tickers, performance_metrics
+
+def print_final_summary(
+    sorted_final_results: List[Dict],
+    models_buy: Dict,
+    models_sell: Dict,
+    scalers: Dict,
+    optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]],
+    final_strategy_value_1y: float,
+    final_buy_hold_value_1y: float,
+    ai_1y_return: float,
+    final_strategy_value_ytd: float,
+    final_buy_hold_value_ytd: float,
+    ai_ytd_return: float
+):
+    """Prints the final summary table and saves models."""
+    import joblib
+    
+    print("\n\n====================================================================================================")
+    print("                                 🚀 AI-Powered Momentum & Trend Strategy Results                               ")
+    print("====================================================================================================")
+    
+    print(f"\nOverall Portfolio Performance (1-Year):")
+    print(f"  Strategy Final Value: ${final_strategy_value_1y:,.2f} (Return: {ai_1y_return:.2f}%)")
+    print(f"  Buy & Hold Final Value: ${final_buy_hold_value_1y:,.2f} (Return: {((final_buy_hold_value_1y - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:.2f}%)")
+
+    print(f"\nOverall Portfolio Performance (YTD):")
+    print(f"  Strategy Final Value: ${final_strategy_value_ytd:,.2f} (Return: {ai_ytd_return:.2f}%)")
+    print(f"  Buy & Hold Final Value: ${final_buy_hold_value_ytd:,.2f} (Return: {((final_buy_hold_value_ytd - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:.2f}%)")
+
+    print(f"\nML Model Thresholds:")
+    print(f"  Minimum Buy Probability: {MIN_PROBA_BUY:.2f}")
+    print(f"  Minimum Sell Probability: {MIN_PROBA_SELL:.2f}")
+
+    print("\nIndividual Ticker Performance (1-Year Backtest):")
+    print(f"{'Rank':<5} | {'Ticker':<10} | {'1Y Perf (%)':>12} | {'YTD Perf (%)':>12} | {'Strategy Value':>18} | {'Sharpe Ratio':>14} | {'Min Buy Proba':>13} | {'Min Sell Proba':>14} | {'Recommendation':<30}")
+    print("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+
+    for i, res in enumerate(sorted_final_results, 1):
+        ticker = res['ticker']
+        strategy_value = res['performance']
+        sharpe = res['sharpe']
+        one_year_perf = res['one_year_perf']
+        ytd_perf = res['ytd_perf']
+
+        # Get per-ticker thresholds or use global defaults
+        min_proba_buy_ticker = MIN_PROBA_BUY
+        min_proba_sell_ticker = MIN_PROBA_SELL
+        if optimized_params_per_ticker and ticker in optimized_params_per_ticker:
+            if 'min_proba_buy' in optimized_params_per_ticker[ticker]:
+                min_proba_buy_ticker = optimized_params_per_ticker[ticker]['min_proba_buy']
+            if 'min_proba_sell' in optimized_params_per_ticker[ticker]:
+                min_proba_sell_ticker = optimized_params_per_ticker[ticker]['min_proba_sell']
+        
+        # Determine individual ticker recommendation
+        individual_strategy_return = ((strategy_value - (INITIAL_BALANCE / len(sorted_final_results))) / (INITIAL_BALANCE / len(sorted_final_results))) * 100
+        individual_recommendation = "Outperformed B&H" if individual_strategy_return > one_year_perf else "Underperformed B&H"
+
+        print(f"{i:<5} | {ticker:<10} | {one_year_perf:>12.2f} | {ytd_perf:>12.2f} | {strategy_value:>18,.2f} | {sharpe:>14.2f} | {min_proba_buy_ticker:>13.2f} | {min_proba_sell_ticker:>14.2f} | {individual_recommendation:<30}")
+
+    print("====================================================================================================================================================================================")
+    
+    print("\nOverall Recommendation:")
+    if ai_1y_return > ((final_buy_hold_value_1y - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:
+        print(f"The AI strategy outperformed a simple Buy & Hold strategy over the 1-Year period. Consider deploying this strategy.")
+    else:
+        print(f"The AI strategy did not outperform a simple Buy & Hold strategy over the 1-Year period. Further optimization may be needed.")
+    
+    if sorted_final_results:
+        top_ticker = sorted_final_results[0]['ticker']
+        top_perf = sorted_final_results[0]['one_year_perf']
+        print(f"The top performing ticker in the backtest was {top_ticker} with a 1-Year benchmark performance of {top_perf:.2f}%.")
+
+    print("\nSaving trained models and scalers...")
+    for ticker, model_buy in models_buy.items():
+        try:
+            joblib.dump(model_buy, f"logs/models/{ticker}_model_buy.joblib")
+            joblib.dump(models_sell[ticker], f"logs/models/{ticker}_model_sell.joblib")
+            joblib.dump(scalers[ticker], f"logs/models/{ticker}_scaler.joblib")
+            print(f"  ✅ Saved models for {ticker}")
+        except Exception as e:
+            print(f"  ⚠️ Could not save models for {ticker}: {e}")
+            
+    if optimized_params_per_ticker:
+        try:
+            with open(TOP_CACHE_PATH.parent / "optimized_per_ticker_params.json", 'w') as f:
+                json.dump(optimized_params_per_ticker, f, indent=4)
+            print(f"  ✅ Saved optimized parameters to {TOP_CACHE_PATH.parent.name}/{Path('optimized_per_ticker_params.json').name}")
+        except Exception as e:
+            print(f"  ⚠️ Could not save optimized parameters: {e}")
+
+    print("\nAnalysis complete. Check 'logs/models/' for saved models and 'logs/optimized_per_ticker_params.json' for optimized parameters.")
 
 if __name__ == "__main__":
-    print("Starting AI Stock Advisor...")
-    # Model training and optimization are performed conditionally per ticker within process_ticker.
-    # N_TOP_TICKERS is set to 10 for a focused test.
-    N_TOP_TICKERS = 10
-    USE_PERFORMANCE_BENCHMARK = True
-    find_top_performers(n_top=N_TOP_TICKERS)
-    print("AI Stock Advisor finished.")
+    main()
