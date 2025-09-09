@@ -864,7 +864,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     best_model_name = max(results, key=results.get)
     print(f"  🏆 Best model: {best_model_name} with AUC = {results[best_model_name]:.4f}")
 
-    # Train the best model on all available data and return it
+    # Train the best model on all available data and and return it
     best_model_instance = models[best_model_name]
     best_model_instance.fit(X, y)
     
@@ -1592,7 +1592,7 @@ def optimize_thresholds_for_portfolio(
 ) -> Dict[str, Dict[str, float]]:
     """Orchestrates parallel optimization of thresholds for all tickers."""
     print("\n🔍 Step 2.5: Optimizing ML thresholds for each ticker...")
-    num_processes = max(1, cpu_count() - 2)
+    num_processes = max(1, cpu_count() - 3) # Reduced to 1/4 of CPU cores
 
     optimization_params = []
     for ticker in top_tickers:
@@ -1687,7 +1687,7 @@ def main(
     bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)
     train_end_1y = bt_start_1y - timedelta(days=1)
     train_start_1y = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
-    num_processes = max(1, cpu_count() - 2)
+    num_processes = max(1, cpu_count() - 3) # Reduced to 1/4 of CPU cores
 
     training_params_1y = [(ticker, train_start_1y, train_end_1y, target_percentage, feature_set) for ticker in top_tickers]
     models_buy, models_sell, scalers = {}, {}, {}
@@ -1724,19 +1724,46 @@ def main(
     capital_per_stock = INITIAL_BALANCE / max(len(top_tickers), 1)
 
     # --- OPTIMIZE THRESHOLDS ---
-    optimized_params_per_ticker = optimize_thresholds_for_portfolio(
-        top_tickers=top_tickers,
-        train_start=train_start_1y, # Use training data for optimization
-        train_end=train_end_1y,
-        target_percentage=target_percentage,
-        feature_set=feature_set,
-        models_buy=models_buy,
-        models_sell=models_sell,
-        scalers=scalers,
-        market_data=market_data,
-        capital_per_stock=capital_per_stock,
-        run_parallel=run_parallel
-    )
+    # Ensure logs directory exists for optimized parameters
+    _ensure_dir(TOP_CACHE_PATH.parent)
+    optimized_params_file = TOP_CACHE_PATH.parent / "optimized_per_ticker_params.json"
+    
+    optimized_params_per_ticker = None
+    if optimized_params_file.exists():
+        try:
+            with open(optimized_params_file, 'r') as f:
+                optimized_params_per_ticker = json.load(f)
+            print(f"✅ Loaded optimized parameters from {optimized_params_file}")
+        except Exception as e:
+            print(f"⚠️ Could not load optimized parameters from file: {e}. Re-running optimization.")
+            optimized_params_per_ticker = optimize_thresholds_for_portfolio(
+                top_tickers=top_tickers,
+                train_start=train_start_1y, # Use training data for optimization
+                train_end=train_end_1y,
+                target_percentage=target_percentage,
+                feature_set=feature_set,
+                models_buy=models_buy,
+                models_sell=models_sell,
+                scalers=scalers,
+                market_data=market_data,
+                capital_per_stock=capital_per_stock,
+                run_parallel=run_parallel
+            )
+    
+    if optimized_params_per_ticker is None: # If file didn't exist or loading failed
+        optimized_params_per_ticker = optimize_thresholds_for_portfolio(
+            top_tickers=top_tickers,
+            train_start=train_start_1y, # Use training data for optimization
+            train_end=train_end_1y,
+            target_percentage=target_percentage,
+            feature_set=feature_set,
+            models_buy=models_buy,
+            models_sell=models_sell,
+            scalers=scalers,
+            market_data=market_data,
+            capital_per_stock=capital_per_stock,
+            run_parallel=run_parallel
+        )
 
     # --- Run 1-Year Backtest ---
     final_strategy_value_1y, strategy_results_1y, processed_tickers_1y, performance_metrics_1y = _run_portfolio_backtest(
@@ -1774,6 +1801,7 @@ def main(
     ytd_start_date = datetime(bt_end.year, 1, 1, tzinfo=timezone.utc)
     train_end_ytd = ytd_start_date - timedelta(days=1)
     train_start_ytd = train_end_ytd - timedelta(days=TRAIN_LOOKBACK_DAYS)
+    num_processes = max(1, cpu_count() - 3) # Reduced to 1/4 of CPU cores
     
     training_params_ytd = [(ticker, train_start_ytd, train_end_ytd, target_percentage, feature_set) for ticker in top_tickers]
     models_buy_ytd, models_sell_ytd, scalers_ytd = {}, {}, {}
@@ -1946,7 +1974,7 @@ def _run_portfolio_backtest(
         return INITIAL_BALANCE, [], [], []
 
     print(f"\n🔍 Step 4: Running {period_name} backtest for {len(processed_tickers)} tickers...")
-    num_processes = max(1, cpu_count() - 2)
+    num_processes = max(1, cpu_count() - 3) # Reduced to 1/4 of CPU cores
 
     if run_parallel:
         print(f"📈 Running {period_name} backtests in parallel using {num_processes} processes...")
