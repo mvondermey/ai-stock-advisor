@@ -27,6 +27,7 @@ import codecs
 from io import StringIO
 from multiprocessing import Pool, cpu_count
 import joblib # Added for model saving/loading
+import warnings # Added for warning suppression
 
 # --- Force UTF-8 output on Windows ---
 if sys.stdout.encoding != 'utf-8':
@@ -76,12 +77,13 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 10          # Set to 0 to disable the limit and run on all performers
+N_TOP_TICKERS           = 50          # Set to 0 to disable the limit and run on all performers
 BATCH_DOWNLOAD_SIZE     = 500
 PAUSE_BETWEEN_BATCHES   = 5.0
 
 # --- Backtest & training windows
 BACKTEST_DAYS           = 365        # 1 year for backtest
+BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest
 TRAIN_LOOKBACK_DAYS     = 360        # more data for model (e.g., 1 year)
 
 # --- Strategy (separate from feature windows)
@@ -110,6 +112,7 @@ USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
+FORCE_OPTIMIZATION      = True      # Set to True to force re-optimization of ML thresholds
 
 # ============================
 # Helpers
@@ -758,6 +761,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     from sklearn.svm import SVC
     from sklearn.model_selection import cross_val_score, StratifiedKFold
     from sklearn.preprocessing import StandardScaler
+    from sklearn.exceptions import UndefinedMetricWarning # Corrected import for warning suppression
 
     try:
         from lightgbm import LGBMClassifier
@@ -809,12 +813,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     d = df[req].dropna()
     if len(d) < 50:  # Increased requirement for cross-validation
         print("⚠️ Not enough rows after feature prep to compare models (need ≥ 50). Skipping.")
-        return None
-
-    # --- Check for class balance ---
-    if d[target_col].nunique() < 2:
-        print(f"⚠️ Not enough class diversity for training on '{target_col}'. Skipping model.")
-        return None
+        return None, None # Return None for both model and scaler
 
     # Use the provided feature_set directly, as it's already filtered and ready
     if feature_set is None:
@@ -825,6 +824,17 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     
     X_df = d[final_feature_names]
     y = d[target_col].values
+
+    # --- More robust check for class balance and minimum samples for cross-validation ---
+    unique_classes, counts = np.unique(y, return_counts=True)
+    if len(unique_classes) < 2:
+        print(f"⚠️ Not enough class diversity for training on '{target_col}' (only {len(unique_classes)} class found). Skipping model.")
+        return None, None
+    
+    n_splits = 5 # From StratifiedKFold
+    if any(c < n_splits for c in counts):
+        print(f"⚠️ Least populated class in '{target_col}' has fewer than {n_splits} members. Skipping model to avoid cross-validation errors.")
+        return None, None
 
     # Scale features for models that are sensitive to scale (like Logistic Regression and SVC)
     scaler = StandardScaler()
@@ -844,13 +854,16 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
         models["LightGBM"] = LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1)
 
     results = {}
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED) # Use n_splits variable
 
     print("  🔬 Comparing classifier performance (AUC score via 5-fold cross-validation):")
     for name, model in models.items():
         try:
-            # Set n_jobs=1 to avoid multiprocessing issues on Windows
-            scores = cross_val_score(model, X, y, cv=cv, scoring='roc_auc', n_jobs=1)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
+                warnings.filterwarnings("ignore", category=UserWarning)
+                # Set n_jobs=1 to avoid multiprocessing issues on Windows
+                scores = cross_val_score(model, X, y, cv=cv, scoring='roc_auc', n_jobs=1)
             results[name] = np.mean(scores)
             print(f"    - {name}: {results[name]:.4f} (std: {np.std(scores):.4f})")
         except Exception as e:
@@ -1539,25 +1552,29 @@ def optimize_thresholds_worker(params: Tuple) -> Dict:
     scaler = scalers.get(ticker)
 
     if model_buy is None or scaler is None:
-        return {'ticker': ticker, 'min_proba_buy': MIN_PROBA_BUY, 'min_proba_sell': MIN_PROBA_SELL, 'sharpe': -np.inf}
+        # If no model or scaler, return default thresholds with a neutral sharpe
+        return {'ticker': ticker, 'min_proba_buy': MIN_PROBA_BUY, 'min_proba_sell': MIN_PROBA_SELL, 'sharpe': 0.0}
 
     # Fetch data for optimization period (same as training data)
     df_opt = load_prices_robust(ticker, train_start, train_end)
     if df_opt.empty or len(df_opt) < STRAT_SMA_LONG + 5:
-        return {'ticker': ticker, 'min_proba_buy': MIN_PROBA_BUY, 'min_proba_sell': MIN_PROBA_SELL, 'sharpe': -np.inf}
+        # If insufficient data for optimization, return default thresholds with a neutral sharpe
+        return {'ticker': ticker, 'min_proba_buy': MIN_PROBA_BUY, 'min_proba_sell': MIN_PROBA_SELL, 'sharpe': 0.0}
 
     # Define a range of thresholds to test
-    buy_thresholds = np.arange(0.5, 0.9, 0.05)
-    sell_thresholds = np.arange(0.5, 0.9, 0.05)
+    buy_thresholds = np.arange(0.0, 1., 0.05)
+    sell_thresholds = np.arange(0.0, 1., 0.05)
 
     for buy_t in buy_thresholds:
         for sell_t in sell_thresholds:
+            # Ensure feature_set is passed to RuleTradingEnv for consistent feature handling
+            feature_set_for_env = scaler.feature_names_in_ if hasattr(scaler, 'feature_names_in_') else feature_set
             env = RuleTradingEnv(df_opt.copy(), initial_balance=capital_per_stock, transaction_cost=TRANSACTION_COST,
                                  model_buy=model_buy, model_sell=model_sell, scaler=scaler,
                                  min_proba_buy=buy_t, min_proba_sell=sell_t,
                                  use_gate=USE_MODEL_GATE,
                                  market_data=market_data, use_market_filter=USE_MARKET_FILTER,
-                                 feature_set=feature_set)
+                                 feature_set=feature_set_for_env)
             final_val, log, _ = env.run() # Don't need last_ai_action for optimization
 
             if len(env.portfolio_history) > 1:
@@ -1574,7 +1591,7 @@ def optimize_thresholds_worker(params: Tuple) -> Dict:
                 best_min_proba_buy = buy_t
                 best_min_proba_sell = sell_t
     
-    print(f"  ✅ Optimized {ticker}: Buy={best_min_proba_buy:.2f}, Sell={best_min_proba_sell:.2f}, Sharpe={best_sharpe:.2f}")
+    print(f"  ✅ Optimized {ticker}: Buy={best_min_proba_buy:.2f}, Sell={best_min_proba_sell:.2f}, Sharpe={best_sharpe:.2f} (Actual best Sharpe found: {best_sharpe:.2f})")
     return {'ticker': ticker, 'min_proba_buy': best_min_proba_buy, 'min_proba_sell': best_min_proba_sell, 'sharpe': best_sharpe}
 
 def optimize_thresholds_for_portfolio(
@@ -1608,7 +1625,7 @@ def optimize_thresholds_for_portfolio(
         results = [optimize_thresholds_worker(p) for p in tqdm(optimization_params, desc="Optimizing Thresholds")]
 
     for res in results:
-        if res and res['sharpe'] != -np.inf: # Only store if optimization was successful
+        if res: # Always store the result if it's not None, regardless of sharpe
             optimized_results[res['ticker']] = {
                 'min_proba_buy': res['min_proba_buy'],
                 'min_proba_sell': res['min_proba_sell']
@@ -1628,7 +1645,7 @@ def main(
     run_parallel: bool = True,
     single_ticker: Optional[str] = None,
     optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None
-) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float]]:
+) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float]]:
     
     end_date = datetime.now(timezone.utc)
     bt_end = end_date
@@ -1729,11 +1746,26 @@ def main(
     optimized_params_file = TOP_CACHE_PATH.parent / "optimized_per_ticker_params.json"
     
     optimized_params_per_ticker = None
-    if optimized_params_file.exists():
+    if FORCE_OPTIMIZATION or not optimized_params_file.exists():
+        print("🔄 Running optimization for ML thresholds (forced or no existing file)...")
+        optimized_params_per_ticker = optimize_thresholds_for_portfolio(
+            top_tickers=top_tickers,
+            train_start=train_start_1y, # Use training data for optimization
+            train_end=train_end_1y,
+            target_percentage=target_percentage,
+            feature_set=feature_set,
+            models_buy=models_buy,
+            models_sell=models_sell,
+            scalers=scalers,
+            market_data=market_data,
+            capital_per_stock=capital_per_stock,
+            run_parallel=run_parallel
+        )
+    else:
         try:
             with open(optimized_params_file, 'r') as f:
                 optimized_params_per_ticker = json.load(f)
-            print(f"✅ Loaded optimized parameters from {optimized_params_file}")
+            print(f"✅ Loaded optimized parameters from {optimized_params_file} (set FORCE_OPTIMIZATION = True to re-run)")
         except Exception as e:
             print(f"⚠️ Could not load optimized parameters from file: {e}. Re-running optimization.")
             optimized_params_per_ticker = optimize_thresholds_for_portfolio(
@@ -1749,21 +1781,6 @@ def main(
                 capital_per_stock=capital_per_stock,
                 run_parallel=run_parallel
             )
-    
-    if optimized_params_per_ticker is None: # If file didn't exist or loading failed
-        optimized_params_per_ticker = optimize_thresholds_for_portfolio(
-            top_tickers=top_tickers,
-            train_start=train_start_1y, # Use training data for optimization
-            train_end=train_end_1y,
-            target_percentage=target_percentage,
-            feature_set=feature_set,
-            models_buy=models_buy,
-            models_sell=models_sell,
-            scalers=scalers,
-            market_data=market_data,
-            capital_per_stock=capital_per_stock,
-            run_parallel=run_parallel
-        )
 
     # --- Run 1-Year Backtest ---
     final_strategy_value_1y, strategy_results_1y, processed_tickers_1y, performance_metrics_1y = _run_portfolio_backtest(
@@ -1853,6 +1870,63 @@ def main(
             buy_hold_results_ytd.append(capital_per_stock) # If no data, assume initial capital
     final_buy_hold_value_ytd = sum(buy_hold_results_ytd) + (len(top_tickers) - len(processed_tickers_ytd_local)) * capital_per_stock
 
+    # --- Training Models (for 3-Month Backtest) ---
+    print("\n🔍 Step 5: Training AI models for 3-Month backtest...")
+    bt_start_3month = bt_end - timedelta(days=BACKTEST_DAYS_3MONTH)
+    train_end_3month = bt_start_3month - timedelta(days=1)
+    train_start_3month = train_end_3month - timedelta(days=TRAIN_LOOKBACK_DAYS)
+    num_processes = max(1, cpu_count() - 3)
+
+    training_params_3month = [(ticker, train_start_3month, train_end_3month, target_percentage, feature_set) for ticker in top_tickers]
+    models_buy_3month, models_sell_3month, scalers_3month = {}, {}, {}
+
+    if run_parallel:
+        print(f"🤖 Training 3-Month models in parallel for {len(top_tickers)} tickers using {num_processes} processes...")
+        with Pool(processes=num_processes) as pool:
+            training_results_3month = list(tqdm(pool.imap(train_worker, training_params_3month), total=len(training_params_3month), desc="Training 3-Month Models"))
+    else:
+        print(f"🤖 Training 3-Month models sequentially for {len(top_tickers)} tickers...")
+        training_results_3month = [train_worker(p) for p in tqdm(training_params_3month, desc="Training 3-Month Models")]
+
+    for res in training_results_3month:
+        if res and res.get('model_buy'):
+            models_buy_3month[res['ticker']] = res['model_buy']
+            models_sell_3month[res['ticker']] = res['model_sell']
+            scalers_3month[res['ticker']] = res['scaler']
+
+    if not models_buy_3month and USE_MODEL_GATE:
+        print("⚠️ No models were trained for 3-Month backtest. Model-gating will be disabled for this run.\n")
+
+    # --- Run 3-Month Backtest ---
+    final_strategy_value_3month, strategy_results_3month, processed_tickers_3month_local, performance_metrics_3month = _run_portfolio_backtest(
+        start_date=bt_start_3month,
+        end_date=bt_end,
+        top_tickers=top_tickers,
+        models_buy=models_buy_3month,
+        models_sell=models_sell_3month,
+        scalers=scalers_3month,
+        market_data=market_data,
+        optimized_params_per_ticker=optimized_params_per_ticker,
+        capital_per_stock=capital_per_stock,
+        target_percentage=target_percentage,
+        run_parallel=run_parallel,
+        period_name="3-Month"
+    )
+    ai_3month_return = ((final_strategy_value_3month - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
+
+    # --- Calculate Buy & Hold for 3-Month ---
+    buy_hold_results_3month = []
+    for ticker in processed_tickers_3month_local:
+        df_bh = load_prices_robust(ticker, bt_start_3month, bt_end)
+        if not df_bh.empty:
+            start_price = float(df_bh["Close"].iloc[0])
+            shares_bh = int(capital_per_stock / start_price) if start_price > 0 else 0
+            cash_bh = capital_per_stock - shares_bh * start_price
+            buy_hold_results_3month.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
+        else:
+            buy_hold_results_3month.append(capital_per_stock)
+    final_buy_hold_value_3month = sum(buy_hold_results_3month) + (len(top_tickers) - len(processed_tickers_3month_local)) * capital_per_stock
+
     # --- Prepare data for the final summary table (using 1-Year results for the table) ---
     final_results = []
     for i, ticker in enumerate(processed_tickers_1y):
@@ -1893,9 +1967,10 @@ def main(
     
     print_final_summary(sorted_final_results, models_buy, models_sell, scalers, optimized_params_per_ticker,
                         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
-                        final_strategy_value_ytd, final_buy_hold_value_ytd, ai_ytd_return)
+                        final_strategy_value_ytd, final_buy_hold_value_ytd, ai_ytd_return,
+                        final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return)
     
-    return final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return
+    return final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker
 
 def _run_portfolio_backtest(
     start_date: datetime,
@@ -2014,7 +2089,10 @@ def print_final_summary(
     ai_1y_return: float,
     final_strategy_value_ytd: float,
     final_buy_hold_value_ytd: float,
-    ai_ytd_return: float
+    ai_ytd_return: float,
+    final_strategy_value_3month: float,
+    final_buy_hold_value_3month: float,
+    ai_3month_return: float
 ):
     """Prints the final summary table and saves models."""
     import joblib
@@ -2031,9 +2109,18 @@ def print_final_summary(
     print(f"  Strategy Final Value: ${final_strategy_value_ytd:,.2f} (Return: {ai_ytd_return:.2f}%)")
     print(f"  Buy & Hold Final Value: ${final_buy_hold_value_ytd:,.2f} (Return: {((final_buy_hold_value_ytd - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:.2f}%)")
 
-    print(f"\nML Model Thresholds:")
-    print(f"  Minimum Buy Probability: {MIN_PROBA_BUY:.2f}")
-    print(f"  Minimum Sell Probability: {MIN_PROBA_SELL:.2f}")
+    print(f"\nOverall Portfolio Performance (3-Month):")
+    print(f"  Strategy Final Value: ${final_strategy_value_3month:,.2f} (Return: {ai_3month_return:.2f}%)")
+    print(f"  Buy & Hold Final Value: ${final_buy_hold_value_3month:,.2f} (Return: {((final_buy_hold_value_3month - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:.2f}%)")
+
+    print(f"\nML Model Thresholds (Per-Ticker Optimized):")
+    if optimized_params_per_ticker:
+        print(f"  Thresholds are optimized per ticker and saved in logs/optimized_per_ticker_params.json")
+        print(f"  Default Global Buy Probability: {MIN_PROBA_BUY:.2f}")
+        print(f"  Default Global Sell Probability: {MIN_PROBA_SELL:.2f}")
+    else:
+        print(f"  Minimum Buy Probability: {MIN_PROBA_BUY:.2f}")
+        print(f"  Minimum Sell Probability: {MIN_PROBA_SELL:.2f}")
 
     print("\nIndividual Ticker Performance (1-Year Backtest):")
     print(f"{'Rank':<5} | {'Ticker':<10} | {'1Y Perf (%)':>12} | {'BH Perf (%)':>12} | {'Strategy Value':>18} | {'Sharpe Ratio':>14} | {'Min Buy Proba':>13} | {'Min Sell Proba':>14} | {'AI Action':<10}")
@@ -2048,13 +2135,8 @@ def print_final_summary(
         last_ai_action = res['last_ai_action'] # Get last AI action
 
         # Get per-ticker thresholds or use global defaults
-        min_proba_buy_ticker = MIN_PROBA_BUY
-        min_proba_sell_ticker = MIN_PROBA_SELL
-        if optimized_params_per_ticker and ticker in optimized_params_per_ticker:
-            if 'min_proba_buy' in optimized_params_per_ticker[ticker]:
-                min_proba_buy_ticker = optimized_params_per_ticker[ticker]['min_proba_buy']
-            if 'min_proba_sell' in optimized_params_per_ticker[ticker]:
-                min_proba_sell_ticker = optimized_params_per_ticker[ticker]['min_proba_sell']
+        min_proba_buy_ticker = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
+        min_proba_sell_ticker = optimized_params_per_ticker.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
         
         print(f"{i:<5} | {ticker:<10} | {one_year_perf:>12.2f} | {individual_bh_return:>12.2f} | {strategy_value:>18,.2f} | {sharpe:>14.2f} | {min_proba_buy_ticker:>13.2f} | {min_proba_sell_ticker:>14.2f} | {last_ai_action:<10}")
 
@@ -2092,4 +2174,6 @@ def print_final_summary(
     print("\nAnalysis complete. Check 'logs/models/' for saved models and 'logs/optimized_per_ticker_params.json' for optimized parameters.")
 
 if __name__ == "__main__":
-    main()
+    final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker = main(
+        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True
+    )
