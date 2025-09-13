@@ -112,7 +112,7 @@ USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
-FORCE_OPTIMIZATION      = True      # Set to True to force re-optimization of ML thresholds
+FORCE_OPTIMIZATION      = False      # Set to True to force re-optimization of ML thresholds
 
 # ============================
 # Helpers
@@ -1777,10 +1777,10 @@ def optimize_thresholds_worker(params: Tuple) -> Dict:
         return {'ticker': ticker, 'min_proba_buy': MIN_PROBA_BUY, 'min_proba_sell': MIN_PROBA_SELL, 'target_percentage': initial_target_percentage, 'sharpe': 0.0}
 
     # Define ranges for thresholds and target percentage to test
-    buy_thresholds = np.arange(0.0, 1., 0.05)
-    sell_thresholds = np.arange(0.0, 1., 0.05)
+    buy_thresholds = np.arange(0.0, 1., 0.2)
+    sell_thresholds = np.arange(0.0, 1., 0.2)
     # Define a reasonable range for target_percentage, e.g., 0.5% to 5%
-    target_percentages_to_test = np.arange(0.005, 0.055, 0.005) 
+    target_percentages_to_test = np.arange(0.005, 0.025, 0.01) 
 
     for current_target_percentage in target_percentages_to_test:
         # Re-fetch training data with the current target_percentage to generate new labels
@@ -2249,5 +2249,5 @@ def main(
 if __name__ == "__main__":
     # Run main.py for only one stock (AAPL) with optimization forced
     final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker = main(
-        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker="GOOGL", force_optimization=True
+        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker="AAPL", force_optimization=False
     )
