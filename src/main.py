@@ -25,7 +25,7 @@ import gymnasium as gym
 import sys
 import codecs
 from io import StringIO
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count, current_process
 import joblib # Added for model saving/loading
 import warnings # Added for warning suppression
 
@@ -68,6 +68,10 @@ except ImportError:
 SEED                    = 42
 np.random.seed(SEED)
 
+# --- Parallel Processing
+NUM_PROCESSES           = max(1, cpu_count() - 10) # Use all but one CPU core for parallel processing
+DOWNLOAD_THREADS        = max(1, cpu_count() - 10) # Use all but one CPU core for yfinance.download threads
+
 # --- Provider & caching
 DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', or 'alpaca'
 USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin
@@ -92,7 +96,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 1         # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 0         # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 200        # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 10.0       # Increased pause between batches for stability
 
@@ -128,6 +132,7 @@ USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
 INITIAL_BALANCE         = 50_000.0
 SAVE_PLOTS              = False
 FORCE_OPTIMIZATION      = False      # Set to True to force re-optimization of ML thresholds
+ENABLE_LIVE_TRADING     = True      # Set to True to enable actual buy/sell orders on Alpaca (paper or live)
 
 # ============================
 # Helpers
@@ -169,6 +174,23 @@ def _get_alpaca_account_balance() -> Optional[float]:
     except Exception as e:
         print(f"  ⚠️ Error fetching Alpaca account balance: {e}")
         return None
+
+def _get_alpaca_portfolio_tickers(trading_client: TradingClient) -> List[str]:
+    """Fetches current portfolio positions from Alpaca and returns a list of tickers."""
+    if not trading_client:
+        return []
+    try:
+        positions = trading_client.get_all_positions()
+        if positions:
+            tickers = [p.symbol for p in positions]
+            print(f"✅ Fetched Alpaca portfolio positions: {', '.join(tickers)}")
+            return tickers
+        else:
+            print("ℹ️ No open positions found in Alpaca portfolio.")
+            return []
+    except Exception as e:
+        print(f"  ⚠️ Error fetching Alpaca portfolio positions: {e}")
+        return []
 
 def _fetch_from_stooq(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Fetch OHLCV from Stooq. Try both 'TICKER' and 'TICKER.US'."""
@@ -264,8 +286,9 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
 
     for attempt in range(max_retries):
         try:
-            # Set threads to False to avoid potential conflicts with yfinance's internal threading
-            data = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=True, threads=20, keepna=False)
+            # Use DOWNLOAD_THREADS for yfinance.download, or False to let yfinance manage
+            threads_param = DOWNLOAD_THREADS if DOWNLOAD_THREADS > 0 else False
+            data = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=True, threads=threads_param, keepna=False)
             
             # Critical check: If the dataframe is empty or all values are NaN, it's a failed download.
             if data.empty or data.isnull().all().all():
@@ -1132,7 +1155,8 @@ class RuleTradingEnv:
     def __init__(self, df: pd.DataFrame, initial_balance: float, transaction_cost: float,
                  model_buy=None, model_sell=None, scaler=None, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, use_gate: bool = USE_MODEL_GATE,
                  market_data: Optional[pd.DataFrame] = None, use_market_filter: bool = USE_MARKET_FILTER, feature_set: Optional[List[str]] = None,
-                 per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None):
+                 per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None,
+                 alpaca_trading_client: Optional[TradingClient] = None): # Added alpaca_trading_client
         if "Close" not in df.columns:
             raise ValueError("DataFrame must contain 'Close' column.")
         self.df = df.reset_index()
@@ -1151,6 +1175,8 @@ class RuleTradingEnv:
         # This will be passed from the training worker
         self.feature_set = feature_set if feature_set is not None else ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper", "%K", "%D", "ADX",
                                                                         'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA']
+        self.alpaca_trading_client = alpaca_trading_client # Store the Alpaca trading client
+        self.live_trading_enabled = (alpaca_trading_client is not None) # Flag to indicate if live trading is enabled
 
         self.reset()
 
@@ -1166,8 +1192,19 @@ class RuleTradingEnv:
         self.trade_log: List[Tuple] = []
         self.ticker = self.df.iloc[0]['ticker'] if 'ticker' in self.df.columns else "UNKNOWN" # Store ticker for logging
         self.last_ai_action: str = "HOLD" # New: Track last AI action
+        self.alpaca_order_log_dir = Path("logs/alpaca_orders")
+        _ensure_dir(self.alpaca_order_log_dir)
         
         # print(f"DEBUG: In RuleTradingEnv.reset() for {self.ticker}, columns: {self.df.columns.tolist()}") # Debug print
+
+    def _log_alpaca_order(self, message: str):
+        """Logs Alpaca order messages to a ticker-specific file."""
+        if not self.live_trading_enabled:
+            return
+        log_file = self.alpaca_order_log_dir / f"{self.ticker}_orders.log"
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"{message}\n")
+
 
         close = self.df["Close"]
         
@@ -1344,6 +1381,22 @@ class RuleTradingEnv:
         self.holding_bars = 0
         self.trade_log.append((date, "BUY", price, qty, self.ticker, {"fee": fee}, fee))
         self.last_ai_action = "BUY" # Update last AI action
+        if self.live_trading_enabled and self.alpaca_trading_client:
+            try:
+                self.alpaca_trading_client.submit_order(
+                    symbol=self.ticker,
+                    qty=qty,
+                    side='buy',
+                    type='market',
+                    time_in_force='day'
+                )
+                log_message = f"[{date}] Alpaca BUY order submitted for {qty} shares of {self.ticker} at market price."
+                print(f"  [{self.ticker}] ✅ {log_message}")
+                self._log_alpaca_order(log_message)
+            except Exception as e:
+                log_message = f"[{date}] Error submitting Alpaca BUY order for {self.ticker}: {e}"
+                print(f"  [{self.ticker}] ⚠️ {log_message}")
+                self._log_alpaca_order(log_message)
         # print(f"  [{self.ticker}] BUY: {date}, Price: {price:.2f}, Qty: {qty}, Cash: {self.cash:,.2f}, Shares: {self.shares:.2f}")
 
     def _sell(self, price: float, date: str):
@@ -1360,6 +1413,22 @@ class RuleTradingEnv:
         self.holding_bars = 0
         self.trade_log.append((date, "SELL", price, qty, self.ticker, {"fee": fee}, fee))
         self.last_ai_action = "SELL" # Update last AI action
+        if self.live_trading_enabled and self.alpaca_trading_client:
+            try:
+                self.alpaca_trading_client.submit_order(
+                    symbol=self.ticker,
+                    qty=qty,
+                    side='sell',
+                    type='market',
+                    time_in_force='day'
+                )
+                log_message = f"[{date}] Alpaca SELL order submitted for {qty} shares of {self.ticker} at market price."
+                print(f"  [{self.ticker}] ✅ {log_message}")
+                self._log_alpaca_order(log_message)
+            except Exception as e:
+                log_message = f"[{date}] Error submitting Alpaca SELL order for {self.ticker}: {e}"
+                print(f"  [{self.ticker}] ⚠️ {log_message}")
+                self._log_alpaca_order(log_message)
         # print(f"  [{self.ticker}] SELL: {price:.2f}, Qty: {qty}, Cash: {self.cash:,.2f}, Shares: {self.shares:.2f}")
 
     def step(self):
@@ -1730,7 +1799,7 @@ def _run_portfolio_backtest(
 ) -> Tuple[float, List[float], List[str], List[Dict]]:
     """Helper function to run portfolio backtest for a given period."""
     print(f"\n🔍 Step X: Running {period_name} Backtest...")
-    num_processes = max(1, cpu_count() - 3)
+    num_processes = NUM_PROCESSES
 
     backtest_params = []
     for ticker in top_tickers:
@@ -1749,7 +1818,8 @@ def _run_portfolio_backtest(
         backtest_params.append((
             ticker, start_date, end_date, capital_per_stock,
             models_buy.get(ticker), models_sell.get(ticker), scalers.get(ticker),
-            market_data, feature_set_for_worker, min_proba_buy_ticker, min_proba_sell_ticker, target_percentage_ticker
+            market_data, feature_set_for_worker, min_proba_buy_ticker, min_proba_sell_ticker, target_percentage_ticker,
+            alpaca_trading_client # Pass the Alpaca trading client
         ))
 
     portfolio_values = []
@@ -1868,7 +1938,7 @@ def train_worker(params: Tuple) -> Dict:
 
 def backtest_worker(params: Tuple) -> Optional[Dict]:
     """Worker function to run backtest for a single ticker."""
-    ticker, bt_start, bt_end, capital_per_stock, model_buy, model_sell, scaler, market_data, feature_set, min_proba_buy, min_proba_sell, target_percentage = params
+    ticker, bt_start, bt_end, capital_per_stock, model_buy, model_sell, scaler, market_data, feature_set, min_proba_buy, min_proba_sell, target_percentage, alpaca_trading_client = params
     
     warmup_days = max(STRAT_SMA_LONG, 200) + 50
     data_start = bt_start - timedelta(days=warmup_days)
@@ -1884,7 +1954,8 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
                          min_proba_buy=min_proba_buy, min_proba_sell=min_proba_sell, 
                          use_gate=USE_MODEL_GATE,
                          market_data=market_data, use_market_filter=USE_MARKET_FILTER,
-                         feature_set=feature_set)
+                         feature_set=feature_set,
+                         alpaca_trading_client=alpaca_trading_client) # Pass the Alpaca trading client
     final_val, log, last_ai_action = env.run() # Capture last_ai_action
     
     df_backtest = df.loc[df.index >= bt_start]
@@ -1995,7 +2066,7 @@ def optimize_thresholds_for_portfolio(
     """Orchestrates parallel optimization of thresholds for all tickers."""
     print("\n🔍 Step 2.5: Optimizing ML thresholds for each ticker...")
     print(f"DEBUG: optimize_thresholds_for_portfolio called for {len(top_tickers)} tickers.") # Debug print
-    num_processes = max(1, cpu_count() - 3) # Reduced to 1/4 of CPU cores
+    num_processes = NUM_PROCESSES
 
     optimization_params = []
     for ticker in top_tickers:
@@ -2039,6 +2110,19 @@ def main(
     end_date = datetime.now(timezone.utc)
     bt_end = end_date
     
+    # --- Initialize Alpaca Trading Client if live trading is enabled ---
+    alpaca_trading_client = None
+    if DATA_PROVIDER.lower() == 'alpaca' and ENABLE_LIVE_TRADING and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
+        try:
+            # Use paper trading for now, as requested by the user
+            alpaca_trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+            print("✅ Alpaca Paper Trading Client initialized for live trading actions.")
+        except Exception as e:
+            print(f"⚠️ Error initializing Alpaca Trading Client: {e}. Live trading actions will be disabled.")
+            alpaca_trading_client = None
+    elif ENABLE_LIVE_TRADING:
+        print("⚠️ Live trading is enabled, but Alpaca is not the data provider, or API keys are missing/SDK not available. Live trading actions will be disabled.")
+
     # Determine initial balance
     current_initial_balance = INITIAL_BALANCE
     if DATA_PROVIDER.lower() == 'alpaca' and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
@@ -2092,30 +2176,63 @@ def main(
         print(title + "\n" + "="*50 + "\n")
 
         print("🔍 Step 1: Identifying stocks outperforming market benchmarks...")
-        top_performers_data = find_top_performers(return_tickers=True, fcf_min_threshold=fcf_threshold, ebitda_min_threshold=ebitda_threshold)
-    
+        
+        # Fetch Alpaca portfolio tickers if live trading is enabled
+        alpaca_portfolio_tickers = []
+        if ENABLE_LIVE_TRADING and alpaca_trading_client:
+            print(f"DEBUG: alpaca_trading_client is initialized: {alpaca_trading_client is not None}")
+            alpaca_portfolio_tickers = _get_alpaca_portfolio_tickers(alpaca_trading_client)
+            if alpaca_portfolio_tickers:
+                print(f"Adding {len(alpaca_portfolio_tickers)} tickers from Alpaca portfolio to analysis.")
+        
+        # Get top performers from market selection
+        market_selected_performers = find_top_performers(return_tickers=True, fcf_min_threshold=fcf_threshold, ebitda_min_threshold=ebitda_threshold)
+        
+        # Combine and deduplicate tickers
+        combined_tickers = set(alpaca_portfolio_tickers)
+        for ticker, _, _ in market_selected_performers:
+            combined_tickers.add(ticker)
+            
+        # Re-fetch performance data for all combined tickers
+        # This is a simplified approach; a more robust solution would re-run find_top_performers
+        # with the combined list or fetch data for new tickers only.
+        # For now, we'll just use the combined list as the new 'top_performers_data'
+        
+        # Create a dummy top_performers_data structure for the combined tickers
+        # We'll need to fetch their 1Y and YTD performance if they weren't in market_selected_performers
+        # For simplicity, we'll just create a list of (ticker, 0.0, 0.0) and let subsequent steps handle actual performance.
+        # A more complete solution would involve fetching performance for these new tickers.
+        top_performers_data = []
+        for ticker in sorted(list(combined_tickers)): # Sort for consistent order
+            # Try to find existing performance data
+            found_perf = next(((t, p1y, pytd) for t, p1y, pytd in market_selected_performers if t == ticker), None)
+            if found_perf:
+                top_performers_data.append(found_perf)
+            else:
+                # If not found, add with dummy performance. Actual performance will be calculated later.
+                top_performers_data.append((ticker, 0.0, 0.0)) # Placeholder performance
+                
     if not top_performers_data:
         print("❌ Could not identify top tickers. Aborting backtest.")
         return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None # Return 15 Nones
     
     top_tickers = [ticker for ticker, _, _ in top_performers_data]
-    print(f"\n✅ Identified {len(top_tickers)} stocks for backtesting.\n")
+    print(f"\n✅ Identified {len(top_tickers)} stocks for backtesting: {', '.join(top_tickers)}\n")
 
     # --- Training Models (for 1-Year Backtest) ---
     print("🔍 Step 2: Training AI models for 1-Year backtest...")
     bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)
     train_end_1y = bt_start_1y - timedelta(days=1)
     train_start_1y = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
-    num_processes = max(1, cpu_count() - 3) # Reduced to 1/4 of CPU cores
-
+    num_processes = NUM_PROCESSES 
     training_params_1y = [(ticker, train_start_1y, train_end_1y, target_percentage, feature_set) for ticker in top_tickers]
     models_buy, models_sell, scalers = {}, {}, {}
 
     if run_parallel:
-        print(f"🤖 Training 1-Year models in parallel for {len(top_tickers)} tickers using {num_processes} processes...")
+        print(f"🤖 Training 1-Year models in parallel for {len(top_tickers)} tickers using {NUM_PROCESSES} processes...")
         training_results_1y = []
         try:
-            with Pool(processes=num_processes) as pool:
+            with Pool(processes=NUM_PROCESSES) as pool:
                 training_results_1y = list(tqdm(pool.imap(train_worker, training_params_1y), total=len(training_params_1y), desc="Training 1-Year Models"))
         except Exception as e:
             print(f"  ❌ Error during parallel training for 1-Year models: {e}")
@@ -2256,14 +2373,14 @@ def main(
     ytd_start_date = datetime(bt_end.year, 1, 1, tzinfo=timezone.utc)
     train_end_ytd = ytd_start_date - timedelta(days=1)
     train_start_ytd = train_end_ytd - timedelta(days=TRAIN_LOOKBACK_DAYS)
-    num_processes = max(1, cpu_count() - 3) # Reduced to 1/4 of CPU cores
+    num_processes = NUM_PROCESSES
     
     training_params_ytd = [(ticker, train_start_ytd, train_end_ytd, target_percentage, feature_set) for ticker in top_tickers]
     models_buy_ytd, models_sell_ytd, scalers_ytd = {}, {}, {}
 
     if run_parallel:
-        print(f"🤖 Training YTD models in parallel for {len(top_tickers)} tickers using {num_processes} processes...")
-        with Pool(processes=num_processes) as pool:
+        print(f"🤖 Training YTD models in parallel for {len(top_tickers)} tickers using {NUM_PROCESSES} processes...")
+        with Pool(processes=NUM_PROCESSES) as pool:
             training_results_ytd = list(tqdm(pool.imap(train_worker, training_params_ytd), total=len(training_params_ytd), desc="Training YTD Models"))
     else:
         print(f"🤖 Training YTD models sequentially for {len(top_tickers)} tickers...")
@@ -2316,14 +2433,14 @@ def main(
     bt_start_3month = bt_end - timedelta(days=BACKTEST_DAYS_3MONTH)
     train_end_3month = bt_start_3month - timedelta(days=1)
     train_start_3month = train_end_3month - timedelta(days=TRAIN_LOOKBACK_DAYS)
-    num_processes = max(1, cpu_count() - 3)
+    num_processes = NUM_PROCESSES 
 
     training_params_3month = [(ticker, train_start_3month, train_end_3month, target_percentage, feature_set) for ticker in top_tickers]
     models_buy_3month, models_sell_3month, scalers_3month = {}, {}, {}
 
     if run_parallel:
-        print(f"🤖 Training 3-Month models in parallel for {len(top_tickers)} tickers using {num_processes} processes...")
-        with Pool(processes=num_processes) as pool:
+        print(f"🤖 Training 3-Month models in parallel for {len(top_tickers)} tickers using {NUM_PROCESSES} processes...")
+        with Pool(processes=NUM_PROCESSES) as pool:
             training_results_3month = list(tqdm(pool.imap(train_worker, training_params_3month), total=len(training_params_3month), desc="Training 3-Month Models"))
     else:
         print(f"🤖 Training 3-Month models sequentially for {len(top_tickers)} tickers...")
@@ -2422,5 +2539,5 @@ def main(
 if __name__ == "__main__":
     # Run main.py for only one stock (AAPL) with optimization forced
     final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker = main(
-        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker="AAPL", force_optimization=True
+        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker=None, force_optimization=True
     )
