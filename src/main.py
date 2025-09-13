@@ -92,7 +92,7 @@ STRAT_SMA_LONG          = 100
 ATR_PERIOD              = 14
 ATR_MULT_TRAIL          = 3.5
 ATR_MULT_TP             = 0.0        # 0 disables hard TP; rely on trailing
-RISK_PER_TRADE          = 0.01       # 1% of capital
+RISK_PER_TRADE          = 0.9       # 1% of capital
 TRANSACTION_COST        = 0.001      # 0.1%
 
 # --- Feature windows (for ML only)
@@ -369,7 +369,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         if "Open" not in price_df.columns:
             price_df["Open"] = price_df["Close"]
             
-        print(f"DEBUG: In load_prices for {ticker}, 'Volume' column exists: {'Volume' in price_df.columns}, 'High' exists: {'High' in price_df.columns}, 'Low' exists: {'Low' in price_df.columns}, 'Open' exists: {'Open' in price_df.columns}") # Debug print
+       # print(f"DEBUG: In load_prices for {ticker}, 'Volume' column exists: {'Volume' in price_df.columns}, 'High' exists: {'High' in price_df.columns}, 'Low' exists: {'Low' in price_df.columns}, 'Open' exists: {'Open' in price_df.columns}") # Debug print
         
         price_df = price_df.dropna(subset=["Close"])
         price_df = price_df.ffill().bfill()
@@ -831,21 +831,49 @@ def fetch_training_data(ticker: str, start: Optional[datetime] = None, end: Opti
     print(f"   ↳ rows after features available: {len(ready)}")
     return ready, final_training_features
 
+# Scikit-learn imports (fallback for CPU or if cuML not available)
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.model_selection import cross_val_score, StratifiedKFold, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.exceptions import UndefinedMetricWarning
+
+# Attempt to import GPU-accelerated libraries
+try:
+    import torch
+    CUDA_AVAILABLE = torch.cuda.is_available()
+    if CUDA_AVAILABLE:
+        print(f"✅ CUDA available: {torch.cuda.get_device_name(0)}")
+    else:
+        print("ℹ️ CUDA not available. Falling back to CPU for GPU-accelerated libraries.")
+except ImportError:
+    print("⚠️ PyTorch not installed. GPU acceleration for LightGBM and cuML will be skipped.")
+    CUDA_AVAILABLE = False
+
+try:
+    from lightgbm import LGBMClassifier
+    if CUDA_AVAILABLE:
+        print("✅ LightGBM found. Will attempt to use GPU.")
+    else:
+        print("ℹ️ LightGBM found, but CUDA not available. Will use CPU.")
+except ImportError:
+    print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
+    LGBMClassifier = None
+
+try:
+    import cuml
+    from cuml.preprocessing import StandardScaler as cuMLStandardScaler
+    from cuml.ensemble import RandomForestClassifier as cuMLRandomForestClassifier
+    from cuml.linear_model import LogisticRegression as cuMLLogisticRegression
+    print("✅ cuML found. Will attempt to use GPU for compatible models.")
+    CUML_AVAILABLE = CUDA_AVAILABLE
+except ImportError:
+    print("⚠️ cuML not installed. Run: pip install cuml-cuda11 (or appropriate version). GPU acceleration for scikit-learn models will be skipped.")
+    CUML_AVAILABLE = False
+
 def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None):
     """Train and compare multiple classifiers for a given target, returning the best one."""
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.svm import SVC
-    from sklearn.model_selection import cross_val_score, StratifiedKFold, GridSearchCV # Added GridSearchCV
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.exceptions import UndefinedMetricWarning # Corrected import for warning suppression
-
-    try:
-        from lightgbm import LGBMClassifier
-    except ImportError:
-        print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
-        LGBMClassifier = None
-
     d = df.copy() # Renamed to d to match the original error context
     
     if target_col not in d.columns:
@@ -905,34 +933,61 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
         return None, None
 
     # Scale features for models that are sensitive to scale (like Logistic Regression and SVM)
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_df)
-    X = pd.DataFrame(X_scaled, columns=final_feature_names, index=X_df.index)
+    if CUML_AVAILABLE:
+        scaler = cuMLStandardScaler()
+        # cuML expects cupy arrays or pandas dataframes, convert if X_df is numpy
+        X_gpu = cuml.DataFrame(X_df) if not isinstance(X_df, cuml.DataFrame) else X_df
+        X_scaled = scaler.fit_transform(X_gpu)
+        X = pd.DataFrame(X_scaled.to_numpy(), columns=final_feature_names, index=X_df.index) # Convert back to pandas for GridSearchCV
+    else:
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X_df)
+        X = pd.DataFrame(X_scaled, columns=final_feature_names, index=X_df.index)
     
     # Store feature names for consistent use during prediction
     scaler.feature_names_in_ = list(final_feature_names) 
 
     # Define models and their parameter grids for GridSearchCV
-    models_and_params = {
-        "Logistic Regression": {
-            "model": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
+    models_and_params = {}
+
+    if CUML_AVAILABLE:
+        models_and_params["cuML Logistic Regression"] = {
+            "model": cuMLLogisticRegression(random_state=SEED, class_weight="balanced", solver='qn'), # cuML LogisticRegression uses 'qn' solver
             "params": {'C': [0.1, 1.0, 10.0]}
-        },
-        "Random Forest": {
-            "model": RandomForestClassifier(random_state=SEED, class_weight="balanced"),
+        }
+        models_and_params["cuML Random Forest"] = {
+            "model": cuMLRandomForestClassifier(random_state=SEED, class_weight="balanced"),
             "params": {'n_estimators': [50, 100, 200], 'max_depth': [5, 10, None]}
-        },
-        "SVM": {
+        }
+        # SVM is not yet in cuML, so we keep the sklearn version as a fallback if cuML is available but SVM is desired.
+        models_and_params["SVM"] = {
             "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
             "params": {'C': [0.1, 1.0, 10.0], 'kernel': ['rbf', 'linear']}
         }
-    }
+    else:
+        models_and_params["Logistic Regression"] = {
+            "model": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
+            "params": {'C': [0.1, 1.0, 10.0]}
+        }
+        models_and_params["Random Forest"] = {
+            "model": RandomForestClassifier(random_state=SEED, class_weight="balanced"),
+            "params": {'n_estimators': [50, 100, 200], 'max_depth': [5, 10, None]}
+        }
+        models_and_params["SVM"] = {
+            "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
+            "params": {'C': [0.1, 1.0, 10.0], 'kernel': ['rbf', 'linear']}
+        }
 
     if LGBMClassifier:
-        models_and_params["LightGBM"] = {
+        lgbm_model_params = {
             "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1),
             "params": {'n_estimators': [50, 100, 200], 'learning_rate': [0.05, 0.1, 0.2]}
         }
+        if CUDA_AVAILABLE:
+            lgbm_model_params["model"].set_params(device='gpu')
+            models_and_params["LightGBM (GPU)"] = lgbm_model_params
+        else:
+            models_and_params["LightGBM (CPU)"] = lgbm_model_params
 
     results = {}
     best_model_overall = None
@@ -2249,5 +2304,5 @@ def main(
 if __name__ == "__main__":
     # Run main.py for only one stock (AAPL) with optimization forced
     final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker = main(
-        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker="AAPL", force_optimization=False
+        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker=None, force_optimization=False
     )
