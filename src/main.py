@@ -50,6 +50,17 @@ try:
 except Exception:
     pdr = None
 
+# Optional Alpaca provider
+try:
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.trading.client import TradingClient # Added for trading account access
+    ALPACA_AVAILABLE = True
+except ImportError:
+    print("⚠️ Alpaca SDK not installed. Run: pip install alpaca-py. Alpaca data provider will be skipped.")
+    ALPACA_AVAILABLE = False
+
 # ============================
 # Configuration / Hyperparams
 # ============================
@@ -58,11 +69,15 @@ SEED                    = 42
 np.random.seed(SEED)
 
 # --- Provider & caching
-DATA_PROVIDER           = 'yahoo'    # 'stooq' or 'yahoo'
+DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', or 'alpaca'
 USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin
 DATA_CACHE_DIR          = Path("data_cache")
 TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
 CACHE_DAYS              = 7
+
+# Alpaca API credentials (set as environment variables for security)
+ALPACA_API_KEY          = os.environ.get("ALPACA_API_KEY")
+ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
 
 # --- Universe / selection
 MARKET_SELECTION = {
@@ -77,7 +92,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 0         # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 1         # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 200        # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 10.0       # Increased pause between batches for stability
 
@@ -110,7 +125,7 @@ MARKET_FILTER_SMA       = 200
 USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
 
 # --- Misc
-INITIAL_BALANCE         = 100_000.0
+INITIAL_BALANCE         = 50_000.0
 SAVE_PLOTS              = False
 FORCE_OPTIMIZATION      = False      # Set to True to force re-optimization of ML thresholds
 
@@ -132,6 +147,29 @@ def _to_utc(ts):
         return t.tz_localize('UTC')
     return t.tz_convert('UTC')
 
+def _get_alpaca_account_balance() -> Optional[float]:
+    """Fetches the current cash balance from the Alpaca trading account."""
+    print(f"DEBUG: Checking ALPACA_AVAILABLE: {ALPACA_AVAILABLE}")
+    print(f"DEBUG: ALPACA_API_KEY is set: {bool(ALPACA_API_KEY)}")
+    print(f"DEBUG: ALPACA_SECRET_KEY is set: {bool(ALPACA_SECRET_KEY)}")
+
+    if not ALPACA_AVAILABLE or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        print("⚠️ Alpaca API keys are missing or SDK not available. Cannot fetch account balance.")
+        return None
+    
+    try:
+        trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True) # Assuming paper trading for backtesting
+        account = trading_client.get_account()
+        if account and account.cash:
+            print(f"✅ Fetched Alpaca account cash balance: ${float(account.cash):,.2f}")
+            return float(account.cash)
+        else:
+            print("⚠️ Could not retrieve Alpaca account cash balance. Account object or cash attribute missing.")
+            return None
+    except Exception as e:
+        print(f"  ⚠️ Error fetching Alpaca account balance: {e}")
+        return None
+
 def _fetch_from_stooq(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Fetch OHLCV from Stooq. Try both 'TICKER' and 'TICKER.US'."""
     if pdr is None:
@@ -150,6 +188,37 @@ def _fetch_from_stooq(ticker: str, start: datetime, end: datetime) -> pd.DataFra
         df.index.name = "Date"
         return df
     except Exception:
+        return pd.DataFrame()
+
+def _fetch_from_alpaca(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
+    """Fetch OHLCV from Alpaca."""
+    if not ALPACA_AVAILABLE or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        return pd.DataFrame()
+    
+    try:
+        client = StockHistoricalDataClient(ALPACA_API_KEY, ALPACA_SECRET_KEY)
+        request_params = StockBarsRequest(
+            symbol_or_symbols=[ticker],
+            timeframe=TimeFrame.Day,
+            start=start,
+            end=end
+        )
+        bars = client.get_stock_bars(request_params)
+        df = bars.df
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Alpaca returns a MultiIndex DataFrame, we need to flatten it
+        df = df.loc[ticker]
+        df = df.rename(columns={
+            'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
+        })
+        df.index.name = "Date"
+        df.index = pd.to_datetime(df.index, utc=True)
+        return df
+    except Exception as e:
+        print(f"  ⚠️ Could not fetch data from Alpaca for {ticker}: {e}")
         return pd.DataFrame()
 
 # ============================
@@ -284,6 +353,19 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
 
     return df_financial.sort_index()
 
+def _fetch_financial_data_from_alpaca(ticker: str) -> pd.DataFrame:
+    """Placeholder for fetching financial metrics from Alpaca.
+    Alpaca's SDK primarily provides market data (bars, quotes, trades) and does not
+    directly offer a comprehensive set of fundamental financial statements (like income statements,
+    balance sheets, cash flow statements) in the same way yfinance does.
+    
+    If Alpaca adds this functionality in the future, this function would be updated.
+    For now, it returns an empty DataFrame, and the system will fall back to Yahoo Finance
+    for fundamental data.
+    """
+    print(f"  ℹ️ Alpaca SDK does not directly provide fundamental financial statements. Using Yahoo Finance for {ticker} fundamentals.")
+    return pd.DataFrame()
+
 
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Download and clean data from the selected provider, with an improved local caching mechanism."""
@@ -315,6 +397,23 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         
         provider = DATA_PROVIDER.lower()
         
+        if provider == 'alpaca':
+            if not ALPACA_AVAILABLE or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+                print("⚠️ Alpaca is selected but API keys are missing or SDK not available. Falling back to Yahoo.")
+                provider = 'yahoo' # Fallback if Alpaca is selected but not configured
+            else:
+                alpaca_df = _fetch_from_alpaca(ticker, start_utc, end_utc)
+                if not alpaca_df.empty:
+                    price_df = alpaca_df.copy()
+                elif USE_YAHOO_FALLBACK:
+                    print(f"  ℹ️ Alpaca data for {ticker} empty. Falling back to Yahoo.")
+                    try:
+                        downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
+                        if downloaded_df is not None:
+                            price_df = downloaded_df.dropna()
+                    except Exception as e:
+                        raise e
+        
         if provider == 'stooq':
             stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
             if stooq_df.empty and not ticker.upper().endswith('.US'):
@@ -322,20 +421,23 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             if not stooq_df.empty:
                 price_df = stooq_df.copy()
             elif USE_YAHOO_FALLBACK:
+                print(f"  ℹ️ Stooq data for {ticker} empty. Falling back to Yahoo.")
                 try:
                     downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
                     if downloaded_df is not None:
                         price_df = downloaded_df.dropna()
                 except Exception as e:
                     raise e
-        else:
+        
+        if provider == 'yahoo' or price_df.empty: # If provider was yahoo, or if previous provider failed
             try:
                 downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
                 if downloaded_df is not None:
                     price_df = downloaded_df.dropna()
             except Exception as e:
                 raise e
-            if price_df.empty and pdr is not None:
+            if price_df.empty and pdr is not None and DATA_PROVIDER.lower() != 'stooq': # Only try stooq fallback if not already tried
+                print(f"  ℹ️ Yahoo data for {ticker} empty. Falling back to Stooq.")
                 stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
                 if stooq_df.empty and not ticker.upper().endswith('.US'):
                     stooq_df = _fetch_from_stooq(f"{ticker}.US", start_utc, end_utc)
@@ -396,7 +498,14 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 print(f"⚠️ Could not read financial cache file for {ticker}: {e}. Refetching financials.")
     
     if financial_df.empty:
-        financial_df = _fetch_financial_data(ticker)
+        if DATA_PROVIDER.lower() == 'alpaca':
+            financial_df = _fetch_financial_data_from_alpaca(ticker)
+            if financial_df.empty: # If Alpaca financial data is empty, fall back to Yahoo
+                print(f"  ℹ️ Falling back to Yahoo Finance for fundamental data for {ticker}.")
+                financial_df = _fetch_financial_data(ticker) # This calls the original Yahoo-based function
+        else:
+            financial_df = _fetch_financial_data(ticker) # This calls the original Yahoo-based function
+            
         if not financial_df.empty:
             try:
                 financial_df.to_csv(financial_cache_file)
@@ -840,37 +949,21 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import UndefinedMetricWarning
 
 # Attempt to import GPU-accelerated libraries
-try:
-    import torch
-    CUDA_AVAILABLE = torch.cuda.is_available()
-    if CUDA_AVAILABLE:
-        print(f"✅ CUDA available: {torch.cuda.get_device_name(0)}")
-    else:
-        print("ℹ️ CUDA not available. Falling back to CPU for GPU-accelerated libraries.")
-except ImportError:
-    print("⚠️ PyTorch not installed. GPU acceleration for LightGBM and cuML will be skipped.")
-    CUDA_AVAILABLE = False
+# Attempt to import GPU-accelerated libraries
+# Temporarily disable GPU acceleration for debugging multiprocessing issues
+CUDA_AVAILABLE = False
+CUML_AVAILABLE = False
 
 try:
     from lightgbm import LGBMClassifier
-    if CUDA_AVAILABLE:
-        print("✅ LightGBM found. Will attempt to use GPU.")
-    else:
-        print("ℹ️ LightGBM found, but CUDA not available. Will use CPU.")
+    print("ℹ️ LightGBM found. Will use CPU (GPU disabled for debugging).")
 except ImportError:
     print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
     LGBMClassifier = None
 
-try:
-    import cuml
-    from cuml.preprocessing import StandardScaler as cuMLStandardScaler
-    from cuml.ensemble import RandomForestClassifier as cuMLRandomForestClassifier
-    from cuml.linear_model import LogisticRegression as cuMLLogisticRegression
-    print("✅ cuML found. Will attempt to use GPU for compatible models.")
-    CUML_AVAILABLE = CUDA_AVAILABLE
-except ImportError:
-    print("⚠️ cuML not installed. Run: pip install cuml-cuda11 (or appropriate version). GPU acceleration for scikit-learn models will be skipped.")
-    CUML_AVAILABLE = False
+# cuML imports are skipped if CUML_AVAILABLE is False, no need for a separate try-except block here.
+# If cuML was imported, it would be handled by the global CUML_AVAILABLE flag.
+# For now, we explicitly set CUML_AVAILABLE to False.
 
 def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None):
     """Train and compare multiple classifiers for a given target, returning the best one."""
@@ -1695,7 +1788,8 @@ def print_final_summary(
     ai_ytd_return: float,
     final_strategy_value_3month: float,
     final_buy_hold_value_3month: float,
-    ai_3month_return: float
+    ai_3month_return: float,
+    initial_balance_used: float # Added parameter
 ) -> None:
     """Prints the final summary of the backtest results."""
     print("\n" + "="*80)
@@ -1703,17 +1797,17 @@ def print_final_summary(
     print("="*80)
 
     print("\n📊 Overall Portfolio Performance:")
-    print(f"  Initial Capital: ${INITIAL_BALANCE:,.2f}")
+    print(f"  Initial Capital: ${initial_balance_used:,.2f}") # Use the passed initial_balance_used
     print(f"  Number of Tickers Analyzed: {len(sorted_final_results)}")
     print("-" * 40)
     print(f"  1-Year Strategy Value: ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)")
-    print(f"  1-Year Buy & Hold Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:+.2f}%)")
+    print(f"  1-Year Buy & Hold Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / initial_balance_used) * 100:+.2f}%)")
     print("-" * 40)
     print(f"  YTD Strategy Value: ${final_strategy_value_ytd:,.2f} ({ai_ytd_return:+.2f}%)")
-    print(f"  YTD Buy & Hold Value: ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:+.2f}%)")
+    print(f"  YTD Buy & Hold Value: ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - initial_balance_used) / initial_balance_used) * 100:+.2f}%)")
     print("-" * 40)
     print(f"  3-Month Strategy Value: ${final_strategy_value_3month:,.2f} ({ai_3month_return:+.2f}%)")
-    print(f"  3-Month Buy & Hold Value: ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - INITIAL_BALANCE) / INITIAL_BALANCE) * 100:+.2f}%)")
+    print(f"  3-Month Buy & Hold Value: ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - initial_balance_used) / initial_balance_used) * 100:+.2f}%)")
     print("="*80)
 
     print("\n📈 Individual Ticker Performance (Sorted by 1-Year Performance):")
@@ -1900,6 +1994,7 @@ def optimize_thresholds_for_portfolio(
 ) -> Dict[str, Dict[str, float]]:
     """Orchestrates parallel optimization of thresholds for all tickers."""
     print("\n🔍 Step 2.5: Optimizing ML thresholds for each ticker...")
+    print(f"DEBUG: optimize_thresholds_for_portfolio called for {len(top_tickers)} tickers.") # Debug print
     num_processes = max(1, cpu_count() - 3) # Reduced to 1/4 of CPU cores
 
     optimization_params = []
@@ -1924,6 +2019,7 @@ def optimize_thresholds_for_portfolio(
             }
     
     print(f"✅ Optimization complete. Found optimized thresholds and target percentages for {len(optimized_results)} tickers.")
+    print(f"DEBUG: Optimized results: {optimized_results}") # Debug print
     return optimized_results
 
 def main(
@@ -1938,11 +2034,24 @@ def main(
     single_ticker: Optional[str] = None,
     optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None,
     force_optimization: bool = FORCE_OPTIMIZATION # Add force_optimization parameter
-) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float]]:
+) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[Dict]]:
     
     end_date = datetime.now(timezone.utc)
     bt_end = end_date
     
+    # Determine initial balance
+    current_initial_balance = INITIAL_BALANCE
+    if DATA_PROVIDER.lower() == 'alpaca' and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
+        alpaca_cash = _get_alpaca_account_balance()
+        if alpaca_cash is not None:
+            current_initial_balance = alpaca_cash
+            print(f"Using Alpaca account cash balance as INITIAL_BALANCE: ${current_initial_balance:,.2f}")
+        else:
+            print(f"⚠️ Could not fetch Alpaca account balance. Falling back to default INITIAL_BALANCE: ${current_initial_balance:,.2f}")
+    else:
+        print(f"Using default INITIAL_BALANCE: ${current_initial_balance:,.2f}")
+    print(f"DEBUG: Final initial balance used for backtesting: ${current_initial_balance:,.2f}")
+
     # --- Handle single ticker case for initial performance calculation ---
     if single_ticker:
         print(f"🔍 Running analysis for single ticker: {single_ticker}")
@@ -1987,7 +2096,7 @@ def main(
     
     if not top_performers_data:
         print("❌ Could not identify top tickers. Aborting backtest.")
-        return None, None, None, None, None, None, None, None, None, None, None # Return 11 Nones
+        return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None # Return 15 Nones
     
     top_tickers = [ticker for ticker, _, _ in top_performers_data]
     print(f"\n✅ Identified {len(top_tickers)} stocks for backtesting.\n")
@@ -2040,15 +2149,23 @@ def main(
         else:
             print(f"⚠️ Could not load market data for {MARKET_FILTER_TICKER}. Filter will be disabled.\n")
 
-    capital_per_stock = INITIAL_BALANCE / max(len(top_tickers), 1)
+    capital_per_stock = current_initial_balance / max(len(top_tickers), 1)
 
     # --- OPTIMIZE THRESHOLDS ---
     # Ensure logs directory exists for optimized parameters
     _ensure_dir(TOP_CACHE_PATH.parent)
     optimized_params_file = TOP_CACHE_PATH.parent / "optimized_per_ticker_params.json"
     
+    # If force_optimization is True and the file exists, delete it to force re-optimization
+    if force_optimization and optimized_params_file.exists():
+        try:
+            os.remove(optimized_params_file)
+            print(f"🗑️ Deleted existing optimized parameters file: {optimized_params_file} to force re-optimization.")
+        except Exception as e:
+            print(f"⚠️ Could not delete optimized parameters file: {e}")
+
     optimized_params_per_ticker = None
-    if FORCE_OPTIMIZATION or not optimized_params_file.exists():
+    if force_optimization or not optimized_params_file.exists():
         print("\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (forced or no existing file)...")
         optimized_params_per_ticker = optimize_thresholds_for_portfolio(
             top_tickers=top_tickers,
@@ -2074,7 +2191,7 @@ def main(
         try:
             with open(optimized_params_file, 'r') as f:
                 optimized_params_per_ticker = json.load(f)
-            print(f"\n✅ Loaded optimized parameters from {optimized_params_file} (set FORCE_OPTIMIZATION = True to re-run)")
+            print(f"\n✅ Loaded optimized parameters from {optimized_params_file} (set 'force_optimization=True' in main() call to re-run)")
         except Exception as e:
             print(f"⚠️ Could not load optimized parameters from file: {e}. Re-running optimization.")
             print("\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (re-running due to load error)...")
@@ -2296,7 +2413,8 @@ def main(
     print_final_summary(sorted_final_results, models_buy, models_sell, scalers, optimized_params_per_ticker,
                         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
                         final_strategy_value_ytd, final_buy_hold_value_ytd, ai_ytd_return,
-                        final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return)
+                        final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return,
+                        initial_balance_used=current_initial_balance) # Pass the actual initial balance used
     print("\n✅ Final summary prepared and printed.")
     
     return final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker
@@ -2304,5 +2422,5 @@ def main(
 if __name__ == "__main__":
     # Run main.py for only one stock (AAPL) with optimization forced
     final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker = main(
-        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker=None, force_optimization=False
+        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker="AAPL", force_optimization=True
     )
