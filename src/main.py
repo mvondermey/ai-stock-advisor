@@ -280,7 +280,7 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
     
     # Ensure all financial columns are numeric
     for col in df_financial.columns:
-        df_financial[col] = pd.to_numeric(df[col], errors='coerce')
+        df_financial[col] = pd.to_numeric(df_financial[col], errors='coerce')
 
     return df_financial.sort_index()
 
@@ -1719,7 +1719,7 @@ def train_worker(params: Tuple) -> Dict:
 
 def backtest_worker(params: Tuple) -> Optional[Dict]:
     """Worker function to run backtest for a single ticker."""
-    ticker, bt_start, bt_end, capital_per_stock, model_buy, model_sell, scaler, market_data, feature_set, min_proba_buy, min_proba_sell = params
+    ticker, bt_start, bt_end, capital_per_stock, model_buy, model_sell, scaler, market_data, feature_set, min_proba_buy, min_proba_sell, target_percentage = params
     
     warmup_days = max(STRAT_SMA_LONG, 200) + 50
     data_start = bt_start - timedelta(days=warmup_days)
@@ -1756,7 +1756,7 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
     # Calculate individual buy and hold return for the backtest period
     individual_bh_return = ((bh_val - capital_per_stock) / capital_per_stock) * 100 if capital_per_stock > 0 else 0
 
-    return {'ticker': ticker, 'final_val': final_val, 'bh_val': bh_val, 'perf_data': perf_data, 'individual_bh_return': individual_bh_return, 'last_ai_action': last_ai_action}
+    return {'ticker': ticker, 'final_val': final_val, 'bh_val': bh_val, 'perf_data': perf_data, 'individual_bh_return': individual_bh_return, 'last_ai_action': last_ai_action, 'target_percentage': target_percentage}
 
 def optimize_thresholds_worker(params: Tuple) -> Dict:
     """Worker function to optimize thresholds and target percentage for a single ticker."""
@@ -2223,5 +2223,5 @@ def main(
 if __name__ == "__main__":
     # Run main.py for only one stock (AAPL) with optimization forced
     final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker = main(
-        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=False, single_ticker="AAPL", force_optimization=True
+        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker="GOOGL", force_optimization=True
     )
