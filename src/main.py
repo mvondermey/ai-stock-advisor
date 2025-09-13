@@ -1994,7 +1994,7 @@ def main(
     
     optimized_params_per_ticker = None
     if FORCE_OPTIMIZATION or not optimized_params_file.exists():
-        print("🔄 Running optimization for ML thresholds (forced or no existing file)...")
+        print("\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (forced or no existing file)...")
         optimized_params_per_ticker = optimize_thresholds_for_portfolio(
             top_tickers=top_tickers,
             train_start=train_start_1y, # Use training data for optimization
@@ -2008,13 +2008,21 @@ def main(
             capital_per_stock=capital_per_stock,
             run_parallel=run_parallel
         )
+        if optimized_params_per_ticker:
+            try:
+                with open(optimized_params_file, 'w') as f:
+                    json.dump(optimized_params_per_ticker, f, indent=4)
+                print(f"✅ Optimized parameters saved to {optimized_params_file}")
+            except Exception as e:
+                print(f"⚠️ Could not save optimized parameters to file: {e}")
     else:
         try:
             with open(optimized_params_file, 'r') as f:
                 optimized_params_per_ticker = json.load(f)
-            print(f"✅ Loaded optimized parameters from {optimized_params_file} (set FORCE_OPTIMIZATION = True to re-run)")
+            print(f"\n✅ Loaded optimized parameters from {optimized_params_file} (set FORCE_OPTIMIZATION = True to re-run)")
         except Exception as e:
             print(f"⚠️ Could not load optimized parameters from file: {e}. Re-running optimization.")
+            print("\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (re-running due to load error)...")
             optimized_params_per_ticker = optimize_thresholds_for_portfolio(
                 top_tickers=top_tickers,
                 train_start=train_start_1y, # Use training data for optimization
@@ -2028,8 +2036,16 @@ def main(
                 capital_per_stock=capital_per_stock,
                 run_parallel=run_parallel
             )
+            if optimized_params_per_ticker:
+                try:
+                    with open(optimized_params_file, 'w') as f:
+                        json.dump(optimized_params_per_ticker, f, indent=4)
+                    print(f"✅ Optimized parameters saved to {optimized_params_file}")
+                except Exception as e:
+                    print(f"⚠️ Could not save optimized parameters to file: {e}")
 
     # --- Run 1-Year Backtest ---
+    print("\n🔍 Step 3: Running 1-Year Backtest...")
     final_strategy_value_1y, strategy_results_1y, processed_tickers_1y, performance_metrics_1y = _run_portfolio_backtest(
         start_date=bt_start_1y,
         end_date=bt_end,
@@ -2048,6 +2064,7 @@ def main(
     ai_1y_return = ((final_strategy_value_1y - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
 
     # --- Calculate Buy & Hold for 1-Year ---
+    print("\n📊 Calculating Buy & Hold performance for 1-Year period...")
     buy_hold_results_1y = []
     for ticker in processed_tickers_1y:
         df_bh = load_prices_robust(ticker, bt_start_1y, bt_end)
@@ -2059,10 +2076,11 @@ def main(
         else:
             buy_hold_results_1y.append(capital_per_stock) # If no data, assume initial capital
     final_buy_hold_value_1y = sum(buy_hold_results_1y) + (len(top_tickers) - len(processed_tickers_1y)) * capital_per_stock
+    print("✅ 1-Year Buy & Hold calculation complete.")
 
 
     # --- Training Models (for YTD Backtest) ---
-    print("\n🔍 Step 3: Training AI models for YTD backtest...")
+    print("\n🔍 Step 4: Training AI models for YTD backtest...")
     ytd_start_date = datetime(bt_end.year, 1, 1, tzinfo=timezone.utc)
     train_end_ytd = ytd_start_date - timedelta(days=1)
     train_start_ytd = train_end_ytd - timedelta(days=TRAIN_LOOKBACK_DAYS)
@@ -2089,6 +2107,7 @@ def main(
         print("⚠️ No models were trained for YTD backtest. Model-gating will be disabled for this run.\n")
 
     # --- Run YTD Backtest ---
+    print("\n🔍 Step 5: Running YTD Backtest...")
     final_strategy_value_ytd, strategy_results_ytd, processed_tickers_ytd_local, performance_metrics_ytd = _run_portfolio_backtest(
         start_date=ytd_start_date,
         end_date=bt_end,
@@ -2106,6 +2125,7 @@ def main(
     ai_ytd_return = ((final_strategy_value_ytd - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
 
     # --- Calculate Buy & Hold for YTD ---
+    print("\n📊 Calculating Buy & Hold performance for YTD period...")
     buy_hold_results_ytd = []
     for ticker in processed_tickers_ytd_local: # Use processed_tickers_ytd_local here
         df_bh = load_prices_robust(ticker, ytd_start_date, bt_end)
@@ -2117,9 +2137,10 @@ def main(
         else:
             buy_hold_results_ytd.append(capital_per_stock) # If no data, assume initial capital
     final_buy_hold_value_ytd = sum(buy_hold_results_ytd) + (len(top_tickers) - len(processed_tickers_ytd_local)) * capital_per_stock
+    print("✅ YTD Buy & Hold calculation complete.")
 
     # --- Training Models (for 3-Month Backtest) ---
-    print("\n🔍 Step 5: Training AI models for 3-Month backtest...")
+    print("\n🔍 Step 6: Training AI models for 3-Month backtest...")
     bt_start_3month = bt_end - timedelta(days=BACKTEST_DAYS_3MONTH)
     train_end_3month = bt_start_3month - timedelta(days=1)
     train_start_3month = train_end_3month - timedelta(days=TRAIN_LOOKBACK_DAYS)
@@ -2146,6 +2167,7 @@ def main(
         print("⚠️ No models were trained for 3-Month backtest. Model-gating will be disabled for this run.\n")
 
     # --- Run 3-Month Backtest ---
+    print("\n🔍 Step 7: Running 3-Month Backtest...")
     final_strategy_value_3month, strategy_results_3month, processed_tickers_3month_local, performance_metrics_3month = _run_portfolio_backtest(
         start_date=bt_start_3month,
         end_date=bt_end,
@@ -2163,6 +2185,7 @@ def main(
     ai_3month_return = ((final_strategy_value_3month - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
 
     # --- Calculate Buy & Hold for 3-Month ---
+    print("\n📊 Calculating Buy & Hold performance for 3-Month period...")
     buy_hold_results_3month = []
     for ticker in processed_tickers_3month_local:
         df_bh = load_prices_robust(ticker, bt_start_3month, bt_end)
@@ -2174,8 +2197,10 @@ def main(
         else:
             buy_hold_results_3month.append(capital_per_stock)
     final_buy_hold_value_3month = sum(buy_hold_results_3month) + (len(top_tickers) - len(processed_tickers_3month_local)) * capital_per_stock
+    print("✅ 3-Month Buy & Hold calculation complete.")
 
     # --- Prepare data for the final summary table (using 1-Year results for the table) ---
+    print("\n📝 Preparing final summary data...")
     final_results = []
     for i, ticker in enumerate(processed_tickers_1y):
         # The performance_metrics_1y list contains the dictionaries returned by backtest_worker
@@ -2217,11 +2242,12 @@ def main(
                         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
                         final_strategy_value_ytd, final_buy_hold_value_ytd, ai_ytd_return,
                         final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return)
+    print("\n✅ Final summary prepared and printed.")
     
     return final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker
 
 if __name__ == "__main__":
     # Run main.py for only one stock (AAPL) with optimization forced
     final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker = main(
-        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker="AAPL", force_optimization=True
+        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker="GOOGL", force_optimization=True
     )
