@@ -1795,7 +1795,8 @@ def _run_portfolio_backtest(
     capital_per_stock: float,
     target_percentage: float,
     run_parallel: bool,
-    period_name: str
+    period_name: str,
+    alpaca_trading_client: Optional[TradingClient] = None # Added alpaca_trading_client
 ) -> Tuple[float, List[float], List[str], List[Dict]]:
     """Helper function to run portfolio backtest for a given period."""
     print(f"\n🔍 Step X: Running {period_name} Backtest...")
@@ -2348,7 +2349,8 @@ def main(
         # Pass the global target_percentage here, as the individual backtest_worker will use the optimized one
         target_percentage=target_percentage, 
         run_parallel=run_parallel,
-        period_name="1-Year"
+        period_name="1-Year",
+        alpaca_trading_client=alpaca_trading_client # Pass the Alpaca trading client
     )
     ai_1y_return = ((final_strategy_value_1y - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
 
@@ -2409,7 +2411,8 @@ def main(
         capital_per_stock=capital_per_stock,
         target_percentage=target_percentage,
         run_parallel=run_parallel,
-        period_name="YTD"
+        period_name="YTD",
+        alpaca_trading_client=alpaca_trading_client # Pass the Alpaca trading client
     )
     ai_ytd_return = ((final_strategy_value_ytd - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
 
@@ -2469,7 +2472,8 @@ def main(
         capital_per_stock=capital_per_stock,
         target_percentage=target_percentage,
         run_parallel=run_parallel,
-        period_name="3-Month"
+        period_name="3-Month",
+        alpaca_trading_client=alpaca_trading_client # Pass the Alpaca trading client
     )
     ai_3month_return = ((final_strategy_value_3month - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
 
