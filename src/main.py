@@ -69,8 +69,8 @@ SEED                    = 42
 np.random.seed(SEED)
 
 # --- Parallel Processing
-NUM_PROCESSES           = max(1, cpu_count() - 10) # Use all but one CPU core for parallel processing
-DOWNLOAD_THREADS        = max(1, cpu_count() - 10) # Use all but one CPU core for yfinance.download threads
+NUM_PROCESSES           = max(1, cpu_count() - 5) # Use all but one CPU core for parallel processing
+DOWNLOAD_THREADS        = max(1, cpu_count() - 5) # Use all but one CPU core for yfinance.download threads
 
 # --- Provider & caching
 DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', or 'alpaca'
@@ -96,7 +96,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 0         # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 10         # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 200        # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 10.0       # Increased pause between batches for stability
 
@@ -1998,10 +1998,10 @@ def optimize_thresholds_worker(params: Tuple) -> Dict:
         return {'ticker': ticker, 'min_proba_buy': MIN_PROBA_BUY, 'min_proba_sell': MIN_PROBA_SELL, 'target_percentage': initial_target_percentage, 'sharpe': 0.0}
 
     # Define ranges for thresholds and target percentage to test
-    buy_thresholds = np.arange(0.0, 1., 0.2)
-    sell_thresholds = np.arange(0.0, 1., 0.2)
-    # Define a reasonable range for target_percentage, e.g., 0.5% to 5%
-    target_percentages_to_test = np.arange(0.005, 0.025, 0.01) 
+    buy_thresholds = np.arange(0.0, 1.01, 0.05) # Increased granularity
+    sell_thresholds = np.arange(0.0, 1.01, 0.05) # Increased granularity
+    # Define a wider range for target_percentage, e.g., 0.25% to 10%
+    target_percentages_to_test = np.arange(0.0025, 0.105, 0.005) 
 
     for current_target_percentage in target_percentages_to_test:
         # Re-fetch training data with the current target_percentage to generate new labels
@@ -2038,7 +2038,11 @@ def optimize_thresholds_worker(params: Tuple) -> Dict:
                     if strat_returns.std() > 0:
                         sharpe = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252)
                     else:
-                        sharpe = 0.0 # No volatility, potentially good if return is positive
+                        # If no volatility but positive return, it's good. Otherwise, it's bad.
+                        if final_val > capital_per_stock:
+                            sharpe = 100.0 # Assign a very high Sharpe for perfect, risk-free positive return
+                        else:
+                            sharpe = -100.0 # Assign a very low Sharpe for no trades or negative return with no volatility
                 else:
                     sharpe = -np.inf # Not enough data for meaningful Sharpe
 
