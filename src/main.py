@@ -69,8 +69,8 @@ SEED                    = 42
 np.random.seed(SEED)
 
 # --- Parallel Processing
-NUM_PROCESSES           = max(1, cpu_count() - 5) # Use all but one CPU core for parallel processing
-DOWNLOAD_THREADS        = max(1, cpu_count() - 5) # Use all but one CPU core for yfinance.download threads
+NUM_PROCESSES           = max(1, cpu_count() - 3) # Use all but one CPU core for parallel processing
+DOWNLOAD_THREADS        = max(1, cpu_count() - 3) # Use all but one CPU core for yfinance.download threads
 
 # --- Provider & caching
 DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', or 'alpaca'
@@ -85,10 +85,10 @@ ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
 
 # --- Universe / selection
 MARKET_SELECTION = {
-    "NASDAQ_ALL": False,
+    "NASDAQ_ALL": True,
     "NASDAQ_100": True,
-    "SP500": False,
-    "DOW_JONES": False,
+    "SP500": True,
+    "DOW_JONES": True,
     "POPULAR_ETFS": False,
     "CRYPTO": False,
     "DAX": False,
@@ -96,7 +96,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 10         # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 0         # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 200        # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 10.0       # Increased pause between batches for stability
 
@@ -126,7 +126,7 @@ USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # re-enable market filter
 MARKET_FILTER_TICKER    = 'SPY'
 MARKET_FILTER_SMA       = 200
-USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
+USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering
 
 # --- Misc
 INITIAL_BALANCE         = 50_000.0
@@ -175,22 +175,41 @@ def _get_alpaca_account_balance() -> Optional[float]:
         print(f"  ⚠️ Error fetching Alpaca account balance: {e}")
         return None
 
-def _get_alpaca_portfolio_tickers(trading_client: TradingClient) -> List[str]:
-    """Fetches current portfolio positions from Alpaca and returns a list of tickers."""
+def _get_alpaca_portfolio_positions(trading_client: TradingClient) -> Tuple[List[Dict], float]:
+    """
+    Fetches current portfolio positions from Alpaca and returns a list of dictionaries
+    with ticker, quantity, current price, market value, and the total market value of positions.
+    """
     if not trading_client:
-        return []
+        return [], 0.0
+    
+    portfolio_positions = []
+    total_positions_market_value = 0.0
+    
     try:
         positions = trading_client.get_all_positions()
         if positions:
-            tickers = [p.symbol for p in positions]
-            print(f"✅ Fetched Alpaca portfolio positions: {', '.join(tickers)}")
-            return tickers
+            print(f"✅ Fetched Alpaca portfolio positions:")
+            for p in positions:
+                symbol = p.symbol
+                qty = float(p.qty)
+                current_price = float(p.current_price)
+                market_value = float(p.market_value)
+                
+                portfolio_positions.append({
+                    'ticker': symbol,
+                    'qty': qty,
+                    'current_price': current_price,
+                    'market_value': market_value
+                })
+                total_positions_market_value += market_value
+            return portfolio_positions, total_positions_market_value
         else:
             print("ℹ️ No open positions found in Alpaca portfolio.")
-            return []
+            return [], 0.0
     except Exception as e:
         print(f"  ⚠️ Error fetching Alpaca portfolio positions: {e}")
-        return []
+        return [], 0.0
 
 def _fetch_from_stooq(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Fetch OHLCV from Stooq. Try both 'TICKER' and 'TICKER.US'."""
@@ -973,20 +992,38 @@ from sklearn.exceptions import UndefinedMetricWarning
 
 # Attempt to import GPU-accelerated libraries
 # Attempt to import GPU-accelerated libraries
-# Temporarily disable GPU acceleration for debugging multiprocessing issues
 CUDA_AVAILABLE = False
 CUML_AVAILABLE = False
 
 try:
+    import torch
+    if torch.cuda.is_available():
+        CUDA_AVAILABLE = True
+        print("✅ CUDA is available. GPU acceleration enabled.")
+    else:
+        print("⚠️ CUDA is not available. GPU acceleration will not be used.")
+except ImportError:
+    print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
+
+try:
+    import cuml
+    from cuml.ensemble import RandomForestClassifier as cuMLRandomForestClassifier
+    from cuml.linear_model import LogisticRegression as cuMLLogisticRegression
+    from cuml.preprocessing import StandardScaler as cuMLStandardScaler
+    CUML_AVAILABLE = True
+    print("✅ cuML found. GPU-accelerated models will be used if CUDA is available.")
+except ImportError:
+    print("⚠️ cuML not installed. Run: pip install cuml. GPU-accelerated models will be skipped.")
+
+try:
     from lightgbm import LGBMClassifier
-    print("ℹ️ LightGBM found. Will use CPU (GPU disabled for debugging).")
+    if CUDA_AVAILABLE:
+        print("ℹ️ LightGBM found. Will attempt to use GPU.")
+    else:
+        print("ℹ️ LightGBM found. Will use CPU (CUDA not available).")
 except ImportError:
     print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
     LGBMClassifier = None
-
-# cuML imports are skipped if CUML_AVAILABLE is False, no need for a separate try-except block here.
-# If cuML was imported, it would be handled by the global CUML_AVAILABLE flag.
-# For now, we explicitly set CUML_AVAILABLE to False.
 
 def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None):
     """Train and compare multiple classifiers for a given target, returning the best one."""
@@ -1121,7 +1158,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                 warnings.filterwarnings("ignore", category=UserWarning)
                 
                 # Use GridSearchCV for hyperparameter tuning
-                grid_search = GridSearchCV(model, params, cv=cv, scoring='roc_auc', n_jobs=1, verbose=0)
+                grid_search = GridSearchCV(model, params, cv=cv, scoring='roc_auc', n_jobs=-1, verbose=0)
                 grid_search.fit(X, y)
                 
                 best_score = grid_search.best_score_
@@ -1152,7 +1189,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
 
 class RuleTradingEnv:
     """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
-    def __init__(self, df: pd.DataFrame, initial_balance: float, transaction_cost: float,
+    def __init__(self, df: pd.DataFrame, ticker: str, initial_balance: float, transaction_cost: float, # Added ticker parameter
                  model_buy=None, model_sell=None, scaler=None, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, use_gate: bool = USE_MODEL_GATE,
                  market_data: Optional[pd.DataFrame] = None, use_market_filter: bool = USE_MARKET_FILTER, feature_set: Optional[List[str]] = None,
                  per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None,
@@ -1160,6 +1197,7 @@ class RuleTradingEnv:
         if "Close" not in df.columns:
             raise ValueError("DataFrame must contain 'Close' column.")
         self.df = df.reset_index()
+        self.ticker = ticker # Assign ticker directly
         self.initial_balance = float(initial_balance)
         self.transaction_cost = float(transaction_cost)
         self.model_buy = model_buy
@@ -1177,7 +1215,7 @@ class RuleTradingEnv:
                                                                         'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA']
         self.alpaca_trading_client = alpaca_trading_client # Store the Alpaca trading client
         self.live_trading_enabled = (alpaca_trading_client is not None) # Flag to indicate if live trading is enabled
-
+        
         self.reset()
 
     def reset(self):
@@ -1190,24 +1228,15 @@ class RuleTradingEnv:
         self.holding_bars = 0
         self.portfolio_history: List[float] = [self.initial_balance]
         self.trade_log: List[Tuple] = []
-        self.ticker = self.df.iloc[0]['ticker'] if 'ticker' in self.df.columns else "UNKNOWN" # Store ticker for logging
+        # self.ticker is already set in __init__, no need to re-set here.
         self.last_ai_action: str = "HOLD" # New: Track last AI action
         self.alpaca_order_log_dir = Path("logs/alpaca_orders")
         _ensure_dir(self.alpaca_order_log_dir)
         
-        # print(f"DEBUG: In RuleTradingEnv.reset() for {self.ticker}, columns: {self.df.columns.tolist()}") # Debug print
-
-    def _log_alpaca_order(self, message: str):
-        """Logs Alpaca order messages to a ticker-specific file."""
-        if not self.live_trading_enabled:
-            return
-        log_file = self.alpaca_order_log_dir / f"{self.ticker}_orders.log"
-        with open(log_file, 'a', encoding='utf-8') as f:
-            f.write(f"{message}\n")
-
-
         close = self.df["Close"]
-        
+        high = self.df["High"] if "High" in self.df.columns else None
+        low  = self.df["Low"]  if "Low" in self.df.columns else None
+
         # --- Strategy Indicators ---
         # 1. Trend Filter: 200-day SMA
         self.df['SMA_200'] = close.rolling(window=200).mean()
@@ -1243,9 +1272,16 @@ class RuleTradingEnv:
         else:
             ret = close.pct_change(fill_method=None)
             self.df["ATR"] = (ret.rolling(ATR_PERIOD).std() * close).rolling(2).mean()
-
+        
         # Low-volatility filter reference: rolling median ATR
         self.df['ATR_MED'] = self.df['ATR'].rolling(50).median()
+
+        # Set current_step to the first index where ATR is not NaN
+        first_valid_atr_idx = self.df['ATR'].first_valid_index()
+        if first_valid_atr_idx is not None:
+            self.current_step = self.df.index.get_loc(first_valid_atr_idx)
+        else:
+            pass # Removed warning print
 
         # --- Features for ML Gate ---
         self.df["Returns"]    = close.pct_change(fill_method=None)
@@ -1587,7 +1623,6 @@ def find_top_performers(return_tickers: bool = False, n_top: int = N_TOP_TICKERS
                         print(f"  ✅ {bench_ticker} 1-Year Performance: {perf:.2f}%")
             except Exception as e:
                 print(f"⚠️ Could not calculate {bench_ticker} performance: {e}.")
-            time.sleep(2) # Add a pause to avoid rate limiting
         
         if not benchmark_perfs:
             print("❌ Could not calculate any benchmark performance. Cannot proceed.")
@@ -1610,7 +1645,6 @@ def find_top_performers(return_tickers: bool = False, n_top: int = N_TOP_TICKERS
                         print(f"  ✅ {bench_ticker} YTD Performance: {perf:.2f}%")
             except Exception as e:
                 print(f"⚠️ Could not calculate {bench_ticker} YTD performance: {e}.")
-            time.sleep(2) # Add a pause to avoid rate limiting
         
         if not ytd_benchmark_perfs:
             print("❌ Could not calculate any YTD benchmark performance. Cannot proceed.")
@@ -1663,8 +1697,8 @@ def find_top_performers(return_tickers: bool = False, n_top: int = N_TOP_TICKERS
                 print(f"  ⚠️ Error calculating 1-Year performance for {ticker}: {e}. Skipping.")
         
         if i < num_batches - 1:
-            print(f"--- Pausing for {PAUSE_BETWEEN_BATCHES} seconds before next batch ---")
-            time.sleep(PAUSE_BETWEEN_BATCHES)
+            # Removed time.sleep(PAUSE_BETWEEN_BATCHES) to optimize batch processing
+            pass
 
     if not all_tickers_performance:
         print("❌ No tickers with valid 1-Year performance found. Aborting.")
@@ -1949,8 +1983,11 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
         return None
     if df.isna().all().all() or "Close" not in df.columns or df["Close"].isna().any():
         return None
-
-    env = RuleTradingEnv(df, initial_balance=capital_per_stock, transaction_cost=TRANSACTION_COST,
+    
+    # Add ticker column to the DataFrame for logging purposes in RuleTradingEnv
+    # The 'ticker' column is added to the DataFrame, but RuleTradingEnv now expects it as a direct parameter.
+    # So, we pass the 'ticker' directly.
+    env = RuleTradingEnv(df, ticker, initial_balance=capital_per_stock, transaction_cost=TRANSACTION_COST,
                          model_buy=model_buy, model_sell=model_sell, scaler=scaler, 
                          min_proba_buy=min_proba_buy, min_proba_sell=min_proba_sell, 
                          use_gate=USE_MODEL_GATE,
@@ -2025,7 +2062,7 @@ def optimize_thresholds_worker(params: Tuple) -> Dict:
                 # Ensure feature_set is passed to RuleTradingEnv for consistent feature handling
                 feature_set_for_env = current_scaler.feature_names_in_ if hasattr(current_scaler, 'feature_names_in_') else final_training_features
                 
-                env = RuleTradingEnv(training_data_df.copy(), initial_balance=capital_per_stock, transaction_cost=TRANSACTION_COST,
+                env = RuleTradingEnv(training_data_df.copy(), ticker, initial_balance=capital_per_stock, transaction_cost=TRANSACTION_COST,
                                      model_buy=current_model_buy, model_sell=current_model_sell, scaler=current_scaler,
                                      min_proba_buy=buy_t, min_proba_sell=sell_t,
                                      use_gate=USE_MODEL_GATE,
@@ -2052,7 +2089,6 @@ def optimize_thresholds_worker(params: Tuple) -> Dict:
                     best_min_proba_sell = sell_t
                     best_target_percentage = current_target_percentage
     
-    print(f"  ✅ Optimized {ticker}: Buy={best_min_proba_buy:.2f}, Sell={best_min_proba_sell:.2f}, Target%={best_target_percentage:.2%}, Sharpe={best_sharpe:.2f}")
     return {'ticker': ticker, 'min_proba_buy': best_min_proba_buy, 'min_proba_sell': best_min_proba_sell, 'target_percentage': best_target_percentage, 'sharpe': best_sharpe}
 
 def optimize_thresholds_for_portfolio(
@@ -2070,7 +2106,6 @@ def optimize_thresholds_for_portfolio(
 ) -> Dict[str, Dict[str, float]]:
     """Orchestrates parallel optimization of thresholds for all tickers."""
     print("\n🔍 Step 2.5: Optimizing ML thresholds for each ticker...")
-    print(f"DEBUG: optimize_thresholds_for_portfolio called for {len(top_tickers)} tickers.") # Debug print
     num_processes = NUM_PROCESSES
 
     optimization_params = []
@@ -2095,7 +2130,6 @@ def optimize_thresholds_for_portfolio(
             }
     
     print(f"✅ Optimization complete. Found optimized thresholds and target percentages for {len(optimized_results)} tickers.")
-    print(f"DEBUG: Optimized results: {optimized_results}") # Debug print
     return optimized_results
 
 def main(
@@ -2182,40 +2216,70 @@ def main(
 
         print("🔍 Step 1: Identifying stocks outperforming market benchmarks...")
         
-        # Fetch Alpaca portfolio tickers if live trading is enabled
-        alpaca_portfolio_tickers = []
+        # Fetch Alpaca portfolio positions if live trading is enabled
+        alpaca_portfolio_positions = []
+        total_alpaca_portfolio_value = 0.0
         if ENABLE_LIVE_TRADING and alpaca_trading_client:
             print(f"DEBUG: alpaca_trading_client is initialized: {alpaca_trading_client is not None}")
-            alpaca_portfolio_tickers = _get_alpaca_portfolio_tickers(alpaca_trading_client)
-            if alpaca_portfolio_tickers:
-                print(f"Adding {len(alpaca_portfolio_tickers)} tickers from Alpaca portfolio to analysis.")
-        
+            alpaca_portfolio_positions, total_alpaca_portfolio_value = _get_alpaca_portfolio_positions(alpaca_trading_client)
+            if alpaca_portfolio_positions:
+                print(f"Adding {len(alpaca_portfolio_positions)} tickers from Alpaca portfolio to analysis.")
+                
+                # Print Alpaca portfolio details
+                print("\n📊 Current Alpaca Portfolio:")
+                print("-" * 60)
+                print(f"{'Ticker':<10} | {'Qty':>8} | {'Price':>12} | {'Value':>15} | {'Allocation':>12}")
+                print("-" * 60)
+                
+                total_portfolio_value_with_cash = total_alpaca_portfolio_value + current_initial_balance # Include cash in total for allocation
+                
+                for pos in alpaca_portfolio_positions:
+                    ticker = pos['ticker']
+                    qty = pos['qty']
+                    current_price = pos['current_price']
+                    market_value = pos['market_value']
+                    allocation = (market_value / total_portfolio_value_with_cash) * 100 if total_portfolio_value_with_cash > 0 else 0
+                    print(f"{ticker:<10} | {qty:>8.0f} | {current_price:>11.2f}$ | {market_value:>14.2f}$ | {allocation:>11.2f}%")
+                print("-" * 60)
+                print(f"{'Total Positions':<33} | {total_alpaca_portfolio_value:>14.2f}$ |")
+                print(f"{'Total Portfolio (incl. Cash)':<33} | {total_portfolio_value_with_cash:>14.2f}$ |")
+                print("-" * 60)
+
         # Get top performers from market selection
-        market_selected_performers = find_top_performers(return_tickers=True, fcf_min_threshold=fcf_threshold, ebitda_min_threshold=ebitda_threshold)
+        market_selected_performers = find_top_performers(return_tickers=True, n_top=0, fcf_min_threshold=fcf_threshold, ebitda_min_threshold=ebitda_threshold)
         
         # Combine and deduplicate tickers
-        combined_tickers = set(alpaca_portfolio_tickers)
+        combined_tickers = set([pos['ticker'] for pos in alpaca_portfolio_positions])
         for ticker, _, _ in market_selected_performers:
             combined_tickers.add(ticker)
             
         # Re-fetch performance data for all combined tickers
-        # This is a simplified approach; a more robust solution would re-run find_top_performers
-        # with the combined list or fetch data for new tickers only.
-        # For now, we'll just use the combined list as the new 'top_performers_data'
-        
-        # Create a dummy top_performers_data structure for the combined tickers
-        # We'll need to fetch their 1Y and YTD performance if they weren't in market_selected_performers
-        # For simplicity, we'll just create a list of (ticker, 0.0, 0.0) and let subsequent steps handle actual performance.
-        # A more complete solution would involve fetching performance for these new tickers.
         top_performers_data = []
-        for ticker in sorted(list(combined_tickers)): # Sort for consistent order
-            # Try to find existing performance data
+        for ticker in sorted(list(combined_tickers)):
             found_perf = next(((t, p1y, pytd) for t, p1y, pytd in market_selected_performers if t == ticker), None)
             if found_perf:
                 top_performers_data.append(found_perf)
             else:
-                # If not found, add with dummy performance. Actual performance will be calculated later.
-                top_performers_data.append((ticker, 0.0, 0.0)) # Placeholder performance
+                # If not found, fetch its performance (simplified, could be optimized with batch fetching)
+                start_date_1y = end_date - timedelta(days=365)
+                ytd_start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
+                
+                df_1y = load_prices_robust(ticker, start_date_1y, end_date)
+                perf_1y = -np.inf
+                if df_1y is not None and not df_1y.empty:
+                    start_price = df_1y['Close'].iloc[0]
+                    end_price = df_1y['Close'].iloc[-1]
+                    if start_price > 0:
+                        perf_1y = ((end_price - start_price) / start_price) * 100
+
+                df_ytd = load_prices_robust(ticker, ytd_start_date, end_date)
+                perf_ytd = -np.inf
+                if df_ytd is not None and not df_ytd.empty:
+                    start_price = df_ytd['Close'].iloc[0]
+                    end_price = df_ytd['Close'].iloc[-1]
+                    if start_price > 0:
+                        perf_ytd = ((end_price - start_price) / start_price) * 100
+                top_performers_data.append((ticker, perf_1y, perf_ytd))
                 
     if not top_performers_data:
         print("❌ Could not identify top tickers. Aborting backtest.")
