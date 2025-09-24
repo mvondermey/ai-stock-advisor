@@ -56,6 +56,8 @@ try:
     from alpaca.data.timeframe import TimeFrame
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.trading.client import TradingClient # Added for trading account access
+    from alpaca.trading.requests import MarketOrderRequest, GetAssetsRequest # For submitting orders
+    from alpaca.trading.enums import OrderSide, TimeInForce, AssetClass, AssetStatus # For order details
     ALPACA_AVAILABLE = True
 except ImportError:
     print("⚠️ Alpaca SDK not installed. Run: pip install alpaca-py. Alpaca data provider will be skipped.")
@@ -85,10 +87,11 @@ ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
 
 # --- Universe / selection
 MARKET_SELECTION = {
-    "NASDAQ_ALL": True,
-    "NASDAQ_100": True,
-    "SP500": True,
-    "DOW_JONES": True,
+    "ALPACA_STOCKS": True, # Fetch all tradable US equities from Alpaca
+    "NASDAQ_ALL": False,
+    "NASDAQ_100": False,
+    "SP500": False,
+    "DOW_JONES": False,
     "POPULAR_ETFS": False,
     "CRYPTO": False,
     "DAX": False,
@@ -96,7 +99,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 10         # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 30         # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 10000        # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 20.0       # Increased pause between batches for stability
 
@@ -176,7 +179,7 @@ def _to_utc(ts):
     return t.tz_convert('UTC')
 
 def _get_alpaca_account_balance() -> Optional[float]:
-    """Fetches the current cash balance from the Alpaca trading account."""
+    """Fetches the current equity from the Alpaca trading account."""
     print(f"DEBUG: Checking ALPACA_AVAILABLE: {ALPACA_AVAILABLE}")
     print(f"DEBUG: ALPACA_API_KEY is set: {bool(ALPACA_API_KEY)}")
     print(f"DEBUG: ALPACA_SECRET_KEY is set: {bool(ALPACA_SECRET_KEY)}")
@@ -188,11 +191,11 @@ def _get_alpaca_account_balance() -> Optional[float]:
     try:
         trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True) # Assuming paper trading for backtesting
         account = trading_client.get_account()
-        if account and account.cash:
-            print(f"✅ Fetched Alpaca account cash balance: ${float(account.cash):,.2f}")
-            return float(account.cash)
+        if account and account.equity:
+            print(f"✅ Fetched Alpaca account equity: ${float(account.equity):,.2f}")
+            return float(account.equity)
         else:
-            print("⚠️ Could not retrieve Alpaca account cash balance. Account object or cash attribute missing.")
+            print("⚠️ Could not retrieve Alpaca account equity. Account object or equity attribute missing.")
             return None
     except Exception as e:
         print(f"  ⚠️ Error fetching Alpaca account balance: {e}")
@@ -522,7 +525,14 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
         price_df.index = pd.to_datetime(price_df.index, utc=True)
         price_df.index.name = "Date"
-        price_df["Close"] = pd.to_numeric(price_df["Close"], errors="coerce")
+        
+        # Convert all relevant columns to numeric, coercing errors to NaN
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col in price_df.columns:
+                price_df[col] = pd.to_numeric(price_df[col], errors='coerce')
+
+        # Replace infinities with NaN
+        price_df.replace([np.inf, -np.inf], np.nan, inplace=True)
         
         # Ensure 'Volume', 'High', 'Low', 'Open' columns exist, fill with 'Close' or 0 if missing
         if "Volume" not in price_df.columns:
@@ -623,6 +633,25 @@ def get_all_tickers() -> List[str]:
     """
     all_tickers = set()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
+
+    # --- Alpaca Stocks ---
+    if MARKET_SELECTION.get("ALPACA_STOCKS"):
+        if ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
+            try:
+                trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+                search_params = GetAssetsRequest(
+                    asset_class=AssetClass.US_EQUITY,
+                    status=AssetStatus.ACTIVE
+                )
+                assets = trading_client.get_all_assets(search_params)
+                tradable_assets = [a for a in assets if a.tradable]
+                alpaca_tickers = [asset.symbol for asset in tradable_assets]
+                all_tickers.update(alpaca_tickers)
+                print(f"✅ Fetched {len(alpaca_tickers)} tradable US equity tickers from Alpaca.")
+            except Exception as e:
+                print(f"⚠️ Could not fetch asset list from Alpaca ({e}).")
+        else:
+            print("⚠️ Alpaca stock selection is enabled, but SDK/API keys are not available.")
 
     # --- US Tickers ---
     if MARKET_SELECTION.get("NASDAQ_ALL"):
@@ -1297,12 +1326,25 @@ class RuleTradingEnv:
         self.live_trading_enabled = (alpaca_trading_client is not None) # Flag to indicate if live trading is enabled
         
         self.reset()
+        self._prepare_data()
 
     def reset(self):
         self.current_step = 0
         self.cash = self.initial_balance
         self.shares = 0.0
         self.entry_price: Optional[float] = None
+
+        # If live trading, synchronize with Alpaca portfolio to get current holdings
+        if self.live_trading_enabled and self.alpaca_trading_client:
+            try:
+                position = self.alpaca_trading_client.get_open_position(self.ticker)
+                self.shares = float(position.qty)
+                self.entry_price = float(position.avg_entry_price)
+                print(f"  [{self.ticker}] ✅ Synced with Alpaca. Found existing position of {self.shares} shares.")
+            except Exception: # Catches position not found error
+                self.shares = 0.0
+                self.entry_price = None
+        
         self.highest_since_entry: Optional[float] = None
         self.entry_atr: Optional[float] = None
         self.holding_bars = 0
@@ -1315,6 +1357,16 @@ class RuleTradingEnv:
         self.alpaca_order_log_dir = Path("logs/alpaca_orders")
         _ensure_dir(self.alpaca_order_log_dir)
         
+    def _log_alpaca_order(self, message: str):
+        """Logs Alpaca order submissions to a file."""
+        log_file = self.alpaca_order_log_dir / f"{self.ticker}_orders.log"
+        try:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(message + "\n")
+        except Exception as e:
+            print(f"  [{self.ticker}] ⚠️ Error writing to Alpaca order log: {e}")
+
+    def _prepare_data(self):
         close = self.df["Close"]
         high = self.df["High"] if "High" in self.df.columns else None
         low  = self.df["Low"]  if "Low" in self.df.columns else None
@@ -1421,15 +1473,6 @@ class RuleTradingEnv:
         self.df['%K'] = self.df['%K'].fillna(0)
         self.df['%D'] = self.df['%D'].fillna(0)
 
-    def _log_alpaca_order(self, message: str):
-        """Logs Alpaca order submissions to a file."""
-        log_file = self.alpaca_order_log_dir / f"{self.ticker}_orders.log"
-        try:
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(message + "\n")
-        except Exception as e:
-            print(f"  [{self.ticker}] ⚠️ Error writing to Alpaca order log: {e}")
-
     def _date_at(self, i: int) -> str:
         if "Date" in self.df.columns:
             return str(self.df.loc[i, "Date"])
@@ -1512,13 +1555,13 @@ class RuleTradingEnv:
         self.last_ai_action = "BUY" # Update last AI action
         if self.live_trading_enabled and self.alpaca_trading_client:
             try:
-                self.alpaca_trading_client.submit_order(
+                market_order_data = MarketOrderRequest(
                     symbol=self.ticker,
                     qty=qty,
-                    side='buy',
-                    type='market',
-                    time_in_force='day'
+                    side=OrderSide.BUY,
+                    time_in_force=TimeInForce.DAY
                 )
+                self.alpaca_trading_client.submit_order(order_data=market_order_data)
                 log_message = f"[{date}] Alpaca BUY order submitted for {qty} shares of {self.ticker} at market price."
                 print(f"  [{self.ticker}] ✅ {log_message}")
                 self._log_alpaca_order(log_message)
@@ -1544,17 +1587,41 @@ class RuleTradingEnv:
         self.last_ai_action = "SELL" # Update last AI action
         if self.live_trading_enabled and self.alpaca_trading_client:
             try:
-                self.alpaca_trading_client.submit_order(
-                    symbol=self.ticker,
-                    qty=qty,
-                    side='sell',
-                    type='market',
-                    time_in_force='day'
-                )
-                log_message = f"[{date}] Alpaca SELL order submitted for {qty} shares of {self.ticker} at market price."
-                print(f"  [{self.ticker}] ✅ {log_message}")
-                self._log_alpaca_order(log_message)
+                # Get the specific position for the ticker
+                position = self.alpaca_trading_client.get_open_position(self.ticker)
+                
+                # Get the quantity available to trade
+                qty_available = float(position.qty_available)
+                
+                # The quantity to sell is what the backtester thinks it has
+                qty_to_sell = int(self.shares)
+
+                if qty_available > 0:
+                    # We can only sell up to the available quantity
+                    final_qty_to_sell = min(qty_to_sell, int(qty_available))
+
+                    if final_qty_to_sell > 0:
+                        market_order_data = MarketOrderRequest(
+                            symbol=self.ticker,
+                            qty=final_qty_to_sell,
+                            side=OrderSide.SELL,
+                            time_in_force=TimeInForce.DAY
+                        )
+                        self.alpaca_trading_client.submit_order(order_data=market_order_data)
+                        log_message = f"[{date}] Alpaca SELL order submitted for {final_qty_to_sell} shares of {self.ticker} at market price."
+                        print(f"  [{self.ticker}] ✅ {log_message}")
+                        self._log_alpaca_order(log_message)
+                    else:
+                        log_message = f"[{date}] Skipped Alpaca SELL order for {self.ticker}: Quantity to sell is zero."
+                        print(f"  [{self.ticker}] ℹ️ {log_message}")
+                        self._log_alpaca_order(log_message)
+                else:
+                    log_message = f"[{date}] Skipped Alpaca SELL order for {self.ticker}: No quantity available in portfolio."
+                    print(f"  [{self.ticker}] ℹ️ {log_message}")
+                    self._log_alpaca_order(log_message)
+
             except Exception as e:
+                # This will catch both API errors and cases where the position doesn't exist
                 log_message = f"[{date}] Error submitting Alpaca SELL order for {self.ticker}: {e}"
                 print(f"  [{self.ticker}] ⚠️ {log_message}")
                 self._log_alpaca_order(log_message)
@@ -1702,8 +1769,8 @@ def analyze_performance(
     print(f"  - Total PnL: ${total_pnl:,.2f}")
 
     # --- Performance Metrics ---
-    strat_returns = pd.Series(strategy_history).pct_change().dropna()
-    bh_returns = pd.Series(buy_hold_history).pct_change().dropna()
+    strat_returns = pd.Series(strategy_history).pct_change(fill_method=None).dropna()
+    bh_returns = pd.Series(buy_hold_history).pct_change(fill_method=None).dropna()
 
     # Sharpe Ratio (annualized, assuming 252 trading days)
     sharpe_strat = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252) if strat_returns.std() > 0 else 0
@@ -1866,7 +1933,7 @@ def find_top_performers(
         print(f"\n✅ Selected top {len(final_performers_for_selection)} tickers based on 1-Year performance.")
     else:
         final_performers_for_selection = sorted_all_tickers_performance_with_df
-        print(f"\n✅ Analyzing all {len(final_performers_for_selection)} tickers (N_TOP_TICKERS is 0).")
+        print(f"\n✅ Analyzing all {len(final_performers_for_selection)} tickers (N_TOP_TICKERS is {n_top}).")
 
     # --- Step 3: Apply Performance Benchmarks (if enabled) and YTD performance in parallel ---
     print(f"🔍 Applying performance benchmarks and fetching YTD for selected tickers in parallel...")
@@ -2096,7 +2163,7 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
                 # Calculate Sharpe Ratio for this combination
                 strategy_history = env.portfolio_history
                 if len(strategy_history) > 1:
-                    strat_returns = pd.Series(strategy_history).pct_change().dropna()
+                    strat_returns = pd.Series(strategy_history).pct_change(fill_method=None).dropna()
                     if strat_returns.std() > 0:
                         sharpe = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252)
                     else:
@@ -2136,7 +2203,6 @@ def _run_portfolio_backtest(
     alpaca_trading_client: Optional[TradingClient] = None
 ) -> Tuple[float, List[float], List[str], List[Dict]]:
     """Helper function to run portfolio backtest for a given period."""
-    print(f"\n🔍 Step X: Running {period_name} Backtest...")
     num_processes = NUM_PROCESSES
 
     backtest_params = []
@@ -2266,13 +2332,13 @@ def print_final_summary(
     print(f"  Number of Tickers Analyzed: {len(sorted_final_results)}")
     print("-" * 40)
     print(f"  1-Year Strategy Value: ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)")
-    print(f"  1-Year Buy & Hold Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / initial_balance_used) * 100:+.2f}%)")
+    print(f"  1-Year Buy & Hold Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / initial_balance_used) * 100 if initial_balance_used > 0 else 0.0:+.2f}%)")
     print("-" * 40)
     print(f"  YTD Strategy Value: ${final_strategy_value_ytd:,.2f} ({ai_ytd_return:+.2f}%)")
-    print(f"  YTD Buy & Hold Value: ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - initial_balance_used) / initial_balance_used) * 100:+.2f}%)")
+    print(f"  YTD Buy & Hold Value: ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - initial_balance_used) / initial_balance_used) * 100 if initial_balance_used > 0 else 0.0:+.2f}%)")
     print("-" * 40)
     print(f"  3-Month Strategy Value: ${final_strategy_value_3month:,.2f} ({ai_3month_return:+.2f}%)")
-    print(f"  3-Month Buy & Hold Value: ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - initial_balance_used) / initial_balance_used) * 100:+.2f}%)")
+    print(f"  3-Month Buy & Hold Value: ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - initial_balance_used) / initial_balance_used) * 100 if initial_balance_used > 0 else 0.0:+.2f}%)")
     print("="*80)
 
     print("\n📈 Individual Ticker Performance (Sorted by 1-Year Performance):")
@@ -2342,14 +2408,19 @@ def main(
     # Determine initial balance
     current_initial_balance = INITIAL_BALANCE
     if DATA_PROVIDER.lower() == 'alpaca' and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
-        alpaca_cash = _get_alpaca_account_balance()
-        if alpaca_cash is not None:
-            current_initial_balance = alpaca_cash
-            print(f"Using Alpaca account cash balance as INITIAL_BALANCE: ${current_initial_balance:,.2f}")
+        alpaca_equity = _get_alpaca_account_balance()
+        if alpaca_equity is not None and alpaca_equity > 0:
+            current_initial_balance = alpaca_equity
+            print(f"Using Alpaca account equity as INITIAL_BALANCE: ${current_initial_balance:,.2f}")
         else:
-            print(f"⚠️ Could not fetch Alpaca account balance. Falling back to default INITIAL_BALANCE: ${current_initial_balance:,.2f}")
+            print(f"⚠️ Could not fetch a positive Alpaca account equity. Falling back to default INITIAL_BALANCE: ${current_initial_balance:,.2f}")
     else:
         print(f"Using default INITIAL_BALANCE: ${current_initial_balance:,.2f}")
+
+    if current_initial_balance <= 0:
+        print(f"⚠️ Initial balance is not positive (${current_initial_balance:,.2f}). Falling back to default INITIAL_BALANCE.")
+        current_initial_balance = INITIAL_BALANCE
+        
     print(f"DEBUG: Final initial balance used for backtesting: ${current_initial_balance:,.2f}")
 
     # --- Handle single ticker case for initial performance calculation ---
@@ -2413,15 +2484,60 @@ def main(
             all_available_tickers=all_available_tickers,
             all_tickers_data=all_tickers_data,
             return_tickers=True,
-            n_top=0,
+            n_top=N_TOP_TICKERS,
             fcf_min_threshold=fcf_threshold,
             ebitda_min_threshold=ebitda_threshold
         )
         
-        # ... (Alpaca portfolio logic remains the same)
-        
-        # The logic to combine and re-fetch is now simplified as all data is local
-        top_performers_data = market_selected_performers # Simplified for now
+        # Also include stocks currently in the Alpaca portfolio
+        if alpaca_trading_client:
+            print("🔍 Fetching current Alpaca portfolio positions to include in analysis...")
+            portfolio_positions, _ = _get_alpaca_portfolio_positions(alpaca_trading_client)
+            portfolio_tickers = {p['ticker'] for p in portfolio_positions}
+            
+            if portfolio_tickers:
+                print(f"  ✅ Found {len(portfolio_tickers)} unique tickers in portfolio: {', '.join(portfolio_tickers)}")
+                
+                market_selected_tickers = {ticker for ticker, _, _ in market_selected_performers}
+                new_tickers_from_portfolio = portfolio_tickers - market_selected_tickers
+                
+                if new_tickers_from_portfolio:
+                    print(f"  - Adding {len(new_tickers_from_portfolio)} new tickers from portfolio to the analysis list: {', '.join(new_tickers_from_portfolio)}")
+                    
+                    end_date_perf = all_tickers_data.index.max()
+                    start_date_1y_perf = end_date_perf - timedelta(days=365)
+                    ytd_start_date_perf = datetime(end_date_perf.year, 1, 1, tzinfo=timezone.utc)
+
+                    for ticker in new_tickers_from_portfolio:
+                        perf_1y, perf_ytd = -np.inf, -np.inf
+                        try:
+                            # 1Y perf
+                            df_1y = all_tickers_data.loc[start_date_1y_perf:end_date_perf, (slice(None), ticker)]
+                            df_1y.columns = df_1y.columns.droplevel(1)
+                            if not df_1y.empty:
+                                start_price_1y = df_1y['Close'].iloc[0]
+                                end_price_1y = df_1y['Close'].iloc[-1]
+                                if start_price_1y > 0:
+                                    perf_1y = ((end_price_1y - start_price_1y) / start_price_1y) * 100
+                            
+                            # YTD perf
+                            df_ytd = all_tickers_data.loc[ytd_start_date_perf:end_date_perf, (slice(None), ticker)]
+                            df_ytd.columns = df_ytd.columns.droplevel(1)
+                            if not df_ytd.empty:
+                                start_price_ytd = df_ytd['Close'].iloc[0]
+                                end_price_ytd = df_ytd['Close'].iloc[-1]
+                                if start_price_ytd > 0:
+                                    perf_ytd = ((end_price_ytd - start_price_ytd) / start_price_ytd) * 100
+                                    
+                            market_selected_performers.append((ticker, perf_1y, perf_ytd))
+                        except (KeyError, IndexError):
+                            print(f"    ⚠️ Could not find pre-fetched data for portfolio ticker {ticker}. It will be added with default performance.")
+                            market_selected_performers.append((ticker, -999.0, -999.0))
+                        except Exception as e:
+                            print(f"    ⚠️ Could not calculate performance for portfolio ticker {ticker}: {e}. It will be added with default performance.")
+                            market_selected_performers.append((ticker, -999.0, -999.0))
+
+        top_performers_data = market_selected_performers
                 
     if not top_performers_data:
         print("❌ Could not identify top tickers. Aborting backtest.")
@@ -2531,7 +2647,7 @@ def main(
             print(f"\n✅ Loaded optimized parameters from {optimized_params_file} (set 'force_optimization=True' in main() call to re-run)")
         except Exception as e:
             print(f"⚠️ Could not load optimized parameters from file: {e}. Re-running optimization.")
-            print("\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (re-running due to load error)...")
+            print(f"\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (re-running due to load error)...")
             optimized_params_per_ticker = optimize_thresholds_for_portfolio(
                 top_tickers=top_tickers,
                 train_start=train_start_1y, # Use training data for optimization
@@ -2573,7 +2689,7 @@ def main(
         top_performers_data=top_performers_data, # Pass top_performers_data
         alpaca_trading_client=alpaca_trading_client # Pass the Alpaca trading client
     )
-    ai_1y_return = ((final_strategy_value_1y - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
+    ai_1y_return = ((final_strategy_value_1y - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
 
     # --- Calculate Buy & Hold for 1-Year ---
     print("\n📊 Calculating Buy & Hold performance for 1-Year period...")
@@ -2645,7 +2761,7 @@ def main(
         top_performers_data=top_performers_data, # Pass top_performers_data
         alpaca_trading_client=alpaca_trading_client # Pass the Alpaca trading client
     )
-    ai_ytd_return = ((final_strategy_value_ytd - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
+    ai_ytd_return = ((final_strategy_value_ytd - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
 
     # --- Calculate Buy & Hold for YTD ---
     print("\n📊 Calculating Buy & Hold performance for YTD period...")
@@ -2716,7 +2832,7 @@ def main(
         top_performers_data=top_performers_data, # Pass top_performers_data
         alpaca_trading_client=alpaca_trading_client # Pass the Alpaca trading client
     )
-    ai_3month_return = ((final_strategy_value_3month - INITIAL_BALANCE) / INITIAL_BALANCE) * 100 if INITIAL_BALANCE > 0 else 0
+    ai_3month_return = ((final_strategy_value_3month - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
 
     # --- Calculate Buy & Hold for 3-Month ---
     print("\n📊 Calculating Buy & Hold performance for 3-Month period...")
