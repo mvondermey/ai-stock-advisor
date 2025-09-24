@@ -58,6 +58,7 @@ try:
     from alpaca.trading.client import TradingClient # Added for trading account access
     from alpaca.trading.requests import MarketOrderRequest, GetAssetsRequest # For submitting orders
     from alpaca.trading.enums import OrderSide, TimeInForce, AssetClass, AssetStatus # For order details
+    from alpaca.common.exceptions import APIError
     ALPACA_AVAILABLE = True
 except ImportError:
     print("⚠️ Alpaca SDK not installed. Run: pip install alpaca-py. Alpaca data provider will be skipped.")
@@ -1367,6 +1368,22 @@ class RuleTradingEnv:
             print(f"  [{self.ticker}] ⚠️ Error writing to Alpaca order log: {e}")
 
     def _prepare_data(self):
+        # --- Data Cleaning ---
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col in self.df.columns:
+                self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
+        
+        self.df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+        if "Volume" not in self.df.columns: self.df["Volume"] = 0
+        if "High" not in self.df.columns: self.df["High"] = self.df["Close"]
+        if "Low" not in self.df.columns: self.df["Low"] = self.df["Close"]
+        if "Open" not in self.df.columns: self.df["Open"] = self.df["Close"]
+            
+        self.df = self.df.dropna(subset=["Close"])
+        if self.df.empty: return # Exit if no data left after cleaning
+        self.df = self.df.ffill().bfill()
+        
         close = self.df["Close"]
         high = self.df["High"] if "High" in self.df.columns else None
         low  = self.df["Low"]  if "Low" in self.df.columns else None
@@ -1523,8 +1540,10 @@ class RuleTradingEnv:
     def _position_size_from_atr(self, price: float, atr: float) -> int:
         if atr is None or np.isnan(atr) or atr <= 0 or price <= 0:
             return 0
-        risk_dollars = self.initial_balance * RISK_PER_TRADE
+        risk_dollars = min(self.initial_balance * RISK_PER_TRADE, 10000)  # Cap risk at $10,000
         per_share_risk = ATR_MULT_TRAIL * atr
+        if per_share_risk <= 0:
+            return 0
         qty = int(risk_dollars / per_share_risk)
         return max(qty, 0)
 
@@ -1555,6 +1574,19 @@ class RuleTradingEnv:
         self.last_ai_action = "BUY" # Update last AI action
         if self.live_trading_enabled and self.alpaca_trading_client:
             try:
+                # Check buying power before submitting order
+                account = self.alpaca_trading_client.get_account()
+                buying_power = float(account.buying_power)
+                
+                if cost > buying_power:
+                    log_message = f"[{date}] Insufficient buying power for {self.ticker}. Cost: ${cost:,.2f}, Buying Power: ${buying_power:,.2f}. Skipping trade."
+                    print(f"  [{self.ticker}] ⚠️ {log_message}")
+                    self._log_alpaca_order(log_message)
+                    # Revert the state changes since the trade is skipped
+                    self.cash += cost
+                    self.shares -= qty
+                    return
+
                 market_order_data = MarketOrderRequest(
                     symbol=self.ticker,
                     qty=qty,
@@ -1565,8 +1597,12 @@ class RuleTradingEnv:
                 log_message = f"[{date}] Alpaca BUY order submitted for {qty} shares of {self.ticker} at market price."
                 print(f"  [{self.ticker}] ✅ {log_message}")
                 self._log_alpaca_order(log_message)
+            except APIError as e:
+                log_message = f"[{date}] API Error on Alpaca BUY for {self.ticker}: {e}"
+                print(f"  [{self.ticker}] ⚠️ {log_message}")
+                self._log_alpaca_order(log_message)
             except Exception as e:
-                log_message = f"[{date}] Error submitting Alpaca BUY order for {self.ticker}: {e}"
+                log_message = f"[{date}] Unexpected error on Alpaca BUY for {self.ticker}: {e}"
                 print(f"  [{self.ticker}] ⚠️ {log_message}")
                 self._log_alpaca_order(log_message)
         # print(f"  [{self.ticker}] BUY: {date}, Price: {price:.2f}, Qty: {qty}, Cash: {self.cash:,.2f}, Shares: {self.shares:.2f}")
@@ -1587,42 +1623,39 @@ class RuleTradingEnv:
         self.last_ai_action = "SELL" # Update last AI action
         if self.live_trading_enabled and self.alpaca_trading_client:
             try:
-                # Get the specific position for the ticker
+                # First, check if the position exists to avoid errors when backtest is out of sync
                 position = self.alpaca_trading_client.get_open_position(self.ticker)
                 
-                # Get the quantity available to trade
                 qty_available = float(position.qty_available)
                 
-                # The quantity to sell is what the backtester thinks it has
-                qty_to_sell = int(self.shares)
-
                 if qty_available > 0:
-                    # We can only sell up to the available quantity
-                    final_qty_to_sell = min(qty_to_sell, int(qty_available))
-
-                    if final_qty_to_sell > 0:
-                        market_order_data = MarketOrderRequest(
-                            symbol=self.ticker,
-                            qty=final_qty_to_sell,
-                            side=OrderSide.SELL,
-                            time_in_force=TimeInForce.DAY
-                        )
-                        self.alpaca_trading_client.submit_order(order_data=market_order_data)
-                        log_message = f"[{date}] Alpaca SELL order submitted for {final_qty_to_sell} shares of {self.ticker} at market price."
-                        print(f"  [{self.ticker}] ✅ {log_message}")
-                        self._log_alpaca_order(log_message)
-                    else:
-                        log_message = f"[{date}] Skipped Alpaca SELL order for {self.ticker}: Quantity to sell is zero."
-                        print(f"  [{self.ticker}] ℹ️ {log_message}")
-                        self._log_alpaca_order(log_message)
+                    # The backtester's share count might be out of sync, sell the available quantity
+                    market_order_data = MarketOrderRequest(
+                        symbol=self.ticker,
+                        qty=qty_available, # Sell the actual available quantity
+                        side=OrderSide.SELL,
+                        time_in_force=TimeInForce.DAY
+                    )
+                    self.alpaca_trading_client.submit_order(order_data=market_order_data)
+                    log_message = f"[{date}] Alpaca SELL order submitted for {qty_available} shares of {self.ticker} at market price."
+                    print(f"  [{self.ticker}] ✅ {log_message}")
+                    self._log_alpaca_order(log_message)
                 else:
-                    log_message = f"[{date}] Skipped Alpaca SELL order for {self.ticker}: No quantity available in portfolio."
+                    log_message = f"[{date}] Skipped Alpaca SELL for {self.ticker}: No quantity available to trade."
                     print(f"  [{self.ticker}] ℹ️ {log_message}")
                     self._log_alpaca_order(log_message)
 
+            except APIError as e:
+                if 'position not found' in str(e).lower():
+                    log_message = f"[{date}] Skipped Alpaca SELL for {self.ticker}: No position in portfolio."
+                    print(f"  [{self.ticker}] ℹ️ {log_message}")
+                    self._log_alpaca_order(log_message)
+                else:
+                    log_message = f"[{date}] API Error on Alpaca SELL for {self.ticker}: {e}"
+                    print(f"  [{self.ticker}] ⚠️ {log_message}")
+                    self._log_alpaca_order(log_message)
             except Exception as e:
-                # This will catch both API errors and cases where the position doesn't exist
-                log_message = f"[{date}] Error submitting Alpaca SELL order for {self.ticker}: {e}"
+                log_message = f"[{date}] Unexpected error on Alpaca SELL for {self.ticker}: {e}"
                 print(f"  [{self.ticker}] ⚠️ {log_message}")
                 self._log_alpaca_order(log_message)
         # print(f"  [{self.ticker}] SELL: {price:.2f}, Qty: {qty}, Cash: {self.cash:,.2f}, Shares: {self.shares:.2f}")
@@ -1672,7 +1705,7 @@ class RuleTradingEnv:
         elif self.shares > 0 and self._allow_sell_by_model(self.current_step): # Changed to elif to prioritize buy
             self._sell(price, date)
         else:
-            self.last_ai_action = "HOLD" # No action taken by AI
+            self.last_ai_action = "HOLD"
 
         port_val = self.cash + self.shares * price
         self.portfolio_history.append(port_val)
@@ -1699,10 +1732,11 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
         market_data, feature_set, min_proba_buy, min_proba_sell, target_percentage, \
         top_performers_data, alpaca_trading_client = params
     
+    if df_backtest.empty:
+        print(f"  ⚠️ Skipping backtest for {ticker}: DataFrame is empty.")
+        return None
+        
     try:
-        if df_backtest.empty:
-            return None
-
         env = RuleTradingEnv(
             df=df_backtest.copy(),
             ticker=ticker,
@@ -2223,6 +2257,9 @@ def _run_portfolio_backtest(
         try:
             ticker_backtest_data = all_tickers_data.loc[start_date:end_date, (slice(None), ticker)]
             ticker_backtest_data.columns = ticker_backtest_data.columns.droplevel(1)
+            if ticker_backtest_data.empty:
+                print(f"  ⚠️ Sliced backtest data for {ticker} for period {period_name} is empty. Skipping.")
+                continue
         except (KeyError, IndexError):
             print(f"  ⚠️ Could not slice backtest data for {ticker} for period {period_name}. Skipping.")
             continue
@@ -2332,13 +2369,13 @@ def print_final_summary(
     print(f"  Number of Tickers Analyzed: {len(sorted_final_results)}")
     print("-" * 40)
     print(f"  1-Year Strategy Value: ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)")
-    print(f"  1-Year Buy & Hold Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / initial_balance_used) * 100 if initial_balance_used > 0 else 0.0:+.2f}%)")
+    print(f"  1-Year Buy & Hold Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
     print("-" * 40)
     print(f"  YTD Strategy Value: ${final_strategy_value_ytd:,.2f} ({ai_ytd_return:+.2f}%)")
-    print(f"  YTD Buy & Hold Value: ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - initial_balance_used) / initial_balance_used) * 100 if initial_balance_used > 0 else 0.0:+.2f}%)")
+    print(f"  YTD Buy & Hold Value: ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
     print("-" * 40)
     print(f"  3-Month Strategy Value: ${final_strategy_value_3month:,.2f} ({ai_3month_return:+.2f}%)")
-    print(f"  3-Month Buy & Hold Value: ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - initial_balance_used) / initial_balance_used) * 100 if initial_balance_used > 0 else 0.0:+.2f}%)")
+    print(f"  3-Month Buy & Hold Value: ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
     print("="*80)
 
     print("\n📈 Individual Ticker Performance (Sorted by 1-Year Performance):")
@@ -2900,6 +2937,23 @@ def main(
                         final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return,
                         initial_balance_used=current_initial_balance) # Pass the actual initial balance used
     print("\n✅ Final summary prepared and printed.")
+
+    # --- Final Portfolio Print ---
+    if alpaca_trading_client:
+        print("\n" + "="*80)
+        print("                     💼 CURRENT ALPACA PORTFOLIO 💼")
+        print("="*80)
+        portfolio_positions, total_market_value = _get_alpaca_portfolio_positions(alpaca_trading_client)
+        if portfolio_positions:
+            print(f"\n{'Ticker':<10} | {'Quantity':>15} | {'Current Price':>15} | {'Market Value':>15}")
+            print("-" * 65)
+            for pos in portfolio_positions:
+                print(f"{pos['ticker']:<10} | {pos['qty']:>15.2f} | ${pos['current_price']:>14,.2f} | ${pos['market_value']:>14,.2f}")
+            print("-" * 65)
+            print(f"Total Portfolio Market Value: ${total_market_value:,.2f}")
+        else:
+            print("No open positions in the portfolio.")
+        print("="*80)
     
     return final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker
 
