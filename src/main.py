@@ -1961,6 +1961,9 @@ def find_top_performers(
     # Sort all tickers by 1-Year performance in descending order
     sorted_all_tickers_performance_with_df = sorted(all_tickers_performance_with_df, key=lambda item: item[1], reverse=True)
     
+    # Filter out extreme outliers (e.g., >1000% gain)
+    sorted_all_tickers_performance_with_df = [item for item in sorted_all_tickers_performance_with_df if item[1] < 1000]
+
     # Apply n_top limit AFTER sorting
     if n_top > 0:
         final_performers_for_selection = sorted_all_tickers_performance_with_df[:n_top]
