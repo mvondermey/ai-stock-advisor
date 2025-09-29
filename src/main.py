@@ -29,6 +29,10 @@ from multiprocessing import Pool, cpu_count, current_process
 import joblib # Added for model saving/loading
 import warnings # Added for warning suppression
 
+# --- Add project root to sys.path ---
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
+
 # --- Force UTF-8 output on Windows ---
 if sys.stdout.encoding != 'utf-8':
     sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
@@ -59,6 +63,7 @@ try:
     from alpaca.trading.requests import MarketOrderRequest, GetAssetsRequest # For submitting orders
     from alpaca.trading.enums import OrderSide, TimeInForce, AssetClass, AssetStatus # For order details
     from alpaca.common.exceptions import APIError
+    from src.live_trading import _get_alpaca_account_balance, _get_alpaca_portfolio_positions
     ALPACA_AVAILABLE = True
 except ImportError:
     print("⚠️ Alpaca SDK not installed. Run: pip install alpaca-py. Alpaca data provider will be skipped.")
@@ -71,15 +76,12 @@ except ImportError:
 SEED                    = 42
 np.random.seed(SEED)
 
-# --- Parallel Processing
-NUM_PROCESSES           = max(1, cpu_count() - 3) # Use all but one CPU core for parallel processing
-DOWNLOAD_THREADS        = max(1, cpu_count() - 3) # Use all but one CPU core for yfinance.download threads
-
 # --- Provider & caching
 DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', or 'alpaca'
 USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin
 DATA_CACHE_DIR          = Path("data_cache")
 TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
+VALID_TICKERS_CACHE_PATH = Path("logs/valid_tickers.json")
 CACHE_DAYS              = 7
 
 # Alpaca API credentials (set as environment variables for security)
@@ -100,13 +102,13 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 30         # Number of top performers to select (0 to disable limit)
-BATCH_DOWNLOAD_SIZE     = 10000        # Reduced batch size for stability
-PAUSE_BETWEEN_BATCHES   = 20.0       # Increased pause between batches for stability
+N_TOP_TICKERS           = 0         # Number of top performers to select (0 to disable limit)
+BATCH_DOWNLOAD_SIZE     = 100       # Reduced batch size for stability
+PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
+PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
 
 # --- Parallel Processing
 NUM_PROCESSES           = max(1, cpu_count() - 5) # Use all but one CPU core for parallel processing
-DOWNLOAD_THREADS        = max(1, cpu_count() - 5) # Use all but one CPU core for yfinance.download threads
 
 # --- Backtest & training windows
 BACKTEST_DAYS           = 365        # 1 year for backtest
@@ -179,65 +181,6 @@ def _to_utc(ts):
         return t.tz_localize('UTC')
     return t.tz_convert('UTC')
 
-def _get_alpaca_account_balance() -> Optional[float]:
-    """Fetches the current equity from the Alpaca trading account."""
-    print(f"DEBUG: Checking ALPACA_AVAILABLE: {ALPACA_AVAILABLE}")
-    print(f"DEBUG: ALPACA_API_KEY is set: {bool(ALPACA_API_KEY)}")
-    print(f"DEBUG: ALPACA_SECRET_KEY is set: {bool(ALPACA_SECRET_KEY)}")
-
-    if not ALPACA_AVAILABLE or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
-        print("⚠️ Alpaca API keys are missing or SDK not available. Cannot fetch account balance.")
-        return None
-    
-    try:
-        trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True) # Assuming paper trading for backtesting
-        account = trading_client.get_account()
-        if account and account.equity:
-            print(f"✅ Fetched Alpaca account equity: ${float(account.equity):,.2f}")
-            return float(account.equity)
-        else:
-            print("⚠️ Could not retrieve Alpaca account equity. Account object or equity attribute missing.")
-            return None
-    except Exception as e:
-        print(f"  ⚠️ Error fetching Alpaca account balance: {e}")
-        return None
-
-def _get_alpaca_portfolio_positions(trading_client: TradingClient) -> Tuple[List[Dict], float]:
-    """
-    Fetches current portfolio positions from Alpaca and returns a list of dictionaries
-    with ticker, quantity, current price, market value, and the total market value of positions.
-    """
-    if not trading_client:
-        return [], 0.0
-    
-    portfolio_positions = []
-    total_positions_market_value = 0.0
-    
-    try:
-        positions = trading_client.get_all_positions()
-        if positions:
-            print(f"✅ Fetched Alpaca portfolio positions:")
-            for pos in positions:
-                symbol = pos.symbol
-                qty = float(pos.qty)
-                current_price = float(pos.current_price)
-                market_value = float(pos.market_value)
-                
-                portfolio_positions.append({
-                    'ticker': symbol,
-                    'qty': qty,
-                    'current_price': current_price,
-                    'market_value': market_value
-                })
-                total_positions_market_value += market_value
-            return portfolio_positions, total_positions_market_value
-        else:
-            print("ℹ️ No open positions found in Alpaca portfolio.")
-            return [], 0.0
-    except Exception as e:
-        print(f"  ⚠️ Error fetching Alpaca portfolio positions: {e}")
-        return [], 0.0
-
 def _fetch_from_stooq(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Fetch OHLCV from Stooq. Try both 'TICKER' and 'TICKER.US'."""
     if pdr is None:
@@ -298,7 +241,7 @@ def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFr
     import time
     import random
     max_retries = 5
-    base_wait_time = 1  # seconds, increased for more tolerance
+    base_wait_time = 5  # seconds, increased for more tolerance
 
     for attempt in range(max_retries):
         try:
@@ -328,13 +271,12 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
     import time
     import random
     max_retries = 7 # Increased retries
-    base_wait_time = 15  # seconds, increased for more tolerance
+    base_wait_time = 30  # seconds, increased for more tolerance
 
     for attempt in range(max_retries):
         try:
             # Use DOWNLOAD_THREADS for yfinance.download, or False to let yfinance manage
-            threads_param = DOWNLOAD_THREADS if DOWNLOAD_THREADS > 0 else False
-            data = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=True, threads=threads_param, keepna=False)
+            data = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=True, threads=False, keepna=False)
             
             # Critical check: If the dataframe is empty or all values are NaN, it's a failed download.
             if data.empty or data.isnull().all().all():
@@ -344,21 +286,21 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
             return data
         except Exception as e:
             error_str = str(e).lower()
-            print(f"  ⚠️ Error {error_str}")
             # Catch common yfinance multi-ticker failure messages
             if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str or "failed download" in error_str or "batch download failed" in error_str:
                 wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, 2)
-                print(f"  ⚠️ Rate limited on batch download for tickers {tickers}. Retrying in {wait_time:.2f} seconds...")
+                print(f"  ⚠️ Batch download failed for {len(tickers)} tickers (attempt {attempt + 1}/{max_retries}): {error_str}. Retrying in {wait_time:.2f} seconds...")
                 time.sleep(wait_time)
             else:
-                print(f"  ⚠️ An unexpected error occurred during batch download for tickers {tickers}: {e}. Skipping batch.")
+                print(f"  ⚠️ An unexpected error occurred during batch download for {len(tickers)} tickers: {e}. Skipping batch.")
                 return pd.DataFrame()
     
-    print(f"  ❌ Failed to download batch data for tickers {tickers} after {max_retries} retries.")
+    print(f"  ❌ Failed to download batch data for {len(tickers)} tickers after {max_retries} retries.")
     return pd.DataFrame()
 
 def _fetch_financial_data(ticker: str) -> pd.DataFrame:
     """Fetch key financial metrics from yfinance and prepare them for merging."""
+    time.sleep(PAUSE_BETWEEN_YF_CALLS)
     yf_ticker = yf.Ticker(ticker)
     
     financial_data = {}
@@ -628,6 +570,7 @@ def get_tickers_for_backtest(n: int = 10) -> List[str]:
     print(f"Randomly selected {n} tickers: {', '.join(selected_tickers)}")
     return selected_tickers
 
+
 def get_all_tickers() -> List[str]:
     """
     Gets a list of tickers from the markets selected in the configuration.
@@ -874,10 +817,8 @@ def get_all_tickers() -> List[str]:
             # Normalize US tickers (e.g., BRK.B -> BRK-B)
             final_tickers.add(s_ticker.replace('.', '-'))
 
-    print(f"Total unique tickers to analyze: {len(final_tickers)}")
-    final_list = sorted(list(final_tickers))
-    print(f"  Tickers: {', '.join(final_list)}")
-    return final_list
+    print(f"Total unique tickers found: {len(final_tickers)}")
+    return sorted(list(final_tickers))
 
 
 # ============================
@@ -1302,8 +1243,7 @@ class RuleTradingEnv:
     def __init__(self, df: pd.DataFrame, ticker: str, initial_balance: float, transaction_cost: float, # Added ticker parameter
                  model_buy=None, model_sell=None, scaler=None, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, use_gate: bool = USE_MODEL_GATE,
                  market_data: Optional[pd.DataFrame] = None, use_market_filter: bool = USE_MARKET_FILTER, feature_set: Optional[List[str]] = None,
-                 per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None,
-                 alpaca_trading_client: Optional[TradingClient] = None): # Added alpaca_trading_client
+                 per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None):
         if "Close" not in df.columns:
             raise ValueError("DataFrame must contain 'Close' column.")
         self.df = df.reset_index()
@@ -1323,8 +1263,6 @@ class RuleTradingEnv:
         # This will be passed from the training worker
         self.feature_set = feature_set if feature_set is not None else ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper", "%K", "%D", "ADX",
                                                                         'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA']
-        self.alpaca_trading_client = alpaca_trading_client # Store the Alpaca trading client
-        self.live_trading_enabled = (alpaca_trading_client is not None) # Flag to indicate if live trading is enabled
         
         self.reset()
         self._prepare_data()
@@ -1334,18 +1272,6 @@ class RuleTradingEnv:
         self.cash = self.initial_balance
         self.shares = 0.0
         self.entry_price: Optional[float] = None
-
-        # If live trading, synchronize with Alpaca portfolio to get current holdings
-        if self.live_trading_enabled and self.alpaca_trading_client:
-            try:
-                position = self.alpaca_trading_client.get_open_position(self.ticker)
-                self.shares = float(position.qty)
-                self.entry_price = float(position.avg_entry_price)
-                print(f"  [{self.ticker}] ✅ Synced with Alpaca. Found existing position of {self.shares} shares.")
-            except Exception: # Catches position not found error
-                self.shares = 0.0
-                self.entry_price = None
-        
         self.highest_since_entry: Optional[float] = None
         self.entry_atr: Optional[float] = None
         self.holding_bars = 0
@@ -1355,18 +1281,7 @@ class RuleTradingEnv:
         self.last_ai_action: str = "HOLD" # New: Track last AI action
         self.last_buy_prob: float = 0.0
         self.last_sell_prob: float = 0.0
-        self.alpaca_order_log_dir = Path("logs/alpaca_orders")
-        _ensure_dir(self.alpaca_order_log_dir)
         
-    def _log_alpaca_order(self, message: str):
-        """Logs Alpaca order submissions to a file."""
-        log_file = self.alpaca_order_log_dir / f"{self.ticker}_orders.log"
-        try:
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(message + "\n")
-        except Exception as e:
-            print(f"  [{self.ticker}] ⚠️ Error writing to Alpaca order log: {e}")
-
     def _prepare_data(self):
         # --- Data Cleaning ---
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
@@ -1382,6 +1297,7 @@ class RuleTradingEnv:
             
         self.df = self.df.dropna(subset=["Close"])
         if self.df.empty: return # Exit if no data left after cleaning
+        self.df = self.df.reset_index(drop=True)
         self.df = self.df.ffill().bfill()
         
         close = self.df["Close"]
@@ -1550,19 +1466,23 @@ class RuleTradingEnv:
     def _buy(self, price: float, atr: Optional[float], date: str):
         if self.cash <= 0:
             return
+
+        # 1. Determine initial quantity based on risk model
         qty = self._position_size_from_atr(price, atr if atr is not None else np.nan)
         if qty <= 0:
             return
-        fee = price * qty * self.transaction_cost
-        cost = price * qty + fee
+
+        # 2. Adjust quantity based on backtester's available cash
+        cost = price * qty * (1 + self.transaction_cost)
         if cost > self.cash:
             qty = int(self.cash / (price * (1 + self.transaction_cost)))
-            if qty <= 0:
-                return
-            fee = price * qty * self.transaction_cost
-            cost = price * qty + fee
-            if cost > self.cash:
-                return
+        
+        if qty <= 0:
+            return
+
+        # 4. Finalize cost and fee, then update the backtester's state
+        fee = price * qty * self.transaction_cost
+        cost = price * qty + fee
 
         self.cash -= cost
         self.shares += qty
@@ -1571,40 +1491,7 @@ class RuleTradingEnv:
         self.highest_since_entry = price
         self.holding_bars = 0
         self.trade_log.append((date, "BUY", price, qty, self.ticker, {"fee": fee}, fee))
-        self.last_ai_action = "BUY" # Update last AI action
-        if self.live_trading_enabled and self.alpaca_trading_client:
-            try:
-                # Check buying power before submitting order
-                account = self.alpaca_trading_client.get_account()
-                buying_power = float(account.buying_power)
-                
-                if cost > buying_power:
-                    log_message = f"[{date}] Insufficient buying power for {self.ticker}. Cost: ${cost:,.2f}, Buying Power: ${buying_power:,.2f}. Skipping trade."
-                    print(f"  [{self.ticker}] ⚠️ {log_message}")
-                    self._log_alpaca_order(log_message)
-                    # Revert the state changes since the trade is skipped
-                    self.cash += cost
-                    self.shares -= qty
-                    return
-
-                market_order_data = MarketOrderRequest(
-                    symbol=self.ticker,
-                    qty=qty,
-                    side=OrderSide.BUY,
-                    time_in_force=TimeInForce.DAY
-                )
-                self.alpaca_trading_client.submit_order(order_data=market_order_data)
-                log_message = f"[{date}] Alpaca BUY order submitted for {qty} shares of {self.ticker} at market price."
-                print(f"  [{self.ticker}] ✅ {log_message}")
-                self._log_alpaca_order(log_message)
-            except APIError as e:
-                log_message = f"[{date}] API Error on Alpaca BUY for {self.ticker}: {e}"
-                print(f"  [{self.ticker}] ⚠️ {log_message}")
-                self._log_alpaca_order(log_message)
-            except Exception as e:
-                log_message = f"[{date}] Unexpected error on Alpaca BUY for {self.ticker}: {e}"
-                print(f"  [{self.ticker}] ⚠️ {log_message}")
-                self._log_alpaca_order(log_message)
+        self.last_ai_action = "BUY"
         # print(f"  [{self.ticker}] BUY: {date}, Price: {price:.2f}, Qty: {qty}, Cash: {self.cash:,.2f}, Shares: {self.shares:.2f}")
 
     def _sell(self, price: float, date: str):
@@ -1621,43 +1508,6 @@ class RuleTradingEnv:
         self.holding_bars = 0
         self.trade_log.append((date, "SELL", price, qty, self.ticker, {"fee": fee}, fee))
         self.last_ai_action = "SELL" # Update last AI action
-        if self.live_trading_enabled and self.alpaca_trading_client:
-            try:
-                # First, check if the position exists to avoid errors when backtest is out of sync
-                position = self.alpaca_trading_client.get_open_position(self.ticker)
-                
-                qty_available = float(position.qty_available)
-                
-                if qty_available > 0:
-                    # The backtester's share count might be out of sync, sell the available quantity
-                    market_order_data = MarketOrderRequest(
-                        symbol=self.ticker,
-                        qty=qty_available, # Sell the actual available quantity
-                        side=OrderSide.SELL,
-                        time_in_force=TimeInForce.DAY
-                    )
-                    self.alpaca_trading_client.submit_order(order_data=market_order_data)
-                    log_message = f"[{date}] Alpaca SELL order submitted for {qty_available} shares of {self.ticker} at market price."
-                    print(f"  [{self.ticker}] ✅ {log_message}")
-                    self._log_alpaca_order(log_message)
-                else:
-                    log_message = f"[{date}] Skipped Alpaca SELL for {self.ticker}: No quantity available to trade."
-                    print(f"  [{self.ticker}] ℹ️ {log_message}")
-                    self._log_alpaca_order(log_message)
-
-            except APIError as e:
-                if 'position not found' in str(e).lower():
-                    log_message = f"[{date}] Skipped Alpaca SELL for {self.ticker}: No position in portfolio."
-                    print(f"  [{self.ticker}] ℹ️ {log_message}")
-                    self._log_alpaca_order(log_message)
-                else:
-                    log_message = f"[{date}] API Error on Alpaca SELL for {self.ticker}: {e}"
-                    print(f"  [{self.ticker}] ⚠️ {log_message}")
-                    self._log_alpaca_order(log_message)
-            except Exception as e:
-                log_message = f"[{date}] Unexpected error on Alpaca SELL for {self.ticker}: {e}"
-                print(f"  [{self.ticker}] ⚠️ {log_message}")
-                self._log_alpaca_order(log_message)
         # print(f"  [{self.ticker}] SELL: {price:.2f}, Qty: {qty}, Cash: {self.cash:,.2f}, Shares: {self.shares:.2f}")
 
     def step(self):
@@ -1697,8 +1547,13 @@ class RuleTradingEnv:
                     return self.current_step >= len(self.df)
 
         # --- Entry Signal ---
-        # Condition: AI model is now the primary buy signal generator.
-        if self.shares == 0 and self._allow_buy_by_model(self.current_step):
+        sma_s = row.get("SMA_S", np.nan)
+        sma_l = row.get("SMA_L", np.nan)
+
+        # Condition: AI model must approve
+        ai_signal = self._allow_buy_by_model(self.current_step)
+
+        if self.shares == 0 and ai_signal:
             self._buy(price, atr, date)
         
         # --- AI-driven Exit Signal ---
@@ -1713,10 +1568,12 @@ class RuleTradingEnv:
         return self.current_step >= len(self.df)
 
     def run(self) -> Tuple[float, List[Tuple], str, float, float]: # Added str for last_ai_action
+        if self.df.empty:
+            return self.initial_balance, [], "N/A", np.nan, np.nan
         done = False
         while not done:
             done = self.step()
-        if self.shares > 0:
+        if self.shares > 0 and not self.df.empty:
             last_price = float(self.df.iloc[-1]["Close"])
             self._sell(last_price, self._date_at(len(self.df)-1))
             self.portfolio_history[-1] = self.cash
@@ -1730,8 +1587,12 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
     """Worker function for parallel backtesting."""
     ticker, df_backtest, capital_per_stock, model_buy, model_sell, scaler, \
         market_data, feature_set, min_proba_buy, min_proba_sell, target_percentage, \
-        top_performers_data, alpaca_trading_client = params
+        top_performers_data = params
     
+    # Initial log to confirm the worker has started for a ticker
+    with open("logs/worker_debug.log", "a") as f:
+        f.write(f"Worker started for ticker: {ticker}\n")
+
     if df_backtest.empty:
         print(f"  ⚠️ Skipping backtest for {ticker}: DataFrame is empty.")
         return None
@@ -1750,8 +1611,7 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             use_market_filter=USE_MARKET_FILTER,
             feature_set=feature_set,
             per_ticker_min_proba_buy=min_proba_buy,
-            per_ticker_min_proba_sell=min_proba_sell,
-            alpaca_trading_client=alpaca_trading_client
+            per_ticker_min_proba_sell=min_proba_sell
         )
         final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob = env.run()
 
@@ -1772,9 +1632,11 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             'buy_prob': last_buy_prob,
             'sell_prob': last_sell_prob
         }
-    except Exception as e:
-        print(f"  ⚠️ Error in backtest_worker for {ticker}: {e}")
-        return None
+    finally:
+        # This block will execute whether an exception occurred or not.
+        with open("logs/worker_debug.log", "a") as f:
+            final_val_to_log = 'Error' if 'final_val' not in locals() else final_val
+            f.write(f"Worker finished for ticker: {ticker}. Final Value: {final_val_to_log}\n")
 
 def analyze_performance(
     trade_log: List[tuple],
@@ -1844,9 +1706,10 @@ def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[
         if not df_1y.empty and len(df_1y) > 200:  # Some basic data quality check
             start_price = df_1y['Close'].iloc[0]
             end_price = df_1y['Close'].iloc[-1]
-            if start_price > 0:
+            if start_price > 0.01:  # Ensure start_price is a meaningful positive number
                 perf_1y = ((end_price - start_price) / start_price) * 100
-                return (ticker, perf_1y, df_1y)
+                if np.isfinite(perf_1y):  # Check for nan or inf
+                    return (ticker, perf_1y, df_1y)
     except Exception as e:
         # Suppress verbose errors for single ticker failures in a large batch
         # print(f"  ℹ️ Could not process {ticker} for performance calculation: {e}")
@@ -2036,6 +1899,7 @@ def _apply_fundamental_screen_worker(params: Tuple[str, float, float, float, flo
     ticker, perf_1y, perf_ytd, fcf_min_threshold, ebitda_min_threshold = params
     
     try:
+        time.sleep(PAUSE_BETWEEN_YF_CALLS)
         yf_ticker = yf.Ticker(ticker)
         
         # FCF Check
@@ -2081,7 +1945,7 @@ def _finalize_single_ticker_performance(params: Tuple[str, float, pd.DataFrame, 
     """Worker function to derive YTD data from 1Y DataFrame, apply benchmarks, and perform fundamental screening for a single ticker."""
     ticker, perf_1y, df_1y, ytd_start_date, end_date, final_benchmark_perf, ytd_benchmark_perf, use_performance_benchmark = params
     
-    perf_ytd = -np.inf
+    perf_ytd = np.nan
     try:
         # Derive YTD data from the already fetched df_1y
         df_ytd = df_1y.loc[(df_1y.index >= _to_utc(ytd_start_date)) & (df_1y.index <= _to_utc(end_date))].copy()
@@ -2091,6 +1955,8 @@ def _finalize_single_ticker_performance(params: Tuple[str, float, pd.DataFrame, 
             end_price = df_ytd['Close'].iloc[-1]
             if start_price > 0:
                 perf_ytd = ((end_price - start_price) / start_price) * 100
+            else:
+                perf_ytd = np.nan
         
         # Apply benchmark filter if enabled
         if use_performance_benchmark:
@@ -2236,8 +2102,7 @@ def _run_portfolio_backtest(
     target_percentage: float,
     run_parallel: bool,
     period_name: str,
-    top_performers_data: List[Tuple], # Added top_performers_data
-    alpaca_trading_client: Optional[TradingClient] = None
+    top_performers_data: List[Tuple] # Added top_performers_data
 ) -> Tuple[float, List[float], List[str], List[Dict]]:
     """Helper function to run portfolio backtest for a given period."""
     num_processes = NUM_PROCESSES
@@ -2271,8 +2136,7 @@ def _run_portfolio_backtest(
             ticker, ticker_backtest_data.copy(), capital_per_stock,
             models_buy.get(ticker), models_sell.get(ticker), scalers.get(ticker),
             market_data, feature_set_for_worker, min_proba_buy_ticker, min_proba_sell_ticker, target_percentage_ticker,
-            top_performers_data, # Pass top_performers_data
-            alpaca_trading_client # Pass the Alpaca trading client
+            top_performers_data # Pass top_performers_data
         ))
 
     portfolio_values = []
@@ -2288,22 +2152,23 @@ def _run_portfolio_backtest(
             results = []
             for res in tqdm(pool.imap(backtest_worker, backtest_params), total=total_tickers_to_process, desc=f"Backtesting {period_name}"):
                 if res:
+                    print(f"  [DEBUG] Ticker: {res['ticker']}, Final Value: {res['final_val']}")
                     portfolio_values.append(res['final_val'])
                     processed_tickers.append(res['ticker'])
                     performance_metrics.append(res)
                     
                     # Find the corresponding performance data (1Y and YTD from top_performers_data)
-                    perf_1y_benchmark, perf_ytd_benchmark = -np.inf, -np.inf
+                    perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
                     for t, p1y, pytd in top_performers_data:
                         if t == res['ticker']:
-                            perf_1y_benchmark = p1y
-                            perf_ytd_benchmark = pytd
+                            perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
+                            perf_ytd_benchmark = pytd if np.isfinite(pytd) else np.nan
                             break
                     
                     # Print individual stock performance immediately
                     print(f"\n📈 Individual Stock Performance for {res['ticker']} ({period_name}):")
-                    print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%")
-                    print(f"  - YTD Performance: {perf_ytd_benchmark:.2f}%")
+                    print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
+                    print(f"  - YTD Performance: {perf_ytd_benchmark:.2f}%" if pd.notna(perf_ytd_benchmark) else "  - YTD Performance: N/A")
                     print(f"  - AI Sharpe Ratio: {res['perf_data']['sharpe_ratio']:.2f}")
                     print(f"  - Last AI Action: {res['last_ai_action']}")
                     print(f"  - Optimized Buy Threshold: {optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY):.2f}")
@@ -2317,22 +2182,23 @@ def _run_portfolio_backtest(
         for res in tqdm(backtest_params, desc=f"Backtesting {period_name}"):
             worker_result = backtest_worker(res)
             if worker_result:
+                print(f"  [DEBUG] Ticker: {worker_result['ticker']}, Final Value: {worker_result['final_val']}")
                 portfolio_values.append(worker_result['final_val'])
                 processed_tickers.append(worker_result['ticker'])
                 performance_metrics.append(worker_result)
                 
                 # Find the corresponding performance data (1Y and YTD from top_performers_data)
-                perf_1y_benchmark, perf_ytd_benchmark = -np.inf, -np.inf
+                perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
                 for t, p1y, pytd in top_performers_data:
                     if t == worker_result['ticker']:
-                        perf_1y_benchmark = p1y
-                        perf_ytd_benchmark = pytd
+                        perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
+                        perf_ytd_benchmark = pytd if np.isfinite(pytd) else np.nan
                         break
                 
                 # Print individual stock performance immediately
                 print(f"\n📈 Individual Stock Performance for {worker_result['ticker']} ({period_name}):")
-                print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%")
-                print(f"  - YTD Performance: {perf_ytd_benchmark:.2f}%")
+                print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
+                print(f"  - YTD Performance: {perf_ytd_benchmark:.2f}%" if pd.notna(perf_ytd_benchmark) else "  - YTD Performance: N/A")
                 print(f"  - AI Sharpe Ratio: {worker_result['perf_data']['sharpe_ratio']:.2f}")
                 print(f"  - Last AI Action: {worker_result['last_ai_action']}")
                 print(f"  - Optimized Buy Threshold: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY):.2f}")
@@ -2341,7 +2207,10 @@ def _run_portfolio_backtest(
                 print("-" * 40)
             processed_count += 1
 
-    final_portfolio_value = sum(portfolio_values) + (total_tickers_to_process - len(processed_tickers)) * capital_per_stock
+    # Filter out any None values from portfolio_values before summing
+    valid_portfolio_values = [v for v in portfolio_values if v is not None and np.isfinite(v)]
+    
+    final_portfolio_value = sum(valid_portfolio_values) + (total_tickers_to_process - len(processed_tickers)) * capital_per_stock
     print(f"✅ {period_name} Backtest complete. Final portfolio value: ${final_portfolio_value:,.2f}\n")
     return final_portfolio_value, portfolio_values, processed_tickers, performance_metrics
 
@@ -2360,7 +2229,8 @@ def print_final_summary(
     final_strategy_value_3month: float,
     final_buy_hold_value_3month: float,
     ai_3month_return: float,
-    initial_balance_used: float # Added parameter
+    initial_balance_used: float, # Added parameter
+    num_tickers_analyzed: int
 ) -> None:
     """Prints the final summary of the backtest results."""
     print("\n" + "="*80)
@@ -2369,7 +2239,7 @@ def print_final_summary(
 
     print("\n📊 Overall Portfolio Performance:")
     print(f"  Initial Capital: ${initial_balance_used:,.2f}") # Use the passed initial_balance_used
-    print(f"  Number of Tickers Analyzed: {len(sorted_final_results)}")
+    print(f"  Number of Tickers Analyzed: {num_tickers_analyzed}")
     print("-" * 40)
     print(f"  1-Year Strategy Value: ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)")
     print(f"  1-Year Buy & Hold Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
@@ -2386,12 +2256,22 @@ def print_final_summary(
     print(f"{'Ticker':<10} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10}")
     print("-" * 160)
     for res in sorted_final_results:
-        ticker = res['ticker']
+        # --- Safely get ticker and parameters ---
+        ticker = str(res.get('ticker', 'N/A'))
         optimized_params = optimized_params_per_ticker.get(ticker, {})
         buy_thresh = optimized_params.get('min_proba_buy', MIN_PROBA_BUY)
         sell_thresh = optimized_params.get('min_proba_sell', MIN_PROBA_SELL)
         target_perc = optimized_params.get('target_percentage', TARGET_PERCENTAGE)
-        print(f"{res['ticker']:<10} | {res['one_year_perf']:>9.2f}% | {res['ytd_perf']:>9.2f}% | {res['sharpe']:>11.2f} | {res['last_ai_action']:<16} | {res['buy_prob']:>9.2f} | {res['sell_prob']:>9.2f} | {buy_thresh:>11.2f} | {sell_thresh:>11.2f} | {target_perc:>9.2%}")
+
+        # --- Safely format performance numbers ---
+        one_year_perf_str = f"{res.get('one_year_perf', 0.0):>9.2f}%" if pd.notna(res.get('one_year_perf')) else "N/A".rjust(10)
+        ytd_perf_str = f"{res.get('ytd_perf', 0.0):>9.2f}%" if pd.notna(res.get('ytd_perf')) else "N/A".rjust(10)
+        sharpe_str = f"{res.get('sharpe', 0.0):>11.2f}" if pd.notna(res.get('sharpe')) else "N/A".rjust(12)
+        buy_prob_str = f"{res.get('buy_prob', 0.0):>9.2f}" if pd.notna(res.get('buy_prob')) else "N/A".rjust(10)
+        sell_prob_str = f"{res.get('sell_prob', 0.0):>9.2f}" if pd.notna(res.get('sell_prob')) else "N/A".rjust(10)
+        last_ai_action_str = str(res.get('last_ai_action', 'HOLD'))
+        
+        print(f"{ticker:<10} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {buy_thresh:>11.2f} | {sell_thresh:>11.2f} | {target_perc:>9.2%}")
     print("-" * 160)
 
     print("\n🤖 ML Model Status:")
@@ -2448,7 +2328,19 @@ def main(
     # Determine initial balance
     current_initial_balance = INITIAL_BALANCE
     if DATA_PROVIDER.lower() == 'alpaca' and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
-        alpaca_equity = _get_alpaca_account_balance()
+        client_for_balance = alpaca_trading_client
+        if not client_for_balance:
+            try:
+                client_for_balance = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+            except Exception as e:
+                print(f"⚠️ Could not create Alpaca client for balance check: {e}")
+                client_for_balance = None
+        
+        if client_for_balance:
+            alpaca_equity = _get_alpaca_account_balance(client_for_balance)
+        else:
+            alpaca_equity = None
+
         if alpaca_equity is not None and alpaca_equity > 0:
             current_initial_balance = alpaca_equity
             print(f"Using Alpaca account equity as INITIAL_BALANCE: ${current_initial_balance:,.2f}")
@@ -2470,20 +2362,24 @@ def main(
         ytd_start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
         
         df_1y = load_prices_robust(single_ticker, start_date_1y, end_date)
-        perf_1y = -np.inf
+        perf_1y = np.nan
         if df_1y is not None and not df_1y.empty:
             start_price = df_1y['Close'].iloc[0]
             end_price = df_1y['Close'].iloc[-1]
             if start_price > 0:
                 perf_1y = ((end_price - start_price) / start_price) * 100
+            else:
+                perf_1y = np.nan
 
         df_ytd = load_prices_robust(single_ticker, ytd_start_date, end_date)
-        perf_ytd = -np.inf
+        perf_ytd = np.nan
         if df_ytd is not None and not df_ytd.empty:
             start_price = df_ytd['Close'].iloc[0]
             end_price = df_ytd['Close'].iloc[-1]
             if start_price > 0:
                 perf_ytd = ((end_price - start_price) / start_price) * 100
+            else:
+                perf_ytd = np.nan
         
         top_performers_data = [(single_ticker, perf_1y, perf_ytd)]
     
@@ -2498,7 +2394,23 @@ def main(
     earliest_date_needed = train_start_1y
 
     print(f"🚀 Step 1: Batch downloading data for {len(all_available_tickers)} tickers from {earliest_date_needed.date()} to {end_date.date()}...")
-    all_tickers_data = _download_batch_robust(all_available_tickers, start=earliest_date_needed, end=end_date)
+    
+    all_tickers_data_list = []
+    for i in range(0, len(all_available_tickers), BATCH_DOWNLOAD_SIZE):
+        batch = all_available_tickers[i:i + BATCH_DOWNLOAD_SIZE]
+        print(f"  - Downloading batch {i//BATCH_DOWNLOAD_SIZE + 1}/{(len(all_available_tickers) + BATCH_DOWNLOAD_SIZE - 1)//BATCH_DOWNLOAD_SIZE} ({len(batch)} tickers)...")
+        batch_data = _download_batch_robust(batch, start=earliest_date_needed, end=end_date)
+        if not batch_data.empty:
+            all_tickers_data_list.append(batch_data)
+        if i + BATCH_DOWNLOAD_SIZE < len(all_available_tickers):
+            print(f"  - Pausing for {PAUSE_BETWEEN_BATCHES} seconds before next batch...")
+            time.sleep(PAUSE_BETWEEN_BATCHES)
+
+    if not all_tickers_data_list:
+        print("❌ Comprehensive batch download failed. Aborting.")
+        return (None,) * 15
+
+    all_tickers_data = pd.concat(all_tickers_data_list, axis=1)
 
     if all_tickers_data.empty:
         print("❌ Comprehensive batch download failed. Aborting.")
@@ -2549,33 +2461,33 @@ def main(
                     ytd_start_date_perf = datetime(end_date_perf.year, 1, 1, tzinfo=timezone.utc)
 
                     for ticker in new_tickers_from_portfolio:
-                        perf_1y, perf_ytd = -np.inf, -np.inf
+                        perf_1y, perf_ytd = np.nan, np.nan
                         try:
                             # 1Y perf
                             df_1y = all_tickers_data.loc[start_date_1y_perf:end_date_perf, (slice(None), ticker)]
                             df_1y.columns = df_1y.columns.droplevel(1)
-                            if not df_1y.empty:
+                            if not df_1y.empty and len(df_1y) > 1:
                                 start_price_1y = df_1y['Close'].iloc[0]
                                 end_price_1y = df_1y['Close'].iloc[-1]
-                                if start_price_1y > 0:
+                                if start_price_1y > 0 and pd.notna(start_price_1y) and pd.notna(end_price_1y):
                                     perf_1y = ((end_price_1y - start_price_1y) / start_price_1y) * 100
                             
                             # YTD perf
                             df_ytd = all_tickers_data.loc[ytd_start_date_perf:end_date_perf, (slice(None), ticker)]
                             df_ytd.columns = df_ytd.columns.droplevel(1)
-                            if not df_ytd.empty:
+                            if not df_ytd.empty and len(df_ytd) > 1:
                                 start_price_ytd = df_ytd['Close'].iloc[0]
                                 end_price_ytd = df_ytd['Close'].iloc[-1]
-                                if start_price_ytd > 0:
+                                if start_price_ytd > 0 and pd.notna(start_price_ytd) and pd.notna(end_price_ytd):
                                     perf_ytd = ((end_price_ytd - start_price_ytd) / start_price_ytd) * 100
                                     
                             market_selected_performers.append((ticker, perf_1y, perf_ytd))
                         except (KeyError, IndexError):
-                            print(f"    ⚠️ Could not find pre-fetched data for portfolio ticker {ticker}. It will be added with default performance.")
-                            market_selected_performers.append((ticker, -999.0, -999.0))
+                            print(f"    ⚠️ Could not find pre-fetched data for portfolio ticker {ticker}. It will be added with NaN performance.")
+                            market_selected_performers.append((ticker, np.nan, np.nan))
                         except Exception as e:
-                            print(f"    ⚠️ Could not calculate performance for portfolio ticker {ticker}: {e}. It will be added with default performance.")
-                            market_selected_performers.append((ticker, -999.0, -999.0))
+                            print(f"    ⚠️ Could not calculate performance for portfolio ticker {ticker}: {e}. It will be added with NaN performance.")
+                            market_selected_performers.append((ticker, np.nan, np.nan))
 
         top_performers_data = market_selected_performers
                 
@@ -2585,6 +2497,14 @@ def main(
     
     top_tickers = [ticker for ticker, _, _ in top_performers_data]
     print(f"\n✅ Identified {len(top_tickers)} stocks for backtesting: {', '.join(top_tickers)}\n")
+
+    # Log skipped tickers
+    skipped_tickers = set(all_available_tickers) - set(top_tickers)
+    if skipped_tickers:
+        with open("logs/skipped_tickers.log", "w") as f:
+            f.write("Tickers skipped during performance analysis:\n")
+            for ticker in sorted(list(skipped_tickers)):
+                f.write(f"{ticker}\n")
 
     # --- Training Models (for 1-Year Backtest) ---
     print("🔍 Step 3: Training AI models for 1-Year backtest...")
@@ -2726,8 +2646,7 @@ def main(
         target_percentage=target_percentage, 
         run_parallel=run_parallel,
         period_name="1-Year",
-        top_performers_data=top_performers_data, # Pass top_performers_data
-        alpaca_trading_client=alpaca_trading_client # Pass the Alpaca trading client
+        top_performers_data=top_performers_data # Pass top_performers_data
     )
     ai_1y_return = ((final_strategy_value_1y - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
 
@@ -2798,8 +2717,7 @@ def main(
         target_percentage=target_percentage,
         run_parallel=run_parallel,
         period_name="YTD",
-        top_performers_data=top_performers_data, # Pass top_performers_data
-        alpaca_trading_client=alpaca_trading_client # Pass the Alpaca trading client
+        top_performers_data=top_performers_data # Pass top_performers_data
     )
     ai_ytd_return = ((final_strategy_value_ytd - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
 
@@ -2848,7 +2766,7 @@ def main(
         if res and res.get('model_buy'):
             models_buy_3month[res['ticker']] = res['model_buy']
             models_sell_3month[res['ticker']] = res['model_sell']
-            scalers_3month[res['ticker']] = res['scaler']
+            scalers_3month[res['scaler']] = res['scaler']
 
     if not models_buy_3month and USE_MODEL_GATE:
         print("⚠️ No models were trained for 3-Month backtest. Model-gating will be disabled for this run.\n")
@@ -2869,8 +2787,7 @@ def main(
         target_percentage=target_percentage,
         run_parallel=run_parallel,
         period_name="3-Month",
-        top_performers_data=top_performers_data, # Pass top_performers_data
-        alpaca_trading_client=alpaca_trading_client # Pass the Alpaca trading client
+        top_performers_data=top_performers_data # Pass top_performers_data
     )
     ai_3month_return = ((final_strategy_value_3month - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
 
@@ -2912,11 +2829,11 @@ def main(
             sell_prob = 0.0
 
         # Find the corresponding performance data (1Y and YTD from find_top_performers)
-        perf_1y_benchmark, perf_ytd_benchmark = -np.inf, -np.inf
+        perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
         for t, p1y, pytd in top_performers_data:
             if t == ticker:
-                perf_1y_benchmark = p1y
-                perf_ytd_benchmark = pytd
+                perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
+                perf_ytd_benchmark = pytd if np.isfinite(pytd) else np.nan
                 break
         
         final_results.append({
@@ -2931,15 +2848,22 @@ def main(
             'sell_prob': sell_prob
         })
     
-    # Sort by 1Y performance for the final table
-    sorted_final_results = sorted(final_results, key=lambda x: x['one_year_perf'], reverse=True)
+    # Sort by 1Y performance for the final table, handling potential NaN values
+    sorted_final_results = sorted(final_results, key=lambda x: x.get('one_year_perf', -np.inf) if pd.notna(x.get('one_year_perf')) else -np.inf, reverse=True)
     
     print_final_summary(sorted_final_results, models_buy, models_sell, scalers, optimized_params_per_ticker,
                         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
                         final_strategy_value_ytd, final_buy_hold_value_ytd, ai_ytd_return,
                         final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return,
-                        initial_balance_used=current_initial_balance) # Pass the actual initial balance used
+                        initial_balance_used=current_initial_balance,
+                        num_tickers_analyzed=len(top_tickers))
     print("\n✅ Final summary prepared and printed.")
+
+    # --- Save recommendations to file ---
+    recommendations_path = Path("logs/recommendations.json")
+    with open(recommendations_path, 'w') as f:
+        json.dump(sorted_final_results, f, indent=4)
+    print(f"\n✅ Recommendations saved to {recommendations_path}")
 
     # --- Final Portfolio Print ---
     if alpaca_trading_client:
@@ -2962,6 +2886,6 @@ def main(
 
 if __name__ == "__main__":
     # Run main.py with optimization disabled for faster subsequent runs
-    final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker = main(
+    main(
         fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker=None, force_optimization=False, top_performers_data=None
     )
