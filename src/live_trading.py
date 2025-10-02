@@ -11,12 +11,14 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest, GetAssetsRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, AssetClass, AssetStatus
 from alpaca.common.exceptions import APIError
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestTradeRequest, StockLatestQuoteRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from multiprocessing import Pool, cpu_count
+from main import train_worker, TARGET_PERCENTAGE, TRAIN_LOOKBACK_DAYS
 import joblib
 import pandas as pd
 from tqdm import tqdm
@@ -25,6 +27,9 @@ from datetime import datetime, timedelta, timezone
 # Alpaca API credentials (set as environment variables for security)
 ALPACA_API_KEY          = os.environ.get("ALPACA_API_KEY")
 ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
+
+# --- Configuration for Model Retraining ---
+MODEL_RETRAIN_DAYS = 90 # Retrain models if they are older than this many days
 
 def _get_alpaca_buying_power(trading_client: TradingClient) -> Optional[float]:
     """Fetches the current Reg T buying power from the Alpaca trading account."""
@@ -39,6 +44,82 @@ def _get_alpaca_buying_power(trading_client: TradingClient) -> Optional[float]:
             return None
     except Exception as e:
         print(f"  ⚠️ Error fetching Alpaca account balance: {e}")
+        return None
+
+def verify_ticker_data(ticker: str) -> Optional[str]:
+    """Worker function to verify data availability for a single ticker."""
+    try:
+        data_client = StockHistoricalDataClient(ALPACA_API_KEY, ALPACA_SECRET_KEY)
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=5)
+        
+        request_params = StockBarsRequest(
+            symbol_or_symbols=[ticker],
+            timeframe=TimeFrame.Day,
+            start=start_date,
+            end=end_date
+        )
+        bars = data_client.get_stock_bars(request_params)
+        if not bars.df.empty and 'close' in bars.df.columns:
+            return ticker
+    except APIError:
+        pass
+    except Exception as e:
+        print(f"  ⚠️ Error verifying ticker {ticker}: {e}")
+    return None
+
+
+def verify_train_and_recommend_worker(args: Tuple) -> Optional[Dict]:
+    """
+    Worker function that handles the entire pipeline for a single ticker:
+    1. Verifies data availability.
+    2. Trains/retrains the model if necessary.
+    3. Generates a recommendation.
+    """
+    ticker, models_dir, optimized_params = args
+    
+    # 1. Verify data
+    if not verify_ticker_data(ticker):
+        return None # Ticker is not valid
+
+    # 2. Check model and train if needed
+    model_buy_path = models_dir / f"{ticker}_model_buy.joblib"
+    current_time = datetime.now(timezone.utc)
+    retrain_threshold = timedelta(days=MODEL_RETRAIN_DAYS)
+    
+    needs_training = False
+    if not model_buy_path.exists():
+        needs_training = True
+        print(f"  ℹ️ No models found for {ticker}. Queuing for training.")
+    else:
+        model_mod_time = datetime.fromtimestamp(model_buy_path.stat().st_mtime, timezone.utc)
+        if (current_time - model_mod_time) > retrain_threshold:
+            needs_training = True
+            print(f"  ℹ️ Models for {ticker} are stale. Queuing for retraining.")
+
+    if needs_training:
+        train_end = datetime.now(timezone.utc) - timedelta(days=1)
+        train_start = train_end - timedelta(days=TRAIN_LOOKBACK_DAYS)
+        from main import load_prices_robust, train_worker
+        
+        df_train_period = load_prices_robust(ticker, train_start, train_end)
+        
+        training_result = train_worker((ticker, df_train_period, TARGET_PERCENTAGE, None))
+        if not training_result or not training_result.get('model_buy'):
+            print(f"  ❌ Failed to train models for {ticker}. Skipping recommendation.")
+            return None
+
+    # 3. Generate recommendation
+    try:
+        recommendation = process_ticker(ticker, models_dir, optimized_params)
+        if recommendation and recommendation['action'] != "HOLD":
+             # Print recommendation as soon as it's generated
+            buy_prob_str = f"{recommendation['buy_prob'] * 100:.2f}%"
+            sell_prob_str = f"{recommendation['sell_prob'] * 100:.2f}%"
+            print(f"  ✅ Recommendation for {ticker}: {recommendation['action']} (Buy Prob: {buy_prob_str}, Sell Prob: {sell_prob_str})")
+        return recommendation
+    except Exception as e:
+        print(f"  ⚠️ Error generating recommendation for {ticker}: {e}")
         return None
 
 def _get_alpaca_portfolio_positions(trading_client: TradingClient) -> Tuple[List[Dict], float]:
@@ -150,8 +231,38 @@ def get_recommendation(ticker: str, model_buy, model_sell, scaler, data: pd.Data
     else:
         return "HOLD", buy_prob, sell_prob
 
+def process_ticker(ticker: str, models_dir: Path, optimized_params: Dict) -> Optional[Dict]:
+    """Worker function to process a single ticker and generate a recommendation."""
+    try:
+        model_buy = joblib.load(models_dir / f"{ticker}_model_buy.joblib")
+        model_sell = joblib.load(models_dir / f"{ticker}_model_sell.joblib")
+        scaler = joblib.load(models_dir / f"{ticker}_scaler.joblib")
+
+        ticker_params = optimized_params.get(ticker, {})
+        buy_thresh = ticker_params.get('min_proba_buy', 0.5)
+        sell_thresh = ticker_params.get('min_proba_sell', 0.5)
+
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=365)
+        from main import load_prices_robust
+        live_data = load_prices_robust(ticker, start_date, end_date)
+
+        recommendation, buy_prob, sell_prob = get_recommendation(ticker, model_buy, model_sell, scaler, live_data, buy_thresh, sell_thresh)
+        
+        return {
+            'ticker': ticker,
+            'action': recommendation,
+            'buy_prob': buy_prob,
+            'sell_prob': sell_prob,
+            'buy_thresh': buy_thresh,
+            'sell_thresh': sell_thresh
+        }
+    except Exception as e:
+        print(f"  ⚠️ Error processing ticker {ticker}: {e}")
+        return None
+
 def run_live_trading():
-    """Main function to run the live trading bot."""
+    """Main function to run the live trading bot with a streaming, end-to-end process for each ticker."""
     print("🚀 Starting Live Trading Bot...")
     
     alpaca_trading_client = None
@@ -167,14 +278,7 @@ def run_live_trading():
         return
 
     models_dir = Path("logs/models")
-    if not models_dir.exists():
-        print(f"❌ Models directory not found at {models_dir}. Please run the backtest and training first.")
-        return
-
-    tickers = sorted(list(set([f.name.split('_')[0] for f in models_dir.glob('*_model_buy.joblib')])))
-    if not tickers:
-        print("ℹ️ No trained models found.")
-        return
+    models_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Load Optimized Thresholds ---
     optimized_params = {}
@@ -185,48 +289,37 @@ def run_live_trading():
     else:
         print(f"⚠️ Optimized parameters file not found at {optimized_params_path}. Using default thresholds.")
 
-    # --- Pre-computation Step ---
-    print("\n--- Generating all recommendations before execution ---")
-    all_recommendations = []
-    all_generated_recommendations = [] # New list for all recommendations
-    for ticker in tqdm(tickers, desc="Generating Recommendations"):
-        try:
-            model_buy = joblib.load(models_dir / f"{ticker}_model_buy.joblib")
-            model_sell = joblib.load(models_dir / f"{ticker}_model_sell.joblib")
-            scaler = joblib.load(models_dir / f"{ticker}_scaler.joblib")
+    # --- Fetch all tradable tickers ---
+    try:
+        search_params = GetAssetsRequest(asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE)
+        assets = alpaca_trading_client.get_all_assets(search_params)
+        tradable_tickers = [a.symbol for a in assets if a.tradable]
+        print(f"✅ Fetched {len(tradable_tickers)} tradable US equity tickers from Alpaca.")
+    except Exception as e:
+        print(f"⚠️ Could not fetch asset list from Alpaca ({e}). Aborting.")
+        return
 
-            # Get optimized thresholds for the ticker, with a fallback to default values
-            ticker_params = optimized_params.get(ticker, {})
-            buy_thresh = ticker_params.get('min_proba_buy', 0.5)
-            sell_thresh = ticker_params.get('min_proba_sell', 0.5)
+    # --- Process all tickers in parallel from verification to recommendation ---
+    print("\n--- Verifying, Training, and Generating Recommendations in Parallel ---")
+    num_processes = max(1, cpu_count() - 1)
+    worker_args = [(ticker, models_dir, optimized_params) for ticker in tradable_tickers]
+    
+    all_generated_recommendations = []
+    with Pool(processes=num_processes) as pool:
+        with tqdm(total=len(tradable_tickers), desc="Processing Tickers") as pbar:
+            for result in pool.imap_unordered(verify_train_and_recommend_worker, worker_args):
+                if result:
+                    all_generated_recommendations.append(result)
+                pbar.update()
 
-            end_date = datetime.now(timezone.utc)
-            start_date = end_date - timedelta(days=365)
-            from main import load_prices_robust
-            live_data = load_prices_robust(ticker, start_date, end_date)
-
-            recommendation, buy_prob, sell_prob = get_recommendation(ticker, model_buy, model_sell, scaler, live_data, buy_thresh, sell_thresh)
-            
-            rec_data = {
-                'ticker': ticker,
-                'action': recommendation,
-                'buy_prob': buy_prob,
-                'sell_prob': sell_prob,
-                'buy_thresh': buy_thresh,
-                'sell_thresh': sell_thresh
-            }
-            all_generated_recommendations.append(rec_data)
-
-            if recommendation != "HOLD":
-                all_recommendations.append(rec_data)
-        except Exception as e:
-            print(f"  ⚠️ Error processing ticker {ticker}: {e}")
-
-    # --- Print All Recommendations ---
+    # --- Print Full Recommendation Summary ---
+    if not all_generated_recommendations:
+        print("\n--- No valid tickers or recommendations were generated. ---")
+        return
+        
     print("\n--- Full Recommendation Summary ---")
     print(f"{'Ticker':<10} | {'Recommendation':<15} | {'Buy Prob %':>12} | {'Sell Prob %':>12} | {'Buy Thresh':>12} | {'Sell Thresh':>12}")
     print("-" * 80)
-    # Sort by buy probability in descending order
     sorted_generated_recs = sorted(all_generated_recommendations, key=lambda x: x['buy_prob'], reverse=True)
     for rec in sorted_generated_recs:
         buy_prob_str = f"{rec['buy_prob'] * 100:.2f}%"
@@ -236,7 +329,7 @@ def run_live_trading():
         print(f"{rec['ticker']:<10} | {rec['action']:<15} | {buy_prob_str:>12} | {sell_prob_str:>12} | {buy_thresh_str:>12} | {sell_thresh_str:>12}")
     print("-" * 80)
 
-
+    all_recommendations = [rec for rec in all_generated_recommendations if rec['action'] != "HOLD"]
     if not all_recommendations:
         print("\n--- No new BUY/SELL recommendations generated. No trades to execute. ---")
         return

@@ -984,43 +984,53 @@ from sklearn.model_selection import cross_val_score, StratifiedKFold, GridSearch
 from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import UndefinedMetricWarning
 
-# Attempt to import GPU-accelerated libraries
-# Attempt to import GPU-accelerated libraries
+# --- Globals for ML library status ---
+_ml_libraries_initialized = False
 CUDA_AVAILABLE = False
 CUML_AVAILABLE = False
+LGBMClassifier = None
 
-try:
-    import torch
-    if torch.cuda.is_available():
-        CUDA_AVAILABLE = True
-        print("✅ CUDA is available. GPU acceleration enabled.")
-    else:
-        print("⚠️ CUDA is not available. GPU acceleration will not be used.")
-except ImportError:
-    print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
+def initialize_ml_libraries():
+    """Initializes ML libraries and prints their status only once."""
+    global _ml_libraries_initialized, CUDA_AVAILABLE, CUML_AVAILABLE, LGBMClassifier
+    if _ml_libraries_initialized:
+        return
 
-try:
-    import cuml
-    from cuml.ensemble import RandomForestClassifier as cuMLRandomForestClassifier
-    from cuml.linear_model import LogisticRegression as cuMLLogisticRegression
-    from cuml.preprocessing import StandardScaler as cuMLStandardScaler
-    CUML_AVAILABLE = True
-    print("✅ cuML found. GPU-accelerated models will be used if CUDA is available.")
-except ImportError:
-    print("⚠️ cuML not installed. Run: pip install cuml. GPU-accelerated models will be skipped.")
+    try:
+        import torch
+        if torch.cuda.is_available():
+            CUDA_AVAILABLE = True
+            print("✅ CUDA is available. GPU acceleration enabled.")
+        else:
+            print("⚠️ CUDA is not available. GPU acceleration will not be used.")
+    except ImportError:
+        print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
 
-try:
-    from lightgbm import LGBMClassifier
-    if CUDA_AVAILABLE:
-        print("ℹ️ LightGBM found. Will attempt to use GPU.")
-    else:
-        print("ℹ️ LightGBM found. Will use CPU (CUDA not available).")
-except ImportError:
-    print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
-    LGBMClassifier = None
+    try:
+        import cuml
+        from cuml.ensemble import RandomForestClassifier as cuMLRandomForestClassifier
+        from cuml.linear_model import LogisticRegression as cuMLLogisticRegression
+        from cuml.preprocessing import StandardScaler as cuMLStandardScaler
+        CUML_AVAILABLE = True
+        print("✅ cuML found. GPU-accelerated models will be used if CUDA is available.")
+    except ImportError:
+        print("⚠️ cuML not installed. Run: pip install cuml. GPU-accelerated models will be skipped.")
+
+    try:
+        from lightgbm import LGBMClassifier as lgbm
+        LGBMClassifier = lgbm
+        if CUDA_AVAILABLE:
+            print("ℹ️ LightGBM found. Will attempt to use GPU.")
+        else:
+            print("ℹ️ LightGBM found. Will use CPU (CUDA not available).")
+    except ImportError:
+        print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
+    
+    _ml_libraries_initialized = True
 
 def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN"):
     """Train and compare multiple classifiers for a given target, returning the best one."""
+    initialize_ml_libraries()
     d = df.copy() # Renamed to d to match the original error context
     
     if target_col not in d.columns:
