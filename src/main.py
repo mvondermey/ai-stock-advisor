@@ -103,7 +103,7 @@ MARKET_SELECTION = {
     "FTSE_MIB": False,
 }
 N_TOP_TICKERS           = 0         # Number of top performers to select (0 to disable limit)
-BATCH_DOWNLOAD_SIZE     = 100       # Reduced batch size for stability
+BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
 
@@ -142,7 +142,6 @@ USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering
 INITIAL_BALANCE         = 50_000.0
 SAVE_PLOTS              = False
 FORCE_OPTIMIZATION      = False      # Set to True to force re-optimization of ML thresholds
-ENABLE_LIVE_TRADING     = True      # Set to True to enable actual buy/sell orders on Alpaca (paper or live)
 
 # ============================
 # Helpers
@@ -229,7 +228,12 @@ def _fetch_from_alpaca(ticker: str, start: datetime, end: datetime) -> pd.DataFr
         df.index = pd.to_datetime(df.index, utc=True)
         return df
     except Exception as e:
-        print(f"  ⚠️ Could not fetch data from Alpaca for {ticker}: {e}")
+        error_msg = str(e)
+        if "subscription does not permit querying recent SIP data" in error_msg:
+            # This is an expected condition on free Alpaca plans, not a critical error.
+            print(f"  ℹ️ Alpaca (free tier) does not provide recent data for {ticker}. Attempting fallback provider.")
+        else:
+            print(f"  ⚠️ Could not fetch data from Alpaca for {ticker}: {e}")
         return pd.DataFrame()
 
 # ============================
@@ -416,12 +420,14 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 if not alpaca_df.empty:
                     price_df = alpaca_df.copy()
                 elif USE_YAHOO_FALLBACK:
+                    print(f"  ℹ️ Alpaca fetch failed for {ticker}. Trying Yahoo Finance fallback...")
                     try:
                         downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
-                        if downloaded_df is not None:
+                        if downloaded_df is not None and not downloaded_df.empty:
                             price_df = downloaded_df.dropna()
                     except Exception as e:
-                        raise e
+                        print(f"  ⚠️ Yahoo Finance fallback also failed for {ticker}: {e}")
+                        # Do not raise, allow function to continue and return empty df if needed
         
         if provider == 'stooq':
             stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
@@ -433,18 +439,21 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 print(f"  ℹ️ Stooq data for {ticker} empty. Falling back to Yahoo.")
                 try:
                     downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
-                    if downloaded_df is not None:
+                    if downloaded_df is not None and not downloaded_df.empty:
                         price_df = downloaded_df.dropna()
                 except Exception as e:
-                    raise e
+                    print(f"  ⚠️ Yahoo Finance fallback (after Stooq) also failed for {ticker}: {e}")
+                    # Do not raise
         
         if provider == 'yahoo' or price_df.empty: # If provider was yahoo, or if previous provider failed
             try:
                 downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
-                if downloaded_df is not None:
+                if downloaded_df is not None and not downloaded_df.empty:
                     price_df = downloaded_df.dropna()
             except Exception as e:
-                raise e
+                # This is the final attempt, if it fails, we just log it.
+                print(f"  ⚠️ Final Yahoo download attempt failed for {ticker}: {e}")
+                # Do not raise e
             if price_df.empty and pdr is not None and DATA_PROVIDER.lower() != 'stooq': # Only try stooq fallback if not already tried
                 print(f"  ℹ️ Yahoo data for {ticker} empty. Falling back to Stooq.")
                 stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
@@ -828,7 +837,7 @@ def get_all_tickers() -> List[str]:
 def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: float = 0.05) -> Tuple[pd.DataFrame, List[str]]:
     """Compute ML features from a given DataFrame."""
     if data.empty or len(data) < FEAT_SMA_LONG + 10:
-        print(f"⚠️ Insufficient data for {ticker}. Returning empty DataFrame.")
+        print(f"  [DIAGNOSTIC] {ticker}: Skipping feature prep. Initial data has {len(data)} rows, required > {FEAT_SMA_LONG + 10}.")
         return pd.DataFrame(), []
 
     df = data.copy()
@@ -1011,12 +1020,12 @@ except ImportError:
     print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
     LGBMClassifier = None
 
-def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None):
+def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN"):
     """Train and compare multiple classifiers for a given target, returning the best one."""
     d = df.copy() # Renamed to d to match the original error context
     
     if target_col not in d.columns:
-        print(f"⚠️ Target column '{target_col}' not found in DataFrame. Skipping model training.")
+        print(f"  [DIAGNOSTIC] {ticker}: Target column '{target_col}' not found. Skipping.")
         return None, None
 
     # The input 'df' (now 'd') is expected to already have all necessary features computed by fetch_training_data.
@@ -1054,7 +1063,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     d = d[required_cols_for_training].dropna() # Ensure only relevant columns are kept and NaNs are dropped
     
     if len(d) < 50:  # Increased requirement for cross-validation
-        print("⚠️ Not enough rows after feature prep to compare models (need ≥ 50). Skipping.")
+        print(f"  [DIAGNOSTIC] {ticker}: Not enough rows after feature prep ({len(d)} rows, need >= 50). Skipping.")
         return None, None # Return None for both model and scaler
     
     X_df = d[final_feature_names]
@@ -1063,12 +1072,12 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     # --- More robust check for class balance and minimum samples for cross-validation ---
     unique_classes, counts = np.unique(y, return_counts=True)
     if len(unique_classes) < 2:
-        print(f"⚠️ Not enough class diversity for training on '{target_col}' (only {len(unique_classes)} class found). Skipping model.")
+        print(f"  [DIAGNOSTIC] {ticker}: Not enough class diversity for '{target_col}' (only 1 class found: {unique_classes}). Skipping.")
         return None, None
     
     n_splits = 5 # From StratifiedKFold
     if any(c < n_splits for c in counts):
-        print(f"⚠️ Least populated class in '{target_col}' has fewer than {n_splits} members. Skipping model to avoid cross-validation errors.")
+        print(f"  [DIAGNOSTIC] {ticker}: Least populated class in '{target_col}' has {min(counts)} members (needs >= {n_splits}). Skipping.")
         return None, None
 
     # Scale features for models that are sensitive to scale (like Logistic Regression and SVM)
@@ -1207,9 +1216,9 @@ def train_worker(params: Tuple) -> Dict:
         return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None}
 
     # Train BUY model
-    model_buy, scaler_buy = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set)
+    model_buy, scaler_buy = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker)
     # Train SELL model (using the same scaler as buy for consistency, or a separate one if needed)
-    model_sell, scaler_sell = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set)
+    model_sell, scaler_sell = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker)
 
     # For simplicity, we'll use the scaler from the buy model for both if they are different.
     # In a more complex scenario, you might want to ensure feature_set consistency or use separate scalers.
@@ -1303,28 +1312,6 @@ class RuleTradingEnv:
         close = self.df["Close"]
         high = self.df["High"] if "High" in self.df.columns else None
         low  = self.df["Low"]  if "Low" in self.df.columns else None
-
-        # --- Strategy Indicators ---
-        # 1. Trend Filter: 200-day SMA
-        self.df['SMA_200'] = close.rolling(window=200).mean()
-
-        # 2. Crossover SMAs
-        self.df['SMA_S'] = close.rolling(window=STRAT_SMA_SHORT).mean()
-        self.df['SMA_L'] = close.rolling(window=STRAT_SMA_LONG).mean()
-
-        # --- Other Indicators (for reference or potential future use) ---
-        # Momentum: 14-day RSI
-        delta = close.diff()
-        gain = (delta.where(delta > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
-        loss = (-delta.where(delta < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
-        rs = gain / loss
-        self.df['RSI'] = 100 - (100 / (1 + rs))
-
-        # 3. Volume: On-Balance Volume (OBV) and its SMAs
-        self.df['OBV'] = (np.sign(close.diff()) * self.df['Volume']).fillna(0).cumsum()
-        self.df['OBV_SMA_S'] = self.df['OBV'].rolling(window=10).mean()
-        self.df['OBV_SMA_L'] = self.df['OBV'].rolling(window=30).mean()
-        # ------------------------------------
 
         # ATR for risk management (unchanged)
         high = self.df["High"] if "High" in self.df.columns else None
@@ -1547,9 +1534,6 @@ class RuleTradingEnv:
                     return self.current_step >= len(self.df)
 
         # --- Entry Signal ---
-        sma_s = row.get("SMA_S", np.nan)
-        sma_l = row.get("SMA_L", np.nan)
-
         # Condition: AI model must approve
         ai_signal = self._allow_buy_by_model(self.current_step)
 
@@ -2034,9 +2018,8 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
     best_target_percentage = default_target_percentage
 
     # Define ranges for optimization
-    min_proba_buy_range = np.arange(0.4, 0.7, 0.05) # Example range
-    min_proba_sell_range = np.arange(0.4, 0.7, 0.05) # Example range
-    target_percentage_range = np.arange(0.005, 0.02, 0.005) # Example range
+    min_proba_buy_range = np.arange(0.2, 0.9, 0.1) # Example range
+    min_proba_sell_range = np.arange(0.2, 0.9, 0.1) # Example range
 
     # Load data for backtesting during optimization
     df_backtest_opt = load_prices(ticker, train_start, train_end)
@@ -2045,40 +2028,46 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
 
     for p_buy in min_proba_buy_range:
         for p_sell in min_proba_sell_range:
-            for t_perc in target_percentage_range:
-                env = RuleTradingEnv(
-                    df=df_backtest_opt.copy(),
-                    ticker=ticker,
-                    initial_balance=capital_per_stock,
-                    transaction_cost=TRANSACTION_COST,
-                    model_buy=model_buy,
-                    model_sell=model_sell,
-                    scaler=scaler,
-                    per_ticker_min_proba_buy=p_buy,
-                    per_ticker_min_proba_sell=p_sell,
-                    use_gate=USE_MODEL_GATE,
-                    market_data=market_data,
-                    use_market_filter=USE_MARKET_FILTER,
-                    feature_set=feature_set
-                )
-                final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob = env.run()
-                
-                # Calculate Sharpe Ratio for this combination
-                strategy_history = env.portfolio_history
-                if len(strategy_history) > 1:
-                    strat_returns = pd.Series(strategy_history).pct_change(fill_method=None).dropna()
-                    if strat_returns.std() > 0:
-                        sharpe = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252)
-                    else:
-                        sharpe = 0.0 # Avoid division by zero
+            env = RuleTradingEnv(
+                df=df_backtest_opt.copy(),
+                ticker=ticker,
+                initial_balance=capital_per_stock,
+                transaction_cost=TRANSACTION_COST,
+                model_buy=model_buy,
+                model_sell=model_sell,
+                scaler=scaler,
+                per_ticker_min_proba_buy=p_buy,
+                per_ticker_min_proba_sell=p_sell,
+                use_gate=USE_MODEL_GATE,
+                market_data=market_data,
+                use_market_filter=USE_MARKET_FILTER,
+                feature_set=feature_set
+            )
+            final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob = env.run()
+            
+            # Calculate Sharpe Ratio for this combination
+            strategy_history = env.portfolio_history
+            if len(strategy_history) > 1:
+                strat_returns = pd.Series(strategy_history).pct_change(fill_method=None).dropna()
+                if strat_returns.std() > 0:
+                    sharpe = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252)
                 else:
-                    sharpe = 0.0
+                    sharpe = 0.0 # Avoid division by zero
+            else:
+                sharpe = 0.0
 
-                if sharpe > best_sharpe:
-                    best_sharpe = sharpe
-                    best_min_proba_buy = p_buy
-                    best_min_proba_sell = p_sell
-                    best_target_percentage = t_perc
+            # --- Diagnostic Logging ---
+            # This will show the Sharpe ratio for each combination of thresholds tested.
+            # print(f"  [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f} -> Sharpe={sharpe:.4f}")
+            
+            if sharpe > best_sharpe:
+                best_sharpe = sharpe
+                best_min_proba_buy = p_buy
+                best_min_proba_sell = p_sell
+    
+    # The target_percentage is not optimized here because the models are pre-trained.
+    # We return the default_target_percentage that the models were trained with.
+    best_target_percentage = default_target_percentage
     
     return {
         'ticker': ticker,
@@ -2312,48 +2301,9 @@ def main(
     end_date = datetime.now(timezone.utc)
     bt_end = end_date
     
-    # --- Initialize Alpaca Trading Client if live trading is enabled ---
     alpaca_trading_client = None
-    if DATA_PROVIDER.lower() == 'alpaca' and ENABLE_LIVE_TRADING and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
-        try:
-            # Use paper trading for now, as requested by the user
-            alpaca_trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
-            print("✅ Alpaca Paper Trading Client initialized for live trading actions.")
-        except Exception as e:
-            print(f"⚠️ Error initializing Alpaca Trading Client: {e}. Live trading actions will be disabled.")
-            alpaca_trading_client = None
-    elif ENABLE_LIVE_TRADING:
-        print("⚠️ Live trading is enabled, but Alpaca is not the data provider, or API keys are missing/SDK not available. Live trading actions will be disabled.")
-
-    # Determine initial balance
     current_initial_balance = INITIAL_BALANCE
-    if DATA_PROVIDER.lower() == 'alpaca' and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
-        client_for_balance = alpaca_trading_client
-        if not client_for_balance:
-            try:
-                client_for_balance = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
-            except Exception as e:
-                print(f"⚠️ Could not create Alpaca client for balance check: {e}")
-                client_for_balance = None
-        
-        if client_for_balance:
-            alpaca_equity = _get_alpaca_account_balance(client_for_balance)
-        else:
-            alpaca_equity = None
-
-        if alpaca_equity is not None and alpaca_equity > 0:
-            current_initial_balance = alpaca_equity
-            print(f"Using Alpaca account equity as INITIAL_BALANCE: ${current_initial_balance:,.2f}")
-        else:
-            print(f"⚠️ Could not fetch a positive Alpaca account equity. Falling back to default INITIAL_BALANCE: ${current_initial_balance:,.2f}")
-    else:
-        print(f"Using default INITIAL_BALANCE: ${current_initial_balance:,.2f}")
-
-    if current_initial_balance <= 0:
-        print(f"⚠️ Initial balance is not positive (${current_initial_balance:,.2f}). Falling back to default INITIAL_BALANCE.")
-        current_initial_balance = INITIAL_BALANCE
-        
-    print(f"DEBUG: Final initial balance used for backtesting: ${current_initial_balance:,.2f}")
+    print(f"Using initial balance: ${current_initial_balance:,.2f}")
 
     # --- Handle single ticker case for initial performance calculation ---
     if single_ticker:
@@ -2441,53 +2391,6 @@ def main(
             ebitda_min_threshold=ebitda_threshold
         )
         
-        # Also include stocks currently in the Alpaca portfolio
-        if alpaca_trading_client:
-            print("🔍 Fetching current Alpaca portfolio positions to include in analysis...")
-            portfolio_positions, _ = _get_alpaca_portfolio_positions(alpaca_trading_client)
-            portfolio_tickers = {p['ticker'] for p in portfolio_positions}
-            
-            if portfolio_tickers:
-                print(f"  ✅ Found {len(portfolio_tickers)} unique tickers in portfolio: {', '.join(portfolio_tickers)}")
-                
-                market_selected_tickers = {ticker for ticker, _, _ in market_selected_performers}
-                new_tickers_from_portfolio = portfolio_tickers - market_selected_tickers
-                
-                if new_tickers_from_portfolio:
-                    print(f"  - Adding {len(new_tickers_from_portfolio)} new tickers from portfolio to the analysis list: {', '.join(new_tickers_from_portfolio)}")
-                    
-                    end_date_perf = all_tickers_data.index.max()
-                    start_date_1y_perf = end_date_perf - timedelta(days=365)
-                    ytd_start_date_perf = datetime(end_date_perf.year, 1, 1, tzinfo=timezone.utc)
-
-                    for ticker in new_tickers_from_portfolio:
-                        perf_1y, perf_ytd = np.nan, np.nan
-                        try:
-                            # 1Y perf
-                            df_1y = all_tickers_data.loc[start_date_1y_perf:end_date_perf, (slice(None), ticker)]
-                            df_1y.columns = df_1y.columns.droplevel(1)
-                            if not df_1y.empty and len(df_1y) > 1:
-                                start_price_1y = df_1y['Close'].iloc[0]
-                                end_price_1y = df_1y['Close'].iloc[-1]
-                                if start_price_1y > 0 and pd.notna(start_price_1y) and pd.notna(end_price_1y):
-                                    perf_1y = ((end_price_1y - start_price_1y) / start_price_1y) * 100
-                            
-                            # YTD perf
-                            df_ytd = all_tickers_data.loc[ytd_start_date_perf:end_date_perf, (slice(None), ticker)]
-                            df_ytd.columns = df_ytd.columns.droplevel(1)
-                            if not df_ytd.empty and len(df_ytd) > 1:
-                                start_price_ytd = df_ytd['Close'].iloc[0]
-                                end_price_ytd = df_ytd['Close'].iloc[-1]
-                                if start_price_ytd > 0 and pd.notna(start_price_ytd) and pd.notna(end_price_ytd):
-                                    perf_ytd = ((end_price_ytd - start_price_ytd) / start_price_ytd) * 100
-                                    
-                            market_selected_performers.append((ticker, perf_1y, perf_ytd))
-                        except (KeyError, IndexError):
-                            print(f"    ⚠️ Could not find pre-fetched data for portfolio ticker {ticker}. It will be added with NaN performance.")
-                            market_selected_performers.append((ticker, np.nan, np.nan))
-                        except Exception as e:
-                            print(f"    ⚠️ Could not calculate performance for portfolio ticker {ticker}: {e}. It will be added with NaN performance.")
-                            market_selected_performers.append((ticker, np.nan, np.nan))
 
         top_performers_data = market_selected_performers
                 
@@ -2526,18 +2429,9 @@ def main(
 
     if run_parallel:
         print(f"🤖 Training 1-Year models in parallel for {len(top_tickers)} tickers using {NUM_PROCESSES} processes...")
-        training_results_1y = []
-        try:
-            with Pool(processes=NUM_PROCESSES) as pool:
-                training_results_1y = list(tqdm(pool.imap(train_worker, training_params_1y), total=len(training_params_1y), desc="Training 1-Year Models"))
-        except Exception as e:
-            print(f"  ❌ Error during parallel training for 1-Year models: {e}")
-            # Fallback to sequential if parallel fails
-            print("  🔄 Falling back to sequential training for 1-Year models...")
-            run_parallel = False # Temporarily disable parallel for this section
-            training_results_1y = [train_worker(p) for p in tqdm(training_params_1y, desc="Training 1-Year Models (Sequential Fallback)")]
-    
-    if not run_parallel: # If parallel was originally false or fell back to sequential
+        with Pool(processes=NUM_PROCESSES) as pool:
+            training_results_1y = list(tqdm(pool.imap(train_worker, training_params_1y), total=len(training_params_1y), desc="Training 1-Year Models"))
+    else:
         print(f"🤖 Training 1-Year models sequentially for {len(top_tickers)} tickers...")
         training_results_1y = [train_worker(p) for p in tqdm(training_params_1y, desc="Training 1-Year Models")]
 
@@ -2865,22 +2759,6 @@ def main(
         json.dump(sorted_final_results, f, indent=4)
     print(f"\n✅ Recommendations saved to {recommendations_path}")
 
-    # --- Final Portfolio Print ---
-    if alpaca_trading_client:
-        print("\n" + "="*80)
-        print("                     💼 CURRENT ALPACA PORTFOLIO 💼")
-        print("="*80)
-        portfolio_positions, total_market_value = _get_alpaca_portfolio_positions(alpaca_trading_client)
-        if portfolio_positions:
-            print(f"\n{'Ticker':<10} | {'Quantity':>15} | {'Current Price':>15} | {'Market Value':>15}")
-            print("-" * 65)
-            for pos in portfolio_positions:
-                print(f"{pos['ticker']:<10} | {pos['qty']:>15.2f} | ${pos['current_price']:>14,.2f} | ${pos['market_value']:>14,.2f}")
-            print("-" * 65)
-            print(f"Total Portfolio Market Value: ${total_market_value:,.2f}")
-        else:
-            print("No open positions in the portfolio.")
-        print("="*80)
     
     return final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker
 
