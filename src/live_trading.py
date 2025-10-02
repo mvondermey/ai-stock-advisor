@@ -258,50 +258,48 @@ def run_live_trading():
     time.sleep(5) # Wait 5 seconds
     buying_power = _get_alpaca_account_balance(alpaca_trading_client)
     
-    capital_per_stock = 0
-    if buy_recs:
-        if buying_power is not None and buying_power > 0:
-            allocated_capital = buying_power / len(buy_recs)
-            if allocated_capital >= 1000:
-                capital_per_stock = allocated_capital
-                print(f"ℹ️ Allocating ${capital_per_stock:,.2f} per BUY trade for {len(buy_recs)} ranked tickers.")
-            else:
-                print(f"⚠️ Allocated capital per stock (${allocated_capital:,.2f}) is less than the $1000 minimum. Skipping all BUY trades.")
-                buy_recs = [] # Clear buy recommendations
-        else:
-            print("⚠️ No buying power available. Skipping all BUY trades.")
-            buy_recs = [] # Clear buy recommendations
-
+    CAPITAL_PER_TRADE = 1000.0
+    
     print(f"\n{'Ticker':<10} | {'Recommendation':<15} | {'Buy Prob %':>12} | {'Action / Status':<60}")
     print("-" * 100)
 
-    for rec in buy_recs:
-        ticker = rec['ticker']
-        buy_prob = rec['buy_prob'] * 100
-        buy_prob_str = f"{buy_prob:.2f}%"
-        status = ""
+    if not buy_recs:
+        print("No BUY recommendations to process.")
+    elif buying_power is None or buying_power < CAPITAL_PER_TRADE:
+        print(f"Insufficient buying power (${buying_power:,.2f}) to execute any trades with a ${CAPITAL_PER_TRADE:,.2f} minimum. Skipping all BUY trades.")
+    else:
+        print(f"Starting BUY execution with available buying power: ${buying_power:,.2f}")
+        for rec in buy_recs:
+            ticker = rec['ticker']
+            buy_prob = rec['buy_prob'] * 100
+            buy_prob_str = f"{buy_prob:.2f}%"
+            status = ""
 
-        if ticker in portfolio:
-            status = f"ℹ️ Skipping BUY because {ticker} is already in the portfolio."
-        elif capital_per_stock > 0:
-            price = _get_latest_price_from_alpaca(ticker)
-            if price and price > 0:
-                qty_to_buy = int(capital_per_stock / price)
-                if qty_to_buy > 0:
-                    try:
-                        market_order_data = MarketOrderRequest(symbol=ticker, qty=qty_to_buy, side=OrderSide.BUY, time_in_force=TimeInForce.DAY)
-                        alpaca_trading_client.submit_order(order_data=market_order_data)
-                        status = f"✅ Submitted BUY order for {qty_to_buy} shares at ~${price:,.2f}."
-                    except Exception as e:
-                        status = f"❌ Error submitting BUY order: {e}"
-                else:
-                    status = f"ℹ️ Not enough capital (${capital_per_stock:,.2f}) to buy 1 share at ${price:,.2f}."
+            if buying_power < CAPITAL_PER_TRADE:
+                status = f"ℹ️ Insufficient buying power left (${buying_power:,.2f}) to place trade. Halting further BUYs."
+                print(f"{ticker:<10} | {'BUY':<15} | {buy_prob_str:>12} | {status:<60}")
+                break # Stop processing more buy recommendations
+
+            if ticker in portfolio:
+                status = f"ℹ️ Skipping BUY because {ticker} is already in the portfolio."
             else:
-                status = f"⚠️ Could not fetch real-time price. Skipping trade."
-        else:
-            status = "ℹ️ Skipping BUY trade due to insufficient capital allocation."
-        
-        print(f"{ticker:<10} | {'BUY':<15} | {buy_prob_str:>12} | {status:<60}")
+                price = _get_latest_price_from_alpaca(ticker)
+                if price and price > 0:
+                    qty_to_buy = int(CAPITAL_PER_TRADE / price)
+                    if qty_to_buy > 0:
+                        try:
+                            market_order_data = MarketOrderRequest(symbol=ticker, qty=qty_to_buy, side=OrderSide.BUY, time_in_force=TimeInForce.DAY)
+                            alpaca_trading_client.submit_order(order_data=market_order_data)
+                            status = f"✅ Submitted BUY order for {qty_to_buy} shares of {ticker} (~${CAPITAL_PER_TRADE:,.2f})."
+                            buying_power -= (qty_to_buy * price) # Decrement buying power
+                        except Exception as e:
+                            status = f"❌ Error submitting BUY order: {e}"
+                    else:
+                        status = f"ℹ️ Not enough capital (${CAPITAL_PER_TRADE:,.2f}) to buy 1 share at ${price:,.2f}."
+                else:
+                    status = f"⚠️ Could not fetch real-time price. Skipping trade."
+            
+            print(f"{ticker:<10} | {'BUY':<15} | {buy_prob_str:>12} | {status:<60}")
 
     print("-" * 100)
 
