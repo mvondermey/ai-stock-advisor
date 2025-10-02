@@ -42,8 +42,17 @@ def track_performance():
         print(f"❌ Could not fetch Alpaca positions: {e}")
         return
 
-    if not positions_map:
-        print("ℹ️ No open positions to analyze.")
+    # Get account details to include cash balance
+    try:
+        account = trading_client.get_account()
+        cash_balance = float(account.cash)
+        print(f"✅ Fetched account details. Cash balance: ${cash_balance:,.2f}")
+    except APIError as e:
+        print(f"❌ Could not fetch Alpaca account details: {e}")
+        cash_balance = 0.0 # Default to 0 if fetch fails
+
+    if not positions_map and cash_balance == 0:
+        print("ℹ️ No open positions or cash balance to analyze.")
         return
 
     print("\n--- Live Portfolio Performance ---")
@@ -72,11 +81,15 @@ def track_performance():
     print("-" * 110)
     
     total_unrealized_pl_pct = (total_unrealized_pl / total_cost_basis) * 100 if total_cost_basis != 0 else 0.0
+    total_portfolio_value = total_market_value + cash_balance
     
     print("\n--- Portfolio Summary ---")
-    print(f"Total Market Value:   ${total_market_value:,.2f}")
-    print(f"Total Cost Basis:     ${total_cost_basis:,.2f}")
-    print(f"Total Unrealized P&L: ${total_unrealized_pl:,.2f} ({total_unrealized_pl_pct:.2f}%)")
+    print(f"Total Market Value of Positions: ${total_market_value:,.2f}")
+    print(f"Cash Balance:                    ${cash_balance:,.2f}")
+    print(f"Total Portfolio Value:           ${total_portfolio_value:,.2f}")
+    print("-" * 40)
+    print(f"Total Cost Basis:                ${total_cost_basis:,.2f}")
+    print(f"Total Unrealized P&L:            ${total_unrealized_pl:,.2f} ({total_unrealized_pl_pct:.2f}%)")
     print("-" * 40)
 
 

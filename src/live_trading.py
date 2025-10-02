@@ -15,7 +15,8 @@ from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.common.exceptions import APIError
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockLatestTradeRequest, StockLatestQuoteRequest
+from alpaca.data.requests import StockLatestTradeRequest, StockLatestQuoteRequest, StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
 import joblib
 import pandas as pd
 from tqdm import tqdm
@@ -25,16 +26,16 @@ from datetime import datetime, timedelta, timezone
 ALPACA_API_KEY          = os.environ.get("ALPACA_API_KEY")
 ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
 
-def _get_alpaca_account_balance(trading_client: TradingClient) -> Optional[float]:
-    """Fetches the current day trading buying power from the Alpaca trading account."""
+def _get_alpaca_buying_power(trading_client: TradingClient) -> Optional[float]:
+    """Fetches the current Reg T buying power from the Alpaca trading account."""
     try:
         account = trading_client.get_account()
-        if account and account.daytrading_buying_power:
-            buying_power = float(account.daytrading_buying_power)
-            print(f"✅ Fetched Alpaca day trading buying power: ${buying_power:,.2f}")
+        if account and account.regt_buying_power:
+            buying_power = float(account.regt_buying_power)
+            print(f"✅ Fetched Alpaca Reg T Buying Power: ${buying_power:,.2f}")
             return buying_power
         else:
-            print("⚠️ Could not retrieve Alpaca day trading buying power.")
+            print("⚠️ Could not retrieve Alpaca Reg T buying power.")
             return None
     except Exception as e:
         print(f"  ⚠️ Error fetching Alpaca account balance: {e}")
@@ -75,20 +76,38 @@ def _get_alpaca_portfolio_positions(trading_client: TradingClient) -> Tuple[List
 def _get_latest_price_from_alpaca(ticker: str) -> Optional[float]:
     """
     Fetches the latest price for a ticker from Alpaca.
-    It first tries to get the latest quote and uses the ask price.
-    If that fails, it falls back to the latest trade price.
+    It first tries to get the latest daily bar and uses the closing price.
+    If that fails, it falls back to the latest quote, then the latest trade.
     """
     try:
         data_client = StockHistoricalDataClient(ALPACA_API_KEY, ALPACA_SECRET_KEY)
         
-        # First, try to get the latest quote (often available on free tiers)
+        # Primary method: Fetch the latest daily bar
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=5) # Look back 5 days for the latest bar
+        
+        bars_request = StockBarsRequest(
+            symbol_or_symbols=[ticker],
+            timeframe=TimeFrame.Day,
+            start=start_date,
+            end=end_date
+        )
+        latest_bars = data_client.get_stock_bars(bars_request)
+        
+        if ticker in latest_bars.df.index.get_level_values('symbol'):
+            ticker_bars = latest_bars.df.loc[ticker]
+            if not ticker_bars.empty:
+                return float(ticker_bars.iloc[-1]['close'])
+
+        # Fallback 1: Try to get the latest quote
+        print(f"  ℹ️ Could not get latest bar for {ticker}, falling back to latest quote.")
         quote_request_params = StockLatestQuoteRequest(symbol_or_symbols=[ticker])
         latest_quote = data_client.get_stock_latest_quote(quote_request_params)
         
         if ticker in latest_quote and latest_quote[ticker] and latest_quote[ticker].ask_price is not None:
             return float(latest_quote[ticker].ask_price)
             
-        # If quote fails or is incomplete, fall back to latest trade
+        # Fallback 2: Try the latest trade
         print(f"  ℹ️ Could not get latest quote for {ticker}, falling back to latest trade.")
         trade_request_params = StockLatestTradeRequest(symbol_or_symbols=[ticker])
         latest_trade = data_client.get_stock_latest_trade(trade_request_params)
@@ -256,7 +275,7 @@ def run_live_trading():
     print("...waiting a moment for sell orders to potentially fill and update buying power...")
     import time
     time.sleep(5) # Wait 5 seconds
-    buying_power = _get_alpaca_account_balance(alpaca_trading_client)
+    buying_power = _get_alpaca_buying_power(alpaca_trading_client)
     
     CAPITAL_PER_TRADE = 1000.0
     

@@ -63,7 +63,6 @@ try:
     from alpaca.trading.requests import MarketOrderRequest, GetAssetsRequest # For submitting orders
     from alpaca.trading.enums import OrderSide, TimeInForce, AssetClass, AssetStatus # For order details
     from alpaca.common.exceptions import APIError
-    from src.live_trading import _get_alpaca_account_balance, _get_alpaca_portfolio_positions
     ALPACA_AVAILABLE = True
 except ImportError:
     print("⚠️ Alpaca SDK not installed. Run: pip install alpaca-py. Alpaca data provider will be skipped.")
