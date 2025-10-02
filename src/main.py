@@ -76,7 +76,7 @@ SEED                    = 42
 np.random.seed(SEED)
 
 # --- Provider & caching
-DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', or 'alpaca'
+DATA_PROVIDER           = 'twelvedata'    # 'stooq', 'yahoo', 'alpaca', or 'twelvedata'
 USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin
 DATA_CACHE_DIR          = Path("data_cache")
 TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
@@ -86,6 +86,9 @@ CACHE_DAYS              = 7
 # Alpaca API credentials (set as environment variables for security)
 ALPACA_API_KEY          = os.environ.get("ALPACA_API_KEY")
 ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
+
+# TwelveData API credentials
+TWELVEDATA_API_KEY      = os.environ.get("TWELVEDATA_API_KEY")
 
 # --- Universe / selection
 MARKET_SELECTION = {
@@ -233,6 +236,46 @@ def _fetch_from_alpaca(ticker: str, start: datetime, end: datetime) -> pd.DataFr
             print(f"  ℹ️ Alpaca (free tier) does not provide recent data for {ticker}. Attempting fallback provider.")
         else:
             print(f"  ⚠️ Could not fetch data from Alpaca for {ticker}: {e}")
+        return pd.DataFrame()
+
+def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
+    """Fetch OHLCV from TwelveData."""
+    if not TWELVEDATA_API_KEY:
+        return pd.DataFrame()
+
+    try:
+        # TwelveData API endpoint for historical data
+        url = f"https://api.twelvedata.com/time_series?symbol={ticker}&interval=1day&apikey={TWELVEDATA_API_KEY}&start_date={start.strftime('%Y-%m-%d')}&end_date={end.strftime('%Y-%m-%d')}&outputsize=5000"
+        
+        import requests
+        response = requests.get(url)
+        response.raise_for_status() # Raise an exception for HTTP errors
+        data = response.json()
+
+        if "values" not in data or not data["values"]:
+            print(f"  ℹ️ No data found for {ticker} from TwelveData.")
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data["values"])
+        df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+        df = df.set_index("datetime")
+        df.index.name = "Date"
+        
+        df = df.rename(columns={
+            'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
+        })
+        
+        # Ensure all relevant columns are numeric
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        return df.sort_index()
+    except requests.exceptions.RequestException as e:
+        print(f"  ⚠️ Error fetching data from TwelveData for {ticker}: {e}")
+        return pd.DataFrame()
+    except Exception as e:
+        print(f"  ⚠️ An unexpected error occurred while processing TwelveData for {ticker}: {e}")
         return pd.DataFrame()
 
 # ============================
@@ -410,10 +453,27 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         
         provider = DATA_PROVIDER.lower()
         
-        if provider == 'alpaca':
+        if provider == 'twelvedata':
+            if not TWELVEDATA_API_KEY:
+                print("⚠️ TwelveData is selected but API key is missing. Falling back to Yahoo.")
+                provider = 'yahoo'
+            else:
+                twelvedata_df = _fetch_from_twelvedata(ticker, start_utc, end_utc)
+                if not twelvedata_df.empty:
+                    price_df = twelvedata_df.copy()
+                elif USE_YAHOO_FALLBACK:
+                    print(f"  ℹ️ TwelveData fetch failed for {ticker}. Trying Yahoo Finance fallback...")
+                    try:
+                        downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
+                        if downloaded_df is not None and not downloaded_df.empty:
+                            price_df = downloaded_df.dropna()
+                    except Exception as e:
+                        print(f"  ⚠️ Yahoo Finance fallback also failed for {ticker}: {e}")
+
+        elif provider == 'alpaca':
             if not ALPACA_AVAILABLE or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
                 print("⚠️ Alpaca is selected but API keys are missing or SDK not available. Falling back to Yahoo.")
-                provider = 'yahoo' # Fallback if Alpaca is selected but not configured
+                provider = 'yahoo'
             else:
                 alpaca_df = _fetch_from_alpaca(ticker, start_utc, end_utc)
                 if not alpaca_df.empty:
@@ -426,9 +486,8 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                             price_df = downloaded_df.dropna()
                     except Exception as e:
                         print(f"  ⚠️ Yahoo Finance fallback also failed for {ticker}: {e}")
-                        # Do not raise, allow function to continue and return empty df if needed
         
-        if provider == 'stooq':
+        elif provider == 'stooq':
             stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
             if stooq_df.empty and not ticker.upper().endswith('.US'):
                 stooq_df = _fetch_from_stooq(f"{ticker}.US", start_utc, end_utc)
@@ -442,18 +501,15 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                         price_df = downloaded_df.dropna()
                 except Exception as e:
                     print(f"  ⚠️ Yahoo Finance fallback (after Stooq) also failed for {ticker}: {e}")
-                    # Do not raise
         
-        if provider == 'yahoo' or price_df.empty: # If provider was yahoo, or if previous provider failed
+        if price_df.empty: # If previous provider failed or was yahoo
             try:
                 downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
                 if downloaded_df is not None and not downloaded_df.empty:
                     price_df = downloaded_df.dropna()
             except Exception as e:
-                # This is the final attempt, if it fails, we just log it.
                 print(f"  ⚠️ Final Yahoo download attempt failed for {ticker}: {e}")
-                # Do not raise e
-            if price_df.empty and pdr is not None and DATA_PROVIDER.lower() != 'stooq': # Only try stooq fallback if not already tried
+            if price_df.empty and pdr is not None and DATA_PROVIDER.lower() != 'stooq':
                 print(f"  ℹ️ Yahoo data for {ticker} empty. Falling back to Stooq.")
                 stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
                 if stooq_df.empty and not ticker.upper().endswith('.US'):
@@ -1246,11 +1302,19 @@ def train_worker(params: Tuple) -> Dict:
             'ticker': ticker,
             'model_buy': model_buy,
             'model_sell': model_sell,
-            'scaler': final_scaler
+            'scaler': final_scaler,
+            'status': 'trained',
+            'reason': None
         }
     else:
-        print(f"  ❌ Failed to train models for {ticker}.")
-        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None}
+        reason = "Insufficient training data" # Default reason
+        if df_train.empty:
+            reason = f"Insufficient training data (initial rows: {len(df_train_period)})"
+        elif len(df_train) < 50:
+            reason = f"Not enough rows after feature prep ({len(df_train)} rows, need >= 50)"
+        
+        print(f"  ❌ Failed to train models for {ticker}. Reason: {reason}")
+        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None, 'status': 'failed', 'reason': reason}
 
 # ============================
 # Rule-based backtester (ATR & ML gate)
@@ -2435,6 +2499,7 @@ def main(
             print(f"  ⚠️ Could not slice training data for {ticker} for 1-Year period. Skipping.")
             continue
     models_buy, models_sell, scalers = {}, {}, {}
+    failed_training_tickers_1y = {} # New: Store failed tickers and their reasons
 
     if run_parallel:
         print(f"🤖 Training 1-Year models in parallel for {len(top_tickers)} tickers using {NUM_PROCESSES} processes...")
@@ -2445,14 +2510,32 @@ def main(
         training_results_1y = [train_worker(p) for p in tqdm(training_params_1y, desc="Training 1-Year Models")]
 
     for res in training_results_1y:
-        if res and res.get('model_buy'):
+        if res and res.get('status') == 'trained':
             models_buy[res['ticker']] = res['model_buy']
             models_sell[res['ticker']] = res['model_sell']
             scalers[res['ticker']] = res['scaler']
+        elif res and res.get('status') == 'failed':
+            failed_training_tickers_1y[res['ticker']] = res['reason']
 
     if not models_buy and USE_MODEL_GATE:
         print("⚠️ No models were trained for 1-Year backtest. Model-gating will be disabled for this run.\n")
-
+    
+    # Filter out failed tickers from top_tickers for subsequent steps
+    top_tickers_1y_filtered = [t for t in top_tickers if t not in failed_training_tickers_1y]
+    print(f"  ℹ️ {len(failed_training_tickers_1y)} tickers failed 1-Year model training and will be skipped: {', '.join(failed_training_tickers_1y.keys())}")
+    
+    # Update top_performers_data to reflect only successfully trained tickers
+    top_performers_data_1y_filtered = [item for item in top_performers_data if item[0] in top_tickers_1y_filtered]
+    
+    # Update capital_per_stock based on filtered tickers
+    capital_per_stock_1y = current_initial_balance / max(len(top_tickers_1y_filtered), 1)
+    
+    # Update optimized_params_per_ticker to only include successfully trained tickers
+    if optimized_params_per_ticker:
+        optimized_params_per_ticker_1y_filtered = {k: v for k, v in optimized_params_per_ticker.items() if k in top_tickers_1y_filtered}
+    else:
+        optimized_params_per_ticker_1y_filtered = {}
+    
     # --- Fetch Market Data (if enabled) ---
     market_data = None
     if USE_MARKET_FILTER:
@@ -2465,8 +2548,8 @@ def main(
         else:
             print(f"⚠️ Could not load market data for {MARKET_FILTER_TICKER}. Filter will be disabled.\n")
 
-    capital_per_stock = current_initial_balance / max(len(top_tickers), 1)
-
+    # capital_per_stock = current_initial_balance / max(len(top_tickers), 1) # Original line, now replaced by capital_per_stock_1y
+    
     # --- OPTIMIZE THRESHOLDS ---
     # Ensure logs directory exists for optimized parameters
     _ensure_dir(TOP_CACHE_PATH.parent)
@@ -2484,7 +2567,7 @@ def main(
     if force_optimization or not optimized_params_file.exists():
         print("\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (forced or no existing file)...")
         optimized_params_per_ticker = optimize_thresholds_for_portfolio(
-            top_tickers=top_tickers,
+            top_tickers=top_tickers_1y_filtered, # Use filtered tickers for optimization
             train_start=train_start_1y, # Use training data for optimization
             train_end=train_end_1y,
             target_percentage=target_percentage,
@@ -2493,7 +2576,7 @@ def main(
             models_sell=models_sell,
             scalers=scalers,
             market_data=market_data,
-            capital_per_stock=capital_per_stock,
+            capital_per_stock=capital_per_stock_1y, # Use filtered capital per stock
             run_parallel=run_parallel
         )
         if optimized_params_per_ticker:
@@ -2506,13 +2589,15 @@ def main(
     else:
         try:
             with open(optimized_params_file, 'r') as f:
-                optimized_params_per_ticker = json.load(f)
+                loaded_optimized_params = json.load(f)
+                # Filter loaded params to only include successfully trained tickers
+                optimized_params_per_ticker = {k: v for k, v in loaded_optimized_params.items() if k in top_tickers_1y_filtered}
             print(f"\n✅ Loaded optimized parameters from {optimized_params_file} (set 'force_optimization=True' in main() call to re-run)")
         except Exception as e:
             print(f"⚠️ Could not load optimized parameters from file: {e}. Re-running optimization.")
             print(f"\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (re-running due to load error)...")
             optimized_params_per_ticker = optimize_thresholds_for_portfolio(
-                top_tickers=top_tickers,
+                top_tickers=top_tickers_1y_filtered, # Use filtered tickers for optimization
                 train_start=train_start_1y, # Use training data for optimization
                 train_end=train_end_1y,
                 target_percentage=target_percentage,
@@ -2521,7 +2606,7 @@ def main(
                 models_sell=models_sell,
                 scalers=scalers,
                 market_data=market_data,
-                capital_per_stock=capital_per_stock,
+                capital_per_stock=capital_per_stock_1y, # Use filtered capital per stock
                 run_parallel=run_parallel
             )
             if optimized_params_per_ticker:
@@ -2538,18 +2623,18 @@ def main(
         all_tickers_data=all_tickers_data,
         start_date=bt_start_1y,
         end_date=bt_end,
-        top_tickers=top_tickers,
+        top_tickers=top_tickers_1y_filtered, # Use filtered tickers for backtest
         models_buy=models_buy,
         models_sell=models_sell,
         scalers=scalers,
         market_data=market_data,
         optimized_params_per_ticker=optimized_params_per_ticker,
-        capital_per_stock=capital_per_stock,
+        capital_per_stock=capital_per_stock_1y, # Use filtered capital per stock
         # Pass the global target_percentage here, as the individual backtest_worker will use the optimized one
         target_percentage=target_percentage, 
         run_parallel=run_parallel,
         period_name="1-Year",
-        top_performers_data=top_performers_data # Pass top_performers_data
+        top_performers_data=top_performers_data_1y_filtered # Pass filtered top_performers_data
     )
     ai_1y_return = ((final_strategy_value_1y - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
 
@@ -2560,12 +2645,12 @@ def main(
         df_bh = load_prices_robust(ticker, bt_start_1y, bt_end)
         if not df_bh.empty:
             start_price = float(df_bh["Close"].iloc[0])
-            shares_bh = int(capital_per_stock / start_price) if start_price > 0 else 0
-            cash_bh = capital_per_stock - shares_bh * start_price
+            shares_bh = int(capital_per_stock_1y / start_price) if start_price > 0 else 0 # Use filtered capital per stock
+            cash_bh = capital_per_stock_1y - shares_bh * start_price # Use filtered capital per stock
             buy_hold_results_1y.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
         else:
-            buy_hold_results_1y.append(capital_per_stock) # If no data, assume initial capital
-    final_buy_hold_value_1y = sum(buy_hold_results_1y) + (len(top_tickers) - len(processed_tickers_1y)) * capital_per_stock
+            buy_hold_results_1y.append(capital_per_stock_1y) # If no data, assume initial capital
+    final_buy_hold_value_1y = sum(buy_hold_results_1y) + (len(top_tickers_1y_filtered) - len(processed_tickers_1y)) * capital_per_stock_1y
     print("✅ 1-Year Buy & Hold calculation complete.")
 
 
@@ -2576,7 +2661,7 @@ def main(
     train_start_ytd = train_end_ytd - timedelta(days=TRAIN_LOOKBACK_DAYS)
     
     training_params_ytd = []
-    for ticker in top_tickers:
+    for ticker in top_tickers_1y_filtered: # Use filtered tickers for YTD training
         try:
             # Slice the main DataFrame for the training period
             ticker_train_data = all_tickers_data.loc[train_start_ytd:train_end_ytd, (slice(None), ticker)]
@@ -2586,23 +2671,42 @@ def main(
             print(f"  ⚠️ Could not slice training data for {ticker} for YTD period. Skipping.")
             continue
     models_buy_ytd, models_sell_ytd, scalers_ytd = {}, {}, {}
+    failed_training_tickers_ytd = {} # New: Store failed tickers and their reasons
 
     if run_parallel:
-        print(f"🤖 Training YTD models in parallel for {len(top_tickers)} tickers using {NUM_PROCESSES} processes...")
+        print(f"🤖 Training YTD models in parallel for {len(top_tickers_1y_filtered)} tickers using {NUM_PROCESSES} processes...")
         with Pool(processes=NUM_PROCESSES) as pool:
             training_results_ytd = list(tqdm(pool.imap(train_worker, training_params_ytd), total=len(training_params_ytd), desc="Training YTD Models"))
     else:
-        print(f"🤖 Training YTD models sequentially for {len(top_tickers)} tickers...")
+        print(f"🤖 Training YTD models sequentially for {len(top_tickers_1y_filtered)} tickers...")
         training_results_ytd = [train_worker(p) for p in tqdm(training_params_ytd, desc="Training YTD Models")]
 
     for res in training_results_ytd:
-        if res and res.get('model_buy'):
+        if res and res.get('status') == 'trained':
             models_buy_ytd[res['ticker']] = res['model_buy']
             models_sell_ytd[res['ticker']] = res['model_sell']
             scalers_ytd[res['ticker']] = res['scaler']
+        elif res and res.get('status') == 'failed':
+            failed_training_tickers_ytd[res['ticker']] = res['reason']
 
     if not models_buy_ytd and USE_MODEL_GATE:
         print("⚠️ No models were trained for YTD backtest. Model-gating will be disabled for this run.\n")
+
+    # Filter out failed tickers from top_tickers_1y_filtered for subsequent steps
+    top_tickers_ytd_filtered = [t for t in top_tickers_1y_filtered if t not in failed_training_tickers_ytd]
+    print(f"  ℹ️ {len(failed_training_tickers_ytd)} tickers failed YTD model training and will be skipped: {', '.join(failed_training_tickers_ytd.keys())}")
+
+    # Update top_performers_data to reflect only successfully trained tickers
+    top_performers_data_ytd_filtered = [item for item in top_performers_data_1y_filtered if item[0] in top_tickers_ytd_filtered]
+
+    # Update capital_per_stock based on filtered tickers
+    capital_per_stock_ytd = current_initial_balance / max(len(top_tickers_ytd_filtered), 1)
+
+    # Update optimized_params_per_ticker to only include successfully trained tickers
+    if optimized_params_per_ticker:
+        optimized_params_per_ticker_ytd_filtered = {k: v for k, v in optimized_params_per_ticker.items() if k in top_tickers_ytd_filtered}
+    else:
+        optimized_params_per_ticker_ytd_filtered = {}
 
     # --- Run YTD Backtest ---
     print("\n🔍 Step 6: Running YTD Backtest...")
@@ -2610,17 +2714,17 @@ def main(
         all_tickers_data=all_tickers_data,
         start_date=ytd_start_date,
         end_date=bt_end,
-        top_tickers=top_tickers,
+        top_tickers=top_tickers_ytd_filtered, # Use filtered tickers for backtest
         models_buy=models_buy_ytd,
         models_sell=models_sell_ytd,
         scalers=scalers_ytd,
         market_data=market_data, # Use the same market data as 1-year backtest
-        optimized_params_per_ticker=optimized_params_per_ticker,
-        capital_per_stock=capital_per_stock,
+        optimized_params_per_ticker=optimized_params_per_ticker_ytd_filtered,
+        capital_per_stock=capital_per_stock_ytd, # Use filtered capital per stock
         target_percentage=target_percentage,
         run_parallel=run_parallel,
         period_name="YTD",
-        top_performers_data=top_performers_data # Pass top_performers_data
+        top_performers_data=top_performers_data_ytd_filtered # Pass filtered top_performers_data
     )
     ai_ytd_return = ((final_strategy_value_ytd - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
 
@@ -2631,12 +2735,12 @@ def main(
         df_bh = load_prices_robust(ticker, ytd_start_date, bt_end)
         if not df_bh.empty:
             start_price = float(df_bh["Close"].iloc[0])
-            shares_bh = int(capital_per_stock / start_price) if start_price > 0 else 0
-            cash_bh = capital_per_stock - shares_bh * start_price
+            shares_bh = int(capital_per_stock_ytd / start_price) if start_price > 0 else 0 # Use filtered capital per stock
+            cash_bh = capital_per_stock_ytd - shares_bh * start_price # Use filtered capital per stock
             buy_hold_results_ytd.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
         else:
-            buy_hold_results_ytd.append(capital_per_stock) # If no data, assume initial capital
-    final_buy_hold_value_ytd = sum(buy_hold_results_ytd) + (len(top_tickers) - len(processed_tickers_ytd_local)) * capital_per_stock
+            buy_hold_results_ytd.append(capital_per_stock_ytd) # If no data, assume initial capital
+    final_buy_hold_value_ytd = sum(buy_hold_results_ytd) + (len(top_tickers_ytd_filtered) - len(processed_tickers_ytd_local)) * capital_per_stock_ytd
     print("✅ YTD Buy & Hold calculation complete.")
 
     # --- Training Models (for 3-Month Backtest) ---
@@ -2646,7 +2750,7 @@ def main(
     train_start_3month = train_end_3month - timedelta(days=TRAIN_LOOKBACK_DAYS)
 
     training_params_3month = []
-    for ticker in top_tickers:
+    for ticker in top_tickers_ytd_filtered: # Use filtered tickers for 3-Month training
         try:
             # Slice the main DataFrame for the training period
             ticker_train_data = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
@@ -2656,23 +2760,42 @@ def main(
             print(f"  ⚠️ Could not slice training data for {ticker} for 3-Month period. Skipping.")
             continue
     models_buy_3month, models_sell_3month, scalers_3month = {}, {}, {}
+    failed_training_tickers_3month = {} # New: Store failed tickers and their reasons
 
     if run_parallel:
-        print(f"🤖 Training 3-Month models in parallel for {len(top_tickers)} tickers using {NUM_PROCESSES} processes...")
+        print(f"🤖 Training 3-Month models in parallel for {len(top_tickers_ytd_filtered)} tickers using {NUM_PROCESSES} processes...")
         with Pool(processes=NUM_PROCESSES) as pool:
             training_results_3month = list(tqdm(pool.imap(train_worker, training_params_3month), total=len(training_params_3month), desc="Training 3-Month Models"))
     else:
-        print(f"🤖 Training 3-Month models sequentially for {len(top_tickers)} tickers...")
+        print(f"🤖 Training 3-Month models sequentially for {len(top_tickers_ytd_filtered)} tickers...")
         training_results_3month = [train_worker(p) for p in tqdm(training_params_3month, desc="Training 3-Month Models")]
 
     for res in training_results_3month:
-        if res and res.get('model_buy'):
+        if res and res.get('status') == 'trained':
             models_buy_3month[res['ticker']] = res['model_buy']
             models_sell_3month[res['ticker']] = res['model_sell']
-            scalers_3month[res['scaler']] = res['scaler']
+            scalers_3month[res['ticker']] = res['scaler']
+        elif res and res.get('status') == 'failed':
+            failed_training_tickers_3month[res['ticker']] = res['reason']
 
     if not models_buy_3month and USE_MODEL_GATE:
         print("⚠️ No models were trained for 3-Month backtest. Model-gating will be disabled for this run.\n")
+
+    # Filter out failed tickers from top_tickers_ytd_filtered for subsequent steps
+    top_tickers_3month_filtered = [t for t in top_tickers_ytd_filtered if t not in failed_training_tickers_3month]
+    print(f"  ℹ️ {len(failed_training_tickers_3month)} tickers failed 3-Month model training and will be skipped: {', '.join(failed_training_tickers_3month.keys())}")
+
+    # Update top_performers_data to reflect only successfully trained tickers
+    top_performers_data_3month_filtered = [item for item in top_performers_data_ytd_filtered if item[0] in top_tickers_3month_filtered]
+
+    # Update capital_per_stock based on filtered tickers
+    capital_per_stock_3month = current_initial_balance / max(len(top_tickers_3month_filtered), 1)
+
+    # Update optimized_params_per_ticker to only include successfully trained tickers
+    if optimized_params_per_ticker:
+        optimized_params_per_ticker_3month_filtered = {k: v for k, v in optimized_params_per_ticker.items() if k in top_tickers_3month_filtered}
+    else:
+        optimized_params_per_ticker_3month_filtered = {}
 
     # --- Run 3-Month Backtest ---
     print("\n🔍 Step 8: Running 3-Month Backtest...")
@@ -2680,17 +2803,17 @@ def main(
         all_tickers_data=all_tickers_data,
         start_date=bt_start_3month,
         end_date=bt_end,
-        top_tickers=top_tickers,
+        top_tickers=top_tickers_3month_filtered, # Use filtered tickers for backtest
         models_buy=models_buy_3month,
         models_sell=models_sell_3month,
         scalers=scalers_3month,
         market_data=market_data,
-        optimized_params_per_ticker=optimized_params_per_ticker,
-        capital_per_stock=capital_per_stock,
+        optimized_params_per_ticker=optimized_params_per_ticker_3month_filtered,
+        capital_per_stock=capital_per_stock_3month, # Use filtered capital per stock
         target_percentage=target_percentage,
         run_parallel=run_parallel,
         period_name="3-Month",
-        top_performers_data=top_performers_data # Pass top_performers_data
+        top_performers_data=top_performers_data_3month_filtered # Pass filtered top_performers_data
     )
     ai_3month_return = ((final_strategy_value_3month - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
 
@@ -2701,20 +2824,26 @@ def main(
         df_bh = load_prices_robust(ticker, bt_start_3month, bt_end)
         if not df_bh.empty:
             start_price = float(df_bh["Close"].iloc[0])
-            shares_bh = int(capital_per_stock / start_price) if start_price > 0 else 0
-            cash_bh = capital_per_stock - shares_bh * start_price
+            shares_bh = int(capital_per_stock_3month / start_price) if start_price > 0 else 0 # Use filtered capital per stock
+            cash_bh = capital_per_stock_3month - shares_bh * start_price # Use filtered capital per stock
             buy_hold_results_3month.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
         else:
-            buy_hold_results_3month.append(capital_per_stock)
-    final_buy_hold_value_3month = sum(buy_hold_results_3month) + (len(top_tickers) - len(processed_tickers_3month_local)) * capital_per_stock
+            buy_hold_results_3month.append(capital_per_stock_3month)
+    final_buy_hold_value_3month = sum(buy_hold_results_3month) + (len(top_tickers_3month_filtered) - len(processed_tickers_3month_local)) * capital_per_stock_3month
     print("✅ 3-Month Buy & Hold calculation complete.")
 
     # --- Prepare data for the final summary table (using 1-Year results for the table) ---
     print("\n📝 Preparing final summary data...")
     final_results = []
+    
+    # Combine all failed tickers from all periods
+    all_failed_tickers = {}
+    all_failed_tickers.update(failed_training_tickers_1y)
+    all_failed_tickers.update(failed_training_tickers_ytd)
+    all_failed_tickers.update(failed_training_tickers_3month)
+
+    # Add successfully processed tickers
     for i, ticker in enumerate(processed_tickers_1y):
-        # The performance_metrics_1y list contains the dictionaries returned by backtest_worker
-        # Each dictionary has 'perf_data', 'individual_bh_return', and 'last_ai_action'
         backtest_result_for_ticker = next((res for res in performance_metrics_1y if res['ticker'] == ticker), None)
         
         if backtest_result_for_ticker:
@@ -2724,14 +2853,12 @@ def main(
             buy_prob = backtest_result_for_ticker['buy_prob']
             sell_prob = backtest_result_for_ticker['sell_prob']
         else:
-            # Fallback if ticker not found in backtest_results (should not happen if processed_tickers_1y is accurate)
             perf_data = {'sharpe_ratio': 0.0}
             individual_bh_return = 0.0
             last_ai_action = "N/A"
             buy_prob = 0.0
             sell_prob = 0.0
 
-        # Find the corresponding performance data (1Y and YTD from find_top_performers)
         perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
         for t, p1y, pytd in top_performers_data:
             if t == ticker:
@@ -2744,13 +2871,31 @@ def main(
             'performance': strategy_results_1y[i],
             'sharpe': perf_data['sharpe_ratio'],
             'one_year_perf': perf_1y_benchmark,
-            'ytd_perf': perf_ytd_benchmark, # Use perf_ytd_benchmark here for consistency
+            'ytd_perf': perf_ytd_benchmark,
             'individual_bh_return': individual_bh_return,
             'last_ai_action': last_ai_action,
             'buy_prob': buy_prob,
-            'sell_prob': sell_prob
+            'sell_prob': sell_prob,
+            'status': 'trained',
+            'reason': None
         })
     
+    # Add failed tickers to the final results
+    for ticker, reason in all_failed_tickers.items():
+        final_results.append({
+            'ticker': ticker,
+            'performance': current_initial_balance / max(len(top_tickers), 1), # Assign initial capital for failed tickers
+            'sharpe': np.nan,
+            'one_year_perf': np.nan,
+            'ytd_perf': np.nan,
+            'individual_bh_return': np.nan,
+            'last_ai_action': "FAILED",
+            'buy_prob': np.nan,
+            'sell_prob': np.nan,
+            'status': 'failed',
+            'reason': reason
+        })
+
     # Sort by 1Y performance for the final table, handling potential NaN values
     sorted_final_results = sorted(final_results, key=lambda x: x.get('one_year_perf', -np.inf) if pd.notna(x.get('one_year_perf')) else -np.inf, reverse=True)
     
