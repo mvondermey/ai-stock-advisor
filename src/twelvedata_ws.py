@@ -35,8 +35,18 @@ class TwelveDataWebSocketClient:
                 # print(f"  [WS] Received price for {symbol}: {price}")
                 if self.on_message_callback:
                     self.on_message_callback(data)
-        elif data.get('event') == 'subscribe-status' and data.get('status') == 'ok':
-            print(f"  [WS] Successfully subscribed to {data.get('symbol')}")
+        elif data.get('event') == 'subscribe-status':
+            if data.get('status') == 'ok':
+                for s in data.get('success', []):
+                    print(f"  [WS] Successfully subscribed to {s.get('symbol')}")
+            if data.get('fails'):
+                for f in data.get('fails', []):
+                    symbol = f.get('symbol')
+                    reason = f.get('reason', 'Unknown reason')
+                    print(f"  [WS] Failed to subscribe to {symbol}: {reason}")
+                    with self._lock:
+                        if symbol in self.subscribed_symbols:
+                            self.subscribed_symbols.remove(symbol) # Remove failed symbols from subscribed list
         elif data.get('event') == 'heartbeat':
             pass # Ignore heartbeat messages
         elif data.get('event') == 'liveness':
@@ -89,7 +99,7 @@ class TwelveDataWebSocketClient:
                 }
             }
             self.ws.send(json.dumps(subscribe_message))
-            time.sleep(0.1) # Add a small delay to respect rate limits
+            time.sleep(0.6) # Increased delay to respect 100 events per minute limit (1 event per 0.6 seconds)
         else:
             print(f"  [WS] Not connected to WebSocket, cannot subscribe to {symbol}. Will attempt to subscribe on connect.")
 

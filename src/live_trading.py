@@ -18,7 +18,7 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestTradeRequest, StockLatestQuoteRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from multiprocessing import Pool, cpu_count
-from main import train_worker, TARGET_PERCENTAGE, TRAIN_LOOKBACK_DAYS, TWELVEDATA_API_KEY
+from main import train_worker, TARGET_PERCENTAGE, TRAIN_LOOKBACK_DAYS, TWELVEDATA_API_KEY, get_all_tickers # Import get_all_tickers
 import joblib
 import pandas as pd
 from tqdm import tqdm
@@ -378,14 +378,16 @@ def run_live_trading():
     else:
         print(f"⚠️ Optimized parameters file not found at {optimized_params_path}. Using default thresholds.")
 
-    # --- Fetch all tradable tickers ---
+    # --- Fetch all tradable tickers based on MARKET_SELECTION in main.py ---
     try:
-        search_params = GetAssetsRequest(asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE)
-        assets = alpaca_trading_client.get_all_assets(search_params)
-        tradable_tickers = [a.symbol for a in assets if a.tradable]
-        print(f"✅ Fetched {len(tradable_tickers)} tradable US equity tickers from Alpaca.")
+        # Use get_all_tickers from main.py to respect MARKET_SELECTION
+        tradable_tickers = get_all_tickers()
+        if not tradable_tickers:
+            print("❌ No tradable tickers found based on MARKET_SELECTION. Aborting live trading.")
+            return
+        print(f"✅ Fetched {len(tradable_tickers)} tradable tickers based on MARKET_SELECTION.")
     except Exception as e:
-        print(f"⚠️ Could not fetch asset list from Alpaca ({e}). Aborting.")
+        print(f"⚠️ Could not fetch tradable tickers ({e}). Aborting live trading.")
         return
 
     if TWELVEDATA_API_KEY:

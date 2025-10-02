@@ -92,9 +92,9 @@ TWELVEDATA_API_KEY      = os.environ.get("TWELVEDATA_API_KEY")
 
 # --- Universe / selection
 MARKET_SELECTION = {
-    "ALPACA_STOCKS": True, # Fetch all tradable US equities from Alpaca
+    "ALPACA_STOCKS": False, # Fetch all tradable US equities from Alpaca
     "NASDAQ_ALL": False,
-    "NASDAQ_100": False,
+    "NASDAQ_100": True,
     "SP500": False,
     "DOW_JONES": False,
     "POPULAR_ETFS": False,
