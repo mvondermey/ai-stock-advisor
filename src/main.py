@@ -68,6 +68,13 @@ except ImportError:
     print("⚠️ Alpaca SDK not installed. Run: pip install alpaca-py. Alpaca data provider will be skipped.")
     ALPACA_AVAILABLE = False
 
+# TwelveData SDK client
+try:
+    from src.twelvedata_sdk_client import TwelveDataSDKClient
+    TWELVEDATA_SDK_AVAILABLE = True
+except ImportError:
+    print("⚠️ TwelveData SDK client not found. TwelveData data provider will be skipped.")
+    TWELVEDATA_SDK_AVAILABLE = False
 # ============================
 # Configuration / Hyperparams
 # ============================
@@ -104,7 +111,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 0         # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 10         # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -138,12 +145,12 @@ USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # re-enable market filter
 MARKET_FILTER_TICKER    = 'SPY'
 MARKET_FILTER_SMA       = 200
-USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering
+USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
 
 # --- Misc
 INITIAL_BALANCE         = 50_000.0
 SAVE_PLOTS              = False
-FORCE_OPTIMIZATION      = False      # Set to True to force re-optimization of ML thresholds
+FORCE_OPTIMIZATION      = True      # Set to True to force re-optimization of ML thresholds
 
 # ============================
 # Helpers
@@ -239,21 +246,28 @@ def _fetch_from_alpaca(ticker: str, start: datetime, end: datetime) -> pd.DataFr
         return pd.DataFrame()
 
 def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
-    """Fetch OHLCV from TwelveData."""
-    if not TWELVEDATA_API_KEY:
+    """Fetch OHLCV from TwelveData using the SDK."""
+    if not TWELVEDATA_SDK_AVAILABLE or not TWELVEDATA_API_KEY:
         return pd.DataFrame()
 
     try:
-        # TwelveData API endpoint for historical data
-        url = f"https://api.twelvedata.com/time_series?symbol={ticker}&interval=1day&apikey={TWELVEDATA_API_KEY}&start_date={start.strftime('%Y-%m-%d')}&end_date={end.strftime('%Y-%m-%d')}&outputsize=5000"
+        sdk_client = TwelveDataSDKClient(api_key=TWELVEDATA_API_KEY)
         
-        import requests
-        response = requests.get(url)
-        response.raise_for_status() # Raise an exception for HTTP errors
-        data = response.json()
+        # The SDK's get_time_series already handles outputsize and interval
+        # We need to convert datetime objects to string for start_date and end_date
+        start_date_str = start.strftime('%Y-%m-%d')
+        end_date_str = end.strftime('%Y-%m-%d')
 
-        if "values" not in data or not data["values"]:
-            print(f"  ℹ️ No data found for {ticker} from TwelveData.")
+        data = sdk_client.get_time_series(
+            symbol=ticker,
+            interval="1day",
+            start_date=start_date_str,
+            end_date=end_date_str,
+            outputsize=5000 # Max outputsize for historical data
+        )
+
+        if not data or "values" not in data or not data["values"]:
+            print(f"  ℹ️ No data found for {ticker} from TwelveData SDK.")
             return pd.DataFrame()
 
         df = pd.DataFrame(data["values"])
@@ -271,13 +285,9 @@ def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime) -> pd.Da
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
         return df.sort_index()
-    except requests.exceptions.RequestException as e:
-        print(f"  ⚠️ Error fetching data from TwelveData for {ticker}: {e}")
-        return pd.DataFrame()
     except Exception as e:
-        print(f"  ⚠️ An unexpected error occurred while processing TwelveData for {ticker}: {e}")
+        print(f"  ⚠️ An error occurred while fetching data from TwelveData SDK for {ticker}: {e}")
         return pd.DataFrame()
-
 # ============================
 # Data access
 # ============================
@@ -2085,63 +2095,92 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
     ticker, train_start, train_end, default_target_percentage, feature_set, \
         model_buy, model_sell, scaler, market_data, capital_per_stock = params
 
+    sys.stderr.write(f"  [DEBUG] {current_process().name} - Optimizing for ticker: {ticker}\n")
+
     best_sharpe = -np.inf
     best_min_proba_buy = MIN_PROBA_BUY
     best_min_proba_sell = MIN_PROBA_SELL
     best_target_percentage = default_target_percentage
 
     # Define ranges for optimization
-    min_proba_buy_range = np.arange(0.2, 0.9, 0.1) # Example range
-    min_proba_sell_range = np.arange(0.2, 0.9, 0.1) # Example range
+    min_proba_buy_range = np.arange(0.2, 0.9, 0.05) # Example range
+    min_proba_sell_range = np.arange(0.2, 0.9, 0.05) # Example range
+    target_percentage_range = np.arange(0.005, 0.02, 0.005) # Example range for 0.5% to 2%
 
     # Load data for backtesting during optimization
+    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Loading prices for optimization...\n")
     df_backtest_opt = load_prices(ticker, train_start, train_end)
     if df_backtest_opt.empty:
+        sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: No data for optimization. Returning default.\n")
         return {'ticker': ticker, 'min_proba_buy': MIN_PROBA_BUY, 'min_proba_sell': MIN_PROBA_SELL, 'target_percentage': default_target_percentage}
+    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Prices loaded. Starting threshold loops.\n")
 
     for p_buy in min_proba_buy_range:
         for p_sell in min_proba_sell_range:
-            env = RuleTradingEnv(
-                df=df_backtest_opt.copy(),
-                ticker=ticker,
-                initial_balance=capital_per_stock,
-                transaction_cost=TRANSACTION_COST,
-                model_buy=model_buy,
-                model_sell=model_sell,
-                scaler=scaler,
-                per_ticker_min_proba_buy=p_buy,
-                per_ticker_min_proba_sell=p_sell,
-                use_gate=USE_MODEL_GATE,
-                market_data=market_data,
-                use_market_filter=USE_MARKET_FILTER,
-                feature_set=feature_set
-            )
-            final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob = env.run()
-            
-            # Calculate Sharpe Ratio for this combination
-            strategy_history = env.portfolio_history
-            if len(strategy_history) > 1:
-                strat_returns = pd.Series(strategy_history).pct_change(fill_method=None).dropna()
-                if strat_returns.std() > 0:
-                    sharpe = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252)
-                else:
-                    sharpe = 0.0 # Avoid division by zero
-            else:
-                sharpe = 0.0
+            for t_perc in target_percentage_range: # Loop for target_percentage
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Testing p_buy={p_buy:.2f}, p_sell={p_sell:.2f}, t_perc={t_perc:.3f}\n")
+                
+                # Re-fetch training data with the current target_percentage for this iteration
+                # This is crucial because fetch_training_data creates the TargetClassBuy/Sell based on target_percentage
+                df_train_for_opt, actual_feature_set_for_opt = fetch_training_data(ticker, df_backtest_opt.copy(), t_perc)
+                
+                if df_train_for_opt.empty:
+                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Insufficient data for optimization with t_perc={t_perc:.3f}. Skipping.\n")
+                    continue
 
-            # --- Diagnostic Logging ---
-            # This will show the Sharpe ratio for each combination of thresholds tested.
-            # print(f"  [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f} -> Sharpe={sharpe:.4f}")
-            
-            if sharpe > best_sharpe:
-                best_sharpe = sharpe
-                best_min_proba_buy = p_buy
-                best_min_proba_sell = p_sell
+                # Re-train models for this specific target_percentage
+                # This is a significant change: models need to be retrained for each target_percentage
+                # This will make the optimization much slower.
+                # A more efficient approach might be to pre-calculate targets for all percentages
+                # or to optimize target_percentage in a separate, outer loop.
+                # For now, we'll do it this way to ensure correctness.
+                model_buy_opt, scaler_buy_opt = train_and_evaluate_models(df_train_for_opt, "TargetClassBuy", actual_feature_set_for_opt, ticker=ticker)
+                model_sell_opt, scaler_sell_opt = train_and_evaluate_models(df_train_for_opt, "TargetClassSell", actual_feature_set_for_opt, ticker=ticker)
+                
+                if not (model_buy_opt and model_sell_opt and scaler_buy_opt):
+                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Models failed to train for t_perc={t_perc:.3f}. Skipping.\n")
+                    continue
+
+                env = RuleTradingEnv(
+                    df=df_backtest_opt.copy(),
+                    ticker=ticker,
+                    initial_balance=capital_per_stock,
+                    transaction_cost=TRANSACTION_COST,
+                    model_buy=model_buy_opt, # Use newly trained model
+                    model_sell=model_sell_opt, # Use newly trained model
+                    scaler=scaler_buy_opt, # Use newly trained scaler
+                    per_ticker_min_proba_buy=p_buy,
+                    per_ticker_min_proba_sell=p_sell,
+                    use_gate=USE_MODEL_GATE,
+                    market_data=market_data,
+                    use_market_filter=USE_MARKET_FILTER,
+                    feature_set=actual_feature_set_for_opt # Pass the actual feature set used for training
+                )
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: RuleTradingEnv initialized. Running env.run()...\n")
+                final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob = env.run()
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Calculating Sharpe Ratio.\n")
+                
+                # Calculate Sharpe Ratio for this combination
+                strategy_history = env.portfolio_history
+                if len(strategy_history) > 1:
+                    strat_returns = pd.Series(strategy_history).pct_change(fill_method=None).dropna()
+                    if strat_returns.std() > 0:
+                        sharpe = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252)
+                    else:
+                        sharpe = 0.0 # Avoid division by zero
+                else:
+                    sharpe = 0.0
+
+                # --- Diagnostic Logging ---
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f}, Target%={t_perc:.3f} -> Sharpe={sharpe:.4f}\n")
+                
+                if sharpe > best_sharpe:
+                    best_sharpe = sharpe
+                    best_min_proba_buy = p_buy
+                    best_min_proba_sell = p_sell
+                    best_target_percentage = t_perc
     
-    # The target_percentage is not optimized here because the models are pre-trained.
-    # We return the default_target_percentage that the models were trained with.
-    best_target_percentage = default_target_percentage
-    
+    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Sharpe={best_sharpe:.4f}\n")
     return {
         'ticker': ticker,
         'min_proba_buy': best_min_proba_buy,
@@ -2919,5 +2958,5 @@ def main(
 if __name__ == "__main__":
     # Run main.py with optimization disabled for faster subsequent runs
     main(
-        fcf_threshold=0.0, ebitda_threshold=0.0, run_parallel=True, single_ticker=None, force_optimization=False, top_performers_data=None
+        fcf_threshold=None, ebitda_threshold=None, run_parallel=True, single_ticker=None, force_optimization=True, top_performers_data=None
     )

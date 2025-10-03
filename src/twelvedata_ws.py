@@ -13,16 +13,25 @@ class TwelveDataWebSocketClient:
         self.is_connected = False
         self.latest_prices: Dict[str, float] = {} # Stores latest price for each subscribed symbol
         self.subscribed_symbols: set = set(symbols_to_subscribe) if symbols_to_subscribe else set() # Initialize with symbols
+        self.successful_subscriptions_count: int = 0 # New: Counter for successful subscriptions
+        self.failed_subscriptions: Dict[str, datetime] = {} # Stores symbols that failed to subscribe and their last failure time
         self.on_message_callback = on_message_callback
         self._lock = threading.Lock()
         self._connect_thread: Optional[threading.Thread] = None
+        self._retry_thread: Optional[threading.Thread] = None # New: Thread for retrying failed subscriptions
+        self.retry_interval_seconds = 300 # Retry failed subscriptions every 5 minutes
 
     def _on_open(self, ws):
         self.is_connected = True
         print(f"✅ TwelveData WebSocket connection opened.")
         with self._lock:
-            for symbol in list(self.subscribed_symbols): # Subscribe/Resubscribe on connect/reconnect
+            # Attempt to subscribe to initial symbols and any previously failed ones
+            # Reset successful count on new connection
+            self.successful_subscriptions_count = 0 
+            all_symbols_to_attempt = list(self.subscribed_symbols) + list(self.failed_subscriptions.keys())
+            for symbol in all_symbols_to_attempt:
                 self._send_subscribe_message(symbol)
+        self._start_retry_thread() # Start the retry thread when connected
 
     def _on_message(self, ws, message):
         data = json.loads(message)
@@ -32,21 +41,31 @@ class TwelveDataWebSocketClient:
             if symbol and price is not None:
                 with self._lock:
                     self.latest_prices[symbol] = float(price)
+                    # If a price is received for a symbol that was previously failed, remove it from failed_subscriptions
+                    if symbol in self.failed_subscriptions:
+                        del self.failed_subscriptions[symbol]
+                        self.successful_subscriptions_count += 1 # Count as successful if it starts streaming after a retry
                 # print(f"  [WS] Received price for {symbol}: {price}")
                 if self.on_message_callback:
                     self.on_message_callback(data)
         elif data.get('event') == 'subscribe-status':
             if data.get('status') == 'ok':
                 for s in data.get('success', []):
-                    print(f"  [WS] Successfully subscribed to {s.get('symbol')}")
+                    symbol = s.get('symbol')
+                    print(f"  [WS] Successfully subscribed to {symbol}")
+                    with self._lock:
+                        if symbol in self.failed_subscriptions:
+                            del self.failed_subscriptions[symbol] # Remove from failed list on success
+                        self.subscribed_symbols.add(symbol) # Ensure it's in subscribed list
+                        self.successful_subscriptions_count += 1 # Increment successful count
             if data.get('fails'):
                 for f in data.get('fails', []):
                     symbol = f.get('symbol')
                     reason = f.get('reason', 'Unknown reason')
                     print(f"  [WS] Failed to subscribe to {symbol}: {reason}")
                     with self._lock:
-                        if symbol in self.subscribed_symbols:
-                            self.subscribed_symbols.remove(symbol) # Remove failed symbols from subscribed list
+                        self.failed_subscriptions[symbol] = datetime.now(timezone.utc) # Add to failed_subscriptions for retry
+                        # Do NOT remove from self.subscribed_symbols here, as per user request to retry
         elif data.get('event') == 'heartbeat':
             pass # Ignore heartbeat messages
         elif data.get('event') == 'liveness':
@@ -82,9 +101,39 @@ class TwelveDataWebSocketClient:
             # Give it a moment to connect
             time.sleep(2) 
 
+    def _retry_failed_subscriptions_loop(self):
+        while self.is_connected:
+            time.sleep(self.retry_interval_seconds)
+            with self._lock:
+                now = datetime.now(timezone.utc)
+                symbols_to_retry = []
+                for symbol, last_failure_time in list(self.failed_subscriptions.items()):
+                    # Only retry if retry_interval_seconds has passed since last failure
+                    if (now - last_failure_time).total_seconds() >= self.retry_interval_seconds:
+                        symbols_to_retry.append(symbol)
+                
+                if symbols_to_retry:
+                    print(f"  [WS] Retrying failed subscriptions for: {', '.join(symbols_to_retry)}")
+                    for symbol in symbols_to_retry:
+                        self._send_subscribe_message(symbol)
+                        # Update last failure time to prevent immediate re-retry if it fails again
+                        self.failed_subscriptions[symbol] = now 
+
+    def _start_retry_thread(self):
+        if self._retry_thread is None or not self._retry_thread.is_alive():
+            self._retry_thread = threading.Thread(target=self._retry_failed_subscriptions_loop)
+            self._retry_thread.daemon = True
+            self._retry_thread.start()
+
+    def _stop_retry_thread(self):
+        if self._retry_thread and self._retry_thread.is_alive():
+            # No direct way to stop a daemon thread, rely on main thread exit or is_connected flag
+            pass # The loop condition `while self.is_connected` will handle stopping
+
     def disconnect(self):
         if self.ws:
             print("Disconnecting from TwelveData WebSocket...")
+            self._stop_retry_thread() # Ensure retry thread is stopped before closing WS
             self.ws.close()
             if self._connect_thread and self._connect_thread.is_alive():
                 self._connect_thread.join(timeout=5) # Wait for thread to finish
@@ -106,12 +155,17 @@ class TwelveDataWebSocketClient:
     def subscribe(self, symbols: List[str]):
         with self._lock:
             for symbol in symbols:
-                if symbol not in self.subscribed_symbols:
+                # Add to subscribed_symbols if not already there, and not currently in failed_subscriptions
+                if symbol not in self.subscribed_symbols and symbol not in self.failed_subscriptions:
                     self.subscribed_symbols.add(symbol)
                     if self.is_connected: # Only send subscribe message if already connected
                         self._send_subscribe_message(symbol)
                     else:
                         print(f"  [WS] Added {symbol} to pending subscriptions. Will subscribe on connect.")
+                elif symbol in self.failed_subscriptions:
+                    # If it's in failed_subscriptions, it means we've tried before.
+                    # We don't re-add it to subscribed_symbols here, as the retry thread will handle it.
+                    print(f"  [WS] {symbol} is in failed subscriptions. Will be retried periodically.")
                 else:
                     print(f"  [WS] Already subscribed to {symbol}.")
 
@@ -120,6 +174,7 @@ class TwelveDataWebSocketClient:
             for symbol in symbols:
                 if symbol in self.subscribed_symbols:
                     self.subscribed_symbols.remove(symbol)
+                    self.successful_subscriptions_count -= 1 # Decrement count on unsubscribe
                     if self.ws and self.is_connected:
                         unsubscribe_message = {
                             "action": "unsubscribe",
@@ -129,12 +184,19 @@ class TwelveDataWebSocketClient:
                         }
                         self.ws.send(json.dumps(unsubscribe_message))
                         print(f"  [WS] Unsubscribed from {symbol}.")
+                elif symbol in self.failed_subscriptions:
+                    del self.failed_subscriptions[symbol] # Also remove from failed list if explicitly unsubscribed
+                    print(f"  [WS] Removed {symbol} from failed subscriptions list.")
                 else:
                     print(f"  [WS] Not subscribed to {symbol}.")
 
     def get_latest_price(self, symbol: str) -> Optional[float]:
         with self._lock:
             return self.latest_prices.get(symbol)
+
+    def get_successful_subscriptions_count(self) -> int:
+        with self._lock:
+            return self.successful_subscriptions_count
 
 if __name__ == "__main__":
     # Example Usage:

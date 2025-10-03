@@ -207,7 +207,7 @@ def process_ticker(ticker: str, models_dir: Path, optimized_params: Dict, latest
         hist_end_date = end_date - timedelta(days=1)
         hist_start_date = hist_end_date - timedelta(days=365) # Use a lookback period for features
         from main import load_prices_robust
-        historical_data = load_prices_robust(ticker, hist_start_date, hist_start_date) # Only fetch one day for features
+        historical_data = load_prices_robust(ticker, hist_start_date, hist_end_date) # Fetch full lookback period
 
         if historical_data.empty:
             print(f"  ⚠️ No sufficient historical data for {ticker}. Skipping recommendation.")
@@ -399,7 +399,16 @@ def run_live_trading():
     # Subscriptions are now handled by the WebSocket client's _on_open method
     if twelvedata_ws_client:
         print("ℹ️ TwelveData WebSocket client initialized. Subscriptions will be handled on connection.")
-        time.sleep(5) # Give some time for initial price data to stream in
+        time.sleep(15) # Give more time for initial price data to stream in and subscriptions to process
+
+        successful_count = twelvedata_ws_client.get_successful_subscriptions_count()
+        print(f"✅ Successfully subscribed to {successful_count} out of {len(tradable_tickers)} NASDAQ 100 tickers via TwelveData WebSocket.")
+        if successful_count < len(tradable_tickers):
+            print(f"ℹ️ Some subscriptions failed. The client will periodically retry these failed subscriptions.")
+        print("\n--- Note on Multiple WebSocket Connections ---")
+        print("The current implementation uses a single WebSocket connection for simplicity and to manage API limits.")
+        print("Implementing 8 concurrent WebSocket connections would require a significant architectural change")
+        print("to manage multiple client instances, their threads, and data aggregation. This would be a separate, more complex task.")
 
     # --- Process all tickers in parallel from verification to recommendation ---
     print("\n--- Verifying, Training, and Generating Recommendations in Parallel ---")
@@ -535,6 +544,33 @@ def run_live_trading():
             print(f"{ticker:<10} | {'BUY':<15} | {buy_prob_str:>12} | {status:<60}")
 
     print("-" * 100)
+
+    # --- Print Final Live Trading Summary ---
+    print("\n" + "="*80)
+    print("                     🚀 LIVE TRADING SESSION SUMMARY 🚀")
+    print("="*80)
+
+    if not all_generated_recommendations:
+        print("\n--- No valid tickers or recommendations were generated during this session. ---")
+    else:
+        print("\n📈 Individual Ticker Recommendations (Sorted by Buy Probability):")
+        print("-" * 120)
+        print(f"{'Ticker':<10} | {'Recommendation':<15} | {'Buy Prob %':>12} | {'Sell Prob %':>12} | {'Buy Thresh':>12} | {'Sell Thresh':>12}")
+        print("-" * 120)
+        sorted_final_recs = sorted(all_generated_recommendations, key=lambda x: x['buy_prob'], reverse=True)
+        for rec in sorted_final_recs:
+            buy_prob_str = f"{rec['buy_prob'] * 100:.2f}%"
+            sell_prob_str = f"{rec['sell_prob'] * 100:.2f}%"
+            buy_thresh_str = f"{rec['buy_thresh']:.2f}"
+            sell_thresh_str = f"{rec['sell_thresh']:.2f}"
+            print(f"{rec['ticker']:<10} | {rec['action']:<15} | {buy_prob_str:>12} | {sell_prob_str:>12} | {buy_thresh_str:>12} | {sell_thresh_str:>12}")
+        print("-" * 120)
+
+    print("\n💡 Next Steps:")
+    print("  - Review the recommendations and trade executions.")
+    print("  - Adjust `MARKET_SELECTION` in `main.py` or `TARGET_PERCENTAGE` for different strategies.")
+    print("  - Monitor TwelveData WebSocket logs for persistent subscription failures.")
+    print("="*80)
 
     # Disconnect WebSocket client
     if twelvedata_ws_client:
