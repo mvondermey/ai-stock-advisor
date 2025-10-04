@@ -152,7 +152,7 @@ USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
 FORCE_TRAINING          = True      # Set to True to force re-training of ML models
-FORCE_THRESHOLDS_OPTIMIZATION = True # Set to True to force re-optimization of ML thresholds
+FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 
 # ============================
 # Helpers
@@ -416,7 +416,7 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
     
     # Ensure all financial columns are numeric
     for col in df_financial.columns:
-        df_financial[col] = pd.to_numeric(df[col], errors='coerce')
+        df_financial[col] = pd.to_numeric(df_financial[col], errors='coerce')
 
     return df_financial.sort_index()
 
@@ -546,7 +546,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         # Convert all relevant columns to numeric, coercing errors to NaN
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
             if col in price_df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+                price_df[col] = pd.to_numeric(price_df[col], errors='coerce')
 
         # Replace infinities with NaN
         price_df.replace([np.inf, -np.inf], np.nan, inplace=True)
@@ -1071,12 +1071,18 @@ _ml_libraries_initialized = False
 CUDA_AVAILABLE = False
 CUML_AVAILABLE = False
 LGBMClassifier = None
+cuMLRandomForestClassifier = None
+cuMLLogisticRegression = None
+cuMLStandardScaler = None
+models_and_params: Dict = {} # Declare as global and initialize
 
 def initialize_ml_libraries():
     """Initializes ML libraries and prints their status only once."""
-    global _ml_libraries_initialized, CUDA_AVAILABLE, CUML_AVAILABLE, LGBMClassifier
+    global _ml_libraries_initialized, CUDA_AVAILABLE, CUML_AVAILABLE, LGBMClassifier, models_and_params, \
+           cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler
+    
     if _ml_libraries_initialized:
-        return
+        return models_and_params # Return the dictionary if already initialized
 
     try:
         import torch
@@ -1090,9 +1096,12 @@ def initialize_ml_libraries():
 
     try:
         import cuml
-        from cuml.ensemble import RandomForestClassifier as cuMLRandomForestClassifier
-        from cuml.linear_model import LogisticRegression as cuMLLogisticRegression
-        from cuml.preprocessing import StandardScaler as cuMLStandardScaler
+        from cuml.ensemble import RandomForestClassifier as cuMLRandomForestClassifier_
+        from cuml.linear_model import LogisticRegression as cuMLLogisticRegression_
+        from cuml.preprocessing import StandardScaler as cuMLStandardScaler_
+        cuMLRandomForestClassifier = cuMLRandomForestClassifier_
+        cuMLLogisticRegression = cuMLLogisticRegression_
+        cuMLStandardScaler = cuMLStandardScaler_
         CUML_AVAILABLE = True
         print("✅ cuML found. GPU-accelerated models will be used if CUDA is available.")
     except ImportError:
@@ -1102,17 +1111,28 @@ def initialize_ml_libraries():
         from lightgbm import LGBMClassifier as lgbm
         LGBMClassifier = lgbm
         if CUDA_AVAILABLE:
-            print("ℹ️ LightGBM found. Will attempt to use GPU.")
+            lgbm_model_params = {
+                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+            }
+            lgbm_model_params["model"].set_params(device='gpu')
+            models_and_params["LightGBM (GPU)"] = lgbm_model_params
         else:
             print("ℹ️ LightGBM found. Will use CPU (CUDA not available).")
+            lgbm_model_params = {
+                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+            }
+            models_and_params["LightGBM (CPU)"] = lgbm_model_params
     except ImportError:
         print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
     
     _ml_libraries_initialized = True
+    return models_and_params # Return the dictionary
 
 def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN"):
     """Train and compare multiple classifiers for a given target, returning the best one."""
-    initialize_ml_libraries()
+    models_and_params = initialize_ml_libraries() # Initialize and get models_and_params
     d = df.copy() # Renamed to d to match the original error context
     
     if target_col not in d.columns:
@@ -1172,12 +1192,19 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
         return None, None
 
     # Scale features for models that are sensitive to scale (like Logistic Regression and SVM)
-    if CUML_AVAILABLE:
-        scaler = cuMLStandardScaler()
-        # cuML expects cupy arrays or pandas dataframes, convert if X_df is numpy
-        X_gpu = cuml.DataFrame(X_df) if not isinstance(X_df, cuml.DataFrame) else X_df
-        X_scaled = scaler.fit_transform(X_gpu)
-        X = pd.DataFrame(X_scaled.to_numpy(), columns=final_feature_names, index=X_df.index) # Convert back to pandas for GridSearchCV
+    if CUML_AVAILABLE and cuMLStandardScaler: # Check if CUML_AVAILABLE and cuMLStandardScaler is imported globally
+        try:
+            import cuml # Import cuml locally for worker processes
+            scaler = cuMLStandardScaler()
+            # cuML expects cupy arrays or pandas dataframes, convert if X_df is numpy
+            X_gpu = cuml.DataFrame(X_df) if not isinstance(X_df, cuml.DataFrame) else X_df
+            X_scaled = scaler.fit_transform(X_gpu)
+            X = pd.DataFrame(X_scaled.to_numpy(), columns=final_feature_names, index=X_df.index) # Convert back to pandas for GridSearchCV
+        except Exception as e: # Catch broader exception for cuML issues
+            print(f"⚠️ Error using cuML StandardScaler: {e}. Falling back to sklearn.StandardScaler.")
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X_df)
+            X = pd.DataFrame(X_scaled, columns=final_feature_names, index=X_df.index)
     else:
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X_df)
@@ -1191,39 +1218,31 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
 
     if CUML_AVAILABLE:
         models_and_params["cuML Logistic Regression"] = {
-            "model": cuMLLogisticRegression(random_state=SEED, class_weight="balanced", solver='qn'), # cuML LogisticRegression uses 'qn' solver
+            "model": cuMLLogisticRegression(class_weight="balanced", solver='qn'), # cuML LogisticRegression uses 'qn' solver, removed random_state
             "params": {'C': [0.1, 1.0, 10.0]}
         }
         models_and_params["cuML Random Forest"] = {
-            "model": cuMLRandomForestClassifier(random_state=SEED, class_weight="balanced"),
+            "model": cuMLRandomForestClassifier(random_state=SEED),
             "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
         }
-        # SVM is not yet in cuML, so we keep the sklearn version as a fallback if cuML is available but SVM is desired.
-        models_and_params["SVM"] = {
-            "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
-            "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear']}
-        }
-        models_and_params["MLPClassifier"] = {
-            "model": MLPClassifier(random_state=SEED, max_iter=500, early_stopping=True),
-            "params": {'hidden_layer_sizes': [(100,), (100, 50), (50, 25)], 'activation': ['relu', 'tanh'], 'alpha': [0.0001, 0.001, 0.01], 'learning_rate_init': [0.001, 0.01]}
-        }
-    else:
-        models_and_params["Logistic Regression"] = {
-            "model": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
-            "params": {'C': [0.1, 1.0, 10.0, 100.0]}
-        }
-        models_and_params["Random Forest"] = {
-            "model": RandomForestClassifier(random_state=SEED, class_weight="balanced"),
-            "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
-        }
-        models_and_params["SVM"] = {
-            "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
-            "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear']}
-        }
-        models_and_params["MLPClassifier"] = {
-            "model": MLPClassifier(random_state=SEED, max_iter=500, early_stopping=True),
-            "params": {'hidden_layer_sizes': [(100,), (100, 50), (50, 25)], 'activation': ['relu', 'tanh'], 'alpha': [0.0001, 0.001, 0.01], 'learning_rate_init': [0.001, 0.01]}
-        }
+    
+    # Always include scikit-learn versions as fallbacks or if cuML is not available
+    models_and_params["Logistic Regression"] = {
+        "model": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
+        "params": {'C': [0.1, 1.0, 10.0, 100.0]}
+    }
+    models_and_params["Random Forest"] = {
+        "model": RandomForestClassifier(random_state=SEED, class_weight="balanced"),
+        "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
+    }
+    models_and_params["SVM"] = {
+        "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
+        "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear']}
+    }
+    models_and_params["MLPClassifier"] = {
+        "model": MLPClassifier(random_state=SEED, max_iter=500, early_stopping=True),
+        "params": {'hidden_layer_sizes': [(100,), (100, 50), (50, 25)], 'activation': ['relu', 'tanh'], 'alpha': [0.0001, 0.001, 0.01], 'learning_rate_init': [0.001, 0.01]}
+    }
 
     if LGBMClassifier:
         lgbm_model_params = {
@@ -3185,8 +3204,10 @@ def main(
     return final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker, final_strategy_value_1month, ai_1month_return, final_buy_hold_value_1month
 
 if __name__ == "__main__":
-    # Run main.py with force_training enabled and force_thresholds_optimization disabled
+    start_time = time.time()
     main(
         fcf_threshold=None, ebitda_threshold=None, run_parallel=True, single_ticker=None, 
         force_training=True, force_thresholds_optimization=False, top_performers_data=None
     )
+    end_time = time.time()
+    print(f"\nRoutine completed in {end_time - start_time:.2f} seconds.")
