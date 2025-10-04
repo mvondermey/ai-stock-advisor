@@ -126,11 +126,11 @@ BACKTEST_DAYS_1MONTH    = 30         # 1 month for backtest
 TRAIN_LOOKBACK_DAYS     = 360        # more data for model (e.g., 1 year)
 
 # --- Strategy (separate from feature windows)
-STRAT_SMA_SHORT         = 20
-STRAT_SMA_LONG          = 100
+STRAT_SMA_SHORT         = 10
+STRAT_SMA_LONG          = 50
 ATR_PERIOD              = 14
-ATR_MULT_TRAIL          = 3.5
-ATR_MULT_TP             = 0.0        # 0 disables hard TP; rely on trailing
+ATR_MULT_TRAIL          = 2.0
+ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
 INVESTMENT_PER_STOCK    = 15000.0    # Fixed amount to invest per stock
 TRANSACTION_COST        = 0.001      # 0.1%
 
