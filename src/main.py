@@ -130,7 +130,7 @@ STRAT_SMA_LONG          = 100
 ATR_PERIOD              = 14
 ATR_MULT_TRAIL          = 3.5
 ATR_MULT_TP             = 0.0        # 0 disables hard TP; rely on trailing
-RISK_PER_TRADE          = 0.9       # 1% of capital
+INVESTMENT_PER_STOCK    = 10000.0    # Fixed amount to invest per stock
 TRANSACTION_COST        = 0.001      # 0.1%
 
 # --- Feature windows (for ML only)
@@ -148,9 +148,10 @@ MARKET_FILTER_SMA       = 200
 USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
 
 # --- Misc
-INITIAL_BALANCE         = 50_000.0
+INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
-FORCE_OPTIMIZATION      = True      # Set to True to force re-optimization of ML thresholds
+FORCE_TRAINING          = True      # Set to True to force re-training of ML models
+FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 
 # ============================
 # Helpers
@@ -416,7 +417,7 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
     
     # Ensure all financial columns are numeric
     for col in df_financial.columns:
-        df_financial[col] = pd.to_numeric(df_financial[col], errors='coerce')
+        df_financial[col] = pd.to_numeric(df[col], errors='coerce')
 
     return df_financial.sort_index()
 
@@ -546,7 +547,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         # Convert all relevant columns to numeric, coercing errors to NaN
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
             if col in price_df.columns:
-                price_df[col] = pd.to_numeric(price_df[col], errors='coerce')
+                df[col] = pd.to_numeric(df[col], errors='coerce')
 
         # Replace infinities with NaN
         price_df.replace([np.inf, -np.inf], np.nan, inplace=True)
@@ -1266,8 +1267,8 @@ def train_worker(params: Tuple) -> Dict:
 
     model_buy, model_sell, scaler = None, None, None
 
-    # Load models if they exist and FORCE_OPTIMIZATION is False
-    if not FORCE_OPTIMIZATION and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
+    # Load models if they exist and FORCE_TRAINING is False
+    if not FORCE_TRAINING and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
         try:
             model_buy = joblib.load(model_buy_path)
             model_sell = joblib.load(model_sell_path)
@@ -1526,11 +1527,12 @@ class RuleTradingEnv:
     def _position_size_from_atr(self, price: float, atr: float) -> int:
         if atr is None or np.isnan(atr) or atr <= 0 or price <= 0:
             return 0
-        risk_dollars = min(self.initial_balance * RISK_PER_TRADE, 10000)  # Cap risk at $10,000
-        per_share_risk = ATR_MULT_TRAIL * atr
-        if per_share_risk <= 0:
-            return 0
-        qty = int(risk_dollars / per_share_risk)
+        # Use a fixed investment amount per stock
+        investment_amount = INVESTMENT_PER_STOCK
+        
+        # Calculate quantity based on the fixed investment amount
+        qty = int(investment_amount / price)
+        
         return max(qty, 0)
 
     def _buy(self, price: float, atr: Optional[float], date: str):
@@ -2407,14 +2409,17 @@ def main(
     run_parallel: bool = True,
     single_ticker: Optional[str] = None,
     optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None,
-    force_optimization: bool = FORCE_OPTIMIZATION # Add force_optimization parameter
+    force_training: bool = FORCE_TRAINING, # Use new force_training parameter
+    force_thresholds_optimization: bool = FORCE_THRESHOLDS_OPTIMIZATION # Use new force_thresholds_optimization parameter
 ) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[Dict]]:
     
     end_date = datetime.now(timezone.utc)
     bt_end = end_date
     
     alpaca_trading_client = None
-    current_initial_balance = INITIAL_BALANCE
+    # Calculate initial balance based on investment per stock and number of top tickers
+    # This will be updated after top_tickers are identified
+    current_initial_balance = INITIAL_BALANCE 
     print(f"Using initial balance: ${current_initial_balance:,.2f}")
 
     # --- Handle single ticker case for initial performance calculation ---
@@ -2566,8 +2571,8 @@ def main(
     # Update top_performers_data to reflect only successfully trained tickers
     top_performers_data_1y_filtered = [item for item in top_performers_data if item[0] in top_tickers_1y_filtered]
     
-    # Update capital_per_stock based on filtered tickers
-    capital_per_stock_1y = current_initial_balance / max(len(top_tickers_1y_filtered), 1)
+    # Set capital_per_stock to the fixed investment amount
+    capital_per_stock_1y = INVESTMENT_PER_STOCK
     
     # Update optimized_params_per_ticker to only include successfully trained tickers
     if optimized_params_per_ticker:
@@ -2587,15 +2592,13 @@ def main(
         else:
             print(f"⚠️ Could not load market data for {MARKET_FILTER_TICKER}. Filter will be disabled.\n")
 
-    # capital_per_stock = current_initial_balance / max(len(top_tickers), 1) # Original line, now replaced by capital_per_stock_1y
-    
     # --- OPTIMIZE THRESHOLDS ---
     # Ensure logs directory exists for optimized parameters
     _ensure_dir(TOP_CACHE_PATH.parent)
     optimized_params_file = TOP_CACHE_PATH.parent / "optimized_per_ticker_params.json"
     
-    # If force_optimization is True and the file exists, delete it to force re-optimization
-    if force_optimization and optimized_params_file.exists():
+    # If force_thresholds_optimization is True and the file exists, delete it to force re-optimization
+    if force_thresholds_optimization and optimized_params_file.exists():
         try:
             os.remove(optimized_params_file)
             print(f"🗑️ Deleted existing optimized parameters file: {optimized_params_file} to force re-optimization.")
@@ -2603,7 +2606,8 @@ def main(
             print(f"⚠️ Could not delete optimized parameters file: {e}")
 
     optimized_params_per_ticker = None
-    if force_optimization or not optimized_params_file.exists():
+    # This block is modified to skip optimization if force_thresholds_optimization is False
+    if force_thresholds_optimization: # Only run optimization if force_thresholds_optimization is True
         print("\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (forced or no existing file)...")
         optimized_params_per_ticker = optimize_thresholds_for_portfolio(
             top_tickers=top_tickers_1y_filtered, # Use filtered tickers for optimization
@@ -2615,7 +2619,7 @@ def main(
             models_sell=models_sell,
             scalers=scalers,
             market_data=market_data,
-            capital_per_stock=capital_per_stock_1y, # Use filtered capital per stock
+            capital_per_stock=capital_per_stock_1y, # Use fixed capital per stock
             run_parallel=run_parallel
         )
         if optimized_params_per_ticker:
@@ -2625,36 +2629,19 @@ def main(
                 print(f"✅ Optimized parameters saved to {optimized_params_file}")
             except Exception as e:
                 print(f"⚠️ Could not save optimized parameters to file: {e}")
-    else:
-        try:
-            with open(optimized_params_file, 'r') as f:
-                loaded_optimized_params = json.load(f)
-                # Filter loaded params to only include successfully trained tickers
-                optimized_params_per_ticker = {k: v for k, v in loaded_optimized_params.items() if k in top_tickers_1y_filtered}
-            print(f"\n✅ Loaded optimized parameters from {optimized_params_file} (set 'force_optimization=True' in main() call to re-run)")
-        except Exception as e:
-            print(f"⚠️ Could not load optimized parameters from file: {e}. Re-running optimization.")
-            print(f"\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (re-running due to load error)...")
-            optimized_params_per_ticker = optimize_thresholds_for_portfolio(
-                top_tickers=top_tickers_1y_filtered, # Use filtered tickers for optimization
-                train_start=train_start_1y, # Use training data for optimization
-                train_end=train_end_1y,
-                target_percentage=target_percentage,
-                feature_set=feature_set,
-                models_buy=models_buy,
-                models_sell=models_sell,
-                scalers=scalers,
-                market_data=market_data,
-                capital_per_stock=capital_per_stock_1y, # Use filtered capital per stock
-                run_parallel=run_parallel
-            )
-            if optimized_params_per_ticker:
-                try:
-                    with open(optimized_params_file, 'w') as f:
-                        json.dump(optimized_params_per_ticker, f, indent=4)
-                    print(f"✅ Optimized parameters saved to {optimized_params_file}")
-                except Exception as e:
-                    print(f"⚠️ Could not save optimized parameters to file: {e}")
+    else: # If not forcing optimization, try to load existing or skip
+        if optimized_params_file.exists():
+            try:
+                with open(optimized_params_file, 'r') as f:
+                    loaded_optimized_params = json.load(f)
+                    # Filter loaded params to only include successfully trained tickers
+                    optimized_params_per_ticker = {k: v for k, v in loaded_optimized_params.items() if k in top_tickers_1y_filtered}
+                print(f"\n✅ Loaded optimized parameters from {optimized_params_file} (set 'force_thresholds_optimization=True' in main() call to re-run)")
+            except Exception as e:
+                print(f"⚠️ Could not load optimized parameters from file: {e}. Skipping optimization.")
+        else:
+            print("\nℹ️ No optimized parameters file found and optimization is not forced. Skipping optimization.")
+
 
     # --- Run 1-Year Backtest ---
     print("\n🔍 Step 4: Running 1-Year Backtest...")
@@ -2668,14 +2655,14 @@ def main(
         scalers=scalers,
         market_data=market_data,
         optimized_params_per_ticker=optimized_params_per_ticker,
-        capital_per_stock=capital_per_stock_1y, # Use filtered capital per stock
+        capital_per_stock=capital_per_stock_1y, # Use fixed capital per stock
         # Pass the global target_percentage here, as the individual backtest_worker will use the optimized one
         target_percentage=target_percentage, 
         run_parallel=run_parallel,
         period_name="1-Year",
         top_performers_data=top_performers_data_1y_filtered # Pass filtered top_performers_data
     )
-    ai_1y_return = ((final_strategy_value_1y - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
+    ai_1y_return = ((final_strategy_value_1y - (capital_per_stock_1y * len(top_tickers_1y_filtered))) / abs(capital_per_stock_1y * len(top_tickers_1y_filtered))) * 100 if (capital_per_stock_1y * len(top_tickers_1y_filtered)) != 0 else 0
 
     # --- Calculate Buy & Hold for 1-Year ---
     print("\n📊 Calculating Buy & Hold performance for 1-Year period...")
@@ -2684,8 +2671,8 @@ def main(
         df_bh = load_prices_robust(ticker, bt_start_1y, bt_end)
         if not df_bh.empty:
             start_price = float(df_bh["Close"].iloc[0])
-            shares_bh = int(capital_per_stock_1y / start_price) if start_price > 0 else 0 # Use filtered capital per stock
-            cash_bh = capital_per_stock_1y - shares_bh * start_price # Use filtered capital per stock
+            shares_bh = int(capital_per_stock_1y / start_price) if start_price > 0 else 0 # Use fixed capital per stock
+            cash_bh = capital_per_stock_1y - shares_bh * start_price # Use fixed capital per stock
             buy_hold_results_1y.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
         else:
             buy_hold_results_1y.append(capital_per_stock_1y) # If no data, assume initial capital
@@ -2738,8 +2725,8 @@ def main(
     # Update top_performers_data to reflect only successfully trained tickers
     top_performers_data_ytd_filtered = [item for item in top_performers_data_1y_filtered if item[0] in top_tickers_ytd_filtered]
 
-    # Update capital_per_stock based on filtered tickers
-    capital_per_stock_ytd = current_initial_balance / max(len(top_tickers_ytd_filtered), 1)
+    # Set capital_per_stock to the fixed investment amount
+    capital_per_stock_ytd = INVESTMENT_PER_STOCK
 
     # Update optimized_params_per_ticker to only include successfully trained tickers
     if optimized_params_per_ticker:
@@ -2759,13 +2746,13 @@ def main(
         scalers=scalers_ytd,
         market_data=market_data, # Use the same market data as 1-year backtest
         optimized_params_per_ticker=optimized_params_per_ticker_ytd_filtered,
-        capital_per_stock=capital_per_stock_ytd, # Use filtered capital per stock
+        capital_per_stock=capital_per_stock_ytd, # Use fixed capital per stock
         target_percentage=target_percentage,
         run_parallel=run_parallel,
         period_name="YTD",
         top_performers_data=top_performers_data_ytd_filtered # Pass filtered top_performers_data
     )
-    ai_ytd_return = ((final_strategy_value_ytd - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
+    ai_ytd_return = ((final_strategy_value_ytd - (capital_per_stock_ytd * len(top_tickers_ytd_filtered))) / abs(capital_per_stock_ytd * len(top_tickers_ytd_filtered))) * 100 if (capital_per_stock_ytd * len(top_tickers_ytd_filtered)) != 0 else 0
 
     # --- Calculate Buy & Hold for YTD ---
     print("\n📊 Calculating Buy & Hold performance for YTD period...")
@@ -2774,8 +2761,8 @@ def main(
         df_bh = load_prices_robust(ticker, ytd_start_date, bt_end)
         if not df_bh.empty:
             start_price = float(df_bh["Close"].iloc[0])
-            shares_bh = int(capital_per_stock_ytd / start_price) if start_price > 0 else 0 # Use filtered capital per stock
-            cash_bh = capital_per_stock_ytd - shares_bh * start_price # Use filtered capital per stock
+            shares_bh = int(capital_per_stock_ytd / start_price) if start_price > 0 else 0 # Use fixed capital per stock
+            cash_bh = capital_per_stock_ytd - shares_bh * start_price # Use fixed capital per stock
             buy_hold_results_ytd.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
         else:
             buy_hold_results_ytd.append(capital_per_stock_ytd) # If no data, assume initial capital
@@ -2827,8 +2814,8 @@ def main(
     # Update top_performers_data to reflect only successfully trained tickers
     top_performers_data_3month_filtered = [item for item in top_performers_data_ytd_filtered if item[0] in top_tickers_3month_filtered]
 
-    # Update capital_per_stock based on filtered tickers
-    capital_per_stock_3month = current_initial_balance / max(len(top_tickers_3month_filtered), 1)
+    # Set capital_per_stock to the fixed investment amount
+    capital_per_stock_3month = INVESTMENT_PER_STOCK
 
     # Update optimized_params_per_ticker to only include successfully trained tickers
     if optimized_params_per_ticker:
@@ -2848,13 +2835,13 @@ def main(
         scalers=scalers_3month,
         market_data=market_data,
         optimized_params_per_ticker=optimized_params_per_ticker_3month_filtered,
-        capital_per_stock=capital_per_stock_3month, # Use filtered capital per stock
+        capital_per_stock=capital_per_stock_3month, # Use fixed capital per stock
         target_percentage=target_percentage,
         run_parallel=run_parallel,
         period_name="3-Month",
         top_performers_data=top_performers_data_3month_filtered # Pass filtered top_performers_data
     )
-    ai_3month_return = ((final_strategy_value_3month - current_initial_balance) / abs(current_initial_balance)) * 100 if current_initial_balance != 0 else 0
+    ai_3month_return = ((final_strategy_value_3month - (capital_per_stock_3month * len(top_tickers_3month_filtered))) / abs(capital_per_stock_3month * len(top_tickers_3month_filtered))) * 100 if (capital_per_stock_3month * len(top_tickers_3month_filtered)) != 0 else 0
 
     # --- Calculate Buy & Hold for 3-Month ---
     print("\n📊 Calculating Buy & Hold performance for 3-Month period...")
@@ -2863,8 +2850,8 @@ def main(
         df_bh = load_prices_robust(ticker, bt_start_3month, bt_end)
         if not df_bh.empty:
             start_price = float(df_bh["Close"].iloc[0])
-            shares_bh = int(capital_per_stock_3month / start_price) if start_price > 0 else 0 # Use filtered capital per stock
-            cash_bh = capital_per_stock_3month - shares_bh * start_price # Use filtered capital per stock
+            shares_bh = int(capital_per_stock_3month / start_price) if start_price > 0 else 0 # Use fixed capital per stock
+            cash_bh = capital_per_stock_3month - shares_bh * start_price # Use fixed capital per stock
             buy_hold_results_3month.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
         else:
             buy_hold_results_3month.append(capital_per_stock_3month)
@@ -2923,7 +2910,7 @@ def main(
     for ticker, reason in all_failed_tickers.items():
         final_results.append({
             'ticker': ticker,
-            'performance': current_initial_balance / max(len(top_tickers), 1), # Assign initial capital for failed tickers
+            'performance': INVESTMENT_PER_STOCK, # Assign initial capital for failed tickers
             'sharpe': np.nan,
             'one_year_perf': np.nan,
             'ytd_perf': np.nan,
@@ -2942,7 +2929,7 @@ def main(
                         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
                         final_strategy_value_ytd, final_buy_hold_value_ytd, ai_ytd_return,
                         final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return,
-                        initial_balance_used=current_initial_balance,
+                        initial_balance_used=(INVESTMENT_PER_STOCK * len(top_tickers)),
                         num_tickers_analyzed=len(top_tickers))
     print("\n✅ Final summary prepared and printed.")
 
@@ -2956,7 +2943,8 @@ def main(
     return final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker
 
 if __name__ == "__main__":
-    # Run main.py with optimization disabled for faster subsequent runs
+    # Run main.py with force_training enabled and force_thresholds_optimization disabled
     main(
-        fcf_threshold=None, ebitda_threshold=None, run_parallel=True, single_ticker=None, force_optimization=True, top_performers_data=None
+        fcf_threshold=None, ebitda_threshold=None, run_parallel=True, single_ticker=None, 
+        force_training=True, force_thresholds_optimization=False, top_performers_data=None
     )
