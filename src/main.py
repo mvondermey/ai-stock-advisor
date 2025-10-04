@@ -122,6 +122,7 @@ NUM_PROCESSES           = max(1, cpu_count() - 5) # Use all but one CPU core for
 # --- Backtest & training windows
 BACKTEST_DAYS           = 365        # 1 year for backtest
 BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest
+BACKTEST_DAYS_1MONTH    = 30         # 1 month for backtest
 TRAIN_LOOKBACK_DAYS     = 360        # more data for model (e.g., 1 year)
 
 # --- Strategy (separate from feature windows)
@@ -130,7 +131,7 @@ STRAT_SMA_LONG          = 100
 ATR_PERIOD              = 14
 ATR_MULT_TRAIL          = 3.5
 ATR_MULT_TP             = 0.0        # 0 disables hard TP; rely on trailing
-INVESTMENT_PER_STOCK    = 10000.0    # Fixed amount to invest per stock
+INVESTMENT_PER_STOCK    = 15000.0    # Fixed amount to invest per stock
 TRANSACTION_COST        = 0.001      # 0.1%
 
 # --- Feature windows (for ML only)
@@ -2355,9 +2356,9 @@ def print_final_summary(
     print("="*80)
 
     print("\n📈 Individual Ticker Performance (Sorted by 1-Year Performance):")
-    print("-" * 160)
-    print(f"{'Ticker':<10} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10}")
-    print("-" * 160)
+    print("-" * 200)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10}")
+    print("-" * 200)
     for res in sorted_final_results:
         # --- Safely get ticker and parameters ---
         ticker = str(res.get('ticker', 'N/A'))
@@ -2365,6 +2366,10 @@ def print_final_summary(
         buy_thresh = optimized_params.get('min_proba_buy', MIN_PROBA_BUY)
         sell_thresh = optimized_params.get('min_proba_sell', MIN_PROBA_SELL)
         target_perc = optimized_params.get('target_percentage', TARGET_PERCENTAGE)
+
+        # --- Calculate allocated capital and strategy gain ---
+        allocated_capital = INVESTMENT_PER_STOCK
+        strategy_gain = res.get('performance', 0.0) - allocated_capital
 
         # --- Safely format performance numbers ---
         one_year_perf_str = f"{res.get('one_year_perf', 0.0):>9.2f}%" if pd.notna(res.get('one_year_perf')) else "N/A".rjust(10)
@@ -2374,8 +2379,8 @@ def print_final_summary(
         sell_prob_str = f"{res.get('sell_prob', 0.0):>9.2f}" if pd.notna(res.get('sell_prob')) else "N/A".rjust(10)
         last_ai_action_str = str(res.get('last_ai_action', 'HOLD'))
         
-        print(f"{ticker:<10} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {buy_thresh:>11.2f} | {sell_thresh:>11.2f} | {target_perc:>9.2%}")
-    print("-" * 160)
+        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {buy_thresh:>11.2f} | {sell_thresh:>11.2f} | {target_perc:>9.2%}")
+    print("-" * 200)
 
     print("\n🤖 ML Model Status:")
     for ticker in sorted_final_results:
@@ -2932,6 +2937,51 @@ def main(
                         initial_balance_used=(INVESTMENT_PER_STOCK * len(top_tickers)),
                         num_tickers_analyzed=len(top_tickers))
     print("\n✅ Final summary prepared and printed.")
+
+    # --- Select and save best performing models for live trading ---
+    # Determine which period had the highest portfolio return
+    performance_values = {
+        "1-Year": final_strategy_value_1y,
+        "YTD": final_strategy_value_ytd,
+        "3-Month": final_strategy_value_3month
+    }
+    
+    best_period_name = max(performance_values, key=performance_values.get)
+    
+    # Get the models and scalers corresponding to the best period
+    if best_period_name == "1-Year":
+        best_models_buy_dict = models_buy
+        best_models_sell_dict = models_sell
+        best_scalers_dict = scalers
+    elif best_period_name == "YTD":
+        best_models_buy_dict = models_buy_ytd
+        best_models_sell_dict = models_sell_ytd
+        best_scalers_dict = scalers_ytd
+    else: # "3-Month"
+        best_models_buy_dict = models_buy_3month
+        best_models_sell_dict = models_sell_3month
+        best_scalers_dict = scalers_3month
+
+    # Save the best models and scalers for each ticker to the paths used by live_trading.py
+    models_dir = Path("logs/models")
+    _ensure_dir(models_dir) # Ensure the directory exists
+
+    print(f"\n🏆 Saving best performing models ({best_period_name} period) for live trading...")
+    for ticker in top_tickers: # Iterate through all top tickers
+        model_buy_path = models_dir / f"{ticker}_model_buy.joblib"
+        model_sell_path = models_dir / f"{ticker}_model_sell.joblib"
+        scaler_path = models_dir / f"{ticker}_scaler.joblib"
+
+        if ticker in best_models_buy_dict and ticker in best_models_sell_dict and ticker in best_scalers_dict:
+            try:
+                joblib.dump(best_models_buy_dict[ticker], model_buy_path)
+                joblib.dump(best_models_sell_dict[ticker], model_sell_path)
+                joblib.dump(best_scalers_dict[ticker], scaler_path)
+                print(f"   ✅ Saved models for {ticker}")
+            except Exception as e:
+                print(f"   ⚠️ Error saving models for {ticker}: {e}")
+        else:
+            print(f"   ℹ️ No models available for {ticker} in the best performing period. Skipping save.")
 
     # --- Save recommendations to file ---
     recommendations_path = Path("logs/recommendations.json")
