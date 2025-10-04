@@ -70,7 +70,7 @@ except ImportError:
 
 # TwelveData SDK client
 try:
-    from src.twelvedata_sdk_client import TwelveDataSDKClient
+    from twelvedata import TDClient
     TWELVEDATA_SDK_AVAILABLE = True
 except ImportError:
     print("⚠️ TwelveData SDK client not found. TwelveData data provider will be skipped.")
@@ -152,7 +152,7 @@ USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
 FORCE_TRAINING          = True      # Set to True to force re-training of ML models
-FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
+FORCE_THRESHOLDS_OPTIMIZATION = True # Set to True to force re-optimization of ML thresholds
 
 # ============================
 # Helpers
@@ -253,30 +253,28 @@ def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime) -> pd.Da
         return pd.DataFrame()
 
     try:
-        sdk_client = TwelveDataSDKClient(api_key=TWELVEDATA_API_KEY)
+        tdc = TDClient(apikey=TWELVEDATA_API_KEY)
         
-        # The SDK's get_time_series already handles outputsize and interval
-        # We need to convert datetime objects to string for start_date and end_date
-        start_date_str = start.strftime('%Y-%m-%d')
-        end_date_str = end.strftime('%Y-%m-%d')
-
-        data = sdk_client.get_time_series(
+        # Construct the time series API call
+        ts = tdc.time_series(
             symbol=ticker,
             interval="1day",
-            start_date=start_date_str,
-            end_date=end_date_str,
+            start_date=start.strftime('%Y-%m-%d'),
+            end_date=end.strftime('%Y-%m-%d'),
             outputsize=5000 # Max outputsize for historical data
-        )
+        ).as_pandas() # Get data as pandas DataFrame
 
-        if not data or "values" not in data or not data["values"]:
+        if ts.empty:
             print(f"  ℹ️ No data found for {ticker} from TwelveData SDK.")
             return pd.DataFrame()
 
-        df = pd.DataFrame(data["values"])
-        df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
-        df = df.set_index("datetime")
+        df = ts.copy()
+        
+        # TwelveData returns 'datetime' as index, ensure it's UTC and named 'Date'
+        df.index = pd.to_datetime(df.index, utc=True)
         df.index.name = "Date"
         
+        # Rename columns to match expected format
         df = df.rename(columns={
             'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
         })
@@ -818,7 +816,7 @@ def get_all_tickers() -> List[str]:
             response_mdax.raise_for_status()
             tables_mdax = pd.read_html(StringIO(response_mdax.text))
             table_mdax = None
-            for table in tables_mdax:
+            for table in tables_mib:
                 if 'Ticker' in table.columns or 'Symbol' in table.columns:
                     table_mdax = table
                     break
@@ -1034,7 +1032,8 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     # Define a base set of expected technical features
     expected_technical_features = [
         "Close", "Volume", "High", "Low", "Open", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", 
-        "RSI_feat", "MACD", "BB_upper", "%K", "%D", "ADX", "OBV", "CMF", "ROC", "KC_Upper", "DC_Upper"
+        "ATR", "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
+        "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower"
     ]
     
     # Filter to only include technical features that are actually in df.columns
@@ -1378,9 +1377,12 @@ class RuleTradingEnv:
         self.use_market_filter = use_market_filter and market_data is not None
         # Dynamically determine the full feature set including financial features
         # This will be passed from the training worker
-        self.feature_set = feature_set if feature_set is not None else ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper", "%K", "%D", "ADX",
-                                                                        "OBV", "CMF", "ROC", "KC_Upper", "DC_Upper",
-                                                                        'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA']
+        self.feature_set = feature_set if feature_set is not None else [
+            "Close", "Volume", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "ATR",
+            "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
+            "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
+            'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA'
+        ]
         
         self.reset()
         self._prepare_data()
@@ -1888,7 +1890,7 @@ def find_top_performers(
                     start_price = df['Close'].iloc[0]
                     end_price = df['Close'].iloc[-1]
                     if start_price > 0:
-                        perf = ((end_price - start_price) / start_price) * 100
+                        perf = ((end_end - start_price) / start_price) * 100
                         ytd_benchmark_perfs[bench_ticker] = perf
                         print(f"  ✅ {bench_ticker} YTD Performance: {perf:.2f}%")
             except Exception as e:
@@ -2092,14 +2094,15 @@ def optimize_thresholds_for_portfolio(
     top_tickers: List[str],
     train_start: datetime,
     train_end: datetime,
-    target_percentage: float,
+    default_target_percentage: float, # Renamed to avoid confusion with per-ticker target
     feature_set: Optional[List[str]],
     models_buy: Dict,
     models_sell: Dict,
     scalers: Dict,
     market_data: Optional[pd.DataFrame],
     capital_per_stock: float,
-    run_parallel: bool
+    run_parallel: bool,
+    current_optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None # New parameter
 ) -> Dict[str, Dict[str, float]]:
     """
     Optimizes ML thresholds (min_proba_buy, min_proba_sell, target_percentage)
@@ -2114,11 +2117,22 @@ def optimize_thresholds_for_portfolio(
             print(f"  ⚠️ Skipping optimization for {ticker}: Models or scaler not available.")
             continue
         
-        # Pass necessary data for optimization
+        # Get current optimized values for this ticker, or use defaults
+        current_buy_proba = MIN_PROBA_BUY
+        current_sell_proba = MIN_PROBA_SELL
+        current_target_perc = default_target_percentage
+
+        if current_optimized_params_per_ticker and ticker in current_optimized_params_per_ticker:
+            current_buy_proba = current_optimized_params_per_ticker[ticker].get('min_proba_buy', MIN_PROBA_BUY)
+            current_sell_proba = current_optimized_params_per_ticker[ticker].get('min_proba_sell', MIN_PROBA_SELL)
+            current_target_perc = current_optimized_params_per_ticker[ticker].get('target_percentage', default_target_percentage)
+
+        # Pass necessary data for optimization, including current optimized values
         optimization_params.append((
-            ticker, train_start, train_end, target_percentage, feature_set,
-            models_buy[ticker], models_sell[ticker], scalers[ticker],
-            market_data, capital_per_stock
+            ticker, train_start, train_end, current_target_perc, # Pass current_target_perc
+            feature_set, models_buy[ticker], models_sell[ticker], scalers[ticker],
+            market_data, capital_per_stock,
+            current_buy_proba, current_sell_proba # Pass current buy/sell proba
         ))
 
     if run_parallel:
@@ -2142,27 +2156,49 @@ def optimize_thresholds_for_portfolio(
 
 def optimize_single_ticker_worker(params: Tuple) -> Dict:
     """Worker function to optimize thresholds for a single ticker."""
-    ticker, train_start, train_end, default_target_percentage, feature_set, \
-        model_buy, model_sell, scaler, market_data, capital_per_stock = params
+    ticker, train_start, train_end, current_target_percentage, feature_set, \
+        model_buy, model_sell, scaler, market_data, capital_per_stock, \
+        current_min_proba_buy, current_min_proba_sell = params # Updated params
 
     sys.stderr.write(f"  [DEBUG] {current_process().name} - Optimizing for ticker: {ticker}\n")
 
     best_sharpe = -np.inf
-    best_min_proba_buy = MIN_PROBA_BUY
-    best_min_proba_sell = MIN_PROBA_SELL
-    best_target_percentage = default_target_percentage
+    best_min_proba_buy = current_min_proba_buy # Initialize with current values
+    best_min_proba_sell = current_min_proba_sell
+    best_target_percentage = current_target_percentage
 
-    # Define ranges for optimization
-    min_proba_buy_range = np.arange(0.2, 0.9, 0.05) # Example range
-    min_proba_sell_range = np.arange(0.2, 0.9, 0.05) # Example range
-    target_percentage_range = np.arange(0.005, 0.02, 0.005) # Example range for 0.5% to 2%
+    # Define ranges for optimization based on current values
+    # One step lower, current value, one step higher
+    step_proba = 0.05
+    step_target_perc = 0.005
+
+    min_proba_buy_range = [
+        max(0.0, current_min_proba_buy - step_proba),
+        current_min_proba_buy,
+        current_min_proba_buy + step_proba
+    ]
+    min_proba_buy_range = sorted(list(set([round(x, 2) for x in min_proba_buy_range if 0.0 <= x <= 1.0])))
+
+    min_proba_sell_range = [
+        max(0.0, current_min_proba_sell - step_proba),
+        current_min_proba_sell,
+        current_min_proba_sell + step_proba
+    ]
+    min_proba_sell_range = sorted(list(set([round(x, 2) for x in min_proba_sell_range if 0.0 <= x <= 1.0])))
+
+    target_percentage_range = [
+        max(0.001, current_target_percentage - step_target_perc),
+        current_target_percentage,
+        current_target_percentage + step_target_perc
+    ]
+    target_percentage_range = sorted(list(set([round(x, 3) for x in target_percentage_range if 0.001 <= x <= 0.1]))) # Assuming max 10% target
 
     # Load data for backtesting during optimization
     sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Loading prices for optimization...\n")
     df_backtest_opt = load_prices(ticker, train_start, train_end)
     if df_backtest_opt.empty:
         sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: No data for optimization. Returning default.\n")
-        return {'ticker': ticker, 'min_proba_buy': MIN_PROBA_BUY, 'min_proba_sell': MIN_PROBA_SELL, 'target_percentage': default_target_percentage}
+        return {'ticker': ticker, 'min_proba_buy': current_min_proba_buy, 'min_proba_sell': current_min_proba_sell, 'target_percentage': current_target_percentage}
     sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Prices loaded. Starting threshold loops.\n")
 
     for p_buy in min_proba_buy_range:
@@ -2579,6 +2615,7 @@ def main(
     # Log skipped tickers
     skipped_tickers = set(all_available_tickers) - set(top_tickers)
     if skipped_tickers:
+        _ensure_dir(Path("logs")) # Ensure logs directory exists
         with open("logs/skipped_tickers.log", "w") as f:
             f.write("Tickers skipped during performance analysis:\n")
             for ticker in sorted(list(skipped_tickers)):
@@ -2663,22 +2700,33 @@ def main(
         except Exception as e:
             print(f"⚠️ Could not delete optimized parameters file: {e}")
 
-    optimized_params_per_ticker = None
-    # This block is modified to skip optimization if force_thresholds_optimization is False
-    if force_thresholds_optimization: # Only run optimization if force_thresholds_optimization is True
+    optimized_params_per_ticker = {}
+    loaded_optimized_params = {}
+
+    # Try to load existing optimized parameters if not forcing re-optimization
+    if optimized_params_file.exists():
+        try:
+            with open(optimized_params_file, 'r') as f:
+                loaded_optimized_params = json.load(f)
+            print(f"\n✅ Loaded existing optimized parameters from {optimized_params_file}.")
+        except Exception as e:
+            print(f"⚠️ Could not load optimized parameters from file: {e}. Starting with default thresholds.")
+
+    if force_thresholds_optimization:
         print("\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (forced or no existing file)...")
         optimized_params_per_ticker = optimize_thresholds_for_portfolio(
             top_tickers=top_tickers_1y_filtered, # Use filtered tickers for optimization
             train_start=train_start_1y, # Use training data for optimization
             train_end=train_end_1y,
-            target_percentage=target_percentage,
+            default_target_percentage=target_percentage, # Pass default target_percentage
             feature_set=feature_set,
             models_buy=models_buy,
             models_sell=models_sell,
             scalers=scalers,
             market_data=market_data,
             capital_per_stock=capital_per_stock_1y, # Use fixed capital per stock
-            run_parallel=run_parallel
+            run_parallel=run_parallel,
+            current_optimized_params_per_ticker=loaded_optimized_params # Pass loaded params
         )
         if optimized_params_per_ticker:
             try:
@@ -2687,18 +2735,11 @@ def main(
                 print(f"✅ Optimized parameters saved to {optimized_params_file}")
             except Exception as e:
                 print(f"⚠️ Could not save optimized parameters to file: {e}")
-    else: # If not forcing optimization, try to load existing or skip
-        if optimized_params_file.exists():
-            try:
-                with open(optimized_params_file, 'r') as f:
-                    loaded_optimized_params = json.load(f)
-                    # Filter loaded params to only include successfully trained tickers
-                    optimized_params_per_ticker = {k: v for k, v in loaded_optimized_params.items() if k in top_tickers_1y_filtered}
-                print(f"\n✅ Loaded optimized parameters from {optimized_params_file} (set 'force_thresholds_optimization=True' in main() call to re-run)")
-            except Exception as e:
-                print(f"⚠️ Could not load optimized parameters from file: {e}. Skipping optimization.")
-        else:
-            print("\nℹ️ No optimized parameters file found and optimization is not forced. Skipping optimization.")
+    else: # If not forcing optimization, use the loaded parameters
+        optimized_params_per_ticker = {k: v for k, v in loaded_optimized_params.items() if k in top_tickers_1y_filtered}
+        print(f"\n✅ Using loaded optimized parameters (set 'force_thresholds_optimization=True' in main() call to re-run optimization).")
+        if not optimized_params_per_ticker:
+            print("\nℹ️ No optimized parameters found for current tickers. Using default thresholds.")
 
 
     # --- Run 1-Year Backtest ---

@@ -24,7 +24,8 @@ import pandas as pd
 from tqdm import tqdm
 from datetime import datetime, timedelta, timezone
 import time # Import the time module
-from twelvedata_ws import TwelveDataWebSocketClient # Import the new WebSocket client
+from twelvedata_ws import TwelveDataWebSocketClient
+from twelvedata import TDClient # Import the TwelveData REST API client
 
 # Alpaca API credentials (set as environment variables for security)
 ALPACA_API_KEY          = os.environ.get("ALPACA_API_KEY")
@@ -140,29 +141,20 @@ def _get_latest_price_from_twelvedata(ticker: str, latest_prices_dict: Dict[str,
         return None
 
     try:
-        # TwelveData API endpoint for historical data (latest day)
-        url = f"https://api.twelvedata.com/time_series?symbol={ticker}&interval=1day&apikey={TWELVEDATA_API_KEY}&outputsize=1"
+        tdc = TDClient(apikey=TWELVEDATA_API_KEY)
         
-        import requests
-        response = requests.get(url)
-        response.raise_for_status() # Raise an exception for HTTP errors
-        data = response.json()
+        # Fetch latest price using the TwelveData client
+        # The `TDClient.price` method is suitable for getting the latest price
+        price_data = tdc.price(symbol=ticker).as_json()
 
-        if "values" not in data or not data["values"]:
-            print(f"  ℹ️ No latest data found for {ticker} from TwelveData.")
+        if not price_data or 'price' not in price_data:
+            print(f"  ℹ️ No latest price data found for {ticker} from TwelveData.")
             return None
 
-        latest_bar = data["values"][0]
-        if 'close' in latest_bar and latest_bar['close'] is not None:
-            return float(latest_bar['close'])
+        return float(price_data['price'])
             
-        print(f"  ⚠️ Could not retrieve latest closing price for {ticker} from TwelveData.")
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"  ❌ TwelveData API Error for {ticker}: {e}. Could not fetch latest price.")
-        return None
     except Exception as e:
-        print(f"  ❌ Unexpected error fetching latest price for {ticker}: {e}")
+        print(f"  ❌ TwelveData API Error for {ticker}: {e}. Could not fetch latest price.")
         return None
 
 def get_recommendation(ticker: str, model_buy, model_sell, scaler, data: pd.DataFrame, buy_thresh: float, sell_thresh: float) -> Tuple[str, float, float]:
