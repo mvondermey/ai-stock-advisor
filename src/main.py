@@ -952,51 +952,65 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     df['BB_lower'] = df['BB_mid'] - (df['BB_std'] * 2)
 
     # Stochastic Oscillator
-    # Ensure High/Low exist before calculation (redundant here, handled in load_prices)
-    # if "High" not in df.columns: df["High"] = df["Close"]
-    # if "Low" not in df.columns: df["Low"] = df["Close"]
-    
     low_14, high_14 = df['Low'].rolling(window=14).min(), df['High'].rolling(window=14).max()
-    # Handle division by zero for %K
     denominator_k = (high_14 - low_14)
     df['%K'] = np.where(denominator_k != 0, (df['Close'] - low_14) / denominator_k * 100, 0)
     df['%D'] = df['%K'].rolling(window=3).mean()
-    df['%K'] = df['%K'].fillna(0) # Fill NaNs for Stochastic Oscillator
-    df['%D'] = df['%D'].fillna(0) # Fill NaNs for Stochastic Oscillator
+    df['%K'] = df['%K'].fillna(0)
+    df['%D'] = df['%D'].fillna(0)
 
     # Average Directional Index (ADX)
-    # Ensure High/Low exist before calculation (redundant here, handled in load_prices)
-    # if "High" not in df.columns: df["High"] = df["Close"]
-    # if "Low" not in df.columns: df["Low"] = df["Close"]
-
     df['up_move'] = df['High'] - df['High'].shift(1)
     df['down_move'] = df['Low'].shift(1) - df['Low']
     df['+DM'] = np.where((df['up_move'] > df['down_move']) & (df['up_move'] > 0), df['up_move'], 0)
     df['-DM'] = np.where((df['down_move'] > df['up_move']) & (df['down_move'] > 0), df['down_move'], 0)
-    df['+DM'] = df['+DM'].fillna(0) # Fill NaNs for DM
+    df['+DM'] = df['+DM'].fillna(0)
 
     # Calculate True Range (TR)
     high_low_diff = df['High'] - df['Low']
     high_prev_close_diff_abs = (df['High'] - df['Close'].shift(1)).abs()
     low_prev_close_diff_abs = (df['Low'] - df['Close'].shift(1)).abs()
     df['TR'] = pd.concat([high_low_diff, high_prev_close_diff_abs, low_prev_close_diff_abs], axis=1).max(axis=1)
-    df['TR'] = df['TR'].fillna(0) # Fill NaNs for TR
+    df['TR'] = df['TR'].fillna(0)
 
     # Calculate Smoothed DM and TR
     alpha = 1/14
     df['+DM14'] = df['+DM'].ewm(alpha=alpha, adjust=False).mean()
     df['-DM14'] = df['-DM'].ewm(alpha=alpha, adjust=False).mean()
     df['TR14'] = df['TR'].ewm(alpha=alpha, adjust=False).mean()
-    df['+DM14'] = df['+DM14'].fillna(0) # Fill NaNs for Smoothed DM
-    df['-DM14'] = df['-DM14'].fillna(0) # Fill NaNs for Smoothed DM
-    df['TR14'] = df['TR14'].fillna(0) # Fill NaNs for Smoothed TR
+    df['+DM14'] = df['+DM14'].fillna(0)
+    df['-DM14'] = df['-DM14'].fillna(0)
+    df['TR14'] = df['TR14'].fillna(0)
 
     # Calculate Directional Index (DX)
     denominator_dx = (df['+DM14'] + df['-DM14'])
     df['DX'] = np.where(denominator_dx != 0, (abs(df['+DM14'] - df['-DM14']) / denominator_dx) * 100, 0)
     df['ADX'] = df['DX'].ewm(alpha=alpha, adjust=False).mean()
-    df['DX'] = df['DX'].fillna(0) # Fill NaNs for DX
-    df['ADX'] = df['ADX'].fillna(0) # Fill NaNs for ADX
+    df['DX'] = df['DX'].fillna(0)
+    df['ADX'] = df['ADX'].fillna(0)
+
+    # On-Balance Volume (OBV)
+    df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
+
+    # Chaikin Money Flow (CMF)
+    mfv = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low']) * df['Volume']
+    df['CMF'] = mfv.rolling(window=20).sum() / df['Volume'].rolling(window=20).sum()
+    df['CMF'] = df['CMF'].fillna(0)
+
+    # Rate of Change (ROC)
+    df['ROC'] = df['Close'].pct_change(periods=12) * 100
+
+    # Keltner Channels
+    df['KC_TR'] = pd.concat([df['High'] - df['Low'], (df['High'] - df['Close'].shift(1)).abs(), (df['Low'] - df['Close'].shift(1)).abs()], axis=1).max(axis=1)
+    df['KC_ATR'] = df['KC_TR'].rolling(window=10).mean()
+    df['KC_Middle'] = df['Close'].rolling(window=20).mean()
+    df['KC_Upper'] = df['KC_Middle'] + (df['KC_ATR'] * 2)
+    df['KC_Lower'] = df['KC_Middle'] - (df['KC_ATR'] * 2)
+
+    # Donchian Channels
+    df['DC_Upper'] = df['High'].rolling(window=20).max()
+    df['DC_Lower'] = df['Low'].rolling(window=20).min()
+    df['DC_Middle'] = (df['DC_Upper'] + df['DC_Lower']) / 2
     
     # --- Additional Financial Features (from _fetch_financial_data) ---
     financial_features = [col for col in df.columns if col.startswith('Fin_')]
@@ -1020,7 +1034,7 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     # Define a base set of expected technical features
     expected_technical_features = [
         "Close", "Volume", "High", "Low", "Open", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", 
-        "RSI_feat", "MACD", "BB_upper", "%K", "%D", "ADX"
+        "RSI_feat", "MACD", "BB_upper", "%K", "%D", "ADX", "OBV", "CMF", "ROC", "KC_Upper", "DC_Upper"
     ]
     
     # Filter to only include technical features that are actually in df.columns
@@ -1051,6 +1065,7 @@ from sklearn.svm import SVC
 from sklearn.model_selection import cross_val_score, StratifiedKFold, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import UndefinedMetricWarning
+from sklearn.neural_network import MLPClassifier # Added for Neural Network model
 
 # --- Globals for ML library status ---
 _ml_libraries_initialized = False
@@ -1182,31 +1197,39 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
         }
         models_and_params["cuML Random Forest"] = {
             "model": cuMLRandomForestClassifier(random_state=SEED, class_weight="balanced"),
-            "params": {'n_estimators': [50, 100, 200], 'max_depth': [5, 10, None]}
+            "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
         }
         # SVM is not yet in cuML, so we keep the sklearn version as a fallback if cuML is available but SVM is desired.
         models_and_params["SVM"] = {
             "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
-            "params": {'C': [0.1, 1.0, 10.0], 'kernel': ['rbf', 'linear']}
+            "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear']}
+        }
+        models_and_params["MLPClassifier"] = {
+            "model": MLPClassifier(random_state=SEED, max_iter=500, early_stopping=True),
+            "params": {'hidden_layer_sizes': [(100,), (100, 50), (50, 25)], 'activation': ['relu', 'tanh'], 'alpha': [0.0001, 0.001, 0.01], 'learning_rate_init': [0.001, 0.01]}
         }
     else:
         models_and_params["Logistic Regression"] = {
             "model": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
-            "params": {'C': [0.1, 1.0, 10.0]}
+            "params": {'C': [0.1, 1.0, 10.0, 100.0]}
         }
         models_and_params["Random Forest"] = {
             "model": RandomForestClassifier(random_state=SEED, class_weight="balanced"),
-            "params": {'n_estimators': [50, 100, 200], 'max_depth': [5, 10, None]}
+            "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
         }
         models_and_params["SVM"] = {
             "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
-            "params": {'C': [0.1, 1.0, 10.0], 'kernel': ['rbf', 'linear']}
+            "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear']}
+        }
+        models_and_params["MLPClassifier"] = {
+            "model": MLPClassifier(random_state=SEED, max_iter=500, early_stopping=True),
+            "params": {'hidden_layer_sizes': [(100,), (100, 50), (50, 25)], 'activation': ['relu', 'tanh'], 'alpha': [0.0001, 0.001, 0.01], 'learning_rate_init': [0.001, 0.01]}
         }
 
     if LGBMClassifier:
         lgbm_model_params = {
             "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1),
-            "params": {'n_estimators': [50, 100, 200], 'learning_rate': [0.05, 0.1, 0.2]}
+            "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
         }
         if CUDA_AVAILABLE:
             lgbm_model_params["model"].set_params(device='gpu')
@@ -1356,6 +1379,7 @@ class RuleTradingEnv:
         # Dynamically determine the full feature set including financial features
         # This will be passed from the training worker
         self.feature_set = feature_set if feature_set is not None else ["Close", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "BB_upper", "%K", "%D", "ADX",
+                                                                        "OBV", "CMF", "ROC", "KC_Upper", "DC_Upper",
                                                                         'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA']
         
         self.reset()
@@ -1467,7 +1491,7 @@ class RuleTradingEnv:
         self.df['ADX'] = self.df['DX'].ewm(alpha=alpha, adjust=False).mean()
         # Fill NaNs for all ADX-related indicators after their calculations
         self.df['+DM'] = self.df['+DM'].fillna(0)
-        self.df['-DM'] = self.df['-DM'].fillna(0) # Corrected: Removed tuple index
+        self.df['-DM'] = self.df['-DM'].fillna(0)
         self.df['TR'] = self.df['TR'].fillna(0)
         self.df['+DM14'] = self.df['+DM14'].fillna(0)
         self.df['-DM14'] = self.df['-DM14'].fillna(0)
@@ -1477,6 +1501,29 @@ class RuleTradingEnv:
         # Fill NaNs for Stochastic Oscillator after its calculations
         self.df['%K'] = self.df['%K'].fillna(0)
         self.df['%D'] = self.df['%D'].fillna(0)
+
+        # On-Balance Volume (OBV)
+        self.df['OBV'] = (np.sign(self.df['Close'].diff()) * self.df['Volume']).fillna(0).cumsum()
+
+        # Chaikin Money Flow (CMF)
+        mfv = ((self.df['Close'] - self.df['Low']) - (self.df['High'] - self.df['Close'])) / (self.df['High'] - self.df['Low']) * self.df['Volume']
+        self.df['CMF'] = mfv.rolling(window=20).sum() / self.df['Volume'].rolling(window=20).sum()
+        self.df['CMF'] = self.df['CMF'].fillna(0)
+
+        # Rate of Change (ROC)
+        self.df['ROC'] = self.df['Close'].pct_change(periods=12) * 100
+
+        # Keltner Channels
+        self.df['KC_TR'] = pd.concat([self.df['High'] - self.df['Low'], (self.df['High'] - self.df['Close'].shift(1)).abs(), (self.df['Low'] - self.df['Close'].shift(1)).abs()], axis=1).max(axis=1)
+        self.df['KC_ATR'] = self.df['KC_TR'].rolling(window=10).mean()
+        self.df['KC_Middle'] = self.df['Close'].rolling(window=20).mean()
+        self.df['KC_Upper'] = self.df['KC_Middle'] + (self.df['KC_ATR'] * 2)
+        self.df['KC_Lower'] = self.df['KC_Middle'] - (self.df['KC_ATR'] * 2)
+
+        # Donchian Channels
+        self.df['DC_Upper'] = self.df['High'].rolling(window=20).max()
+        self.df['DC_Lower'] = self.df['Low'].rolling(window=20).min()
+        self.df['DC_Middle'] = (self.df['DC_Upper'] + self.df['DC_Lower']) / 2
 
     def _date_at(self, i: int) -> str:
         if "Date" in self.df.columns:
