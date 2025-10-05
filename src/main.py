@@ -111,7 +111,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 10         # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 0         # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -146,7 +146,7 @@ USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
 MARKET_FILTER_SMA       = 200
-USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
+USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering
 
 # --- Simple Rule-Based Strategy specific hyperparameters
 USE_SIMPLE_RULE_STRATEGY = False     # Set to True to enable a simple rule-based strategy
@@ -2119,7 +2119,7 @@ def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[
         # The data is already passed in, no need to fetch.
         # The dataframe might have NaN rows for dates where the ticker didn't trade.
         df_1y = df_1y.dropna(subset=['Close'])
-        if not df_1y.empty and len(df_1y) > 200:  # Some basic data quality check
+        if not df_1y.empty:  # Some basic data quality check
             start_price = df_1y['Close'].iloc[0]
             end_price = df_1y['Close'].iloc[-1]
             if start_price > 0.01:  # Ensure start_price is a meaningful positive number
