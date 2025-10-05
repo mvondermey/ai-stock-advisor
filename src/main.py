@@ -143,10 +143,19 @@ MIN_PROBA_BUY           = 0.2       # ML gate threshold for buy model
 MIN_PROBA_SELL          = 0.2       # ML gate threshold for sell model
 TARGET_PERCENTAGE       = 0.01       # 1% target for buy/sell classification
 USE_MODEL_GATE          = True       # ENABLE ML gate
-USE_MARKET_FILTER       = False      # re-enable market filter
+USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
 MARKET_FILTER_SMA       = 200
 USE_PERFORMANCE_BENCHMARK = False   # Set to True to enable benchmark filtering
+
+# --- Deep Learning specific hyperparameters
+SEQUENCE_LENGTH         = 20         # Number of past days to consider for LSTM/GRU
+LSTM_HIDDEN_SIZE        = 64
+LSTM_NUM_LAYERS         = 2
+LSTM_DROPOUT            = 0.2
+LSTM_EPOCHS             = 50
+LSTM_BATCH_SIZE         = 64
+LSTM_LEARNING_RATE      = 0.001
 
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
@@ -1065,33 +1074,87 @@ from sklearn.model_selection import cross_val_score, StratifiedKFold, GridSearch
 from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import UndefinedMetricWarning
 from sklearn.neural_network import MLPClassifier # Added for Neural Network model
+from sklearn.preprocessing import MinMaxScaler # Added for scaling data for neural networks
+
+# Added for XGBoost
+try:
+    import xgboost as xgb
+    XGBOOST_AVAILABLE = True
+except ImportError:
+    print("⚠️ xgboost not installed. Run: pip install xgboost. It will be skipped.")
+    XGBOOST_AVAILABLE = False
+
+# Added for PyTorch and LSTM/GRU models
+try:
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    from torch.utils.data import TensorDataset, DataLoader
+    PYTORCH_AVAILABLE = True
+except ImportError:
+    print("⚠️ PyTorch not installed. Run: pip install torch. Deep learning models will be skipped.")
+    PYTORCH_AVAILABLE = False
 
 # --- Globals for ML library status ---
 _ml_libraries_initialized = False
 CUDA_AVAILABLE = False
 CUML_AVAILABLE = False
 LGBMClassifier = None
+XGBClassifier = None # Added for XGBoost
 cuMLRandomForestClassifier = None
 cuMLLogisticRegression = None
 cuMLStandardScaler = None
 models_and_params: Dict = {} # Declare as global and initialize
 
+# Define LSTM/GRU model architecture
+class LSTMClassifier(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, output_size, dropout_rate=0.5):
+        super(LSTMClassifier, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate)
+        self.fc = nn.Linear(hidden_size, output_size)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        out, _ = self.lstm(x, (h0, c0))
+        out = self.fc(out[:, -1, :]) # Get output from the last time step
+        out = self.sigmoid(out)
+        return out
+
+class GRUClassifier(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, output_size, dropout_rate=0.5):
+        super(GRUClassifier, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.gru = nn.GRU(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate)
+        self.fc = nn.Linear(hidden_size, output_size)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        out, _ = self.gru(x, h0)
+        out = self.fc(out[:, -1, :]) # Get output from the last time step
+        out = self.sigmoid(out)
+        return out
+
 def initialize_ml_libraries():
     """Initializes ML libraries and prints their status only once."""
-    global _ml_libraries_initialized, CUDA_AVAILABLE, CUML_AVAILABLE, LGBMClassifier, models_and_params, \
+    global _ml_libraries_initialized, CUDA_AVAILABLE, CUML_AVAILABLE, LGBMClassifier, XGBClassifier, models_and_params, \
            cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler
     
     if _ml_libraries_initialized:
         return models_and_params # Return the dictionary if already initialized
 
     try:
-        import torch
         if torch.cuda.is_available():
             CUDA_AVAILABLE = True
             print("✅ CUDA is available. GPU acceleration enabled.")
         else:
             print("⚠️ CUDA is not available. GPU acceleration will not be used.")
-    except ImportError:
+    except NameError: # Catch NameError if torch is not imported
         print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
 
     try:
@@ -1126,6 +1189,19 @@ def initialize_ml_libraries():
             models_and_params["LightGBM (CPU)"] = lgbm_model_params
     except ImportError:
         print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
+
+    if XGBOOST_AVAILABLE:
+        XGBClassifier = xgb.XGBClassifier
+        xgb_model_params = {
+            "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1), # scale_pos_weight for class imbalance
+            "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
+        }
+        if CUDA_AVAILABLE:
+            xgb_model_params["model"].set_params(tree_method='gpu_hist')
+            models_and_params["XGBoost (GPU)"] = xgb_model_params
+        else:
+            print("ℹ️ XGBoost found. Will use CPU (CUDA not available).")
+            models_and_params["XGBoost (CPU)"] = xgb_model_params
     
     _ml_libraries_initialized = True
     return models_and_params # Return the dictionary
@@ -1214,32 +1290,33 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     scaler.feature_names_in_ = list(final_feature_names) 
 
     # Define models and their parameter grids for GridSearchCV
-    models_and_params = {}
+    # Initialize models_and_params here to ensure it's fresh for each call
+    models_and_params_local = {} 
 
     if CUML_AVAILABLE:
-        models_and_params["cuML Logistic Regression"] = {
-            "model": cuMLLogisticRegression(class_weight="balanced", solver='qn'), # cuML LogisticRegression uses 'qn' solver, removed random_state
+        models_and_params_local["cuML Logistic Regression"] = {
+            "model": cuMLLogisticRegression(class_weight="balanced", solver='qn'),
             "params": {'C': [0.1, 1.0, 10.0]}
         }
-        models_and_params["cuML Random Forest"] = {
+        models_and_params_local["cuML Random Forest"] = {
             "model": cuMLRandomForestClassifier(random_state=SEED),
             "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
         }
     
     # Always include scikit-learn versions as fallbacks or if cuML is not available
-    models_and_params["Logistic Regression"] = {
+    models_and_params_local["Logistic Regression"] = {
         "model": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
         "params": {'C': [0.1, 1.0, 10.0, 100.0]}
     }
-    models_and_params["Random Forest"] = {
+    models_and_params_local["Random Forest"] = {
         "model": RandomForestClassifier(random_state=SEED, class_weight="balanced"),
         "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
     }
-    models_and_params["SVM"] = {
+    models_and_params_local["SVM"] = {
         "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
         "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear']}
     }
-    models_and_params["MLPClassifier"] = {
+    models_and_params_local["MLPClassifier"] = {
         "model": MLPClassifier(random_state=SEED, max_iter=500, early_stopping=True),
         "params": {'hidden_layer_sizes': [(100,), (100, 50), (50, 25)], 'activation': ['relu', 'tanh'], 'alpha': [0.0001, 0.001, 0.01], 'learning_rate_init': [0.001, 0.01]}
     }
@@ -1251,9 +1328,117 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
         }
         if CUDA_AVAILABLE:
             lgbm_model_params["model"].set_params(device='gpu')
-            models_and_params["LightGBM (GPU)"] = lgbm_model_params
+            models_and_params_local["LightGBM (GPU)"] = lgbm_model_params
         else:
-            models_and_params["LightGBM (CPU)"] = lgbm_model_params
+            models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
+
+    if XGBOOST_AVAILABLE and XGBClassifier:
+        xgb_model_params = {
+            "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1),
+            "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
+        }
+        if CUDA_AVAILABLE:
+            xgb_model_params["model"].set_params(tree_method='gpu_hist')
+            models_and_params_local["XGBoost (GPU)"] = xgb_model_params
+        else:
+            models_and_params_local["XGBoost (CPU)"] = xgb_model_params
+
+    # --- Deep Learning Models (LSTM/GRU) ---
+    if PYTORCH_AVAILABLE:
+        # Prepare data for LSTM/GRU: sequence generation and scaling
+        # Use MinMaxScaler for deep learning models
+        dl_scaler = MinMaxScaler(feature_range=(0, 1))
+        X_scaled_dl = dl_scaler.fit_transform(X_df) # Use X_df (unsequenced) for fitting scaler
+        
+        # Create sequences
+        X_sequences = []
+        y_sequences = []
+        for i in range(len(X_scaled_dl) - SEQUENCE_LENGTH):
+            X_sequences.append(X_scaled_dl[i:i + SEQUENCE_LENGTH])
+            y_sequences.append(y[i + SEQUENCE_LENGTH])
+        
+        if not X_sequences:
+            print(f"  [DIAGNOSTIC] {ticker}: Not enough data to create sequences for DL models (need > {SEQUENCE_LENGTH} rows). Skipping DL models.")
+        else:
+            X_sequences = torch.tensor(np.array(X_sequences), dtype=torch.float32)
+            y_sequences = torch.tensor(np.array(y_sequences), dtype=torch.float32).unsqueeze(1)
+
+            # Determine device
+            device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+            
+            # Create DataLoader
+            dataset = TensorDataset(X_sequences, y_sequences)
+            dataloader = DataLoader(dataset, batch_size=LSTM_BATCH_SIZE, shuffle=True)
+
+            input_size = X_sequences.shape[2] # Number of features
+
+            # LSTM Model
+            lstm_model = LSTMClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
+            optimizer_lstm = optim.Adam(lstm_model.parameters(), lr=LSTM_LEARNING_RATE)
+            criterion = nn.BCELoss() # Binary Cross-Entropy for binary classification
+
+            print(f"    - Training LSTM for {ticker}...")
+            for epoch in range(LSTM_EPOCHS):
+                for batch_X, batch_y in dataloader:
+                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                    optimizer_lstm.zero_grad()
+                    outputs = lstm_model(batch_X)
+                    loss = criterion(outputs, batch_y)
+                    loss.backward()
+                    optimizer_lstm.step()
+            
+            # Evaluate LSTM
+            lstm_model.eval()
+            with torch.no_grad():
+                all_outputs = []
+                for batch_X, _ in dataloader:
+                    batch_X = batch_X.to(device)
+                    outputs = lstm_model(batch_X)
+                    all_outputs.append(outputs.cpu().numpy())
+                y_pred_proba_lstm = np.concatenate(all_outputs).flatten()
+            
+            # Calculate AUC for LSTM
+            from sklearn.metrics import roc_auc_score
+            try:
+                auc_lstm = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_lstm)
+                models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": auc_lstm}
+                print(f"      LSTM AUC: {auc_lstm:.4f}")
+            except ValueError:
+                print(f"      LSTM AUC: Not enough samples with positive class for AUC calculation.")
+                models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": 0.0}
+
+            # GRU Model
+            gru_model = GRUClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
+            optimizer_gru = optim.Adam(gru_model.parameters(), lr=LSTM_LEARNING_RATE)
+
+            print(f"    - Training GRU for {ticker}...")
+            for epoch in range(LSTM_EPOCHS):
+                for batch_X, batch_y in dataloader:
+                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                    optimizer_gru.zero_grad()
+                    outputs = gru_model(batch_X)
+                    loss = criterion(outputs, batch_y)
+                    loss.backward()
+                    optimizer_gru.step()
+
+            # Evaluate GRU
+            gru_model.eval()
+            with torch.no_grad():
+                all_outputs = []
+                for batch_X, _ in dataloader:
+                    batch_X = batch_X.to(device)
+                    outputs = gru_model(batch_X)
+                    all_outputs.append(outputs.cpu().numpy())
+                y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+
+            # Calculate AUC for GRU
+            try:
+                auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
+                models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru}
+                print(f"      GRU AUC: {auc_gru:.4f}")
+            except ValueError:
+                print(f"      GRU AUC: Not enough samples with positive class for AUC calculation.")
+                models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": 0.0}
 
     results = {}
     best_model_overall = None
@@ -1261,30 +1446,49 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
 
     print("  🔬 Comparing classifier performance (AUC score via 5-fold cross-validation with GridSearchCV):")
-    for name, mp in models_and_params.items():
-        model = mp["model"]
-        params = mp["params"]
-        
-        try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
-                warnings.filterwarnings("ignore", category=UserWarning)
-                
-                # Use GridSearchCV for hyperparameter tuning
-                grid_search = GridSearchCV(model, params, cv=cv, scoring='roc_auc', n_jobs=-1, verbose=0)
-                grid_search.fit(X, y)
-                
-                best_score = grid_search.best_score_
-                results[name] = best_score
-                print(f"    - {name}: {best_score:.4f} (Best Params: {grid_search.best_params_})")
+    for name, mp in models_and_params_local.items(): # Iterate over local models_and_params
+        if name in ["LSTM", "GRU"]:
+            # For DL models, we already have AUC from direct training
+            current_auc = mp["auc"]
+            results[name] = current_auc
+            print(f"    - {name}: {current_auc:.4f}")
+            if current_auc > best_auc_overall:
+                best_auc_overall = current_auc
+                best_model_overall = mp["model"]
+                scaler = mp["scaler"] # Use the DL scaler for DL models
+        else:
+            model = mp["model"]
+            params = mp["params"]
+            
+            try:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
+                    warnings.filterwarnings("ignore", category=UserWarning)
+                    
+                    # Use GridSearchCV for hyperparameter tuning
+                    grid_search = GridSearchCV(model, params, cv=cv, scoring='roc_auc', n_jobs=-1, verbose=0)
+                    grid_search.fit(X, y)
+                    
+                    best_score = grid_search.best_score_
+                    results[name] = best_score
+                    print(f"    - {name}: {best_score:.4f} (Best Params: {grid_search.best_params_})")
 
-                if best_score > best_auc_overall:
-                    best_auc_overall = best_score
-                    best_model_overall = grid_search.best_estimator_ # Store the best estimator from GridSearchCV
+                    if best_score > best_auc_overall:
+                        best_auc_overall = best_score
+                        best_model_overall = grid_search.best_estimator_ # Store the best estimator from GridSearchCV
+                        # For non-DL models, the scaler is already defined as 'scaler'
+                        # and will be returned at the end of the function.
+                        # We need to ensure the correct scaler is associated with the best model.
+                        # If the best model is a DL model, its scaler is already set.
+                        # If the best model is a traditional ML model, the 'scaler' variable
+                        # (which is StandardScaler) is the correct one.
+                        # This implies that if a DL model is chosen, the 'scaler' variable
+                        # should be updated to 'dl_scaler'.
+                        # This is handled by the logic below.
 
-        except Exception as e:
-            print(f"    - {name}: Failed evaluation. Error: {e}")
-            results[name] = 0.0
+            except Exception as e:
+                print(f"    - {name}: Failed evaluation. Error: {e}")
+                results[name] = 0.0
 
     if not any(results.values()):
         print("  ⚠️ All models failed evaluation. No model will be used.")
@@ -1293,8 +1497,12 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     best_model_name = max(results, key=results.get)
     print(f"  🏆 Best model: {best_model_name} with AUC = {best_auc_overall:.4f}")
 
-    # Return the best model found by GridSearchCV and the scaler
-    return best_model_overall, scaler
+    # If the best model is a DL model, ensure its specific scaler is returned
+    if best_model_name in ["LSTM", "GRU"]:
+        return models_and_params_local[best_model_name]["model"], models_and_params_local[best_model_name]["scaler"]
+    else:
+        # Otherwise, return the best traditional ML model and the StandardScaler
+        return best_model_overall, scaler
 
 def train_worker(params: Tuple) -> Dict:
     """Worker function for parallel model training."""
@@ -1377,8 +1585,8 @@ class RuleTradingEnv:
     """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
     def __init__(self, df: pd.DataFrame, ticker: str, initial_balance: float, transaction_cost: float, # Added ticker parameter
                  model_buy=None, model_sell=None, scaler=None, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, use_gate: bool = USE_MODEL_GATE,
-                 market_data: Optional[pd.DataFrame] = None, use_market_filter: bool = USE_MARKET_FILTER, feature_set: Optional[List[str]] = None,
-                 per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None):
+                 feature_set: Optional[List[str]] = None,
+                 per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None): # Removed market_data
         if "Close" not in df.columns:
             raise ValueError("DataFrame must contain 'Close' column.")
         self.df = df.reset_index()
@@ -1392,8 +1600,6 @@ class RuleTradingEnv:
         self.min_proba_buy = float(per_ticker_min_proba_buy if per_ticker_min_proba_buy is not None else min_proba_buy)
         self.min_proba_sell = float(per_ticker_min_proba_sell if per_ticker_min_proba_sell is not None else min_proba_sell)
         self.use_gate = bool(use_gate) and (scaler is not None)
-        self.market_data = market_data
-        self.use_market_filter = use_market_filter and market_data is not None
         # Dynamically determine the full feature set including financial features
         # This will be passed from the training worker
         self.feature_set = feature_set if feature_set is not None else [
@@ -1577,10 +1783,46 @@ class RuleTradingEnv:
             return 0.0
 
         try:
-            X_scaled_np = self.scaler.transform(X_df)
-            X = pd.DataFrame(X_scaled_np, columns=model_feature_names) # Use model_feature_names for columns
-            
-            return float(model.predict_proba(X)[0][1])
+            # Handle PyTorch models (LSTM/GRU) separately
+            if PYTORCH_AVAILABLE and isinstance(model, (LSTMClassifier, GRUClassifier)):
+                # For PyTorch models, we need to scale the data and create sequences
+                # The scaler for DL models is MinMaxScaler, which was fitted on unsequenced data
+                # We need to get the last SEQUENCE_LENGTH rows for prediction
+                start_idx = max(0, i - SEQUENCE_LENGTH + 1)
+                end_idx = i + 1
+                
+                # Ensure we have enough data for the sequence
+                if end_idx <= SEQUENCE_LENGTH: # Not enough data for a full sequence yet
+                    # Pad with zeros or handle as insufficient data
+                    # For now, return 0.0 (no strong signal)
+                    return 0.0
+                
+                # Get the relevant historical data for sequencing
+                historical_data_for_seq = self.df.loc[start_idx:end_idx-1, model_feature_names].copy()
+                
+                # Ensure all columns are numeric and fill any NaNs
+                for col in historical_data_for_seq.columns:
+                    historical_data_for_seq[col] = pd.to_numeric(historical_data_for_seq[col], errors='coerce').fillna(0.0)
+
+                # Scale the sequence data
+                X_scaled_seq = self.scaler.transform(historical_data_for_seq)
+                
+                # Convert to tensor and add batch dimension
+                X_tensor = torch.tensor(X_scaled_seq, dtype=torch.float32).unsqueeze(0)
+                
+                # Move to appropriate device
+                device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+                X_tensor = X_tensor.to(device)
+
+                model.eval() # Set model to evaluation mode
+                with torch.no_grad():
+                    output = model(X_tensor)
+                    return float(output.cpu().numpy()[0][0]) # Get the probability
+            else:
+                # For traditional ML models, use the existing scaling and prediction logic
+                X_scaled_np = self.scaler.transform(X_df)
+                X = pd.DataFrame(X_scaled_np, columns=model_feature_names)
+                return float(model.predict_proba(X)[0][1])
         except Exception as e:
             print(f"  [{self.ticker}] Error in model prediction at step {i}: {e}")
             return 0.0
@@ -1668,25 +1910,6 @@ class RuleTradingEnv:
         date = self._date_at(self.current_step)
         atr = float(row.get("ATR", np.nan)) if pd.notna(row.get("ATR", np.nan)) else None
 
-        # --- Market Filter ---
-        if self.use_market_filter:
-            current_date = row['Date'].normalize()
-            # Use asof to find the latest market data point on or before the current date
-            market_slice = self.market_data.loc[:current_date]
-            if not market_slice.empty:
-                latest_market_data = market_slice.iloc[-1]
-                market_close = latest_market_data['Close']
-                market_sma = latest_market_data['SMA_L_MKT']
-                if pd.notna(market_close) and pd.notna(market_sma) and market_close < market_sma:
-                    # Market is in a downtrend. Sell any open position and do not open new ones.
-                    if self.shares > 0:
-                        self._sell(price, date)
-                    
-                    port_val = self.cash + self.shares * price
-                    self.portfolio_history.append(port_val)
-                    self.current_step += 1
-                    return self.current_step >= len(self.df)
-
         # --- Entry Signal ---
         # Condition: AI model must approve
         ai_signal = self._allow_buy_by_model(self.current_step)
@@ -1724,8 +1947,8 @@ class RuleTradingEnv:
 def backtest_worker(params: Tuple) -> Optional[Dict]:
     """Worker function for parallel backtesting."""
     ticker, df_backtest, capital_per_stock, model_buy, model_sell, scaler, \
-        market_data, feature_set, min_proba_buy, min_proba_sell, target_percentage, \
-        top_performers_data = params
+        feature_set, min_proba_buy, min_proba_sell, target_percentage, \
+        top_performers_data = params # Removed market_data from params
     
     # Initial log to confirm the worker has started for a ticker
     with open("logs/worker_debug.log", "a") as f:
@@ -1745,8 +1968,8 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             model_sell=model_sell,
             scaler=scaler,
             use_gate=USE_MODEL_GATE,
-            market_data=market_data,
-            use_market_filter=USE_MARKET_FILTER,
+            # market_data=market_data, # Removed market_data
+            # use_market_filter=USE_MARKET_FILTER, # Removed use_market_filter as it depends on market_data
             feature_set=feature_set,
             per_ticker_min_proba_buy=min_proba_buy,
             per_ticker_min_proba_sell=min_proba_sell
@@ -2118,11 +2341,10 @@ def optimize_thresholds_for_portfolio(
     models_buy: Dict,
     models_sell: Dict,
     scalers: Dict,
-    market_data: Optional[pd.DataFrame],
     capital_per_stock: float,
     run_parallel: bool,
     current_optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None # New parameter
-) -> Dict[str, Dict[str, float]]:
+) -> Dict[str, Dict[str, float]]: # Removed market_data
     """
     Optimizes ML thresholds (min_proba_buy, min_proba_sell, target_percentage)
     for each ticker in the portfolio based on Sharpe Ratio.
@@ -2150,9 +2372,9 @@ def optimize_thresholds_for_portfolio(
         optimization_params.append((
             ticker, train_start, train_end, current_target_perc, # Pass current_target_perc
             feature_set, models_buy[ticker], models_sell[ticker], scalers[ticker],
-            market_data, capital_per_stock,
+            capital_per_stock,
             current_buy_proba, current_sell_proba # Pass current buy/sell proba
-        ))
+        )) # Removed market_data
 
     if run_parallel:
         print(f"  Running optimization in parallel for {len(optimization_params)} tickers using {NUM_PROCESSES} processes...")
@@ -2176,8 +2398,8 @@ def optimize_thresholds_for_portfolio(
 def optimize_single_ticker_worker(params: Tuple) -> Dict:
     """Worker function to optimize thresholds for a single ticker."""
     ticker, train_start, train_end, current_target_percentage, feature_set, \
-        model_buy, model_sell, scaler, market_data, capital_per_stock, \
-        current_min_proba_buy, current_min_proba_sell = params # Updated params
+        model_buy, model_sell, scaler, capital_per_stock, \
+        current_min_proba_buy, current_min_proba_sell = params # Updated params, removed market_data
 
     sys.stderr.write(f"  [DEBUG] {current_process().name} - Optimizing for ticker: {ticker}\n")
 
@@ -2257,8 +2479,6 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
                     per_ticker_min_proba_buy=p_buy,
                     per_ticker_min_proba_sell=p_sell,
                     use_gate=USE_MODEL_GATE,
-                    market_data=market_data,
-                    use_market_filter=USE_MARKET_FILTER,
                     feature_set=actual_feature_set_for_opt # Pass the actual feature set used for training
                 )
                 sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: RuleTradingEnv initialized. Running env.run()...\n")
@@ -2302,7 +2522,7 @@ def _run_portfolio_backtest(
     models_buy: Dict,
     models_sell: Dict,
     scalers: Dict,
-    market_data: Optional[pd.DataFrame],
+    # market_data: Optional[pd.DataFrame], # Removed market_data
     optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]],
     capital_per_stock: float,
     target_percentage: float,
@@ -2341,7 +2561,7 @@ def _run_portfolio_backtest(
         backtest_params.append((
             ticker, ticker_backtest_data.copy(), capital_per_stock,
             models_buy.get(ticker), models_sell.get(ticker), scalers.get(ticker),
-            market_data, feature_set_for_worker, min_proba_buy_ticker, min_proba_sell_ticker, target_percentage_ticker,
+            feature_set_for_worker, min_proba_buy_ticker, min_proba_sell_ticker, target_percentage_ticker, # Removed market_data
             top_performers_data # Pass top_performers_data
         ))
 
@@ -2694,18 +2914,6 @@ def main(
     else:
         optimized_params_per_ticker_1y_filtered = {}
     
-    # --- Fetch Market Data (if enabled) ---
-    market_data = None
-    if USE_MARKET_FILTER:
-        print(f"🔄 Fetching market data for filter ({MARKET_FILTER_TICKER})...")
-        market_start = train_start_1y - timedelta(days=MARKET_FILTER_SMA)
-        market_data = load_prices_robust(MARKET_FILTER_TICKER, market_start, bt_end)
-        if not market_data.empty:
-            market_data['SMA_L_MKT'] = market_data['Close'].rolling(MARKET_FILTER_SMA).mean()
-            print("✅ Market data prepared.\n")
-        else:
-            print(f"⚠️ Could not load market data for {MARKET_FILTER_TICKER}. Filter will be disabled.\n")
-
     # --- OPTIMIZE THRESHOLDS ---
     # Ensure logs directory exists for optimized parameters
     _ensure_dir(TOP_CACHE_PATH.parent)
@@ -2742,7 +2950,6 @@ def main(
             models_buy=models_buy,
             models_sell=models_sell,
             scalers=scalers,
-            market_data=market_data,
             capital_per_stock=capital_per_stock_1y, # Use fixed capital per stock
             run_parallel=run_parallel,
             current_optimized_params_per_ticker=loaded_optimized_params # Pass loaded params
@@ -2771,7 +2978,6 @@ def main(
         models_buy=models_buy,
         models_sell=models_sell,
         scalers=scalers,
-        market_data=market_data,
         optimized_params_per_ticker=optimized_params_per_ticker,
         capital_per_stock=capital_per_stock_1y, # Use fixed capital per stock
         # Pass the global target_percentage here, as the individual backtest_worker will use the optimized one
@@ -2862,7 +3068,6 @@ def main(
         models_buy=models_buy_ytd,
         models_sell=models_sell_ytd,
         scalers=scalers_ytd,
-        market_data=market_data, # Use the same market data as 1-year backtest
         optimized_params_per_ticker=optimized_params_per_ticker_ytd_filtered,
         capital_per_stock=capital_per_stock_ytd, # Use fixed capital per stock
         target_percentage=target_percentage,
@@ -2951,7 +3156,6 @@ def main(
         models_buy=models_buy_3month,
         models_sell=models_sell_3month,
         scalers=scalers_3month,
-        market_data=market_data,
         optimized_params_per_ticker=optimized_params_per_ticker_3month_filtered,
         capital_per_stock=capital_per_stock_3month, # Use fixed capital per stock
         target_percentage=target_percentage,
@@ -3040,7 +3244,6 @@ def main(
         models_buy=models_buy_1month,
         models_sell=models_sell_1month,
         scalers=scalers_1month,
-        market_data=market_data,
         optimized_params_per_ticker=optimized_params_per_ticker_1month_filtered,
         capital_per_stock=capital_per_stock_1month, # Use fixed capital per stock
         target_percentage=target_percentage,
@@ -3207,7 +3410,7 @@ if __name__ == "__main__":
     start_time = time.time()
     main(
         fcf_threshold=None, ebitda_threshold=None, run_parallel=True, single_ticker=None, 
-        force_training=True, force_thresholds_optimization=False, top_performers_data=None
+        force_training=True, force_thresholds_optimization=True, top_performers_data=None # Set to True to force re-optimization
     )
     end_time = time.time()
     print(f"\nRoutine completed in {end_time - start_time:.2f} seconds.")
