@@ -111,7 +111,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 0         # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 0        # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -141,7 +141,7 @@ FEAT_VOL_WINDOW         = 10
 CLASS_HORIZON           = 5          # days ahead for classification target
 MIN_PROBA_BUY           = 0.2       # ML gate threshold for buy model
 MIN_PROBA_SELL          = 0.2       # ML gate threshold for sell model
-TARGET_PERCENTAGE       = 0.01       # 1% target for buy/sell classification
+TARGET_PERCENTAGE       = 0.005       # 1% target for buy/sell classification
 USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
@@ -166,7 +166,8 @@ LSTM_LEARNING_RATE      = 0.001
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
 FORCE_TRAINING          = False      # Set to True to force re-training of ML models
-FORCE_THRESHOLDS_OPTIMIZATION = True # Set to True to force re-optimization of ML thresholds
+FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
+FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
 
 # ============================
 # Helpers
@@ -2187,7 +2188,7 @@ def find_top_performers(
                     start_price = df['Close'].iloc[0]
                     end_price = df['Close'].iloc[-1]
                     if start_price > 0:
-                        perf = ((end_end - start_price) / start_price) * 100
+                        perf = ((end_price - start_price) / start_price) * 100
                         ytd_benchmark_perfs[bench_ticker] = perf
                         print(f"  ✅ {bench_ticker} YTD Performance: {perf:.2f}%")
             except Exception as e:
@@ -2398,8 +2399,9 @@ def optimize_thresholds_for_portfolio(
     scalers: Dict,
     capital_per_stock: float,
     run_parallel: bool,
-    current_optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None # New parameter
-) -> Dict[str, Dict[str, float]]: # Removed market_data
+    force_percentage_optimization: bool, # New parameter
+    current_optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None
+) -> Dict[str, Dict[str, float]]:
     """
     Optimizes ML thresholds (min_proba_buy, min_proba_sell, target_percentage)
     for each ticker in the portfolio based on Sharpe Ratio.
@@ -2413,7 +2415,6 @@ def optimize_thresholds_for_portfolio(
             print(f"  ⚠️ Skipping optimization for {ticker}: Models or scaler not available.")
             continue
         
-        # Get current optimized values for this ticker, or use defaults
         current_buy_proba = MIN_PROBA_BUY
         current_sell_proba = MIN_PROBA_SELL
         current_target_perc = default_target_percentage
@@ -2423,13 +2424,13 @@ def optimize_thresholds_for_portfolio(
             current_sell_proba = current_optimized_params_per_ticker[ticker].get('min_proba_sell', MIN_PROBA_SELL)
             current_target_perc = current_optimized_params_per_ticker[ticker].get('target_percentage', default_target_percentage)
 
-        # Pass necessary data for optimization, including current optimized values
         optimization_params.append((
-            ticker, train_start, train_end, current_target_perc, # Pass current_target_perc
+            ticker, train_start, train_end, current_target_perc,
             feature_set, models_buy[ticker], models_sell[ticker], scalers[ticker],
             capital_per_stock,
-            current_buy_proba, current_sell_proba # Pass current buy/sell proba
-        )) # Removed market_data
+            current_buy_proba, current_sell_proba,
+            force_percentage_optimization # Pass the new parameter
+        ))
 
     if run_parallel:
         print(f"  Running optimization in parallel for {len(optimization_params)} tickers using {NUM_PROCESSES} processes...")
@@ -2445,117 +2446,127 @@ def optimize_thresholds_for_portfolio(
                 'min_proba_buy': res['min_proba_buy'],
                 'min_proba_sell': res['min_proba_sell'],
                 'target_percentage': res['target_percentage'],
-                'optimization_status': res['optimization_status'] # Store the status
+                'optimization_status': res['optimization_status']
             }
             print(f"  ✅ {res['ticker']} optimized: Buy={res['min_proba_buy']:.2f}, Sell={res['min_proba_sell']:.2f}, Target%={res['target_percentage']:.2%}, Status: {res['optimization_status']}")
     
     return optimized_params_per_ticker
 
 def optimize_single_ticker_worker(params: Tuple) -> Dict:
-    """Worker function to optimize thresholds for a single ticker."""
-    ticker, train_start, train_end, default_target_percentage, feature_set, \
+    """Worker function to optimize thresholds and target percentage for a single ticker."""
+    ticker, train_start, train_end, initial_target_percentage, feature_set, \
         model_buy, model_sell, scaler, capital_per_stock, \
-        current_min_proba_buy, current_min_proba_sell = params
+        current_min_proba_buy, current_min_proba_sell, force_percentage_optimization = params
     
-    # Note: Simple rule strategy is not optimized here, it uses fixed percentages.
-    # This worker is specifically for optimizing ML gate thresholds.
-
     sys.stderr.write(f"  [DEBUG] {current_process().name} - Optimizing for ticker: {ticker}\n")
 
     best_sharpe = -np.inf
-    best_min_proba_buy = current_min_proba_buy # Initialize with current values
+    best_min_proba_buy = current_min_proba_buy
     best_min_proba_sell = current_min_proba_sell
-    # target_percentage is fixed for already trained models, so it's not optimized here.
-    best_target_percentage = default_target_percentage # Keep fixed as per user clarification
+    best_target_percentage = initial_target_percentage
 
-    # Define ranges for optimization based on current values
-    # One step lower, current value, one step higher
     step_proba = 0.05
+    min_proba_buy_range = sorted(list(set([round(x, 2) for x in [max(0.0, current_min_proba_buy - step_proba), current_min_proba_buy, current_min_proba_buy + step_proba] if 0.0 <= x <= 1.0])))
+    min_proba_sell_range = sorted(list(set([round(x, 2) for x in [max(0.0, current_min_proba_sell - step_proba), current_min_proba_sell, current_min_proba_sell + step_proba] if 0.0 <= x <= 1.0])))
 
-    min_proba_buy_range = [
-        max(0.0, current_min_proba_buy - step_proba),
-        current_min_proba_buy,
-        current_min_proba_buy + step_proba
-    ]
-    min_proba_buy_range = sorted(list(set([round(x, 2) for x in min_proba_buy_range if 0.0 <= x <= 1.0])))
-
-    min_proba_sell_range = [
-        max(0.0, current_min_proba_sell - step_proba),
-        current_min_proba_sell,
-        current_min_proba_sell + step_proba
-    ]
-    min_proba_sell_range = sorted(list(set([round(x, 2) for x in min_proba_sell_range if 0.0 <= x <= 1.0])))
-
-    # Load data for backtesting during optimization
+    target_percentage_range = [initial_target_percentage]
+    if force_percentage_optimization:
+        # Define a range for target_percentage optimization, e.g., +/- 0.0025 around the initial value
+        # with steps of 0.001. Ensure values are positive.
+        target_percentage_range = sorted(list(set([
+            max(0.001, round(initial_target_percentage - 0.0025, 4)),
+            max(0.001, round(initial_target_percentage - 0.001, 4)),
+            initial_target_percentage,
+            round(initial_target_percentage + 0.001, 4),
+            round(initial_target_percentage + 0.0025, 4)
+        ])))
+    
     sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Loading prices for optimization...\n")
     df_backtest_opt = load_prices(ticker, train_start, train_end)
     if df_backtest_opt.empty:
         sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: No data for optimization. Returning default.\n")
-        return {'ticker': ticker, 'min_proba_buy': current_min_proba_buy, 'min_proba_sell': current_min_proba_sell, 'target_percentage': default_target_percentage}
-    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Prices loaded. Starting threshold loops.\n")
+        return {'ticker': ticker, 'min_proba_buy': current_min_proba_buy, 'min_proba_sell': current_min_proba_sell, 'target_percentage': initial_target_percentage, 'optimization_status': "Failed (no data)"}
+    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Prices loaded. Starting optimization loops.\n")
 
-    # No need to re-fetch training data or retrain models here.
-    # The models and scaler are passed in and are assumed to be already trained
-    # with a specific target_percentage (default_target_percentage).
-
-    for p_buy in min_proba_buy_range:
-        for p_sell in min_proba_sell_range:
-            sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Testing p_buy={p_buy:.2f}, p_sell={p_sell:.2f}\n")
-            
-            env = RuleTradingEnv(
-                df=df_backtest_opt.copy(),
-                ticker=ticker,
-                initial_balance=capital_per_stock,
-                transaction_cost=TRANSACTION_COST,
-                model_buy=model_buy, # Use passed trained model
-                model_sell=model_sell, # Use passed trained model
-                scaler=scaler, # Use passed trained scaler
-                per_ticker_min_proba_buy=p_buy,
-                per_ticker_min_proba_sell=p_sell,
-                use_gate=USE_MODEL_GATE,
-                feature_set=feature_set, # Pass the feature set used for initial training
-                use_simple_rule_strategy=False # Ensure simple rule is OFF during ML optimization
-            )
-            sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: RuleTradingEnv initialized. Running env.run()...\n")
-            final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob = env.run()
-            sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Calculating Sharpe Ratio.\n")
-            
-            # Calculate Sharpe Ratio for this combination
-            strategy_history = env.portfolio_history
-            if len(strategy_history) > 1:
-                strat_returns = pd.Series(strategy_history).pct_change(fill_method=None).dropna()
-                if strat_returns.std() > 0:
-                    sharpe = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252)
-                else:
-                        sharpe = 0.0 # Avoid division by zero
-            else:
-                sharpe = 0.0
-
-            # --- Diagnostic Logging ---
-            sys.stderr.write(f"  [DEBUG] {current_process().name} - [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f} -> Sharpe={sharpe:.4f}\n")
-            
-            if sharpe > best_sharpe:
-                best_sharpe = sharpe
-                best_min_proba_buy = p_buy
-                best_min_proba_sell = p_sell
-                # best_target_percentage remains fixed as default_target_percentage
+    # Re-fetch training data for each target_percentage if optimizing it
+    # This is crucial because target_percentage affects the 'TargetClassBuy' and 'TargetClassSell' labels
+    # which are used to train the models.
     
-    # Determine optimization status
+    # Store models and scalers for each target_percentage to avoid re-training if already done
+    models_cache = {} # Key: target_percentage, Value: (model_buy, model_sell, scaler)
+
+    for p_target in target_percentage_range:
+        # If we are optimizing target_percentage, we need to re-train models for each p_target
+        # or load them if already trained for this p_target.
+        if p_target not in models_cache:
+            sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Re-fetching training data and re-training models for target_percentage={p_target:.4f}\n")
+            df_train, actual_feature_set = fetch_training_data(ticker, df_backtest_opt.copy(), p_target) # Use df_backtest_opt as training data for optimization
+            if df_train.empty:
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Insufficient training data for target_percentage={p_target:.4f}. Skipping.\n")
+                continue
+            
+            model_buy_for_opt, scaler_buy_for_opt = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker)
+            model_sell_for_opt, scaler_sell_for_opt = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker)
+            
+            if model_buy_for_opt and model_sell_for_opt and scaler_buy_for_opt:
+                models_cache[p_target] = (model_buy_for_opt, model_sell_for_opt, scaler_buy_for_opt)
+            else:
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Failed to train models for target_percentage={p_target:.4f}. Skipping.\n")
+                continue
+        
+        current_model_buy, current_model_sell, current_scaler = models_cache[p_target]
+
+        for p_buy in min_proba_buy_range:
+            for p_sell in min_proba_sell_range:
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Testing p_buy={p_buy:.2f}, p_sell={p_sell:.2f}, p_target={p_target:.4f}\n")
+                
+                env = RuleTradingEnv(
+                    df=df_backtest_opt.copy(),
+                    ticker=ticker,
+                    initial_balance=capital_per_stock,
+                    transaction_cost=TRANSACTION_COST,
+                    model_buy=current_model_buy,
+                    model_sell=current_model_sell,
+                    scaler=current_scaler,
+                    per_ticker_min_proba_buy=p_buy,
+                    per_ticker_min_proba_sell=p_sell,
+                    use_gate=USE_MODEL_GATE,
+                    feature_set=feature_set,
+                    use_simple_rule_strategy=False
+                )
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: RuleTradingEnv initialized. Running env.run()...\n")
+                final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob = env.run()
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Calculating Sharpe Ratio.\n")
+                
+                strategy_history = env.portfolio_history
+                if len(strategy_history) > 1:
+                    strat_returns = pd.Series(strategy_history).pct_change(fill_method=None).dropna()
+                    sharpe = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252) if strat_returns.std() > 0 else 0.0
+                else:
+                    sharpe = 0.0
+
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f}, Target%={p_target:.4f} -> Sharpe={sharpe:.4f}\n")
+                
+                if sharpe > best_sharpe:
+                    best_sharpe = sharpe
+                    best_min_proba_buy = p_buy
+                    best_min_proba_sell = p_sell
+                    best_target_percentage = p_target
+    
     optimization_status = "No Change"
     if not np.isclose(best_min_proba_buy, current_min_proba_buy) or \
-       not np.isclose(best_min_proba_sell, current_min_proba_sell):
+       not np.isclose(best_min_proba_sell, current_min_proba_sell) or \
+       not np.isclose(best_target_percentage, initial_target_percentage):
         optimization_status = "Optimized"
-    # Note: best_target_percentage is always default_target_percentage in this version,
-    # so it won't trigger "Optimized" based on target_percentage change.
 
     sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Sharpe={best_sharpe:.4f}, Status: {optimization_status}\n")
     return {
         'ticker': ticker,
         'min_proba_buy': best_min_proba_buy,
         'min_proba_sell': best_min_proba_sell,
-        'target_percentage': best_target_percentage, # Return the fixed target percentage
+        'target_percentage': best_target_percentage,
         'best_sharpe': best_sharpe,
-        'optimization_status': optimization_status # Add optimization status
+        'optimization_status': optimization_status
     }
 
 def _run_portfolio_backtest(
@@ -2853,6 +2864,7 @@ def main(
     min_proba_sell: float = MIN_PROBA_SELL,
     target_percentage: float = TARGET_PERCENTAGE, # This will now be the initial/default target_percentage for optimization
     force_thresholds_optimization: bool = FORCE_THRESHOLDS_OPTIMIZATION, # New parameter
+    force_percentage_optimization: bool = FORCE_PERCENTAGE_OPTIMIZATION, # New parameter
     top_performers_data=None,
     feature_set: Optional[List[str]] = None,
     run_parallel: bool = True,
@@ -3055,20 +3067,24 @@ def main(
         except Exception as e:
             print(f"⚠️ Could not load optimized parameters from file: {e}. Starting with default thresholds.")
 
-    if force_thresholds_optimization: # Use local parameter
-        print("\n🔄 Step 2.5: Optimizing ML thresholds for each ticker (forced or no existing file)...")
+    # Determine if optimization needs to run at all
+    should_run_optimization = force_thresholds_optimization or force_percentage_optimization
+
+    if should_run_optimization:
+        print("\n🔄 Step 2.5: Optimizing ML parameters for each ticker...")
         optimized_params_per_ticker = optimize_thresholds_for_portfolio(
-            top_tickers=top_tickers_1y_filtered, # Use filtered tickers for optimization
-            train_start=train_start_1y, # Use training data for optimization
+            top_tickers=top_tickers_1y_filtered,
+            train_start=train_start_1y,
             train_end=train_end_1y,
-            default_target_percentage=target_percentage, # Pass default target_percentage
+            default_target_percentage=target_percentage,
             feature_set=feature_set,
             models_buy=models_buy,
             models_sell=models_sell,
             scalers=scalers,
-            capital_per_stock=capital_per_stock_1y, # Use fixed capital per stock
+            capital_per_stock=capital_per_stock_1y,
             run_parallel=run_parallel,
-            current_optimized_params_per_ticker=loaded_optimized_params # Pass loaded params
+            force_percentage_optimization=force_percentage_optimization,
+            current_optimized_params_per_ticker=loaded_optimized_params
         )
         if optimized_params_per_ticker:
             try:
@@ -3077,23 +3093,22 @@ def main(
                 print(f"✅ Optimized parameters saved to {optimized_params_file}")
             except Exception as e:
                 print(f"⚠️ Could not save optimized parameters to file: {e}")
-    else: # If not forcing optimization, use the loaded parameters
-        # Initialize optimized_params_per_ticker with loaded values and set status
+    else:
+        # If no optimization is forced, load existing or use defaults
         optimized_params_per_ticker = {}
         for ticker in top_tickers_1y_filtered:
             if ticker in loaded_optimized_params:
                 optimized_params_per_ticker[ticker] = loaded_optimized_params[ticker]
                 optimized_params_per_ticker[ticker]['optimization_status'] = "Loaded"
             else:
-                # If no loaded params for this ticker, use defaults and mark as such
                 optimized_params_per_ticker[ticker] = {
                     'min_proba_buy': MIN_PROBA_BUY,
                     'min_proba_sell': MIN_PROBA_SELL,
                     'target_percentage': target_percentage,
                     'optimization_status': "Not Optimized (using defaults)"
                 }
-        print(f"\n✅ Using loaded optimized parameters (set 'force_thresholds_optimization=True' in main() call to re-run optimization).")
-        if not optimized_params_per_ticker: # This check might be redundant now, but keep for safety
+        print(f"\n✅ Using loaded or default parameters (set 'force_thresholds_optimization=True' or 'force_percentage_optimization=True' in main() call to re-run optimization).")
+        if not optimized_params_per_ticker:
             print("\nℹ️ No optimized parameters found for current tickers. Using default thresholds.")
 
 
@@ -3650,6 +3665,7 @@ if __name__ == "__main__":
     main(
         fcf_threshold=None, ebitda_threshold=None, run_parallel=True, single_ticker=None, 
         force_thresholds_optimization=FORCE_THRESHOLDS_OPTIMIZATION, # Pass the global constant
+        force_percentage_optimization=FORCE_PERCENTAGE_OPTIMIZATION, # Pass the global constant
         top_performers_data=None,
         use_simple_rule_strategy=True # Enable simple rule-based strategy for comparison
     )
