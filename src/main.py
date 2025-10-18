@@ -111,7 +111,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 0        # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 2        # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -148,8 +148,22 @@ MARKET_FILTER_TICKER    = 'SPY'
 MARKET_FILTER_SMA       = 200
 USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering
 
+# --- ML Model Selection Flags ---
+USE_LOGISTIC_REGRESSION = False
+USE_SVM                 = False
+USE_MLP_CLASSIFIER      = False
+USE_LIGHTGBM            = False # Enable LightGBM - GOOD
+#GOOD
+USE_XGBOOST             = False # Disable XGBoost
+USE_LSTM                = False
+#Not so GOOD
+USE_GRU                 = True # Enable GRU - BEST
+#BEST
+USE_RANDOM_FOREST       = False # Disable RandomForest
+#WORST
+
 # --- Simple Rule-Based Strategy specific hyperparameters
-USE_SIMPLE_RULE_STRATEGY = False     # Set to True to enable a simple rule-based strategy
+USE_SIMPLE_RULE_STRATEGY = False
 SIMPLE_RULE_TRAILING_STOP_PERCENT = 0.10 # 10% trailing stop
 SIMPLE_RULE_TAKE_PROFIT_PERCENT = 0.10   # 10% take profit
 
@@ -165,7 +179,7 @@ LSTM_LEARNING_RATE      = 0.001
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
-FORCE_TRAINING          = False      # Set to True to force re-training of ML models
+FORCE_TRAINING          = True      # Set to True to force re-training of ML models
 FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
 
@@ -1025,6 +1039,57 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     df['DC_Upper'] = df['High'].rolling(window=20).max()
     df['DC_Lower'] = df['Low'].rolling(window=20).min()
     df['DC_Middle'] = (df['DC_Upper'] + df['DC_Lower']) / 2
+
+    # Parabolic SAR (PSAR)
+    # Initialize PSAR
+    psar = df['Close'].copy()
+    af = 0.02 # Acceleration Factor
+    max_af = 0.2 # Maximum Acceleration Factor
+
+    # Initial trend and extreme point
+    # Assume initial uptrend if Close > Open, downtrend otherwise
+    uptrend = True if df['Close'].iloc[0] > df['Open'].iloc[0] else False
+    ep = df['High'].iloc[0] if uptrend else df['Low'].iloc[0]
+    sar = df['Low'].iloc[0] if uptrend else df['High'].iloc[0]
+    
+    # Iterate to calculate PSAR
+    for i in range(1, len(df)):
+        if uptrend:
+            sar = sar + af * (ep - sar)
+            if df['Low'].iloc[i] < sar: # Trend reversal
+                uptrend = False
+                sar = ep
+                ep = df['Low'].iloc[i]
+                af = 0.02
+            else:
+                if df['High'].iloc[i] > ep:
+                    ep = df['High'].iloc[i]
+                    af = min(max_af, af + 0.02)
+        else: # Downtrend
+            sar = sar + af * (ep - sar)
+            if df['High'].iloc[i] > sar: # Trend reversal
+                uptrend = True
+                sar = ep
+                ep = df['High'].iloc[i]
+                af = 0.02
+            else:
+                if df['Low'].iloc[i] < ep:
+                    ep = df['Low'].iloc[i]
+                    af = min(max_af, af + 0.02)
+        psar.iloc[i] = sar
+    df['PSAR'] = psar
+
+    # Accumulation/Distribution Line (ADL)
+    # Money Flow Volume (MFV)
+    mf_multiplier = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
+    mf_volume = mf_multiplier * df['Volume']
+    df['ADL'] = mf_volume.cumsum()
+    df['ADL'] = df['ADL'].fillna(0) # Fill initial NaNs with 0
+
+    # Commodity Channel Index (CCI)
+    TP = (df['High'] + df['Low'] + df['Close']) / 3
+    df['CCI'] = (TP - TP.rolling(window=20).mean()) / (0.015 * TP.rolling(window=20).std())
+    df['CCI'] = df['CCI'].fillna(0) # Fill initial NaNs with 0
     
     # --- Additional Financial Features (from _fetch_financial_data) ---
     financial_features = [col for col in df.columns if col.startswith('Fin_')]
@@ -1049,7 +1114,8 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     expected_technical_features = [
         "Close", "Volume", "High", "Low", "Open", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", 
         "ATR", "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
-        "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower"
+        "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
+        "PSAR", "ADL", "CCI" # Added new features
     ]
     
     # Filter to only include technical features that are actually in df.columns
@@ -1204,12 +1270,12 @@ def initialize_ml_libraries():
             "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
         }
         if CUDA_AVAILABLE:
-            xgb_model_params["model"].set_params(tree_method='gpu_hist')
+            xgb_model_params["model"].set_params(tree_method='hist') # Changed from 'gpu_hist' to 'hist'
             models_and_params["XGBoost (GPU)"] = xgb_model_params
         else:
             print("ℹ️ XGBoost found. Will use CPU (CUDA not available).")
             models_and_params["XGBoost (CPU)"] = xgb_model_params
-    
+
     _ml_libraries_initialized = True
     return models_and_params # Return the dictionary
 
@@ -1303,35 +1369,40 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     # Initialize models_and_params here to ensure it's fresh for each call
     models_and_params_local = {} 
 
-    if CUML_AVAILABLE:
+    if CUML_AVAILABLE and USE_LOGISTIC_REGRESSION:
         models_and_params_local["cuML Logistic Regression"] = {
             "model": cuMLLogisticRegression(class_weight="balanced", solver='qn'),
             "params": {'C': [0.1, 1.0, 10.0]}
         }
+    if CUML_AVAILABLE and USE_RANDOM_FOREST:
         models_and_params_local["cuML Random Forest"] = {
             "model": cuMLRandomForestClassifier(random_state=SEED),
             "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
         }
     
     # Always include scikit-learn versions as fallbacks or if cuML is not available
-    models_and_params_local["Logistic Regression"] = {
-        "model": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
-        "params": {'C': [0.1, 1.0, 10.0, 100.0]}
-    }
-    models_and_params_local["Random Forest"] = {
-        "model": RandomForestClassifier(random_state=SEED, class_weight="balanced"),
-        "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
-    }
-    models_and_params_local["SVM"] = {
-        "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
-        "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear']}
-    }
-    models_and_params_local["MLPClassifier"] = {
-        "model": MLPClassifier(random_state=SEED, max_iter=500, early_stopping=True),
-        "params": {'hidden_layer_sizes': [(100,), (100, 50), (50, 25)], 'activation': ['relu', 'tanh'], 'alpha': [0.0001, 0.001, 0.01], 'learning_rate_init': [0.001, 0.01]}
-    }
+    if USE_LOGISTIC_REGRESSION:
+        models_and_params_local["Logistic Regression"] = {
+            "model": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
+            "params": {'C': [0.1, 1.0, 10.0, 100.0]}
+        }
+    if USE_RANDOM_FOREST:
+        models_and_params_local["Random Forest"] = {
+            "model": RandomForestClassifier(random_state=SEED, class_weight="balanced"),
+            "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
+        }
+    if USE_SVM:
+        models_and_params_local["SVM"] = {
+            "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
+            "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear']}
+        }
+    if USE_MLP_CLASSIFIER:
+        models_and_params_local["MLPClassifier"] = {
+            "model": MLPClassifier(random_state=SEED, max_iter=500, early_stopping=True),
+            "params": {'hidden_layer_sizes': [(100,), (100, 50), (50, 25)], 'activation': ['relu', 'tanh'], 'alpha': [0.0001, 0.001, 0.01], 'learning_rate_init': [0.001, 0.01]}
+        }
 
-    if LGBMClassifier:
+    if LGBMClassifier and USE_LIGHTGBM:
         lgbm_model_params = {
             "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1),
             "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
@@ -1342,7 +1413,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
         else:
             models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
 
-    if XGBOOST_AVAILABLE and XGBClassifier:
+    if XGBOOST_AVAILABLE and XGBClassifier and USE_XGBOOST:
         xgb_model_params = {
             "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1),
             "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
@@ -1354,7 +1425,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
             models_and_params_local["XGBoost (CPU)"] = xgb_model_params
 
     # --- Deep Learning Models (LSTM/GRU) ---
-    if PYTORCH_AVAILABLE:
+    if PYTORCH_AVAILABLE and (USE_LSTM or USE_GRU):
         # Prepare data for LSTM/GRU: sequence generation and scaling
         # Use MinMaxScaler for deep learning models
         dl_scaler = MinMaxScaler(feature_range=(0, 1))
@@ -1381,74 +1452,77 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
             dataloader = DataLoader(dataset, batch_size=LSTM_BATCH_SIZE, shuffle=True)
 
             input_size = X_sequences.shape[2] # Number of features
-
-            # LSTM Model
-            lstm_model = LSTMClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
-            optimizer_lstm = optim.Adam(lstm_model.parameters(), lr=LSTM_LEARNING_RATE)
             criterion = nn.BCELoss() # Binary Cross-Entropy for binary classification
 
-            print(f"    - Training LSTM for {ticker}...")
-            for epoch in range(LSTM_EPOCHS):
-                for batch_X, batch_y in dataloader:
-                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                    optimizer_lstm.zero_grad()
-                    outputs = lstm_model(batch_X)
-                    loss = criterion(outputs, batch_y)
-                    loss.backward()
-                    optimizer_lstm.step()
-            
-            # Evaluate LSTM
-            lstm_model.eval()
-            with torch.no_grad():
-                all_outputs = []
-                for batch_X, _ in dataloader:
-                    batch_X = batch_X.to(device)
-                    outputs = lstm_model(batch_X)
-                    all_outputs.append(outputs.cpu().numpy())
-                y_pred_proba_lstm = np.concatenate(all_outputs).flatten()
-            
-            # Calculate AUC for LSTM
-            from sklearn.metrics import roc_auc_score
-            try:
-                auc_lstm = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_lstm)
-                models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": auc_lstm}
-                print(f"      LSTM AUC: {auc_lstm:.4f}")
-            except ValueError:
-                print(f"      LSTM AUC: Not enough samples with positive class for AUC calculation.")
-                models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": 0.0}
+            if USE_LSTM:
+                # LSTM Model
+                lstm_model = LSTMClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
+                optimizer_lstm = optim.Adam(lstm_model.parameters(), lr=LSTM_LEARNING_RATE)
 
-            # GRU Model
-            gru_model = GRUClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
-            optimizer_gru = optim.Adam(gru_model.parameters(), lr=LSTM_LEARNING_RATE)
+                print(f"    - Training LSTM for {ticker}...")
+                for epoch in range(LSTM_EPOCHS):
+                    for batch_X, batch_y in dataloader:
+                        batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                        optimizer_lstm.zero_grad()
+                        outputs = lstm_model(batch_X)
+                        loss = criterion(outputs, batch_y)
+                        loss.backward()
+                        optimizer_lstm.step()
+                
+                # Evaluate LSTM
+                lstm_model.eval()
+                with torch.no_grad():
+                    all_outputs = []
+                    for batch_X, _ in dataloader:
+                        batch_X = batch_X.to(device)
+                        outputs = lstm_model(batch_X)
+                        all_outputs.append(outputs.cpu().numpy())
+                    y_pred_proba_lstm = np.concatenate(all_outputs).flatten()
+                
+                # Calculate AUC for LSTM
+                try:
+                    from sklearn.metrics import roc_auc_score # Moved import outside conditional block
+                    auc_lstm = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_lstm)
+                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": auc_lstm}
+                    print(f"      LSTM AUC: {auc_lstm:.4f}")
+                except ValueError:
+                    print(f"      LSTM AUC: Not enough samples with positive class for AUC calculation.")
+                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": 0.0}
 
-            print(f"    - Training GRU for {ticker}...")
-            for epoch in range(LSTM_EPOCHS):
-                for batch_X, batch_y in dataloader:
-                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                    optimizer_gru.zero_grad()
-                    outputs = gru_model(batch_X)
-                    loss = criterion(outputs, batch_y)
-                    loss.backward()
-                    optimizer_gru.step()
+            if USE_GRU:
+                # GRU Model
+                gru_model = GRUClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
+                optimizer_gru = optim.Adam(gru_model.parameters(), lr=LSTM_LEARNING_RATE)
 
-            # Evaluate GRU
-            gru_model.eval()
-            with torch.no_grad():
-                all_outputs = []
-                for batch_X, _ in dataloader:
-                    batch_X = batch_X.to(device)
-                    outputs = gru_model(batch_X)
-                    all_outputs.append(outputs.cpu().numpy())
-                y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+                print(f"    - Training GRU for {ticker}...")
+                for epoch in range(LSTM_EPOCHS):
+                    for batch_X, batch_y in dataloader:
+                        batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                        optimizer_gru.zero_grad()
+                        outputs = gru_model(batch_X)
+                        loss = criterion(outputs, batch_y)
+                        loss.backward()
+                        optimizer_gru.step()
 
-            # Calculate AUC for GRU
-            try:
-                auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
-                models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru}
-                print(f"      GRU AUC: {auc_gru:.4f}")
-            except ValueError:
-                print(f"      GRU AUC: Not enough samples with positive class for AUC calculation.")
-                models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": 0.0}
+                # Evaluate GRU
+                gru_model.eval()
+                with torch.no_grad():
+                    all_outputs = []
+                    for batch_X, _ in dataloader:
+                        batch_X = batch_X.to(device)
+                        outputs = gru_model(batch_X)
+                        all_outputs.append(outputs.cpu().numpy())
+                    y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+
+                # Calculate AUC for GRU
+                try:
+                    from sklearn.metrics import roc_auc_score # Moved import outside conditional block
+                    auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
+                    models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru}
+                    print(f"      GRU AUC: {auc_gru:.4f}")
+                except ValueError:
+                    print(f"      GRU AUC: Not enough samples with positive class for AUC calculation.")
+                    models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": 0.0}
 
     results = {}
     best_model_overall = None
@@ -1624,6 +1698,7 @@ class RuleTradingEnv:
             "Close", "Volume", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "ATR",
             "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
             "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
+            "PSAR", "ADL", "CCI", # Added new features
             'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA'
         ]
         
@@ -1710,11 +1785,13 @@ class RuleTradingEnv:
         ema_12 = close.ewm(span=12, adjust=False).mean()
         ema_26 = close.ewm(span=26, adjust=False).mean()
         self.df['MACD'] = ema_12 - ema_26
+        self.df['MACD_signal'] = self.df['MACD'].ewm(span=9, adjust=False).mean() # Added MACD_signal
         
         # Bollinger Bands for features
         bb_mid = close.rolling(window=20).mean()
         bb_std = close.rolling(window=20).std()
         self.df['BB_upper'] = bb_mid + (bb_std * 2)
+        self.df['BB_lower'] = bb_mid - (bb_std * 2) # Added BB_lower
 
         # Stochastic Oscillator
         low_14, high_14 = self.df['Low'].rolling(window=14).min(), self.df['High'].rolling(window=14).max()
@@ -1771,6 +1848,55 @@ class RuleTradingEnv:
         self.df['DC_Upper'] = self.df['High'].rolling(window=20).max()
         self.df['DC_Lower'] = self.df['Low'].rolling(window=20).min()
         self.df['DC_Middle'] = (self.df['DC_Upper'] + self.df['DC_Lower']) / 2
+
+        # Parabolic SAR (PSAR) - Re-implementing for RuleTradingEnv
+        psar = self.df['Close'].copy()
+        af = 0.02 # Acceleration Factor
+        max_af = 0.2 # Maximum Acceleration Factor
+
+        # Initial trend and extreme point
+        # Assume initial uptrend if Close > Open, downtrend otherwise
+        uptrend = True if self.df['Close'].iloc[0] > self.df['Open'].iloc[0] else False
+        ep = self.df['High'].iloc[0] if uptrend else self.df['Low'].iloc[0]
+        sar = df['Low'].iloc[0] if uptrend else df['High'].iloc[0]
+        
+        # Iterate to calculate PSAR
+        for i in range(1, len(self.df)):
+            if uptrend:
+                sar = sar + af * (ep - sar)
+                if self.df['Low'].iloc[i] < sar: # Trend reversal
+                    uptrend = False
+                    sar = ep
+                    ep = self.df['Low'].iloc[i]
+                    af = 0.02
+                else:
+                    if self.df['High'].iloc[i] > ep:
+                        ep = self.df['High'].iloc[i]
+                        af = min(max_af, af + 0.02)
+            else: # Downtrend
+                sar = sar + af * (ep - sar)
+                if self.df['High'].iloc[i] > sar: # Trend reversal
+                    uptrend = True
+                    sar = ep
+                    ep = self.df['High'].iloc[i]
+                    af = 0.02
+                else:
+                    if self.df['Low'].iloc[i] < ep:
+                        ep = self.df['Low'].iloc[i]
+                        af = min(max_af, af + 0.02)
+            psar.iloc[i] = sar
+        self.df['PSAR'] = psar
+
+        # Accumulation/Distribution Line (ADL) - Re-implementing for RuleTradingEnv
+        mf_multiplier = ((self.df['Close'] - self.df['Low']) - (self.df['High'] - self.df['Close'])) / (self.df['High'] - self.df['Low'])
+        mf_volume = mf_multiplier * self.df['Volume']
+        self.df['ADL'] = mf_volume.cumsum()
+        self.df['ADL'] = self.df['ADL'].fillna(0) # Fill initial NaNs with 0
+
+        # Commodity Channel Index (CCI) - Re-implementing for RuleTradingEnv
+        TP = (self.df['High'] + self.df['Low'] + self.df['Close']) / 3
+        self.df['CCI'] = (TP - TP.rolling(window=20).mean()) / (0.015 * TP.rolling(window=20).std())
+        self.df['CCI'] = self.df['CCI'].fillna(0) # Fill initial NaNs with 0
 
     def _date_at(self, i: int) -> str:
         if "Date" in self.df.columns:
@@ -2460,7 +2586,7 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
     
     sys.stderr.write(f"  [DEBUG] {current_process().name} - Optimizing for ticker: {ticker}\n")
 
-    best_sharpe = -np.inf
+    best_revenue = -np.inf # Changed from best_sharpe to best_revenue
     best_min_proba_buy = current_min_proba_buy
     best_min_proba_sell = current_min_proba_sell
     best_target_percentage = initial_target_percentage
@@ -2536,19 +2662,15 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
                 )
                 sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: RuleTradingEnv initialized. Running env.run()...\n")
                 final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob = env.run()
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Calculating Sharpe Ratio.\n")
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Getting final value.\n")
                 
-                strategy_history = env.portfolio_history
-                if len(strategy_history) > 1:
-                    strat_returns = pd.Series(strategy_history).pct_change(fill_method=None).dropna()
-                    sharpe = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252) if strat_returns.std() > 0 else 0.0
-                else:
-                    sharpe = 0.0
+                # Optimize for final portfolio value (revenue)
+                current_revenue = final_val
 
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f}, Target%={p_target:.4f} -> Sharpe={sharpe:.4f}\n")
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f}, Target%={p_target:.4f} -> Revenue=${current_revenue:,.2f}\n")
                 
-                if sharpe > best_sharpe:
-                    best_sharpe = sharpe
+                if current_revenue > best_revenue:
+                    best_revenue = current_revenue
                     best_min_proba_buy = p_buy
                     best_min_proba_sell = p_sell
                     best_target_percentage = p_target
@@ -2559,13 +2681,13 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
        not np.isclose(best_target_percentage, initial_target_percentage):
         optimization_status = "Optimized"
 
-    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Sharpe={best_sharpe:.4f}, Status: {optimization_status}\n")
+    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Revenue=${best_revenue:,.2f}, Status: {optimization_status}\n")
     return {
         'ticker': ticker,
         'min_proba_buy': best_min_proba_buy,
         'min_proba_sell': best_min_proba_sell,
         'target_percentage': best_target_percentage,
-        'best_sharpe': best_sharpe,
+        'best_revenue': best_revenue, # Changed from best_sharpe to best_revenue
         'optimization_status': optimization_status
     }
 
@@ -3664,8 +3786,8 @@ if __name__ == "__main__":
     start_time = time.time()
     main(
         fcf_threshold=None, ebitda_threshold=None, run_parallel=True, single_ticker=None, 
-        force_thresholds_optimization=FORCE_THRESHOLDS_OPTIMIZATION, # Pass the global constant
-        force_percentage_optimization=FORCE_PERCENTAGE_OPTIMIZATION, # Pass the global constant
+        force_thresholds_optimization=True, # Enable threshold optimization
+        force_percentage_optimization=True, # Enable target percentage optimization
         top_performers_data=None,
         use_simple_rule_strategy=True # Enable simple rule-based strategy for comparison
     )
