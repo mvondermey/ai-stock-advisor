@@ -2815,8 +2815,13 @@ def _apply_fundamental_screen_worker(params: Tuple[str, float, float, float, flo
                     if key in latest_cashflow.index:
                         fcf = latest_cashflow[key]
                         break
-                if fcf is not None and fcf <= fcf_min_threshold:
-                    fcf_ok = False
+                if fcf is not None:
+                    print(f"  [DEBUG] {ticker}: FCF = {fcf}, Threshold = {fcf_min_threshold}")
+                    if fcf <= fcf_min_threshold:
+                        fcf_ok = False
+                else:
+                    print(f"  [DEBUG] {ticker}: FCF data not found.")
+                    fcf_ok = False # If FCF data is missing, consider it a failure
         
         # EBITDA Check
         ebitda_ok = True
@@ -2826,12 +2831,20 @@ def _apply_fundamental_screen_worker(params: Tuple[str, float, float, float, flo
                 latest_financials = financials.iloc[:, 0]
                 ebitda_keys = ['EBITDA', 'ebitda']
                 ebitda = None
-                for key in latest_financials.index:
+                for key in ebitda_keys: # Corrected loop to iterate over ebitda_keys
                     if key in latest_financials.index:
                         ebitda = latest_financials[key]
                         break
-                if ebitda is not None and ebitda <= ebitda_min_threshold:
-                    ebitda_ok = False
+                if ebitda is not None:
+                    print(f"  [DEBUG] {ticker}: EBITDA = {ebitda}, Threshold = {ebitda_min_threshold}")
+                    if ebitda <= ebitda_min_threshold:
+                        ebitda_ok = False
+                else:
+                    print(f"  [DEBUG] {ticker}: EBITDA data not found.")
+                    ebitda_ok = False # If EBITDA data is missing, consider it a failure
+            else:
+                print(f"  [DEBUG] {ticker}: Financials (EBITDA) dataframe is empty.")
+                ebitda_ok = False # If financials dataframe is empty, consider it a failure
 
         if fcf_ok and ebitda_ok:
             return (ticker, perf_1y, perf_ytd)
