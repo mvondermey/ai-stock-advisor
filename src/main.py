@@ -154,7 +154,7 @@ FEAT_VOL_WINDOW         = 10
 CLASS_HORIZON           = 5          # days ahead for classification target
 MIN_PROBA_BUY           = 0.2       # ML gate threshold for buy model
 MIN_PROBA_SELL          = 0.2       # ML gate threshold for sell model
-TARGET_PERCENTAGE       = 0.005       # 1% target for buy/sell classification
+TARGET_PERCENTAGE       = 0.01       # 1% target for buy/sell classification
 USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
@@ -192,7 +192,7 @@ LSTM_LEARNING_RATE      = 0.001
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
-FORCE_TRAINING          = False      # Set to True to force re-training of ML models
+FORCE_TRAINING          = True      # Set to True to force re-training of ML models
 FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
 
@@ -973,6 +973,22 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     df["Volatility"] = df["Returns"].rolling(FEAT_VOL_WINDOW).std()
 
     # --- Additional Features ---
+    # ATR (Average True Range)
+    high = df["High"] if "High" in df.columns else None
+    low  = df["Low"]  if "Low" in df.columns else None
+    prev_close = df["Close"].shift(1)
+    if high is not None and low is not None:
+        hl = (high - low).abs()
+        h_pc = (high - prev_close).abs()
+        l_pc = (low  - prev_close).abs()
+        tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
+        df["ATR"] = tr.rolling(ATR_PERIOD).mean()
+    else:
+        # Fallback for ATR if High/Low are not available (though they should be after load_prices)
+        ret = df["Close"].pct_change(fill_method=None)
+        df["ATR"] = (ret.rolling(ATR_PERIOD).std() * df["Close"]).rolling(2).mean()
+    df["ATR"] = df["ATR"].fillna(0) # Fill any NaNs from initial ATR calculation
+
     # RSI
     delta = df["Close"].diff()
     gain = (delta.where(delta > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
@@ -1026,8 +1042,7 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     # Calculate Directional Index (DX)
     denominator_dx = (df['+DM14'] + df['-DM14'])
     df['DX'] = np.where(denominator_dx != 0, (abs(df['+DM14'] - df['-DM14']) / denominator_dx) * 100, 0)
-    df['ADX'] = df['DX'].ewm(alpha=alpha, adjust=False).mean()
-    df['DX'] = df['DX'].fillna(0)
+    df['ADX'] = df['DX'].ewm(alpha=alpha, adjust=False).mean() # Missing line added
     df['ADX'] = df['ADX'].fillna(0)
 
     # On-Balance Volume (OBV)
@@ -1103,7 +1118,46 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     TP = (df['High'] + df['Low'] + df['Close']) / 3
     df['CCI'] = (TP - TP.rolling(window=20).mean()) / (0.015 * TP.rolling(window=20).std())
     df['CCI'] = df['CCI'].fillna(0) # Fill initial NaNs with 0
-    
+
+    # Volume Weighted Average Price (VWAP)
+    df['VWAP'] = (df['Close'] * df['Volume']).rolling(window=FEAT_VOL_WINDOW).sum() / df['Volume'].rolling(window=FEAT_VOL_WINDOW).sum()
+    df['VWAP'] = df['VWAP'].fillna(df['Close']) # Fill initial NaNs with Close price
+
+    # ATR Percentage
+    df['ATR_Pct'] = (df['ATR'] / df['Close']) * 100
+    df['ATR_Pct'] = df['ATR_Pct'].fillna(0)
+
+    # Chaikin Oscillator
+    adl_fast = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low']) * df['Volume']
+    adl_slow = adl_fast.ewm(span=10, adjust=False).mean()
+    adl_fast = adl_fast.ewm(span=3, adjust=False).mean()
+    df['Chaikin_Oscillator'] = adl_fast - adl_slow
+    df['Chaikin_Oscillator'] = df['Chaikin_Oscillator'].fillna(0)
+
+    # Money Flow Index (MFI)
+    typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+    money_flow = typical_price * df['Volume']
+    positive_mf = money_flow.where(typical_price > typical_price.shift(1), 0)
+    negative_mf = money_flow.where(typical_price < typical_price.shift(1), 0)
+    mfi_ratio = positive_mf.rolling(window=14).sum() / negative_mf.rolling(window=14).sum()
+    df['MFI'] = 100 - (100 / (1 + mfi_ratio))
+    df['MFI'] = df['MFI'].fillna(0)
+
+    # OBV Moving Average
+    df['OBV_SMA'] = df['OBV'].rolling(window=10).mean()
+    df['OBV_SMA'] = df['OBV_SMA'].fillna(0)
+
+    # Historical Volatility (e.g., 20-day rolling standard deviation of log returns)
+    df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
+    df['Historical_Volatility'] = df['Log_Returns'].rolling(window=20).std() * np.sqrt(252) # Annualized
+    df['Historical_Volatility'] = df['Historical_Volatility'].fillna(0)
+
+    # Market Momentum (using SPY) - Requires fetching SPY data
+    # This feature will be handled differently, as it requires external data.
+    # For now, we'll add a placeholder and assume it's handled in the main loop or a separate function.
+    # For the purpose of feature generation, we'll assume it's a column that will be merged later.
+    # df['Market_Momentum_SPY'] = 0 # Placeholder
+
     # --- Additional Financial Features (from _fetch_financial_data) ---
     financial_features = [col for col in df.columns if col.startswith('Fin_')]
     
@@ -1128,7 +1182,8 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
         "Close", "Volume", "High", "Low", "Open", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", 
         "ATR", "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
         "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
-        "PSAR", "ADL", "CCI" # Added new features
+        "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
+        "Market_Momentum_SPY" # Added new feature
     ]
     
     # Filter to only include technical features that are actually in df.columns
@@ -1638,6 +1693,7 @@ def train_worker(params: Tuple) -> Dict:
             print(f"  ⚠️ Error loading models for {ticker}: {e}. Retraining.")
 
     print(f"  ⚙️ Training models for {ticker} (FORCE_TRAINING is {FORCE_TRAINING})...")
+    print(f"  [DEBUG] {current_process().name} - {ticker}: Initiating feature extraction for training.")
     # The full DataFrame for the training period is already passed in.
     df_train, actual_feature_set = fetch_training_data(ticker, df_train_period, target_percentage)
 
@@ -1645,8 +1701,10 @@ def train_worker(params: Tuple) -> Dict:
         print(f"  ❌ Skipping {ticker}: Insufficient training data.")
         return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None}
 
+    print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for BUY target.")
     # Train BUY model
     model_buy, scaler_buy = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker)
+    print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for SELL target.")
     # Train SELL model (using the same scaler as buy for consistency, or a separate one if needed)
     model_sell, scaler_sell = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker)
 
@@ -1716,8 +1774,9 @@ class RuleTradingEnv:
             "Close", "Volume", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "ATR",
             "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
             "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
-            "PSAR", "ADL", "CCI", # Added new features
-            'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA'
+            "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
+            'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA',
+            'Market_Momentum_SPY'
         ]
         
         self.reset()
@@ -1830,16 +1889,16 @@ class RuleTradingEnv:
         self.df['-DM14'] = self.df['-DM'].ewm(alpha=alpha, adjust=False).mean()
         self.df['TR14'] = self.df['TR'].ewm(alpha=alpha, adjust=False).mean()
         self.df['DX'] = (abs(self.df['+DM14'] - self.df['-DM14']) / (self.df['+DM14'] + self.df['-DM14'])) * 100
+        self.df['DX'] = self.df['DX'].fillna(0) # Fill NaNs for DX immediately after calculation
         self.df['ADX'] = self.df['DX'].ewm(alpha=alpha, adjust=False).mean()
-        # Fill NaNs for all ADX-related indicators after their calculations
+        self.df['ADX'] = self.df['ADX'].fillna(0) # Fill NaNs for ADX immediately after calculation
+        # Fill NaNs for all other ADX-related indicators after their calculations
         self.df['+DM'] = self.df['+DM'].fillna(0)
         self.df['-DM'] = self.df['-DM'].fillna(0)
         self.df['TR'] = self.df['TR'].fillna(0)
         self.df['+DM14'] = self.df['+DM14'].fillna(0)
         self.df['-DM14'] = self.df['-DM14'].fillna(0)
         self.df['TR14'] = self.df['TR14'].fillna(0)
-        self.df['DX'] = self.df['DX'].fillna(0)
-        self.df['ADX'] = self.df['ADX'].fillna(0)
         # Fill NaNs for Stochastic Oscillator after its calculations
         self.df['%K'] = self.df['%K'].fillna(0)
         self.df['%D'] = self.df['%D'].fillna(0)
@@ -1915,6 +1974,55 @@ class RuleTradingEnv:
         TP = (self.df['High'] + self.df['Low'] + self.df['Close']) / 3
         self.df['CCI'] = (TP - TP.rolling(window=20).mean()) / (0.015 * TP.rolling(window=20).std())
         self.df['CCI'] = self.df['CCI'].fillna(0) # Fill initial NaNs with 0
+
+        # Volume Weighted Average Price (VWAP)
+        self.df['VWAP'] = (self.df['Close'] * self.df['Volume']).rolling(window=FEAT_VOL_WINDOW).sum() / self.df['Volume'].rolling(window=FEAT_VOL_WINDOW).sum()
+        self.df['VWAP'] = self.df['VWAP'].fillna(self.df['Close']) # Fill initial NaNs with Close price
+
+        # ATR Percentage
+        # Ensure ATR is calculated before ATR_Pct
+        if "ATR" not in self.df.columns:
+            high = self.df["High"] if "High" in self.df.columns else None
+            low  = self.df["Low"]  if "Low" in self.df.columns else None
+            prev_close = self.df["Close"].shift(1)
+            if high is not None and low is not None:
+                hl = (high - low).abs()
+                h_pc = (high - prev_close).abs()
+                l_pc = (low  - prev_close).abs()
+                tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
+                self.df["ATR"] = tr.rolling(ATR_PERIOD).mean()
+            else:
+                ret = self.df["Close"].pct_change(fill_method=None)
+                self.df["ATR"] = (ret.rolling(ATR_PERIOD).std() * self.df["Close"]).rolling(2).mean()
+            self.df["ATR"] = self.df["ATR"].fillna(0)
+
+        self.df['ATR_Pct'] = (self.df['ATR'] / self.df['Close']) * 100
+        self.df['ATR_Pct'] = self.df['ATR_Pct'].fillna(0)
+
+        # Chaikin Oscillator
+        mf_multiplier_co = ((self.df['Close'] - self.df['Low']) - (self.df['High'] - self.df['Close'])) / (self.df['High'] - self.df['Low'])
+        adl_fast = (mf_multiplier_co * self.df['Volume']).ewm(span=3, adjust=False).mean()
+        adl_slow = (mf_multiplier_co * self.df['Volume']).ewm(span=10, adjust=False).mean()
+        self.df['Chaikin_Oscillator'] = adl_fast - adl_slow
+        self.df['Chaikin_Oscillator'] = self.df['Chaikin_Oscillator'].fillna(0)
+
+        # Money Flow Index (MFI)
+        typical_price_mfi = (self.df['High'] + self.df['Low'] + self.df['Close']) / 3
+        money_flow_mfi = typical_price_mfi * self.df['Volume']
+        positive_mf_mfi = money_flow_mfi.where(typical_price_mfi > typical_price_mfi.shift(1), 0)
+        negative_mf_mfi = money_flow_mfi.where(typical_price_mfi < typical_price_mfi.shift(1), 0)
+        mfi_ratio = positive_mf_mfi.rolling(window=14).sum() / negative_mf_mfi.rolling(window=14).sum()
+        self.df['MFI'] = 100 - (100 / (1 + mfi_ratio))
+        self.df['MFI'] = self.df['MFI'].fillna(0)
+
+        # OBV Moving Average
+        self.df['OBV_SMA'] = self.df['OBV'].rolling(window=10).mean()
+        self.df['OBV_SMA'] = self.df['OBV_SMA'].fillna(0)
+
+        # Historical Volatility (e.g., 20-day rolling standard deviation of log returns)
+        self.df['Log_Returns'] = np.log(self.df['Close'] / self.df['Close'].shift(1))
+        self.df['Historical_Volatility'] = self.df['Log_Returns'].rolling(window=20).std() * np.sqrt(252) # Annualized
+        self.df['Historical_Volatility'] = self.df['Historical_Volatility'].fillna(0)
 
     def _date_at(self, i: int) -> str:
         if "Date" in self.df.columns:
@@ -3089,6 +3197,25 @@ def main(
     else:
         all_tickers_data.index = all_tickers_data.index.tz_convert('UTC')
     print("✅ Comprehensive data download complete.")
+
+    # --- Fetch SPY data for Market Momentum feature ---
+    print("🔍 Fetching SPY data for Market Momentum feature...")
+    spy_df = load_prices_robust('SPY', earliest_date_needed, end_date)
+    if not spy_df.empty:
+        spy_df['SPY_Returns'] = spy_df['Close'].pct_change()
+        spy_df['Market_Momentum_SPY'] = spy_df['SPY_Returns'].rolling(window=FEAT_VOL_WINDOW).mean()
+        spy_df = spy_df[['Market_Momentum_SPY']]
+        spy_df.columns = pd.MultiIndex.from_product([spy_df.columns, ['SPY']])
+        
+        # Merge SPY data into all_tickers_data
+        all_tickers_data = all_tickers_data.merge(spy_df, left_index=True, right_index=True, how='left')
+        # Forward fill and then back fill any NaNs introduced by the merge
+        all_tickers_data['Market_Momentum_SPY', 'SPY'] = all_tickers_data['Market_Momentum_SPY', 'SPY'].ffill().bfill().fillna(0)
+        print("✅ SPY Market Momentum data fetched and merged.")
+    else:
+        print("⚠️ Could not fetch SPY data. Market Momentum feature will be 0.")
+        # Add a zero-filled column if SPY data couldn't be fetched
+        all_tickers_data['Market_Momentum_SPY', 'SPY'] = 0.0
 
     # --- Identify top performers if not provided ---
     if top_performers_data is None:
