@@ -3387,7 +3387,7 @@ def main(
             start_price = df_ytd['Close'].iloc[0]
             end_price = df_ytd['Close'].iloc[-1]
             if start_price > 0:
-                perf_ytd = ((end_date - start_price) / start_price) * 100
+                perf_ytd = ((end_price - start_price) / start_price) * 100
             else:
                 perf_ytd = np.nan
         
