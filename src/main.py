@@ -11,6 +11,7 @@ Trading AI — Improved Rule-Based System with Optional ML Gate
 """
 
 from __future__ import annotations
+print("DEBUG: Script execution initiated.") # Moved for debugging silent exits
 
 import os
 import json
@@ -137,12 +138,6 @@ ENABLE_YTD_TRAINING     = True
 ENABLE_3MONTH_TRAINING  = True
 ENABLE_1MONTH_TRAINING  = True
 
-# --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = True
-ENABLE_YTD_TRAINING     = True
-ENABLE_3MONTH_TRAINING  = True
-ENABLE_1MONTH_TRAINING  = True
-
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
 STRAT_SMA_LONG          = 50
@@ -197,7 +192,7 @@ LSTM_LEARNING_RATE      = 0.001
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
-FORCE_TRAINING          = True      # Set to True to force re-training of ML models
+FORCE_TRAINING          = False      # Set to True to force re-training of ML models
 FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
 
@@ -463,7 +458,7 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
     
     # Ensure all financial columns are numeric
     for col in df_financial.columns:
-        df_financial[col] = pd.to_numeric(df_financial[col], errors='coerce')
+        df_financial[col] = pd.to_numeric(df[col], errors='coerce')
 
     return df_financial.sort_index()
 
@@ -1094,7 +1089,7 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
                 if df['Low'].iloc[i] < ep:
                     ep = df['Low'].iloc[i]
                     af = min(max_af, af + 0.02)
-        psar.iloc[i] = sar
+            psar.iloc[i] = sar
     df['PSAR'] = psar
 
     # Accumulation/Distribution Line (ADL)
@@ -2337,7 +2332,7 @@ def find_top_performers(
                     start_price = df['Close'].iloc[0]
                     end_price = df['Close'].iloc[-1]
                     if start_price > 0:
-                        perf = ((end_price - start_price) / start_price) * 100
+                        perf = ((end_date - start_price) / start_price) * 100
                         ytd_benchmark_perfs[bench_ticker] = perf
                         print(f"  ✅ {bench_ticker} YTD Performance: {perf:.2f}%")
             except Exception as e:
@@ -3022,10 +3017,10 @@ def main(
     bt_end = end_date
     
     alpaca_trading_client = None
-    # Calculate initial balance based on investment per stock and number of top tickers
-    # This will be updated after top_tickers are identified
-    current_initial_balance = INITIAL_BALANCE 
-    print(f"Using initial balance: ${current_initial_balance:,.2f}")
+    
+    # Initialize initial_balance_used here with a default value
+    initial_balance_used = INITIAL_BALANCE 
+    print(f"Using initial balance: ${initial_balance_used:,.2f}")
 
     # --- Handle single ticker case for initial performance calculation ---
     if single_ticker:
@@ -3133,43 +3128,44 @@ def main(
                 f.write(f"{ticker}\n")
 
     # --- Training Models (for 1-Year Backtest) ---
-    print("🔍 Step 3: Training AI models for 1-Year backtest...")
-    bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)
-    train_end_1y = bt_start_1y - timedelta(days=1)
-    train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
-    
-    training_params_1y = []
-    for ticker in top_tickers:
-        try:
-            # Slice the main DataFrame for the training period
-            ticker_train_data = all_tickers_data.loc[train_start_1y_calc:train_end_1y, (slice(None), ticker)]
-            ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-            training_params_1y.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
-        except (KeyError, IndexError):
-            print(f"  ⚠️ Could not slice training data for {ticker} for 1-Year period. Skipping.")
-            continue
     models_buy, models_sell, scalers = {}, {}, {}
     failed_training_tickers_1y = {} # New: Store failed tickers and their reasons
+    if ENABLE_1YEAR_TRAINING:
+        print("🔍 Step 3: Training AI models for 1-Year backtest...")
+        bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)
+        train_end_1y = bt_start_1y - timedelta(days=1)
+        train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
+        
+        training_params_1y = []
+        for ticker in top_tickers:
+            try:
+                # Slice the main DataFrame for the training period
+                ticker_train_data = all_tickers_data.loc[train_start_1y_calc:train_end_1y, (slice(None), ticker)]
+                ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
+                training_params_1y.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
+            except (KeyError, IndexError):
+                print(f"  ⚠️ Could not slice training data for {ticker} for 1-Year period. Skipping.")
+                continue
+        
+        if run_parallel:
+            print(f"🤖 Training 1-Year models in parallel for {len(top_tickers)} tickers using {NUM_PROCESSES} processes...")
+            with Pool(processes=NUM_PROCESSES) as pool:
+                training_results_1y = list(tqdm(pool.imap(train_worker, training_params_1y), total=len(training_params_1y), desc="Training 1-Year Models"))
+        else:
+            print(f"🤖 Training 1-Year models sequentially for {len(top_tickers)} tickers...")
+            training_results_1y = [train_worker(p) for p in tqdm(training_params_1y, desc="Training 1-Year Models")]
 
-    if run_parallel:
-        print(f"🤖 Training 1-Year models in parallel for {len(top_tickers)} tickers using {NUM_PROCESSES} processes...")
-        with Pool(processes=NUM_PROCESSES) as pool:
-            training_results_1y = list(tqdm(pool.imap(train_worker, training_params_1y), total=len(training_params_1y), desc="Training 1-Year Models"))
-    else:
-        print(f"🤖 Training 1-Year models sequentially for {len(top_tickers)} tickers...")
-        training_results_1y = [train_worker(p) for p in tqdm(training_params_1y, desc="Training 1-Year Models")]
+        for res in training_results_1y:
+            if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
+                models_buy[res['ticker']] = res['model_buy']
+                models_sell[res['ticker']] = res['model_sell']
+                scalers[res['ticker']] = res['scaler']
+            elif res and res.get('status') == 'failed':
+                failed_training_tickers_1y[res['ticker']] = res['reason']
+        print(f"  [DIAGNOSTIC] After 1-Year training loop, models_buy has {len(models_buy)} entries.")
 
-    for res in training_results_1y:
-        if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
-            models_buy[res['ticker']] = res['model_buy']
-            models_sell[res['ticker']] = res['model_sell']
-            scalers[res['ticker']] = res['scaler']
-        elif res and res.get('status') == 'failed':
-            failed_training_tickers_1y[res['ticker']] = res['reason']
-    print(f"  [DIAGNOSTIC] After 1-Year training loop, models_buy has {len(models_buy)} entries.")
-
-    if not models_buy and USE_MODEL_GATE:
-        print("⚠️ No models were trained for 1-Year backtest. Model-gating will be disabled for this run.\n")
+        if not models_buy and USE_MODEL_GATE:
+            print("⚠️ No models were trained for 1-Year backtest. Model-gating will be disabled for this run.\n")
     
     # Filter out failed tickers from top_tickers for subsequent steps
     top_tickers_1y_filtered = [t for t in top_tickers if t not in failed_training_tickers_1y]
@@ -3186,6 +3182,7 @@ def main(
         optimized_params_per_ticker_1y_filtered = {k: v for k, v in optimized_params_per_ticker.items() if k in top_tickers_1y_filtered}
     else:
         optimized_params_per_ticker_1y_filtered = {}
+    
     
     # --- OPTIMIZE THRESHOLDS ---
     # Ensure logs directory exists for optimized parameters
@@ -3257,107 +3254,164 @@ def main(
             print("\nℹ️ No optimized parameters found for current tickers. Using default thresholds.")
 
 
-    # --- Run 1-Year Backtest ---
-    print("\n🔍 Step 4: Running 1-Year Backtest...")
-    # --- Run 1-Year Backtest (AI Strategy) ---
-    print("\n🔍 Step 4: Running 1-Year Backtest (AI Strategy)...")
-    final_strategy_value_1y, strategy_results_1y, processed_tickers_1y, performance_metrics_1y = _run_portfolio_backtest(
-        all_tickers_data=all_tickers_data,
-        start_date=bt_start_1y,
-        end_date=bt_end,
-        top_tickers=top_tickers_1y_filtered, # Use filtered tickers for backtest
-        models_buy=models_buy,
-        models_sell=models_sell,
-        scalers=scalers,
-        optimized_params_per_ticker=optimized_params_per_ticker,
-        capital_per_stock=capital_per_stock_1y, # Use fixed capital per stock
-        # Pass the global target_percentage here, as the individual backtest_worker will use the optimized one
-        target_percentage=target_percentage, 
-        run_parallel=run_parallel,
-        period_name="1-Year (AI)",
-        top_performers_data=top_performers_data_1y_filtered, # Pass filtered top_performers_data
-        use_simple_rule_strategy=False # Explicitly set to False for AI strategy
-    )
-    ai_1y_return = ((final_strategy_value_1y - (capital_per_stock_1y * len(top_tickers_1y_filtered))) / abs(capital_per_stock_1y * len(top_tickers_1y_filtered))) * 100 if (capital_per_stock_1y * len(top_tickers_1y_filtered)) != 0 else 0
-
-    # --- Run 1-Year Backtest (Simple Rule Strategy) ---
-    print("\n🔍 Running 1-Year Backtest (Simple Rule Strategy)...")
-    final_simple_rule_value_1y, simple_rule_results_1y, processed_simple_rule_tickers_1y, performance_metrics_simple_rule_1y = _run_portfolio_backtest(
-        all_tickers_data=all_tickers_data,
-        start_date=bt_start_1y,
-        end_date=bt_end,
-        top_tickers=top_tickers_1y_filtered, # Use filtered tickers for backtest
-        models_buy={}, # No ML models for simple rule strategy
-        models_sell={}, # No ML models for simple rule strategy
-        scalers={}, # No scalers for simple rule strategy
-        optimized_params_per_ticker={}, # No optimized params for simple rule strategy
-        capital_per_stock=capital_per_stock_1y,
-        target_percentage=target_percentage,
-        run_parallel=run_parallel,
-        period_name="1-Year (Simple Rule)",
-        top_performers_data=top_performers_data_1y_filtered,
-        use_simple_rule_strategy=True # Explicitly set to True for simple rule strategy
-    )
-    simple_rule_1y_return = ((final_simple_rule_value_1y - (capital_per_stock_1y * len(top_tickers_1y_filtered))) / abs(capital_per_stock_1y * len(top_tickers_1y_filtered))) * 100 if (capital_per_stock_1y * len(top_tickers_1y_filtered)) != 0 else 0
-
-    # --- Calculate Buy & Hold for 1-Year ---
-    print("\n📊 Calculating Buy & Hold performance for 1-Year period...")
+    # Initialize all backtest related variables to default values
+    final_strategy_value_1y = initial_balance_used
+    strategy_results_1y = []
+    processed_tickers_1y = []
+    performance_metrics_1y = []
+    ai_1y_return = 0.0
+    final_simple_rule_value_1y = initial_balance_used
+    simple_rule_results_1y = []
+    processed_simple_rule_tickers_1y = []
+    performance_metrics_simple_rule_1y = []
+    simple_rule_1y_return = 0.0
+    final_buy_hold_value_1y = initial_balance_used
     buy_hold_results_1y = []
-    for ticker in processed_tickers_1y:
-        df_bh = load_prices_robust(ticker, bt_start_1y, bt_end)
-        if not df_bh.empty:
-            start_price = float(df_bh["Close"].iloc[0])
-            shares_bh = int(capital_per_stock_1y / start_price) if start_price > 0 else 0 # Use fixed capital per stock
-            cash_bh = capital_per_stock_1y - shares_bh * start_price # Use fixed capital per stock
-            buy_hold_results_1y.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
-        else:
-            buy_hold_results_1y.append(capital_per_stock_1y) # If no data, assume initial capital
-    final_buy_hold_value_1y = sum(buy_hold_results_1y) + (len(top_tickers_1y_filtered) - len(processed_tickers_1y)) * capital_per_stock_1y
-    print("✅ 1-Year Buy & Hold calculation complete.")
+    
+    final_strategy_value_ytd = initial_balance_used
+    strategy_results_ytd = []
+    processed_tickers_ytd_local = []
+    performance_metrics_ytd = []
+    ai_ytd_return = 0.0
+    final_simple_rule_value_ytd = initial_balance_used
+    simple_rule_results_ytd = []
+    processed_simple_rule_tickers_ytd = []
+    performance_metrics_simple_rule_ytd = []
+    simple_rule_ytd_return = 0.0
+    final_buy_hold_value_ytd = initial_balance_used
+    buy_hold_results_ytd = []
+
+    final_strategy_value_3month = initial_balance_used
+    strategy_results_3month = []
+    processed_tickers_3month_local = []
+    performance_metrics_3month = []
+    ai_3month_return = 0.0
+    final_simple_rule_value_3month = initial_balance_used
+    simple_rule_results_3month = []
+    processed_simple_rule_tickers_3month = []
+    performance_metrics_simple_rule_3month = []
+    simple_rule_3month_return = 0.0
+    final_buy_hold_value_3month = initial_balance_used
+    buy_hold_results_3month = []
+
+    final_strategy_value_1month = initial_balance_used
+    strategy_results_1month = []
+    processed_tickers_1month_local = []
+    performance_metrics_1month = []
+    ai_1month_return = 0.0
+    final_simple_rule_value_1month = initial_balance_used
+    simple_rule_results_1month = []
+    processed_simple_rule_tickers_1month = []
+    performance_metrics_simple_rule_1month = []
+    simple_rule_1month_return = 0.0
+    final_buy_hold_value_1month = initial_balance_used
+    buy_hold_results_1month = []
+
+    # --- Run 1-Year Backtest ---
+    if ENABLE_1YEAR_BACKTEST:
+        print("\n🔍 Step 4: Running 1-Year Backtest...")
+        # --- Run 1-Year Backtest (AI Strategy) ---
+        print("\n🔍 Step 4: Running 1-Year Backtest (AI Strategy)...")
+        final_strategy_value_1y, strategy_results_1y, processed_tickers_1y, performance_metrics_1y = _run_portfolio_backtest(
+            all_tickers_data=all_tickers_data,
+            start_date=bt_start_1y,
+            end_date=bt_end,
+            top_tickers=top_tickers_1y_filtered, # Use filtered tickers for backtest
+            models_buy=models_buy,
+            models_sell=models_sell,
+            scalers=scalers,
+            optimized_params_per_ticker=optimized_params_per_ticker,
+            capital_per_stock=capital_per_stock_1y, # Use fixed capital per stock
+            # Pass the global target_percentage here, as the individual backtest_worker will use the optimized one
+            target_percentage=target_percentage, 
+            run_parallel=run_parallel,
+            period_name="1-Year (AI)",
+            top_performers_data=top_performers_data_1y_filtered, # Pass filtered top_performers_data
+            use_simple_rule_strategy=False # Explicitly set to False for AI strategy
+        )
+        ai_1y_return = ((final_strategy_value_1y - (capital_per_stock_1y * len(top_tickers_1y_filtered))) / abs(capital_per_stock_1y * len(top_tickers_1y_filtered))) * 100 if (capital_per_stock_1y * len(top_tickers_1y_filtered)) != 0 else 0
+
+        # --- Run 1-Year Backtest (Simple Rule Strategy) ---
+        print("\n🔍 Running 1-Year Backtest (Simple Rule Strategy)...")
+        final_simple_rule_value_1y, simple_rule_results_1y, processed_simple_rule_tickers_1y, performance_metrics_simple_rule_1y = _run_portfolio_backtest(
+            all_tickers_data=all_tickers_data,
+            start_date=bt_start_1y,
+            end_date=bt_end,
+            top_tickers=top_tickers_1y_filtered, # Use filtered tickers for backtest
+            models_buy={}, # No ML models for simple rule strategy
+            models_sell={}, # No ML models for simple rule strategy
+            scalers={}, # No scalers for simple rule strategy
+            optimized_params_per_ticker={}, # No optimized params for simple rule strategy
+            capital_per_stock=capital_per_stock_1y,
+            target_percentage=target_percentage,
+            run_parallel=run_parallel,
+            period_name="1-Year (Simple Rule)",
+            top_performers_data=top_performers_data_1y_filtered,
+            use_simple_rule_strategy=True # Explicitly set to True for simple rule strategy
+        )
+        simple_rule_1y_return = ((final_simple_rule_value_1y - (capital_per_stock_1y * len(top_tickers_1y_filtered))) / abs(capital_per_stock_1y * len(top_tickers_1y_filtered))) * 100 if (capital_per_stock_1y * len(top_tickers_1y_filtered)) != 0 else 0
+
+        # --- Calculate Buy & Hold for 1-Year ---
+        print("\n📊 Calculating Buy & Hold performance for 1-Year period...")
+        buy_hold_results_1y = []
+        for ticker in processed_tickers_1y:
+            df_bh = load_prices_robust(ticker, bt_start_1y, bt_end)
+            if not df_bh.empty:
+                start_price = float(df_bh["Close"].iloc[0])
+                shares_bh = int(capital_per_stock_1y / start_price) if start_price > 0 else 0 # Use fixed capital per stock
+                cash_bh = capital_per_stock_1y - shares_bh * start_price # Use fixed capital per stock
+                buy_hold_results_1y.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
+            else:
+                buy_hold_results_1y.append(capital_per_stock_1y) # If no data, assume initial capital
+        final_buy_hold_value_1y = sum(buy_hold_results_1y) + (len(top_tickers_1y_filtered) - len(processed_tickers_1y)) * capital_per_stock_1y
+        print("✅ 1-Year Buy & Hold calculation complete.")
+    else:
+        print("\nℹ️ 1-Year Backtest is disabled by ENABLE_1YEAR_BACKTEST flag.")
 
 
     # --- Training Models (for YTD Backtest) ---
-    print("\n🔍 Step 5: Training AI models for YTD backtest...")
-    ytd_start_date = datetime(bt_end.year, 1, 1, tzinfo=timezone.utc)
-    train_end_ytd = ytd_start_date - timedelta(days=1)
-    train_start_ytd = train_end_ytd - timedelta(days=TRAIN_LOOKBACK_DAYS)
-    
-    training_params_ytd = []
-    for ticker in top_tickers_1y_filtered: # Use filtered tickers for YTD training
-        try:
-            # Slice the main DataFrame for the training period
-            ticker_train_data = all_tickers_data.loc[train_start_ytd:train_end_ytd, (slice(None), ticker)]
-            ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-            training_params_ytd.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
-        except (KeyError, IndexError):
-            print(f"  ⚠️ Could not slice training data for {ticker} for YTD period. Skipping.")
-            continue
     models_buy_ytd, models_sell_ytd, scalers_ytd = {}, {}, {}
     failed_training_tickers_ytd = {} # New: Store failed tickers and their reasons
+    if ENABLE_YTD_TRAINING:
+        print("\n🔍 Step 5: Training AI models for YTD backtest...")
+        ytd_start_date = datetime(bt_end.year, 1, 1, tzinfo=timezone.utc)
+        train_end_ytd = ytd_start_date - timedelta(days=1)
+        train_start_ytd = train_end_ytd - timedelta(days=TRAIN_LOOKBACK_DAYS)
+        
+        training_params_ytd = []
+        for ticker in top_tickers_1y_filtered: # Use filtered tickers for YTD training
+            try:
+                # Slice the main DataFrame for the training period
+                ticker_train_data = all_tickers_data.loc[train_start_ytd:train_end_ytd, (slice(None), ticker)]
+                ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
+                training_params_ytd.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
+            except (KeyError, IndexError):
+                print(f"  ⚠️ Could not slice training data for {ticker} for YTD period. Skipping.")
+                continue
+        
+        if run_parallel:
+            print(f"🤖 Training YTD models in parallel for {len(top_tickers_1y_filtered)} tickers using {NUM_PROCESSES} processes...")
+            with Pool(processes=NUM_PROCESSES) as pool:
+                training_results_ytd = list(tqdm(pool.imap(train_worker, training_params_ytd), total=len(training_params_ytd), desc="Training YTD Models"))
+        else:
+            print(f"🤖 Training YTD models sequentially for {len(top_tickers_1y_filtered)} tickers...")
+            training_results_ytd = [train_worker(p) for p in tqdm(training_params_ytd, desc="Training YTD Models")]
 
-    if run_parallel:
-        print(f"🤖 Training YTD models in parallel for {len(top_tickers_1y_filtered)} tickers using {NUM_PROCESSES} processes...")
-        with Pool(processes=NUM_PROCESSES) as pool:
-            training_results_ytd = list(tqdm(pool.imap(train_worker, training_params_ytd), total=len(training_params_ytd), desc="Training YTD Models"))
-    else:
-        print(f"🤖 Training YTD models sequentially for {len(top_tickers_1y_filtered)} tickers...")
-        training_results_ytd = [train_worker(p) for p in tqdm(training_params_ytd, desc="Training YTD Models")]
+        for res in training_results_ytd:
+            if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
+                models_buy_ytd[res['ticker']] = res['model_buy']
+                models_sell_ytd[res['ticker']] = res['model_sell']
+                scalers_ytd[res['ticker']] = res['scaler']
+            elif res and res.get('status') == 'failed':
+                failed_training_tickers_ytd[res['ticker']] = res['reason']
+        print(f"  [DIAGNOSTIC] After YTD training loop, models_buy_ytd has {len(models_buy_ytd)} entries.")
 
-    for res in training_results_ytd:
-        if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
-            models_buy_ytd[res['ticker']] = res['model_buy']
-            models_sell_ytd[res['ticker']] = res['model_sell']
-            scalers_ytd[res['ticker']] = res['scaler']
-        elif res and res.get('status') == 'failed':
-            failed_training_tickers_ytd[res['ticker']] = res['reason']
-    print(f"  [DIAGNOSTIC] After YTD training loop, models_buy_ytd has {len(models_buy_ytd)} entries.")
-
-    if not models_buy_ytd and USE_MODEL_GATE:
-        print("⚠️ No models were trained for YTD backtest. Model-gating will be disabled for this run.\n")
+        if not models_buy_ytd and USE_MODEL_GATE:
+            print("⚠️ No models were trained for YTD backtest. Model-gating will be disabled for this run.\n")
 
     # Filter out failed tickers from top_tickers_1y_filtered for subsequent steps
     top_tickers_ytd_filtered = [t for t in top_tickers_1y_filtered if t not in failed_training_tickers_ytd]
-    print(f"  ℹ️ {len(failed_training_tickers_ytd)} tickers failed YTD model training and will be skipped: {', '.join(failed_training_tickers_ytd.keys())}")
+    print(f"  ℹ️ {len(failed_training_tickers_ytd)} tickers failed YTD model training and will be skipped: {', '.in(failed_training_tickers_ytd.keys())}")
 
     # Update top_performers_data to reflect only successfully trained tickers
     top_performers_data_ytd_filtered = [item for item in top_performers_data_1y_filtered if item[0] in top_tickers_ytd_filtered]
@@ -3372,100 +3426,104 @@ def main(
         optimized_params_per_ticker_ytd_filtered = {}
 
     # --- Run YTD Backtest ---
-    print("\n🔍 Step 6: Running YTD Backtest...")
-    # --- Run YTD Backtest (AI Strategy) ---
-    print("\n🔍 Step 6: Running YTD Backtest (AI Strategy)...")
-    final_strategy_value_ytd, strategy_results_ytd, processed_tickers_ytd_local, performance_metrics_ytd = _run_portfolio_backtest(
-        all_tickers_data=all_tickers_data,
-        start_date=ytd_start_date,
-        end_date=bt_end,
-        top_tickers=top_tickers_ytd_filtered, # Use filtered tickers for backtest
-        models_buy=models_buy_ytd,
-        models_sell=models_sell_ytd,
-        scalers=scalers_ytd,
-        optimized_params_per_ticker=optimized_params_per_ticker_ytd_filtered,
-        capital_per_stock=capital_per_stock_ytd, # Use fixed capital per stock
-        target_percentage=target_percentage,
-        run_parallel=run_parallel,
-        period_name="YTD (AI)",
-        top_performers_data=top_performers_data_ytd_filtered, # Pass filtered top_performers_data
-        use_simple_rule_strategy=False # Explicitly set to False for AI strategy
-    )
-    ai_ytd_return = ((final_strategy_value_ytd - (capital_per_stock_ytd * len(top_tickers_ytd_filtered))) / abs(capital_per_stock_ytd * len(top_tickers_ytd_filtered))) * 100 if (capital_per_stock_ytd * len(top_tickers_ytd_filtered)) != 0 else 0
+    if ENABLE_YTD_BACKTEST:
+        print("\n🔍 Step 6: Running YTD Backtest...")
+        # --- Run YTD Backtest (AI Strategy) ---
+        print("\n🔍 Step 6: Running YTD Backtest (AI Strategy)...")
+        final_strategy_value_ytd, strategy_results_ytd, processed_tickers_ytd_local, performance_metrics_ytd = _run_portfolio_backtest(
+            all_tickers_data=all_tickers_data,
+            start_date=ytd_start_date,
+            end_date=bt_end,
+            top_tickers=top_tickers_ytd_filtered, # Use filtered tickers for backtest
+            models_buy=models_buy_ytd,
+            models_sell=models_sell_ytd,
+            scalers=scalers_ytd,
+            optimized_params_per_ticker=optimized_params_per_ticker_ytd_filtered,
+            capital_per_stock=capital_per_stock_ytd, # Use fixed capital per stock
+            target_percentage=target_percentage,
+            run_parallel=run_parallel,
+            period_name="YTD (AI)",
+            top_performers_data=top_performers_data_ytd_filtered, # Pass filtered top_performers_data
+            use_simple_rule_strategy=False # Explicitly set to False for AI strategy
+        )
+        ai_ytd_return = ((final_strategy_value_ytd - (capital_per_stock_ytd * len(top_tickers_ytd_filtered))) / abs(capital_per_stock_ytd * len(top_tickers_ytd_filtered))) * 100 if (capital_per_stock_ytd * len(top_tickers_ytd_filtered)) != 0 else 0
 
-    # --- Run YTD Backtest (Simple Rule Strategy) ---
-    print("\n🔍 Running YTD Backtest (Simple Rule Strategy)...")
-    final_simple_rule_value_ytd, simple_rule_results_ytd, processed_simple_rule_tickers_ytd, performance_metrics_simple_rule_ytd = _run_portfolio_backtest(
-        all_tickers_data=all_tickers_data,
-        start_date=ytd_start_date,
-        end_date=bt_end,
-        top_tickers=top_tickers_ytd_filtered,
-        models_buy={},
-        models_sell={},
-        scalers={},
-        optimized_params_per_ticker={},
-        capital_per_stock=capital_per_stock_ytd,
-        target_percentage=target_percentage,
-        run_parallel=run_parallel,
-        period_name="YTD (Simple Rule)",
-        top_performers_data=top_performers_data_ytd_filtered,
-        use_simple_rule_strategy=True
-    )
-    simple_rule_ytd_return = ((final_simple_rule_value_ytd - (capital_per_stock_ytd * len(top_tickers_ytd_filtered))) / abs(capital_per_stock_ytd * len(top_tickers_ytd_filtered))) * 100 if (capital_per_stock_ytd * len(top_tickers_ytd_filtered)) != 0 else 0
+        # --- Run YTD Backtest (Simple Rule Strategy) ---
+        print("\n🔍 Running YTD Backtest (Simple Rule Strategy)...")
+        final_simple_rule_value_ytd, simple_rule_results_ytd, processed_simple_rule_tickers_ytd, performance_metrics_simple_rule_ytd = _run_portfolio_backtest(
+            all_tickers_data=all_tickers_data,
+            start_date=ytd_start_date,
+            end_date=bt_end,
+            top_tickers=top_tickers_ytd_filtered,
+            models_buy={},
+            models_sell={},
+            scalers={},
+            optimized_params_per_ticker={},
+            capital_per_stock=capital_per_stock_ytd,
+            target_percentage=target_percentage,
+            run_parallel=run_parallel,
+            period_name="YTD (Simple Rule)",
+            top_performers_data=top_performers_data_ytd_filtered,
+            use_simple_rule_strategy=True
+        )
+        simple_rule_ytd_return = ((final_simple_rule_value_ytd - (capital_per_stock_ytd * len(top_tickers_ytd_filtered))) / abs(capital_per_stock_ytd * len(top_tickers_ytd_filtered))) * 100 if (capital_per_stock_ytd * len(top_tickers_ytd_filtered)) != 0 else 0
 
-    # --- Calculate Buy & Hold for YTD ---
-    print("\n📊 Calculating Buy & Hold performance for YTD period...")
-    buy_hold_results_ytd = []
-    for ticker in processed_tickers_ytd_local: # Use processed_tickers_ytd_local here
-        df_bh = load_prices_robust(ticker, ytd_start_date, bt_end)
-        if not df_bh.empty:
-            start_price = float(df_bh["Close"].iloc[0])
-            shares_bh = int(capital_per_stock_ytd / start_price) if start_price > 0 else 0 # Use fixed capital per stock
-            cash_bh = capital_per_stock_ytd - shares_bh * start_price # Use fixed capital per stock
-            buy_hold_results_ytd.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
-        else:
-            buy_hold_results_ytd.append(capital_per_stock_ytd) # If no data, assume initial capital
-    final_buy_hold_value_ytd = sum(buy_hold_results_ytd) + (len(top_tickers_ytd_filtered) - len(processed_tickers_ytd_local)) * capital_per_stock_ytd
-    print("✅ YTD Buy & Hold calculation complete.")
+        # --- Calculate Buy & Hold for YTD ---
+        print("\n📊 Calculating Buy & Hold performance for YTD period...")
+        buy_hold_results_ytd = []
+        for ticker in processed_tickers_ytd_local: # Use processed_tickers_ytd_local here
+            df_bh = load_prices_robust(ticker, ytd_start_date, bt_end)
+            if not df_bh.empty:
+                start_price = float(df_bh["Close"].iloc[0])
+                shares_bh = int(capital_per_stock_ytd / start_price) if start_price > 0 else 0 # Use fixed capital per stock
+                cash_bh = capital_per_stock_ytd - shares_bh * start_price # Use fixed capital per stock
+                buy_hold_results_ytd.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
+            else:
+                buy_hold_results_ytd.append(capital_per_stock_ytd) # If no data, assume initial capital
+        final_buy_hold_value_ytd = sum(buy_hold_results_ytd) + (len(top_tickers_ytd_filtered) - len(processed_tickers_ytd_local)) * capital_per_stock_ytd
+        print("✅ YTD Buy & Hold calculation complete.")
+    else:
+        print("\nℹ️ YTD Backtest is disabled by ENABLE_YTD_BACKTEST flag.")
 
     # --- Training Models (for 3-Month Backtest) ---
-    print("\n🔍 Step 7: Training AI models for 3-Month backtest...")
-    bt_start_3month = bt_end - timedelta(days=BACKTEST_DAYS_3MONTH)
-    train_end_3month = bt_start_3month - timedelta(days=1)
-    train_start_3month = train_end_3month - timedelta(days=TRAIN_LOOKBACK_DAYS)
-
-    training_params_3month = []
-    for ticker in top_tickers_ytd_filtered: # Use filtered tickers for 3-Month training
-        try:
-            # Slice the main DataFrame for the training period
-            ticker_train_data = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
-            ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-            training_params_3month.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
-        except (KeyError, IndexError):
-            print(f"  ⚠️ Could not slice training data for {ticker} for 3-Month period. Skipping.")
-            continue
     models_buy_3month, models_sell_3month, scalers_3month = {}, {}, {}
     failed_training_tickers_3month = {} # New: Store failed tickers and their reasons
+    if ENABLE_3MONTH_TRAINING:
+        print("\n🔍 Step 7: Training AI models for 3-Month backtest...")
+        bt_start_3month = bt_end - timedelta(days=BACKTEST_DAYS_3MONTH)
+        train_end_3month = bt_start_3month - timedelta(days=1)
+        train_start_3month = train_end_3month - timedelta(days=TRAIN_LOOKBACK_DAYS)
 
-    if run_parallel:
-        print(f"🤖 Training 3-Month models in parallel for {len(top_tickers_ytd_filtered)} tickers using {NUM_PROCESSES} processes...")
-        with Pool(processes=NUM_PROCESSES) as pool:
-            training_results_3month = list(tqdm(pool.imap(train_worker, training_params_3month), total=len(training_params_3month), desc="Training 3-Month Models"))
-    else:
-        print(f"🤖 Training 3-Month models sequentially for {len(top_tickers_ytd_filtered)} tickers...")
-        training_results_3month = [train_worker(p) for p in tqdm(training_params_3month, desc="Training 3-Month Models")]
+        training_params_3month = []
+        for ticker in top_tickers_ytd_filtered: # Use filtered tickers for 3-Month training
+            try:
+                # Slice the main DataFrame for the training period
+                ticker_train_data = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
+                ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
+                training_params_3month.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
+            except (KeyError, IndexError):
+                print(f"  ⚠️ Could not slice training data for {ticker} for 3-Month period. Skipping.")
+                continue
+        
+        if run_parallel:
+            print(f"🤖 Training 3-Month models in parallel for {len(top_tickers_ytd_filtered)} tickers using {NUM_PROCESSES} processes...")
+            with Pool(processes=NUM_PROCESSES) as pool:
+                training_results_3month = list(tqdm(pool.imap(train_worker, training_params_3month), total=len(training_params_3month), desc="Training 3-Month Models"))
+        else:
+            print(f"🤖 Training 3-Month models sequentially for {len(top_tickers_ytd_filtered)} tickers...")
+            training_results_3month = [train_worker(p) for p in tqdm(training_params_3month, desc="Training 3-Month Models")]
 
-    for res in training_results_3month:
-        if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
-            models_buy_3month[res['ticker']] = res['model_buy']
-            models_sell_3month[res['ticker']] = res['model_sell']
-            scalers_3month[res['ticker']] = res['scaler']
-        elif res and res.get('status') == 'failed':
-            failed_training_tickers_3month[res['ticker']] = res['reason']
-    print(f"  [DIAGNOSTIC] After 3-Month training loop, models_buy_3month has {len(models_buy_3month)} entries.")
+        for res in training_results_3month:
+            if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
+                models_buy_3month[res['ticker']] = res['model_buy']
+                models_sell_3month[res['ticker']] = res['model_sell']
+                scalers_3month[res['ticker']] = res['scaler']
+            elif res and res.get('status') == 'failed':
+                failed_training_tickers_3month[res['ticker']] = res['reason']
+        print(f"  [DIAGNOSTIC] After 3-Month training loop, models_buy_3month has {len(models_buy_3month)} entries.")
 
-    if not models_buy_3month and USE_MODEL_GATE:
-        print("⚠️ No models were trained for 3-Month backtest. Model-gating will be disabled for this run.\n")
+        if not models_buy_3month and USE_MODEL_GATE:
+            print("⚠️ No models were trained for 3-Month backtest. Model-gating will be disabled for this run.\n")
 
     # Filter out failed tickers from top_tickers_ytd_filtered for subsequent steps
     top_tickers_3month_filtered = [t for t in top_tickers_ytd_filtered if t not in failed_training_tickers_3month]
@@ -3484,100 +3542,104 @@ def main(
         optimized_params_per_ticker_3month_filtered = {}
 
     # --- Run 3-Month Backtest ---
-    print("\n🔍 Step 8: Running 3-Month Backtest...")
-    # --- Run 3-Month Backtest (AI Strategy) ---
-    print("\n🔍 Step 8: Running 3-Month Backtest (AI Strategy)...")
-    final_strategy_value_3month, strategy_results_3month, processed_tickers_3month_local, performance_metrics_3month = _run_portfolio_backtest(
-        all_tickers_data=all_tickers_data,
-        start_date=bt_start_3month,
-        end_date=bt_end,
-        top_tickers=top_tickers_3month_filtered, # Use filtered tickers for backtest
-        models_buy=models_buy_3month,
-        models_sell=models_sell_3month,
-        scalers=scalers_3month,
-        optimized_params_per_ticker=optimized_params_per_ticker_3month_filtered,
-        capital_per_stock=capital_per_stock_3month, # Use fixed capital per stock
-        target_percentage=target_percentage,
-        run_parallel=run_parallel,
-        period_name="3-Month (AI)",
-        top_performers_data=top_performers_data_3month_filtered, # Pass filtered top_performers_data
-        use_simple_rule_strategy=False # Explicitly set to False for AI strategy
-    )
-    ai_3month_return = ((final_strategy_value_3month - (capital_per_stock_3month * len(top_tickers_3month_filtered))) / abs(capital_per_stock_3month * len(top_tickers_3month_filtered))) * 100 if (capital_per_stock_3month * len(top_tickers_3month_filtered)) != 0 else 0
+    if ENABLE_3MONTH_BACKTEST:
+        print("\n🔍 Step 8: Running 3-Month Backtest...")
+        # --- Run 3-Month Backtest (AI Strategy) ---
+        print("\n🔍 Step 8: Running 3-Month Backtest (AI Strategy)...")
+        final_strategy_value_3month, strategy_results_3month, processed_tickers_3month_local, performance_metrics_3month = _run_portfolio_backtest(
+            all_tickers_data=all_tickers_data,
+            start_date=bt_start_3month,
+            end_date=bt_end,
+            top_tickers=top_tickers_3month_filtered, # Use filtered tickers for backtest
+            models_buy=models_buy_3month,
+            models_sell=models_sell_3month,
+            scalers=scalers_3month,
+            optimized_params_per_ticker=optimized_params_per_ticker_3month_filtered,
+            capital_per_stock=capital_per_stock_3month, # Use fixed capital per stock
+            target_percentage=target_percentage,
+            run_parallel=run_parallel,
+            period_name="3-Month (AI)",
+            top_performers_data=top_performers_data_3month_filtered, # Pass filtered top_performers_data
+            use_simple_rule_strategy=False # Explicitly set to False for AI strategy
+        )
+        ai_3month_return = ((final_strategy_value_3month - (capital_per_stock_3month * len(top_tickers_3month_filtered))) / abs(capital_per_stock_3month * len(top_tickers_3month_filtered))) * 100 if (capital_per_stock_3month * len(top_tickers_3month_filtered)) != 0 else 0
 
-    # --- Run 3-Month Backtest (Simple Rule Strategy) ---
-    print("\n🔍 Running 3-Month Backtest (Simple Rule Strategy)...")
-    final_simple_rule_value_3month, simple_rule_results_3month, processed_simple_rule_tickers_3month, performance_metrics_simple_rule_3month = _run_portfolio_backtest(
-        all_tickers_data=all_tickers_data,
-        start_date=bt_start_3month,
-        end_date=bt_end,
-        top_tickers=top_tickers_3month_filtered,
-        models_buy={},
-        models_sell={},
-        scalers={},
-        optimized_params_per_ticker={},
-        capital_per_stock=capital_per_stock_3month,
-        target_percentage=target_percentage,
-        run_parallel=run_parallel,
-        period_name="3-Month (Simple Rule)",
-        top_performers_data=top_performers_data_3month_filtered,
-        use_simple_rule_strategy=True
-    )
-    simple_rule_3month_return = ((final_simple_rule_value_3month - (capital_per_stock_3month * len(top_tickers_3month_filtered))) / abs(capital_per_stock_3month * len(top_tickers_3month_filtered))) * 100 if (capital_per_stock_3month * len(top_tickers_3month_filtered)) != 0 else 0
+        # --- Run 3-Month Backtest (Simple Rule Strategy) ---
+        print("\n🔍 Running 3-Month Backtest (Simple Rule Strategy)...")
+        final_simple_rule_value_3month, simple_rule_results_3month, processed_simple_rule_tickers_3month, performance_metrics_simple_rule_3month = _run_portfolio_backtest(
+            all_tickers_data=all_tickers_data,
+            start_date=bt_start_3month,
+            end_date=bt_end,
+            top_tickers=top_tickers_3month_filtered,
+            models_buy={},
+            models_sell={},
+            scalers={},
+            optimized_params_per_ticker={},
+            capital_per_stock=capital_per_stock_3month,
+            target_percentage=target_percentage,
+            run_parallel=run_parallel,
+            period_name="3-Month (Simple Rule)",
+            top_performers_data=top_performers_data_3month_filtered,
+            use_simple_rule_strategy=True
+        )
+        simple_rule_3month_return = ((final_simple_rule_value_3month - (capital_per_stock_3month * len(top_tickers_3month_filtered))) / abs(capital_per_stock_3month * len(top_tickers_3month_filtered))) * 100 if (capital_per_stock_3month * len(top_tickers_3month_filtered)) != 0 else 0
 
-    # --- Calculate Buy & Hold for 3-Month ---
-    print("\n📊 Calculating Buy & Hold performance for 3-Month period...")
-    buy_hold_results_3month = []
-    for ticker in processed_tickers_3month_local:
-        df_bh = load_prices_robust(ticker, bt_start_3month, bt_end)
-        if not df_bh.empty:
-            start_price = float(df_bh["Close"].iloc[0])
-            shares_bh = int(capital_per_stock_3month / start_price) if start_price > 0 else 0 # Use fixed capital per stock
-            cash_bh = capital_per_stock_3month - shares_bh * start_price # Use fixed capital per stock
-            buy_hold_results_3month.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
-        else:
-            buy_hold_results_3month.append(capital_per_stock_3month)
-    final_buy_hold_value_3month = sum(buy_hold_results_3month) + (len(top_tickers_3month_filtered) - len(processed_tickers_3month_local)) * capital_per_stock_3month
-    print("✅ 3-Month Buy & Hold calculation complete.")
+        # --- Calculate Buy & Hold for 3-Month ---
+        print("\n📊 Calculating Buy & Hold performance for 3-Month period...")
+        buy_hold_results_3month = []
+        for ticker in processed_tickers_3month_local:
+            df_bh = load_prices_robust(ticker, bt_start_3month, bt_end)
+            if not df_bh.empty:
+                start_price = float(df_bh["Close"].iloc[0])
+                shares_bh = int(capital_per_stock_3month / start_price) if start_price > 0 else 0 # Use fixed capital per stock
+                cash_bh = capital_per_stock_3month - shares_bh * start_price # Use fixed capital per stock
+                buy_hold_results_3month.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
+            else:
+                buy_hold_results_3month.append(capital_per_stock_3month)
+        final_buy_hold_value_3month = sum(buy_hold_results_3month) + (len(top_tickers_3month_filtered) - len(processed_tickers_3month_local)) * capital_per_stock_3month
+        print("✅ 3-Month Buy & Hold calculation complete.")
+    else:
+        print("\nℹ️ 3-Month Backtest is disabled by ENABLE_3MONTH_BACKTEST flag.")
 
     # --- Training Models (for 1-Month Backtest) ---
-    print("\n🔍 Step 9: Training AI models for 1-Month backtest...")
-    bt_start_1month = bt_end - timedelta(days=BACKTEST_DAYS_1MONTH)
-    train_end_1month = bt_start_1month - timedelta(days=1)
-    train_start_1month = train_end_1month - timedelta(days=TRAIN_LOOKBACK_DAYS)
-
-    training_params_1month = []
-    for ticker in top_tickers_3month_filtered: # Use filtered tickers for 1-Month training
-        try:
-            # Slice the main DataFrame for the training period
-            ticker_train_data = all_tickers_data.loc[train_start_1month:train_end_1month, (slice(None), ticker)]
-            ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-            training_params_1month.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
-        except (KeyError, IndexError):
-            print(f"  ⚠️ Could not slice training data for {ticker} for 1-Month period. Skipping.")
-            continue
     models_buy_1month, models_sell_1month, scalers_1month = {}, {}, {}
     failed_training_tickers_1month = {} # New: Store failed tickers and their reasons
+    if ENABLE_1MONTH_TRAINING:
+        print("\n🔍 Step 9: Training AI models for 1-Month backtest...")
+        bt_start_1month = bt_end - timedelta(days=BACKTEST_DAYS_1MONTH)
+        train_end_1month = bt_start_1month - timedelta(days=1)
+        train_start_1month = train_end_1month - timedelta(days=TRAIN_LOOKBACK_DAYS)
 
-    if run_parallel:
-        print(f"🤖 Training 1-Month models in parallel for {len(top_tickers_3month_filtered)} tickers using {NUM_PROCESSES} processes...")
-        with Pool(processes=NUM_PROCESSES) as pool:
-            training_results_1month = list(tqdm(pool.imap(train_worker, training_params_1month), total=len(training_params_1month), desc="Training 1-Month Models"))
-    else:
-        print(f"🤖 Training 1-Month models sequentially for {len(top_tickers_3month_filtered)} tickers...")
-        training_results_1month = [train_worker(p) for p in tqdm(training_params_1month, desc="Training 1-Month Models")]
+        training_params_1month = []
+        for ticker in top_tickers_3month_filtered: # Use filtered tickers for 1-Month training
+            try:
+                # Slice the main DataFrame for the training period
+                ticker_train_data = all_tickers_data.loc[train_start_1month:train_end_1month, (slice(None), ticker)]
+                ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
+                training_params_1month.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
+            except (KeyError, IndexError):
+                print(f"  ⚠️ Could not slice training data for {ticker} for 1-Month period. Skipping.")
+                continue
+        
+        if run_parallel:
+            print(f"🤖 Training 1-Month models in parallel for {len(top_tickers_3month_filtered)} tickers using {NUM_PROCESSES} processes...")
+            with Pool(processes=NUM_PROCESSES) as pool:
+                training_results_1month = list(tqdm(pool.imap(train_worker, training_params_1month), total=len(training_params_1month), desc="Training 1-Month Models"))
+        else:
+            print(f"🤖 Training 1-Month models sequentially for {len(top_tickers_3month_filtered)} tickers...")
+            training_results_1month = [train_worker(p) for p in tqdm(training_params_1month, desc="Training 1-Month Models")]
 
-    for res in training_results_1month:
-        if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
-            models_buy_1month[res['ticker']] = res['model_buy']
-            models_sell_1month[res['ticker']] = res['model_sell']
-            scalers_1month[res['ticker']] = res['scaler']
-        elif res and res.get('status') == 'failed':
-            failed_training_tickers_1month[res['ticker']] = res['reason']
-    print(f"  [DIAGNOSTIC] After 1-Month training loop, models_buy_1month has {len(models_buy_1month)} entries.")
+        for res in training_results_1month:
+            if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
+                models_buy_1month[res['ticker']] = res['model_buy']
+                models_sell_1month[res['ticker']] = res['model_sell']
+                scalers_1month[res['ticker']] = res['scaler']
+            elif res and res.get('status') == 'failed':
+                failed_training_tickers_1month[res['ticker']] = res['reason']
+        print(f"  [DIAGNOSTIC] After 1-Month training loop, models_buy_1month has {len(models_buy_1month)} entries.")
 
-    if not models_buy_1month and USE_MODEL_GATE:
-        print("⚠️ No models were trained for 1-Month backtest. Model-gating will be disabled for this run.\n")
+        if not models_buy_1month and USE_MODEL_GATE:
+            print("⚠️ No models were trained for 1-Month backtest. Model-gating will be disabled for this run.\n")
 
     # Filter out failed tickers from top_tickers_3month_filtered for subsequent steps
     top_tickers_1month_filtered = [t for t in top_tickers_3month_filtered if t not in failed_training_tickers_1month]
@@ -3596,61 +3658,64 @@ def main(
         optimized_params_per_ticker_1month_filtered = {}
 
     # --- Run 1-Month Backtest ---
-    print("\n🔍 Step 10: Running 1-Month Backtest...")
-    # --- Run 1-Month Backtest (AI Strategy) ---
-    print("\n🔍 Step 10: Running 1-Month Backtest (AI Strategy)...")
-    final_strategy_value_1month, strategy_results_1month, processed_tickers_1month_local, performance_metrics_1month = _run_portfolio_backtest(
-        all_tickers_data=all_tickers_data,
-        start_date=bt_start_1month,
-        end_date=bt_end,
-        top_tickers=top_tickers_1month_filtered, # Use filtered tickers for backtest
-        models_buy=models_buy_1month,
-        models_sell=models_sell_1month,
-        scalers=scalers_1month,
-        optimized_params_per_ticker=optimized_params_per_ticker_1month_filtered,
-        capital_per_stock=capital_per_stock_1month, # Use fixed capital per stock
-        target_percentage=target_percentage, 
-        run_parallel=run_parallel,
-        period_name="1-Month (AI)",
-        top_performers_data=top_performers_data_1month_filtered, # Pass filtered top_performers_data
-        use_simple_rule_strategy=False # Explicitly set to False for AI strategy
-    )
-    ai_1month_return = ((final_strategy_value_1month - (capital_per_stock_1month * len(top_tickers_1month_filtered))) / abs(capital_per_stock_1month * len(top_tickers_1month_filtered))) * 100 if (capital_per_stock_1month * len(top_tickers_1month_filtered)) != 0 else 0
+    if ENABLE_1MONTH_BACKTEST:
+        print("\n🔍 Step 10: Running 1-Month Backtest...")
+        # --- Run 1-Month Backtest (AI Strategy) ---
+        print("\n🔍 Step 10: Running 1-Month Backtest (AI Strategy)...")
+        final_strategy_value_1month, strategy_results_1month, processed_tickers_1month_local, performance_metrics_1month = _run_portfolio_backtest(
+            all_tickers_data=all_tickers_data,
+            start_date=bt_start_1month,
+            end_date=bt_end,
+            top_tickers=top_tickers_1month_filtered, # Use filtered tickers for backtest
+            models_buy=models_buy_1month,
+            models_sell=models_sell_1month,
+            scalers=scalers_1month,
+            optimized_params_per_ticker=optimized_params_per_ticker_1month_filtered,
+            capital_per_stock=capital_per_stock_1month, # Use fixed capital per stock
+            target_percentage=target_percentage, 
+            run_parallel=run_parallel,
+            period_name="1-Month (AI)",
+            top_performers_data=top_performers_data_1month_filtered, # Pass filtered top_performers_data
+            use_simple_rule_strategy=False # Explicitly set to False for AI strategy
+        )
+        ai_1month_return = ((final_strategy_value_1month - (capital_per_stock_1month * len(top_tickers_1month_filtered))) / abs(capital_per_stock_1month * len(top_tickers_1month_filtered))) * 100 if (capital_per_stock_1month * len(top_tickers_1month_filtered)) != 0 else 0
 
-    # --- Run 1-Month Backtest (Simple Rule Strategy) ---
-    print("\n🔍 Running 1-Month Backtest (Simple Rule Strategy)...")
-    final_simple_rule_value_1month, simple_rule_results_1month, processed_simple_rule_tickers_1month, performance_metrics_simple_rule_1month = _run_portfolio_backtest(
-        all_tickers_data=all_tickers_data,
-        start_date=bt_start_1month,
-        end_date=bt_end,
-        top_tickers=top_tickers_1month_filtered,
-        models_buy={},
-        models_sell={},
-        scalers={},
-        optimized_params_per_ticker={},
-        capital_per_stock=capital_per_stock_1month,
-        target_percentage=target_percentage,
-        run_parallel=run_parallel,
-        period_name="1-Month (Simple Rule)",
-        top_performers_data=top_performers_data_1month_filtered,
-        use_simple_rule_strategy=True
-    )
-    simple_rule_1month_return = ((final_simple_rule_value_1month - (capital_per_stock_1month * len(top_tickers_1month_filtered))) / abs(capital_per_stock_1month * len(top_tickers_1month_filtered))) * 100 if (capital_per_stock_1month * len(top_tickers_1month_filtered)) != 0 else 0
+        # --- Run 1-Month Backtest (Simple Rule Strategy) ---
+        print("\n🔍 Running 1-Month Backtest (Simple Rule Strategy)...")
+        final_simple_rule_value_1month, simple_rule_results_1month, processed_simple_rule_tickers_1month, performance_metrics_simple_rule_1month = _run_portfolio_backtest(
+            all_tickers_data=all_tickers_data,
+            start_date=bt_start_1month,
+            end_date=bt_end,
+            top_tickers=top_tickers_1month_filtered,
+            models_buy={},
+            models_sell={},
+            scalers={},
+            optimized_params_per_ticker={},
+            capital_per_stock=capital_per_stock_1month,
+            target_percentage=target_percentage,
+            run_parallel=run_parallel,
+            period_name="1-Month (Simple Rule)",
+            top_performers_data=top_performers_data_1month_filtered,
+            use_simple_rule_strategy=True
+        )
+        simple_rule_1month_return = ((final_simple_rule_value_1month - (capital_per_stock_1month * len(top_tickers_1month_filtered))) / abs(capital_per_stock_1month * len(top_tickers_1month_filtered))) * 100 if (capital_per_stock_1month * len(top_tickers_1month_filtered)) != 0 else 0
 
-    # --- Calculate Buy & Hold for 1-Month ---
-    print("\n📊 Calculating Buy & Hold performance for 1-Month period...")
-    buy_hold_results_1month = []
-    for ticker in processed_tickers_1month_local:
-        df_bh = load_prices_robust(ticker, bt_start_1month, bt_end)
-        if not df_bh.empty:
-            start_price = float(df_bh["Close"].iloc[0])
-            shares_bh = int(capital_per_stock_1month / start_price) if start_price > 0 else 0 # Use fixed capital per stock
-            cash_bh = capital_per_stock_1month - shares_bh * start_price # Use fixed capital per stock
-            buy_hold_results_1month.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
-        else:
-            buy_hold_results_1month.append(capital_per_stock_1month)
-    final_buy_hold_value_1month = sum(buy_hold_results_1month) + (len(top_tickers_1month_filtered) - len(processed_tickers_1month_local)) * capital_per_stock_1month
-    print("✅ 1-Month Buy & Hold calculation complete.")
+        # --- Calculate Buy & Hold for 1-Month ---
+        print("\n📊 Calculating Buy & Hold performance for 1-Month period...")
+        buy_hold_results_1month = []
+        for ticker in processed_tickers_1month_local:
+            df_bh = load_prices_robust(ticker, bt_start_1month, bt_end)
+            if not df_bh.empty:
+                start_price = float(df_bh["Close"].iloc[0])
+                shares_bh = int(capital_per_stock_1month / start_price) if start_price > 0 else 0 # Use fixed capital per stock
+                cash_bh = capital_per_stock_1month - shares_bh * start_price # Use fixed capital per stock
+                buy_hold_results_1month.append(cash_bh + shares_bh * df_bh["Close"].iloc[-1])
+            else:
+                buy_hold_results_1month.append(capital_per_stock_1month)
+        final_buy_hold_value_1month = sum(buy_hold_results_1month) + (len(top_tickers_1month_filtered) - len(processed_tickers_1month_local)) * capital_per_stock_1month
+        print("✅ 1-Month Buy & Hold calculation complete.")
+    else:
+        print("\nℹ️ 1-Month Backtest is disabled by ENABLE_1MONTH_BACKTEST flag.")
 
     # --- Prepare data for the final summary table (using 1-Year results for the table) ---
     print("\n📝 Preparing final summary data...")
@@ -3806,10 +3871,14 @@ def main(
            final_simple_rule_value_3month, simple_rule_3month_return, final_simple_rule_value_1month, simple_rule_1month_return
 
 if __name__ == "__main__":
+    print("DEBUG: Attempting to call main function...")
     start_time = time.time()
-    main(
-        fcf_threshold=None, ebitda_threshold=None, run_parallel=True, single_ticker=None, 
-        top_performers_data=None,
-    )
+    try:
+        main(
+            fcf_threshold=None, ebitda_threshold=None, run_parallel=True, single_ticker=None, 
+            top_performers_data=None,
+        )
+    except Exception as e:
+        print(f"An error occurred during main execution: {e}")
     end_time = time.time()
     print(f"\nRoutine completed in {end_time - start_time:.2f} seconds.")
