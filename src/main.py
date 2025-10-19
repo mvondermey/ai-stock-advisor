@@ -167,7 +167,7 @@ USE_SVM                 = False
 USE_MLP_CLASSIFIER      = False
 USE_LIGHTGBM            = False # Enable LightGBM - GOOD
 #GOOD
-USE_XGBOOST             = False # Disable XGBoost
+USE_XGBOOST             = False # Enable XGBoost
 USE_LSTM                = False
 #Not so GOOD
 USE_GRU                 = True # Enable GRU - BEST
@@ -193,8 +193,8 @@ LSTM_LEARNING_RATE      = 0.001
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
 FORCE_TRAINING          = True      # Set to True to force re-training of ML models
-FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
-FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
+FORCE_THRESHOLDS_OPTIMIZATION = True # Set to True to force re-optimization of ML thresholds
+FORCE_PERCENTAGE_OPTIMIZATION = True # Set to True to force re-optimization of TARGET_PERCENTAGE
 
 # ============================
 # Helpers
@@ -458,7 +458,7 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
     
     # Ensure all financial columns are numeric
     for col in df_financial.columns:
-        df_financial[col] = pd.to_numeric(df[col], errors='coerce')
+        df_financial[col] = pd.to_numeric(df_financial[col], errors='coerce') # Corrected to df_financial[col]
 
     return df_financial.sort_index()
 
@@ -657,8 +657,49 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     else:
         final_df = price_df.copy()
 
+    # --- Add placeholder for sentiment data (for demonstration) ---
+    # In a real scenario, this would be fetched from a sentiment API
+    if 'Sentiment_Score' not in final_df.columns:
+        final_df['Sentiment_Score'] = np.random.uniform(-1, 1, len(final_df)) # Placeholder: random sentiment
+        final_df['Sentiment_Score'] = final_df['Sentiment_Score'].rolling(window=5).mean().fillna(0) # Smooth it a bit
+
     # Return the specifically requested slice
     return final_df.loc[(final_df.index >= _to_utc(start)) & (final_df.index <= _to_utc(end))].copy()
+
+def _fetch_intermarket_data(start: datetime, end: datetime) -> pd.DataFrame:
+    """Fetches intermarket data (e.g., bond yields, commodities, currencies)."""
+    intermarket_tickers = {
+        'US10Y': 'Bond_Yield',  # 10-Year Treasury Yield (TwelveData symbol)
+        'USO': 'Oil_Price',    # United States Oil Fund (assuming this works or falls back to Yahoo)
+        'GLD': 'Gold_Price',   # SPDR Gold Shares (assuming this works or falls back to Yahoo)
+        # 'DX-Y.NYB': 'DXY_Index' # U.S. Dollar Index (removed, no direct TwelveData equivalent found)
+    }
+    
+    all_intermarket_dfs = []
+    for ticker, name in intermarket_tickers.items():
+        try:
+            # Use load_prices_robust to respect DATA_PROVIDER and handle caching/fallbacks
+            df = load_prices_robust(ticker, start, end)
+            if not df.empty:
+                # load_prices_robust returns a DataFrame with 'Close' column
+                single_ticker_df = df[['Close']].rename(columns={'Close': name})
+                all_intermarket_dfs.append(single_ticker_df)
+        except Exception as e:
+            print(f"  ⚠️ Could not fetch intermarket data for {ticker} ({name}): {e}")
+            
+    if not all_intermarket_dfs:
+        return pd.DataFrame()
+
+    # Concatenate all individual DataFrames
+    intermarket_df = pd.concat(all_intermarket_dfs, axis=1)
+    intermarket_df.index = pd.to_datetime(intermarket_df.index, utc=True)
+    intermarket_df.index.name = "Date"
+    
+    # Calculate returns for intermarket features
+    for col in intermarket_df.columns:
+        intermarket_df[f"{col}_Returns"] = intermarket_df[col].pct_change(fill_method=None).fillna(0)
+        
+    return intermarket_df.ffill().bfill().fillna(0)
 
 # ============================
 # Ticker discovery
@@ -858,7 +899,7 @@ def get_all_tickers() -> List[str]:
             response_mdax.raise_for_status()
             tables_mdax = pd.read_html(StringIO(response_mdax.text))
             table_mdax = None
-            for table in tables_mib:
+            for table in tables_mdax:
                 if 'Ticker' in table.columns or 'Symbol' in table.columns:
                     table_mdax = table
                     break
@@ -1183,7 +1224,9 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
         "ATR", "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
         "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
         "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
-        "Market_Momentum_SPY" # Added new feature
+        "Market_Momentum_SPY", # Added new feature
+        "Sentiment_Score", # Added sentiment score
+        "Bond_Yield_Returns", "Oil_Price_Returns", "Gold_Price_Returns", "DXY_Index_Returns" # Added intermarket features
     ]
     
     # Filter to only include technical features that are actually in df.columns
@@ -1236,6 +1279,14 @@ except ImportError:
     print("⚠️ PyTorch not installed. Run: pip install torch. Deep learning models will be skipped.")
     PYTORCH_AVAILABLE = False
 
+# Added for SHAP
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except ImportError:
+    print("⚠️ SHAP not installed. Run: pip install shap. SHAP analysis will be skipped.")
+    SHAP_AVAILABLE = False
+
 # --- Globals for ML library status ---
 _ml_libraries_initialized = False
 CUDA_AVAILABLE = False
@@ -1275,6 +1326,12 @@ class GRUClassifier(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
+        print(f"DEBUG: GRUClassifier forward - Initial input shape: {x.shape}") # Added debug print
+        # If input is 4D, squeeze the first dimension (assuming it's an extra batch dimension from SHAP)
+        if x.dim() == 4:
+            x = x.squeeze(0) # Remove the extra batch dimension
+            print(f"DEBUG: GRUClassifier forward - Shape after squeeze(0): {x.shape}") # Added debug print
+
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
         out, _ = self.gru(x, h0)
         out = self.fc(out[:, -1, :]) # Get output from the last time step
@@ -1346,6 +1403,139 @@ def initialize_ml_libraries():
 
     _ml_libraries_initialized = True
     return models_and_params # Return the dictionary
+
+# def analyze_shap_for_gru(model: GRUClassifier, scaler: MinMaxScaler, X_df: pd.DataFrame, feature_names: List[str], ticker: str, target_col: str):
+#     """
+#     Calculates and visualizes SHAP values for a GRU model.
+#     """
+#     if not SHAP_AVAILABLE:
+#         print(f"  [{ticker}] SHAP is not available. Skipping SHAP analysis.")
+#         return
+
+#     print(f"  [{ticker}] Calculating SHAP values for GRU model ({target_col})...")
+    
+#     try:
+#         # Define a wrapper prediction function for KernelExplainer
+#         # This function will capture 'model', 'scaler', 'SEQUENCE_LENGTH' from the outer scope.
+#         def gru_predict_proba_wrapper_for_kernel(X_unsequenced_np):
+#             # X_unsequenced_np is a 2D numpy array (num_samples, num_features)
+            
+#             # Scale the data using the fitted scaler
+#             X_scaled_np = scaler.transform(X_unsequenced_np)
+            
+#             # Create sequences from the scaled data
+#             X_sequences_for_pred = []
+#             # Handle cases where X_scaled_np might be too short for a full sequence
+#             if len(X_scaled_np) < SEQUENCE_LENGTH:
+#                 # Return neutral probability for insufficient sequences
+#                 return np.full(len(X_unsequenced_np), 0.5)
+
+#             for i in range(len(X_scaled_np) - SEQUENCE_LENGTH + 1):
+#                 X_sequences_for_pred.append(X_scaled_np[i:i + SEQUENCE_LENGTH])
+            
+#             if not X_sequences_for_pred:
+#                 return np.full(len(X_unsequenced_np), 0.5) # Should not happen if len(X_scaled_np) >= SEQUENCE_LENGTH
+
+#             X_sequences_tensor = torch.tensor(np.array(X_sequences_for_pred), dtype=torch.float32)
+            
+#             device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+#             model.to(device)
+#             X_sequences_tensor = X_sequences_tensor.to(device)
+
+#             model.eval()
+#             with torch.no_grad():
+#                 outputs = model(X_sequences_tensor)
+#                 # The model outputs probabilities for the positive class.
+#                 # KernelExplainer expects a single output for binary classification.
+#                 return outputs.cpu().numpy().flatten()
+
+#         # Re-generate X_sequences from the full training data (X_df)
+#         # This ensures consistency with how the model was trained.
+#         # Use the scaler that was fitted during model training
+#         X_scaled_dl_full = scaler.transform(X_df)
+        
+#         X_sequences_full = []
+#         for i in range(len(X_scaled_dl_full) - SEQUENCE_LENGTH):
+#             X_sequences_full.append(X_scaled_dl_full[i:i + SEQUENCE_LENGTH])
+        
+#         if not X_sequences_full:
+#             print(f"  [{ticker}] Not enough data to create sequences for SHAP. Skipping.")
+#             return
+        
+#         X_sequences_full_np = np.array(X_sequences_full) # Shape: (num_total_sequences, SEQUENCE_LENGTH, num_features)
+
+#         # Sample background data for KernelExplainer (unsequenced, unscaled)
+#         # KernelExplainer expects background data in the same format as the prediction function input.
+#         # So, we need to sample from the original X_df (unsequenced, unscaled).
+#         num_background_samples = min(50, len(X_df)) # Smaller background for performance
+#         background_data_for_kernel = X_df.sample(num_background_samples, random_state=SEED).values # NumPy array (num_samples, num_features)
+
+#         # Sample data to explain (unsequenced, unscaled)
+#         num_explain_samples = min(20, len(X_df)) # Very small sample for performance
+#         explain_data_for_kernel = X_df.sample(num_explain_samples, random_state=SEED).values # NumPy array (num_samples, num_features)
+
+#         if explain_data_for_kernel.shape[0] == 0:
+#             print(f"  [{ticker}] Explain data for KernelExplainer is empty. Skipping SHAP calculation.")
+#             return
+
+#         # Create a KernelExplainer
+#         explainer = shap.KernelExplainer(
+#             gru_predict_proba_wrapper_for_kernel, # Pass the nested function directly
+#             background_data_for_kernel
+#         )
+        
+#         # Calculate SHAP values
+#         shap_values = explainer.shap_values(explain_data_for_kernel)
+        
+#         print(f"DEBUG: SHAP values raw output: {shap_values}")
+#         print(f"DEBUG: SHAP values type: {type(shap_values)}")
+#         if isinstance(shap_values, list):
+#             print(f"DEBUG: SHAP values list length: {len(shap_values)}")
+#             if len(shap_values) > 0 and isinstance(shap_values[0], np.ndarray):
+#                 print(f"DEBUG: SHAP values[0] shape: {shap_values[0].shape}")
+#             if len(shap_values) > 1 and isinstance(shap_values[1], np.ndarray):
+#                 print(f"DEBUG: SHAP values[1] shape: {shap_values[1].shape}")
+#         elif isinstance(shap_values, np.ndarray):
+#             print(f"DEBUG: SHAP values array shape: {shap_values.shape}")
+
+#         shap_values_for_plot = None
+#         if isinstance(shap_values, list):
+#             if len(shap_values) == 2: # For binary classification, take the positive class (index 1)
+#                 shap_values_for_plot = shap_values[1]
+#             elif len(shap_values) == 1: # If only one output, take that output
+#                 shap_values_for_plot = shap_values[0]
+#             else:
+#                 print(f"  [{ticker}] SHAP values list has unexpected length ({len(shap_values)}). Skipping plot.")
+#                 return
+#         elif isinstance(shap_values, np.ndarray):
+#             shap_values_for_plot = shap_values
+#         else:
+#             print(f"  [{ticker}] SHAP values are not a list or numpy array. Type: {type(shap_values)}. Skipping plot.")
+#             return
+
+#         if shap_values_for_plot is None or shap_values_for_plot.size == 0:
+#             print(f"  [{ticker}] SHAP values for plotting are empty or None. Skipping plot.")
+#             return
+
+#         # For KernelExplainer, shap_values_for_plot is already (num_samples, num_features)
+#         # and explain_data_for_kernel is also (num_samples, num_features).
+#         # No need to average over sequence length.
+        
+#         # Generate SHAP summary plot
+#         plt.figure(figsize=(10, 6))
+#         shap.summary_plot(shap_values_for_plot, explain_data_for_kernel, feature_names=feature_names, plot_type="bar", show=False)
+#         plt.title(f"SHAP Feature Importance for {ticker} GRU ({target_col})")
+#         plt.tight_layout()
+        
+#         shap_plot_path = Path(f"logs/shap_plots/{ticker}_GRU_SHAP_{target_col}.png")
+#         _ensure_dir(shap_plot_path.parent)
+#         plt.savefig(shap_plot_path)
+#         plt.close()
+#         print(f"  [{ticker}] SHAP summary plot saved to {shap_plot_path}")
+
+#     except Exception as e:
+#         print(f"  [{ticker}] Error during SHAP analysis for GRU model ({target_col}): {e}")
+
 
 def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN"):
     """Train and compare multiple classifiers for a given target, returning the best one."""
@@ -1656,6 +1846,16 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
 
     # If the best model is a DL model, ensure its specific scaler is returned
     if best_model_name in ["LSTM", "GRU"]:
+        # After training, if GRU is the best model, perform SHAP analysis
+        # if best_model_name == "GRU" and SHAP_AVAILABLE:
+        #     analyze_shap_for_gru(
+        #         model=models_and_params_local[best_model_name]["model"],
+        #         scaler=models_and_params_local[best_model_name]["scaler"],
+        #         X_df=X_df, # Pass the unsequenced, unscaled X_df
+        #         feature_names=final_feature_names,
+        #         ticker=ticker,
+        #         target_col=target_col
+        #     )
         return models_and_params_local[best_model_name]["model"], models_and_params_local[best_model_name]["scaler"]
     else:
         # Otherwise, return the best traditional ML model and the StandardScaler
@@ -2472,7 +2672,7 @@ def find_top_performers(
                     start_price = df['Close'].iloc[0]
                     end_price = df['Close'].iloc[-1]
                     if start_price > 0:
-                        perf = ((end_price - start_price) / start_price) * 100
+                        perf = ((end_date - start_price) / start_price) * 100
                         ytd_benchmark_perfs[bench_ticker] = perf
                         print(f"  ✅ {bench_ticker} YTD Performance: {perf:.2f}%")
             except Exception as e:
@@ -2952,13 +3152,13 @@ def _run_portfolio_backtest(
                 for t, p1y, pytd in top_performers_data:
                     if t == worker_result['ticker']:
                         perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
-                        perf_ytd_benchmark = pytd if np.isfinite(pytd) else np.nan
+                        ytd_perf_benchmark = pytd if np.isfinite(pytd) else np.nan
                         break
                 
                 # Print individual stock performance immediately
                 print(f"\n📈 Individual Stock Performance for {worker_result['ticker']} ({period_name}):")
                 print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
-                print(f"  - YTD Performance: {perf_ytd_benchmark:.2f}%" if pd.notna(perf_ytd_benchmark) else "  - YTD Performance: N/A")
+                print(f"  - YTD Performance: {ytd_perf_benchmark:.2f}%" if pd.notna(ytd_perf_benchmark) else "  - YTD Performance: N/A")
                 print(f"  - AI Sharpe Ratio: {worker_result['perf_data']['sharpe_ratio']:.2f}")
                 print(f"  - Last AI Action: {worker_result['last_ai_action']}")
                 print(f"  - Optimized Buy Threshold: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY):.2f}")
@@ -3251,6 +3451,15 @@ def main(
         print("⚠️ Could not fetch SPY data. Market Momentum feature will be 0.")
         # Add a zero-filled column if SPY data couldn't be fetched
         all_tickers_data['Market_Momentum_SPY', 'SPY'] = 0.0
+
+    # --- Fetch and merge intermarket data ---
+    # User requested to disable this feature.
+    print("ℹ️ Intermarket data fetching is disabled as per user request.")
+    # Add zero-filled columns for intermarket features to ensure feature set consistency
+    for col_name in ['Bond_Yield_Returns', 'Oil_Price_Returns', 'Gold_Price_Returns', 'DXY_Index_Returns']:
+        # Check if the column already exists before adding, to prevent errors if it was partially merged
+        if (col_name, 'Intermarket') not in all_tickers_data.columns:
+            all_tickers_data[col_name, 'Intermarket'] = 0.0
 
     # --- Identify top performers if not provided ---
     if top_performers_data is None:
@@ -4096,43 +4305,23 @@ def main(
     models_dir = Path("logs/models")
     _ensure_dir(models_dir) # Ensure the directory exists
 
-    print(f"\n🏆 Saving best performing models ({best_period_name} period) for live trading...")
-    for ticker in top_tickers: # Iterate through all top tickers
-        model_buy_path = models_dir / f"{ticker}_model_buy.joblib"
-        model_sell_path = models_dir / f"{ticker}_model_sell.joblib"
-        scaler_path = models_dir / f"{ticker}_scaler.joblib"
+    print(f"\n🏆 Saving best performing models for live trading from {best_period_name} period...")
 
-        if ticker in best_models_buy_dict and ticker in best_models_sell_dict and ticker in best_scalers_dict:
-            try:
-                joblib.dump(best_models_buy_dict[ticker], model_buy_path)
-                joblib.dump(best_models_sell_dict[ticker], model_sell_path)
-                joblib.dump(best_scalers_dict[ticker], scaler_path)
-                print(f"   ✅ Saved models for {ticker}")
-            except Exception as e:
-                print(f"   ⚠️ Error saving models for {ticker}: {e}")
-        else:
-            print(f"   ℹ️ No models available for {ticker} in the best performing period. Skipping save.")
+    for ticker in best_models_buy_dict.keys():
+        try:
+            joblib.dump(best_models_buy_dict[ticker], models_dir / f"{ticker}_model_buy.joblib")
+            joblib.dump(best_models_sell_dict[ticker], models_dir / f"{ticker}_model_sell.joblib")
+            joblib.dump(best_scalers_dict[ticker], models_dir / f"{ticker}_scaler.joblib")
+            print(f"  ✅ Saved models for {ticker} from {best_period_name} period.")
+        except Exception as e:
+            print(f"  ⚠️ Error saving models for {ticker} from {best_period_name} period: {e}")
 
-    # --- Save recommendations to file ---
-    recommendations_path = Path("logs/recommendations.json")
-    with open(recommendations_path, 'w') as f:
-        json.dump(sorted_final_results, f, indent=4)
-    print(f"\n✅ Recommendations saved to {recommendations_path}")
-
-    
-    return final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers, top_performers_data, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, ai_1y_return, ai_ytd_return, final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return, optimized_params_per_ticker, final_strategy_value_1month, ai_1month_return, final_buy_hold_value_1month, \
-           final_simple_rule_value_1y, simple_rule_1y_return, final_simple_rule_value_ytd, simple_rule_ytd_return, \
-           final_simple_rule_value_3month, simple_rule_3month_return, final_simple_rule_value_1month, simple_rule_1month_return
+    return (
+        final_strategy_value_1y, final_buy_hold_value_1y, models_buy, models_sell, scalers,
+        strategy_results_1y, processed_tickers_1y, performance_metrics_1y, top_performers_data,
+        final_strategy_value_ytd, final_buy_hold_value_ytd, final_strategy_value_3month,
+        final_buy_hold_value_3month, final_strategy_value_1month, optimized_params_per_ticker
+    )
 
 if __name__ == "__main__":
-    print("DEBUG: Attempting to call main function...")
-    start_time = time.time()
-    try:
-        main(
-            fcf_threshold=None, ebitda_threshold=None, run_parallel=True, single_ticker=None, 
-            top_performers_data=None,
-        )
-    except Exception as e:
-        print(f"An error occurred during main execution: {e}")
-    end_time = time.time()
-    print(f"\nRoutine completed in {end_time - start_time:.2f} seconds.")
+    main()
