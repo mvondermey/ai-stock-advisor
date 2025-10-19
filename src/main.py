@@ -3599,7 +3599,7 @@ def main(
 
     # Filter out failed tickers from top_tickers_1y_filtered for subsequent steps
     top_tickers_ytd_filtered = [t for t in top_tickers_1y_filtered if t not in failed_training_tickers_ytd]
-    print(f"  ℹ️ {len(failed_training_tickers_ytd)} tickers failed YTD model training and will be skipped: {', '.贫(failed_training_tickers_ytd.keys())}")
+    print(f"  ℹ️ {len(failed_training_tickers_ytd)} tickers failed YTD model training and will be skipped: {', '.join(failed_training_tickers_ytd.keys())}")
 
     # Update top_performers_data to reflect only successfully trained tickers
     top_performers_data_ytd_filtered = [item for item in top_performers_data_1y_filtered if item[0] in top_tickers_ytd_filtered]
