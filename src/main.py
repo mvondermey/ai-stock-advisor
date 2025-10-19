@@ -125,6 +125,24 @@ BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest
 BACKTEST_DAYS_1MONTH    = 30         # 1 month for backtest
 TRAIN_LOOKBACK_DAYS     = 360        # more data for model (e.g., 1 year)
 
+# --- Backtest Period Enable/Disable Flags ---
+ENABLE_1YEAR_BACKTEST   = True
+ENABLE_YTD_BACKTEST     = True
+ENABLE_3MONTH_BACKTEST  = True
+ENABLE_1MONTH_BACKTEST  = True
+
+# --- Training Period Enable/Disable Flags ---
+ENABLE_1YEAR_TRAINING   = True
+ENABLE_YTD_TRAINING     = True
+ENABLE_3MONTH_TRAINING  = True
+ENABLE_1MONTH_TRAINING  = True
+
+# --- Training Period Enable/Disable Flags ---
+ENABLE_1YEAR_TRAINING   = True
+ENABLE_YTD_TRAINING     = True
+ENABLE_3MONTH_TRAINING  = True
+ENABLE_1MONTH_TRAINING  = True
+
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
 STRAT_SMA_LONG          = 50
@@ -757,7 +775,7 @@ def get_all_tickers() -> List[str]:
             col = "Symbol"
             dow_tickers = [str(s).replace('.', '-') for s in table_dow[col].tolist()]
             all_tickers.update(dow_tickers)
-            print(f"✅ Fetched {len(dow_tickers)} tickers from Dow Jones.")
+            print(f"✅ Fetched {len(dow_tickers)} tickers from Dow Jones. ")
         except Exception as e:
             print(f"⚠️ Could not fetch Dow Jones list ({e}).")
 
@@ -1411,6 +1429,11 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
             lgbm_model_params["model"].set_params(device='gpu')
             models_and_params_local["LightGBM (GPU)"] = lgbm_model_params
         else:
+            print("ℹ️ LightGBM found. Will use CPU (CUDA not available).")
+            lgbm_model_params = {
+                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+            }
             models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
 
     if XGBOOST_AVAILABLE and XGBClassifier and USE_XGBOOST:
@@ -1806,7 +1829,7 @@ class RuleTradingEnv:
         high_low_diff = self.df['High'] - self.df['Low']
         high_prev_close_diff_abs = (self.df['High'] - self.df['Close'].shift(1)).abs()
         low_prev_close_diff_abs = (self.df['Low'] - self.df['Close'].shift(1)).abs()
-        self.df['TR'] = pd.concat([high_low_diff, high_prev_close_diff_abs, low_prev_close_diff_abs], axis=1).max(axis=1)
+        self.df['TR'] = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
         alpha = 1/14
         self.df['+DM14'] = self.df['+DM'].ewm(alpha=alpha, adjust=False).mean()
         self.df['-DM14'] = self.df['-DM'].ewm(alpha=alpha, adjust=False).mean()
@@ -1858,7 +1881,7 @@ class RuleTradingEnv:
         # Assume initial uptrend if Close > Open, downtrend otherwise
         uptrend = True if self.df['Close'].iloc[0] > self.df['Open'].iloc[0] else False
         ep = self.df['High'].iloc[0] if uptrend else self.df['Low'].iloc[0]
-        sar = df['Low'].iloc[0] if uptrend else df['High'].iloc[0]
+        sar = self.df['Low'].iloc[0] if uptrend else self.df['High'].iloc[0]
         
         # Iterate to calculate PSAR
         for i in range(1, len(self.df)):
@@ -3786,10 +3809,7 @@ if __name__ == "__main__":
     start_time = time.time()
     main(
         fcf_threshold=None, ebitda_threshold=None, run_parallel=True, single_ticker=None, 
-        force_thresholds_optimization=True, # Enable threshold optimization
-        force_percentage_optimization=True, # Enable target percentage optimization
         top_performers_data=None,
-        use_simple_rule_strategy=True # Enable simple rule-based strategy for comparison
     )
     end_time = time.time()
     print(f"\nRoutine completed in {end_time - start_time:.2f} seconds.")
