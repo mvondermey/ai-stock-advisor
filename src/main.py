@@ -2672,7 +2672,7 @@ def find_top_performers(
                     start_price = df['Close'].iloc[0]
                     end_price = df['Close'].iloc[-1]
                     if start_price > 0:
-                        perf = ((end_date - start_price) / start_price) * 100
+                        perf = ((end_price - start_price) / start_price) * 100
                         ytd_benchmark_perfs[bench_ticker] = perf
                         print(f"  ✅ {bench_ticker} YTD Performance: {perf:.2f}%")
             except Exception as e:
