@@ -193,8 +193,9 @@ LSTM_LEARNING_RATE      = 0.001
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
 FORCE_TRAINING          = True      # Set to True to force re-training of ML models
-FORCE_THRESHOLDS_OPTIMIZATION = True # Set to True to force re-optimization of ML thresholds
-FORCE_PERCENTAGE_OPTIMIZATION = True # Set to True to force re-optimization of TARGET_PERCENTAGE
+CONTINUE_TRAINING_FROM_EXISTING = False # Set to True to load existing models and continue training
+FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
+FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
 
 # ============================
 # Helpers
@@ -1226,7 +1227,7 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
         "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
         "Market_Momentum_SPY", # Added new feature
         "Sentiment_Score", # Added sentiment score
-        "Bond_Yield_Returns", "Oil_Price_Returns", "Gold_Price_Returns", "DXY_Index_Returns" # Added intermarket features
+        "Bond_Yield_Returns", "Oil_Price_Returns", "Gold_Price_Returns" # Added intermarket features
     ]
     
     # Filter to only include technical features that are actually in df.columns
@@ -1326,11 +1327,11 @@ class GRUClassifier(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        print(f"DEBUG: GRUClassifier forward - Initial input shape: {x.shape}") # Added debug print
+        # print(f"DEBUG: GRUClassifier forward - Initial input shape: {x.shape}") # Added debug print
         # If input is 4D, squeeze the first dimension (assuming it's an extra batch dimension from SHAP)
         if x.dim() == 4:
             x = x.squeeze(0) # Remove the extra batch dimension
-            print(f"DEBUG: GRUClassifier forward - Shape after squeeze(0): {x.shape}") # Added debug print
+            # print(f"DEBUG: GRUClassifier forward - Shape after squeeze(0): {x.shape}") # Added debug print
 
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
         out, _ = self.gru(x, h0)
@@ -1347,11 +1348,16 @@ def initialize_ml_libraries():
         return models_and_params # Return the dictionary if already initialized
 
     try:
-        if torch.cuda.is_available():
-            CUDA_AVAILABLE = True
-            print("✅ CUDA is available. GPU acceleration enabled.")
+        if PYTORCH_AVAILABLE:
+            torch.manual_seed(SEED) # Set seed for PyTorch CPU operations
+            if torch.cuda.is_available():
+                CUDA_AVAILABLE = True
+                torch.cuda.manual_seed_all(SEED) # Set seed for PyTorch GPU operations
+                print("✅ CUDA is available. GPU acceleration enabled.")
+            else:
+                print("⚠️ CUDA is not available. GPU acceleration will not be used.")
         else:
-            print("⚠️ CUDA is not available. GPU acceleration will not be used.")
+            print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
     except NameError: # Catch NameError if torch is not imported
         print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
 
@@ -1537,7 +1543,7 @@ def initialize_ml_libraries():
 #         print(f"  [{ticker}] Error during SHAP analysis for GRU model ({target_col}): {e}")
 
 
-def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN"):
+def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN", initial_model=None):
     """Train and compare multiple classifiers for a given target, returning the best one."""
     models_and_params = initialize_ml_libraries() # Initialize and get models_and_params
     d = df.copy() # Renamed to d to match the original error context
@@ -1720,6 +1726,13 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
             if USE_LSTM:
                 # LSTM Model
                 lstm_model = LSTMClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
+                if initial_model and isinstance(initial_model, LSTMClassifier):
+                    try:
+                        lstm_model.load_state_dict(initial_model.state_dict())
+                        print(f"    - Loaded existing LSTM model state for {ticker} to continue training.")
+                    except Exception as e:
+                        print(f"    - Error loading LSTM model state for {ticker}: {e}. Training from scratch.")
+                
                 optimizer_lstm = optim.Adam(lstm_model.parameters(), lr=LSTM_LEARNING_RATE)
 
                 print(f"    - Training LSTM for {ticker}...")
@@ -1755,6 +1768,13 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
             if USE_GRU:
                 # GRU Model
                 gru_model = GRUClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
+                if initial_model and isinstance(initial_model, GRUClassifier):
+                    try:
+                        gru_model.load_state_dict(initial_model.state_dict())
+                        print(f"    - Loaded existing GRU model state for {ticker} to continue training.")
+                    except Exception as e:
+                        print(f"    - Error loading GRU model state for {ticker}: {e}. Training from scratch.")
+
                 optimizer_gru = optim.Adam(gru_model.parameters(), lr=LSTM_LEARNING_RATE)
 
                 print(f"    - Training GRU for {ticker}...")
@@ -1873,28 +1893,43 @@ def train_worker(params: Tuple) -> Dict:
     scaler_path = models_dir / f"{ticker}_scaler.joblib"
 
     model_buy, model_sell, scaler = None, None, None
+    
+    # Flag to indicate if we successfully loaded a model to continue training
+    loaded_for_retraining = False
 
-    # Load models if they exist and FORCE_TRAINING is False
-    if not FORCE_TRAINING and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
+    # Attempt to load models if CONTINUE_TRAINING_FROM_EXISTING is True
+    if CONTINUE_TRAINING_FROM_EXISTING and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
         try:
             model_buy = joblib.load(model_buy_path)
             model_sell = joblib.load(model_sell_path)
             scaler = joblib.load(scaler_path)
-            print(f"  ✅ Loaded existing models for {ticker}.")
+            print(f"  ✅ Loaded existing models for {ticker} to continue training.")
+            loaded_for_retraining = True
+        except Exception as e:
+            print(f"  ⚠️ Error loading models for {ticker} for retraining: {e}. Training from scratch.")
+
+    # If FORCE_TRAINING is False and we didn't load for retraining, then we just load and skip training
+    if not FORCE_TRAINING and not loaded_for_retraining and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
+        try:
+            model_buy = joblib.load(model_buy_path)
+            model_sell = joblib.load(model_sell_path)
+            scaler = joblib.load(scaler_path)
+            print(f"  ✅ Loaded existing models for {ticker} (FORCE_TRAINING is False).")
             return {
                 'ticker': ticker,
                 'model_buy': model_buy,
                 'model_sell': model_sell,
                 'scaler': scaler,
-                'status': 'loaded', # Explicitly set status for loaded models
+                'status': 'loaded',
                 'reason': None
             }
         except Exception as e:
-            print(f"  ⚠️ Error loading models for {ticker}: {e}. Retraining.")
+            print(f"  ⚠️ Error loading models for {ticker}: {e}. Training from scratch.")
+            # Fall through to training from scratch if loading fails
 
-    print(f"  ⚙️ Training models for {ticker} (FORCE_TRAINING is {FORCE_TRAINING})...")
+    print(f"  ⚙️ Training models for {ticker} (FORCE_TRAINING is {FORCE_TRAINING}, CONTINUE_TRAINING_FROM_EXISTING is {CONTINUE_TRAINING_FROM_EXISTING})...")
     print(f"  [DEBUG] {current_process().name} - {ticker}: Initiating feature extraction for training.")
-    # The full DataFrame for the training period is already passed in.
+    
     df_train, actual_feature_set = fetch_training_data(ticker, df_train_period, target_percentage)
 
     if df_train.empty:
@@ -1902,11 +1937,11 @@ def train_worker(params: Tuple) -> Dict:
         return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None}
 
     print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for BUY target.")
-    # Train BUY model
-    model_buy, scaler_buy = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker)
+    # Train BUY model, passing the potentially loaded model
+    model_buy, scaler_buy = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker, initial_model=model_buy if loaded_for_retraining else None)
     print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for SELL target.")
-    # Train SELL model (using the same scaler as buy for consistency, or a separate one if needed)
-    model_sell, scaler_sell = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker)
+    # Train SELL model, passing the potentially loaded model
+    model_sell, scaler_sell = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker, initial_model=model_sell if loaded_for_retraining else None)
 
     # For simplicity, we'll use the scaler from the buy model for both if they are different.
     # In a more complex scenario, you might want to ensure feature_set consistency or use separate scalers.
@@ -3466,14 +3501,23 @@ def main(
         all_tickers_data['Market_Momentum_SPY', 'SPY'] = 0.0
 
     # --- Fetch and merge intermarket data ---
-    # User requested to disable this feature.
-    print("ℹ️ Intermarket data fetching is disabled as per user request.")
-    # Add zero-filled columns for intermarket features to ensure feature set consistency
-    for col_name in ['Bond_Yield_Returns', 'Oil_Price_Returns', 'Gold_Price_Returns', 'DXY_Index_Returns']:
-        # Check if the column already exists before adding, to prevent errors if it was partially merged
-        if (col_name, 'Intermarket') not in all_tickers_data.columns:
-            all_tickers_data[col_name, 'Intermarket'] = 0.0
-
+    # --- Fetch and merge intermarket data ---
+    print("🔍 Fetching intermarket data...")
+    intermarket_df = _fetch_intermarket_data(earliest_date_needed, end_date)
+    if not intermarket_df.empty:
+        # Rename columns to include 'Intermarket' level for MultiIndex
+        intermarket_df.columns = pd.MultiIndex.from_product([intermarket_df.columns, ['Intermarket']])
+        all_tickers_data = all_tickers_data.merge(intermarket_df, left_index=True, right_index=True, how='left')
+        # Forward fill and then back fill any NaNs introduced by the merge
+        for col in intermarket_df.columns:
+            all_tickers_data[col] = all_tickers_data[col].ffill().bfill().fillna(0)
+        print("✅ Intermarket data fetched and merged.")
+    else:
+        print("⚠️ Could not fetch intermarket data. Intermarket features will be 0.")
+        # Add zero-filled columns for intermarket features to ensure feature set consistency
+        for col_name in ['Bond_Yield_Returns', 'Oil_Price_Returns', 'Gold_Price_Returns']: # DXY_Index_Returns removed from _fetch_intermarket_data
+            if (col_name, 'Intermarket') not in all_tickers_data.columns:
+                all_tickers_data[col_name, 'Intermarket'] = 0.0
     # --- Identify top performers if not provided ---
     if top_performers_data is None:
         title = "🚀 AI-Powered Momentum & Trend Strategy"
