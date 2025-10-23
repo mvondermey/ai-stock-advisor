@@ -189,13 +189,25 @@ LSTM_EPOCHS             = 50
 LSTM_BATCH_SIZE         = 64
 LSTM_LEARNING_RATE      = 0.001
 
+# --- GRU Hyperparameter Search Ranges ---
+GRU_HIDDEN_SIZE_OPTIONS = [32, 64, 128]
+GRU_NUM_LAYERS_OPTIONS  = [1, 2, 3]
+GRU_DROPOUT_OPTIONS     = [0.1, 0.2, 0.3]
+GRU_LEARNING_RATE_OPTIONS = [0.0005, 0.001, 0.005]
+GRU_BATCH_SIZE_OPTIONS  = [32, 64, 128]
+GRU_EPOCHS_OPTIONS      = [30, 50, 70]
+FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
+FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
+ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = False # Set to True to enable GRU hyperparameter search
+
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
-FORCE_TRAINING          = True      # Set to True to force re-training of ML models
+FORCE_TRAINING          = False      # Set to True to force re-training of ML models
 CONTINUE_TRAINING_FROM_EXISTING = False # Set to True to load existing models and continue training
 FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
+
 
 # ============================
 # Helpers
@@ -1766,46 +1778,123 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                     models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": 0.0}
 
             if USE_GRU:
-                # GRU Model
-                gru_model = GRUClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
-                if initial_model and isinstance(initial_model, GRUClassifier):
+                if ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION:
+                    print(f"    - Starting GRU hyperparameter search for {ticker} ({target_col})...")
+                    best_gru_auc = -np.inf
+                    best_gru_model = None
+                    best_gru_scaler = None
+                    best_gru_hyperparams = {}
+
+                    # Iterate through hyperparameter combinations
+                    for hidden_size in GRU_HIDDEN_SIZE_OPTIONS:
+                        for num_layers in GRU_NUM_LAYERS_OPTIONS:
+                            for dropout_rate in GRU_DROPOUT_OPTIONS:
+                                for learning_rate in GRU_LEARNING_RATE_OPTIONS:
+                                    for batch_size in GRU_BATCH_SIZE_OPTIONS:
+                                        for epochs in GRU_EPOCHS_OPTIONS:
+                                            print(f"      Testing GRU with: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
+
+                                            gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
+                                            optimizer_gru = optim.Adam(gru_model.parameters(), lr=learning_rate)
+                                            
+                                            # Create DataLoader for current batch_size
+                                            current_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+                                            for epoch in range(epochs):
+                                                for batch_X, batch_y in current_dataloader:
+                                                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                                                    optimizer_gru.zero_grad()
+                                                    outputs = gru_model(batch_X)
+                                                    loss = criterion(outputs, batch_y)
+                                                    loss.backward()
+                                                    optimizer_gru.step()
+                                            
+                                            # Evaluate GRU
+                                            gru_model.eval()
+                                            with torch.no_grad():
+                                                all_outputs = []
+                                                for batch_X, _ in current_dataloader:
+                                                    batch_X = batch_X.to(device)
+                                                    outputs = gru_model(batch_X)
+                                                    all_outputs.append(outputs.cpu().numpy())
+                                                y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+
+                                            try:
+                                                from sklearn.metrics import roc_auc_score
+                                                auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
+                                                print(f"        GRU AUC: {auc_gru:.4f}")
+
+                                                if auc_gru > best_gru_auc:
+                                                    best_gru_auc = auc_gru
+                                                    best_gru_model = gru_model
+                                                    best_gru_scaler = dl_scaler # dl_scaler is already fitted
+                                                    best_gru_hyperparams = {
+                                                        "hidden_size": hidden_size,
+                                                        "num_layers": num_layers,
+                                                        "dropout_rate": dropout_rate,
+                                                        "learning_rate": learning_rate,
+                                                        "batch_size": batch_size,
+                                                        "epochs": epochs
+                                                    }
+                                            except ValueError:
+                                                print(f"        GRU AUC: Not enough samples with positive class for AUC calculation.")
+                                                
+                    if best_gru_model:
+                        models_and_params_local["GRU"] = {"model": best_gru_model, "scaler": best_gru_scaler, "auc": best_gru_auc, "hyperparams": best_gru_hyperparams}
+                        print(f"      Best GRU found for {ticker} ({target_col}) with AUC: {best_gru_auc:.4f}, Hyperparams: {best_gru_hyperparams}")
+                    else:
+                        print(f"      No valid GRU model found after hyperparameter search for {ticker} ({target_col}).")
+                        models_and_params_local["GRU"] = {"model": None, "scaler": None, "auc": 0.0}
+                else: # ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION is False, use fixed hyperparameters
+                    print(f"    - Training GRU for {ticker} ({target_col}) with fixed hyperparameters...")
+                    # Use default LSTM hyperparameters as fixed GRU hyperparameters
+                    hidden_size = LSTM_HIDDEN_SIZE
+                    num_layers = LSTM_NUM_LAYERS
+                    dropout_rate = LSTM_DROPOUT
+                    learning_rate = LSTM_LEARNING_RATE
+                    batch_size = LSTM_BATCH_SIZE
+                    epochs = LSTM_EPOCHS
+
+                    gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
+                    if initial_model and isinstance(initial_model, GRUClassifier):
+                        try:
+                            gru_model.load_state_dict(initial_model.state_dict())
+                            print(f"    - Loaded existing GRU model state for {ticker} to continue training.")
+                        except Exception as e:
+                            print(f"    - Error loading GRU model state for {ticker}: {e}. Training from scratch.")
+                    
+                    optimizer_gru = optim.Adam(gru_model.parameters(), lr=learning_rate)
+                    
+                    # Create DataLoader for current batch_size
+                    current_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+                    for epoch in range(epochs):
+                        for batch_X, batch_y in current_dataloader:
+                            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                            optimizer_gru.zero_grad()
+                            outputs = gru_model(batch_X)
+                            loss = criterion(outputs, batch_y)
+                            loss.backward()
+                            optimizer_gru.step()
+                    
+                    # Evaluate GRU
+                    gru_model.eval()
+                    with torch.no_grad():
+                        all_outputs = []
+                        for batch_X, _ in current_dataloader:
+                            batch_X = batch_X.to(device)
+                            outputs = gru_model(batch_X)
+                            all_outputs.append(outputs.cpu().numpy())
+                        y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+
                     try:
-                        gru_model.load_state_dict(initial_model.state_dict())
-                        print(f"    - Loaded existing GRU model state for {ticker} to continue training.")
-                    except Exception as e:
-                        print(f"    - Error loading GRU model state for {ticker}: {e}. Training from scratch.")
-
-                optimizer_gru = optim.Adam(gru_model.parameters(), lr=LSTM_LEARNING_RATE)
-
-                print(f"    - Training GRU for {ticker}...")
-                for epoch in range(LSTM_EPOCHS):
-                    for batch_X, batch_y in dataloader:
-                        batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                        optimizer_gru.zero_grad()
-                        outputs = gru_model(batch_X)
-                        loss = criterion(outputs, batch_y)
-                        loss.backward()
-                        optimizer_gru.step()
-
-                # Evaluate GRU
-                gru_model.eval()
-                with torch.no_grad():
-                    all_outputs = []
-                    for batch_X, _ in dataloader:
-                        batch_X = batch_X.to(device)
-                        outputs = gru_model(batch_X)
-                        all_outputs.append(outputs.cpu().numpy())
-                    y_pred_proba_gru = np.concatenate(all_outputs).flatten()
-
-                # Calculate AUC for GRU
-                try:
-                    from sklearn.metrics import roc_auc_score # Moved import outside conditional block
-                    auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
-                    models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru}
-                    print(f"      GRU AUC: {auc_gru:.4f}")
-                except ValueError:
-                    print(f"      GRU AUC: Not enough samples with positive class for AUC calculation.")
-                    models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": 0.0}
+                        from sklearn.metrics import roc_auc_score
+                        auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
+                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru, "hyperparams": {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}}
+                        print(f"      GRU AUC (fixed params): {auc_gru:.4f}")
+                    except ValueError:
+                        print(f"      GRU AUC (fixed params): Not enough samples with positive class for AUC calculation.")
+                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": 0.0}
 
     results = {}
     best_model_overall = None
