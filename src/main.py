@@ -203,7 +203,7 @@ ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = False # Set to True to enable GRU hyper
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
-FORCE_TRAINING          = False      # Set to True to force re-training of ML models
+FORCE_TRAINING          = True      # Set to True to force re-training of ML models
 CONTINUE_TRAINING_FROM_EXISTING = False # Set to True to load existing models and continue training
 FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
@@ -1237,9 +1237,9 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
         "ATR", "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
         "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
         "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
-        "Market_Momentum_SPY", # Added new feature
-        "Sentiment_Score", # Added sentiment score
-        "Bond_Yield_Returns", "Oil_Price_Returns", "Gold_Price_Returns" # Added intermarket features
+        "Market_Momentum_SPY",
+        "Sentiment_Score",
+        "Bond_Yield_Returns", "Oil_Price_Returns", "Gold_Price_Returns"
     ]
     
     # Filter to only include technical features that are actually in df.columns
