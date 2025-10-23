@@ -101,8 +101,8 @@ TWELVEDATA_API_KEY      = os.environ.get("TWELVEDATA_API_KEY")
 # --- Universe / selection
 MARKET_SELECTION = {
     "ALPACA_STOCKS": False, # Fetch all tradable US equities from Alpaca
-    "NASDAQ_ALL": False,
-    "NASDAQ_100": True,
+    "NASDAQ_ALL": True,
+    "NASDAQ_100": False,
     "SP500": False,
     "DOW_JONES": False,
     "POPULAR_ETFS": False,
@@ -112,7 +112,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 2        # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 0        # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -196,15 +196,13 @@ GRU_DROPOUT_OPTIONS     = [0.1, 0.2, 0.3]
 GRU_LEARNING_RATE_OPTIONS = [0.0005, 0.001, 0.005]
 GRU_BATCH_SIZE_OPTIONS  = [32, 64, 128]
 GRU_EPOCHS_OPTIONS      = [30, 50, 70]
-FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
-FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
 ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = False # Set to True to enable GRU hyperparameter search
 
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
 FORCE_TRAINING          = True      # Set to True to force re-training of ML models
-CONTINUE_TRAINING_FROM_EXISTING = False # Set to True to load existing models and continue training
+CONTINUE_TRAINING_FROM_EXISTING = True # Set to True to load existing models and continue training
 FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
 
@@ -1555,7 +1553,7 @@ def initialize_ml_libraries():
 #         print(f"  [{ticker}] Error during SHAP analysis for GRU model ({target_col}): {e}")
 
 
-def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN", initial_model=None):
+def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN", initial_model=None, loaded_gru_hyperparams: Optional[Dict] = None):
     """Train and compare multiple classifiers for a given target, returning the best one."""
     models_and_params = initialize_ml_libraries() # Initialize and get models_and_params
     d = df.copy() # Renamed to d to match the original error context
@@ -1845,15 +1843,25 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                     else:
                         print(f"      No valid GRU model found after hyperparameter search for {ticker} ({target_col}).")
                         models_and_params_local["GRU"] = {"model": None, "scaler": None, "auc": 0.0}
-                else: # ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION is False, use fixed hyperparameters
-                    print(f"    - Training GRU for {ticker} ({target_col}) with fixed hyperparameters...")
-                    # Use default LSTM hyperparameters as fixed GRU hyperparameters
-                    hidden_size = LSTM_HIDDEN_SIZE
-                    num_layers = LSTM_NUM_LAYERS
-                    dropout_rate = LSTM_DROPOUT
-                    learning_rate = LSTM_LEARNING_RATE
-                    batch_size = LSTM_BATCH_SIZE
-                    epochs = LSTM_EPOCHS
+                else: # ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION is False, use fixed or loaded hyperparameters
+                    if loaded_gru_hyperparams:
+                        print(f"    - Training GRU for {ticker} ({target_col}) with loaded hyperparameters...")
+                        hidden_size = loaded_gru_hyperparams.get("hidden_size", LSTM_HIDDEN_SIZE)
+                        num_layers = loaded_gru_hyperparams.get("num_layers", LSTM_NUM_LAYERS)
+                        dropout_rate = loaded_gru_hyperparams.get("dropout_rate", LSTM_DROPOUT)
+                        learning_rate = loaded_gru_hyperparams.get("learning_rate", LSTM_LEARNING_RATE)
+                        batch_size = loaded_gru_hyperparams.get("batch_size", LSTM_BATCH_SIZE)
+                        epochs = loaded_gru_hyperparams.get("epochs", LSTM_EPOCHS)
+                        print(f"      Loaded GRU Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
+                    else:
+                        print(f"    - Training GRU for {ticker} ({target_col}) with default fixed hyperparameters...")
+                        hidden_size = LSTM_HIDDEN_SIZE
+                        num_layers = LSTM_NUM_LAYERS
+                        dropout_rate = LSTM_DROPOUT
+                        learning_rate = LSTM_LEARNING_RATE
+                        batch_size = LSTM_BATCH_SIZE
+                        epochs = LSTM_EPOCHS
+                        print(f"      Default GRU Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
 
                     gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
                     if initial_model and isinstance(initial_model, GRUClassifier):
@@ -1890,16 +1898,19 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                     try:
                         from sklearn.metrics import roc_auc_score
                         auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
-                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru, "hyperparams": {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}}
-                        print(f"      GRU AUC (fixed params): {auc_gru:.4f}")
+                        current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
+                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
+                        print(f"      GRU AUC (fixed/loaded params): {auc_gru:.4f}")
                     except ValueError:
-                        print(f"      GRU AUC (fixed params): Not enough samples with positive class for AUC calculation.")
+                        print(f"      GRU AUC (fixed/loaded params): Not enough samples with positive class for AUC calculation.")
                         models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": 0.0}
 
-    results = {}
     best_model_overall = None
     best_auc_overall = -np.inf
+    best_hyperparams_overall: Optional[Dict] = None # New: To store GRU hyperparams if GRU is best
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    results = {} # Initialize the results dictionary here
+    results = {} # Initialize the results dictionary here
 
     print("  🔬 Comparing classifier performance (AUC score via 5-fold cross-validation with GridSearchCV):")
     for name, mp in models_and_params_local.items(): # Iterate over local models_and_params
@@ -1912,6 +1923,8 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                 best_auc_overall = current_auc
                 best_model_overall = mp["model"]
                 scaler = mp["scaler"] # Use the DL scaler for DL models
+                if name == "GRU": # If GRU is the best, store its hyperparams
+                    best_hyperparams_overall = mp.get("hyperparams")
         else:
             model = mp["model"]
             params = mp["params"]
@@ -1932,15 +1945,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                     if best_score > best_auc_overall:
                         best_auc_overall = best_score
                         best_model_overall = grid_search.best_estimator_ # Store the best estimator from GridSearchCV
-                        # For non-DL models, the scaler is already defined as 'scaler'
-                        # and will be returned at the end of the function.
-                        # We need to ensure the correct scaler is associated with the best model.
-                        # If the best model is a DL model, its scaler is already set.
-                        # If the best model is a traditional ML model, the 'scaler' variable
-                        # (which is StandardScaler) is the correct one.
-                        # This implies that if a DL model is chosen, the 'scaler' variable
-                        # should be updated to 'dl_scaler'.
-                        # This is handled by the logic below.
+                        best_hyperparams_overall = None # Reset if a non-GRU model is best
 
             except Exception as e:
                 print(f"    - {name}: Failed evaluation. Error: {e}")
@@ -1948,31 +1953,21 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
 
     if not any(results.values()):
         print("  ⚠️ All models failed evaluation. No model will be used.")
-        return None, None
+        return None, None, None # Return None for hyperparams too
 
     best_model_name = max(results, key=results.get)
     print(f"  🏆 Best model: {best_model_name} with AUC = {best_auc_overall:.4f}")
 
     # If the best model is a DL model, ensure its specific scaler is returned
     if best_model_name in ["LSTM", "GRU"]:
-        # After training, if GRU is the best model, perform SHAP analysis
-        # if best_model_name == "GRU" and SHAP_AVAILABLE:
-        #     analyze_shap_for_gru(
-        #         model=models_and_params_local[best_model_name]["model"],
-        #         scaler=models_and_params_local[best_model_name]["scaler"],
-        #         X_df=X_df, # Pass the unsequenced, unscaled X_df
-        #         feature_names=final_feature_names,
-        #         ticker=ticker,
-        #         target_col=target_col
-        #     )
-        return models_and_params_local[best_model_name]["model"], models_and_params_local[best_model_name]["scaler"]
+        return models_and_params_local[best_model_name]["model"], models_and_params_local[best_model_name]["scaler"], best_hyperparams_overall
     else:
         # Otherwise, return the best traditional ML model and the StandardScaler
-        return best_model_overall, scaler
+        return best_model_overall, scaler, best_hyperparams_overall
 
 def train_worker(params: Tuple) -> Dict:
     """Worker function for parallel model training."""
-    ticker, df_train_period, target_percentage, feature_set = params
+    ticker, df_train_period, target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell = params
     
     models_dir = Path("logs/models")
     _ensure_dir(models_dir)
@@ -1980,22 +1975,34 @@ def train_worker(params: Tuple) -> Dict:
     model_buy_path = models_dir / f"{ticker}_model_buy.joblib"
     model_sell_path = models_dir / f"{ticker}_model_sell.joblib"
     scaler_path = models_dir / f"{ticker}_scaler.joblib"
+    gru_hyperparams_buy_path = models_dir / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
+    gru_hyperparams_sell_path = models_dir / f"{ticker}_TargetClassSell_gru_optimized_params.json"
 
     model_buy, model_sell, scaler = None, None, None
+    loaded_gru_hyperparams_buy = None
+    loaded_gru_hyperparams_sell = None
     
     # Flag to indicate if we successfully loaded a model to continue training
     loaded_for_retraining = False
 
-    # Attempt to load models if CONTINUE_TRAINING_FROM_EXISTING is True
+    # Attempt to load models and GRU hyperparams if CONTINUE_TRAINING_FROM_EXISTING is True
     if CONTINUE_TRAINING_FROM_EXISTING and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
         try:
             model_buy = joblib.load(model_buy_path)
             model_sell = joblib.load(model_sell_path)
             scaler = joblib.load(scaler_path)
-            print(f"  ✅ Loaded existing models for {ticker} to continue training.")
+            
+            if gru_hyperparams_buy_path.exists():
+                with open(gru_hyperparams_buy_path, 'r') as f:
+                    loaded_gru_hyperparams_buy = json.load(f)
+            if gru_hyperparams_sell_path.exists():
+                with open(gru_hyperparams_sell_path, 'r') as f:
+                    loaded_gru_hyperparams_sell = json.load(f)
+
+            print(f"  ✅ Loaded existing models and GRU hyperparams for {ticker} to continue training.")
             loaded_for_retraining = True
         except Exception as e:
-            print(f"  ⚠️ Error loading models for {ticker} for retraining: {e}. Training from scratch.")
+            print(f"  ⚠️ Error loading models or GRU hyperparams for {ticker} for retraining: {e}. Training from scratch.")
 
     # If FORCE_TRAINING is False and we didn't load for retraining, then we just load and skip training
     if not FORCE_TRAINING and not loaded_for_retraining and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
@@ -2003,17 +2010,27 @@ def train_worker(params: Tuple) -> Dict:
             model_buy = joblib.load(model_buy_path)
             model_sell = joblib.load(model_sell_path)
             scaler = joblib.load(scaler_path)
-            print(f"  ✅ Loaded existing models for {ticker} (FORCE_TRAINING is False).")
+            
+            if gru_hyperparams_buy_path.exists():
+                with open(gru_hyperparams_buy_path, 'r') as f:
+                    loaded_gru_hyperparams_buy = json.load(f)
+            if gru_hyperparams_sell_path.exists():
+                with open(gru_hyperparams_sell_path, 'r') as f:
+                    loaded_gru_hyperparams_sell = json.load(f)
+
+            print(f"  ✅ Loaded existing models and GRU hyperparams for {ticker} (FORCE_TRAINING is False).")
             return {
                 'ticker': ticker,
                 'model_buy': model_buy,
                 'model_sell': model_sell,
                 'scaler': scaler,
+                'gru_hyperparams_buy': loaded_gru_hyperparams_buy,
+                'gru_hyperparams_sell': loaded_gru_hyperparams_sell,
                 'status': 'loaded',
                 'reason': None
             }
         except Exception as e:
-            print(f"  ⚠️ Error loading models for {ticker}: {e}. Training from scratch.")
+            print(f"  ⚠️ Error loading models or GRU hyperparams for {ticker}: {e}. Training from scratch.")
             # Fall through to training from scratch if loading fails
 
     print(f"  ⚙️ Training models for {ticker} (FORCE_TRAINING is {FORCE_TRAINING}, CONTINUE_TRAINING_FROM_EXISTING is {CONTINUE_TRAINING_FROM_EXISTING})...")
@@ -2026,11 +2043,11 @@ def train_worker(params: Tuple) -> Dict:
         return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None}
 
     print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for BUY target.")
-    # Train BUY model, passing the potentially loaded model
-    model_buy, scaler_buy = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker, initial_model=model_buy if loaded_for_retraining else None)
+    # Train BUY model, passing the potentially loaded model and GRU hyperparams
+    model_buy, scaler_buy, gru_hyperparams_buy = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker, initial_model=model_buy if loaded_for_retraining else None, loaded_gru_hyperparams=loaded_gru_hyperparams_buy)
     print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for SELL target.")
-    # Train SELL model, passing the potentially loaded model
-    model_sell, scaler_sell = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker, initial_model=model_sell if loaded_for_retraining else None)
+    # Train SELL model, passing the potentially loaded model and GRU hyperparams
+    model_sell, scaler_sell, gru_hyperparams_sell = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker, initial_model=model_sell if loaded_for_retraining else None, loaded_gru_hyperparams=loaded_gru_hyperparams_sell)
 
     # For simplicity, we'll use the scaler from the buy model for both if they are different.
     # In a more complex scenario, you might want to ensure feature_set consistency or use separate scalers.
@@ -2041,15 +2058,25 @@ def train_worker(params: Tuple) -> Dict:
             joblib.dump(model_buy, model_buy_path)
             joblib.dump(model_sell, model_sell_path)
             joblib.dump(final_scaler, scaler_path)
-            print(f"  ✅ Models and scaler saved for {ticker}.")
+            
+            if gru_hyperparams_buy:
+                with open(gru_hyperparams_buy_path, 'w') as f:
+                    json.dump(gru_hyperparams_buy, f, indent=4)
+            if gru_hyperparams_sell:
+                with open(gru_hyperparams_sell_path, 'w') as f:
+                    json.dump(gru_hyperparams_sell, f, indent=4)
+
+            print(f"  ✅ Models, scaler, and GRU hyperparams saved for {ticker}.")
         except Exception as e:
-            print(f"  ⚠️ Error saving models for {ticker}: {e}")
+            print(f"  ⚠️ Error saving models or GRU hyperparams for {ticker}: {e}")
             
         return {
             'ticker': ticker,
             'model_buy': model_buy,
             'model_sell': model_sell,
             'scaler': final_scaler,
+            'gru_hyperparams_buy': gru_hyperparams_buy,
+            'gru_hyperparams_sell': gru_hyperparams_sell,
             'status': 'trained',
             'reason': None
         }
@@ -3126,8 +3153,8 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
                 sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Insufficient training data for target_percentage={p_target:.4f}. Skipping.\n")
                 continue
             
-            model_buy_for_opt, scaler_buy_for_opt = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker)
-            model_sell_for_opt, scaler_sell_for_opt = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker)
+            model_buy_for_opt, scaler_buy_for_opt, _ = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker)
+            model_sell_for_opt, scaler_sell_for_opt, _ = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker)
             
             if model_buy_for_opt and model_sell_for_opt and scaler_buy_for_opt:
                 models_cache[p_target] = (model_buy_for_opt, model_sell_for_opt, scaler_buy_for_opt)
@@ -3646,6 +3673,7 @@ def main(
 
     # --- Training Models (for 1-Year Backtest) ---
     models_buy, models_sell, scalers = {}, {}, {}
+    gru_hyperparams_buy_dict, gru_hyperparams_sell_dict = {}, {} # New: To store GRU hyperparams
     failed_training_tickers_1y = {} # New: Store failed tickers and their reasons
     if ENABLE_1YEAR_TRAINING:
         print("🔍 Step 3: Training AI models for 1-Year backtest...")
@@ -3655,11 +3683,30 @@ def main(
         
         training_params_1y = []
         for ticker in top_tickers:
+            # Load existing GRU hyperparams for this ticker if available
+            loaded_gru_hyperparams_buy = None
+            loaded_gru_hyperparams_sell = None
+            gru_hyperparams_buy_path = Path("logs/models") / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
+            gru_hyperparams_sell_path = Path("logs/models") / f"{ticker}_TargetClassSell_gru_optimized_params.json"
+
+            if gru_hyperparams_buy_path.exists():
+                try:
+                    with open(gru_hyperparams_buy_path, 'r') as f:
+                        loaded_gru_hyperparams_buy = json.load(f)
+                except Exception as e:
+                    print(f"  ⚠️ Error loading existing GRU buy hyperparams for {ticker}: {e}")
+            if gru_hyperparams_sell_path.exists():
+                try:
+                    with open(gru_hyperparams_sell_path, 'r') as f:
+                        loaded_gru_hyperparams_sell = json.load(f)
+                except Exception as e:
+                    print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
+
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_1y_calc:train_end_1y, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_1y.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
+                training_params_1y.append((ticker, ticker_train_data.copy(), target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 1-Year period. Skipping.")
                 continue
@@ -3677,6 +3724,10 @@ def main(
                 models_buy[res['ticker']] = res['model_buy']
                 models_sell[res['ticker']] = res['model_sell']
                 scalers[res['ticker']] = res['scaler']
+                if res.get('gru_hyperparams_buy'):
+                    gru_hyperparams_buy_dict[res['ticker']] = res['gru_hyperparams_buy']
+                if res.get('gru_hyperparams_sell'):
+                    gru_hyperparams_sell_dict[res['ticker']] = res['gru_hyperparams_sell']
             elif res and res.get('status') == 'failed':
                 failed_training_tickers_1y[res['ticker']] = res['reason']
         print(f"  [DIAGNOSTIC] After 1-Year training loop, models_buy has {len(models_buy)} entries.")
@@ -3827,6 +3878,8 @@ def main(
     final_buy_hold_value_1month = initial_balance_used
     buy_hold_results_1month = []
     performance_metrics_buy_hold_1month_actual = [] # Initialize here
+    gru_hyperparams_buy_dict_1month, gru_hyperparams_sell_dict_1month = {}, {} # Initialize here
+    gru_hyperparams_buy_dict_1month, gru_hyperparams_sell_dict_1month = {}, {} # Initialize here
 
     # --- Run 1-Year Backtest ---
     if ENABLE_1YEAR_BACKTEST:
@@ -3914,6 +3967,7 @@ def main(
 
     # --- Training Models (for YTD Backtest) ---
     models_buy_ytd, models_sell_ytd, scalers_ytd = {}, {}, {}
+    gru_hyperparams_buy_dict_ytd, gru_hyperparams_sell_dict_ytd = {}, {} # New: To store GRU hyperparams
     failed_training_tickers_ytd = {} # New: Store failed tickers and their reasons
     if ENABLE_YTD_TRAINING:
         print("\n🔍 Step 5: Training AI models for YTD backtest...")
@@ -3923,11 +3977,30 @@ def main(
         
         training_params_ytd = []
         for ticker in top_tickers_1y_filtered: # Use filtered tickers for YTD training
+            # Load existing GRU hyperparams for this ticker if available
+            loaded_gru_hyperparams_buy = None
+            loaded_gru_hyperparams_sell = None
+            gru_hyperparams_buy_path = Path("logs/models") / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
+            gru_hyperparams_sell_path = Path("logs/models") / f"{ticker}_TargetClassSell_gru_optimized_params.json"
+
+            if gru_hyperparams_buy_path.exists():
+                try:
+                    with open(gru_hyperparams_buy_path, 'r') as f:
+                        loaded_gru_hyperparams_buy = json.load(f)
+                except Exception as e:
+                    print(f"  ⚠️ Error loading existing GRU buy hyperparams for {ticker}: {e}")
+            if gru_hyperparams_sell_path.exists():
+                try:
+                    with open(gru_hyperparams_sell_path, 'r') as f:
+                        loaded_gru_hyperparams_sell = json.load(f)
+                except Exception as e:
+                    print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
+
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_ytd:train_end_ytd, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_ytd.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
+                training_params_ytd.append((ticker, ticker_train_data.copy(), target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for YTD period. Skipping.")
                 continue
@@ -3945,6 +4018,10 @@ def main(
                 models_buy_ytd[res['ticker']] = res['model_buy']
                 models_sell_ytd[res['ticker']] = res['model_sell']
                 scalers_ytd[res['ticker']] = res['scaler']
+                if res.get('gru_hyperparams_buy'):
+                    gru_hyperparams_buy_dict_ytd[res['ticker']] = res['gru_hyperparams_buy']
+                if res.get('gru_hyperparams_sell'):
+                    gru_hyperparams_sell_dict_ytd[res['ticker']] = res['gru_hyperparams_sell']
             elif res and res.get('status') == 'failed':
                 failed_training_tickers_ytd[res['ticker']] = res['reason']
         print(f"  [DIAGNOSTIC] After YTD training loop, models_buy_ytd has {len(models_buy_ytd)} entries.")
@@ -4052,6 +4129,7 @@ def main(
 
     # --- Training Models (for 3-Month Backtest) ---
     models_buy_3month, models_sell_3month, scalers_3month = {}, {}, {}
+    gru_hyperparams_buy_dict_3month, gru_hyperparams_sell_dict_3month = {}, {} # New: To store GRU hyperparams
     failed_training_tickers_3month = {} # New: Store failed tickers and their reasons
     if ENABLE_3MONTH_TRAINING:
         print("\n🔍 Step 7: Training AI models for 3-Month backtest...")
@@ -4061,11 +4139,29 @@ def main(
 
         training_params_3month = []
         for ticker in top_tickers_ytd_filtered: # Use filtered tickers for 3-Month training
+            loaded_gru_hyperparams_buy = None
+            loaded_gru_hyperparams_sell = None
+            gru_hyperparams_buy_path = Path("logs/models") / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
+            gru_hyperparams_sell_path = Path("logs/models") / f"{ticker}_TargetClassSell_gru_optimized_params.json"
+
+            if gru_hyperparams_buy_path.exists():
+                try:
+                    with open(gru_hyperparams_buy_path, 'r') as f:
+                        loaded_gru_hyperparams_buy = json.load(f)
+                except Exception as e:
+                    print(f"  ⚠️ Error loading existing GRU buy hyperparams for {ticker}: {e}")
+            if gru_hyperparams_sell_path.exists():
+                try:
+                    with open(gru_hyperparams_sell_path, 'r') as f:
+                        loaded_gru_hyperparams_sell = json.load(f)
+                except Exception as e:
+                    print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
+
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_3month.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
+                training_params_3month.append((ticker, ticker_train_data.copy(), target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 3-Month period. Skipping.")
                 continue
@@ -4083,6 +4179,10 @@ def main(
                 models_buy_3month[res['ticker']] = res['model_buy']
                 models_sell_3month[res['ticker']] = res['model_sell']
                 scalers_3month[res['ticker']] = res['scaler']
+                if res.get('gru_hyperparams_buy'):
+                    gru_hyperparams_buy_dict_3month[res['ticker']] = res['gru_hyperparams_buy']
+                if res.get('gru_hyperparams_sell'):
+                    gru_hyperparams_sell_dict_3month[res['ticker']] = res['gru_hyperparams_sell']
             elif res and res.get('status') == 'failed':
                 failed_training_tickers_3month[res['ticker']] = res['reason']
         print(f"  [DIAGNOSTIC] After 3-Month training loop, models_buy_3month has {len(models_buy_3month)} entries.")
@@ -4199,11 +4299,29 @@ def main(
 
         training_params_1month = []
         for ticker in top_tickers_3month_filtered: # Use filtered tickers for 1-Month training
+            loaded_gru_hyperparams_buy = None
+            loaded_gru_hyperparams_sell = None
+            gru_hyperparams_buy_path = Path("logs/models") / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
+            gru_hyperparams_sell_path = Path("logs/models") / f"{ticker}_TargetClassSell_gru_optimized_params.json"
+
+            if gru_hyperparams_buy_path.exists():
+                try:
+                    with open(gru_hyperparams_buy_path, 'r') as f:
+                        loaded_gru_hyperparams_buy = json.load(f)
+                except Exception as e:
+                    print(f"  ⚠️ Error loading existing GRU buy hyperparams for {ticker}: {e}")
+            if gru_hyperparams_sell_path.exists():
+                try:
+                    with open(gru_hyperparams_sell_path, 'r') as f:
+                        loaded_gru_hyperparams_sell = json.load(f)
+                except Exception as e:
+                    print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
+
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_1month:train_end_1month, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_1month.append((ticker, ticker_train_data.copy(), target_percentage, feature_set))
+                training_params_1month.append((ticker, ticker_train_data.copy(), target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 1-Month period. Skipping.")
                 continue
@@ -4221,6 +4339,10 @@ def main(
                 models_buy_1month[res['ticker']] = res['model_buy']
                 models_sell_1month[res['ticker']] = res['model_sell']
                 scalers_1month[res['ticker']] = res['scaler']
+                if res.get('gru_hyperparams_buy'):
+                    gru_hyperparams_buy_dict_1month[res['ticker']] = res['gru_hyperparams_buy']
+                if res.get('gru_hyperparams_sell'):
+                    gru_hyperparams_sell_dict_1month[res['ticker']] = res['gru_hyperparams_sell']
             elif res and res.get('status') == 'failed':
                 failed_training_tickers_1month[res['ticker']] = res['reason']
         print(f"  [DIAGNOSTIC] After 1-Month training loop, models_buy_1month has {len(models_buy_1month)} entries.")
