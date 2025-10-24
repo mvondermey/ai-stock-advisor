@@ -18,14 +18,14 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestTradeRequest, StockLatestQuoteRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from multiprocessing import Pool, cpu_count
-from main import train_worker, TARGET_PERCENTAGE, TRAIN_LOOKBACK_DAYS, TWELVEDATA_API_KEY, get_all_tickers # Import get_all_tickers
+from main import train_worker, TARGET_PERCENTAGE, TRAIN_LOOKBACK_DAYS, get_all_tickers, GRUClassifier, LSTMClassifier, SEQUENCE_LENGTH, PYTORCH_AVAILABLE, CUDA_AVAILABLE # Import GRUClassifier, LSTMClassifier, SEQUENCE_LENGTH, PYTORCH_AVAILABLE, CUDA_AVAILABLE
 import joblib
 import pandas as pd
 from tqdm import tqdm
 from datetime import datetime, timedelta, timezone
 import time # Import the time module
-from twelvedata_ws import TwelveDataWebSocketClient
-from twelvedata import TDClient # Import the TwelveData REST API client
+import yfinance as yf # Import yfinance
+import torch # Import torch for tensor operations
 
 # Alpaca API credentials (set as environment variables for security)
 ALPACA_API_KEY          = os.environ.get("ALPACA_API_KEY")
@@ -33,6 +33,10 @@ ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
 
 # --- Configuration for Model Retraining ---
 MODEL_RETRAIN_DAYS = 90 # Retrain models if they are older than this many days
+
+# --- Live Trading Configuration ---
+LIVE_TRADING_ENABLED = True # Set to True to enable actual trade execution on Alpaca
+INVESTMENT_PER_STOCK_LIVE = 10000.0 # Fixed amount to invest per stock in live trading
 
 def _get_alpaca_buying_power(trading_client: TradingClient) -> Optional[float]:
     """Fetches the current Reg T buying power from the Alpaca trading account."""
@@ -49,12 +53,42 @@ def _get_alpaca_buying_power(trading_client: TradingClient) -> Optional[float]:
         print(f"  ⚠️ Error fetching Alpaca account balance: {e}")
         return None
 
+def _place_alpaca_order(trading_client: TradingClient, ticker: str, qty: int, side: OrderSide) -> bool:
+    """
+    Places a market order on Alpaca.
+    Returns True if the order was successfully placed, False otherwise.
+    """
+    if not LIVE_TRADING_ENABLED:
+        print(f"  ℹ️ Live trading is disabled. Skipping order placement for {side.value} {qty} shares of {ticker}.")
+        return False
+
+    if qty <= 0:
+        print(f"  ⚠️ Cannot place order for {side.value} {qty} shares of {ticker}. Quantity must be positive.")
+        return False
+
+    try:
+        market_order_data = MarketOrderRequest(
+            symbol=ticker,
+            qty=qty,
+            side=side,
+            time_in_force=TimeInForce.DAY
+        )
+        order = trading_client.submit_order(market_order_data)
+        print(f"  ✅ Successfully placed {side.value} order for {qty} shares of {ticker}. Order ID: {order.id}")
+        return True
+    except APIError as e:
+        print(f"  ❌ Alpaca API Error placing {side.value} order for {ticker}: {e}")
+        return False
+    except Exception as e:
+        print(f"  ❌ Unexpected error placing {side.value} order for {ticker}: {e}")
+        return False
+
 def verify_train_and_recommend_worker(args: Tuple) -> Dict:
     """
     Worker function that handles the entire pipeline for a single ticker and
     always returns a status dictionary.
     """
-    ticker, models_dir, optimized_params, latest_prices_dict = args
+    ticker, models_dir, optimized_params = args
     
     # 1. Check model and train if needed (this will also serve as data verification)
     model_buy_path = models_dir / f"{ticker}_model_buy.joblib"
@@ -70,27 +104,25 @@ def verify_train_and_recommend_worker(args: Tuple) -> Dict:
             needs_training = True
 
     if needs_training:
-        train_end = datetime.now(timezone.utc) - timedelta(days=1)
-        train_start = train_end - timedelta(days=TRAIN_LOOKBACK_DAYS)
-        from main import load_prices_robust, train_worker
-        
-        # This call now serves as our data verification. If it fails, the ticker is invalid.
-        df_train_period = load_prices_robust(ticker, train_start, train_end)
-        if df_train_period.empty:
-            return {'status': 'failure', 'ticker': ticker, 'reason': 'Failed to load historical training data'}
-            
-        training_result = train_worker((ticker, df_train_period, TARGET_PERCENTAGE, None))
-        if not training_result or not training_result.get('model_buy'):
-            return {'status': 'failure', 'ticker': ticker, 'reason': 'Model training failed'}
+        print(f"DEBUG: {ticker}: Model is missing or outdated. Skipping ticker.")
+        return {'status': 'failure', 'ticker': ticker, 'reason': 'Model missing or outdated'}
+    else:
+        print(f"DEBUG: {ticker}: Model already exists and is up-to-date.")
 
     # 2. Generate recommendation
     try:
-        recommendation = process_ticker(ticker, models_dir, optimized_params, latest_prices_dict)
+        print(f"DEBUG: {ticker}: Generating recommendation.")
+        recommendation = process_ticker(ticker, models_dir, optimized_params)
         if recommendation:
+            print(f"DEBUG: {ticker}: Recommendation generated: {recommendation['action']}.")
             return {'status': 'success', 'data': recommendation}
         else:
+            # The process_ticker function now handles missing real-time price internally
+            # and returns None if it fails to get a price.
+            print(f"DEBUG: {ticker}: Recommendation generation failed.")
             return {'status': 'failure', 'ticker': ticker, 'reason': 'Recommendation generation failed'}
     except Exception as e:
+        print(f"DEBUG: {ticker}: Exception during recommendation generation: {e}")
         return {'status': 'failure', 'ticker': ticker, 'reason': f'Exception in recommendation: {e}'}
 
 def _get_alpaca_portfolio_positions(trading_client: TradingClient) -> Tuple[List[Dict], float]:
@@ -125,36 +157,23 @@ def _get_alpaca_portfolio_positions(trading_client: TradingClient) -> Tuple[List
         print(f"  ⚠️ Error fetching Alpaca portfolio positions: {e}")
         return [], 0.0
 
-def _get_latest_price_from_twelvedata(ticker: str, latest_prices_dict: Dict[str, float]) -> Optional[float]:
+def _get_latest_price_from_yahoo(ticker: str) -> Optional[float]:
     """
-    Fetches the latest price for a ticker from TwelveData, preferring the passed dictionary.
-    If not in dictionary, it falls back to REST API.
+    Fetches the latest real-time price for a ticker from Yahoo Finance.
+    This function is called by parallel workers for recommendations, so no internal delay/retry is needed here.
     """
-    price_from_dict = latest_prices_dict.get(ticker)
-    if price_from_dict is not None:
-        return price_from_dict
-    
-    # If price not in dict, fall back to REST API
-
-    if not TWELVEDATA_API_KEY:
-        print(f"  ⚠️ TwelveData API key not set. Cannot fetch latest price for {ticker}.")
-        return None
-
     try:
-        tdc = TDClient(apikey=TWELVEDATA_API_KEY)
+        stock = yf.Ticker(ticker)
+        latest_price = stock.info.get('currentPrice') or stock.info.get('regularMarketPrice')
         
-        # Fetch latest price using the TwelveData client
-        # The `TDClient.price` method is suitable for getting the latest price
-        price_data = tdc.price(symbol=ticker).as_json()
-
-        if not price_data or 'price' not in price_data:
-            print(f"  ℹ️ No latest price data found for {ticker} from TwelveData.")
+        if latest_price is not None:
+            print(f"✅ Fetched latest price for {ticker} from Yahoo Finance: ${latest_price:.2f}")
+            return float(latest_price)
+        else:
+            print(f"⚠️ Could not retrieve latest price for {ticker} from Yahoo Finance.")
             return None
-
-        return float(price_data['price'])
-            
     except Exception as e:
-        print(f"  ❌ TwelveData API Error for {ticker}: {e}. Could not fetch latest price.")
+        print(f"  ⚠️ Error fetching latest price for {ticker} from Yahoo Finance: {e}")
         return None
 
 def get_recommendation(ticker: str, model_buy, model_sell, scaler, data: pd.DataFrame, buy_thresh: float, sell_thresh: float) -> Tuple[str, float, float]:
@@ -170,10 +189,52 @@ def get_recommendation(ticker: str, model_buy, model_sell, scaler, data: pd.Data
 
     latest_data = latest_data[required_features]
     scaled_data_np = scaler.transform(latest_data)
-    scaled_data = pd.DataFrame(scaled_data_np, columns=required_features)
     
-    buy_prob = model_buy.predict_proba(scaled_data)[0][1]
-    sell_prob = model_sell.predict_proba(scaled_data)[0][1]
+    buy_prob = 0.0
+    sell_prob = 0.0
+
+    # Handle PyTorch models (LSTM/GRU) separately
+    if PYTORCH_AVAILABLE and isinstance(model_buy, (LSTMClassifier, GRUClassifier)):
+        # For PyTorch models, we need to create a sequence from the scaled data
+        # The `scaled_data_np` is a 2D array (1, num_features) representing the latest day.
+        # We need to create a sequence of `SEQUENCE_LENGTH` days.
+        # For live trading, we'll assume `data` contains enough historical context.
+        
+        # Get the last SEQUENCE_LENGTH rows from the original `data` (before `latest_data` slicing)
+        # and then scale them.
+        if len(data) < SEQUENCE_LENGTH:
+            # Not enough historical data to form a sequence, return neutral probabilities
+            return "HOLD", 0.5, 0.5
+
+        # Get the last SEQUENCE_LENGTH rows for sequencing
+        historical_data_for_seq = data.iloc[-SEQUENCE_LENGTH:][required_features].copy()
+        
+        # Ensure all columns are numeric and fill any NaNs
+        for col in historical_data_for_seq.columns:
+            historical_data_for_seq[col] = pd.to_numeric(historical_data_for_seq[col], errors='coerce').fillna(0.0)
+
+        # Scale the sequence data using the same scaler that was used for training
+        X_scaled_seq = scaler.transform(historical_data_for_seq)
+        
+        # Convert to tensor and add batch dimension (batch_size=1)
+        X_tensor = torch.tensor(X_scaled_seq, dtype=torch.float32).unsqueeze(0)
+        
+        # Move to appropriate device
+        device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+        X_tensor = X_tensor.to(device)
+
+        model_buy.eval() # Set model to evaluation mode
+        model_sell.eval() # Set model to evaluation mode
+        with torch.no_grad():
+            buy_output = model_buy(X_tensor)
+            sell_output = model_sell(X_tensor)
+            buy_prob = float(buy_output.cpu().numpy()[0][0])
+            sell_prob = float(sell_output.cpu().numpy()[0][0])
+    else:
+        # For traditional ML models, use the existing scaling and prediction logic
+        scaled_data = pd.DataFrame(scaled_data_np, columns=required_features)
+        buy_prob = model_buy.predict_proba(scaled_data)[0][1]
+        sell_prob = model_sell.predict_proba(scaled_data)[0][1]
 
     if buy_prob > buy_thresh:
         return "BUY", buy_prob, sell_prob
@@ -182,7 +243,7 @@ def get_recommendation(ticker: str, model_buy, model_sell, scaler, data: pd.Data
     else:
         return "HOLD", buy_prob, sell_prob
 
-def process_ticker(ticker: str, models_dir: Path, optimized_params: Dict, latest_prices_dict: Dict[str, float]) -> Optional[Dict]:
+def process_ticker(ticker: str, models_dir: Path, optimized_params: Dict) -> Optional[Dict]:
     """Worker function to process a single ticker and generate a recommendation."""
     try:
         model_buy = joblib.load(models_dir / f"{ticker}_model_buy.joblib")
@@ -205,8 +266,8 @@ def process_ticker(ticker: str, models_dir: Path, optimized_params: Dict, latest
             print(f"  ⚠️ No sufficient historical data for {ticker}. Skipping recommendation.")
             return None
 
-        # Get the latest real-time price from the passed dictionary or fallback to REST API
-        latest_realtime_price = _get_latest_price_from_twelvedata(ticker, latest_prices_dict)
+        # Get the latest real-time price from Yahoo Finance
+        latest_realtime_price = _get_latest_price_from_yahoo(ticker)
         if latest_realtime_price is None:
             print(f"  ⚠️ Could not get latest real-time price for {ticker}. Skipping recommendation.")
             return None
@@ -262,64 +323,8 @@ def process_ticker(ticker: str, models_dir: Path, optimized_params: Dict, latest
             'buy_prob': buy_prob,
             'sell_prob': sell_prob,
             'buy_thresh': buy_thresh,
-            'sell_thresh': sell_thresh
-        }
-    except Exception as e:
-        print(f"  ⚠️ Error processing ticker {ticker}: {e}")
-        return None
-
-        # Create a "live" data point for today using the latest real-time price
-        # This simulates a new bar for today with the real-time close price
-        live_bar_data = {
-            'Open': historical_data['Close'].iloc[-1], # Use previous day's close as today's open
-            'High': max(historical_data['Close'].iloc[-1], latest_realtime_price), # Placeholder for high
-            'Low': min(historical_data['Close'].iloc[-1], latest_realtime_price),  # Placeholder for low
-            'Close': latest_realtime_price,
-            'Volume': 0 # Live volume is not easily available from this WS feed
-        }
-        # Add financial features from the last historical day, as they don't change intraday
-        for col in historical_data.columns:
-            if col.startswith('Fin_'):
-                live_bar_data[col] = historical_data[col].iloc[-1]
-
-        live_bar_df = pd.DataFrame([live_bar_data], index=[end_date], columns=historical_data.columns)
-        live_bar_df.index.name = "Date"
-        
-        # Append the live bar to historical data for feature calculation
-        # Ensure column consistency before concat
-        missing_cols_hist = set(live_bar_df.columns) - set(historical_data.columns)
-        for col in missing_cols_hist:
-            historical_data[col] = 0 # Add missing columns to historical_data with default 0
-        
-        missing_cols_live = set(historical_data.columns) - set(live_bar_df.columns)
-        for col in missing_cols_live:
-            live_bar_df[col] = 0 # Add missing columns to live_bar_df with default 0
-
-        # Reorder columns to match
-        live_bar_df = live_bar_df[historical_data.columns]
-
-        combined_data = pd.concat([historical_data, live_bar_df])
-        
-        # Re-calculate features on the combined data to include the latest price
-        from main import fetch_training_data
-        # fetch_training_data returns (ready_df, actual_feature_set)
-        # We only need the ready_df for the latest row to get features for prediction
-        processed_combined_data, _ = fetch_training_data(ticker, combined_data, TARGET_PERCENTAGE)
-
-        if processed_combined_data.empty:
-            print(f"  ⚠️ Failed to process combined data for {ticker}. Skipping recommendation.")
-            return None
-
-        # Get recommendation using the newly processed data (which includes the live price)
-        recommendation, buy_prob, sell_prob = get_recommendation(ticker, model_buy, model_sell, scaler, processed_combined_data, buy_thresh, sell_thresh)
-        
-        return {
-            'ticker': ticker,
-            'action': recommendation,
-            'buy_prob': buy_prob,
-            'sell_prob': sell_prob,
-            'buy_thresh': buy_thresh,
-            'sell_thresh': sell_thresh
+            'sell_thresh': sell_thresh,
+            'latest_price': latest_realtime_price # Include the latest price
         }
     except Exception as e:
         print(f"  ⚠️ Error processing ticker {ticker}: {e}")
@@ -337,20 +342,27 @@ def run_live_trading():
     else:
         print("❌ Alpaca API Keys: NOT Set")
     
-    if TWELVEDATA_API_KEY:
-        print("✅ TwelveData API Key: Set")
-    else:
-        print("❌ TwelveData API Key: NOT Set")
     print("----------------------")
     
     alpaca_trading_client = None
-    twelvedata_ws_client: Optional[TwelveDataWebSocketClient] = None # Declare WebSocket client
     tradable_tickers: List[str] = [] # Initialize tradable_tickers here
 
     if ALPACA_API_KEY and ALPACA_SECRET_KEY:
         try:
             alpaca_trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
             print("✅ Alpaca Paper Trading Client initialized.")
+
+            # --- Print Initial Alpaca Portfolio ---
+            positions_list, total_market_value = _get_alpaca_portfolio_positions(alpaca_trading_client)
+            print("\n--- Initial Alpaca Portfolio ---")
+            if positions_list:
+                for pos in positions_list:
+                    print(f"  - {pos['ticker']}: {pos['qty']} shares @ ${pos['current_price']:.2f} (Value: ${pos['market_value']:,.2f})")
+                print(f"  Total Portfolio Market Value: ${total_market_value:,.2f}")
+            else:
+                print("  No open positions.")
+            print("------------------------------")
+
         except Exception as e:
             print(f"⚠️ Error initializing Alpaca Trading Client: {e}. Live trading actions will be disabled.")
             return
@@ -370,59 +382,85 @@ def run_live_trading():
     else:
         print(f"⚠️ Optimized parameters file not found at {optimized_params_path}. Using default thresholds.")
 
-    # --- Fetch all tradable tickers based on MARKET_SELECTION in main.py ---
+    # --- Fetch all potential tradable tickers based on MARKET_SELECTION in main.py ---
     try:
-        # Use get_all_tickers from main.py to respect MARKET_SELECTION
-        tradable_tickers = get_all_tickers()
-        if not tradable_tickers:
-            print("❌ No tradable tickers found based on MARKET_SELECTION. Aborting live trading.")
+        all_potential_tickers = get_all_tickers()
+        if not all_potential_tickers:
+            print("❌ No potential tradable tickers found based on MARKET_SELECTION. Aborting live trading.")
             return
-        print(f"✅ Fetched {len(tradable_tickers)} tradable tickers based on MARKET_SELECTION.")
+        print(f"✅ Fetched {len(all_potential_tickers)} potential tradable tickers based on MARKET_SELECTION.")
     except Exception as e:
-        print(f"⚠️ Could not fetch tradable tickers ({e}). Aborting live trading.")
+        print(f"⚠️ Could not fetch potential tradable tickers ({e}). Aborting live trading.")
         return
 
-    if TWELVEDATA_API_KEY:
-        twelvedata_ws_client = TwelveDataWebSocketClient(TWELVEDATA_API_KEY, symbols_to_subscribe=tradable_tickers)
-        twelvedata_ws_client.connect()
-    else:
-        print("⚠️ TwelveData API key not set. Real-time price fetching via TwelveData WebSocket will be unavailable.")
+    # Filter tickers to only include those with existing and up-to-date models
+    models_dir = Path("logs/models")
+    tradable_tickers = []
+    current_time = datetime.now(timezone.utc)
+    retrain_threshold = timedelta(days=MODEL_RETRAIN_DAYS)
 
-    # Subscriptions are now handled by the WebSocket client's _on_open method
-    if twelvedata_ws_client:
-        print("ℹ️ TwelveData WebSocket client initialized. Subscriptions will be handled on connection.")
-        time.sleep(15) # Give more time for initial price data to stream in and subscriptions to process
+    print("\n--- Filtering tickers based on available and up-to-date models ---")
+    for ticker in all_potential_tickers:
+        model_buy_path = models_dir / f"{ticker}_model_buy.joblib"
+        if model_buy_path.exists():
+            model_mod_time = datetime.fromtimestamp(model_buy_path.stat().st_mtime, timezone.utc)
+            if (current_time - model_mod_time) <= retrain_threshold:
+                tradable_tickers.append(ticker)
+            else:
+                print(f"  ℹ️ Skipping {ticker}: Model is outdated (older than {MODEL_RETRAIN_DAYS} days).")
+        else:
+            print(f"  ℹ️ Skipping {ticker}: No trained model found.")
 
-        successful_count = twelvedata_ws_client.get_successful_subscriptions_count()
-        print(f"✅ Successfully subscribed to {successful_count} out of {len(tradable_tickers)} NASDAQ 100 tickers via TwelveData WebSocket.")
-        if successful_count < len(tradable_tickers):
-            print(f"ℹ️ Some subscriptions failed. The client will periodically retry these failed subscriptions.")
-        print("\n--- Note on Multiple WebSocket Connections ---")
-        print("The current implementation uses a single WebSocket connection for simplicity and to manage API limits.")
-        print("Implementing 8 concurrent WebSocket connections would require a significant architectural change")
-        print("to manage multiple client instances, their threads, and data aggregation. This would be a separate, more complex task.")
+    if not tradable_tickers:
+        print("\n--- No tickers with existing and up-to-date models found after filtering. Aborting live trading. ---")
+        return
+    print(f"✅ Identified {len(tradable_tickers)} tickers with existing and up-to-date models for live trading.")
 
-    # --- Process all tickers in parallel from verification to recommendation ---
-    print("\n--- Verifying, Training, and Generating Recommendations in Parallel ---")
+    # The script will now proceed with the filtered list of all available tradable tickers.
+    print(f"DEBUG: Subscribing to all {len(tradable_tickers)} available tickers.")
+
+
+    # --- Initial Pass: Verify/Train Models and Filter Tickers ---
+    print("\n--- Initial Pass: Verifying/Training Models and Filtering Tickers ---")
+    print("DEBUG: Starting initial pass for model verification/training.")
     num_processes = max(1, cpu_count() - 1)
-    # Collect latest prices from the WebSocket client before passing to workers
-    latest_prices_from_ws = {}
-    if twelvedata_ws_client:
-        # Give some time for initial price data to stream in
-        print("ℹ️ Waiting for initial WebSocket price data...")
-        time.sleep(10) # Increased sleep to allow more data to come in
-        latest_prices_from_ws = twelvedata_ws_client.latest_prices.copy()
-        print(f"✅ Collected {len(latest_prices_from_ws)} latest prices from WebSocket.")
     
-    print("\n--- Process all tickers in parallel from verification to recommendation ---")
-    num_processes = max(1, cpu_count() - 1)
-    print(f"ℹ️ Using {num_processes} parallel processes for ticker processing.")
-    worker_args = [(ticker, models_dir, optimized_params, latest_prices_from_ws) for ticker in tradable_tickers]
+    initial_worker_args = [(ticker, models_dir, optimized_params) for ticker in tradable_tickers]
+    
+    model_ready_tickers_initial = []
+    skipped_tickers_info = []
+
+    print(f"DEBUG: Initializing Pool with {num_processes} processes for model verification/training.")
+    with Pool(processes=num_processes) as pool:
+        with tqdm(total=len(tradable_tickers), desc="Verifying/Training Models") as pbar:
+            for result in pool.imap_unordered(verify_train_and_recommend_worker, initial_worker_args):
+                if result['status'] == 'success':
+                    model_ready_tickers_initial.append(result['data']['ticker'])
+                else:
+                    skipped_tickers_info.append({'ticker': result['ticker'], 'reason': result['reason']})
+                    pbar.write(f"  ⚠️ Skipping {result['ticker']} for live trading: {result['reason']}")
+                pbar.update()
+    print("DEBUG: Initial pass for model verification/training completed.")
+
+    if not model_ready_tickers_initial:
+        print("\n--- No tickers with successfully trained models and prices found. Aborting live trading. ---")
+        return
+
+    print(f"\n✅ Identified {len(model_ready_tickers_initial)} tickers with trained models and prices for live trading.")
+    if skipped_tickers_info:
+        print(f"ℹ️ {len(skipped_tickers_info)} tickers were skipped due to various issues.")
+
+    # --- Main Pass: Generate Recommendations for Model-Ready Tickers ---
+    print("\n--- Generating Recommendations for Model-Ready Tickers ---")
+    print("DEBUG: Starting main pass for recommendation generation.")
+
+    main_worker_args = [(ticker, models_dir, optimized_params) for ticker in model_ready_tickers_initial]
     
     all_generated_recommendations = []
+    print(f"DEBUG: Initializing Pool with {num_processes} processes for recommendation generation.")
     with Pool(processes=num_processes) as pool:
-        with tqdm(total=len(tradable_tickers), desc="Processing Tickers") as pbar:
-            for result in pool.imap_unordered(verify_train_and_recommend_worker, worker_args):
+        with tqdm(total=len(model_ready_tickers_initial), desc="Generating Recommendations") as pbar:
+            for result in pool.imap_unordered(verify_train_and_recommend_worker, main_worker_args):
                 if result['status'] == 'success':
                     rec = result['data']
                     all_generated_recommendations.append(rec)
@@ -430,13 +468,12 @@ def run_live_trading():
                     sell_prob_str = f"{rec['sell_prob'] * 100:.2f}%"
                     pbar.write(f"  - Rec for {rec['ticker']}: {rec['action']} (Buy: {buy_prob_str}, Sell: {sell_prob_str})")
                 else:
-                    # Print a message for skipped tickers to provide feedback
-                    pbar.write(f"  ⚠️ Skipping {result['ticker']}: {result['reason']}")
+                    pbar.write(f"  ❌ Failed to generate recommendation for {result['ticker']}: {result['reason']}")
                 pbar.update()
+    print("DEBUG: Main pass for recommendation generation completed.")
 
-    # --- Print Full Recommendation Summary ---
     if not all_generated_recommendations:
-        print("\n--- No valid tickers or recommendations were generated. ---")
+        print("\n--- No valid recommendations were generated for model-ready tickers. ---")
         return
         
     print("\n--- Full Recommendation Summary ---")
@@ -449,124 +486,73 @@ def run_live_trading():
         buy_thresh_str = f"{rec['buy_thresh']:.2f}"
         sell_thresh_str = f"{rec['sell_thresh']:.2f}"
         print(f"{rec['ticker']:<10} | {rec['action']:<15} | {buy_prob_str:>12} | {sell_prob_str:>12} | {buy_thresh_str:>12} | {sell_thresh_str:>12}")
-    print("-" * 80)
+    print("-" * 120)
 
-    all_recommendations = [rec for rec in all_generated_recommendations if rec['action'] != "HOLD"]
-    if not all_recommendations:
-        print("\n--- No new BUY/SELL recommendations generated. No trades to execute. ---")
-        return
-
-    # --- Execution Step ---
-    print("\n--- Executing Trades Based on Recommendations ---")
-    positions_list, _ = _get_alpaca_portfolio_positions(alpaca_trading_client)
-    portfolio = {pos['ticker']: pos['qty'] for pos in positions_list}
-
-    buy_recs = sorted([r for r in all_recommendations if r['action'] == 'BUY'], key=lambda x: x['buy_prob'], reverse=True)
-    sell_recs = [r for r in all_recommendations if r['action'] == 'SELL']
-
-    # --- 1. Execute all SELL orders first ---
-    print("\n--- Phase 1: Executing SELL Recommendations ---")
-    print(f"{'Ticker':<10} | {'Recommendation':<15} | {'Action / Status':<60}")
-    print("-" * 100)
-    for rec in sell_recs:
-        ticker = rec['ticker']
-        status = ""
-        if ticker in portfolio:
-            qty_to_sell = portfolio[ticker]
-            try:
-                market_order_data = MarketOrderRequest(symbol=ticker, qty=qty_to_sell, side=OrderSide.SELL, time_in_force=TimeInForce.DAY)
-                alpaca_trading_client.submit_order(order_data=market_order_data)
-                status = f"✅ Submitted SELL order for {qty_to_sell} shares."
-            except Exception as e:
-                status = f"❌ Error submitting SELL order: {e}"
-        else:
-            status = "ℹ️ No position to sell (not in portfolio)."
-        print(f"{ticker:<10} | {'SELL':<15} | {status:<60}")
-    print("-" * 100)
-
-    # --- 2. Re-evaluate buying power and execute BUY orders ---
-    print("\n--- Phase 2: Executing BUY Recommendations ---")
-    # Re-fetch buying power after sells have been submitted
-    print("...waiting a moment for sell orders to potentially fill and update buying power...")
-    import time
-    time.sleep(5) # Wait 5 seconds
-    buying_power = _get_alpaca_buying_power(alpaca_trading_client)
-    
-    CAPITAL_PER_TRADE = 1000.0
-    
-    print(f"\n{'Ticker':<10} | {'Recommendation':<15} | {'Buy Prob %':>12} | {'Action / Status':<60}")
-    print("-" * 100)
-
-    if not buy_recs:
-        print("No BUY recommendations to process.")
-    elif buying_power is None or buying_power < CAPITAL_PER_TRADE:
-        print(f"Insufficient buying power (${buying_power:,.2f}) to execute any trades with a ${CAPITAL_PER_TRADE:,.2f} minimum. Skipping all BUY trades.")
-    else:
-        print(f"Starting BUY execution with available buying power: ${buying_power:,.2f}")
-        for rec in buy_recs:
+    # --- Execute Trades based on Recommendations ---
+    if LIVE_TRADING_ENABLED and alpaca_trading_client:
+        print("\n--- Executing Live Trades on Alpaca ---")
+        
+        available_buying_power = _get_alpaca_buying_power(alpaca_trading_client)
+        if available_buying_power is None or available_buying_power <= 0:
+            print("  ⚠️ No available buying power on Alpaca. Skipping all BUY orders.")
+            # Still proceed with SELL orders if any
+        
+        current_positions_raw = alpaca_trading_client.get_all_positions()
+        current_positions_map = {}
+        for pos in current_positions_raw:
+            current_positions_map[pos.symbol] = {
+                'qty': float(pos.qty),
+                'qty_available': float(pos.qty_available) # Get available quantity
+            }
+        
+        for rec in sorted_generated_recs:
             ticker = rec['ticker']
-            buy_prob = rec['buy_prob'] * 100
-            buy_prob_str = f"{buy_prob:.2f}%"
-            status = ""
-
-            if buying_power < CAPITAL_PER_TRADE:
-                status = f"ℹ️ Insufficient buying power left (${buying_power:,.2f}) to place trade. Halting further BUYs."
-                print(f"{ticker:<10} | {'BUY':<15} | {buy_prob_str:>12} | {status:<60}")
-                break # Stop processing more buy recommendations
-
-            if ticker in portfolio:
-                status = f"ℹ️ Skipping BUY because {ticker} is already in the portfolio."
-            else:
-                price = _get_latest_price_from_twelvedata(ticker, twelvedata_ws_client) # Use TwelveData for latest price
-                if price and price > 0:
-                    qty_to_buy = int(CAPITAL_PER_TRADE / price)
-                    if qty_to_buy > 0:
-                        try:
-                            market_order_data = MarketOrderRequest(symbol=ticker, qty=qty_to_buy, side=OrderSide.BUY, time_in_force=TimeInForce.DAY)
-                            alpaca_trading_client.submit_order(order_data=market_order_data)
-                            status = f"✅ Submitted BUY order for {qty_to_buy} shares of {ticker} (~${CAPITAL_PER_TRADE:,.2f})."
-                            buying_power -= (qty_to_buy * price) # Decrement buying power
-                        except Exception as e:
-                            status = f"❌ Error submitting BUY order: {e}"
-                    else:
-                        status = f"ℹ️ Not enough capital (${CAPITAL_PER_TRADE:,.2f}) to buy 1 share at ${price:,.2f}."
-                else:
-                    status = f"⚠️ Could not fetch real-time price. Skipping trade."
+            action = rec['action']
+            latest_price = rec.get('latest_price') # Get the latest price from the recommendation result
             
-            print(f"{ticker:<10} | {'BUY':<15} | {buy_prob_str:>12} | {status:<60}")
+            if latest_price is None:
+                print(f"  ⚠️ Recommendation for {ticker} did not include latest price. Skipping trade execution.")
+                continue
 
-    print("-" * 100)
-
-    # --- Print Final Live Trading Summary ---
-    print("\n" + "="*80)
-    print("                     🚀 LIVE TRADING SESSION SUMMARY 🚀")
-    print("="*80)
-
-    if not all_generated_recommendations:
-        print("\n--- No valid tickers or recommendations were generated during this session. ---")
+            if action == "BUY":
+                if ticker not in current_positions_map:
+                    if available_buying_power is not None and available_buying_power > 0:
+                        # Calculate quantity based on fixed investment amount, but limited by buying power
+                        max_qty_by_investment = int(INVESTMENT_PER_STOCK_LIVE / latest_price)
+                        max_qty_by_buying_power = int(available_buying_power / latest_price)
+                        
+                        qty_to_buy = min(max_qty_by_investment, max_qty_by_buying_power)
+                        
+                        if qty_to_buy > 0:
+                            _place_alpaca_order(alpaca_trading_client, ticker, qty_to_buy, OrderSide.BUY)
+                            # Deduct the cost from available buying power for subsequent trades
+                            available_buying_power -= (qty_to_buy * latest_price) # Approximate deduction
+                        else:
+                            print(f"  ⚠️ Insufficient buying power for {ticker} (needed ${INVESTMENT_PER_STOCK_LIVE:.2f}, available ${available_buying_power:.2f}). Skipping BUY order.")
+                    else:
+                        print(f"  ⚠️ No buying power available for {ticker}. Skipping BUY order.")
+                else:
+                    print(f"  ℹ️ Already holding {ticker}. Skipping BUY order.")
+            elif action == "SELL":
+                if ticker in current_positions_map:
+                    qty_to_sell = int(current_positions_map[ticker]['qty_available']) # Use qty_available for selling
+                    if qty_to_sell > 0:
+                        _place_alpaca_order(alpaca_trading_client, ticker, qty_to_sell, OrderSide.SELL)
+                    else:
+                        print(f"  ℹ️ No available quantity to sell for {ticker}. Skipping SELL order.")
+                else:
+                    print(f"  ℹ️ Not holding {ticker}. Skipping SELL order.")
+            elif action == "HOLD":
+                print(f"  ℹ️ Recommendation for {ticker} is HOLD. No action taken.")
     else:
-        print("\n📈 Individual Ticker Recommendations (Sorted by Buy Probability):")
-        print("-" * 120)
-        print(f"{'Ticker':<10} | {'Recommendation':<15} | {'Buy Prob %':>12} | {'Sell Prob %':>12} | {'Buy Thresh':>12} | {'Sell Thresh':>12}")
-        print("-" * 120)
-        sorted_final_recs = sorted(all_generated_recommendations, key=lambda x: x['buy_prob'], reverse=True)
-        for rec in sorted_final_recs:
-            buy_prob_str = f"{rec['buy_prob'] * 100:.2f}%"
-            sell_prob_str = f"{rec['sell_prob'] * 100:.2f}%"
-            buy_thresh_str = f"{rec['buy_thresh']:.2f}"
-            sell_thresh_str = f"{rec['sell_thresh']:.2f}"
-            print(f"{rec['ticker']:<10} | {rec['action']:<15} | {buy_prob_str:>12} | {sell_prob_str:>12} | {buy_thresh_str:>12} | {sell_thresh_str:>12}")
-        print("-" * 120)
+        print("\n--- Live Trading Execution is DISABLED ---")
+        print("  Set `LIVE_TRADING_ENABLED = True` in `src/live_trading.py` to enable actual trade execution.")
+        print("  Ensure Alpaca API keys are set as environment variables.")
 
     print("\n💡 Next Steps:")
     print("  - Review the recommendations and trade executions.")
     print("  - Adjust `MARKET_SELECTION` in `main.py` or `TARGET_PERCENTAGE` for different strategies.")
-    print("  - Monitor TwelveData WebSocket logs for persistent subscription failures.")
     print("="*80)
-
-    # Disconnect WebSocket client
-    if twelvedata_ws_client:
-        twelvedata_ws_client.disconnect()
 
 if __name__ == "__main__":
     run_live_trading()

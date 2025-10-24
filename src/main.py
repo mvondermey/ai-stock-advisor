@@ -96,7 +96,7 @@ ALPACA_API_KEY          = os.environ.get("ALPACA_API_KEY")
 ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
 
 # TwelveData API credentials
-TWELVEDATA_API_KEY      = os.environ.get("TWELVEDATA_API_KEY")
+TWELVEDATA_API_KEY      = "aed912386d7c47939ebc28a86a96a021"
 
 # --- Universe / selection
 MARKET_SELECTION = {
@@ -201,7 +201,7 @@ ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = False # Set to True to enable GRU hyper
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
-FORCE_TRAINING          = True      # Set to True to force re-training of ML models
+FORCE_TRAINING          = False      # Set to True to force re-training of ML models
 CONTINUE_TRAINING_FROM_EXISTING = True # Set to True to load existing models and continue training
 FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
@@ -300,13 +300,14 @@ def _fetch_from_alpaca(ticker: str, start: datetime, end: datetime) -> pd.DataFr
             print(f"  ⚠️ Could not fetch data from Alpaca for {ticker}: {e}")
         return pd.DataFrame()
 
-def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
+def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime, api_key: Optional[str] = None) -> pd.DataFrame:
     """Fetch OHLCV from TwelveData using the SDK."""
-    if not TWELVEDATA_SDK_AVAILABLE or not TWELVEDATA_API_KEY:
+    key_to_use = api_key if api_key else TWELVEDATA_API_KEY
+    if not TWELVEDATA_SDK_AVAILABLE or not key_to_use:
         return pd.DataFrame()
 
     try:
-        tdc = TDClient(apikey=TWELVEDATA_API_KEY)
+        tdc = TDClient(apikey=key_to_use)
         
         # Construct the time series API call
         ts = tdc.time_series(
@@ -1015,6 +1016,14 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     # Ensure 'Close' is numeric and drop rows with NaN in 'Close'
     df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
     df = df.dropna(subset=["Close"])
+    
+    if df.empty:
+        print(f"  [DIAGNOSTIC] {ticker}: DataFrame became empty after dropping NaNs in 'Close'. Skipping feature prep.")
+        return pd.DataFrame(), []
+    
+    if df.empty:
+        print(f"  [DIAGNOSTIC] {ticker}: DataFrame became empty after dropping NaNs in 'Close'. Skipping feature prep.")
+        return pd.DataFrame(), []
 
     # Fill missing values in other columns
     df = df.ffill().bfill()
@@ -1560,7 +1569,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     
     if target_col not in d.columns:
         print(f"  [DIAGNOSTIC] {ticker}: Target column '{target_col}' not found. Skipping.")
-        return None, None
+        return None, None, None
 
     # The input 'df' (now 'd') is expected to already have all necessary features computed by fetch_training_data.
     # The feature_set parameter should accurately reflect the features present in 'd'.
@@ -1574,7 +1583,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
         final_feature_names = [col for col in d.columns if col not in ["Target", "TargetClassBuy", "TargetClassSell"]]
         if not final_feature_names:
             print("⚠️ No features found in DataFrame after excluding target columns. Skipping model training.")
-            return None, None
+            return None, None, None
     else:
         # Ensure that all features in feature_set are actually present in 'd'
         final_feature_names = [f for f in feature_set if f in d.columns]
@@ -1583,14 +1592,14 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
             print(f"⚠️ Missing features in DataFrame 'd' that were expected in feature_set: {missing_features}. Proceeding with available features.")
         if not final_feature_names:
             print("⚠️ No valid features to train with after filtering. Skipping model training.")
-            return None, None
+            return None, None, None
 
     # Ensure all required columns (features + target) are present in 'd'
     required_cols_for_training = final_feature_names + [target_col]
     if not all(col in d.columns for col in required_cols_for_training):
         missing = [col for col in required_cols_for_training if col not in d.columns]
         print(f"⚠️ Missing critical columns for model comparison (target: {target_col}, missing: {missing}). Skipping.")
-        return None, None
+        return None, None, None
 
     # The DataFrame 'd' already contains the necessary features and target from fetch_training_data.
     # We just need to ensure it has enough rows after any potential NaNs.
@@ -1599,7 +1608,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     
     if len(d) < 50:  # Increased requirement for cross-validation
         print(f"  [DIAGNOSTIC] {ticker}: Not enough rows after feature prep ({len(d)} rows, need >= 50). Skipping.")
-        return None, None # Return None for both model and scaler
+        return None, None, None # Return None for model, scaler, and hyperparams
     
     X_df = d[final_feature_names]
     y = d[target_col].values
@@ -1610,12 +1619,12 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     print(f"  [DIAGNOSTIC] {ticker}: train_and_evaluate_models - Target '{target_col}' class distribution: {dict(zip(unique_classes, counts))}")
     if len(unique_classes) < 2:
         print(f"  [DIAGNOSTIC] {ticker}: Not enough class diversity for '{target_col}' (only 1 class found: {unique_classes}). Skipping.")
-        return None, None
+        return None, None, None
     
     n_splits = 5 # From StratifiedKFold
     if any(c < n_splits for c in counts):
         print(f"  [DIAGNOSTIC] {ticker}: Least populated class in '{target_col}' has {min(counts)} members (needs >= {n_splits}). Skipping.")
-        return None, None
+        return None, None, None
 
     # Scale features for models that are sensitive to scale (like Logistic Regression and SVM)
     if CUML_AVAILABLE and cuMLStandardScaler: # Check if CUML_AVAILABLE and cuMLStandardScaler is imported globally
@@ -1953,7 +1962,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
 
     if not any(results.values()):
         print("  ⚠️ All models failed evaluation. No model will be used.")
-        return None, None, None # Return None for hyperparams too
+        return None, None, None
 
     best_model_name = max(results, key=results.get)
     print(f"  🏆 Best model: {best_model_name} with AUC = {best_auc_overall:.4f}")
@@ -2164,7 +2173,9 @@ class RuleTradingEnv:
         if "Open" not in self.df.columns: self.df["Open"] = self.df["Close"]
             
         self.df = self.df.dropna(subset=["Close"])
-        if self.df.empty: return # Exit if no data left after cleaning
+        if self.df.empty:
+            print(f"  [DIAGNOSTIC] {self.ticker}: DataFrame became empty after dropping NaNs in 'Close' during _prepare_data. Skipping further prep.")
+            return # Exit if no data left after cleaning
         self.df = self.df.reset_index(drop=True)
         self.df = self.df.ffill().bfill()
         
