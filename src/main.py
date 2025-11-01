@@ -84,7 +84,7 @@ SEED                    = 42
 np.random.seed(SEED)
 
 # --- Provider & caching
-DATA_PROVIDER           = 'twelvedata'    # 'stooq', 'yahoo', 'alpaca', or 'twelvedata'
+DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', 'alpaca', or 'twelvedata'
 USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin
 DATA_CACHE_DIR          = Path("data_cache")
 TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
@@ -101,8 +101,8 @@ TWELVEDATA_API_KEY      = "aed912386d7c47939ebc28a86a96a021"
 # --- Universe / selection
 MARKET_SELECTION = {
     "ALPACA_STOCKS": False, # Fetch all tradable US equities from Alpaca
-    "NASDAQ_ALL": True,
-    "NASDAQ_100": False,
+    "NASDAQ_ALL": False,
+    "NASDAQ_100": True,
     "SP500": False,
     "DOW_JONES": False,
     "POPULAR_ETFS": False,
@@ -152,7 +152,7 @@ FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
 CLASS_HORIZON           = 5          # days ahead for classification target
-MIN_PROBA_BUY           = 0.2       # ML gate threshold for buy model
+MIN_PROBA_BUY           = 0.8      # ML gate threshold for buy model
 MIN_PROBA_SELL          = 0.2       # ML gate threshold for sell model
 TARGET_PERCENTAGE       = 0.01       # 1% target for buy/sell classification
 USE_MODEL_GATE          = True       # ENABLE ML gate
@@ -181,7 +181,7 @@ SIMPLE_RULE_TRAILING_STOP_PERCENT = 0.10 # 10% trailing stop
 SIMPLE_RULE_TAKE_PROFIT_PERCENT = 0.10   # 10% take profit
 
 # --- Deep Learning specific hyperparameters
-SEQUENCE_LENGTH         = 20         # Number of past days to consider for LSTM/GRU
+SEQUENCE_LENGTH         = 32         # Number of past days to consider for LSTM/GRU
 LSTM_HIDDEN_SIZE        = 64
 LSTM_NUM_LAYERS         = 2
 LSTM_DROPOUT            = 0.2
@@ -196,13 +196,13 @@ GRU_DROPOUT_OPTIONS     = [0.1, 0.2, 0.3]
 GRU_LEARNING_RATE_OPTIONS = [0.0005, 0.001, 0.005]
 GRU_BATCH_SIZE_OPTIONS  = [32, 64, 128]
 GRU_EPOCHS_OPTIONS      = [30, 50, 70]
-ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = False # Set to True to enable GRU hyperparameter search
+ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True # Set to True to enable GRU hyperparameter search
 
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
-FORCE_TRAINING          = False      # Set to True to force re-training of ML models
-CONTINUE_TRAINING_FROM_EXISTING = True # Set to True to load existing models and continue training
+FORCE_TRAINING          = True      # Set to True to force re-training of ML models
+CONTINUE_TRAINING_FROM_EXISTING = False # Set to True to load existing models and continue training
 FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
 
@@ -531,8 +531,10 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                         downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
                         if downloaded_df is not None and not downloaded_df.empty:
                             price_df = downloaded_df.dropna()
+                        else:
+                            print(f"  ⚠️ Yahoo Finance fallback returned empty data for {ticker}.")
                     except Exception as e:
-                        print(f"  ⚠️ Yahoo Finance fallback also failed for {ticker}: {e}")
+                        print(f"  ❌ Yahoo Finance fallback failed for {ticker}: {e}")
 
         elif provider == 'alpaca':
             if not ALPACA_AVAILABLE or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
@@ -548,8 +550,10 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                         downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
                         if downloaded_df is not None and not downloaded_df.empty:
                             price_df = downloaded_df.dropna()
+                        else:
+                            print(f"  ⚠️ Yahoo Finance fallback returned empty data for {ticker}.")
                     except Exception as e:
-                        print(f"  ⚠️ Yahoo Finance fallback also failed for {ticker}: {e}")
+                        print(f"  ❌ Yahoo Finance fallback failed for {ticker}: {e}")
         
         elif provider == 'stooq':
             stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
@@ -563,16 +567,20 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                     downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
                     if downloaded_df is not None and not downloaded_df.empty:
                         price_df = downloaded_df.dropna()
+                    else:
+                        print(f"  ⚠️ Yahoo Finance fallback returned empty data for {ticker}.")
                 except Exception as e:
-                    print(f"  ⚠️ Yahoo Finance fallback (after Stooq) also failed for {ticker}: {e}")
+                    print(f"  ❌ Yahoo Finance fallback (after Stooq) failed for {ticker}: {e}")
         
         if price_df.empty: # If previous provider failed or was yahoo
             try:
                 downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
                 if downloaded_df is not None and not downloaded_df.empty:
                     price_df = downloaded_df.dropna()
+                else:
+                    print(f"  ⚠️ Final Yahoo download attempt returned empty data for {ticker}.")
             except Exception as e:
-                print(f"  ⚠️ Final Yahoo download attempt failed for {ticker}: {e}")
+                print(f"  ❌ Final Yahoo download attempt failed for {ticker}: {e}")
             if price_df.empty and pdr is not None and DATA_PROVIDER.lower() != 'stooq':
                 print(f"  ℹ️ Yahoo data for {ticker} empty. Falling back to Stooq.")
                 stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
@@ -681,7 +689,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 def _fetch_intermarket_data(start: datetime, end: datetime) -> pd.DataFrame:
     """Fetches intermarket data (e.g., bond yields, commodities, currencies)."""
     intermarket_tickers = {
-        'US10Y': 'Bond_Yield',  # 10-Year Treasury Yield (TwelveData symbol)
+        # 'US10Y': 'Bond_Yield',  # 10-Year Treasury Yield (TwelveData symbol) - Removed due to persistent Yahoo Finance fetching errors
         'USO': 'Oil_Price',    # United States Oil Fund (assuming this works or falls back to Yahoo)
         'GLD': 'Gold_Price',   # SPDR Gold Shares (assuming this works or falls back to Yahoo)
         # 'DX-Y.NYB': 'DXY_Index' # U.S. Dollar Index (removed, no direct TwelveData equivalent found)
@@ -1799,9 +1807,11 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                                 for learning_rate in GRU_LEARNING_RATE_OPTIONS:
                                     for batch_size in GRU_BATCH_SIZE_OPTIONS:
                                         for epochs in GRU_EPOCHS_OPTIONS:
-                                            print(f"      Testing GRU with: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
+                                            # Adjust dropout_rate if num_layers is 1 to avoid UserWarning
+                                            current_dropout_rate = dropout_rate if num_layers > 1 else 0.0
+                                            print(f"      Testing GRU with: HS={hidden_size}, NL={num_layers}, DO={current_dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
 
-                                            gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
+                                            gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, current_dropout_rate).to(device)
                                             optimizer_gru = optim.Adam(gru_model.parameters(), lr=learning_rate)
                                             
                                             # Create DataLoader for current batch_size
@@ -2599,18 +2609,20 @@ class RuleTradingEnv:
         self.current_step += 1
         return self.current_step >= len(self.df)
 
-    def run(self) -> Tuple[float, List[Tuple], str, float, float]: # Added str for last_ai_action
+    def run(self) -> Tuple[float, List[Tuple], str, float, float, float]: # Added float for shares_before_liquidation
         if self.df.empty:
-            return self.initial_balance, [], "N/A", np.nan, np.nan
+            return self.initial_balance, [], "N/A", np.nan, np.nan, 0.0
         done = False
         while not done:
             done = self.step()
+        
+        shares_before_liquidation = self.shares # Capture shares before final liquidation
+        
         if self.shares > 0 and not self.df.empty:
             last_price = float(self.df.iloc[-1]["Close"])
             self._sell(last_price, self._date_at(len(self.df)-1))
             self.portfolio_history[-1] = self.cash
-        return self.portfolio_history[-1], self.trade_log, self.last_ai_action, self.last_buy_prob, self.last_sell_prob # Return last_ai_action
-
+        return self.portfolio_history[-1], self.trade_log, self.last_ai_action, self.last_buy_prob, self.last_sell_prob, shares_before_liquidation # Return shares_before_liquidation
 # ============================
 # Analytics
 # ============================
@@ -2644,7 +2656,7 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             per_ticker_min_proba_sell=min_proba_sell,
             use_simple_rule_strategy=use_simple_rule_strategy # Pass new parameter
         )
-        final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob = env.run()
+        final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, shares_before_liquidation = env.run()
 
         # Calculate individual Buy & Hold for the same period
         start_price_bh = float(df_backtest["Close"].iloc[0])
@@ -2673,6 +2685,7 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             'last_ai_action': last_ai_action,
             'buy_prob': last_buy_prob,
             'sell_prob': last_sell_prob,
+            'shares_before_liquidation': shares_before_liquidation, # Return the shares before liquidation
             'buy_hold_history': bh_history_for_ticker # Return the buy_hold_history
         }
     finally:
@@ -3194,7 +3207,7 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
                     use_simple_rule_strategy=False
                 )
                 sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: RuleTradingEnv initialized. Running env.run()...\n")
-                final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob = env.run()
+                final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, _ = env.run()
                 sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Getting final value.\n")
                 
                 # Optimize for final portfolio value (revenue)
@@ -3408,9 +3421,9 @@ def print_final_summary(
     print("="*80)
 
     print("\n📈 Individual Ticker Performance (AI Strategy - Sorted by 1-Year Performance):")
-    print("-" * 220)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10} | {'Opt. Status':<25}")
-    print("-" * 220)
+    print("-" * 256)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10} | {'Opt. Status':<25} | {'Shares Before Liquidation':>25}")
+    print("-" * 256)
     for res in sorted_final_results:
         # --- Safely get ticker and parameters ---
         ticker = str(res.get('ticker', 'N/A'))
@@ -3431,15 +3444,16 @@ def print_final_summary(
         buy_prob_str = f"{res.get('buy_prob', 0.0):>9.2f}" if pd.notna(res.get('buy_prob')) else "N/A".rjust(10)
         sell_prob_str = f"{res.get('sell_prob', 0.0):>9.2f}" if pd.notna(res.get('sell_prob')) else "N/A".rjust(10)
         last_ai_action_str = str(res.get('last_ai_action', 'HOLD'))
+        shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}" # New: Shares Before Liquidation
         
-        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {buy_thresh:>11.2f} | {sell_thresh:>11.2f} | {target_perc:>9.2%} | {opt_status:<25}")
-    print("-" * 220)
+        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {buy_thresh:>11.2f} | {sell_thresh:>11.2f} | {target_perc:>9.2%} | {opt_status:<25} | {shares_before_liquidation_str}")
+    print("-" * 256)
 
     # --- Simple Rule Strategy Individual Ticker Performance ---
     print("\n📈 Individual Ticker Performance (Simple Rule Strategy - Sorted by 1-Year Performance):")
-    print("-" * 100)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Last Action':<16}")
-    print("-" * 100)
+    print("-" * 136)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Last Action':<16} | {'Shares Before Liquidation':>25}")
+    print("-" * 136)
     
     # Sort simple rule results by 1Y performance for the table
     sorted_simple_rule_results = sorted(performance_metrics_simple_rule_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
@@ -3461,15 +3475,16 @@ def print_final_summary(
         ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
         sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
         last_action_str = str(res.get('last_ai_action', 'HOLD')) # Renamed from last_ai_action to last_action for clarity
+        shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}" # New: Shares Before Liquidation
 
-        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_action_str:<16}")
-    print("-" * 100)
+        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_action_str:<16} | {shares_before_liquidation_str}")
+    print("-" * 136)
 
     # --- Buy & Hold Strategy Individual Ticker Performance ---
     print("\n📈 Individual Ticker Performance (Buy & Hold Strategy - Sorted by 1-Year Performance):")
-    print("-" * 100)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12}")
-    print("-" * 100)
+    print("-" * 136)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
+    print("-" * 136)
     
     # Sort Buy & Hold results by 1Y performance for the table
     sorted_buy_hold_results = sorted(performance_metrics_buy_hold_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
@@ -3490,9 +3505,10 @@ def print_final_summary(
         one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
         ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
         sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
+        shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}" # New: Shares Before Liquidation
 
-        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str}")
-    print("-" * 100)
+        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
+    print("-" * 136)
 
     print("\n🤖 ML Model Status:")
     for ticker in sorted_final_results:
@@ -3960,7 +3976,8 @@ def main(
                     'ticker': ticker,
                     'final_val': final_bh_val_ticker,
                     'perf_data': perf_data_bh,
-                    'individual_bh_return': ((final_bh_val_ticker - capital_per_stock_1y) / abs(capital_per_stock_1y)) * 100 if capital_per_stock_1y != 0 else 0.0
+                    'individual_bh_return': ((final_bh_val_ticker - capital_per_stock_1y) / abs(capital_per_stock_1y)) * 100 if capital_per_stock_1y != 0 else 0.0,
+                    'final_shares': shares_bh # Add this line
                 })
             else:
                 buy_hold_results_1y.append(capital_per_stock_1y)
@@ -3968,7 +3985,8 @@ def main(
                     'ticker': ticker,
                     'final_val': capital_per_stock_1y,
                     'perf_data': {'sharpe_ratio': np.nan, 'max_drawdown': np.nan},
-                    'individual_bh_return': 0.0
+                    'individual_bh_return': 0.0,
+                    'final_shares': 0.0 # Add this line
                 })
         final_buy_hold_value_1y = sum(buy_hold_results_1y) + (len(top_tickers_1y_filtered) - len(buy_hold_results_1y)) * capital_per_stock_1y
         print("✅ 1-Year Buy & Hold calculation complete.")
@@ -4480,12 +4498,14 @@ def main(
             last_ai_action = backtest_result_for_ticker['last_ai_action']
             buy_prob = backtest_result_for_ticker['buy_prob']
             sell_prob = backtest_result_for_ticker['sell_prob']
+            final_shares = backtest_result_for_ticker['final_shares'] # This is where final_shares is retrieved
         else:
             perf_data = {'sharpe_ratio': 0.0}
             individual_bh_return = 0.0
             last_ai_action = "N/A"
             buy_prob = 0.0
             sell_prob = 0.0
+            final_shares = 0.0 # Set to 0.0 for tickers that didn't have a backtest result
 
         perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
         for t, p1y, pytd in top_performers_data:
@@ -4504,6 +4524,7 @@ def main(
             'last_ai_action': last_ai_action,
             'buy_prob': buy_prob,
             'sell_prob': sell_prob,
+            'final_shares': final_shares, # Add final_shares here
             'status': 'trained',
             'reason': None
         })
@@ -4520,6 +4541,7 @@ def main(
             'last_ai_action': "FAILED",
             'buy_prob': np.nan,
             'sell_prob': np.nan,
+            'final_shares': 0.0, # Set to 0.0 for failed tickers
             'status': 'failed',
             'reason': reason
         })
