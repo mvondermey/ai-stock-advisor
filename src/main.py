@@ -1379,6 +1379,10 @@ def initialize_ml_libraries():
     if _ml_libraries_initialized:
         return models_and_params # Return the dictionary if already initialized
 
+    # Explicitly disable cuML to avoid persistent errors
+    CUML_AVAILABLE = False
+    print("⚠️ cuML usage is explicitly disabled due to persistent errors. Falling back to scikit-learn for compatible models.")
+
     try:
         if PYTORCH_AVAILABLE:
             torch.manual_seed(SEED) # Set seed for PyTorch CPU operations
@@ -1396,18 +1400,20 @@ def initialize_ml_libraries():
     except NameError: # Catch NameError if torch is not imported
         print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
 
+    # The cuML import block is now effectively skipped due to CUML_AVAILABLE = False
+    # However, keeping the structure for future re-enabling if desired.
     try:
-        import cuml
         from cuml.ensemble import RandomForestClassifier as cuMLRandomForestClassifier_
         from cuml.linear_model import LogisticRegression as cuMLLogisticRegression_
         from cuml.preprocessing import StandardScaler as cuMLStandardScaler_
+        # These assignments will only happen if import is successful, but won't be used if CUML_AVAILABLE is False
         cuMLRandomForestClassifier = cuMLRandomForestClassifier_
         cuMLLogisticRegression = cuMLLogisticRegression_
         cuMLStandardScaler = cuMLStandardScaler_
-        CUML_AVAILABLE = True
-        print("✅ cuML found. GPU-accelerated models will be used if CUDA is available.")
     except ImportError:
-        print("⚠️ cuML not installed. Run: pip install cuml. GPU-accelerated models will be skipped.")
+        pass # Expected if cuML is not installed or modules not found
+    except Exception as e:
+        pass # Catch any other errors during cuML import without re-enabling CUML_AVAILABLE
 
     try:
         from lightgbm import LGBMClassifier as lgbm
@@ -1428,6 +1434,22 @@ def initialize_ml_libraries():
             models_and_params["LightGBM (CPU)"] = lgbm_model_params
     except ImportError:
         print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
+
+    if XGBOOST_AVAILABLE:
+        XGBClassifier = xgb.XGBClassifier
+        xgb_model_params = {
+            "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1), # scale_pos_weight for class imbalance
+            "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
+        }
+        if CUDA_AVAILABLE:
+            xgb_model_params["model"].set_params(tree_method='hist') # Changed from 'gpu_hist' to 'hist'
+            models_and_params["XGBoost (GPU)"] = xgb_model_params
+        else:
+            print("ℹ️ XGBoost found. Will use CPU (CUDA not available).")
+            models_and_params["XGBoost (CPU)"] = xgb_model_params
+
+    _ml_libraries_initialized = True
+    return models_and_params # Return the dictionary
 
     if XGBOOST_AVAILABLE:
         XGBClassifier = xgb.XGBClassifier
@@ -1647,10 +1669,11 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
         try:
             import cuml # Import cuml locally for worker processes
             scaler = cuMLStandardScaler()
-            # cuML expects cupy arrays or pandas dataframes, convert if X_df is numpy
-            X_gpu = cuml.DataFrame(X_df) if not isinstance(X_df, cuml.DataFrame) else X_df
-            X_scaled = scaler.fit_transform(X_gpu)
-            X = pd.DataFrame(X_scaled.to_numpy(), columns=final_feature_names, index=X_df.index) # Convert back to pandas for GridSearchCV
+            # cuML's StandardScaler can directly process NumPy arrays.
+            # Convert pandas DataFrame to NumPy array for cuML.
+            X_gpu_np = X_df.values
+            X_scaled = scaler.fit_transform(X_gpu_np)
+            X = pd.DataFrame(X_scaled, columns=final_feature_names, index=X_df.index) # Convert back to pandas for GridSearchCV
         except Exception as e: # Catch broader exception for cuML issues
             print(f"⚠️ Error using cuML StandardScaler: {e}. Falling back to sklearn.StandardScaler.")
             scaler = StandardScaler()
@@ -3665,6 +3688,15 @@ def main(
     bt_end = end_date
     
     alpaca_trading_client = None
+
+    # Initialize ML libraries to determine CUDA availability
+    initialize_ml_libraries()
+    global CUDA_AVAILABLE, PYTORCH_AVAILABLE, USE_LSTM, USE_GRU
+
+    # Disable parallel processing if deep learning models are used with CUDA
+    if PYTORCH_AVAILABLE and CUDA_AVAILABLE and (USE_LSTM or USE_GRU):
+        print("⚠️ CUDA is available and deep learning models are enabled. Disabling parallel processing to avoid CUDA tensor sharing issues.")
+        run_parallel = False
     
     # Initialize initial_balance_used here with a default value
     initial_balance_used = INITIAL_BALANCE 
