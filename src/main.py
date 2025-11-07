@@ -82,6 +82,8 @@ except ImportError:
 
 SEED                    = 42
 np.random.seed(SEED)
+import random
+random.seed(SEED)
 
 # --- Provider & caching
 DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', 'alpaca', or 'twelvedata'
@@ -196,13 +198,13 @@ GRU_DROPOUT_OPTIONS     = [0.1, 0.2, 0.3]
 GRU_LEARNING_RATE_OPTIONS = [0.0005, 0.001, 0.005]
 GRU_BATCH_SIZE_OPTIONS  = [32, 64, 128]
 GRU_EPOCHS_OPTIONS      = [30, 50, 70]
-ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True # Set to True to enable GRU hyperparameter search
+ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = False # Set to True to enable GRU hyperparameter search
 
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
-FORCE_TRAINING          = True      # Set to True to force re-training of ML models
-CONTINUE_TRAINING_FROM_EXISTING = False # Set to True to load existing models and continue training
+FORCE_TRAINING          = False      # Set to True to force re-training of ML models
+CONTINUE_TRAINING_FROM_EXISTING = True # Set to True to load existing models and continue training
 FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
 
@@ -1380,7 +1382,10 @@ def initialize_ml_libraries():
             if torch.cuda.is_available():
                 CUDA_AVAILABLE = True
                 torch.cuda.manual_seed_all(SEED) # Set seed for PyTorch GPU operations
-                print("✅ CUDA is available. GPU acceleration enabled.")
+                # Set additional seeds for CUDA if available and deterministic algorithms are desired
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.benchmark = False
+                print("✅ CUDA is available. GPU acceleration enabled with deterministic algorithms.")
             else:
                 print("⚠️ CUDA is not available. GPU acceleration will not be used.")
         else:
@@ -1784,7 +1789,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                 
                 # Calculate AUC for LSTM
                 try:
-                    from sklearn.metrics import roc_auc_score # Moved import outside conditional block
+                    from sklearn.metrics import roc_auc_score
                     auc_lstm = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_lstm)
                     models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": auc_lstm}
                     print(f"      LSTM AUC: {auc_lstm:.4f}")
@@ -1800,13 +1805,54 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                     best_gru_scaler = None
                     best_gru_hyperparams = {}
 
+                    # Define dynamic search ranges based on loaded_gru_hyperparams
+                    # If no loaded params, use default options
+                    
+                    # Helper to create a range [val-step, val, val+step] with bounds
+                    def create_range(base_val, step, min_val=None, max_val=None, is_float=False):
+                        if is_float:
+                            options = [base_val - step, base_val, base_val + step]
+                            options = [round(x, 4) for x in options] # Round for floats
+                        else:
+                            options = [base_val - step, base_val, base_val + step]
+                        
+                        if min_val is not None:
+                            options = [max(min_val, x) for x in options]
+                        if max_val is not None:
+                            options = [min(max_val, x) for x in options]
+                        return sorted(list(set(options))) # Remove duplicates and sort
+
+                    # Determine base values for optimization
+                    base_hidden_size = loaded_gru_hyperparams.get("hidden_size", LSTM_HIDDEN_SIZE) if loaded_gru_hyperparams else LSTM_HIDDEN_SIZE
+                    base_num_layers = loaded_gru_hyperparams.get("num_layers", LSTM_NUM_LAYERS) if loaded_gru_hyperparams else LSTM_NUM_LAYERS
+                    base_dropout_rate = loaded_gru_hyperparams.get("dropout_rate", LSTM_DROPOUT) if loaded_gru_hyperparams else LSTM_DROPOUT
+                    base_learning_rate = loaded_gru_hyperparams.get("learning_rate", LSTM_LEARNING_RATE) if loaded_gru_hyperparams else LSTM_LEARNING_RATE
+                    base_batch_size = loaded_gru_hyperparams.get("batch_size", LSTM_BATCH_SIZE) if loaded_gru_hyperparams else LSTM_BATCH_SIZE
+                    base_epochs = loaded_gru_hyperparams.get("epochs", LSTM_EPOCHS) if loaded_gru_hyperparams else LSTM_EPOCHS
+
+                    # Generate options
+                    hidden_size_options = create_range(base_hidden_size, 32, min_val=32)
+                    num_layers_options = create_range(base_num_layers, 1, min_val=1)
+                    dropout_rate_options = create_range(base_dropout_rate, 0.1, min_val=0.0, max_val=0.5, is_float=True)
+                    learning_rate_options = create_range(base_learning_rate, base_learning_rate * 0.5, min_val=0.0001, is_float=True) # Multiplicative step
+                    batch_size_options = create_range(base_batch_size, base_batch_size // 2, min_val=16) # Multiplicative step
+                    epochs_options = create_range(base_epochs, 20, min_val=10)
+
+                    print(f"      GRU Hyperparameter Search Ranges:")
+                    print(f"        Hidden Sizes: {hidden_size_options}")
+                    print(f"        Num Layers: {num_layers_options}")
+                    print(f"        Dropout Rates: {dropout_rate_options}")
+                    print(f"        Learning Rates: {learning_rate_options}")
+                    print(f"        Batch Sizes: {batch_size_options}")
+                    print(f"        Epochs: {epochs_options}")
+
                     # Iterate through hyperparameter combinations
-                    for hidden_size in GRU_HIDDEN_SIZE_OPTIONS:
-                        for num_layers in GRU_NUM_LAYERS_OPTIONS:
-                            for dropout_rate in GRU_DROPOUT_OPTIONS:
-                                for learning_rate in GRU_LEARNING_RATE_OPTIONS:
-                                    for batch_size in GRU_BATCH_SIZE_OPTIONS:
-                                        for epochs in GRU_EPOCHS_OPTIONS:
+                    for hidden_size in hidden_size_options:
+                        for num_layers in num_layers_options:
+                            for dropout_rate in dropout_rate_options:
+                                for learning_rate in learning_rate_options:
+                                    for batch_size in batch_size_options:
+                                        for epochs in epochs_options:
                                             # Adjust dropout_rate if num_layers is 1 to avoid UserWarning
                                             current_dropout_rate = dropout_rate if num_layers > 1 else 0.0
                                             print(f"      Testing GRU with: HS={hidden_size}, NL={num_layers}, DO={current_dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
@@ -1998,8 +2044,6 @@ def train_worker(params: Tuple) -> Dict:
     gru_hyperparams_sell_path = models_dir / f"{ticker}_TargetClassSell_gru_optimized_params.json"
 
     model_buy, model_sell, scaler = None, None, None
-    loaded_gru_hyperparams_buy = None
-    loaded_gru_hyperparams_sell = None
     
     # Flag to indicate if we successfully loaded a model to continue training
     loaded_for_retraining = False
@@ -4498,7 +4542,7 @@ def main(
             last_ai_action = backtest_result_for_ticker['last_ai_action']
             buy_prob = backtest_result_for_ticker['buy_prob']
             sell_prob = backtest_result_for_ticker['sell_prob']
-            final_shares = backtest_result_for_ticker['final_shares'] # This is where final_shares is retrieved
+            final_shares = backtest_result_for_ticker['shares_before_liquidation'] # This is where final_shares is retrieved
         else:
             perf_data = {'sharpe_ratio': 0.0}
             individual_bh_return = 0.0
