@@ -198,12 +198,12 @@ GRU_DROPOUT_OPTIONS     = [0.1, 0.2, 0.3]
 GRU_LEARNING_RATE_OPTIONS = [0.0005, 0.001, 0.005]
 GRU_BATCH_SIZE_OPTIONS  = [32, 64, 128]
 GRU_EPOCHS_OPTIONS      = [30, 50, 70]
-ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = False # Set to True to enable GRU hyperparameter search
+ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True # Set to True to enable GRU hyperparameter search
 
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
-FORCE_TRAINING          = False      # Set to True to force re-training of ML models
+FORCE_TRAINING          = True      # Set to True to force re-training of ML models
 CONTINUE_TRAINING_FROM_EXISTING = True # Set to True to load existing models and continue training
 FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
 FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
@@ -1329,44 +1329,47 @@ cuMLStandardScaler = None
 models_and_params: Dict = {} # Declare as global and initialize
 
 # Define LSTM/GRU model architecture
-class LSTMClassifier(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, output_size, dropout_rate=0.5):
-        super(LSTMClassifier, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate)
-        self.fc = nn.Linear(hidden_size, output_size)
-        self.sigmoid = nn.Sigmoid()
+# These classes must be defined only if PyTorch is available,
+# otherwise, 'nn' will not be defined and cause a NameError.
+if PYTORCH_AVAILABLE:
+    class LSTMClassifier(nn.Module):
+        def __init__(self, input_size, hidden_size, num_layers, output_size, dropout_rate=0.5):
+            super(LSTMClassifier, self).__init__()
+            self.hidden_size = hidden_size
+            self.num_layers = num_layers
+            self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate)
+            self.fc = nn.Linear(hidden_size, output_size)
+            self.sigmoid = nn.Sigmoid()
 
-    def forward(self, x):
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        out, _ = self.lstm(x, (h0, c0))
-        out = self.fc(out[:, -1, :]) # Get output from the last time step
-        out = self.sigmoid(out)
-        return out
+        def forward(self, x):
+            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+            c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+            out, _ = self.lstm(x, (h0, c0))
+            out = self.fc(out[:, -1, :]) # Get output from the last time step
+            out = self.sigmoid(out)
+            return out
 
-class GRUClassifier(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, output_size, dropout_rate=0.5):
-        super(GRUClassifier, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.gru = nn.GRU(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate)
-        self.fc = nn.Linear(hidden_size, output_size)
-        self.sigmoid = nn.Sigmoid()
+    class GRUClassifier(nn.Module):
+        def __init__(self, input_size, hidden_size, num_layers, output_size, dropout_rate=0.5):
+            super(GRUClassifier, self).__init__()
+            self.hidden_size = hidden_size
+            self.num_layers = num_layers
+            self.gru = nn.GRU(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate)
+            self.fc = nn.Linear(hidden_size, output_size)
+            self.sigmoid = nn.Sigmoid()
 
-    def forward(self, x):
-        # print(f"DEBUG: GRUClassifier forward - Initial input shape: {x.shape}") # Added debug print
-        # If input is 4D, squeeze the first dimension (assuming it's an extra batch dimension from SHAP)
-        if x.dim() == 4:
-            x = x.squeeze(0) # Remove the extra batch dimension
-            # print(f"DEBUG: GRUClassifier forward - Shape after squeeze(0): {x.shape}") # Added debug print
+        def forward(self, x):
+            # print(f"DEBUG: GRUClassifier forward - Initial input shape: {x.shape}") # Added debug print
+            # If input is 4D, squeeze the first dimension (assuming it's an extra batch dimension from SHAP)
+            if x.dim() == 4:
+                x = x.squeeze(0) # Remove the extra batch dimension
+                # print(f"DEBUG: GRUClassifier forward - Shape after squeeze(0): {x.shape}") # Added debug print
 
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        out, _ = self.gru(x, h0)
-        out = self.fc(out[:, -1, :]) # Get output from the last time step
-        out = self.sigmoid(out)
-        return out
+            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+            out, _ = self.gru(x, h0)
+            out = self.fc(out[:, -1, :]) # Get output from the last time step
+            out = self.sigmoid(out)
+            return out
 
 def initialize_ml_libraries():
     """Initializes ML libraries and prints their status only once."""
@@ -1846,62 +1849,129 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                     print(f"        Batch Sizes: {batch_size_options}")
                     print(f"        Epochs: {epochs_options}")
 
-                    # Iterate through hyperparameter combinations
-                    for hidden_size in hidden_size_options:
-                        for num_layers in num_layers_options:
-                            for dropout_rate in dropout_rate_options:
-                                for learning_rate in learning_rate_options:
-                                    for batch_size in batch_size_options:
-                                        for epochs in epochs_options:
-                                            # Adjust dropout_rate if num_layers is 1 to avoid UserWarning
-                                            current_dropout_rate = dropout_rate if num_layers > 1 else 0.0
-                                            print(f"      Testing GRU with: HS={hidden_size}, NL={num_layers}, DO={current_dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
+                    # Initialize best hyperparameters with loaded or default values
+                    best_gru_hyperparams = {
+                        "hidden_size": loaded_gru_hyperparams.get("hidden_size", LSTM_HIDDEN_SIZE) if loaded_gru_hyperparams else LSTM_HIDDEN_SIZE,
+                        "num_layers": loaded_gru_hyperparams.get("num_layers", LSTM_NUM_LAYERS) if loaded_gru_hyperparams else LSTM_NUM_LAYERS,
+                        "dropout_rate": loaded_gru_hyperparams.get("dropout_rate", LSTM_DROPOUT) if loaded_gru_hyperparams else LSTM_DROPOUT,
+                        "learning_rate": loaded_gru_hyperparams.get("learning_rate", LSTM_LEARNING_RATE) if loaded_gru_hyperparams else LSTM_LEARNING_RATE,
+                        "batch_size": loaded_gru_hyperparams.get("batch_size", LSTM_BATCH_SIZE) if loaded_gru_hyperparams else LSTM_BATCH_SIZE,
+                        "epochs": loaded_gru_hyperparams.get("epochs", LSTM_EPOCHS) if loaded_gru_hyperparams else LSTM_EPOCHS
+                    }
+                    best_gru_auc = -np.inf
+                    best_gru_model = None
+                    best_gru_scaler = dl_scaler # dl_scaler is already fitted
 
-                                            gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, current_dropout_rate).to(device)
-                                            optimizer_gru = optim.Adam(gru_model.parameters(), lr=learning_rate)
-                                            
-                                            # Create DataLoader for current batch_size
-                                            current_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+                    # Helper to create a focused range around a base value
+                    def create_focused_range(base_val, step, min_val=None, max_val=None, is_float=False, options_list=None):
+                        if options_list: # If a predefined list is given, use it
+                            return sorted(list(set([x for x in options_list if (min_val is None or x >= min_val) and (max_val is None or x <= max_val)])))
+                        
+                        if is_float:
+                            options = [base_val - step, base_val, base_val + step]
+                            options = [round(x, 4) for x in options]
+                        else:
+                            options = [base_val - step, base_val, base_val + step]
+                        
+                        if min_val is not None:
+                            options = [max(min_val, x) for x in options]
+                        if max_val is not None:
+                            options = [min(max_val, x) for x in options]
+                        return sorted(list(set(options)))
 
-                                            for epoch in range(epochs):
-                                                for batch_X, batch_y in current_dataloader:
-                                                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                                                    optimizer_gru.zero_grad()
-                                                    outputs = gru_model(batch_X)
-                                                    loss = criterion(outputs, batch_y)
-                                                    loss.backward()
-                                                    optimizer_gru.step()
-                                            
-                                            # Evaluate GRU
-                                            gru_model.eval()
-                                            with torch.no_grad():
-                                                all_outputs = []
-                                                for batch_X, _ in current_dataloader:
-                                                    batch_X = batch_X.to(device)
-                                                    outputs = gru_model(batch_X)
-                                                    all_outputs.append(outputs.cpu().numpy())
-                                                y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+                    # Define hyperparameters to optimize and their step sizes/options lists
+                    hyperparameter_dimensions = [
+                        ("hidden_size", GRU_HIDDEN_SIZE_OPTIONS, 32, None, False, 32),
+                        ("num_layers", GRU_NUM_LAYERS_OPTIONS, 1, None, False, 1),
+                        ("dropout_rate", GRU_DROPOUT_OPTIONS, 0.0, 0.5, True, 0.1),
+                        ("learning_rate", GRU_LEARNING_RATE_OPTIONS, 0.0001, None, True, None), # Use multiplicative step
+                        ("batch_size", GRU_BATCH_SIZE_OPTIONS, 16, None, False, None), # Use multiplicative step
+                        ("epochs", GRU_EPOCHS_OPTIONS, 10, None, False, 20)
+                    ]
 
-                                            try:
-                                                from sklearn.metrics import roc_auc_score
-                                                auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
-                                                print(f"        GRU AUC: {auc_gru:.4f}")
+                    print(f"      GRU Hyperparameter One-Dimensional Optimization for {ticker} ({target_col}):")
 
-                                                if auc_gru > best_gru_auc:
-                                                    best_gru_auc = auc_gru
-                                                    best_gru_model = gru_model
-                                                    best_gru_scaler = dl_scaler # dl_scaler is already fitted
-                                                    best_gru_hyperparams = {
-                                                        "hidden_size": hidden_size,
-                                                        "num_layers": num_layers,
-                                                        "dropout_rate": dropout_rate,
-                                                        "learning_rate": learning_rate,
-                                                        "batch_size": batch_size,
-                                                        "epochs": epochs
-                                                    }
-                                            except ValueError:
-                                                print(f"        GRU AUC: Not enough samples with positive class for AUC calculation.")
-                                                
+                    # Initialize total combinations for progress tracking
+                    total_combinations = 0
+                    for param_name, options_list, min_val, max_val, is_float, step_size_for_range in hyperparameter_dimensions:
+                        current_best_val = best_gru_hyperparams[param_name]
+                        if param_name == "learning_rate":
+                            current_options = create_focused_range(current_best_val, current_best_val * 0.5, min_val=min_val, is_float=True)
+                        elif param_name == "batch_size":
+                            current_options = create_focused_range(current_best_val, current_best_val // 2, min_val=min_val, is_float=False)
+                        elif param_name == "epochs":
+                            current_options = create_focused_range(current_best_val, step_size_for_range, min_val=min_val, is_float=False)
+                        else:
+                            current_options = create_focused_range(current_best_val, step_size_for_range, min_val=min_val, max_val=max_val, is_float=is_float, options_list=options_list)
+                        total_combinations += len(current_options)
+
+                    current_iteration = 0
+                    # Perform one-dimensional optimization
+                    for param_name, options_list, min_val, max_val, is_float, step_size_for_range in hyperparameter_dimensions:
+                        current_best_val = best_gru_hyperparams[param_name]
+                        
+                        # Generate options for the current parameter
+                        if param_name == "learning_rate":
+                            # For learning_rate, create a range around the current best value
+                            current_options = create_focused_range(current_best_val, current_best_val * 0.5, min_val=min_val, is_float=True)
+                        elif param_name == "batch_size":
+                            current_options = create_focused_range(current_best_val, current_best_val // 2, min_val=min_val, is_float=False)
+                        elif param_name == "epochs":
+                            current_options = create_focused_range(current_best_val, step_size_for_range, min_val=min_val, is_float=False)
+                        else: # For hidden_size, num_layers, dropout_rate, use the predefined options list
+                            current_options = create_focused_range(current_best_val, step_size_for_range, min_val=min_val, max_val=max_val, is_float=is_float, options_list=options_list)
+
+                        print(f"        Optimizing '{param_name}'. Current best: {current_best_val}. Testing options: {current_options}")
+
+                        for value in current_options:
+                            current_iteration += 1
+                            temp_hyperparams = best_gru_hyperparams.copy()
+                            temp_hyperparams[param_name] = value
+                            
+                            # Adjust dropout_rate if num_layers is 1 to avoid UserWarning
+                            current_dropout_rate = temp_hyperparams["dropout_rate"] if temp_hyperparams["num_layers"] > 1 else 0.0
+                            temp_hyperparams["dropout_rate"] = current_dropout_rate
+
+                            print(f"          Testing GRU with: HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']}, LR={temp_hyperparams['learning_rate']}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']} ({current_iteration}/{total_combinations})")
+
+                            gru_model = GRUClassifier(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]).to(device)
+                            optimizer_gru = optim.Adam(gru_model.parameters(), lr=temp_hyperparams["learning_rate"])
+                            
+                            # Create DataLoader for current batch_size
+                            current_dataloader = DataLoader(dataset, batch_size=temp_hyperparams["batch_size"], shuffle=True)
+
+                            for epoch in range(temp_hyperparams["epochs"]):
+                                for batch_X, batch_y in current_dataloader:
+                                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                                    optimizer_gru.zero_grad()
+                                    outputs = gru_model(batch_X)
+                                    loss = criterion(outputs, batch_y)
+                                    loss.backward()
+                                    optimizer_gru.step()
+                            
+                            # Evaluate GRU
+                            gru_model.eval()
+                            with torch.no_grad():
+                                all_outputs = []
+                                for batch_X, _ in current_dataloader:
+                                    batch_X = batch_X.to(device)
+                                    outputs = gru_model(batch_X)
+                                    all_outputs.append(outputs.cpu().numpy())
+                                y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+
+                            try:
+                                from sklearn.metrics import roc_auc_score
+                                auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
+                                print(f"            GRU AUC: {auc_gru:.4f}")
+
+                                if auc_gru > best_gru_auc:
+                                    best_gru_auc = auc_gru
+                                    best_gru_model = gru_model
+                                    best_gru_scaler = dl_scaler # dl_scaler is already fitted
+                                    best_gru_hyperparams = temp_hyperparams.copy() # Update best_gru_hyperparams
+                            except ValueError:
+                                print(f"            GRU AUC: Not enough samples with positive class for AUC calculation.")
+                                
                     if best_gru_model:
                         models_and_params_local["GRU"] = {"model": best_gru_model, "scaler": best_gru_scaler, "auc": best_gru_auc, "hyperparams": best_gru_hyperparams}
                         print(f"      Best GRU found for {ticker} ({target_col}) with AUC: {best_gru_auc:.4f}, Hyperparams: {best_gru_hyperparams}")
