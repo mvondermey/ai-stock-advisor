@@ -114,7 +114,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 0        # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 2        # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -204,9 +204,9 @@ ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True # Set to True to enable GRU hyperp
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False
 FORCE_TRAINING          = True      # Set to True to force re-training of ML models
-CONTINUE_TRAINING_FROM_EXISTING = True # Set to True to load existing models and continue training
-FORCE_THRESHOLDS_OPTIMIZATION = False # Set to True to force re-optimization of ML thresholds
-FORCE_PERCENTAGE_OPTIMIZATION = False # Set to True to force re-optimization of TARGET_PERCENTAGE
+CONTINUE_TRAINING_FROM_EXISTING = False # Set to True to load existing models and continue training
+FORCE_THRESHOLDS_OPTIMIZATION = True # Set to True to force re-optimization of ML thresholds
+FORCE_PERCENTAGE_OPTIMIZATION = True # Set to True to force re-optimization of TARGET_PERCENTAGE
 
 
 # ============================
@@ -2091,6 +2091,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
                     warnings.filterwarnings("ignore", category=UserWarning)
+                    warnings.filterwarnings("ignore", category=FutureWarning, module='xgboost')
                     
                     # Use GridSearchCV for hyperparameter tuning
                     grid_search = GridSearchCV(model, params, cv=cv, scoring='roc_auc', n_jobs=-1, verbose=0)
