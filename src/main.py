@@ -1288,11 +1288,12 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
-from sklearn.model_selection import cross_val_score, StratifiedKFold, GridSearchCV
+from sklearn.model_selection import cross_val_score, StratifiedKFold, GridSearchCV, RandomizedSearchCV # Added RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import UndefinedMetricWarning
 from sklearn.neural_network import MLPClassifier # Added for Neural Network model
 from sklearn.preprocessing import MinMaxScaler # Added for scaling data for neural networks
+from scipy.stats import uniform, randint # Added for RandomizedSearchCV
 
 # Added for XGBoost
 try:
