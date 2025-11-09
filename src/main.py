@@ -154,9 +154,9 @@ FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
 CLASS_HORIZON           = 5          # days ahead for classification target
-MIN_PROBA_BUY           = 0.8      # ML gate threshold for buy model
-MIN_PROBA_SELL          = 0.2       # ML gate threshold for sell model
-TARGET_PERCENTAGE       = 0.01       # 1% target for buy/sell classification
+MIN_PROBA_BUY           = 0.70      # ML gate threshold for buy model
+MIN_PROBA_SELL          = 0.30       # ML gate threshold for sell model
+TARGET_PERCENTAGE       = 0.008       # 0.8% target for buy/sell classification
 USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
@@ -192,12 +192,12 @@ LSTM_BATCH_SIZE         = 64
 LSTM_LEARNING_RATE      = 0.001
 
 # --- GRU Hyperparameter Search Ranges ---
-GRU_HIDDEN_SIZE_OPTIONS = [32, 64, 128]
-GRU_NUM_LAYERS_OPTIONS  = [1, 2, 3]
-GRU_DROPOUT_OPTIONS     = [0.1, 0.2, 0.3]
-GRU_LEARNING_RATE_OPTIONS = [0.0005, 0.001, 0.005]
-GRU_BATCH_SIZE_OPTIONS  = [32, 64, 128]
-GRU_EPOCHS_OPTIONS      = [30, 50, 70]
+GRU_HIDDEN_SIZE_OPTIONS = [16, 32, 64, 128, 256]
+GRU_NUM_LAYERS_OPTIONS  = [1, 2, 3, 4]
+GRU_DROPOUT_OPTIONS     = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+GRU_LEARNING_RATE_OPTIONS = [0.0001, 0.0005, 0.001, 0.005, 0.01]
+GRU_BATCH_SIZE_OPTIONS  = [16, 32, 64, 128, 256]
+GRU_EPOCHS_OPTIONS      = [10, 30, 50, 70, 100]
 ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True # Set to True to enable GRU hyperparameter search
 
 # --- Misc
@@ -691,10 +691,13 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 def _fetch_intermarket_data(start: datetime, end: datetime) -> pd.DataFrame:
     """Fetches intermarket data (e.g., bond yields, commodities, currencies)."""
     intermarket_tickers = {
-        # 'US10Y': 'Bond_Yield',  # 10-Year Treasury Yield (TwelveData symbol) - Removed due to persistent Yahoo Finance fetching errors
-        'USO': 'Oil_Price',    # United States Oil Fund (assuming this works or falls back to Yahoo)
-        'GLD': 'Gold_Price',   # SPDR Gold Shares (assuming this works or falls back to Yahoo)
-        # 'DX-Y.NYB': 'DXY_Index' # U.S. Dollar Index (removed, no direct TwelveData equivalent found)
+        '^VIX': 'VIX_Index',  # CBOE Volatility Index
+        'DX-Y.NYB': 'DXY_Index', # U.S. Dollar Index
+        'GC=F': 'Gold_Futures', # Gold Futures
+        'CL=F': 'Oil_Futures',  # Crude Oil Futures
+        '^TNX': 'US10Y_Yield',  # 10-Year Treasury Yield
+        'USO': 'Oil_Price',    # United States Oil Fund ETF
+        'GLD': 'Gold_Price',   # SPDR Gold Shares ETF
     }
     
     all_intermarket_dfs = []
@@ -1256,7 +1259,8 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
         "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
         "Market_Momentum_SPY",
         "Sentiment_Score",
-        "Bond_Yield_Returns", "Oil_Price_Returns", "Gold_Price_Returns"
+        "VIX_Index_Returns", "DXY_Index_Returns", "Gold_Futures_Returns", "Oil_Futures_Returns", "US10Y_Yield_Returns",
+        "Oil_Price_Returns", "Gold_Price_Returns"
     ]
     
     # Filter to only include technical features that are actually in df.columns
