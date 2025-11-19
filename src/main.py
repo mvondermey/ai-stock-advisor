@@ -1379,7 +1379,7 @@ if PYTORCH_AVAILABLE:
 def initialize_ml_libraries():
     """Initializes ML libraries and prints their status only once."""
     global _ml_libraries_initialized, CUDA_AVAILABLE, CUML_AVAILABLE, LGBMClassifier, XGBClassifier, models_and_params, \
-           cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler
+           cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler, PYTORCH_AVAILABLE, USE_LSTM, USE_GRU
     
     if _ml_libraries_initialized:
         return models_and_params # Return the dictionary if already initialized
@@ -2271,6 +2271,12 @@ def train_worker(params: Tuple) -> Dict:
                     loaded_gru_hyperparams_sell = json.load(f)
 
             print(f"  ✅ Loaded existing models and GRU hyperparams for {ticker} (FORCE_TRAINING is False).")
+            # Before returning, ensure PyTorch models are on CPU if they are deep learning models
+            if PYTORCH_AVAILABLE:
+                if isinstance(model_buy, (LSTMClassifier, GRUClassifier)):
+                    model_buy = model_buy.cpu()
+                if isinstance(model_sell, (LSTMClassifier, GRUClassifier)):
+                    model_sell = model_sell.cpu()
             return {
                 'ticker': ticker,
                 'model_buy': model_buy,
@@ -2322,6 +2328,13 @@ def train_worker(params: Tuple) -> Dict:
         except Exception as e:
             print(f"  ⚠️ Error saving models or GRU hyperparams for {ticker}: {e}")
             
+        # Before returning, ensure PyTorch models are on CPU if they are deep learning models
+        if PYTORCH_AVAILABLE:
+            if isinstance(model_buy, (LSTMClassifier, GRUClassifier)):
+                model_buy = model_buy.cpu()
+            if isinstance(model_sell, (LSTMClassifier, GRUClassifier)):
+                model_sell = model_sell.cpu()
+
         return {
             'ticker': ticker,
             'model_buy': model_buy,
@@ -3780,6 +3793,16 @@ def main(
     use_simple_rule_strategy: bool = USE_SIMPLE_RULE_STRATEGY # New parameter for simple rule strategy
 ) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[Dict]]:
     
+    # Set the start method for multiprocessing to 'spawn'
+    # This is crucial for CUDA compatibility with multiprocessing
+    try:
+        if PYTORCH_AVAILABLE and torch.cuda.is_available():
+            import multiprocessing
+            multiprocessing.set_start_method('spawn', force=True)
+            print("✅ Multiprocessing start method set to 'spawn' for CUDA compatibility.")
+    except RuntimeError as e:
+        print(f"⚠️ Could not set multiprocessing start method to 'spawn': {e}. This might cause issues with CUDA and multiprocessing.")
+
     end_date = datetime.now(timezone.utc)
     bt_end = end_date
     
@@ -3787,12 +3810,11 @@ def main(
 
     # Initialize ML libraries to determine CUDA availability
     initialize_ml_libraries()
-    global CUDA_AVAILABLE, PYTORCH_AVAILABLE, USE_LSTM, USE_GRU
-
+    
     # Disable parallel processing if deep learning models are used with CUDA
     if PYTORCH_AVAILABLE and CUDA_AVAILABLE and (USE_LSTM or USE_GRU):
-        print("⚠️ CUDA is available and deep learning models are enabled. Disabling parallel processing to avoid CUDA tensor sharing issues.")
-        run_parallel = False
+        print("⚠️ CUDA is available and deep learning models are enabled.")
+        run_parallel = True
     
     # Initialize initial_balance_used here with a default value
     initial_balance_used = INITIAL_BALANCE 
@@ -3820,7 +3842,7 @@ def main(
             start_price = df_ytd['Close'].iloc[0]
             end_price = df_ytd['Close'].iloc[-1]
             if start_price > 0:
-                perf_ytd = ((end_price - start_price) / start_price) * 100
+                perf_ytd = ((end_date - start_price) / start_price) * 100
             else:
                 perf_ytd = np.nan
         
