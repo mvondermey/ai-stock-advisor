@@ -11,7 +11,10 @@ Trading AI — Improved Rule-Based System with Optional ML Gate
 """
 
 from __future__ import annotations
-print("DEBUG: Script execution initiated.") # Moved for debugging silent exits
+_script_initialized = False
+if not _script_initialized:
+    print("DEBUG: Script execution initiated.")
+    _script_initialized = True
 
 import os
 import json
@@ -125,7 +128,7 @@ NUM_PROCESSES           = max(1, cpu_count() - 5) # Use all but one CPU core for
 # --- Backtest & training windows
 BACKTEST_DAYS           = 365        # 1 year for backtest
 BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest
-BACKTEST_DAYS_1MONTH    = 30         # 1 month for backtest
+BACKTEST_DAYS_1MONTH    = 32         # 1 month for backtest
 TRAIN_LOOKBACK_DAYS     = 360        # more data for model (e.g., 1 year)
 
 # --- Backtest Period Enable/Disable Flags ---
@@ -1007,7 +1010,7 @@ def get_all_tickers() -> List[str]:
 # Feature prep & model
 # ============================
 
-def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: float = 0.05) -> Tuple[pd.DataFrame, List[str]]:
+def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: float = 0.05, class_horizon: int = CLASS_HORIZON) -> Tuple[pd.DataFrame, List[str]]:
     """Compute ML features from a given DataFrame."""
     print(f"  [DIAGNOSTIC] {ticker}: fetch_training_data - Initial data rows: {len(data)}")
     if data.empty or len(data) < FEAT_SMA_LONG + 10:
@@ -1241,11 +1244,11 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
 
     df["Target"]     = df["Close"].shift(-1)
 
-    # Classification label for BUY model: 5-day forward > +target_percentage
-    fwd = df["Close"].shift(-CLASS_HORIZON)
+    # Classification label for BUY model: class_horizon-day forward > +target_percentage
+    fwd = df["Close"].shift(-class_horizon)
     df["TargetClassBuy"] = ((fwd / df["Close"] - 1.0) > target_percentage).astype(float)
 
-    # Classification label for SELL model: 5-day forward < -target_percentage
+    # Classification label for SELL model: class_horizon-day forward < -target_percentage
     df["TargetClassSell"] = ((fwd / df["Close"] - 1.0) < -target_percentage).astype(float)
 
     # Dynamically build the list of features that are actually present in the DataFrame
@@ -1379,7 +1382,7 @@ if PYTORCH_AVAILABLE:
 def initialize_ml_libraries():
     """Initializes ML libraries and prints their status only once."""
     global _ml_libraries_initialized, CUDA_AVAILABLE, CUML_AVAILABLE, LGBMClassifier, XGBClassifier, models_and_params, \
-           cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler, PYTORCH_AVAILABLE, USE_LSTM, USE_GRU
+           cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler
     
     if _ml_libraries_initialized:
         return models_and_params # Return the dictionary if already initialized
@@ -1687,9 +1690,10 @@ def analyze_shap_for_tree_model(model, X_df: pd.DataFrame, feature_names: List[s
         traceback.print_exc() # Print full traceback for debugging
 
 
-def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN", initial_model=None, loaded_gru_hyperparams: Optional[Dict] = None):
+def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN", initial_model=None, loaded_gru_hyperparams: Optional[Dict] = None, models_and_params_global: Optional[Dict] = None):
     """Train and compare multiple classifiers for a given target, returning the best one."""
-    models_and_params = initialize_ml_libraries() # Initialize and get models_and_params
+    # Use the globally initialized models_and_params
+    models_and_params = models_and_params_global if models_and_params_global is not None else initialize_ml_libraries()
     d = df.copy() # Renamed to d to match the original error context
     
     if target_col not in d.columns:
@@ -2161,7 +2165,6 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
     best_hyperparams_overall: Optional[Dict] = None # New: To store GRU hyperparams if GRU is best
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
     results = {} # Initialize the results dictionary here
-    results = {} # Initialize the results dictionary here
 
     print("  🔬 Comparing classifier performance (AUC score via 5-fold cross-validation with GridSearchCV):")
     for name, mp in models_and_params_local.items(): # Iterate over local models_and_params
@@ -2221,7 +2224,7 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
 
 def train_worker(params: Tuple) -> Dict:
     """Worker function for parallel model training."""
-    ticker, df_train_period, target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell = params
+    ticker, df_train_period, target_percentage, class_horizon, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell = params
     
     models_dir = Path("logs/models")
     _ensure_dir(models_dir)
@@ -2294,7 +2297,7 @@ def train_worker(params: Tuple) -> Dict:
     print(f"  ⚙️ Training models for {ticker} (FORCE_TRAINING is {FORCE_TRAINING}, CONTINUE_TRAINING_FROM_EXISTING is {CONTINUE_TRAINING_FROM_EXISTING})...")
     print(f"  [DEBUG] {current_process().name} - {ticker}: Initiating feature extraction for training.")
     
-    df_train, actual_feature_set = fetch_training_data(ticker, df_train_period, target_percentage)
+    df_train, actual_feature_set = fetch_training_data(ticker, df_train_period, target_percentage, class_horizon)
 
     if df_train.empty:
         print(f"  ❌ Skipping {ticker}: Insufficient training data.")
@@ -2302,10 +2305,12 @@ def train_worker(params: Tuple) -> Dict:
 
     print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for BUY target.")
     # Train BUY model, passing the potentially loaded model and GRU hyperparams
-    model_buy, scaler_buy, gru_hyperparams_buy = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker, initial_model=model_buy if loaded_for_retraining else None, loaded_gru_hyperparams=loaded_gru_hyperparams_buy)
+    # Pass the global models_and_params to avoid re-initialization in worker processes
+    global_models_and_params = initialize_ml_libraries() # Ensure it's initialized in the worker process too
+    model_buy, scaler_buy, gru_hyperparams_buy = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker, initial_model=model_buy if loaded_for_retraining else None, loaded_gru_hyperparams=loaded_gru_hyperparams_buy, models_and_params_global=global_models_and_params)
     print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for SELL target.")
     # Train SELL model, passing the potentially loaded model and GRU hyperparams
-    model_sell, scaler_sell, gru_hyperparams_sell = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker, initial_model=model_sell if loaded_for_retraining else None, loaded_gru_hyperparams=loaded_gru_hyperparams_sell)
+    model_sell, scaler_sell, gru_hyperparams_sell = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker, initial_model=model_sell if loaded_for_retraining else None, loaded_gru_hyperparams=loaded_gru_hyperparams_sell, models_and_params_global=global_models_and_params)
 
     # For simplicity, we'll use the scaler from the buy model for both if they are different.
     # In a more complex scenario, you might want to ensure feature_set consistency or use separate scalers.
@@ -2682,7 +2687,7 @@ class RuleTradingEnv:
                 end_idx = i + 1
                 
                 # Ensure we have enough data for the sequence
-                if end_idx <= SEQUENCE_LENGTH: # Not enough data for a full sequence yet
+                if end_idx < SEQUENCE_LENGTH: # Not enough data for a full sequence yet
                     # Pad with zeros or handle as insufficient data
                     # For now, return 0.0 (no strong signal)
                     return 0.0
@@ -3311,6 +3316,7 @@ def optimize_thresholds_for_portfolio(
     train_start: datetime,
     train_end: datetime,
     default_target_percentage: float, # Renamed to avoid confusion with per-ticker target
+    default_class_horizon: int, # New parameter
     feature_set: Optional[List[str]],
     models_buy: Dict,
     models_sell: Dict,
@@ -3336,14 +3342,16 @@ def optimize_thresholds_for_portfolio(
         current_buy_proba = MIN_PROBA_BUY
         current_sell_proba = MIN_PROBA_SELL
         current_target_perc = default_target_percentage
+        current_class_horizon = default_class_horizon
 
         if current_optimized_params_per_ticker and ticker in current_optimized_params_per_ticker:
             current_buy_proba = current_optimized_params_per_ticker[ticker].get('min_proba_buy', MIN_PROBA_BUY)
             current_sell_proba = current_optimized_params_per_ticker[ticker].get('min_proba_sell', MIN_PROBA_SELL)
             current_target_perc = current_optimized_params_per_ticker[ticker].get('target_percentage', default_target_percentage)
+            current_class_horizon = current_optimized_params_per_ticker[ticker].get('class_horizon', default_class_horizon)
 
         optimization_params.append((
-            ticker, train_start, train_end, current_target_perc,
+            ticker, train_start, train_end, current_target_perc, current_class_horizon,
             feature_set, models_buy[ticker], models_sell[ticker], scalers[ticker],
             capital_per_stock,
             current_buy_proba, current_sell_proba,
@@ -3372,7 +3380,7 @@ def optimize_thresholds_for_portfolio(
 
 def optimize_single_ticker_worker(params: Tuple) -> Dict:
     """Worker function to optimize thresholds and target percentage for a single ticker."""
-    ticker, train_start, train_end, initial_target_percentage, feature_set, \
+    ticker, train_start, train_end, initial_target_percentage, initial_class_horizon, feature_set, \
         model_buy, model_sell, scaler, capital_per_stock, \
         current_min_proba_buy, current_min_proba_sell, force_percentage_optimization = params
     
@@ -3381,7 +3389,11 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
     best_revenue = -np.inf # Changed from best_sharpe to best_revenue
     best_min_proba_buy = current_min_proba_buy
     best_min_proba_sell = current_min_proba_sell
+    best_revenue = -np.inf # Changed from best_sharpe to best_revenue
+    best_min_proba_buy = current_min_proba_buy
+    best_min_proba_sell = current_min_proba_sell
     best_target_percentage = initial_target_percentage
+    best_class_horizon = initial_class_horizon
 
     step_proba = 0.05
     min_proba_buy_range = sorted(list(set([round(x, 2) for x in [max(0.0, current_min_proba_buy - step_proba), current_min_proba_buy, current_min_proba_buy + step_proba] if 0.0 <= x <= 1.0])))
@@ -3389,88 +3401,97 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
 
     target_percentage_range = [initial_target_percentage]
     if force_percentage_optimization:
-        # Define a range for target_percentage optimization, e.g., +/- 0.0025 around the initial value
-        # with steps of 0.001. Ensure values are positive.
+        # Define a range for target_percentage optimization: best, one lower, one higher
+        # with a step of 0.001. Ensure values are positive.
         target_percentage_range = sorted(list(set([
-            max(0.001, round(initial_target_percentage - 0.0025, 4)),
             max(0.001, round(initial_target_percentage - 0.001, 4)),
             initial_target_percentage,
-            round(initial_target_percentage + 0.001, 4),
-            round(initial_target_percentage + 0.0025, 4)
+            round(initial_target_percentage + 0.001, 4)
         ])))
     
+    # Define class_horizon_range: best, one lower, one higher
+    class_horizon_range = sorted(list(set([
+        max(1, initial_class_horizon - 1), # Ensure horizon is at least 1
+        initial_class_horizon,
+        initial_class_horizon + 1
+    ])))
+
     sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Loading prices for optimization...\n")
     df_backtest_opt = load_prices(ticker, train_start, train_end)
     if df_backtest_opt.empty:
         sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: No data for optimization. Returning default.\n")
-        return {'ticker': ticker, 'min_proba_buy': current_min_proba_buy, 'min_proba_sell': current_min_proba_sell, 'target_percentage': initial_target_percentage, 'optimization_status': "Failed (no data)"}
+        return {'ticker': ticker, 'min_proba_buy': current_min_proba_buy, 'min_proba_sell': current_min_proba_sell, 'target_percentage': initial_target_percentage, 'class_horizon': initial_class_horizon, 'optimization_status': "Failed (no data)"}
     sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Prices loaded. Starting optimization loops.\n")
 
-    # Re-fetch training data for each target_percentage if optimizing it
-    # This is crucial because target_percentage affects the 'TargetClassBuy' and 'TargetClassSell' labels
+    # Re-fetch training data for each target_percentage and class_horizon if optimizing them
+    # This is crucial because these parameters affect the 'TargetClassBuy' and 'TargetClassSell' labels
     # which are used to train the models.
     
-    # Store models and scalers for each target_percentage to avoid re-training if already done
-    models_cache = {} # Key: target_percentage, Value: (model_buy, model_sell, scaler)
+    # Store models and scalers for each (target_percentage, class_horizon) pair to avoid re-training if already done
+    models_cache = {} # Key: (target_percentage, class_horizon), Value: (model_buy, model_sell, scaler)
 
     for p_target in target_percentage_range:
-        # If we are optimizing target_percentage, we need to re-train models for each p_target
-        # or load them if already trained for this p_target.
-        if p_target not in models_cache:
-            sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Re-fetching training data and re-training models for target_percentage={p_target:.4f}\n")
-            df_train, actual_feature_set = fetch_training_data(ticker, df_backtest_opt.copy(), p_target) # Use df_backtest_opt as training data for optimization
-            if df_train.empty:
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Insufficient training data for target_percentage={p_target:.4f}. Skipping.\n")
-                continue
+        for c_horizon in class_horizon_range:
+            cache_key = (p_target, c_horizon)
+            if cache_key not in models_cache:
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Re-fetching training data and re-training models for target_percentage={p_target:.4f}, class_horizon={c_horizon}\n")
+                df_train, actual_feature_set = fetch_training_data(ticker, df_backtest_opt.copy(), p_target, c_horizon) # Pass c_horizon
+                if df_train.empty:
+                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Insufficient training data for target_percentage={p_target:.4f}, class_horizon={c_horizon}. Skipping.\n")
+                    continue
+                
+                # Pass the global models_and_params to avoid re-initialization in worker processes
+                global_models_and_params = initialize_ml_libraries() # Ensure it's initialized in the worker process too
+                model_buy_for_opt, scaler_buy_for_opt, _ = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker, models_and_params_global=global_models_and_params)
+                model_sell_for_opt, scaler_sell_for_opt, _ = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker, models_and_params_global=global_models_and_params)
+                
+                if model_buy_for_opt and model_sell_for_opt and scaler_buy_for_opt:
+                    models_cache[cache_key] = (model_buy_for_opt, model_sell_for_opt, scaler_buy_for_opt)
+                else:
+                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Failed to train models for target_percentage={p_target:.4f}, class_horizon={c_horizon}. Skipping.\n")
+                    continue
             
-            model_buy_for_opt, scaler_buy_for_opt, _ = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker)
-            model_sell_for_opt, scaler_sell_for_opt, _ = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker)
-            
-            if model_buy_for_opt and model_sell_for_opt and scaler_buy_for_opt:
-                models_cache[p_target] = (model_buy_for_opt, model_sell_for_opt, scaler_buy_for_opt)
-            else:
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Failed to train models for target_percentage={p_target:.4f}. Skipping.\n")
-                continue
-        
-        current_model_buy, current_model_sell, current_scaler = models_cache[p_target]
+            current_model_buy, current_model_sell, current_scaler = models_cache[cache_key]
 
-        for p_buy in min_proba_buy_range:
-            for p_sell in min_proba_sell_range:
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Testing p_buy={p_buy:.2f}, p_sell={p_sell:.2f}, p_target={p_target:.4f}\n")
-                
-                env = RuleTradingEnv(
-                    df=df_backtest_opt.copy(),
-                    ticker=ticker,
-                    initial_balance=capital_per_stock,
-                    transaction_cost=TRANSACTION_COST,
-                    model_buy=current_model_buy,
-                    model_sell=current_model_sell,
-                    scaler=current_scaler,
-                    per_ticker_min_proba_buy=p_buy,
-                    per_ticker_min_proba_sell=p_sell,
-                    use_gate=USE_MODEL_GATE,
-                    feature_set=feature_set,
-                    use_simple_rule_strategy=False
-                )
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: RuleTradingEnv initialized. Running env.run()...\n")
-                final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, _ = env.run()
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Getting final value.\n")
-                
-                # Optimize for final portfolio value (revenue)
-                current_revenue = final_val
+            for p_buy in min_proba_buy_range:
+                for p_sell in min_proba_sell_range:
+                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Testing p_buy={p_buy:.2f}, p_sell={p_sell:.2f}, p_target={p_target:.4f}, c_horizon={c_horizon}\n")
+                    
+                    env = RuleTradingEnv(
+                        df=df_backtest_opt.copy(),
+                        ticker=ticker,
+                        initial_balance=capital_per_stock,
+                        transaction_cost=TRANSACTION_COST,
+                        model_buy=current_model_buy,
+                        model_sell=current_model_sell,
+                        scaler=current_scaler,
+                        per_ticker_min_proba_buy=p_buy,
+                        per_ticker_min_proba_sell=p_sell,
+                        use_gate=USE_MODEL_GATE,
+                        feature_set=feature_set,
+                        use_simple_rule_strategy=False
+                    )
+                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: RuleTradingEnv initialized. Running env.run()...\n")
+                    final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, _ = env.run()
+                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Getting final value.\n")
+                    
+                    # Optimize for final portfolio value (revenue)
+                    current_revenue = final_val
 
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f}, Target%={p_target:.4f} -> Revenue=${current_revenue:,.2f}\n")
-                
-                if current_revenue > best_revenue:
-                    best_revenue = current_revenue
-                    best_min_proba_buy = p_buy
-                    best_min_proba_sell = p_sell
-                    best_target_percentage = p_target
+                    sys.stderr.write(f"  [DEBUG] {current_process().name} - [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f}, Target%={p_target:.4f}, CH={c_horizon} -> Revenue=${current_revenue:,.2f}\n")
+                    
+                    if current_revenue > best_revenue:
+                        best_revenue = current_revenue
+                        best_min_proba_buy = p_buy
+                        best_min_proba_sell = p_sell
+                        best_target_percentage = p_target
+                        best_class_horizon = c_horizon
     
     optimization_status = "No Change"
     if not np.isclose(best_min_proba_buy, current_min_proba_buy) or \
        not np.isclose(best_min_proba_sell, current_min_proba_sell) or \
-       not np.isclose(best_target_percentage, initial_target_percentage):
+       not np.isclose(best_target_percentage, initial_target_percentage) or \
+       not np.isclose(best_class_horizon, initial_class_horizon):
         optimization_status = "Optimized"
 
     sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Revenue=${best_revenue:,.2f}, Status: {optimization_status}\n")
@@ -3479,6 +3500,7 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
         'min_proba_buy': best_min_proba_buy,
         'min_proba_sell': best_min_proba_sell,
         'target_percentage': best_target_percentage,
+        'class_horizon': best_class_horizon,
         'best_revenue': best_revenue, # Changed from best_sharpe to best_revenue
         'optimization_status': optimization_status
     }
@@ -3667,9 +3689,9 @@ def print_final_summary(
     print("="*80)
 
     print("\n📈 Individual Ticker Performance (AI Strategy - Sorted by 1-Year Performance):")
-    print("-" * 256)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10} | {'Opt. Status':<25} | {'Shares Before Liquidation':>25}")
-    print("-" * 256)
+    print("-" * 290)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10} | {'Class Horiz':>13} | {'Opt. Status':<25} | {'Shares Before Liquidation':>25}")
+    print("-" * 290)
     for res in sorted_final_results:
         # --- Safely get ticker and parameters ---
         ticker = str(res.get('ticker', 'N/A'))
@@ -3677,6 +3699,7 @@ def print_final_summary(
         buy_thresh = optimized_params.get('min_proba_buy', MIN_PROBA_BUY)
         sell_thresh = optimized_params.get('min_proba_sell', MIN_PROBA_SELL)
         target_perc = optimized_params.get('target_percentage', TARGET_PERCENTAGE)
+        class_horiz = optimized_params.get('class_horizon', CLASS_HORIZON) # Get class_horizon
         opt_status = optimized_params.get('optimization_status', 'N/A') # Get optimization status
 
         # --- Calculate allocated capital and strategy gain ---
@@ -3692,8 +3715,8 @@ def print_final_summary(
         last_ai_action_str = str(res.get('last_ai_action', 'HOLD'))
         shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}" # New: Shares Before Liquidation
         
-        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {buy_thresh:>11.2f} | {sell_thresh:>11.2f} | {target_perc:>9.2%} | {opt_status:<25} | {shares_before_liquidation_str}")
-    print("-" * 256)
+        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {buy_thresh:>11.2f} | {sell_thresh:>11.2f} | {target_perc:>9.2%} | {class_horiz:>12} | {opt_status:<25} | {shares_before_liquidation_str}")
+    print("-" * 290)
 
     # --- Simple Rule Strategy Individual Ticker Performance ---
     print("\n📈 Individual Ticker Performance (Simple Rule Strategy - Sorted by 1-Year Performance):")
@@ -3783,6 +3806,7 @@ def main(
     min_proba_buy: float = MIN_PROBA_BUY,
     min_proba_sell: float = MIN_PROBA_SELL,
     target_percentage: float = TARGET_PERCENTAGE, # This will now be the initial/default target_percentage for optimization
+    class_horizon: int = CLASS_HORIZON, # New parameter for initial/default class_horizon for optimization
     force_thresholds_optimization: bool = FORCE_THRESHOLDS_OPTIMIZATION, # New parameter
     force_percentage_optimization: bool = FORCE_PERCENTAGE_OPTIMIZATION, # New parameter
     top_performers_data=None,
@@ -3997,7 +4021,7 @@ def main(
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_1y_calc:train_end_1y, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_1y.append((ticker, ticker_train_data.copy(), target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                training_params_1y.append((ticker, ticker_train_data.copy(), target_percentage, class_horizon, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 1-Year period. Skipping.")
                 continue
@@ -4078,6 +4102,7 @@ def main(
             train_start=train_start_1y,
             train_end=train_end_1y,
             default_target_percentage=target_percentage,
+            default_class_horizon=class_horizon, # Pass class_horizon here
             feature_set=feature_set,
             models_buy=models_buy,
             models_sell=models_sell,
@@ -4293,7 +4318,7 @@ def main(
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_ytd:train_end_ytd, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_ytd.append((ticker, ticker_train_data.copy(), target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                training_params_ytd.append((ticker, ticker_train_data.copy(), target_percentage, class_horizon, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for YTD period. Skipping.")
                 continue
@@ -4454,7 +4479,7 @@ def main(
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_3month.append((ticker, ticker_train_data.copy(), target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                training_params_3month.append((ticker, ticker_train_data.copy(), target_percentage, class_horizon, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 3-Month period. Skipping.")
                 continue
@@ -4614,7 +4639,7 @@ def main(
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_1month:train_end_1month, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_1month.append((ticker, ticker_train_data.copy(), target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                training_params_1month.append((ticker, ticker_train_data.copy(), target_percentage, class_horizon, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 1-Month period. Skipping.")
                 continue
