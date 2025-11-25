@@ -173,9 +173,9 @@ USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering
 USE_LOGISTIC_REGRESSION = False
 USE_SVM                 = False
 USE_MLP_CLASSIFIER      = False
-USE_LIGHTGBM            = True # Enable LightGBM - GOOD
+USE_LIGHTGBM            = False # Enable LightGBM - GOOD
 #GOOD
-USE_XGBOOST             = True # Enable XGBoost
+USE_XGBOOST             = False # Enable XGBoost
 USE_LSTM                = False
 #Not so GOOD
 USE_GRU                 = True # Enable GRU - BEST
@@ -3329,7 +3329,7 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
     
     print(f"  [DEBUG] {current_process().name} - Optimizing for ticker: {ticker}")
 
-    best_sharpe = -np.inf # Initialize best_sharpe
+    best_revenue = -np.inf # Initialize best_revenue
     best_min_proba_buy = current_min_proba_buy
     best_min_proba_sell = current_min_proba_sell
     best_target_percentage = initial_target_percentage
@@ -3428,15 +3428,12 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
                     final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, _ = env.run()
                     print(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Getting final value.")
                     
-                    # Calculate Sharpe Ratio for the current backtest run
-                    strategy_history = pd.Series(env.portfolio_history)
-                    strat_returns = strategy_history.pct_change(fill_method=None).dropna()
-                    current_sharpe = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252) if strat_returns.std() > 0 else 0
+                    current_revenue = final_val
 
-                    print(f"  [DEBUG] {current_process().name} - [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f}, Target%={p_target:.4f}, CH={c_horizon} -> Sharpe={current_sharpe:.2f}")
+                    print(f"  [DEBUG] {current_process().name} - [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f}, Target%={p_target:.4f}, CH={c_horizon} -> Revenue=${current_revenue:,.2f}")
                     
-                    if current_sharpe > best_sharpe:
-                        best_sharpe = current_sharpe
+                    if current_revenue > best_revenue:
+                        best_revenue = current_revenue
                         best_min_proba_buy = p_buy
                         best_min_proba_sell = p_sell
                         best_target_percentage = p_target
@@ -3449,14 +3446,14 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
        not np.isclose(best_class_horizon, initial_class_horizon):
         optimization_status = "Optimized"
 
-    print(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Sharpe={best_sharpe:.2f}, Status: {optimization_status}")
+    print(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Revenue=${best_revenue:,.2f}, Status: {optimization_status}")
     return {
         'ticker': ticker,
         'min_proba_buy': best_min_proba_buy,
         'min_proba_sell': best_min_proba_sell,
         'target_percentage': best_target_percentage,
         'class_horizon': best_class_horizon,
-        'best_sharpe': best_sharpe, # Changed from best_revenue to best_sharpe
+        'best_revenue': best_revenue,
         'optimization_status': optimization_status
     }
 

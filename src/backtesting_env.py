@@ -1,0 +1,463 @@
+import numpy as np
+import pandas as pd
+from typing import List, Dict, Tuple, Optional
+
+# Import configuration from config.py
+from config import (
+    MIN_PROBA_BUY, MIN_PROBA_SELL, USE_MODEL_GATE, USE_SIMPLE_RULE_STRATEGY,
+    SIMPLE_RULE_TRAILING_STOP_PERCENT, SIMPLE_RULE_TAKE_PROFIT_PERCENT,
+    INVESTMENT_PER_STOCK, TRANSACTION_COST, ATR_PERIOD, FEAT_SMA_SHORT,
+    FEAT_SMA_LONG, FEAT_VOL_WINDOW, SEQUENCE_LENGTH
+)
+
+# Import PyTorch models if available
+try:
+    import torch
+    import torch.nn as nn
+    PYTORCH_AVAILABLE = True
+    from ml_models import LSTMClassifier, GRUClassifier # Import the classes
+except ImportError:
+    PYTORCH_AVAILABLE = False
+
+class RuleTradingEnv:
+    """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
+    def __init__(self, df: pd.DataFrame, ticker: str, initial_balance: float, transaction_cost: float,
+                 model_buy=None, model_sell=None, scaler=None, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, use_gate: bool = USE_MODEL_GATE,
+                 feature_set: Optional[List[str]] = None,
+                 per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None,
+                 use_simple_rule_strategy: bool = USE_SIMPLE_RULE_STRATEGY,
+                 simple_rule_trailing_stop_percent: float = SIMPLE_RULE_TRAILING_STOP_PERCENT,
+                 simple_rule_take_profit_percent: float = SIMPLE_RULE_TAKE_PROFIT_PERCENT):
+        if "Close" not in df.columns:
+            raise ValueError("DataFrame must contain 'Close' column.")
+        self.df = df.reset_index()
+        self.ticker = ticker
+        self.initial_balance = float(initial_balance)
+        self.transaction_cost = float(transaction_cost)
+        self.model_buy = model_buy
+        self.model_sell = model_sell
+        self.scaler = scaler
+        self.min_proba_buy = float(per_ticker_min_proba_buy if per_ticker_min_proba_buy is not None else min_proba_buy)
+        self.min_proba_sell = float(per_ticker_min_proba_sell if per_ticker_min_proba_sell is not None else min_proba_sell)
+        self.use_gate = bool(use_gate) and (scaler is not None)
+        self.use_simple_rule_strategy = use_simple_rule_strategy
+        self.simple_rule_trailing_stop_percent = simple_rule_trailing_stop_percent
+        self.simple_rule_take_profit_percent = simple_rule_take_profit_percent
+        self.feature_set = feature_set if feature_set is not None else [
+            "Close", "Volume", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "ATR",
+            "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
+            "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
+            "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
+            'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA',
+            'Market_Momentum_SPY'
+        ]
+        
+        self.reset()
+        self._prepare_data()
+
+    def reset(self):
+        self.current_step = 0
+        self.cash = self.initial_balance
+        self.shares = 0.0
+        self.entry_price: Optional[float] = None
+        self.highest_since_entry: Optional[float] = None
+        self.entry_atr: Optional[float] = None
+        self.holding_bars = 0
+        self.portfolio_history: List[float] = [self.initial_balance]
+        self.trade_log: List[Tuple] = []
+        self.last_ai_action: str = "HOLD"
+        self.last_buy_prob: float = 0.0
+        self.last_sell_prob: float = 0.0
+        self.trailing_stop_price: Optional[float] = None
+        self.take_profit_price: Optional[float] = None
+        
+    def _prepare_data(self):
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col in self.df.columns:
+                self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
+        
+        self.df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+        if "Volume" not in self.df.columns: self.df["Volume"] = 0
+        if "High" not in self.df.columns: self.df["High"] = self.df["Close"]
+        if "Low" not in self.df.columns: self.df["Low"] = self.df["Close"]
+        if "Open" not in self.df.columns: self.df["Open"] = self.df["Close"]
+            
+        self.df = self.df.dropna(subset=["Close"])
+        if self.df.empty:
+            print(f"  [DIAGNOSTIC] {self.ticker}: DataFrame became empty after dropping NaNs in 'Close' during _prepare_data. Skipping further prep.")
+            return
+        self.df = self.df.reset_index(drop=True)
+        self.df = self.df.ffill().bfill()
+        
+        close = self.df["Close"]
+        high = self.df["High"] if "High" in self.df.columns else None
+        low  = self.df["Low"]  if "Low" in self.df.columns else None
+
+        high = self.df["High"] if "High" in self.df.columns else None
+        low  = self.df["Low"]  if "Low" in self.df.columns else None
+        prev_close = close.shift(1)
+        if high is not None and low is not None:
+            hl = (high - low).abs()
+            h_pc = (high - prev_close).abs()
+            l_pc = (low  - prev_close).abs()
+            tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
+            self.df["ATR"] = tr.rolling(ATR_PERIOD).mean()
+        else:
+            ret = close.pct_change(fill_method=None)
+            self.df["ATR"] = (ret.rolling(ATR_PERIOD).std() * close).rolling(2).mean()
+        
+        self.df['ATR_MED'] = self.df['ATR'].rolling(50).median()
+
+        first_valid_atr_idx = self.df['ATR'].first_valid_index()
+        if first_valid_atr_idx is not None:
+            self.current_step = self.df.index.get_loc(first_valid_atr_idx)
+        else:
+            pass
+
+        self.df["Returns"]    = close.pct_change(fill_method=None)
+        self.df["SMA_F_S"]    = close.rolling(FEAT_SMA_SHORT).mean()
+        self.df["SMA_F_L"]    = close.rolling(FEAT_SMA_LONG).mean()
+        self.df["Volatility"] = self.df["Returns"].rolling(FEAT_VOL_WINDOW).std()
+        
+        delta_feat = close.diff()
+        gain_feat = (delta_feat.where(delta_feat > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+        loss_feat = (-delta_feat.where(delta_feat < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+        rs_feat = gain_feat / loss_feat
+        self.df['RSI_feat'] = 100 - (100 / (1 + rs_feat))
+
+        ema_12 = close.ewm(span=12, adjust=False).mean()
+        ema_26 = close.ewm(span=26, adjust=False).mean()
+        self.df['MACD'] = ema_12 - ema_26
+        self.df['MACD_signal'] = self.df['MACD'].ewm(span=9, adjust=False).mean()
+        
+        bb_mid = close.rolling(window=20).mean()
+        bb_std = close.rolling(window=20).std()
+        self.df['BB_upper'] = bb_mid + (bb_std * 2)
+        self.df['BB_lower'] = bb_mid - (bb_std * 2)
+
+        low_14, high_14 = self.df['Low'].rolling(window=14).min(), self.df['High'].rolling(window=14).max()
+        self.df['%K'] = (self.df['Close'] - low_14) / (high_14 - low_14) * 100
+        self.df['%D'] = self.df['%K'].rolling(window=3).mean()
+
+        self.df['up_move'] = self.df['High'] - self.df['High'].shift(1)
+        self.df['down_move'] = self.df['Low'].shift(1) - self.df['Low']
+        self.df['+DM'] = np.where((self.df['up_move'] > self.df['down_move']) & (self.df['up_move'] > 0), self.df['up_move'], 0)
+        self.df['-DM'] = np.where((self.df['down_move'] > self.df['up_move']) & (self.df['down_move'] > 0), self.df['down_move'], 0)
+        high_low_diff = self.df['High'] - self.df['Low']
+        high_prev_close_diff_abs = (self.df['High'] - self.df['Close'].shift(1)).abs()
+        low_prev_close_diff_abs = (self.df['Low'] - self.df['Close'].shift(1)).abs()
+        self.df['TR'] = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
+        alpha = 1/14
+        self.df['+DM14'] = self.df['+DM'].ewm(alpha=alpha, adjust=False).mean()
+        self.df['-DM14'] = self.df['-DM'].ewm(alpha=alpha, adjust=False).mean()
+        self.df['TR14'] = self.df['TR'].ewm(alpha=alpha, adjust=False).mean()
+        self.df['DX'] = (abs(self.df['+DM14'] - self.df['-DM14']) / (self.df['+DM14'] + self.df['-DM14'])) * 100
+        self.df['DX'] = self.df['DX'].fillna(0)
+        self.df['ADX'] = self.df['DX'].ewm(alpha=alpha, adjust=False).mean()
+        self.df['ADX'] = self.df['ADX'].fillna(0)
+        self.df['+DM'] = self.df['+DM'].fillna(0)
+        self.df['-DM'] = self.df['-DM'].fillna(0)
+        self.df['TR'] = self.df['TR'].fillna(0)
+        self.df['+DM14'] = self.df['+DM14'].fillna(0)
+        self.df['-DM14'] = self.df['-DM14'].fillna(0)
+        self.df['TR14'] = self.df['TR14'].fillna(0)
+        self.df['%K'] = self.df['%K'].fillna(0)
+        self.df['%D'] = self.df['%D'].fillna(0)
+
+        self.df['OBV'] = (np.sign(self.df['Close'].diff()) * self.df['Volume']).fillna(0).cumsum()
+
+        mfv = ((self.df['Close'] - self.df['Low']) - (self.df['High'] - self.df['Close'])) / (self.df['High'] - self.df['Low']) * self.df['Volume']
+        self.df['CMF'] = mfv.rolling(window=20).sum() / self.df['Volume'].rolling(window=20).sum()
+        self.df['CMF'] = self.df['CMF'].fillna(0)
+
+        self.df['ROC'] = self.df['Close'].pct_change(periods=12) * 100
+
+        self.df['KC_TR'] = pd.concat([self.df['High'] - self.df['Low'], (self.df['High'] - self.df['Close'].shift(1)).abs(), (self.df['Low'] - self.df['Close'].shift(1)).abs()], axis=1).max(axis=1)
+        self.df['KC_ATR'] = self.df['KC_TR'].rolling(window=10).mean()
+        self.df['KC_Middle'] = self.df['Close'].rolling(window=20).mean()
+        self.df['KC_Upper'] = self.df['KC_Middle'] + (self.df['KC_ATR'] * 2)
+        self.df['KC_Lower'] = self.df['KC_Middle'] - (self.df['KC_ATR'] * 2)
+
+        self.df['DC_Upper'] = self.df['High'].rolling(window=20).max()
+        self.df['DC_Lower'] = self.df['Low'].rolling(window=20).min()
+        self.df['DC_Middle'] = (self.df['DC_Upper'] + self.df['DC_Lower']) / 2
+
+        psar = self.df['Close'].copy()
+        af = 0.02
+        max_af = 0.2
+
+        uptrend = True if self.df['Close'].iloc[0] > self.df['Open'].iloc[0] else False
+        ep = self.df['High'].iloc[0] if uptrend else self.df['Low'].iloc[0]
+        sar = self.df['Low'].iloc[0] if uptrend else self.df['High'].iloc[0]
+        
+        for i in range(1, len(self.df)):
+            if uptrend:
+                sar = sar + af * (ep - sar)
+                if self.df['Low'].iloc[i] < sar:
+                    uptrend = False
+                    sar = ep
+                    ep = self.df['Low'].iloc[i]
+                    af = 0.02
+                else:
+                    if self.df['High'].iloc[i] > ep:
+                        ep = self.df['High'].iloc[i]
+                        af = min(max_af, af + 0.02)
+            else:
+                sar = sar + af * (ep - sar)
+                if self.df['High'].iloc[i] > sar:
+                    uptrend = True
+                    sar = ep
+                    ep = self.df['High'].iloc[i]
+                    af = 0.02
+                else:
+                    if self.df['Low'].iloc[i] < ep:
+                        ep = self.df['Low'].iloc[i]
+                        af = min(max_af, af + 0.02)
+            psar.iloc[i] = sar
+        self.df['PSAR'] = psar
+
+        mf_multiplier = ((self.df['Close'] - self.df['Low']) - (self.df['High'] - self.df['Close'])) / (self.df['High'] - self.df['Low'])
+        mf_volume = mf_multiplier * self.df['Volume']
+        self.df['ADL'] = mf_volume.cumsum()
+        self.df['ADL'] = self.df['ADL'].fillna(0)
+
+        TP = (self.df['High'] + self.df['Low'] + self.df['Close']) / 3
+        self.df['CCI'] = (TP - TP.rolling(window=20).mean()) / (0.015 * TP.rolling(window=20).std())
+        self.df['CCI'] = self.df['CCI'].fillna(0)
+
+        self.df['VWAP'] = (self.df['Close'] * self.df['Volume']).rolling(window=FEAT_VOL_WINDOW).sum() / self.df['Volume'].rolling(window=FEAT_VOL_WINDOW).sum()
+        self.df['VWAP'] = self.df['VWAP'].fillna(self.df['Close'])
+
+        if "ATR" not in self.df.columns:
+            high = self.df["High"] if "High" in self.df.columns else None
+            low  = self.df["Low"]  if "Low" in self.df.columns else None
+            prev_close = self.df["Close"].shift(1)
+            if high is not None and low is not None:
+                hl = (high - low).abs()
+                h_pc = (high - prev_close).abs()
+                l_pc = (low  - prev_close).abs()
+                tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
+                self.df["ATR"] = tr.rolling(ATR_PERIOD).mean()
+            else:
+                ret = self.df["Close"].pct_change(fill_method=None)
+                self.df["ATR"] = (ret.rolling(ATR_PERIOD).std() * close).rolling(2).mean()
+            self.df["ATR"] = self.df["ATR"].fillna(0)
+
+        self.df['ATR_Pct'] = (self.df['ATR'] / self.df['Close']) * 100
+        self.df['ATR_Pct'] = self.df['ATR_Pct'].fillna(0)
+
+        mf_multiplier_co = ((self.df['Close'] - self.df['Low']) - (self.df['High'] - self.df['Close'])) / (self.df['High'] - self.df['Low'])
+        adl_fast = (mf_multiplier_co * self.df['Volume']).ewm(span=3, adjust=False).mean()
+        adl_slow = (mf_multiplier_co * self.df['Volume']).ewm(span=10, adjust=False).mean()
+        self.df['Chaikin_Oscillator'] = adl_fast - adl_slow
+        self.df['Chaikin_Oscillator'] = self.df['Chaikin_Oscillator'].fillna(0)
+
+        typical_price_mfi = (self.df['High'] + self.df['Low'] + self.df['Close']) / 3
+        money_flow_mfi = typical_price_mfi * self.df['Volume']
+        positive_mf_mfi = money_flow_mfi.where(typical_price_mfi > typical_price_mfi.shift(1), 0)
+        negative_mf_mfi = money_flow_mfi.where(typical_price_mfi < typical_price_mfi.shift(1), 0)
+        mfi_ratio = positive_mf_mfi.rolling(window=14).sum() / negative_mf_mfi.rolling(window=14).sum()
+        self.df['MFI'] = 100 - (100 / (1 + mfi_ratio))
+        self.df['MFI'] = self.df['MFI'].fillna(0)
+
+        self.df['OBV_SMA'] = self.df['OBV'].rolling(window=10).mean()
+        self.df['OBV_SMA'] = self.df['OBV_SMA'].fillna(0)
+
+        self.df['Log_Returns'] = np.log(self.df['Close'] / self.df['Close'].shift(1))
+        self.df['Historical_Volatility'] = self.df['Log_Returns'].rolling(window=20).std() * np.sqrt(252)
+        self.df['Historical_Volatility'] = self.df['Historical_Volatility'].fillna(0)
+
+    def _date_at(self, i: int) -> str:
+        if "Date" in self.df.columns:
+            return str(self.df.loc[i, "Date"])
+        return str(i)
+
+    def _get_model_prediction(self, i: int, model) -> float:
+        if not self.use_gate or model is None:
+            return 0.0
+        row = self.df.loc[i]
+        
+        model_feature_names = self.scaler.feature_names_in_ if hasattr(self.scaler, 'feature_names_in_') else self.feature_set
+        
+        feature_values = {f: row.get(f, 0.0) for f in model_feature_names}
+        
+        X_df = pd.DataFrame([feature_values], columns=model_feature_names)
+        
+        X_df = X_df.apply(pd.to_numeric, errors='coerce').fillna(0.0)
+
+        if X_df.isnull().all().any():
+            print(f"  [{self.ticker}] Critical: Feature column is all NaN after fillna at step {i}. Skipping prediction.")
+            return 0.0
+
+        try:
+            if PYTORCH_AVAILABLE and isinstance(model, (LSTMClassifier, GRUClassifier)):
+                start_idx = max(0, i - SEQUENCE_LENGTH + 1)
+                end_idx = i + 1
+                
+                historical_data_for_seq = self.df.loc[start_idx:end_idx-1, model_feature_names].copy()
+                
+                for col in historical_data_for_seq.columns:
+                    historical_data_for_seq[col] = pd.to_numeric(historical_data_for_seq[col], errors='coerce').fillna(0.0)
+
+                X_scaled_seq = self.scaler.transform(historical_data_for_seq)
+                
+                # Pad sequence if its length is less than SEQUENCE_LENGTH
+                if X_scaled_seq.shape[0] < SEQUENCE_LENGTH:
+                    padding_needed = SEQUENCE_LENGTH - X_scaled_seq.shape[0]
+                    padding_zeros = np.zeros((padding_needed, X_scaled_seq.shape[1]))
+                    X_scaled_seq = np.vstack((padding_zeros, X_scaled_seq))
+
+                X_tensor = torch.tensor(X_scaled_seq, dtype=torch.float32).unsqueeze(0)
+                
+                device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+                X_tensor = X_tensor.to(device)
+
+                model.to(device)
+
+                model.eval()
+                with torch.no_grad():
+                    output = model(X_tensor)
+                    return float(output.cpu().numpy()[0][0])
+            else:
+                X_scaled_np = self.scaler.transform(X_df)
+                X = pd.DataFrame(X_scaled_np, columns=model_feature_names)
+                return float(model.predict_proba(X)[0][1])
+        except Exception as e:
+            print(f"  [{self.ticker}] Error in model prediction at step {i}: {e}")
+            return 0.0
+
+    def _allow_buy_by_model(self, i: int) -> bool:
+        self.last_buy_prob = self._get_model_prediction(i, self.model_buy)
+        return self.last_buy_prob >= self.min_proba_buy
+
+    def _allow_sell_by_model(self, i: int) -> bool:
+        self.last_sell_prob = self._get_model_prediction(i, self.model_sell)
+        return self.last_sell_prob >= self.min_proba_sell
+
+    def _position_size_from_atr(self, price: float, atr: float) -> int:
+        if atr is None or np.isnan(atr) or atr <= 0 or price <= 0:
+            return 0
+        investment_amount = INVESTMENT_PER_STOCK
+        
+        qty = int(investment_amount / price)
+        
+        return max(qty, 0)
+
+    def _buy(self, price: float, atr: Optional[float], date: str):
+        if self.cash <= 0:
+            return
+
+        qty = self._position_size_from_atr(price, atr if atr is not None else np.nan)
+        if qty <= 0:
+            return
+
+        cost = price * qty * (1 + self.transaction_cost)
+        if cost > self.cash:
+            qty = int(self.cash / (price * (1 + self.transaction_cost)))
+        
+        if qty <= 0:
+            return
+
+        fee = price * qty * self.transaction_cost
+        cost = price * qty + fee
+
+        self.cash -= cost
+        self.shares += qty
+        self.entry_price = price
+        self.entry_atr = atr if atr is not None and not np.isnan(atr) else None
+        self.highest_since_entry = price
+        self.holding_bars = 0
+        self.trade_log.append((date, "BUY", price, qty, self.ticker, {"fee": fee}, fee))
+        self.last_ai_action = "BUY"
+
+    def _sell(self, price: float, date: str):
+        if self.shares <= 0:
+            return
+        qty = int(self.shares)
+        proceeds = price * qty
+        fee = proceeds * self.transaction_cost
+        self.cash += proceeds - fee
+        self.shares -= qty
+        self.entry_price = None
+        self.entry_atr = None
+        self.highest_since_entry = None
+        self.holding_bars = 0
+        self.trade_log.append((date, "SELL", price, qty, self.ticker, {"fee": fee}, fee))
+        self.last_ai_action = "SELL"
+
+    def step(self):
+        if self.current_step < 1:
+            self.current_step += 1
+            self.portfolio_history.append(self.initial_balance)
+            return False
+
+        if self.current_step >= len(self.df):
+            return True
+
+        row = self.df.iloc[self.current_step]
+        
+        price = float(row["Close"])
+        date = self._date_at(self.current_step)
+        atr = float(row.get("ATR", np.nan)) if pd.notna(row.get("ATR", np.nan)) else None
+
+        ai_signal = False
+        if not self.use_simple_rule_strategy:
+            ai_signal = self._allow_buy_by_model(self.current_step)
+        
+        simple_rule_entry_signal = False
+        if self.use_simple_rule_strategy:
+            sma_short = self.df.loc[self.current_step, "SMA_F_S"]
+            sma_long = self.df.loc[self.current_step, "SMA_F_L"]
+            prev_sma_short = self.df.loc[self.current_step - 1, "SMA_F_S"]
+            prev_sma_long = self.df.loc[self.current_step - 1, "SMA_F_L"]
+            if prev_sma_short <= prev_sma_long and sma_short > sma_long:
+                simple_rule_entry_signal = True
+
+        if self.shares == 0 and (ai_signal or simple_rule_entry_signal):
+            self._buy(price, atr, date)
+        
+        ai_exit_signal = False
+        if not self.use_simple_rule_strategy:
+            ai_exit_signal = self._allow_sell_by_model(self.current_step)
+
+        simple_rule_exit_signal = False
+        if self.shares > 0 and self.use_simple_rule_strategy:
+            if self.highest_since_entry is None or price > self.highest_since_entry:
+                self.highest_since_entry = price
+            
+            if self.entry_price is not None:
+                self.trailing_stop_price = self.highest_since_entry * (1 - self.simple_rule_trailing_stop_percent)
+                self.take_profit_price = self.entry_price * (1 + self.simple_rule_take_profit_percent)
+            
+            if self.trailing_stop_price is not None and price <= self.trailing_stop_price:
+                simple_rule_exit_signal = True
+                self.last_ai_action = "SELL (Trailing Stop)"
+            elif self.take_profit_price is not None and price >= self.take_profit_price:
+                simple_rule_exit_signal = True
+                self.last_ai_action = "SELL (Take Profit)"
+
+        if self.shares > 0 and (ai_exit_signal or simple_rule_exit_signal):
+            self._sell(price, date)
+        else:
+            self.last_ai_action = "HOLD"
+
+        port_val = self.cash + self.shares * price
+        self.portfolio_history.append(port_val)
+        self.current_step += 1
+        return self.current_step >= len(self.df)
+
+    def run(self) -> Tuple[float, List[Tuple], str, float, float, float]:
+        if self.df.empty:
+            return self.initial_balance, [], "N/A", np.nan, np.nan, 0.0
+        done = False
+        while not done:
+            done = self.step()
+        
+        shares_before_liquidation = self.shares
+        
+        if self.shares > 0 and not self.df.empty:
+            last_price = float(self.df.iloc[-1]["Close"])
+            self._sell(last_price, self._date_at(len(self.df)-1))
+            self.portfolio_history[-1] = self.cash
+        return self.portfolio_history[-1], self.trade_log, self.last_ai_action, self.last_buy_prob, self.last_sell_prob, shares_before_liquidation

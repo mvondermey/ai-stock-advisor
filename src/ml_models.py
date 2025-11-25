@@ -1,0 +1,907 @@
+import numpy as np
+import pandas as pd
+from typing import List, Dict, Tuple, Optional
+import warnings
+import json
+from pathlib import Path
+import joblib # For model saving/loading
+import sys # For current_process in train_worker
+import matplotlib.pyplot as plt # For SHAP plots
+
+# Scikit-learn imports (fallback for CPU or if cuML not available)
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.model_selection import cross_val_score, StratifiedKFold, GridSearchCV, RandomizedSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.exceptions import UndefinedMetricWarning
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import MinMaxScaler
+from scipy.stats import uniform, randint
+
+# Added for XGBoost
+try:
+    import xgboost as xgb
+    XGBOOST_AVAILABLE = True
+except ImportError:
+    XGBOOST_AVAILABLE = False
+
+# Added for PyTorch and LSTM/GRU models
+try:
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    from torch.utils.data import TensorDataset, DataLoader
+    PYTORCH_AVAILABLE = True
+except ImportError:
+    PYTORCH_AVAILABLE = False
+
+# Added for SHAP
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except ImportError:
+    SHAP_AVAILABLE = False
+
+# Import configuration from config.py
+from config import (
+    SEED, FEAT_SMA_LONG, SEQUENCE_LENGTH, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS,
+    LSTM_DROPOUT, LSTM_EPOCHS, LSTM_BATCH_SIZE, LSTM_LEARNING_RATE,
+    GRU_HIDDEN_SIZE_OPTIONS, GRU_NUM_LAYERS_OPTIONS, GRU_DROPOUT_OPTIONS,
+    GRU_LEARNING_RATE_OPTIONS, GRU_BATCH_SIZE_OPTIONS, GRU_EPOCHS_OPTIONS,
+    ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION, SAVE_PLOTS, MIN_PROBA_BUY, MIN_PROBA_SELL,
+    FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING
+)
+
+# Import data fetching for training data
+from feature_engineering import fetch_training_data
+
+# --- Globals for ML library status ---
+_ml_libraries_initialized = False
+CUDA_AVAILABLE = False
+CUML_AVAILABLE = False
+LGBMClassifier = None
+XGBClassifier = None
+cuMLRandomForestClassifier = None
+cuMLLogisticRegression = None
+cuMLStandardScaler = None
+models_and_params: Dict = {}
+
+# Helper function (copied from main.py)
+def _ensure_dir(p: Path) -> None:
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+# Define LSTM/GRU model architecture
+if PYTORCH_AVAILABLE:
+    class LSTMClassifier(nn.Module):
+        def __init__(self, input_size, hidden_size, num_layers, output_size, dropout_rate=0.5):
+            super(LSTMClassifier, self).__init__()
+            self.hidden_size = hidden_size
+            self.num_layers = num_layers
+            self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate)
+            self.fc = nn.Linear(hidden_size, output_size)
+            self.sigmoid = nn.Sigmoid()
+
+        def forward(self, x):
+            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+            c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+            out, _ = self.lstm(x, (h0, c0))
+            out = self.fc(out[:, -1, :])
+            out = self.sigmoid(out)
+            return out
+
+    class GRUClassifier(nn.Module):
+        def __init__(self, input_size, hidden_size, num_layers, output_size, dropout_rate=0.5):
+            super(GRUClassifier, self).__init__()
+            self.hidden_size = hidden_size
+            self.num_layers = num_layers
+            self.gru = nn.GRU(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate)
+            self.fc = nn.Linear(hidden_size, output_size)
+            self.sigmoid = nn.Sigmoid()
+
+        def forward(self, x):
+            if x.dim() == 4:
+                x = x.squeeze(0)
+
+            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+            out, _ = self.gru(x, h0)
+            out = self.fc(out[:, -1, :])
+            out = self.sigmoid(out)
+            return out
+
+def initialize_ml_libraries():
+    """Initializes ML libraries and prints their status only once."""
+    global _ml_libraries_initialized, CUDA_AVAILABLE, CUML_AVAILABLE, LGBMClassifier, XGBClassifier, models_and_params, \
+           cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler
+    
+    if _ml_libraries_initialized:
+        return models_and_params
+
+    # CUML_AVAILABLE is initially False and set to True if imports succeed.
+    # The explicit disablement and fallback message are removed to allow cuML to be enabled if available.
+
+    try:
+        if PYTORCH_AVAILABLE:
+            torch.manual_seed(SEED)
+            if torch.cuda.is_available():
+                CUDA_AVAILABLE = True
+                torch.cuda.manual_seed_all(SEED)
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.benchmark = False
+                print("✅ CUDA is available. GPU acceleration enabled with deterministic algorithms.")
+            else:
+                print("⚠️ CUDA is not available. GPU acceleration will not be used.")
+        else:
+            print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
+    except NameError:
+        print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
+
+    try:
+        from cuml.ensemble import RandomForestClassifier as cuMLRandomForestClassifier_
+        from cuml.linear_model import LogisticRegression as cuMLLogisticRegression_
+        from cuml.preprocessing import StandardScaler as cuMLStandardScaler_
+        cuMLRandomForestClassifier = cuMLRandomForestClassifier_
+        cuMLLogisticRegression = cuMLLogisticRegression_
+        cuMLStandardScaler = cuMLStandardScaler_
+    except ImportError:
+        pass
+    except Exception as e:
+        pass
+
+    try:
+        from lightgbm import LGBMClassifier as lgbm
+        LGBMClassifier = lgbm
+        if CUDA_AVAILABLE:
+            lgbm_model_params = {
+                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='gpu'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+            }
+            models_and_params["LightGBM (GPU)"] = lgbm_model_params
+            print("✅ LightGBM found. Configured for GPU.")
+        else:
+            print("ℹ️ LightGBM found. Will use CPU (CUDA not available).")
+            lgbm_model_params = {
+                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+            }
+            models_and_params["LightGBM (CPU)"] = lgbm_model_params
+    except ImportError:
+        print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
+
+    if XGBOOST_AVAILABLE:
+        XGBClassifier = xgb.XGBClassifier
+        xgb_model_params = {
+            "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1),
+            "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
+        }
+        if CUDA_AVAILABLE:
+            xgb_model_params["model"].set_params(tree_method='gpu_hist')
+            models_and_params["XGBoost (GPU)"] = xgb_model_params
+            print("✅ XGBoost found. Configured for GPU (gpu_hist tree_method).")
+        else:
+            xgb_model_params["model"].set_params(tree_method='hist') # Fallback to CPU hist
+            models_and_params["XGBoost (CPU)"] = xgb_model_params
+            print("ℹ️ XGBoost found. Will use CPU (CUDA not available).")
+
+    _ml_libraries_initialized = True
+    return models_and_params
+
+def analyze_shap_for_gru(model: GRUClassifier, scaler: MinMaxScaler, X_df: pd.DataFrame, feature_names: List[str], ticker: str, target_col: str):
+    """
+    Calculates and visualizes SHAP values for a GRU model.
+    """
+    if not SHAP_AVAILABLE:
+        print(f"  [{ticker}] SHAP is not available. Skipping SHAP analysis.")
+        return
+
+    if isinstance(model, GRUClassifier):
+        print(f"  [{ticker}] SHAP KernelExplainer is not directly compatible with GRU models due to sequential input. Skipping SHAP analysis for GRU.")
+        return
+
+    print(f"  [{ticker}] Calculating SHAP values for GRU model ({target_col})...")
+    
+    try:
+        def gru_predict_proba_wrapper_for_kernel(X_unsequenced_np):
+            X_scaled_np = scaler.transform(X_unsequenced_np)
+            
+            X_sequences_for_pred = []
+            if len(X_scaled_np) < SEQUENCE_LENGTH:
+                return np.full(len(X_unsequenced_np), 0.5)
+
+            for i in range(len(X_scaled_np) - SEQUENCE_LENGTH + 1):
+                X_sequences_for_pred.append(X_scaled_np[i:i + SEQUENCE_LENGTH])
+            
+            if not X_sequences_for_pred:
+                return np.full(len(X_unsequenced_np), 0.5)
+
+            X_sequences_tensor = torch.tensor(np.array(X_sequences_for_pred), dtype=torch.float32)
+            
+            device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+            model.to(device)
+            X_sequences_tensor = X_sequences_tensor.to(device)
+
+            model.eval()
+            with torch.no_grad():
+                outputs = model(X_sequences_tensor)
+                return outputs.cpu().numpy().flatten()
+
+        num_background_samples = min(50, len(X_df))
+        background_data_for_kernel = X_df.sample(num_background_samples, random_state=SEED).values
+        num_explain_samples = min(20, len(X_df))
+        explain_data_for_kernel = X_df.sample(num_explain_samples, random_state=SEED).values
+
+        if explain_data_for_kernel.shape[0] == 0:
+            print(f"  [{ticker}] Explain data for KernelExplainer is empty. Skipping SHAP calculation.")
+            return
+
+        explainer = shap.KernelExplainer(
+            gru_predict_proba_wrapper_for_kernel,
+            background_data_for_kernel
+        )
+        
+        shap_values = explainer.shap_values(explain_data_for_kernel)
+        
+        shap_values_for_plot = None
+        if isinstance(shap_values, list):
+            if len(shap_values) == 2:
+                shap_values_for_plot = shap_values[1]
+            elif len(shap_values) == 1:
+                shap_values_for_plot = shap_values[0]
+            else:
+                print(f"  [{ticker}] SHAP values list has unexpected length ({len(shap_values)}). Skipping plot.")
+                return
+        elif isinstance(shap_values, np.ndarray):
+            shap_values_for_plot = shap_values
+        else:
+            print(f"  [{ticker}] SHAP values are not a list or numpy array. Type: {type(shap_values)}. Skipping plot.")
+            return
+
+        if shap_values_for_plot is None or shap_values_for_plot.size == 0:
+            print(f"  [{ticker}] SHAP values for plotting are empty or None. Skipping plot.")
+            return
+
+        plt.figure(figsize=(10, 6))
+        shap.summary_plot(shap_values_for_plot, explain_data_for_kernel, feature_names=feature_names, plot_type="bar", show=False)
+        plt.title(f"SHAP Feature Importance for {ticker} GRU ({target_col})")
+        plt.tight_layout()
+        
+        shap_plot_path = Path(f"logs/shap_plots/{ticker}_GRU_SHAP_{target_col}.png")
+        _ensure_dir(shap_plot_path.parent)
+        plt.savefig(shap_plot_path)
+        plt.close()
+        print(f"  [{ticker}] SHAP summary plot saved to {shap_plot_path}")
+
+    except Exception as e:
+        print(f"  [{ticker}] Error during SHAP analysis for GRU model ({target_col}): {e}")
+        import traceback
+        traceback.print_exc()
+
+def analyze_shap_for_tree_model(model, X_df: pd.DataFrame, feature_names: List[str], ticker: str, target_col: str):
+    """
+    Calculates and visualizes SHAP values for tree-based models (XGBoost, RandomForest).
+    """
+    if not SHAP_AVAILABLE:
+        print(f"  [{ticker}] SHAP is not available. Skipping SHAP analysis.")
+        return
+
+    print(f"  [{ticker}] Calculating SHAP values for tree model ({target_col})...")
+    
+    try:
+        explainer = shap.TreeExplainer(model)
+        
+        num_explain_samples = min(100, len(X_df))
+        explain_data = X_df.sample(num_explain_samples, random_state=SEED)
+
+        shap_values = explainer.shap_values(explain_data)
+        
+        shap_values_for_plot = None
+        if isinstance(shap_values, list):
+            if len(shap_values) == 2:
+                shap_values_for_plot = shap_values[1]
+            elif len(shap_values) == 1:
+                shap_values_for_plot = shap_values[0]
+            else:
+                print(f"  [{ticker}] SHAP values list has unexpected length ({len(shap_values)}). Skipping plot.")
+                return
+        elif isinstance(shap_values, np.ndarray):
+            shap_values_for_plot = shap_values
+        else:
+            print(f"  [{ticker}] SHAP values are not a list or numpy array. Type: {type(shap_values)}. Skipping plot.")
+            return
+
+        if shap_values_for_plot is None or shap_values_for_plot.size == 0:
+            print(f"  [{ticker}] SHAP values for plotting are empty or None. Skipping plot.")
+            return
+        
+        plt.figure(figsize=(10, 6))
+        shap.summary_plot(shap_values_for_plot, explain_data, feature_names=feature_names, plot_type="bar", show=False)
+        plt.title(f"SHAP Feature Importance for {ticker} Tree Model ({target_col})")
+        plt.tight_layout()
+        
+        shap_plot_path = Path(f"logs/shap_plots/{ticker}_TREE_SHAP_{target_col}.png")
+        _ensure_dir(shap_plot_path.parent)
+        plt.savefig(shap_plot_path)
+        plt.close()
+        print(f"  [{ticker}] SHAP summary plot saved to {shap_plot_path}")
+
+    except Exception as e:
+        print(f"  [{ticker}] Error during SHAP analysis for tree model ({target_col}): {e}")
+        import traceback
+        traceback.print_exc()
+
+def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN", initial_model=None, loaded_gru_hyperparams: Optional[Dict] = None):
+    """Train and compare multiple classifiers for a given target, returning the best one."""
+    models_and_params = initialize_ml_libraries()
+    d = df.copy()
+    
+    if target_col not in d.columns:
+        print(f"  [DIAGNOSTIC] {ticker}: Target column '{target_col}' not found. Skipping.")
+        return None, None, None
+
+    if feature_set is None:
+        print("⚠️ feature_set was None in train_and_evaluate_models. Inferring features from DataFrame columns.")
+        final_feature_names = [col for col in d.columns if col not in ["Target", "TargetClassBuy", "TargetClassSell"]]
+        if not final_feature_names:
+            print("⚠️ No features found in DataFrame after excluding target columns. Skipping model training.")
+            return None, None, None
+    else:
+        final_feature_names = [f for f in feature_set if f in d.columns]
+        if len(final_feature_names) != len(feature_set):
+            missing_features = set(feature_set) - set(final_feature_names)
+            print(f"⚠️ Missing features in DataFrame 'd' that were expected in feature_set: {missing_features}. Proceeding with available features.")
+        if not final_feature_names:
+            print("⚠️ No valid features to train with after filtering. Skipping model training.")
+            return None, None, None
+
+    required_cols_for_training = final_feature_names + [target_col]
+    if not all(col in d.columns for col in required_cols_for_training):
+        missing = [col for col in required_cols_for_training if col not in d.columns]
+        print(f"⚠️ Missing critical columns for model comparison (target: {target_col}, missing: {missing}). Skipping.")
+        return None, None, None
+
+    d = d[required_cols_for_training].dropna()
+    print(f"  [DIAGNOSTIC] {ticker}: train_and_evaluate_models - Rows after dropping NaNs: {len(d)}")
+    
+    if len(d) < 50:
+        print(f"  [DIAGNOSTIC] {ticker}: Not enough rows after feature prep ({len(d)} rows, need >= 50). Skipping.")
+        return None, None, None
+    
+    X_df = d[final_feature_names]
+    y = d[target_col].values
+
+    unique_classes, counts = np.unique(y, return_counts=True)
+    if len(unique_classes) < 2:
+        print(f"  [DIAGNOSTIC] {ticker}: Not enough class diversity for '{target_col}' (only 1 class found: {unique_classes}). Skipping.")
+        return None, None, None
+    
+    n_splits = 5
+    if any(c < n_splits for c in counts):
+        print(f"  [DIAGNOSTIC] {ticker}: Least populated class in '{target_col}' has {min(counts)} members (needs >= {n_splits}). Skipping.")
+        return None, None, None
+
+    if CUML_AVAILABLE and cuMLStandardScaler:
+        try:
+            import cuml
+            scaler = cuMLStandardScaler()
+            X_gpu_np = X_df.values
+            X_scaled = scaler.fit_transform(X_gpu_np)
+            X = pd.DataFrame(X_scaled, columns=final_feature_names, index=X_df.index)
+        except Exception as e:
+            print(f"⚠️ Error using cuML StandardScaler: {e}. Falling back to sklearn.StandardScaler.")
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X_df)
+            X = pd.DataFrame(X_scaled, columns=final_feature_names, index=X_df.index)
+    else:
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X_df)
+        X = pd.DataFrame(X_scaled, columns=final_feature_names, index=X_df.index)
+    
+    scaler.feature_names_in_ = list(final_feature_names) 
+
+    models_and_params_local = {} 
+
+    if CUML_AVAILABLE and USE_LOGISTIC_REGRESSION:
+        models_and_params_local["cuML Logistic Regression"] = {
+            "model": cuMLLogisticRegression(class_weight="balanced", solver='qn'),
+            "params": {'C': [0.1, 1.0, 10.0]}
+        }
+    if CUML_AVAILABLE and USE_RANDOM_FOREST:
+        models_and_params_local["cuML Random Forest"] = {
+            "model": cuMLRandomForestClassifier(random_state=SEED),
+            "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
+        }
+    
+    if USE_LOGISTIC_REGRESSION:
+        models_and_params_local["Logistic Regression"] = {
+            "model": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
+            "params": {'C': [0.1, 1.0, 10.0, 100.0]}
+        }
+    if USE_RANDOM_FOREST:
+        models_and_params_local["Random Forest"] = {
+            "model": RandomForestClassifier(random_state=SEED, class_weight="balanced"),
+            "params": {'n_estimators': [50, 100, 200, 300], 'max_depth': [5, 10, 15, None]}
+        }
+    if USE_SVM:
+        models_and_params_local["SVM"] = {
+            "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
+            "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear']}
+        }
+    if USE_MLP_CLASSIFIER:
+        models_and_params_local["MLPClassifier"] = {
+            "model": MLPClassifier(random_state=SEED, max_iter=500, early_stopping=True),
+            "params": {'hidden_layer_sizes': [(100,), (100, 50), (50, 25)], 'activation': ['relu', 'tanh'], 'alpha': [0.0001, 0.001, 0.01], 'learning_rate_init': [0.001, 0.01]}
+        }
+
+    if LGBMClassifier:
+        if CUDA_AVAILABLE:
+            lgbm_model_params = {
+                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='gpu'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+            }
+            models_and_params_local["LightGBM (GPU)"] = lgbm_model_params
+        else:
+            lgbm_model_params = {
+                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+            }
+            models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
+
+    if XGBOOST_AVAILABLE and XGBClassifier:
+        if CUDA_AVAILABLE:
+            xgb_model_params = {
+                "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1, tree_method='gpu_hist'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
+            }
+            models_and_params_local["XGBoost (GPU)"] = xgb_model_params
+        else:
+            xgb_model_params = {
+                "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1, tree_method='hist'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
+            }
+            models_and_params_local["XGBoost (CPU)"] = xgb_model_params
+
+    if PYTORCH_AVAILABLE:
+        dl_scaler = MinMaxScaler(feature_range=(0, 1))
+        X_scaled_dl = dl_scaler.fit_transform(X_df)
+        
+        X_sequences = []
+        y_sequences = []
+        for i in range(len(X_scaled_dl) - SEQUENCE_LENGTH):
+            X_sequences.append(X_scaled_dl[i:i + SEQUENCE_LENGTH])
+            y_sequences.append(y[i + SEQUENCE_LENGTH])
+        
+        if not X_sequences:
+            print(f"  [DIAGNOSTIC] {ticker}: Not enough data to create sequences for DL models (need > {SEQUENCE_LENGTH} rows). Skipping DL models.")
+        else:
+            X_sequences = torch.tensor(np.array(X_sequences), dtype=torch.float32)
+            y_sequences = torch.tensor(np.array(y_sequences), dtype=torch.float32).unsqueeze(1)
+
+            device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+            
+            dataset = TensorDataset(X_sequences, y_sequences)
+            dataloader = DataLoader(dataset, batch_size=LSTM_BATCH_SIZE, shuffle=True)
+
+            input_size = X_sequences.shape[2]
+            criterion = nn.BCELoss()
+
+            if USE_LSTM:
+                lstm_model = LSTMClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
+                if initial_model and isinstance(initial_model, LSTMClassifier):
+                    try:
+                        lstm_model.load_state_dict(initial_model.state_dict())
+                        print(f"    - Loaded existing LSTM model state for {ticker} to continue training.")
+                    except Exception as e:
+                        print(f"    - Error loading LSTM model state for {ticker}: {e}. Training from scratch.")
+                
+                optimizer_lstm = optim.Adam(lstm_model.parameters(), lr=LSTM_LEARNING_RATE)
+
+                for epoch in range(LSTM_EPOCHS):
+                    for batch_X, batch_y in dataloader:
+                        batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                        optimizer_lstm.zero_grad()
+                        outputs = lstm_model(batch_X)
+                        loss = criterion(outputs, batch_y)
+                        loss.backward()
+                        optimizer_lstm.step()
+                
+                lstm_model.eval()
+                with torch.no_grad():
+                    all_outputs = []
+                    for batch_X, _ in dataloader:
+                        batch_X = batch_X.to(device)
+                        outputs = lstm_model(batch_X)
+                        all_outputs.append(outputs.cpu().numpy())
+                    y_pred_proba_lstm = np.concatenate(all_outputs).flatten()
+                
+                try:
+                    from sklearn.metrics import roc_auc_score
+                    auc_lstm = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_lstm)
+                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": auc_lstm}
+                except ValueError:
+                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": 0.0}
+
+            if USE_GRU:
+                if ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION:
+                    best_gru_auc = -np.inf
+                    best_gru_model = None
+                    best_gru_scaler = None
+                    best_gru_hyperparams = {}
+
+                    def create_focused_range(base_val, step, min_val=None, max_val=None, is_float=False, options_list=None):
+                        if options_list:
+                            return sorted(list(set([x for x in options_list if (min_val is None or x >= min_val) and (max_val is None or x <= max_val)])))
+                        
+                        if is_float:
+                            options = [base_val - step, base_val, base_val + step]
+                            options = [round(x, 4) for x in options]
+                        else:
+                            options = [base_val - step, base_val, base_val + step]
+                        
+                        if min_val is not None:
+                            options = [max(min_val, x) for x in options]
+                        if max_val is not None:
+                            options = [min(max_val, x) for x in options]
+                        return sorted(list(set(options)))
+
+                    base_hidden_size = loaded_gru_hyperparams.get("hidden_size", LSTM_HIDDEN_SIZE) if loaded_gru_hyperparams else LSTM_HIDDEN_SIZE
+                    base_num_layers = loaded_gru_hyperparams.get("num_layers", LSTM_NUM_LAYERS) if loaded_gru_hyperparams else LSTM_NUM_LAYERS
+                    base_dropout_rate = loaded_gru_hyperparams.get("dropout_rate", LSTM_DROPOUT) if loaded_gru_hyperparams else LSTM_DROPOUT
+                    base_learning_rate = loaded_gru_hyperparams.get("learning_rate", LSTM_LEARNING_RATE) if loaded_gru_hyperparams else LSTM_LEARNING_RATE
+                    base_batch_size = loaded_gru_hyperparams.get("batch_size", LSTM_BATCH_SIZE) if loaded_gru_hyperparams else LSTM_BATCH_SIZE
+                    base_epochs = loaded_gru_hyperparams.get("epochs", LSTM_EPOCHS) if loaded_gru_hyperparams else LSTM_EPOCHS
+
+                    hidden_size_options = create_focused_range(base_hidden_size, 32, min_val=32, options_list=GRU_HIDDEN_SIZE_OPTIONS)
+                    num_layers_options = create_focused_range(base_num_layers, 1, min_val=1, options_list=GRU_NUM_LAYERS_OPTIONS)
+                    dropout_rate_options = create_focused_range(base_dropout_rate, 0.1, min_val=0.0, max_val=0.5, is_float=True, options_list=GRU_DROPOUT_OPTIONS)
+                    learning_rate_options = create_focused_range(base_learning_rate, base_learning_rate * 0.5, min_val=0.0001, is_float=True, options_list=GRU_LEARNING_RATE_OPTIONS)
+                    batch_size_options = create_focused_range(base_batch_size, base_batch_size // 2, min_val=16, options_list=GRU_BATCH_SIZE_OPTIONS)
+                    epochs_options = create_focused_range(base_epochs, 20, min_val=10, options_list=GRU_EPOCHS_OPTIONS)
+
+                    best_gru_hyperparams = {
+                        "hidden_size": base_hidden_size, "num_layers": base_num_layers, "dropout_rate": base_dropout_rate,
+                        "learning_rate": base_learning_rate, "batch_size": base_batch_size, "epochs": base_epochs
+                    }
+                    best_gru_auc = -np.inf
+                    best_gru_model = None
+                    best_gru_scaler = dl_scaler
+
+                    hyperparameter_dimensions = [
+                        ("hidden_size", GRU_HIDDEN_SIZE_OPTIONS, 32, None, False, 32),
+                        ("num_layers", GRU_NUM_LAYERS_OPTIONS, 1, None, False, 1),
+                        ("dropout_rate", GRU_DROPOUT_OPTIONS, 0.0, 0.5, True, 0.1),
+                        ("learning_rate", GRU_LEARNING_RATE_OPTIONS, 0.0001, None, True, None),
+                        ("batch_size", GRU_BATCH_SIZE_OPTIONS, 16, None, False, None),
+                        ("epochs", GRU_EPOCHS_OPTIONS, 10, None, False, 20)
+                    ]
+
+                    total_combinations = 0
+                    for param_name, options_list, min_val, max_val, is_float, step_size_for_range in hyperparameter_dimensions:
+                        current_best_val = best_gru_hyperparams[param_name]
+                        if param_name == "learning_rate":
+                            current_options = create_focused_range(current_best_val, current_best_val * 0.5, min_val=min_val, is_float=True)
+                        elif param_name == "batch_size":
+                            current_options = create_focused_range(current_best_val, current_best_val // 2, min_val=min_val, is_float=False)
+                        elif param_name == "epochs":
+                            current_options = create_focused_range(current_best_val, step_size_for_range, min_val=min_val, is_float=False)
+                        else:
+                            current_options = create_focused_range(current_best_val, step_size_for_range, min_val=min_val, max_val=max_val, is_float=is_float, options_list=options_list)
+                        total_combinations += len(current_options)
+
+                    current_iteration = 0
+                    for param_name, options_list, min_val, max_val, is_float, step_size_for_range in hyperparameter_dimensions:
+                        current_best_val = best_gru_hyperparams[param_name]
+                        
+                        if param_name == "learning_rate":
+                            current_options = create_focused_range(current_best_val, current_best_val * 0.5, min_val=min_val, is_float=True)
+                        elif param_name == "batch_size":
+                            current_options = create_focused_range(current_best_val, current_best_val // 2, min_val=min_val, is_float=False)
+                        elif param_name == "epochs":
+                            current_options = create_focused_range(current_best_val, step_size_for_range, min_val=min_val, is_float=False)
+                        else:
+                            current_options = create_focused_range(current_best_val, step_size_for_range, min_val=min_val, max_val=max_val, is_float=is_float, options_list=options_list)
+
+                        for value in current_options:
+                            current_iteration += 1
+                            temp_hyperparams = best_gru_hyperparams.copy()
+                            temp_hyperparams[param_name] = value
+                            
+                            current_dropout_rate = temp_hyperparams["dropout_rate"] if temp_hyperparams["num_layers"] > 1 else 0.0
+                            temp_hyperparams["dropout_rate"] = current_dropout_rate
+
+                            gru_model = GRUClassifier(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]).to(device)
+                            optimizer_gru = optim.Adam(gru_model.parameters(), lr=temp_hyperparams["learning_rate"])
+                            
+                            current_dataloader = DataLoader(dataset, batch_size=temp_hyperparams["batch_size"], shuffle=True)
+
+                            for epoch in range(temp_hyperparams["epochs"]):
+                                for batch_X, batch_y in current_dataloader:
+                                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                                    optimizer_gru.zero_grad()
+                                    outputs = gru_model(batch_X)
+                                    loss = criterion(outputs, batch_y)
+                                    loss.backward()
+                                    optimizer_gru.step()
+                            
+                            gru_model.eval()
+                            with torch.no_grad():
+                                all_outputs = []
+                                for batch_X, _ in current_dataloader:
+                                    batch_X = batch_X.to(device)
+                                    outputs = gru_model(batch_X)
+                                    all_outputs.append(outputs.cpu().numpy())
+                                y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+
+                            try:
+                                from sklearn.metrics import roc_auc_score
+                                auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
+                                print(f"            GRU AUC: {auc_gru:.4f}")
+
+                                if auc_gru > best_gru_auc:
+                                    best_gru_auc = auc_gru
+                                    best_gru_model = gru_model
+                                    best_gru_scaler = dl_scaler # dl_scaler is already fitted
+                                    best_gru_hyperparams = temp_hyperparams.copy() # Update best_gru_hyperparams
+                            except ValueError:
+                                print(f"            GRU AUC: Not enough samples with positive class for AUC calculation.")
+                                
+                    if best_gru_model:
+                        models_and_params_local["GRU"] = {"model": best_gru_model, "scaler": best_gru_scaler, "auc": best_gru_auc, "hyperparams": best_gru_hyperparams}
+                        print(f"      Best GRU found for {ticker} ({target_col}) with AUC: {best_gru_auc:.4f}, Hyperparams: {best_gru_hyperparams}")
+                        print(f"DEBUG: SAVE_PLOTS={SAVE_PLOTS}, SHAP_AVAILABLE={SHAP_AVAILABLE}")
+                        if SAVE_PLOTS and SHAP_AVAILABLE:
+                            analyze_shap_for_gru(best_gru_model, best_gru_scaler, X_df, final_feature_names, ticker, target_col)
+                    else:
+                        models_and_params_local["GRU"] = {"model": None, "scaler": None, "auc": 0.0}
+                else: # ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION is False, use fixed or loaded hyperparameters
+                    if loaded_gru_hyperparams:
+                        print(f"    - Training GRU for {ticker} ({target_col}) with loaded hyperparameters...")
+                        hidden_size = loaded_gru_hyperparams.get("hidden_size", LSTM_HIDDEN_SIZE)
+                        num_layers = loaded_gru_hyperparams.get("num_layers", LSTM_NUM_LAYERS)
+                        dropout_rate = loaded_gru_hyperparams.get("dropout_rate", LSTM_DROPOUT)
+                        learning_rate = loaded_gru_hyperparams.get("learning_rate", LSTM_LEARNING_RATE)
+                        batch_size = loaded_gru_hyperparams.get("batch_size", LSTM_BATCH_SIZE)
+                        epochs = LSTM_EPOCHS
+                        print(f"      Loaded GRU Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
+                    else:
+                        print(f"    - Training GRU for {ticker} ({target_col}) with default fixed hyperparameters...")
+                        hidden_size = LSTM_HIDDEN_SIZE
+                        num_layers = LSTM_NUM_LAYERS
+                        dropout_rate = LSTM_DROPOUT
+                        learning_rate = LSTM_LEARNING_RATE
+                        batch_size = LSTM_BATCH_SIZE
+                        epochs = LSTM_EPOCHS
+                        print(f"      Default GRU Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
+
+                    gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
+                    if initial_model and isinstance(initial_model, GRUClassifier):
+                        try:
+                            gru_model.load_state_dict(initial_model.state_dict())
+                            print(f"    - Loaded existing GRU model state for {ticker} to continue training.")
+                        except Exception as e:
+                            print(f"    - Error loading GRU model state for {ticker}: {e}. Training from scratch.")
+                    
+                    optimizer_gru = optim.Adam(gru_model.parameters(), lr=learning_rate)
+                    
+                    # Create DataLoader for current batch_size
+                    current_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+                    for epoch in range(epochs):
+                        for batch_X, batch_y in current_dataloader:
+                            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                            optimizer_gru.zero_grad()
+                            outputs = gru_model(batch_X)
+                            loss = criterion(outputs, batch_y)
+                            loss.backward()
+                            optimizer_gru.step()
+                    
+                    # Evaluate GRU
+                    gru_model.eval()
+                    with torch.no_grad():
+                        all_outputs = []
+                        for batch_X, _ in current_dataloader:
+                            batch_X = batch_X.to(device)
+                            outputs = gru_model(batch_X)
+                            all_outputs.append(outputs.cpu().numpy())
+                        y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+
+                    try:
+                        from sklearn.metrics import roc_auc_score
+                        auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
+                        current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
+                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
+                        print(f"      GRU AUC (fixed/loaded params): {auc_gru:.4f}")
+                        print(f"DEBUG: SAVE_PLOTS={SAVE_PLOTS}, SHAP_AVAILABLE={SHAP_AVAILABLE}")
+                        if SAVE_PLOTS and SHAP_AVAILABLE:
+                            analyze_shap_for_gru(gru_model, dl_scaler, X_df, final_feature_names, ticker, target_col)
+                    except ValueError:
+                        print(f"      GRU AUC (fixed/loaded params): Not enough samples with positive class for AUC calculation.")
+                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": 0.0}
+
+    best_model_overall = None
+    best_auc_overall = -np.inf
+    best_hyperparams_overall: Optional[Dict] = None # New: To store GRU hyperparams if GRU is best
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    results = {} # Initialize the results dictionary here
+    results = {} # Initialize the results dictionary here
+
+    print("  🔬 Comparing classifier performance (AUC score via 5-fold cross-validation with GridSearchCV):")
+    for name, mp in models_and_params_local.items(): # Iterate over local models_and_params
+        if name in ["LSTM", "GRU"]:
+            # For DL models, we already have AUC from direct training
+            current_auc = mp["auc"]
+            results[name] = current_auc
+            print(f"    - {name}: {current_auc:.4f}")
+            if current_auc > best_auc_overall:
+                best_auc_overall = current_auc
+                best_model_overall = mp["model"]
+                scaler = mp["scaler"] # Use the DL scaler for DL models
+                if name == "GRU": # If GRU is the best, store its hyperparams
+                    best_hyperparams_overall = mp.get("hyperparams")
+        else:
+            model = mp["model"]
+            params = mp["params"]
+            
+            try:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
+                    warnings.filterwarnings("ignore", category=UserWarning)
+                    warnings.filterwarnings("ignore", category=FutureWarning, module='xgboost')
+                    
+                    # Use GridSearchCV for hyperparameter tuning
+                    grid_search = GridSearchCV(model, params, cv=cv, scoring='roc_auc', n_jobs=-1, verbose=0)
+                    grid_search.fit(X, y)
+                    
+                    best_score = grid_search.best_score_
+                    results[name] = best_score
+                    print(f"    - {name}: {best_score:.4f} (Best Params: {grid_search.best_params_})")
+
+                    if best_score > best_auc_overall:
+                        best_auc_overall = best_score
+                        best_model_overall = grid_search.best_estimator_ # Store the best estimator from GridSearchCV
+                        best_hyperparams_overall = None # Reset if a non-GRU model is best
+
+            except Exception as e:
+                print(f"    - {name}: Failed evaluation. Error: {e}")
+                results[name] = 0.0
+
+    if not any(results.values()):
+        print("  ⚠️ All models failed evaluation. No model will be used.")
+        return None, None, None
+
+    best_model_name = max(results, key=results.get)
+    print(f"  🏆 Best model: {best_model_name} with AUC = {best_auc_overall:.4f}")
+
+    # If the best model is a DL model, ensure its specific scaler is returned
+    if best_model_name in ["LSTM", "GRU"]:
+        return models_and_params_local[best_model_name]["model"], models_and_params_local[best_model_name]["scaler"], best_hyperparams_overall
+    else:
+        # Otherwise, return the best traditional ML model and the StandardScaler
+        if SAVE_PLOTS and SHAP_AVAILABLE and isinstance(best_model_overall, (RandomForestClassifier, XGBClassifier)):
+            analyze_shap_for_tree_model(best_model_overall, X_df, final_feature_names, ticker, target_col)
+        return best_model_overall, scaler, best_hyperparams_overall
+
+def train_worker(params: Tuple) -> Dict:
+    """Worker function for parallel model training."""
+    ticker, df_train_period, target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell = params
+    
+    models_dir = Path("logs/models")
+    _ensure_dir(models_dir)
+    
+    model_buy_path = models_dir / f"{ticker}_model_buy.joblib"
+    model_sell_path = models_dir / f"{ticker}_model_sell.joblib"
+    scaler_path = models_dir / f"{ticker}_scaler.joblib"
+    gru_hyperparams_buy_path = models_dir / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
+    gru_hyperparams_sell_path = models_dir / f"{ticker}_TargetClassSell_gru_optimized_params.json"
+
+    model_buy, model_sell, scaler = None, None, None
+    
+    # Flag to indicate if we successfully loaded a model to continue training
+    loaded_for_retraining = False
+
+    # Attempt to load models and GRU hyperparams if CONTINUE_TRAINING_FROM_EXISTING is True
+    if CONTINUE_TRAINING_FROM_EXISTING and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
+        try:
+            model_buy = joblib.load(model_buy_path)
+            model_sell = joblib.load(model_sell_path)
+            scaler = joblib.load(scaler_path)
+            
+            if gru_hyperparams_buy_path.exists():
+                with open(gru_hyperparams_buy_path, 'r') as f:
+                    loaded_gru_hyperparams_buy = json.load(f)
+            if gru_hyperparams_sell_path.exists():
+                with open(gru_hyperparams_sell_path, 'r') as f:
+                    loaded_gru_hyperparams_sell = json.load(f)
+
+            print(f"  ✅ Loaded existing models and GRU hyperparams for {ticker} to continue training.")
+            loaded_for_retraining = True
+        except Exception as e:
+            print(f"  ⚠️ Error loading models or GRU hyperparams for {ticker} for retraining: {e}. Training from scratch.")
+
+    # If FORCE_TRAINING is False and we didn't load for retraining, then we just load and skip training
+    if not FORCE_TRAINING and not loaded_for_retraining and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
+        try:
+            model_buy = joblib.load(model_buy_path)
+            model_sell = joblib.load(model_sell_path)
+            scaler = joblib.load(scaler_path)
+            
+            if gru_hyperparams_buy_path.exists():
+                with open(gru_hyperparams_buy_path, 'r') as f:
+                    loaded_gru_hyperparams_buy = json.load(f)
+            if gru_hyperparams_sell_path.exists():
+                with open(gru_hyperparams_sell_path, 'r') as f:
+                    loaded_gru_hyperparams_sell = json.load(f)
+
+            print(f"  ✅ Loaded existing models and GRU hyperparams for {ticker} (FORCE_TRAINING is False).")
+            return {
+                'ticker': ticker,
+                'model_buy': model_buy,
+                'model_sell': model_sell,
+                'scaler': scaler,
+                'gru_hyperparams_buy': loaded_gru_hyperparams_buy,
+                'gru_hyperparams_sell': loaded_gru_hyperparams_sell,
+                'status': 'loaded',
+                'reason': None
+            }
+        except Exception as e:
+            print(f"  ⚠️ Error loading models or GRU hyperparams for {ticker}: {e}. Training from scratch.")
+            # Fall through to training from scratch if loading fails
+
+    print(f"  ⚙️ Training models for {ticker} (FORCE_TRAINING is {FORCE_TRAINING}, CONTINUE_TRAINING_FROM_EXISTING is {CONTINUE_TRAINING_FROM_EXISTING})...")
+    print(f"  [DEBUG] {current_process().name} - {ticker}: Initiating feature extraction for training.")
+    
+    df_train, actual_feature_set = fetch_training_data(ticker, df_train_period, target_percentage)
+
+    if df_train.empty:
+        print(f"  ❌ Skipping {ticker}: Insufficient training data.")
+        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None}
+
+    print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for BUY target.")
+    # Train BUY model, passing the potentially loaded model and GRU hyperparams
+    model_buy, scaler_buy, gru_hyperparams_buy = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker, initial_model=model_buy if loaded_for_retraining else None, loaded_gru_hyperparams=loaded_gru_hyperparams_buy)
+    print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for SELL target.")
+    # Train SELL model, passing the potentially loaded model and GRU hyperparams
+    model_sell, scaler_sell, gru_hyperparams_sell = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker, initial_model=model_sell if loaded_for_retraining else None, loaded_gru_hyperparams=loaded_gru_hyperparams_sell)
+
+    # For simplicity, we'll use the scaler from the buy model for both if they are different.
+    # In a more complex scenario, you might want to ensure feature_set consistency or use separate scalers.
+    final_scaler = scaler_buy if scaler_buy else scaler_sell
+
+    if model_buy and model_sell and final_scaler:
+        try:
+            joblib.dump(model_buy, model_buy_path)
+            joblib.dump(model_sell, model_sell_path)
+            joblib.dump(final_scaler, scaler_path)
+            
+            if gru_hyperparams_buy:
+                with open(gru_hyperparams_buy_path, 'w') as f:
+                    json.dump(gru_hyperparams_buy, f, indent=4)
+            if gru_hyperparams_sell:
+                with open(gru_hyperparams_sell_path, 'w') as f:
+                    json.dump(gru_hyperparams_sell, f, indent=4)
+
+            print(f"  ✅ Models, scaler, and GRU hyperparams saved for {ticker}.")
+        except Exception as e:
+            print(f"  ⚠️ Error saving models or GRU hyperparams for {ticker}: {e}")
+            
+        return {
+            'ticker': ticker,
+            'model_buy': model_buy,
+            'model_sell': model_sell,
+            'scaler': final_scaler,
+            'gru_hyperparams_buy': gru_hyperparams_buy,
+            'gru_hyperparams_sell': gru_hyperparams_sell,
+            'status': 'trained',
+            'reason': None
+        }
+    else:
+        reason = "Insufficient training data" # Default reason
+        if df_train.empty:
+            reason = f"Insufficient training data (initial rows: {len(df_train_period)})"
+        elif len(df_train) < 50:
+            reason = f"Not enough rows after feature prep ({len(df_train)} rows, need >= 50)"
+        
+        print(f"  ❌ Failed to train models for {ticker}. Reason: {reason}")
+        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None, 'status': 'failed', 'reason': reason}
