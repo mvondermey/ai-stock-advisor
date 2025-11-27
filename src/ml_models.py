@@ -1,12 +1,267 @@
 import numpy as np
+import os
 import pandas as pd
 from typing import List, Dict, Tuple, Optional
 import warnings
 import json
 from pathlib import Path
+from alpha_training import alpha_sample_weights
 import joblib # For model saving/loading
 import sys # For current_process in train_worker
 import matplotlib.pyplot as plt # For SHAP plots
+
+def _alpha_metrics_report(label: str, proba, df_like: pd.DataFrame, freq: str = "D") -> None:
+    """Print Alpha (annualized) and Active-IR vs buy-and-hold for a probability vector aligned to df_like."""
+    try:
+        import numpy as np, pandas as pd, math
+
+        def _infer_ppy(f: str) -> int:
+            return {"D": 252, "W": 52, "M": 12}.get(f.upper(), 252)
+
+        def _ols_alpha(r_s: pd.Series, r_b: pd.Series, f: str) -> float:
+            s = pd.Series(r_s).dropna()
+            b = pd.Series(r_b).reindex_like(s).fillna(0.0)
+            if s.empty:
+                return 0.0
+            x = b.values
+            y = s.values
+            X = np.column_stack([np.ones_like(x), x])
+            beta = np.linalg.lstsq(X, y, rcond=None)[0]
+            return float(beta[0]) * _infer_ppy(f)
+
+        def _active_ir(active: pd.Series, f: str) -> float:
+            ppy = _infer_ppy(f)
+            mu = active.mean() * ppy
+            vol = active.std(ddof=0) * math.sqrt(ppy)
+            return float(mu / vol) if vol > 0 else 0.0
+
+        idx = getattr(proba, "index", None)
+        s_proba = pd.Series(proba, index=idx) if idx is not None else pd.Series(proba, index=df_like.index[:len(proba)])
+
+        fut = None
+        for c in ("future_ret", "Future_Returns", "future_return"):
+            if c in df_like.columns:
+                fut = pd.Series(df_like[c].values, index=df_like.index)
+                break
+        if fut is None and "Close" in df_like.columns:
+            close = pd.to_numeric(df_like["Close"], errors="coerce")
+            fut = (close.shift(-5) / close - 1.0)
+        if fut is None:
+            print(f"    - {label} alpha metrics: (skipped: cannot derive future returns)")
+            return
+
+        fut = fut.reindex(s_proba.index).fillna(0.0)
+        bench = fut.copy()
+        entries = (s_proba >= 0.5).astype(int)  # quick diagnostic threshold
+        strat_ret = fut * entries
+        active = strat_ret - bench
+        alpha = _ols_alpha(strat_ret, bench, freq)
+        ir = _active_ir(active, freq)
+        print(f"    - {label} Alpha (annualized): {alpha:.4f} | Active-IR: {ir:.3f}")
+    except Exception as _e:
+        print(f"    - {label} alpha metrics: (error: {_e})")
+
+
+def _alpha_fit_params(d: pd.DataFrame, X_index) -> dict | None:
+    """Build sklearn fit_params with alpha-aware sample weights.
+
+    Looks for future returns columns in `d`: 'future_ret', 'Future_Returns', or 'future_return'.
+    If none are present, derive a 5-day forward return from 'Close'.
+    If 'bench_future_ret' is present, use it as the benchmark; otherwise, use the asset itself.
+    Returns {'sample_weight': np.ndarray} or None if not possible.
+    """
+    try:
+        fut_col = next((c for c in ("future_ret", "Future_Returns", "future_return") if c in d.columns), None)
+        if fut_col is None:
+            if "Close" not in d.columns:
+                return None
+            close = pd.to_numeric(d["Close"], errors="coerce")
+            fut = (close.shift(-5) / close - 1.0)
+        else:
+            fut = pd.Series(d[fut_col].values, index=d.index)
+
+        if "bench_future_ret" in d.columns:
+            bench = pd.Series(d["bench_future_ret"].values, index=d.index)
+        else:
+            bench = fut.copy()
+
+        w = alpha_sample_weights(fut, bench)
+        if X_index is not None:
+            w = w.reindex(X_index)
+        w = w.fillna(w.min())
+        return {"sample_weight": w.values}
+    except Exception:
+        return None
+
+
+def _alpha_fit_params(d: pd.DataFrame, X_index) -> dict | None:
+    """Build sklearn fit_params with alpha-aware sample weights.
+
+    Looks for future returns columns in `d`: 'future_ret', 'Future_Returns', or 'future_return'.
+    If none are present, derive a 5-day forward return from 'Close'.
+    If 'bench_future_ret' is present, use it as the benchmark; otherwise, use the asset itself.
+    """
+    try:
+        fut_col = next((c for c in ("future_ret", "Future_Returns", "future_return") if c in d.columns), None)
+        if fut_col is None:
+            if "Close" not in d.columns:
+                return None
+            close = pd.to_numeric(d["Close"], errors="coerce")
+            fut = (close.shift(-5) / close - 1.0)
+        else:
+            fut = pd.Series(d[fut_col].values, index=d.index)
+
+        if "bench_future_ret" in d.columns:
+            bench = pd.Series(d["bench_future_ret"].values, index=d.index)
+        else:
+            bench = fut.copy()
+
+        w = alpha_sample_weights(fut, bench)
+        if X_index is not None:
+            w = w.reindex(X_index)
+        w = w.fillna(w.min())
+        return {"sample_weight": w.values}
+    except Exception:
+        return None
+
+
+def _infer_ppy(freq: str = "D") -> int:
+    return {"D": 252, "W": 52, "M": 12}.get(freq.upper(), 252)
+
+def _active_ir(active_ret, freq: str = "D") -> float:
+    import numpy as np, pandas as pd, math
+    s = pd.Series(active_ret).dropna()
+    if s.empty:
+        return 0.0
+    ppy = _infer_ppy(freq)
+    mu = s.mean() * ppy
+    vol = s.std(ddof=0) * math.sqrt(ppy)
+    return float(mu / vol) if vol and vol > 0 else 0.0
+
+def _ols_alpha(r_s, r_b, freq: str = "D") -> float:
+    import numpy as np, pandas as pd
+    s = pd.Series(r_s).dropna()
+    b = pd.Series(r_b).reindex_like(s).fillna(0.0)
+    if s.empty:
+        return 0.0
+    x = b.values
+    y = s.values
+    X = np.column_stack([np.ones_like(x), x])
+    try:
+        beta = np.linalg.lstsq(X, y, rcond=None)[0]
+        alpha_per_period = float(beta[0])
+        return alpha_per_period * _infer_ppy(freq)
+    except Exception:
+        return 0.0
+
+def _derive_future_returns(df, horizon: int = 5):
+    import pandas as pd
+    if "future_ret" in df.columns:
+        return pd.Series(df["future_ret"].values, index=df.index)
+    if "Future_Returns" in df.columns:
+        return pd.Series(df["Future_Returns"].values, index=df.index)
+    if "future_return" in df.columns:
+        return pd.Series(df["future_return"].values, index=df.index)
+    if "Close" in df.columns:
+        close = pd.to_numeric(df["Close"], errors="coerce")
+        return (close.shift(-horizon) / close - 1.0)
+    return None
+
+def _alpha_metrics_report(label: str, proba, df_like: pd.DataFrame, freq: str = "D") -> None:
+    """Print Alpha (annualized) and Active-IR vs buy-and-hold for a probability vector aligned to df_like."""
+    try:
+        import numpy as np, pandas as pd, math
+
+        def _infer_ppy(f: str) -> int:
+            return {"D": 252, "W": 52, "M": 12}.get(f.upper(), 252)
+
+        def _ols_alpha(r_s: pd.Series, r_b: pd.Series, f: str) -> float:
+            s = pd.Series(r_s).dropna()
+            b = pd.Series(r_b).reindex_like(s).fillna(0.0)
+            if s.empty:
+                return 0.0
+            x = b.values
+            y = s.values
+            X = np.column_stack([np.ones_like(x), x])
+            beta = np.linalg.lstsq(X, y, rcond=None)[0]
+            return float(beta[0]) * _infer_ppy(f)
+
+        def _active_ir(active: pd.Series, f: str) -> float:
+            ppy = _infer_ppy(f)
+            mu = active.mean() * ppy
+            vol = active.std(ddof=0) * math.sqrt(ppy)
+            return float(mu / vol) if vol > 0 else 0.0
+
+        idx = getattr(proba, "index", None)
+        s_proba = pd.Series(proba, index=idx) if idx is not None else pd.Series(proba, index=df_like.index[:len(proba)])
+
+        fut = None
+        for c in ("future_ret", "Future_Returns", "future_return"):
+            if c in df_like.columns:
+                fut = pd.Series(df_like[c].values, index=df_like.index)
+                break
+        if fut is None and "Close" in df_like.columns:
+            close = pd.to_numeric(df_like["Close"], errors="coerce")
+            fut = (close.shift(-5) / close - 1.0)
+        if fut is None:
+            print(f"    - {label} alpha metrics: (skipped: cannot derive future returns)")
+            return
+
+        fut = fut.reindex(s_proba.index).fillna(0.0)
+        bench = fut.copy()
+        entries = (s_proba >= 0.5).astype(int)  # quick diagnostic threshold
+        strat_ret = fut * entries
+        active = strat_ret - bench
+        alpha = _ols_alpha(strat_ret, bench, freq)
+        ir = _active_ir(active, freq)
+        print(f"    - {label} Alpha (annualized): {alpha:.4f} | Active-IR: {ir:.3f}")
+    except Exception as _e:
+        print(f"    - {label} alpha metrics: (error: {_e})")
+
+
+    try:
+        import pandas as pd, numpy as np
+        idx = getattr(proba, "index", None)
+        s_proba = pd.Series(proba, index=idx) if idx is not None else pd.Series(proba, index=df_like.index[:len(proba)])
+        fut = _derive_future_returns(df_like)
+        if fut is None:
+            print(f"    - {label} alpha metrics: (skipped: cannot derive future returns)")
+            return
+        fut = pd.Series(fut).reindex(s_proba.index).fillna(0.0)
+        bench = fut.copy()
+        entries = (s_proba >= 0.5).astype(int)  # neutral threshold; final run uses alpha-optimized
+        strat_ret = fut * entries
+        active = strat_ret - bench
+        alpha = _ols_alpha(strat_ret, bench, freq=freq)
+        ir = _active_ir(active, freq=freq)
+        print(f"    - {label} Alpha (annualized): {alpha:.4f} | Active-IR: {ir:.3f}")
+    except Exception as _e:
+        print(f"    - {label} alpha metrics: (error: {_e})")
+
+
+def _alpha_fit_params(df: pd.DataFrame, X_index) -> dict | None:
+    
+    try:
+        cand = ["future_ret", "Future_Returns", "future_return"]
+        col = next((c for c in cand if c in df.columns), None)
+        if col is None:
+            return None
+        fut = pd.Series(df[col].values, index=df.index)
+        if "bench_future_ret" in df.columns:
+            bench = pd.Series(df["bench_future_ret"].values, index=df.index)
+        else:
+            bench = fut.copy()
+        w = alpha_sample_weights(fut, bench)
+        if X_index is not None:
+            w = w.reindex(X_index)
+        w = w.fillna(w.min()).values
+        return {"sample_weight": w}
+    except Exception:
+        return None
+
+
+# Alpha-aware training
+USE_ALPHA_WEIGHTS: bool = True
 
 # Scikit-learn imports (fallback for CPU or if cuML not available)
 from sklearn.ensemble import RandomForestClassifier
@@ -333,6 +588,15 @@ def analyze_shap_for_tree_model(model, X_df: pd.DataFrame, feature_names: List[s
         traceback.print_exc()
 
 def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN", initial_model=None, loaded_gru_hyperparams: Optional[Dict] = None):
+    # --- Alpha-aware weights (optional) ---
+    _fit_params = None
+    if 'd' in locals() and 'X_df' in locals():
+        if USE_ALPHA_WEIGHTS:
+            try:
+                _fit_params = _alpha_fit_params(d, X_df.index)
+            except Exception:
+                _fit_params = None
+    
     """Train and compare multiple classifiers for a given target, returning the best one."""
     models_and_params = initialize_ml_libraries()
     d = df.copy()
@@ -773,6 +1037,13 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
 
     best_model_name = max(results, key=results.get)
     print(f"  🏆 Best model: {best_model_name} with AUC = {best_auc_overall:.4f}")
+    # Alpha metrics (validation-like quick check)
+    try:
+        if 'best_model' in locals() and 'X_df' in locals() and hasattr(best_model, 'predict_proba'):
+            _proba = best_model.predict_proba(X_df)[:, 1]
+            _alpha_metrics_report("Best model (quick)", _proba, d if 'd' in locals() else X_df)
+    except Exception as _e:
+        print(f"    - Alpha metrics (quick) skipped: {_e}")
 
     # If the best model is a DL model, ensure its specific scaler is returned
     if best_model_name in ["LSTM", "GRU"]:

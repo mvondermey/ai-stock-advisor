@@ -1,4 +1,29 @@
+
+from __future__ import annotations
+def _gpu_diag():
+    try:
+        import torch
+        print(f"[GPU] torch.cuda.is_available(): {torch.cuda.is_available()}")
+    except Exception as e:
+        print("[GPU] torch check failed:", e)
+    try:
+        import xgboost as xgb
+        print("[GPU] XGBoost version:", getattr(xgb, "__version__", "?"))
+    except Exception as e:
+        print("[GPU] XGBoost check failed:", e)
+    try:
+        import lightgbm as lgb
+        print("[GPU] LightGBM version:", getattr(lgb, "__version__", "?"))
+    except Exception as e:
+        print("[GPU] LightGBM check failed:", e)
+try:
+    _gpu_diag()
+except Exception:
+    pass
+
 # -*- coding: utf-8 -*-
+
+# Toggle: use alpha-optimized probability threshold for buys
 """
 Trading AI — Improved Rule-Based System with Optional ML Gate
 - Headless-safe Matplotlib (Agg)
@@ -10,7 +35,24 @@ Trading AI — Improved Rule-Based System with Optional ML Gate
 - Optional ML classification gate (5-day horizon) to filter entries
 """
 
-from __future__ import annotations
+from alpha_training import select_threshold_by_alpha, AlphaThresholdConfig
+USE_ALPHA_THRESHOLD_BUY = True
+USE_ALPHA_THRESHOLD_SELL = True
+# Toggle: use alpha-optimized probability threshold for buys
+USE_ALPHA_THRESHOLD = True
+def setup_logging(verbose: bool = False) -> None:
+    """Central logging config; safe for multiprocessing (basic)."""
+    import logging, os, sys
+    level = logging.DEBUG if verbose else logging.INFO
+    handler = logging.StreamHandler(sys.stderr)
+    fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(processName)s | %(name)s | %(message)s")
+    root = logging.getLogger()
+    # Avoid duplicate handlers on re-init
+    if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
+        root.addHandler(handler)
+    root.setLevel(level)
+
+
 _script_initialized = False
 if not _script_initialized:
     print("DEBUG: Script execution initiated.")
@@ -2268,6 +2310,63 @@ def train_worker(params: Tuple) -> Dict:
 # Rule-based backtester (ATR & ML gate)
 # ============================
 
+
+def alpha_opt_threshold_for_df(df_backtest_opt, model_buy, scaler, horizon_days: int = 5) -> float:
+    """Compute per-ticker buy threshold that maximizes alpha vs buy-and-hold of the same asset.
+    Uses RuleTradingEnv._get_model_prediction to obtain probabilities across the window."""
+    import pandas as pd
+
+    if df_backtest_opt is None or len(df_backtest_opt) == 0 or "Close" not in df_backtest_opt.columns:
+        return 0.5  # safe default
+
+    # Build probability series by iterating over rows where features exist
+    # Create a minimal env to reuse feature scaling/pred code
+    try:
+        env_tmp = RuleTradingEnv(
+            df=df_backtest_opt.copy(),
+            ticker="TICK",
+            initial_balance=10_000.0,
+            transaction_cost=0.0,
+            model_buy=model_buy,
+            model_sell=None,
+            scaler=scaler,
+            use_gate=True,
+            feature_set=None,
+            per_ticker_min_proba_buy=None,
+            per_ticker_min_proba_sell=None,
+            use_simple_rule_strategy=False
+        )
+    except Exception:
+        return 0.5
+
+    proba_vals = []
+    idx_vals = []
+    for i in range(len(env_tmp.df)):
+        try:
+            p = env_tmp._get_model_prediction(i, env_tmp.model_buy)  # noqa: SLF001
+        except Exception:
+            p = 0.0
+        proba_vals.append(float(p if p is not None else 0.0))
+        idx_vals.append(pd.to_datetime(env_tmp.df.loc[i, "Date"]) if "Date" in env_tmp.df.columns else i)
+
+    proba = pd.Series(proba_vals, index=idx_vals).sort_index()
+
+    # Future returns over next `horizon_days` using Close prices
+    close = df_backtest_opt.set_index("Date")["Close"] if "Date" in df_backtest_opt.columns else df_backtest_opt["Close"]
+    close = pd.to_numeric(close, errors="coerce").dropna()
+    fut_ret = (close.shift(-horizon_days) / close - 1.0).reindex(proba.index).fillna(0.0)
+
+    # Benchmark: same asset buy-and-hold horizon (conservative default)
+    bench_fut = fut_ret.copy()
+
+    cfg = AlphaThresholdConfig(rebalance_freq="D", metric="alpha", costs_bps=5.0, slippage_bps=2.0)
+    try:
+        t_star, _, score, _ = select_threshold_by_alpha(proba, fut_ret, bench_fut, cfg)
+        return float(t_star)
+    except Exception:
+        return 0.5
+
+
 class RuleTradingEnv:
     """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
     def __init__(self, df: pd.DataFrame, ticker: str, initial_balance: float, transaction_cost: float, # Added ticker parameter
@@ -2842,8 +2941,8 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             scaler=scaler,
             use_gate=USE_MODEL_GATE,
             feature_set=feature_set,
-            per_ticker_min_proba_buy=min_proba_buy,
-            per_ticker_min_proba_sell=min_proba_sell,
+            per_ticker_min_proba_buy=None,
+            per_ticker_min_proba_sell=None,
             use_simple_rule_strategy=use_simple_rule_strategy # Pass new parameter
         )
         final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, shares_before_liquidation = env.run()
@@ -3418,8 +3517,8 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
                         model_buy=current_model_buy,
                         model_sell=current_model_sell,
                         scaler=current_scaler,
-                        per_ticker_min_proba_buy=p_buy,
-                        per_ticker_min_proba_sell=p_sell,
+                        per_ticker_min_proba_buy=None,
+                        per_ticker_min_proba_sell=None,
                         use_gate=USE_MODEL_GATE,
                         feature_set=feature_set,
                         use_simple_rule_strategy=False
@@ -4945,8 +5044,8 @@ def main(
                     model_buy=current_model_buy,
                     model_sell=current_model_sell,
                     scaler=current_scaler,
-                    per_ticker_min_proba_buy=p_buy,
-                    per_ticker_min_proba_sell=p_sell,
+                    per_ticker_min_proba_buy=None,
+                    per_ticker_min_proba_sell=None,
                     use_gate=USE_MODEL_GATE,
                     feature_set=feature_set,
                     use_simple_rule_strategy=False
@@ -6395,3 +6494,59 @@ def main(
 
 if __name__ == "__main__":
     main()
+
+
+
+def set_seed(seed: int | None) -> None:
+    """Seed Python, NumPy, and PyTorch if available."""
+    import random, os
+    if seed is None:
+        return
+    random.seed(seed)
+    try:
+        import numpy as np
+        np.random.seed(seed)
+    except Exception:
+        pass
+    try:
+        import torch
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+    except Exception:
+        pass
+
+
+# ---- Alpha thresholds patch (applied after class definitions) ---------------
+try:
+    from alpha_integration import apply_alpha_thresholds, USE_ALPHA_THRESHOLD_BUY, USE_ALPHA_THRESHOLD_SELL
+    USE_ALPHA_THRESHOLD_BUY = True
+    USE_ALPHA_THRESHOLD_SELL = True
+    apply_alpha_thresholds(RuleTradingEnv)  # type: ignore[name-defined]
+except Exception as _alpha_e:
+    # Fallback silently if alpha integration or RuleTradingEnv unavailable at import time
+    pass
+
+
+
+# --- ALPHA_DIAG (auto-inserted) ---
+try:
+    from alpha_integration import ALPHA_THRESH_LOG
+    if ALPHA_THRESH_LOG:
+        print("\n[ALPHA-DIAG] Final thresholds:")
+        for row in ALPHA_THRESH_LOG[-20:]:
+            t = row.get('ticker')
+            s = row.get('side')
+            thr = row.get('thr')
+            n = row.get('n')
+            try:
+                thr_f = f"{float(thr):.3f}"
+            except Exception:
+                thr_f = str(thr)
+            print(f"  {t} {s} thr={thr_f} n={n}")
+except Exception:
+    pass
+# --- END ALPHA_DIAG ---
+
