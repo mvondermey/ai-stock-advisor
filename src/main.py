@@ -16,10 +16,7 @@ def _gpu_diag():
         print("[GPU] LightGBM version:", getattr(lgb, "__version__", "?"))
     except Exception as e:
         print("[GPU] LightGBM check failed:", e)
-try:
-    _gpu_diag()
-except Exception:
-    pass
+_gpu_diag() # Call directly, let exceptions propagate if not handled internally
 
 # -*- coding: utf-8 -*-
 
@@ -36,10 +33,9 @@ Trading AI — Improved Rule-Based System with Optional ML Gate
 """
 
 from alpha_training import select_threshold_by_alpha, AlphaThresholdConfig
+# Toggle: use alpha-optimized probability threshold for buys/sells
 USE_ALPHA_THRESHOLD_BUY = True
 USE_ALPHA_THRESHOLD_SELL = True
-# Toggle: use alpha-optimized probability threshold for buys
-USE_ALPHA_THRESHOLD = True
 def setup_logging(verbose: bool = False) -> None:
     """Central logging config; safe for multiprocessing (basic)."""
     import logging, os, sys
@@ -146,7 +142,7 @@ ALPACA_API_KEY          = os.environ.get("ALPACA_API_KEY")
 ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
 
 # TwelveData API credentials
-TWELVEDATA_API_KEY      = "aed912386d7c47939ebc28a86a96a021"
+TWELVEDATA_API_KEY      = os.environ.get("TWELVEDATA_API_KEY", "YOUR_DEFAULT_KEY_OR_EMPTY_STRING") # Load from environment variable
 
 # --- Universe / selection
 MARKET_SELECTION = {
@@ -1057,50 +1053,14 @@ def get_all_tickers() -> List[str]:
 # Feature prep & model
 # ============================
 
-def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: float = 0.05, class_horizon: int = CLASS_HORIZON) -> Tuple[pd.DataFrame, List[str]]:
-    """Compute ML features from a given DataFrame."""
-    print(f"  [DIAGNOSTIC] {ticker}: fetch_training_data - Initial data rows: {len(data)}")
-    if data.empty or len(data) < FEAT_SMA_LONG + 10:
-        print(f"  [DIAGNOSTIC] {ticker}: Skipping feature prep. Initial data has {len(data)} rows, required > {FEAT_SMA_LONG + 10}.")
-        return pd.DataFrame(), []
-
-    df = data.copy()
-    if "Close" not in df.columns and "Adj Close" in df.columns:
-        df = df.rename(columns={"Adj Close": "Close"})
-    # The following checks are now handled in load_prices, so they are redundant here.
-    # if "High" not in df.columns and "Close" in df.columns:
-    #     df["High"] = df["Close"]
-    # if "Low" not in df.columns and "Close" in df.columns:
-    #     df["Low"] = df["Close"]
-    # if "Open" not in df.columns and "Close" in df.columns:
-    #     df["Open"] = df["Close"]
-    # if "Volume" not in df.columns:
-    #     df["Volume"] = 0
-    # Ensure 'Close' is numeric and drop rows with NaN in 'Close'
-    df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
-    df = df.dropna(subset=["Close"])
-    
-    if df.empty:
-        print(f"  [DIAGNOSTIC] {ticker}: DataFrame became empty after dropping NaNs in 'Close'. Skipping feature prep.")
-        return pd.DataFrame(), []
-    
-    if df.empty:
-        print(f"  [DIAGNOSTIC] {ticker}: DataFrame became empty after dropping NaNs in 'Close'. Skipping feature prep.")
-        return pd.DataFrame(), []
-
-    # Fill missing values in other columns
-    df = df.ffill().bfill()
-
-    df["Returns"]    = df["Close"].pct_change(fill_method=None)
-    df["SMA_F_S"]    = df["Close"].rolling(FEAT_SMA_SHORT).mean()
-    df["SMA_F_L"]    = df["Close"].rolling(FEAT_SMA_LONG).mean()
-    df["Volatility"] = df["Returns"].rolling(FEAT_VOL_WINDOW).std()
-
-    # --- Additional Features ---
-    # ATR (Average True Range)
+def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    """Calculates technical indicators and adds them to the DataFrame."""
+    close = df["Close"]
     high = df["High"] if "High" in df.columns else None
     low  = df["Low"]  if "Low" in df.columns else None
-    prev_close = df["Close"].shift(1)
+    prev_close = close.shift(1)
+
+    # ATR for risk management
     if high is not None and low is not None:
         hl = (high - low).abs()
         h_pc = (high - prev_close).abs()
@@ -1108,66 +1068,67 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
         tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
         df["ATR"] = tr.rolling(ATR_PERIOD).mean()
     else:
-        # Fallback for ATR if High/Low are not available (though they should be after load_prices)
-        ret = df["Close"].pct_change(fill_method=None)
-        df["ATR"] = (ret.rolling(ATR_PERIOD).std() * df["Close"]).rolling(2).mean()
-    df["ATR"] = df["ATR"].fillna(0) # Fill any NaNs from initial ATR calculation
+        ret = close.pct_change(fill_method=None)
+        df["ATR"] = (ret.rolling(ATR_PERIOD).std() * close).rolling(2).mean()
+    
+    # Low-volatility filter reference: rolling median ATR
+    df['ATR_MED'] = df['ATR'].rolling(50).median()
 
-    # RSI
-    delta = df["Close"].diff()
-    gain = (delta.where(delta > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
-    loss = (-delta.where(delta < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
-    rs = gain / loss
-    df['RSI_feat'] = 100 - (100 / (1 + rs))
+    # --- Features for ML Gate ---
+    df["Returns"]    = close.pct_change(fill_method=None)
+    df["SMA_F_S"]    = close.rolling(FEAT_SMA_SHORT).mean()
+    df["SMA_F_L"]    = close.rolling(FEAT_SMA_LONG).mean()
+    df["Volatility"] = df["Returns"].rolling(FEAT_VOL_WINDOW).std()
+    
+    # RSI for features
+    delta_feat = close.diff()
+    gain_feat = (delta_feat.where(delta_feat > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+    loss_feat = (-delta_feat.where(delta_feat < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+    rs_feat = gain_feat / loss_feat
+    df['RSI_feat'] = 100 - (100 / (1 + rs_feat))
 
-    # MACD
-    ema_12 = df["Close"].ewm(span=12, adjust=False).mean()
-    ema_26 = df["Close"].ewm(span=26, adjust=False).mean()
+    # MACD for features
+    ema_12 = close.ewm(span=12, adjust=False).mean()
+    ema_26 = close.ewm(span=26, adjust=False).mean()
     df['MACD'] = ema_12 - ema_26
     df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-
-    # Bollinger Bands
-    df['BB_mid'] = df["Close"].rolling(window=20).mean()
-    df['BB_std'] = df["Close"].rolling(window=20).std()
-    df['BB_upper'] = df['BB_mid'] + (df['BB_std'] * 2)
-    df['BB_lower'] = df['BB_mid'] - (df['BB_std'] * 2)
+    
+    # Bollinger Bands for features
+    bb_mid = close.rolling(window=20).mean()
+    bb_std = close.rolling(window=20).std()
+    df['BB_upper'] = bb_mid + (bb_std * 2)
+    df['BB_lower'] = bb_mid - (bb_std * 2)
 
     # Stochastic Oscillator
     low_14, high_14 = df['Low'].rolling(window=14).min(), df['High'].rolling(window=14).max()
-    denominator_k = (high_14 - low_14)
-    df['%K'] = np.where(denominator_k != 0, (df['Close'] - low_14) / denominator_k * 100, 0)
+    df['%K'] = (df['Close'] - low_14) / (high_14 - low_14) * 100
     df['%D'] = df['%K'].rolling(window=3).mean()
-    df['%K'] = df['%K'].fillna(0)
-    df['%D'] = df['%D'].fillna(0)
 
     # Average Directional Index (ADX)
     df['up_move'] = df['High'] - df['High'].shift(1)
     df['down_move'] = df['Low'].shift(1) - df['Low']
     df['+DM'] = np.where((df['up_move'] > df['down_move']) & (df['up_move'] > 0), df['up_move'], 0)
     df['-DM'] = np.where((df['down_move'] > df['up_move']) & (df['down_move'] > 0), df['down_move'], 0)
-    df['+DM'] = df['+DM'].fillna(0)
-
-    # Calculate True Range (TR)
-    high_low_diff = df['High'] - df['Low']
-    high_prev_close_diff_abs = (df['High'] - df['Close'].shift(1)).abs()
-    low_prev_close_diff_abs = (df['Low'] - df['Close'].shift(1)).abs()
-    df['TR'] = pd.concat([high_low_diff, high_prev_close_diff_abs, low_prev_close_diff_abs], axis=1).max(axis=1)
-    df['TR'] = df['TR'].fillna(0)
-
-    # Calculate Smoothed DM and TR
+    hl_diff = (df['High'] - df['Low']).abs()
+    h_pc_diff = (df['High'] - df['Close'].shift(1)).abs()
+    l_pc_diff = (df['Low'] - df['Close'].shift(1)).abs()
+    df['TR'] = pd.concat([hl_diff, h_pc_diff, l_pc_diff], axis=1).max(axis=1)
     alpha = 1/14
     df['+DM14'] = df['+DM'].ewm(alpha=alpha, adjust=False).mean()
     df['-DM14'] = df['-DM'].ewm(alpha=alpha, adjust=False).mean()
     df['TR14'] = df['TR'].ewm(alpha=alpha, adjust=False).mean()
+    df['DX'] = (abs(df['+DM14'] - df['-DM14']) / (df['+DM14'] + df['-DM14'])) * 100
+    df['DX'] = df['DX'].fillna(0)
+    df['ADX'] = df['DX'].ewm(alpha=alpha, adjust=False).mean()
+    df['ADX'] = df['ADX'].fillna(0)
+    df['+DM'] = df['+DM'].fillna(0)
+    df['-DM'] = df['-DM'].fillna(0)
+    df['TR'] = df['TR'].fillna(0)
     df['+DM14'] = df['+DM14'].fillna(0)
     df['-DM14'] = df['-DM14'].fillna(0)
     df['TR14'] = df['TR14'].fillna(0)
-
-    # Calculate Directional Index (DX)
-    denominator_dx = (df['+DM14'] + df['-DM14'])
-    df['DX'] = np.where(denominator_dx != 0, (abs(df['+DM14'] - df['-DM14']) / denominator_dx) * 100, 0)
-    df['ADX'] = df['DX'].ewm(alpha=alpha, adjust=False).mean() # Missing line added
-    df['ADX'] = df['ADX'].fillna(0)
+    df['%K'] = df['%K'].fillna(0)
+    df['%D'] = df['%D'].fillna(0)
 
     # On-Balance Volume (OBV)
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
@@ -1183,7 +1144,6 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     df['ROC_60'] = df['Close'].pct_change(periods=60) * 100
 
     # Chande Momentum Oscillator (CMO)
-    # CMO = (Sum(Up Moves) - Sum(Down Moves)) / (Sum(Up Moves) + Sum(Down Moves)) * 100
     cmo_period = 14
     df['cmo_diff'] = df['Close'].diff()
     df['cmo_up'] = df['cmo_diff'].apply(lambda x: x if x > 0 else 0)
@@ -1203,10 +1163,10 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     df['kama_er'] = df['kama_er'].fillna(0)
     df['kama_sc'] = (df['kama_er'] * (fast_ema_const - slow_ema_const) + slow_ema_const)**2
     df['KAMA'] = np.nan
-    df.iloc[kama_period-1, df.columns.get_loc('KAMA')] = df['Close'].iloc[kama_period-1] # Initialize first KAMA value
+    df.iloc[kama_period-1, df.columns.get_loc('KAMA')] = df['Close'].iloc[kama_period-1]
     for i in range(kama_period, len(df)):
         df.iloc[i, df.columns.get_loc('KAMA')] = df.iloc[i-1, df.columns.get_loc('KAMA')] + df.iloc[i, df.columns.get_loc('kama_sc')] * (df.iloc[i, df.columns.get_loc('Close')] - df.iloc[i-1, df.columns.get_loc('KAMA')])
-    df['KAMA'] = df['KAMA'].ffill().bfill().fillna(df['Close']) # Fill initial NaNs
+    df['KAMA'] = df['KAMA'].ffill().bfill().fillna(df['Close'])
 
     # Elder's Force Index (EFI)
     efi_period = 13
@@ -1226,22 +1186,18 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     df['DC_Middle'] = (df['DC_Upper'] + df['DC_Lower']) / 2
 
     # Parabolic SAR (PSAR)
-    # Initialize PSAR
     psar = df['Close'].copy()
-    af = 0.02 # Acceleration Factor
-    max_af = 0.2 # Maximum Acceleration Factor
+    af = 0.02
+    max_af = 0.2
 
-    # Initial trend and extreme point
-    # Assume initial uptrend if Close > Open, downtrend otherwise
     uptrend = True if df['Close'].iloc[0] > df['Open'].iloc[0] else False
     ep = df['High'].iloc[0] if uptrend else df['Low'].iloc[0]
     sar = df['Low'].iloc[0] if uptrend else df['High'].iloc[0]
     
-    # Iterate to calculate PSAR
     for i in range(1, len(df)):
         if uptrend:
             sar = sar + af * (ep - sar)
-            if df.iloc[i, df.columns.get_loc('Low')] < sar: # Trend reversal
+            if df.iloc[i, df.columns.get_loc('Low')] < sar:
                 uptrend = False
                 sar = ep
                 ep = df.iloc[i, df.columns.get_loc('Low')]
@@ -1250,9 +1206,9 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
                 if df.iloc[i, df.columns.get_loc('High')] > ep:
                     ep = df.iloc[i, df.columns.get_loc('High')]
                     af = min(max_af, af + 0.02)
-        else: # Downtrend
+        else:
             sar = sar + af * (ep - sar)
-            if df.iloc[i, df.columns.get_loc('High')] > sar: # Trend reversal
+            if df.iloc[i, df.columns.get_loc('High')] > sar:
                 uptrend = True
                 sar = ep
                 ep = df.iloc[i, df.columns.get_loc('High')]
@@ -1261,42 +1217,53 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
                 if df.iloc[i, df.columns.get_loc('Low')] < ep:
                     ep = df.iloc[i, df.columns.get_loc('Low')]
                     af = min(max_af, af + 0.02)
-            psar.iloc[i] = sar
+        psar.iloc[i] = sar
     df['PSAR'] = psar
 
     # Accumulation/Distribution Line (ADL)
-    # Money Flow Volume (MFV)
     mf_multiplier = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
     mf_volume = mf_multiplier * df['Volume']
     df['ADL'] = mf_volume.cumsum()
-    df['ADL'] = df['ADL'].fillna(0) # Fill initial NaNs with 0
+    df['ADL'] = df['ADL'].fillna(0)
 
     # Commodity Channel Index (CCI)
     TP = (df['High'] + df['Low'] + df['Close']) / 3
     df['CCI'] = (TP - TP.rolling(window=20).mean()) / (0.015 * TP.rolling(window=20).std())
-    df['CCI'] = df['CCI'].fillna(0) # Fill initial NaNs with 0
+    df['CCI'] = df['CCI'].fillna(0)
 
     # Volume Weighted Average Price (VWAP)
     df['VWAP'] = (df['Close'] * df['Volume']).rolling(window=FEAT_VOL_WINDOW).sum() / df['Volume'].rolling(window=FEAT_VOL_WINDOW).sum()
-    df['VWAP'] = df['VWAP'].fillna(df['Close']) # Fill initial NaNs with Close price
+    df['VWAP'] = df['VWAP'].fillna(df['Close'])
 
     # ATR Percentage
+    if "ATR" not in df.columns:
+        if high is not None and low is not None:
+            hl = (high - low).abs()
+            h_pc = (high - prev_close).abs()
+            l_pc = (low  - prev_close).abs()
+            tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
+            df["ATR"] = tr.rolling(ATR_PERIOD).mean()
+        else:
+            ret = df["Close"].pct_change(fill_method=None)
+            df["ATR"] = (ret.rolling(ATR_PERIOD).std() * df["Close"]).rolling(2).mean()
+        df["ATR"] = df["ATR"].fillna(0)
+
     df['ATR_Pct'] = (df['ATR'] / df['Close']) * 100
     df['ATR_Pct'] = df['ATR_Pct'].fillna(0)
 
     # Chaikin Oscillator
-    adl_fast = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low']) * df['Volume']
-    adl_slow = adl_fast.ewm(span=10, adjust=False).mean()
-    adl_fast = adl_fast.ewm(span=3, adjust=False).mean()
+    mf_multiplier_co = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
+    adl_fast = (mf_multiplier_co * df['Volume']).ewm(span=3, adjust=False).mean()
+    adl_slow = (mf_multiplier_co * df['Volume']).ewm(span=10, adjust=False).mean()
     df['Chaikin_Oscillator'] = adl_fast - adl_slow
     df['Chaikin_Oscillator'] = df['Chaikin_Oscillator'].fillna(0)
 
     # Money Flow Index (MFI)
-    typical_price = (df['High'] + df['Low'] + df['Close']) / 3
-    money_flow = typical_price * df['Volume']
-    positive_mf = money_flow.where(typical_price > typical_price.shift(1), 0)
-    negative_mf = money_flow.where(typical_price < typical_price.shift(1), 0)
-    mfi_ratio = positive_mf.rolling(window=14).sum() / negative_mf.rolling(window=14).sum()
+    typical_price_mfi = (df['High'] + df['Low'] + df['Close']) / 3
+    money_flow_mfi = typical_price_mfi * df['Volume']
+    positive_mf_mfi = money_flow_mfi.where(typical_price_mfi > typical_price_mfi.shift(1), 0)
+    negative_mf_mfi = money_flow_mfi.where(typical_price_mfi < typical_price_mfi.shift(1), 0)
+    mfi_ratio = positive_mf_mfi.rolling(window=14).sum() / negative_mf_mfi.rolling(window=14).sum()
     df['MFI'] = 100 - (100 / (1 + mfi_ratio))
     df['MFI'] = df['MFI'].fillna(0)
 
@@ -1306,14 +1273,33 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
 
     # Historical Volatility (e.g., 20-day rolling standard deviation of log returns)
     df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
-    df['Historical_Volatility'] = df['Log_Returns'].rolling(window=20).std() * np.sqrt(252) # Annualized
+    df['Historical_Volatility'] = df['Log_Returns'].rolling(window=20).std() * np.sqrt(252)
     df['Historical_Volatility'] = df['Historical_Volatility'].fillna(0)
+    
+    return df
 
-    # Market Momentum (using SPY) - Requires fetching SPY data
-    # This feature will be handled differently, as it requires external data.
-    # For now, we'll add a placeholder and assume it's handled in the main loop or a separate function.
-    # For the purpose of feature generation, we'll assume it's a column that will be merged later.
-    # df['Market_Momentum_SPY'] = 0 # Placeholder
+def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: float = 0.05, class_horizon: int = CLASS_HORIZON) -> Tuple[pd.DataFrame, List[str]]:
+    """Compute ML features from a given DataFrame."""
+    print(f"  [DIAGNOSTIC] {ticker}: fetch_training_data - Initial data rows: {len(data)}")
+    if data.empty or len(data) < FEAT_SMA_LONG + 10:
+        print(f"  [DIAGNOSTIC] {ticker}: Skipping feature prep. Initial data has {len(data)} rows, required > {FEAT_SMA_LONG + 10}.")
+        return pd.DataFrame(), []
+
+    df = data.copy()
+    if "Close" not in df.columns and "Adj Close" in df.columns:
+        df = df.rename(columns={"Adj Close": "Close"})
+    # Ensure 'Close' is numeric and drop rows with NaN in 'Close'
+    df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+    df = df.dropna(subset=["Close"])
+    
+    if df.empty:
+        print(f"  [DIAGNOSTIC] {ticker}: DataFrame became empty after dropping NaNs in 'Close'. Skipping feature prep.")
+        return pd.DataFrame(), []
+
+    # Fill missing values in other columns
+    df = df.ffill().bfill()
+
+    df = _calculate_technical_indicators(df) # Call the new function
 
     # --- Additional Financial Features (from _fetch_financial_data) ---
     financial_features = [col for col in df.columns if col.startswith('Fin_')]
@@ -1428,10 +1414,6 @@ def analyze_shap_for_gru(model: GRUClassifier, scaler: MinMaxScaler, X_df: pd.Da
     """
     if not SHAP_AVAILABLE:
         print(f"  [{ticker}] SHAP is not available. Skipping SHAP analysis.")
-        return
-
-    if isinstance(model, GRUClassifier):
-        print(f"  [{ticker}] SHAP KernelExplainer is not directly compatible with GRU models due to sequential input. Skipping SHAP analysis for GRU.")
         return
 
     print(f"  [{ticker}] Calculating SHAP values for GRU model ({target_col})...")
@@ -2368,7 +2350,7 @@ def alpha_opt_threshold_for_df(df_backtest_opt, model_buy, scaler, horizon_days:
 
 
 class RuleTradingEnv:
-    """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
+    """SMA cross + ATR trailing stop/TP + fixed-amount sizing. Optional ML gate to allow buys."""
     def __init__(self, df: pd.DataFrame, ticker: str, initial_balance: float, transaction_cost: float, # Added ticker parameter
                  model_buy=None, model_sell=None, scaler=None, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, use_gate: bool = USE_MODEL_GATE,
                  feature_set: Optional[List[str]] = None,
@@ -2414,7 +2396,7 @@ class RuleTradingEnv:
         self.highest_since_entry: Optional[float] = None
         self.entry_atr: Optional[float] = None
         self.holding_bars = 0
-        self.portfolio_history: List[float] = [self.initial_balance]
+        self.portfolio_history: List[float] = [] # Initialize as empty
         self.trade_log: List[Tuple] = []
         # self.ticker is already set in __init__, no need to re-set here.
         self.last_ai_action: str = "HOLD" # New: Track last AI action
@@ -2443,26 +2425,7 @@ class RuleTradingEnv:
         self.df = self.df.reset_index(drop=True)
         self.df = self.df.ffill().bfill()
         
-        close = self.df["Close"]
-        high = self.df["High"] if "High" in self.df.columns else None
-        low  = self.df["Low"]  if "Low" in self.df.columns else None
-
-        # ATR for risk management (unchanged)
-        high = self.df["High"] if "High" in self.df.columns else None
-        low  = self.df["Low"]  if "Low" in self.df.columns else None
-        prev_close = close.shift(1)
-        if high is not None and low is not None:
-            hl = (high - low).abs()
-            h_pc = (high - prev_close).abs()
-            l_pc = (low  - prev_close).abs()
-            tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
-            self.df["ATR"] = tr.rolling(ATR_PERIOD).mean()
-        else:
-            ret = close.pct_change(fill_method=None)
-            self.df["ATR"] = (ret.rolling(ATR_PERIOD).std() * close).rolling(2).mean()
-        
-        # Low-volatility filter reference: rolling median ATR
-        self.df['ATR_MED'] = self.df['ATR'].rolling(50).median()
+        self.df = _calculate_technical_indicators(self.df) # Call the new function
 
         # Set current_step to the first index where ATR is not NaN
         first_valid_atr_idx = self.df['ATR'].first_valid_index()
@@ -2470,217 +2433,6 @@ class RuleTradingEnv:
             self.current_step = self.df.index.get_loc(first_valid_atr_idx)
         else:
             pass # Removed warning print
-
-        # --- Features for ML Gate ---
-        self.df["Returns"]    = close.pct_change(fill_method=None)
-        self.df["SMA_F_S"]    = close.rolling(FEAT_SMA_SHORT).mean()
-        self.df["SMA_F_L"]    = close.rolling(FEAT_SMA_LONG).mean()
-        self.df["Volatility"] = self.df["Returns"].rolling(FEAT_VOL_WINDOW).std()
-        
-        # RSI for features
-        delta_feat = close.diff()
-        gain_feat = (delta_feat.where(delta_feat > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
-        loss_feat = (-delta_feat.where(delta_feat < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
-        rs_feat = gain_feat / loss_feat
-        self.df['RSI_feat'] = 100 - (100 / (1 + rs_feat))
-
-        # MACD for features
-        ema_12 = close.ewm(span=12, adjust=False).mean()
-        ema_26 = close.ewm(span=26, adjust=False).mean()
-        self.df['MACD'] = ema_12 - ema_26
-        self.df['MACD_signal'] = self.df['MACD'].ewm(span=9, adjust=False).mean() # Added MACD_signal
-        
-        # Bollinger Bands for features
-        bb_mid = close.rolling(window=20).mean()
-        bb_std = close.rolling(window=20).std()
-        self.df['BB_upper'] = bb_mid + (bb_std * 2)
-        self.df['BB_lower'] = bb_mid - (bb_std * 2) # Added BB_lower
-
-        # Stochastic Oscillator
-        low_14, high_14 = self.df['Low'].rolling(window=14).min(), self.df['High'].rolling(window=14).max()
-        self.df['%K'] = (self.df['Close'] - low_14) / (high_14 - low_14) * 100
-        self.df['%D'] = self.df['%K'].rolling(window=3).mean()
-
-        # Average Directional Index (ADX)
-        self.df['up_move'] = self.df['High'] - self.df['High'].shift(1)
-        self.df['down_move'] = self.df['Low'].shift(1) - self.df['Low']
-        self.df['+DM'] = np.where((self.df['up_move'] > self.df['down_move']) & (self.df['up_move'] > 0), self.df['up_move'], 0)
-        self.df['-DM'] = np.where((self.df['down_move'] > self.df['up_move']) & (self.df['down_move'] > 0), self.df['down_move'], 0)
-        high_low_diff = self.df['High'] - self.df['Low']
-        high_prev_close_diff_abs = (self.df['High'] - self.df['Close'].shift(1)).abs()
-        low_prev_close_diff_abs = (self.df['Low'] - self.df['Close'].shift(1)).abs()
-        self.df['TR'] = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
-        alpha = 1/14
-        self.df['+DM14'] = self.df['+DM'].ewm(alpha=alpha, adjust=False).mean()
-        self.df['-DM14'] = self.df['-DM'].ewm(alpha=alpha, adjust=False).mean()
-        self.df['TR14'] = self.df['TR'].ewm(alpha=alpha, adjust=False).mean()
-        self.df['DX'] = (abs(self.df['+DM14'] - self.df['-DM14']) / (self.df['+DM14'] + self.df['-DM14'])) * 100
-        self.df['DX'] = self.df['DX'].fillna(0) # Fill NaNs for DX immediately after calculation
-        self.df['ADX'] = self.df['DX'].ewm(alpha=alpha, adjust=False).mean()
-        self.df['ADX'] = self.df['ADX'].fillna(0) # Fill NaNs for ADX immediately after calculation
-        # Fill NaNs for all other ADX-related indicators after their calculations
-        self.df['+DM'] = self.df['+DM'].fillna(0)
-        self.df['-DM'] = self.df['-DM'].fillna(0)
-        self.df['TR'] = self.df['TR'].fillna(0)
-        self.df['+DM14'] = self.df['+DM14'].fillna(0)
-        self.df['-DM14'] = self.df['-DM14'].fillna(0)
-        self.df['TR14'] = self.df['TR14'].fillna(0)
-        # Fill NaNs for Stochastic Oscillator after its calculations
-        self.df['%K'] = self.df['%K'].fillna(0)
-        self.df['%D'] = self.df['%D'].fillna(0)
-
-        # On-Balance Volume (OBV)
-        self.df['OBV'] = (np.sign(self.df['Close'].diff()) * self.df['Volume']).fillna(0).cumsum()
-
-        # Chaikin Money Flow (CMF)
-        mfv = ((self.df['Close'] - self.df['Low']) - (self.df['High'] - self.df['Close'])) / (self.df['High'] - self.df['Low']) * self.df['Volume']
-        self.df['CMF'] = mfv.rolling(window=20).sum() / self.df['Volume'].rolling(window=20).sum()
-        self.df['CMF'] = self.df['CMF'].fillna(0)
-
-        # Rate of Change (ROC)
-        self.df['ROC'] = self.df['Close'].pct_change(periods=12) * 100
-        self.df['ROC_20'] = self.df['Close'].pct_change(periods=20) * 100
-        self.df['ROC_60'] = self.df['Close'].pct_change(periods=60) * 100
-
-        # Chande Momentum Oscillator (CMO)
-        cmo_period = 14
-        self.df['cmo_diff'] = self.df['Close'].diff()
-        self.df['cmo_up'] = self.df['cmo_diff'].apply(lambda x: x if x > 0 else 0)
-        self.df['cmo_down'] = self.df['cmo_diff'].apply(lambda x: abs(x) if x < 0 else 0)
-        self.df['cmo_sum_up'] = self.df['cmo_up'].rolling(window=cmo_period).sum()
-        self.df['cmo_sum_down'] = self.df['cmo_down'].rolling(window=cmo_period).sum()
-        self.df['CMO'] = ((self.df['cmo_sum_up'] - self.df['cmo_sum_down']) / (self.df['cmo_sum_up'] + self.df['cmo_sum_down'])) * 100
-        self.df['CMO'] = self.df['CMO'].fillna(0)
-
-        # Kaufman's Adaptive Moving Average (KAMA)
-        kama_period = 10
-        fast_ema_const = 2 / (2 + 1)
-        slow_ema_const = 2 / (30 + 1)
-        self.df['kama_change'] = abs(self.df['Close'] - self.df['Close'].shift(kama_period))
-        self.df['kama_volatility'] = self.df['Close'].diff().abs().rolling(window=kama_period).sum()
-        self.df['kama_er'] = self.df['kama_change'] / self.df['kama_volatility']
-        self.df['kama_er'] = self.df['kama_er'].fillna(0)
-        self.df['kama_sc'] = (self.df['kama_er'] * (fast_ema_const - slow_ema_const) + slow_ema_const)**2
-        self.df['KAMA'] = np.nan
-        self.df.iloc[kama_period-1, self.df.columns.get_loc('KAMA')] = self.df['Close'].iloc[kama_period-1] # Initialize first KAMA value
-        for i in range(kama_period, len(self.df)):
-            self.df.iloc[i, self.df.columns.get_loc('KAMA')] = self.df.iloc[i-1, self.df.columns.get_loc('KAMA')] + self.df.iloc[i, self.df.columns.get_loc('kama_sc')] * (self.df.iloc[i, self.df.columns.get_loc('Close')] - self.df.iloc[i-1, self.df.columns.get_loc('KAMA')])
-        self.df['KAMA'] = self.df['KAMA'].ffill().bfill().fillna(self.df['Close']) # Fill initial NaNs
-
-        # Elder's Force Index (EFI)
-        efi_period = 13
-        self.df['EFI'] = (self.df['Close'].diff() * self.df['Volume']).ewm(span=efi_period, adjust=False).mean()
-        self.df['EFI'] = self.df['EFI'].fillna(0)
-
-        # Keltner Channels
-        self.df['KC_TR'] = pd.concat([self.df['High'] - self.df['Low'], (self.df['High'] - self.df['Close'].shift(1)).abs(), (self.df['Low'] - self.df['Close'].shift(1)).abs()], axis=1).max(axis=1)
-        self.df['KC_ATR'] = self.df['KC_TR'].rolling(window=10).mean()
-        self.df['KC_Middle'] = self.df['Close'].rolling(window=20).mean()
-        self.df['KC_Upper'] = self.df['KC_Middle'] + (self.df['KC_ATR'] * 2)
-        self.df['KC_Lower'] = self.df['KC_Middle'] - (self.df['KC_ATR'] * 2)
-
-        # Donchian Channels
-        self.df['DC_Upper'] = self.df['High'].rolling(window=20).max()
-        self.df['DC_Lower'] = self.df['Low'].rolling(window=20).min()
-        self.df['DC_Middle'] = (self.df['DC_Upper'] + self.df['DC_Lower']) / 2
-
-        # Parabolic SAR (PSAR) - Re-implementing for RuleTradingEnv
-        psar = self.df['Close'].copy()
-        af = 0.02 # Acceleration Factor
-        max_af = 0.2 # Maximum Acceleration Factor
-
-        # Initial trend and extreme point
-        # Assume initial uptrend if Close > Open, downtrend otherwise
-        uptrend = True if self.df['Close'].iloc[0] > self.df['Open'].iloc[0] else False
-        ep = self.df['High'].iloc[0] if uptrend else self.df['Low'].iloc[0]
-        sar = self.df['Low'].iloc[0] if uptrend else self.df['High'].iloc[0]
-        
-        # Iterate to calculate PSAR
-        for i in range(1, len(self.df)):
-            if uptrend:
-                sar = sar + af * (ep - sar)
-                if self.df.iloc[i, self.df.columns.get_loc('Low')] < sar: # Trend reversal
-                    uptrend = False
-                    sar = ep
-                    ep = self.df.iloc[i, self.df.columns.get_loc('Low')]
-                    af = 0.02
-                else:
-                    if self.df.iloc[i, self.df.columns.get_loc('High')] > ep:
-                        ep = self.df.iloc[i, self.df.columns.get_loc('High')]
-                        af = min(max_af, af + 0.02)
-            else: # Downtrend
-                sar = sar + af * (ep - sar)
-                if self.df.iloc[i, self.df.columns.get_loc('High')] > sar: # Trend reversal
-                    uptrend = True
-                    sar = ep
-                    ep = self.df.iloc[i, self.df.columns.get_loc('High')]
-                    af = 0.02
-                else:
-                    if self.df.iloc[i, self.df.columns.get_loc('Low')] < ep:
-                        ep = self.df.iloc[i, self.df.columns.get_loc('Low')]
-                        af = min(max_af, af + 0.02)
-            psar.iloc[i] = sar
-        self.df['PSAR'] = psar
-
-        # Accumulation/Distribution Line (ADL) - Re-implementing for RuleTradingEnv
-        mf_multiplier = ((self.df['Close'] - self.df['Low']) - (self.df['High'] - self.df['Close'])) / (self.df['High'] - self.df['Low'])
-        mf_volume = mf_multiplier * self.df['Volume']
-        self.df['ADL'] = mf_volume.cumsum()
-        self.df['ADL'] = self.df['ADL'].fillna(0) # Fill initial NaNs with 0
-
-        # Commodity Channel Index (CCI) - Re-implementing for RuleTradingEnv
-        TP = (self.df['High'] + self.df['Low'] + self.df['Close']) / 3
-        self.df['CCI'] = (TP - TP.rolling(window=20).mean()) / (0.015 * TP.rolling(window=20).std())
-        self.df['CCI'] = self.df['CCI'].fillna(0) # Fill initial NaNs with 0
-
-        # Volume Weighted Average Price (VWAP)
-        self.df['VWAP'] = (self.df['Close'] * self.df['Volume']).rolling(window=FEAT_VOL_WINDOW).sum() / self.df['Volume'].rolling(window=FEAT_VOL_WINDOW).sum()
-        self.df['VWAP'] = self.df['VWAP'].fillna(self.df['Close']) # Fill initial NaNs with Close price
-
-        # ATR Percentage
-        # Ensure ATR is calculated before ATR_Pct
-        if "ATR" not in self.df.columns:
-            high = self.df["High"] if "High" in self.df.columns else None
-            low  = self.df["Low"]  if "Low" in self.df.columns else None
-            prev_close = self.df["Close"].shift(1)
-            if high is not None and low is not None:
-                hl = (high - low).abs()
-                h_pc = (high - prev_close).abs()
-                l_pc = (low  - prev_close).abs()
-                tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
-                self.df["ATR"] = tr.rolling(ATR_PERIOD).mean()
-            else:
-                ret = self.df["Close"].pct_change(fill_method=None)
-                self.df["ATR"] = (ret.rolling(ATR_PERIOD).std() * self.df["Close"]).rolling(2).mean()
-            self.df["ATR"] = self.df["ATR"].fillna(0)
-
-        self.df['ATR_Pct'] = (self.df['ATR'] / self.df['Close']) * 100
-        self.df['ATR_Pct'] = self.df['ATR_Pct'].fillna(0)
-
-        # Chaikin Oscillator
-        mf_multiplier_co = ((self.df['Close'] - self.df['Low']) - (self.df['High'] - self.df['Close'])) / (self.df['High'] - self.df['Low'])
-        adl_fast = (mf_multiplier_co * self.df['Volume']).ewm(span=3, adjust=False).mean()
-        adl_slow = (mf_multiplier_co * self.df['Volume']).ewm(span=10, adjust=False).mean()
-        self.df['Chaikin_Oscillator'] = adl_fast - adl_slow
-        self.df['Chaikin_Oscillator'] = self.df['Chaikin_Oscillator'].fillna(0)
-
-        # Money Flow Index (MFI)
-        typical_price_mfi = (self.df['High'] + self.df['Low'] + self.df['Close']) / 3
-        money_flow_mfi = typical_price_mfi * self.df['Volume']
-        positive_mf_mfi = money_flow_mfi.where(typical_price_mfi > typical_price_mfi.shift(1), 0)
-        negative_mf_mfi = money_flow_mfi.where(typical_price_mfi < typical_price_mfi.shift(1), 0)
-        mfi_ratio = positive_mf_mfi.rolling(window=14).sum() / negative_mf_mfi.rolling(window=14).sum()
-        self.df['MFI'] = 100 - (100 / (1 + mfi_ratio))
-        self.df['MFI'] = self.df['MFI'].fillna(0)
-
-        # OBV Moving Average
-        self.df['OBV_SMA'] = self.df['OBV'].rolling(window=10).mean()
-        self.df['OBV_SMA'] = self.df['OBV_SMA'].fillna(0)
-
-        # Historical Volatility (e.g., 20-day rolling standard deviation of log returns)
-        self.df['Log_Returns'] = np.log(self.df['Close'] / self.df['Close'].shift(1))
-        self.df['Historical_Volatility'] = self.df['Log_Returns'].rolling(window=20).std() * np.sqrt(252) # Annualized
-        self.df['Historical_Volatility'] = self.df['Historical_Volatility'].fillna(0)
 
     def _date_at(self, i: int) -> str:
         if "Date" in self.df.columns:
@@ -3283,10 +3035,13 @@ def _apply_fundamental_screen_worker(params: Tuple[str, float, float, float, flo
                     print(f"  [DEBUG] {ticker}: FCF = {fcf}, Threshold = {fcf_min_threshold}")
                     if fcf <= fcf_min_threshold:
                         fcf_ok = False
+                elif fcf_min_threshold > 0.0: # Only fail if a positive threshold is set and data is missing
+                    print(f"  [DEBUG] {ticker}: FCF data not found, and a positive threshold ({fcf_min_threshold}) was set. Failing FCF check.")
+                    fcf_ok = False
                 else:
-                    print(f"  [DEBUG] {ticker}: FCF data not found.")
-                    fcf_ok = False # If FCF data is missing, consider it a failure
-        
+                    print(f"  [DEBUG] {ticker}: FCF data not found, but threshold is 0.0. Passing FCF check.")
+                    fcf_ok = True # If FCF data is missing but threshold is 0.0, pass
+
         # EBITDA Check
         ebitda_ok = True
         if ebitda_min_threshold is not None:
@@ -3295,7 +3050,7 @@ def _apply_fundamental_screen_worker(params: Tuple[str, float, float, float, flo
                 latest_financials = financials.iloc[:, 0]
                 ebitda_keys = ['EBITDA', 'ebitda']
                 ebitda = None
-                for key in ebitda_keys: # Corrected loop to iterate over ebitda_keys
+                for key in ebitda_keys:
                     if key in latest_financials.index:
                         ebitda = latest_financials[key]
                         break
@@ -3303,12 +3058,19 @@ def _apply_fundamental_screen_worker(params: Tuple[str, float, float, float, flo
                     print(f"  [DEBUG] {ticker}: EBITDA = {ebitda}, Threshold = {ebitda_min_threshold}")
                     if ebitda <= ebitda_min_threshold:
                         ebitda_ok = False
+                elif ebitda_min_threshold > 0.0: # Only fail if a positive threshold is set and data is missing
+                    print(f"  [DEBUG] {ticker}: EBITDA data not found, and a positive threshold ({ebitda_min_threshold}) was set. Failing EBITDA check.")
+                    ebitda_ok = False
                 else:
-                    print(f"  [DEBUG] {ticker}: EBITDA data not found.")
-                    ebitda_ok = False # If EBITDA data is missing, consider it a failure
+                    print(f"  [DEBUG] {ticker}: EBITDA data not found, but threshold is 0.0. Passing EBITDA check.")
+                    ebitda_ok = True # If EBITDA data is missing but threshold is 0.0, pass
             else:
-                print(f"  [DEBUG] {ticker}: Financials (EBITDA) dataframe is empty.")
-                ebitda_ok = False # If financials dataframe is empty, consider it a failure
+                if ebitda_min_threshold > 0.0: # Only fail if a positive threshold is set and data is missing
+                    print(f"  [DEBUG] {ticker}: Financials (EBITDA) dataframe is empty, and a positive threshold ({ebitda_min_threshold}) was set. Failing EBITDA check.")
+                    ebitda_ok = False
+                else:
+                    print(f"  [DEBUG] {ticker}: Financials (EBITDA) dataframe is empty, but threshold is 0.0. Passing EBITDA check.")
+                    ebitda_ok = True # If financials dataframe is empty but threshold is 0.0, pass
 
         if fcf_ok and ebitda_ok:
             return (ticker, perf_1y, perf_ytd)
@@ -3316,7 +3078,7 @@ def _apply_fundamental_screen_worker(params: Tuple[str, float, float, float, flo
             return None # Does not pass fundamental screen
 
     except Exception as e:
-        print(f"  ⚠️ Error fetching financials for {ticker}: {e}. Skipping fundamental screen.")
+        print(f"  ⚠️ Error fetching financials for {ticker}: {e}. Skipping fundamental screen and letting it pass.")
         return (ticker, perf_1y, perf_ytd) # Let it pass if there's an error fetching financials
 
 def _finalize_single_ticker_performance(params: Tuple[str, float, pd.DataFrame, datetime, datetime, float, float, bool]) -> Optional[Tuple[str, float, float]]:
@@ -3434,9 +3196,16 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
     best_target_percentage = initial_target_percentage
     best_class_horizon = initial_class_horizon
 
-    step_proba = 0.05
-    min_proba_buy_range = sorted(list(set([round(x, 2) for x in [max(0.0, current_min_proba_buy - step_proba), current_min_proba_buy, current_min_proba_buy + step_proba] if 0.0 <= x <= 1.0])))
-    min_proba_sell_range = sorted(list(set([round(x, 2) for x in [max(0.0, current_min_proba_sell - step_proba), current_min_proba_sell, current_min_proba_sell + step_proba] if 0.0 <= x <= 1.0])))
+    # Determine min_proba_buy_range and min_proba_sell_range
+    if force_thresholds_optimization:
+        # Use a broader range for thresholds if forced
+        min_proba_buy_range = [round(x, 2) for x in np.arange(0.0, 1.05, 0.05)]
+        min_proba_sell_range = [round(x, 2) for x in np.arange(0.0, 1.05, 0.05)]
+    else:
+        # Otherwise, use a focused range around the current best
+        step_proba = 0.05
+        min_proba_buy_range = sorted(list(set([round(x, 2) for x in [max(0.0, current_min_proba_buy - step_proba), current_min_proba_buy, current_min_proba_buy + step_proba] if 0.0 <= x <= 1.0])))
+        min_proba_sell_range = sorted(list(set([round(x, 2) for x in [max(0.0, current_min_proba_sell - step_proba), current_min_proba_sell, current_min_proba_sell + step_proba] if 0.0 <= x <= 1.0])))
 
     # Determine target_percentage_range
     if force_percentage_optimization:
@@ -3917,7 +3686,7 @@ def main(
             start_price = df_ytd['Close'].iloc[0]
             end_price = df_ytd['Close'].iloc[-1]
             if start_price > 0:
-                perf_ytd = ((end_date - start_price) / start_price) * 100
+                perf_ytd = ((end_price - start_price) / start_price) * 100
             else:
                 perf_ytd = np.nan
         
@@ -3997,7 +3766,7 @@ def main(
     else:
         print("⚠️ Could not fetch intermarket data. Intermarket features will be 0.")
         # Add zero-filled columns for intermarket features to ensure feature set consistency
-        for col_name in ['Bond_Yield_Returns', 'Oil_Price_Returns', 'Gold_Price_Returns']: # DXY_Index_Returns removed from _fetch_intermarket_data
+        for col_name in ['VIX_Index_Returns', 'DXY_Index_Returns', 'Gold_Futures_Returns', 'Oil_Futures_Returns', 'US10Y_Yield_Returns', 'Oil_Price_Returns', 'Gold_Price_Returns']:
             if (col_name, 'Intermarket') not in all_tickers_data.columns:
                 all_tickers_data[col_name, 'Intermarket'] = 0.0
     # --- Identify top performers if not provided ---
@@ -6549,4 +6318,3 @@ try:
 except Exception:
     pass
 # --- END ALPHA_DIAG ---
-
