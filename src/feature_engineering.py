@@ -1,14 +1,13 @@
 import numpy as np
 import pandas as pd
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 # Import configuration from config.py
 from config import (
-    FEAT_SMA_SHORT, FEAT_SMA_LONG, FEAT_VOL_WINDOW, ATR_PERIOD,
-    TARGET_PERCENTAGE, CLASS_HORIZON
+    FEAT_SMA_SHORT, FEAT_SMA_LONG, FEAT_VOL_WINDOW, ATR_PERIOD
 )
 
-def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: float = TARGET_PERCENTAGE, class_horizon: int = CLASS_HORIZON) -> Tuple[pd.DataFrame, List[str]]:
+def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: Optional[float] = None, class_horizon: Optional[int] = None, include_targets: bool = True) -> Tuple[pd.DataFrame, List[str]]:
     """Compute ML features from a given DataFrame."""
     print(f"  [DIAGNOSTIC] {ticker}: fetch_training_data - Initial data rows: {len(data)}")
     if data.empty or len(data) < FEAT_SMA_LONG + 10:
@@ -26,9 +25,7 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
         print(f"  [DIAGNOSTIC] {ticker}: DataFrame became empty after dropping NaNs in 'Close'. Skipping feature prep.")
         return pd.DataFrame(), []
     
-    if df.empty:
-        print(f"  [DIAGNOSTIC] {ticker}: DataFrame became empty after dropping NaNs in 'Close'. Skipping feature prep.")
-        return pd.DataFrame(), []
+    # Removed duplicate check for df.empty
 
     # Fill missing values in other columns
     df = df.ffill().bfill()
@@ -220,19 +217,7 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     for col in financial_features:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    df["Target"]     = df["Close"].shift(-1)
-
-    # Classification label for BUY model: X-day forward > +target_percentage
-    fwd = df["Close"].shift(-class_horizon)
-    df["TargetClassBuy"] = ((fwd / df["Close"] - 1.0) > target_percentage).astype(float)
-
-    # Classification label for SELL model: X-day forward < -target_percentage
-    df["TargetClassSell"] = ((fwd / df["Close"] - 1.0) < -target_percentage).astype(float)
-
     # Dynamically build the list of features that are actually present in the DataFrame
-    # This is the most critical part to ensure consistency
-    
-    # Define a base set of expected technical features
     expected_technical_features = [
         "Close", "Volume", "High", "Low", "Open", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", 
         "ATR", "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
@@ -244,22 +229,22 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
         "Oil_Price_Returns", "Gold_Price_Returns"
     ]
     
-    # Filter to only include technical features that are actually in df.columns
     present_technical_features = [col for col in expected_technical_features if col in df.columns]
-    
-    # Combine with financial features
     all_present_features = present_technical_features + financial_features
     
-    # Also include target columns for the initial DataFrame selection before dropna
-    target_cols = ["Target", "TargetClassBuy", "TargetClassSell"]
+    target_cols = []
+    if include_targets and target_percentage is not None and class_horizon is not None:
+        df["Target"] = df["Close"].shift(-1)
+        fwd = df["Close"].shift(-class_horizon)
+        df["TargetClassBuy"] = ((fwd / df["Close"] - 1.0) > target_percentage).astype(float)
+        df["TargetClassSell"] = ((fwd / df["Close"] - 1.0) < -target_percentage).astype(float)
+        target_cols = ["Target", "TargetClassBuy", "TargetClassSell"]
+
     cols_for_ready = all_present_features + target_cols
-    
-    # Filter cols_for_ready to ensure all are actually in df.columns (redundant but safe)
     cols_for_ready_final = [col for col in cols_for_ready if col in df.columns]
 
     ready = df[cols_for_ready_final].dropna()
     
-    # The actual features used for training will be all columns in 'ready' except the target columns
     final_training_features = [col for col in ready.columns if col not in target_cols]
 
     print(f"   ↳ {ticker}: rows after features available: {len(ready)}")

@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
 
 # ============================
 # Configuration / Hyperparams
@@ -43,12 +42,12 @@ PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
 
 # --- Parallel Processing
-NUM_PROCESSES           = max(1, os.cpu_count() - 5) # Use all but one CPU core for parallel processing
+NUM_PROCESSES           = 4 # Use all but one CPU core for parallel processing (changed from max(1, cpu_count() - 5) for simplicity in config)
 
 # --- Backtest & training windows
 BACKTEST_DAYS           = 365        # 1 year for backtest
 BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest
-BACKTEST_DAYS_1MONTH    = 30         # 1 month for backtest
+BACKTEST_DAYS_1MONTH    = 32         # 1 month for backtest
 TRAIN_LOOKBACK_DAYS     = 360        # more data for model (e.g., 1 year)
 
 # --- Backtest Period Enable/Disable Flags ---
@@ -76,12 +75,10 @@ TRANSACTION_COST        = 0.001      # 0.1%
 FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
-MIN_PROBA_BUY           = 0.70      # ML gate threshold for buy model
-MIN_PROBA_SELL          = 0.30       # ML gate threshold for sell model
-TARGET_PERCENTAGE       = 0.002       # 0.8% target for buy/sell classification
-CLASS_HORIZON_OPTIONS   = [5, 10, 20, 30, 40] # Days ahead for classification target
-CLASS_HORIZON           = CLASS_HORIZON_OPTIONS[0] # Default CLASS_HORIZON
-ENABLE_CLASS_HORIZON_OPTIMIZATION = True # Set to True to enable CLASS_HORIZON optimization
+CLASS_HORIZON           = 5          # days ahead for classification target
+MIN_PROBA_BUY           = 0.20      # ML gate threshold for buy model
+MIN_PROBA_SELL          = 0.20       # ML gate threshold for sell model
+TARGET_PERCENTAGE       = 0.008       # 0.8% target for buy/sell classification
 USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
@@ -92,15 +89,11 @@ USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering
 USE_LOGISTIC_REGRESSION = False
 USE_SVM                 = False
 USE_MLP_CLASSIFIER      = False
-USE_LIGHTGBM            = False # Enable LightGBM - GOOD
-#GOOD
-USE_XGBOOST             = False # Enable XGBoost
+USE_LIGHTGBM            = False
+USE_XGBOOST             = False
 USE_LSTM                = False
-#Not so GOOD
-USE_GRU                 = True # Enable GRU - BEST
-#BEST
-USE_RANDOM_FOREST       = False # Enable RandomForest
-#WORST
+USE_GRU                 = True
+USE_RANDOM_FOREST       = False
 
 # --- Simple Rule-Based Strategy specific hyperparameters
 USE_SIMPLE_RULE_STRATEGY = False
@@ -123,12 +116,14 @@ GRU_DROPOUT_OPTIONS     = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
 GRU_LEARNING_RATE_OPTIONS = [0.0001, 0.0005, 0.001, 0.005, 0.01]
 GRU_BATCH_SIZE_OPTIONS  = [16, 32, 64, 128, 256]
 GRU_EPOCHS_OPTIONS      = [10, 30, 50, 70, 100]
-ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True # Set to True to enable GRU hyperparameter search
+GRU_CLASS_HORIZON_OPTIONS = [1, 2, 3, 4, 5, 7, 10, 15, 20]
+GRU_TARGET_PERCENTAGE_OPTIONS = [0.005, 0.008, 0.01, 0.015, 0.02, 0.03, 0.05]
+ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True
 
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = True
-FORCE_TRAINING          = True      # Set to True to force re-training of ML models
-CONTINUE_TRAINING_FROM_EXISTING = False # Set to True to load existing models and continue training
-FORCE_THRESHOLDS_OPTIMIZATION = True # Set to True to force re-optimization of ML thresholds
-FORCE_PERCENTAGE_OPTIMIZATION = True # Set to True to force re-optimization of TARGET_PERCENTAGE
+FORCE_TRAINING          = True
+CONTINUE_TRAINING_FROM_EXISTING = False
+FORCE_THRESHOLDS_OPTIMIZATION = True
+FORCE_PERCENTAGE_OPTIMIZATION = True
