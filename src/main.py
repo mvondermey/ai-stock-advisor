@@ -5293,7 +5293,7 @@ def main(
     else:
         print("⚠️ Could not fetch intermarket data. Intermarket features will be 0.")
         # Add zero-filled columns for intermarket features to ensure feature set consistency
-        for col_name in ['Bond_Yield_Returns', 'Oil_Price_Returns', 'Gold_Price_Returns']: # DXY_Index_Returns removed from _fetch_intermarket_data
+        for col_name in ['VIX_Index_Returns', 'DXY_Index_Returns', 'Gold_Futures_Returns', 'Oil_Futures_Returns', 'US10Y_Yield_Returns', 'Oil_Price_Returns', 'Gold_Price_Returns']:
             if (col_name, 'Intermarket') not in all_tickers_data.columns:
                 all_tickers_data[col_name, 'Intermarket'] = 0.0
     # --- Identify top performers if not provided ---
