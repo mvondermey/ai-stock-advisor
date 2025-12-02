@@ -312,8 +312,10 @@ class RuleTradingEnv:
 def backtest_worker(params: Tuple) -> Optional[Dict]:
     """Worker function for parallel backtesting."""
     ticker, df_backtest, capital_per_stock, model_buy, model_sell, scaler, \
-        feature_set, min_proba_buy, min_proba_sell, target_percentage, \
-        top_performers_data, use_simple_rule_strategy = params
+        feature_set, min_proba_buy, min_proba_sell, \
+        top_performers_data, use_simple_rule_strategy, \
+        opt_target_percentage_buy, opt_class_horizon_buy, \
+        opt_target_percentage_sell, opt_class_horizon_sell = params
     
     with open("logs/worker_debug.log", "a") as f:
         f.write(f"Worker started for ticker: {ticker}\n")
@@ -335,7 +337,11 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             feature_set=feature_set,
             per_ticker_min_proba_buy=min_proba_buy,
             per_ticker_min_proba_sell=min_proba_sell,
-            use_simple_rule_strategy=use_simple_rule_strategy
+            use_simple_rule_strategy=use_simple_rule_strategy,
+            opt_target_percentage_buy=opt_target_percentage_buy,
+            opt_class_horizon_buy=opt_class_horizon_buy,
+            opt_target_percentage_sell=opt_target_percentage_sell,
+            opt_class_horizon_sell=opt_class_horizon_sell
         )
         final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, shares_before_liquidation = env.run()
 

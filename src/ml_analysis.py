@@ -25,8 +25,10 @@ def analyze_shap_for_gru(model: GRUClassifier, scaler: nn.Module, X_df: pd.DataF
 
     if isinstance(model, GRUClassifier):
         print(f"  [{ticker}] SHAP KernelExplainer is not directly compatible with GRU models due to sequential input. Skipping SHAP analysis for GRU.")
-        return
+        return # Explicitly return here to skip the rest of the function
 
+    # The rest of the function remains unchanged, but will only be executed if the model is NOT a GRUClassifier.
+    # This effectively disables SHAP for GRU models as intended by the print statement.
     print(f"  [{ticker}] Calculating SHAP values for GRU model ({target_col})...")
     
     try:
@@ -43,7 +45,7 @@ def analyze_shap_for_gru(model: GRUClassifier, scaler: nn.Module, X_df: pd.DataF
             if not X_sequences_for_pred:
                 return np.full(len(X_unsequenced_np), 0.5)
 
-            X_sequences_tensor = torch.tensor(np.array(X_sequences_for_pred), dtype=torch.float32)
+            X_sequences_tensor = torch.tensor(np.array(X_sequences_for_pred), dtype=torch.float32).unsqueeze(0)
             
             device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
             model.to(device)
