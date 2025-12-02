@@ -20,7 +20,9 @@ class RuleTradingEnv:
                  per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None,
                  use_simple_rule_strategy: bool = USE_SIMPLE_RULE_STRATEGY,
                  simple_rule_trailing_stop_percent: float = SIMPLE_RULE_TRAILING_STOP_PERCENT,
-                 simple_rule_take_profit_percent: float = SIMPLE_RULE_TAKE_PROFIT_PERCENT):
+                 simple_rule_take_profit_percent: float = SIMPLE_RULE_TAKE_PROFIT_PERCENT,
+                 opt_target_percentage_buy: Optional[float] = None, opt_class_horizon_buy: Optional[int] = None,
+                 opt_target_percentage_sell: Optional[float] = None, opt_class_horizon_sell: Optional[int] = None):
         if "Close" not in df.columns:
             raise ValueError("DataFrame must contain 'Close' column.")
         self.df = df.reset_index()
@@ -37,8 +39,13 @@ class RuleTradingEnv:
         self.simple_rule_trailing_stop_percent = simple_rule_trailing_stop_percent
         self.simple_rule_take_profit_percent = simple_rule_take_profit_percent
         
+        # Use the optimized target_percentage and class_horizon for feature generation
+        # If not provided, fallback to defaults (which should be handled by fetch_training_data's defaults)
         df_with_features, actual_feature_set_for_env = fetch_training_data(
-            ticker, df.copy(), target_percentage=0.0, class_horizon=1
+            ticker, df.copy(), 
+            target_percentage=opt_target_percentage_buy, # Use optimized value for buy target
+            class_horizon=opt_class_horizon_buy,       # Use optimized value for buy target
+            include_targets=False # Targets are not needed for backtesting data itself
         )
         self.df = df_with_features.reset_index()
         self.feature_set = actual_feature_set_for_env
