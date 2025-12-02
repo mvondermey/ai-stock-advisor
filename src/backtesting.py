@@ -176,10 +176,14 @@ class RuleTradingEnv:
 
     def _allow_buy_by_model(self, i: int) -> bool:
         self.last_buy_prob = self._get_model_prediction(i, self.model_buy)
+        # Add debug print for buy probability and threshold
+        print(f"  [{self.ticker}] DEBUG: Buy Prob: {self.last_buy_prob:.4f}, Min Proba Buy: {self.min_proba_buy:.4f}")
         return self.last_buy_prob >= self.min_proba_buy
 
     def _allow_sell_by_model(self, i: int) -> bool:
         self.last_sell_prob = self._get_model_prediction(i, self.model_sell)
+        # Add debug print for sell probability and threshold
+        print(f"  [{self.ticker}] DEBUG: Sell Prob: {self.last_sell_prob:.4f}, Min Proba Sell: {self.min_proba_sell:.4f}")
         return self.last_sell_prob >= self.min_proba_sell
 
     def _position_size_from_atr(self, price: float, atr: float) -> int:
@@ -193,17 +197,21 @@ class RuleTradingEnv:
 
     def _buy(self, price: float, atr: Optional[float], date: str):
         if self.cash <= 0:
+            print(f"  [{self.ticker}] DEBUG: Cannot BUY, cash is zero.")
             return
 
         qty = self._position_size_from_atr(price, atr if atr is not None else np.nan)
         if qty <= 0:
+            print(f"  [{self.ticker}] DEBUG: Cannot BUY, calculated quantity is zero or less.")
             return
 
         cost = price * qty * (1 + self.transaction_cost)
         if cost > self.cash:
             qty = int(self.cash / (price * (1 + self.transaction_cost)))
+            print(f"  [{self.ticker}] DEBUG: Adjusted BUY quantity due to insufficient cash. New Qty: {qty}")
         
         if qty <= 0:
+            print(f"  [{self.ticker}] DEBUG: Cannot BUY, adjusted quantity is zero or less.")
             return
 
         fee = price * qty * self.transaction_cost
@@ -217,9 +225,11 @@ class RuleTradingEnv:
         self.holding_bars = 0
         self.trade_log.append((date, "BUY", price, qty, self.ticker, {"fee": fee}, fee))
         self.last_ai_action = "BUY"
+        print(f"  [{self.ticker}] BUY Executed: {date}, Price: {price:.2f}, Qty: {qty}, Cash: {self.cash:,.2f}, Shares: {self.shares:.2f}")
 
     def _sell(self, price: float, date: str):
         if self.shares <= 0:
+            print(f"  [{self.ticker}] DEBUG: Cannot SELL, no shares held.")
             return
         qty = int(self.shares)
         proceeds = price * qty
@@ -232,6 +242,7 @@ class RuleTradingEnv:
         self.holding_bars = 0
         self.trade_log.append((date, "SELL", price, qty, self.ticker, {"fee": fee}, fee))
         self.last_ai_action = "SELL"
+        print(f"  [{self.ticker}] SELL Executed: {date}, Price: {price:.2f}, Qty: {qty}, Cash: {self.cash:,.2f}, Shares: {self.shares:.2f}")
 
     def step(self):
         if self.current_step < 1:
@@ -261,6 +272,9 @@ class RuleTradingEnv:
             if prev_sma_short <= prev_sma_long and sma_short > sma_long:
                 simple_rule_entry_signal = True
 
+        print(f"  [{self.ticker}] DEBUG: Step {self.current_step}, Price: {price:.2f}, Shares: {self.shares:.2f}, Cash: {self.cash:,.2f}")
+        print(f"  [{self.ticker}] DEBUG: AI Buy Signal: {ai_signal}, Simple Rule Buy Signal: {simple_rule_entry_signal}")
+
         if self.shares == 0 and (ai_signal or simple_rule_entry_signal):
             self._buy(price, atr, date)
         
@@ -283,6 +297,8 @@ class RuleTradingEnv:
             elif self.take_profit_price is not None and price >= self.take_profit_price:
                 simple_rule_exit_signal = True
                 self.last_ai_action = "SELL (Take Profit)"
+
+        print(f"  [{self.ticker}] DEBUG: AI Sell Signal: {ai_exit_signal}, Simple Rule Sell Signal: {simple_rule_exit_signal}")
 
         if self.shares > 0 and (ai_exit_signal or simple_rule_exit_signal):
             self._sell(price, date)
