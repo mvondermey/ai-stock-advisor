@@ -3475,6 +3475,12 @@ def main(
     initial_balance_used = INITIAL_BALANCE 
     print(f"Using initial balance: ${initial_balance_used:,.2f}")
 
+    # Initialize filtered ticker lists to avoid UnboundLocalError
+    top_tickers_1y_filtered = []
+    top_tickers_ytd_filtered = []
+    top_tickers_3month_filtered = []
+    top_tickers_1month_filtered = []
+
     # --- Handle single ticker case for initial performance calculation ---
     if single_ticker:
         print(f"🔍 Running analysis for single ticker: {single_ticker}")
@@ -3677,6 +3683,23 @@ def main(
             elif res and res.get('status') == 'failed':
                 failed_training_tickers_1y[res['ticker']] = res['reason']
         print(f"  [DIAGNOSTIC] After 1-Year training loop, models_buy has {len(models_buy)} entries.")
+
+    # 🧠 Initialize dictionaries for model training data before threshold optimization
+    X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
+    prices_dict, signals_dict = {}, {}
+
+    # Populate dictionaries per trained ticker if data exists in memory
+    for ticker in top_tickers_1y_filtered:
+        try:
+            if 'X_train' in locals(): X_train_dict[ticker] = X_train
+            if 'y_train' in locals(): y_train_dict[ticker] = y_train
+            if 'X_test' in locals(): X_test_dict[ticker] = X_test
+            if 'y_test' in locals(): y_test_dict[ticker] = y_test
+            if 'df_prices' in locals(): prices_dict[ticker] = df_prices.get(ticker, None)
+            if 'signal_data' in locals(): signals_dict[ticker] = signal_data.get(ticker, None)
+        except Exception as e:
+            print(f"[WARN] Could not populate training dicts for {ticker}: {e}")
+
 
         if not models_buy and USE_MODEL_GATE:
             print("⚠️ No models were trained for 1-Year backtest. Model-gating will be disabled for this run.\n")
