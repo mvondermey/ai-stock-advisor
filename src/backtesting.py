@@ -22,10 +22,20 @@ Path("logs").mkdir(exist_ok=True)
 # -----------------------------------------------------------------------------
 def optimize_single_ticker_worker(params):
     (
-        ticker, train_start, train_end, current_target_perc, current_class_horizon,
-        feature_set, model_buy, model_sell, scaler,
-        capital_per_stock, current_buy_proba, current_sell_proba,
-        force_percentage_optimization, force_thresholds_optimization
+        ticker,
+        X_train,
+        y_train,
+        X_test,
+        y_test,
+        model_buy,
+        model_sell,
+        scaler,
+        prices_dict,
+        signals_dict,
+        p_target_range,
+        p_buy_range,
+        p_sell_range,
+        c_horizon_range
     ) = params
 
     def evaluate_thresholds(p_buy, p_sell, p_target, c_horizon):
