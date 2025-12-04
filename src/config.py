@@ -77,7 +77,9 @@ FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
 CLASS_HORIZON           = 5          # days ahead for classification target
 MIN_PROBA_BUY           = 0.20      # ML gate threshold for buy model
+MIN_PROBA_BUY_OPTIONS   = [0.19, 0.20, 0.21]
 MIN_PROBA_SELL          = 0.20       # ML gate threshold for sell model
+MIN_PROBA_SELL_OPTIONS  = [0.19, 0.20, 0.21]
 TARGET_PERCENTAGE       = 0.008       # 0.8% target for buy/sell classification
 USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request
@@ -117,7 +119,7 @@ GRU_LEARNING_RATE_OPTIONS = [0.0001, 0.0005, 0.001, 0.005, 0.01]
 GRU_BATCH_SIZE_OPTIONS  = [16, 32, 64, 128, 256]
 GRU_EPOCHS_OPTIONS      = [10, 30, 50, 70, 100]
 GRU_CLASS_HORIZON_OPTIONS = [1, 2, 3, 4, 5, 7, 10, 15, 20]
-GRU_TARGET_PERCENTAGE_OPTIONS = [0.005, 0.008, 0.01, 0.015, 0.02, 0.03, 0.05]
+GRU_TARGET_PERCENTAGE_OPTIONS = [0.007, 0.008, 0.009]
 ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True
 
 # --- Misc

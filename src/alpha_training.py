@@ -136,4 +136,23 @@ def alpha_aware_thresholding(
         bench_future_returns=bench_future_returns,
         cfg=cfg,
     )
-    return t, entries, score
+
+    # Refine thresholds around the initially found best_t
+    refined_thresholds = []
+    step = 0.02 # Define a step size for refinement
+    for i in range(-2, 3): # Generate 5 thresholds: best_t - 2*step, best_t - step, best_t, best_t + step, best_t + 2*step
+        refined_t = round(t + i * step, 4)
+        if 0.0 <= refined_t <= 1.0 and refined_t not in refined_thresholds:
+            refined_thresholds.append(refined_t)
+    
+    if len(refined_thresholds) > 1: # Only re-optimize if there's a range to explore
+        cfg_refined = AlphaThresholdConfig(thresholds=tuple(sorted(refined_thresholds)), rebalance_freq=freq, metric=metric)
+        t_refined, entries_refined, score_refined, _ = select_threshold_by_alpha(
+            proba=proba,
+            future_returns=future_returns,
+            bench_future_returns=bench_future_returns,
+            cfg=cfg_refined,
+        )
+        return t_refined, entries_refined, score_refined
+    else:
+        return t, entries, score

@@ -55,6 +55,7 @@ if not _script_initialized:
     _script_initialized = True
 
 import os
+from backtesting import optimize_thresholds_for_portfolio_parallel
 import json
 import time
 import re

@@ -235,7 +235,7 @@ def train_and_evaluate_models(
                     else:
                         scaler_non_dl = StandardScaler()
                         X_scaled_non_dl = scaler_non_dl.fit_transform(X_df_non_dl)
-                        X_non_dl = pd.DataFrame(X_scaled_non_dl, columns=final_feature_names_non_dl, index=X_df_non_dl.index)
+                        X_non_dl = pd.DataFrame(X_scaled_dl_non_dl, columns=final_feature_names_non_dl, index=X_df_non_dl.index)
                     scaler_non_dl.feature_names_in_ = list(final_feature_names_non_dl)
     
     models_and_params_local = {} 
@@ -301,130 +301,16 @@ def train_and_evaluate_models(
             device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
             
             if USE_GRU:
+                gru_model, gru_scaler, gru_hyperparams = None, None, None
                 if perform_gru_hp_optimization and ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION:
-                    print(f"    - Starting GRU hyperparameter randomized search for {ticker} ({target_col})...")
-                    best_gru_auc = -np.inf
-                    best_gru_model = None
-                    best_gru_scaler = None
-                    best_gru_hyperparams = {}
-                    
-                    gru_param_distributions = {
-                        "hidden_size": GRU_HIDDEN_SIZE_OPTIONS,
-                        "num_layers": GRU_NUM_LAYERS_OPTIONS,
-                        "dropout_rate": GRU_DROPOUT_OPTIONS,
-                        "learning_rate": GRU_LEARNING_RATE_OPTIONS,
-                        "batch_size": GRU_BATCH_SIZE_OPTIONS,
-                        "epochs": GRU_EPOCHS_OPTIONS,
-                        "class_horizon": GRU_CLASS_HORIZON_OPTIONS,
-                        "target_percentage": GRU_TARGET_PERCENTAGE_OPTIONS
-                    }
-                    
-                    n_trials = 20
-
-                    print(f"      GRU Hyperparameter Randomized Search for {ticker} ({target_col}) with {n_trials} trials:")
-
-                    for trial in range(n_trials):
-                        temp_hyperparams = {
-                            "hidden_size": random.choice(gru_param_distributions["hidden_size"]),
-                            "num_layers": random.choice(gru_param_distributions["num_layers"]),
-                            "dropout_rate": random.choice(gru_param_distributions["dropout_rate"]),
-                            "learning_rate": random.choice(gru_param_distributions["learning_rate"]),
-                            "batch_size": random.choice(gru_param_distributions["batch_size"]),
-                            "epochs": random.choice(gru_param_distributions["epochs"]),
-                            "class_horizon": random.choice(gru_param_distributions["class_horizon"]),
-                            "target_percentage": random.choice(gru_param_distributions["target_percentage"])
-                        }
-                        
-                        current_dropout_rate = temp_hyperparams["dropout_rate"] if temp_hyperparams["num_layers"] > 1 else 0.0
-                        temp_hyperparams["dropout_rate"] = current_dropout_rate
-
-                        print(f"          Testing GRU (Trial {trial + 1}/{n_trials}) with: HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']}, CH={temp_hyperparams['class_horizon']}, TP={temp_hyperparams['target_percentage']:.4f}")
-
-                        df_train_trial, actual_feature_set_trial = fetch_training_data(ticker, raw_df_dl.copy(), temp_hyperparams["target_percentage"], temp_hyperparams["class_horizon"])
-                        
-                        if df_train_trial.empty:
-                            print(f"          [DIAGNOSTIC] {ticker}: Insufficient training data for GRU trial. Skipping.")
-                            continue
-                        
-                        X_df_trial = df_train_trial[actual_feature_set_trial]
-                        y_trial = df_train_trial[target_col].values
-
-                        if len(X_df_trial) < SEQUENCE_LENGTH + 1:
-                            print(f"          [DIAGNOSTIC] {ticker}: Not enough rows for sequencing in GRU trial (need > {SEQUENCE_LENGTH} rows). Skipping.")
-                            continue
-
-                        dl_scaler_trial = MinMaxScaler(feature_range=(0, 1))
-                        X_scaled_dl_trial = dl_scaler_trial.fit_transform(X_df_trial)
-                        
-                        X_sequences_trial = []
-                        y_sequences_trial = []
-                        for i in range(len(X_scaled_dl_trial) - SEQUENCE_LENGTH):
-                            X_sequences_trial.append(X_scaled_dl_trial[i:i + SEQUENCE_LENGTH])
-                            y_sequences_trial.append(y_trial[i + SEQUENCE_LENGTH])
-                        
-                        if not X_sequences_trial:
-                            print(f"          [DIAGNOSTIC] {ticker}: Not enough data to create sequences for GRU trial. Skipping.")
-                            continue
-                        
-                        X_sequences_trial = torch.tensor(np.array(X_sequences_trial), dtype=torch.float32)
-                        y_sequences_trial = torch.tensor(np.array(y_sequences_trial), dtype=torch.float32).unsqueeze(1)
-
-                        input_size = X_sequences_trial.shape[2]
-                        
-                        neg_count_trial = (y_sequences_trial == 0).sum()
-                        pos_count_trial = (y_sequences_trial == 1).sum()
-                        if pos_count_trial > 0 and neg_count_trial > 0:
-                            pos_weight_trial = torch.tensor([neg_count_trial / pos_count_trial], device=device, dtype=torch.float32)
-                            criterion_trial = nn.BCEWithLogitsLoss(pos_weight=pos_weight_trial)
-                        else:
-                            criterion_trial = nn.BCEWithLogitsLoss()
-
-                        gru_model = GRUClassifier(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]).to(device)
-                        optimizer_gru = optim.Adam(gru_model.parameters(), lr=temp_hyperparams["learning_rate"])
-                        
-                        current_dataloader = DataLoader(TensorDataset(X_sequences_trial, y_sequences_trial), batch_size=temp_hyperparams["batch_size"], shuffle=True)
-
-                        for epoch in range(temp_hyperparams["epochs"]):
-                            for batch_X, batch_y in current_dataloader:
-                                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                                optimizer_gru.zero_grad()
-                                outputs = gru_model(batch_X)
-                                loss = criterion_trial(outputs, batch_y)
-                                loss.backward()
-                                optimizer_gru.step()
-                        
-                        gru_model.eval()
-                        with torch.no_grad():
-                            all_outputs = []
-                            for batch_X, _ in current_dataloader:
-                                batch_X = batch_X.to(device)
-                                outputs = gru_model(batch_X)
-                                all_outputs.append(torch.sigmoid(outputs).cpu().numpy())
-                            y_pred_proba_gru = np.concatenate(all_outputs).flatten()
-
-                        try:
-                            from sklearn.metrics import roc_auc_score
-                            auc_gru = roc_auc_score(y_sequences_trial.cpu().numpy(), y_pred_proba_gru)
-                            print(f"            GRU AUC: {auc_gru:.4f}")
-
-                            if auc_gru > best_gru_auc:
-                                best_gru_auc = auc_gru
-                                best_gru_model = gru_model
-                                best_gru_scaler = dl_scaler_trial
-                                best_gru_hyperparams = temp_hyperparams.copy()
-                        except ValueError:
-                            print(f"            GRU AUC: Not enough samples with positive class for AUC calculation.")
-                                
-                    if best_gru_model:
-                        models_and_params_local["GRU"] = {"model": best_gru_model, "scaler": best_gru_scaler, "auc": best_gru_auc, "hyperparams": best_gru_hyperparams}
-                        print(f"      Best GRU found for {ticker} ({target_col}) with AUC: {best_gru_auc:.4f}, Hyperparams: {best_gru_hyperparams}")
-                        if SAVE_PLOTS and SHAP_AVAILABLE:
-                            analyze_shap_for_gru(best_gru_model, best_gru_scaler, X_df_trial, actual_feature_set_trial, ticker, target_col, SEQUENCE_LENGTH)
-                    else:
-                        print(f"      No valid GRU model found after hyperparameter search for {ticker} ({target_col}).")
-                        models_and_params_local["GRU"] = {"model": None, "scaler": None, "auc": 0.0}
-
-                else:
+                    gru_model, gru_scaler, gru_hyperparams = optimize_gru_hyperparameters_for_ticker(
+                        ticker, raw_df_dl, df.index.min(), df.index.max(), target_col,
+                        default_target_percentage, default_class_horizon, loaded_gru_hyperparams
+                    )
+                    if gru_model:
+                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": gru_scaler, "auc": 0.0, "hyperparams": gru_hyperparams} # AUC will be calculated later
+                
+                if not gru_model: # If HP opt was skipped or failed, proceed with fixed-hyperparameter training
                     if loaded_gru_hyperparams:
                         print(f"    - Training GRU for {ticker} ({target_col}) with loaded hyperparameters...")
                         hidden_size = loaded_gru_hyperparams.get("hidden_size", LSTM_HIDDEN_SIZE)
@@ -827,4 +713,4 @@ def train_worker(params: Tuple) -> Dict:
             reason = "Insufficient training data for buy or sell model after feature prep"
         
         print(f"  ❌ Failed to train models for {ticker}. Reason: {reason}")
-        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None, 'status': 'failed', 'reason': reason}
+        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None, 'status': 'failed', 'reason': None}
