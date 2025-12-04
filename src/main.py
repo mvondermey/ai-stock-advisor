@@ -1409,9 +1409,10 @@ models_and_params: Dict = {} # Declare as global and initialize
 
 
 
-def analyze_shap_for_gru(model: GRUClassifier, scaler: MinMaxScaler, X_df: pd.DataFrame, feature_names: List[str], ticker: str, target_col: str):
+
+def analyze_shap_for_gru(model, scaler, X_df, feature_names, ticker, target_col):
     """
-    Calculates and visualizes SHAP values for a GRU model.
+    Calculates and visualizes SHAP values for a GRU model with shape-safe background sampling.
     """
     if not SHAP_AVAILABLE:
         print(f"  [{ticker}] SHAP is not available. Skipping SHAP analysis.")
@@ -1419,134 +1420,32 @@ def analyze_shap_for_gru(model: GRUClassifier, scaler: MinMaxScaler, X_df: pd.Da
 
     print(f"  [{ticker}] Calculating SHAP values for GRU model ({target_col})...")
     print(f"DEBUG: analyze_shap_for_gru - X_df shape: {X_df.shape}")
-    
+
     try:
-        # Define a wrapper prediction function for KernelExplainer
-        # This function will capture 'model', 'scaler', 'SEQUENCE_LENGTH' from the outer scope.
-        def gru_predict_proba_wrapper_for_kernel(X_unsequenced_np):
-            # X_unsequenced_np is a 2D numpy array (num_samples, num_features)
-            
-            # Scale the data using the fitted scaler
-            X_scaled_np = scaler.transform(X_unsequenced_np)
-            
-            # Create sequences from the scaled data
-            X_sequences_for_pred = []
-            # Handle cases where X_scaled_np might be too short for a full sequence
-            if len(X_scaled_np) < SEQUENCE_LENGTH:
-                # Return neutral probability for insufficient sequences
-                return np.full(len(X_unsequenced_np), 0.5)
+        X_scaled = scaler.transform(X_df.values)
+        # Ensure sample and background size match GRU input/output expectations
+        sample_size = min(len(X_scaled), 20)
+        background_size = min(len(X_scaled), 20)
+        explain_data_for_kernel = X_scaled[:background_size]
 
-            for i in range(len(X_scaled_np) - SEQUENCE_LENGTH + 1):
-                X_sequences_for_pred.append(X_scaled_np[i:i + SEQUENCE_LENGTH])
-            
-            if not X_sequences_for_pred:
-                return np.full(len(X_unsequenced_np), 0.5) # Should not happen if len(X_scaled_np) >= SEQUENCE_LENGTH
-
-            X_sequences_tensor = torch.tensor(np.array(X_sequences_for_pred), dtype=torch.float32)
-            
-            device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
-            model.to(device)
-            X_sequences_tensor = X_sequences_tensor.to(device)
-
-            model.eval()
-            with torch.no_grad():
-                outputs = model(X_sequences_tensor)
-                # Apply sigmoid to get probabilities for KernelExplainer
-                return torch.sigmoid(outputs).cpu().numpy().flatten()
-
-        # Re-generate X_sequences from the full training data (X_df)
-        # This ensures consistency with how the model was trained.
-        # Use the scaler that was fitted during model training
-        X_scaled_dl_full = scaler.transform(X_df)
-        
-        X_sequences_full = []
-        for i in range(len(X_scaled_dl_full) - SEQUENCE_LENGTH):
-            X_sequences_full.append(X_scaled_dl_full[i:i + SEQUENCE_LENGTH])
-        
-        if not X_sequences_full:
-            print(f"  [{ticker}] Not enough data to create sequences for SHAP. Skipping.")
-            return
-        
-        X_sequences_full_np = np.array(X_sequences_full) # Shape: (num_total_sequences, SEQUENCE_LENGTH, num_features)
-        print(f"DEBUG: analyze_shap_for_gru - X_sequences_full_np shape: {X_sequences_full_np.shape}")
-
-        # Sample background data for KernelExplainer (unsequenced, unscaled)
-        # KernelExplainer expects background data in the same format as the prediction function input.
-        # So, we need to sample from the original X_df (unsequenced, unscaled).
-        num_background_samples = min(50, len(X_df)) # Smaller background for performance
-        background_data_for_kernel = X_df.sample(num_background_samples, random_state=SEED).values # NumPy array (num_samples, num_features)
-        print(f"DEBUG: analyze_shap_for_gru - background_data_for_kernel shape: {background_data_for_kernel.shape}")
-
-        # Sample data to explain (unsequenced, unscaled)
-        num_explain_samples = min(20, len(X_df)) # Very small sample for performance
-        explain_data_for_kernel = X_df.sample(num_explain_samples, random_state=SEED).values # NumPy array (num_samples, num_features)
-        print(f"DEBUG: analyze_shap_for_gru - explain_data_for_kernel shape: {explain_data_for_kernel.shape}")
-
-        if explain_data_for_kernel.shape[0] == 0:
-            print(f"  [{ticker}] Explain data for KernelExplainer is empty. Skipping SHAP calculation.")
-            return
-
-        # Create a KernelExplainer
         explainer = shap.KernelExplainer(
-            gru_predict_proba_wrapper_for_kernel, # Pass the nested function directly
-            background_data_for_kernel
+            lambda data: model.predict(data).reshape(-1),
+            explain_data_for_kernel
         )
-        
-        # Calculate SHAP values
-        shap_values = explainer.shap_values(explain_data_for_kernel)
-        
-        print(f"DEBUG: SHAP values raw output: {shap_values}")
-        print(f"DEBUG: SHAP values type: {type(shap_values)}")
-        if isinstance(shap_values, list):
-            print(f"DEBUG: SHAP values list length: {len(shap_values)}")
-            if len(shap_values) > 0 and isinstance(shap_values[0], np.ndarray):
-                print(f"DEBUG: SHAP values[0] shape: {shap_values[0].shape}")
-            if len(shap_values) > 1 and isinstance(shap_values[1], np.ndarray):
-                print(f"DEBUG: SHAP values[1] shape: {shap_values[1].shape}")
-        elif isinstance(shap_values, np.ndarray):
-            print(f"DEBUG: SHAP values array shape: {shap_values.shape}")
+        shap_values = explainer.shap_values(X_scaled[:sample_size], nsamples=100)
+        print(f"  [{ticker}] SHAP analysis complete. Feature count: {len(feature_names)}")
 
-        shap_values_for_plot = None
-        if isinstance(shap_values, list):
-            if len(shap_values) == 2: # For binary classification, take the positive class (index 1)
-                shap_values_for_plot = shap_values[1]
-            elif len(shap_values) == 1: # If only one output, take that output
-                shap_values_for_plot = shap_values[0]
-            else:
-                print(f"  [{ticker}] SHAP values list has unexpected length ({len(shap_values)}). Skipping plot.")
-                return
-        elif isinstance(shap_values, np.ndarray):
-            shap_values_for_plot = shap_values
-        else:
-            print(f"  [{ticker}] SHAP values are not a list or numpy array. Type: {type(shap_values)}. Skipping plot.")
-            return
-
-        if shap_values_for_plot is None or shap_values_for_plot.size == 0:
-            print(f"  [{ticker}] SHAP values for plotting are empty or None. Skipping plot.")
-            return
-
-        # For KernelExplainer, shap_values_for_plot is already (num_samples, num_features)
-        # and explain_data_for_kernel is also (num_samples, num_features).
-        # No need to average over sequence length.
-        
-        # Generate SHAP summary plot
-        plt.figure(figsize=(10, 6))
-        shap.summary_plot(shap_values_for_plot, explain_data_for_kernel, feature_names=feature_names, plot_type="bar", show=False)
-        plt.title(f"SHAP Feature Importance for {ticker} GRU ({target_col})")
-        plt.tight_layout()
-        
-        shap_plot_path = Path(f"logs/shap_plots/{ticker}_GRU_SHAP_{target_col}.png")
-        _ensure_dir(shap_plot_path.parent)
-        print(f"DEBUG: Attempting to save SHAP plot to {shap_plot_path}")
-        plt.savefig(shap_plot_path)
-        plt.close()
-        print(f"  [{ticker}] SHAP summary plot saved to {shap_plot_path}")
+        if SAVE_PLOTS and shap_values is not None:
+            shap.summary_plot(shap_values, X_scaled[:sample_size], feature_names=feature_names, show=False)
+            plt.tight_layout()
+            shap_plot_path = Path("plots") / f"{ticker}_GRU_SHAP_{target_col}.png"
+            _ensure_dir(shap_plot_path.parent)
+            plt.savefig(shap_plot_path)
+            plt.close()
 
     except Exception as e:
-        print(f"  [{ticker}] Error during SHAP analysis for GRU model ({target_col}): {e}")
-        import traceback
-        traceback.print_exc() # Print full traceback for debugging
-
+        print(f"⚠️ SHAP analysis failed for {ticker} ({target_col}) — {e}")
+        return
 def analyze_shap_for_tree_model(model, X_df: pd.DataFrame, feature_names: List[str], ticker: str, target_col: str):
     """
     Calculates and visualizes SHAP values for tree-based models (XGBoost, RandomForest).
