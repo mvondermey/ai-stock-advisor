@@ -48,7 +48,6 @@ def setup_logging(verbose: bool = False) -> None:
         root.addHandler(handler)
     root.setLevel(level)
 
-
 _script_initialized = False
 if not _script_initialized:
     print("DEBUG: Script execution initiated.")
@@ -255,7 +254,6 @@ CONTINUE_TRAINING_FROM_EXISTING = False # Set to True to load existing models an
 FORCE_THRESHOLDS_OPTIMIZATION = True # Set to True to force re-optimization of ML thresholds
 FORCE_PERCENTAGE_OPTIMIZATION = True # Set to True to force re-optimization of TARGET_PERCENTAGE
 
-
 # ============================
 # Helpers
 # ============================
@@ -265,7 +263,6 @@ def _ensure_dir(p: Path) -> None:
         p.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
-
 
 def _normalize_symbol(symbol: str, provider: str) -> str:
     """Normalizes a ticker symbol for the given data provider."""
@@ -284,7 +281,6 @@ def _normalize_symbol(symbol: str, provider: str) -> str:
         return s_ticker.replace('.', '-').split('.US')[0]
         
     return s_ticker
-
 
 def _to_utc(ts):
     """Return a pandas UTC-aware Timestamp for any datetime-like input."""
@@ -534,7 +530,6 @@ def _fetch_financial_data_from_alpaca(ticker: str) -> pd.DataFrame:
     for fundamental data.
     """
     return pd.DataFrame()
-
 
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Download and clean data from the selected provider, with an improved local caching mechanism."""
@@ -799,7 +794,6 @@ def get_tickers_for_backtest(n: int = 10) -> List[str]:
     print(f"Randomly selected {n} tickers: {', '.join(selected_tickers)}")
     return selected_tickers
 
-
 def get_all_tickers() -> List[str]:
     """
     Gets a list of tickers from the markets selected in the configuration.
@@ -1048,7 +1042,6 @@ def get_all_tickers() -> List[str]:
 
     print(f"Total unique tickers found: {len(final_tickers)}")
     return sorted(list(final_tickers))
-
 
 # ============================
 # Feature prep & model
@@ -1407,9 +1400,6 @@ models_and_params: Dict = {} # Declare as global and initialize
 # These classes must be defined only if PyTorch is available,
 # otherwise, 'nn' will not be defined and cause a NameError.
 
-
-
-
 def analyze_shap_for_gru(model, scaler, X_df, feature_names, ticker, target_col):
     """
     Calculates and visualizes SHAP values for a GRU model with shape-safe background sampling.
@@ -1513,7 +1503,6 @@ def analyze_shap_for_tree_model(model, X_df: pd.DataFrame, feature_names: List[s
         print(f"  [{ticker}] Error during SHAP analysis for tree model ({target_col}): {e}")
         import traceback
         traceback.print_exc() # Print full traceback for debugging
-
 
 def train_and_evaluate_models(
     df: pd.DataFrame, # This is df_train_initial for non-GRU, or raw_df_for_feature_gen for GRU
@@ -1635,7 +1624,6 @@ def train_and_evaluate_models(
             }
             models_and_params_local[f"XGBoost ({xgb_device.upper()})"] = xgb_model_params
             print(f"ℹ️ XGBoost found. Will use {xgb_device.upper()}.")
-
 
     # --- Deep Learning Models (LSTM/GRU) ---
     if PYTORCH_AVAILABLE and (USE_LSTM or USE_GRU):
@@ -2192,7 +2180,6 @@ def train_worker(params: Tuple) -> Dict:
 # Rule-based backtester (ATR & ML gate)
 # ============================
 
-
 def alpha_opt_threshold_for_df(df_backtest_opt, model_buy, scaler, horizon_days: int = 5) -> float:
     """Compute per-ticker buy threshold that maximizes alpha vs buy-and-hold of the same asset.
     Uses RuleTradingEnv._get_model_prediction to obtain probabilities across the window."""
@@ -2247,7 +2234,6 @@ def alpha_opt_threshold_for_df(df_backtest_opt, model_buy, scaler, horizon_days:
         return float(t_star)
     except Exception:
         return 0.5
-
 
 class RuleTradingEnv:
     """SMA cross + ATR trailing stop/TP + fixed-amount sizing. Optional ML gate to allow buys."""
@@ -2733,7 +2719,6 @@ def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[
         pass
     return None
 
-
 def find_top_performers(
     all_available_tickers: List[str],
     all_tickers_data: pd.DataFrame,
@@ -3011,76 +2996,6 @@ def _finalize_single_ticker_performance(params: Tuple[str, float, pd.DataFrame, 
         print(f"  ⚠️ Error deriving YTD or applying benchmark for {ticker}: {e}. Skipping.")
         return None
 
-def optimize_thresholds_for_portfolio(
-    top_tickers: List[str],
-    train_start: datetime,
-    train_end: datetime,
-    default_target_percentage: float, # Renamed to avoid confusion with per-ticker target
-    default_class_horizon: int, # New parameter
-    feature_set: Optional[List[str]],
-    models_buy: Dict,
-    models_sell: Dict,
-    scalers: Dict,
-    capital_per_stock: float,
-    run_parallel: bool,
-    force_percentage_optimization: bool, # New parameter
-    force_thresholds_optimization: bool, # Add this parameter
-    current_optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None
-) -> Dict[str, Dict[str, float]]:
-    """
-    Optimizes ML thresholds (min_proba_buy, min_proba_sell, target_percentage)
-    for each ticker in the portfolio based on Sharpe Ratio.
-    """
-    print("\n🔬 Optimizing ML thresholds for each ticker...")
-    optimized_params_per_ticker = {}
-    
-    optimization_params = []
-    for ticker in top_tickers:
-        if ticker not in models_buy or ticker not in models_sell or ticker not in scalers:
-            print(f"  ⚠️ Skipping optimization for {ticker}: Models or scaler not available.")
-            continue
-        
-        current_buy_proba = MIN_PROBA_BUY
-        current_sell_proba = MIN_PROBA_SELL
-        current_target_perc = default_target_percentage
-        current_class_horizon = default_class_horizon
-
-        if current_optimized_params_per_ticker and ticker in current_optimized_params_per_ticker:
-            current_buy_proba = current_optimized_params_per_ticker[ticker].get('min_proba_buy', MIN_PROBA_BUY)
-            current_sell_proba = current_optimized_params_per_ticker[ticker].get('min_proba_sell', MIN_PROBA_SELL)
-            current_target_perc = current_optimized_params_per_ticker[ticker].get('target_percentage', default_target_percentage)
-            current_class_horizon = current_optimized_params_per_ticker[ticker].get('class_horizon', default_class_horizon)
-
-        optimization_params.append((
-            ticker, train_start, train_end, current_target_perc, current_class_horizon,
-            feature_set, models_buy[ticker], models_sell[ticker], scalers[ticker],
-            capital_per_stock,
-            current_buy_proba, current_sell_proba,
-            force_percentage_optimization,
-            force_thresholds_optimization # Pass this new parameter
-        ))
-
-    if run_parallel:
-        print(f"  Running optimization in parallel for {len(optimization_params)} tickers using {NUM_PROCESSES} processes...")
-        with Pool(processes=NUM_PROCESSES) as pool:
-            results = list(tqdm(pool.imap(optimize_single_ticker_worker, optimization_params), total=len(optimization_params), desc="Optimizing Thresholds"))
-    else:
-        print(f"  Running optimization sequentially for {len(optimization_params)} tickers...")
-        results = [optimize_single_ticker_worker(p) for p in tqdm(optimization_params, desc="Optimizing Thresholds")]
-
-    for res in results:
-        if res and res['ticker']:
-            optimized_params_per_ticker[res['ticker']] = {
-                'min_proba_buy': res['min_proba_buy'],
-                'min_proba_sell': res['min_proba_sell'],
-                'target_percentage': res['target_percentage'],
-                'class_horizon': res['class_horizon'], # Store optimized class_horizon
-                'optimization_status': res['optimization_status']
-            }
-            print(f"  ✅ {res['ticker']} optimized: Buy={res['min_proba_buy']:.2f}, Sell={res['min_proba_sell']:.2f}, Target%={res['target_percentage']:.2%}, Class Horiz={res['class_horizon']}, Status: {res['optimization_status']}")
-    
-    return optimized_params_per_ticker
-
 def optimize_single_ticker_worker(params: Tuple) -> Dict:
     """Worker function to optimize thresholds and target percentage for a single ticker."""
     ticker, train_start, train_end, initial_target_percentage, initial_class_horizon, feature_set, \
@@ -3176,7 +3091,6 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
 
             for p_buy in min_proba_buy_range:
                 for p_sell in min_proba_sell_range:
-                    print(f"  [DEBUG] {current_process().name} - {ticker}: Testing p_buy={p_buy:.2f}, p_sell={p_sell:.2f}, p_target={p_target:.4f}, c_horizon={c_horizon}")
                     
                     env = RuleTradingEnv(
                         df=df_backtest_opt.copy(),
@@ -3192,13 +3106,11 @@ def optimize_single_ticker_worker(params: Tuple) -> Dict:
                         feature_set=feature_set,
                         use_simple_rule_strategy=False
                     )
-                    print(f"  [DEBUG] {current_process().name} - {ticker}: RuleTradingEnv initialized. Running env.run()...")
                     final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, _ = env.run()
                     print(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Getting final value.")
                     
                     current_revenue = final_val
 
-                    print(f"  [DEBUG] {current_process().name} - [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f}, Target%={p_target:.4f}, CH={c_horizon} -> Revenue=${current_revenue:,.2f}")
                     
                     if current_revenue > best_revenue:
                         best_revenue = current_revenue
@@ -3515,7 +3427,6 @@ def print_final_summary(
     print("  - Explore advanced ML models or feature engineering for further improvements.")
     print("="*80)
 
-
 # ============================
 # Main
 # ============================
@@ -3817,22 +3728,25 @@ def main(
 
     if should_run_optimization:
         print("\n🔄 Step 2.5: Optimizing ML parameters for each ticker...")
-        optimized_params_per_ticker = optimize_thresholds_for_portfolio(
-            top_tickers=top_tickers_1y_filtered,
-            train_start=train_start_1y,
-            train_end=train_end_1y,
-            default_target_percentage=target_percentage,
-            default_class_horizon=class_horizon, # Pass class_horizon here
-            feature_set=feature_set,
-            models_buy=models_buy,
-            models_sell=models_sell,
-            scalers=scalers,
-            capital_per_stock=capital_per_stock_1y,
-            run_parallel=run_parallel,
-            force_percentage_optimization=force_percentage_optimization,
-            force_thresholds_optimization=force_thresholds_optimization, # Pass this parameter
-            current_optimized_params_per_ticker=loaded_optimized_params
-        )
+        optimization_params = {
+            "top_tickers": top_tickers_1y_filtered,
+            "train_start": train_start_1y,
+            "train_end": train_end_1y,
+            "default_target_percentage": target_percentage,
+            "default_class_horizon": class_horizon,
+            "feature_set": feature_set,
+            "models_buy": models_buy,
+            "models_sell": models_sell,
+            "scalers": scalers,
+            "capital_per_stock": capital_per_stock_1y,
+            "run_parallel": run_parallel,
+            "force_percentage_optimization": force_percentage_optimization,
+            "force_thresholds_optimization": force_thresholds_optimization,
+            "current_optimized_params_per_ticker": loaded_optimized_params
+        }
+
+        optimized_params_per_ticker = optimize_thresholds_for_portfolio_parallel(optimization_params)
+
         if optimized_params_per_ticker:
             try:
                 with open(optimized_params_file, 'w') as f:
@@ -3857,7 +3771,6 @@ def main(
         print(f"\n✅ Using loaded or default parameters (set 'force_thresholds_optimization=True' or 'force_percentage_optimization=True' in main() call to re-run optimization).")
         if not optimized_params_per_ticker:
             print("\nℹ️ No optimized parameters found for current tickers. Using default thresholds.")
-
 
     # Initialize all backtest related variables to default values
     final_strategy_value_1y = initial_balance_used
@@ -4002,7 +3915,6 @@ def main(
         print("✅ 1-Year Buy & Hold calculation complete.")
     else:
         print("\nℹ️ 1-Year Backtest is disabled by ENABLE_1YEAR_BACKTEST flag.")
-
 
     # --- Training Models (for YTD Backtest) ---
     models_buy_ytd, models_sell_ytd, scalers_ytd = {}, {}, {}
@@ -4703,7 +4615,6 @@ def main(
                 p_buy = round(min_proba_buy_dist.rvs(random_state=SEED + trial_idx), 2)
                 p_sell = round(min_proba_sell_dist.rvs(random_state=SEED + trial_idx + n_threshold_trials), 2)
 
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Testing p_buy={p_buy:.2f}, p_sell={p_sell:.2f}, p_target={p_target:.4f}, c_horizon={c_horizon} (Trial {trial_idx+1}/{n_threshold_trials})\n")
                     
                 env = RuleTradingEnv(
                     df=df_backtest_opt.copy(),
@@ -4719,13 +4630,11 @@ def main(
                     feature_set=feature_set,
                     use_simple_rule_strategy=False
                 )
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: RuleTradingEnv initialized. Running env.run()...\n")
                 final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, _ = env.run()
                 sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Getting final value.\n")
                 
                 current_revenue = final_val
 
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - [Opti] {ticker}: Buy={p_buy:.2f}, Sell={p_sell:.2f}, Target%={p_target:.4f}, CH={c_horizon} -> Revenue=${current_revenue:,.2f}\n")
                 
                 if current_revenue > best_revenue:
                     best_revenue = current_revenue
@@ -5041,7 +4950,6 @@ def print_final_summary(
     print("  - Consider enabling `USE_MARKET_FILTER` and `USE_PERFORMANCE_BENCHMARK` for additional filtering.")
     print("  - Explore advanced ML models or feature engineering for further improvements.")
     print("="*80)
-
 
 # ============================
 # Main
@@ -5385,7 +5293,6 @@ def main(
         if not optimized_params_per_ticker:
             print("\nℹ️ No optimized parameters found for current tickers. Using default thresholds.")
 
-
     # Initialize all backtest related variables to default values
     final_strategy_value_1y = initial_balance_used
     strategy_results_1y = []
@@ -5529,7 +5436,6 @@ def main(
         print("✅ 1-Year Buy & Hold calculation complete.")
     else:
         print("\nℹ️ 1-Year Backtest is disabled by ENABLE_1YEAR_BACKTEST flag.")
-
 
     # --- Training Models (for YTD Backtest) ---
     models_buy_ytd, models_sell_ytd, scalers_ytd = {}, {}, {}
@@ -6164,8 +6070,6 @@ def main(
 if __name__ == "__main__":
     main()
 
-
-
 def set_seed(seed: int | None) -> None:
     """Seed Python, NumPy, and PyTorch if available."""
     import random, os
@@ -6187,7 +6091,6 @@ def set_seed(seed: int | None) -> None:
     except Exception:
         pass
 
-
 # ---- Alpha thresholds patch (applied after class definitions) ---------------
 try:
     from alpha_integration import apply_alpha_thresholds, USE_ALPHA_THRESHOLD_BUY, USE_ALPHA_THRESHOLD_SELL
@@ -6197,8 +6100,6 @@ try:
 except Exception as _alpha_e:
     # Fallback silently if alpha integration or RuleTradingEnv unavailable at import time
     pass
-
-
 
 # --- ALPHA_DIAG (auto-inserted) ---
 try:
