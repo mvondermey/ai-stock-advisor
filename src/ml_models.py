@@ -832,7 +832,7 @@ def train_and_evaluate_models(
                     models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": 0.0}
 
             if USE_GRU:
-                if ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION:
+                if perform_gru_hp_optimization and ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION:
                     best_gru_auc = -np.inf
                     best_gru_model = None
                     best_gru_scaler = None

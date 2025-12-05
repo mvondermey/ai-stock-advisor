@@ -15,9 +15,10 @@ try:
     import torch
     import torch.nn as nn
     PYTORCH_AVAILABLE = True
-    from ml_models import LSTMClassifier, GRUClassifier # Import the classes
+    from ml_models import LSTMClassifier, GRUClassifier, CUDA_AVAILABLE # Import the classes and CUDA_AVAILABLE
 except ImportError:
     PYTORCH_AVAILABLE = False
+    CUDA_AVAILABLE = False
 
 class RuleTradingEnv:
     """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
