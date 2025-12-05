@@ -81,6 +81,9 @@ def optimize_single_ticker_worker(params):
 
     # Cache trained models to avoid retraining for same (target%, horizon)
     models_cache = {}
+    
+    # Store all tested combinations for backtesting
+    tested_combinations = []  # List of dicts with params and revenue
 
     for p_target in target_percentage_range:
         for c_horizon in class_horizon_range:
@@ -141,6 +144,39 @@ def optimize_single_ticker_worker(params):
                 )
                 final_val, _, _, _, _, _ = env.run()
                 revenue = final_val
+                
+                # Calculate buy & hold for this combination
+                start_price_bh = float(df_backtest_opt["Close"].iloc[0])
+                end_price_bh = float(df_backtest_opt["Close"].iloc[-1])
+                shares_bh = int(capital_per_stock / start_price_bh) if start_price_bh > 0 else 0
+                cash_bh = capital_per_stock - shares_bh * start_price_bh
+                buy_hold_final_val = cash_bh + shares_bh * end_price_bh
+                buy_hold_revenue = buy_hold_final_val - capital_per_stock
+                
+                # Calculate percentages
+                revenue_pct = ((revenue - capital_per_stock) / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
+                bh_revenue_pct = (buy_hold_revenue / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
+                diff = revenue - buy_hold_final_val
+                diff_pct = revenue_pct - bh_revenue_pct
+                
+                # Print immediately after each combination is tested
+                print(f"  [{ticker}] Target={p_target:.4f}, Horizon={c_horizon}, Buy={p_buy:.2f}, Sell={p_sell:.2f} → "
+                      f"AI: ${revenue:,.2f} ({revenue_pct:+.2f}%), B&H: ${buy_hold_final_val:,.2f} ({bh_revenue_pct:+.2f}%), "
+                      f"Diff: ${diff:,.2f} ({diff_pct:+.2f}%)")
+                
+                # Store this combination
+                tested_combinations.append({
+                    'min_proba_buy': p_buy,
+                    'min_proba_sell': p_sell,
+                    'target_percentage': p_target,
+                    'class_horizon': c_horizon,
+                    'revenue': revenue,
+                    'buy_hold_revenue': buy_hold_revenue,
+                    'buy_hold_final_val': buy_hold_final_val,
+                    'model_buy': current_model_buy,
+                    'model_sell': current_model_sell,
+                    'scaler': current_scaler
+                })
 
                 if revenue > best_revenue:
                     best_revenue = revenue
@@ -156,6 +192,26 @@ def optimize_single_ticker_worker(params):
        not np.isclose(best_class_horizon, initial_class_horizon):
         optimization_status = "Optimized"
 
+    # Calculate buy & hold for the best combination
+    start_price_bh_best = float(df_backtest_opt["Close"].iloc[0])
+    end_price_bh_best = float(df_backtest_opt["Close"].iloc[-1])
+    shares_bh_best = int(capital_per_stock / start_price_bh_best) if start_price_bh_best > 0 else 0
+    cash_bh_best = capital_per_stock - shares_bh_best * start_price_bh_best
+    buy_hold_final_val_best = cash_bh_best + shares_bh_best * end_price_bh_best
+    buy_hold_revenue_best = buy_hold_final_val_best - capital_per_stock
+    revenue_pct_best = ((best_revenue - capital_per_stock) / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
+    bh_revenue_pct_best = (buy_hold_revenue_best / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
+    diff_best = best_revenue - buy_hold_final_val_best
+    diff_pct_best = revenue_pct_best - bh_revenue_pct_best
+
+    # Print summary of selected values
+    print(f"\n  ✅ [{ticker}] Optimization complete - Selected values:")
+    print(f"     Target={best_target_percentage:.4f}, Horizon={best_class_horizon}, Buy={best_min_proba_buy:.2f}, Sell={best_min_proba_sell:.2f}")
+    print(f"     Best AI Revenue: ${best_revenue:,.2f} ({revenue_pct_best:+.2f}%)")
+    print(f"     Buy & Hold Revenue: ${buy_hold_final_val_best:,.2f} ({bh_revenue_pct_best:+.2f}%)")
+    print(f"     Difference: ${diff_best:,.2f} ({diff_pct_best:+.2f}%)")
+    print(f"     Status: {optimization_status}\n")
+
     sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Revenue=${best_revenue:,.2f}, Status: {optimization_status}\n")
     return {
         'ticker': ticker,
@@ -164,7 +220,8 @@ def optimize_single_ticker_worker(params):
         'target_percentage': best_target_percentage,
         'class_horizon': best_class_horizon,
         'best_revenue': best_revenue, # Changed from best_sharpe to best_revenue
-        'optimization_status': optimization_status
+        'optimization_status': optimization_status,
+        'tested_combinations': tested_combinations  # Return all tested combinations
     }
 
 def optimize_thresholds_for_portfolio_parallel(optimization_params, num_processes=None):
@@ -179,15 +236,19 @@ def optimize_thresholds_for_portfolio_parallel(optimization_params, num_processe
         ))
 
     optimized_params = {}
+    all_tested_combinations = {}  # Store all tested combinations per ticker
+    
     for res in results:
-        if res and res['ticker']:
+        if res and res.get('ticker'):
             optimized_params[res['ticker']] = {
                 k: res[k] for k in ['min_proba_buy', 'min_proba_sell', 'target_percentage', 'class_horizon', 'optimization_status']
             }
+            if 'tested_combinations' in res and res['tested_combinations']:
+                all_tested_combinations[res['ticker']] = res['tested_combinations']
             print(f"Optimized {res['ticker']}: Buy>{res['min_proba_buy']:.2f}, Sell>{res['min_proba_sell']:.2f}, "
                   f"Target={res['target_percentage']:.3%}, Horizon={res['class_horizon']}d → {res['optimization_status']}")
 
-    return optimized_params
+    return optimized_params, all_tested_combinations
 
 
 # -----------------------------------------------------------------------------

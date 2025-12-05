@@ -833,6 +833,7 @@ def train_and_evaluate_models(
 
             if USE_GRU:
                 if perform_gru_hp_optimization and ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION:
+                    print(f"    - Starting GRU hyperparameter optimization for {ticker} ({target_col}) (HP_OPT={perform_gru_hp_optimization}, ENABLE_HP_OPT={ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION}, Target={default_target_percentage:.4f}, Horizon={default_class_horizon})...")
                     best_gru_auc = -np.inf
                     best_gru_model = None
                     best_gru_scaler = None
@@ -965,23 +966,23 @@ def train_and_evaluate_models(
                         models_and_params_local["GRU"] = {"model": None, "scaler": None, "auc": 0.0}
                 else: # ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION is False, use fixed or loaded hyperparameters
                     if loaded_gru_hyperparams:
-                        print(f"    - Training GRU for {ticker} ({target_col}) with loaded hyperparameters...")
+                        print(f"    - Training GRU for {ticker} ({target_col}) with loaded hyperparameters (HP_OPT={perform_gru_hp_optimization}, ENABLE_HP_OPT={ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION})...")
                         hidden_size = loaded_gru_hyperparams.get("hidden_size", LSTM_HIDDEN_SIZE)
                         num_layers = loaded_gru_hyperparams.get("num_layers", LSTM_NUM_LAYERS)
                         dropout_rate = loaded_gru_hyperparams.get("dropout_rate", LSTM_DROPOUT)
                         learning_rate = loaded_gru_hyperparams.get("learning_rate", LSTM_LEARNING_RATE)
                         batch_size = loaded_gru_hyperparams.get("batch_size", LSTM_BATCH_SIZE)
                         epochs = LSTM_EPOCHS
-                        print(f"      Loaded GRU Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
+                        print(f"      Loaded GRU Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}, Target={default_target_percentage:.4f}, Horizon={default_class_horizon}")
                     else:
-                        print(f"    - Training GRU for {ticker} ({target_col}) with default fixed hyperparameters...")
+                        print(f"    - Training GRU for {ticker} ({target_col}) with default fixed hyperparameters (HP_OPT={perform_gru_hp_optimization}, ENABLE_HP_OPT={ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION})...")
                         hidden_size = LSTM_HIDDEN_SIZE
                         num_layers = LSTM_NUM_LAYERS
                         dropout_rate = LSTM_DROPOUT
                         learning_rate = LSTM_LEARNING_RATE
                         batch_size = LSTM_BATCH_SIZE
                         epochs = LSTM_EPOCHS
-                        print(f"      Default GRU Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
+                        print(f"      Default GRU Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}, Target={default_target_percentage:.4f}, Horizon={default_class_horizon}")
 
                     gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
                     if initial_model and isinstance(initial_model, GRUClassifier):

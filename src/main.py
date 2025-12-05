@@ -3144,7 +3144,28 @@ def _run_portfolio_backtest(
                         break
                 
                 # Print individual stock performance immediately
+                final_val = worker_result.get('final_val', capital_per_stock)
+                revenue = final_val - capital_per_stock
+                revenue_pct = (revenue / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
+                
+                # Calculate Buy & Hold final value and revenue
+                buy_hold_history = worker_result.get('buy_hold_history', [])
+                if buy_hold_history:
+                    buy_hold_final_val = buy_hold_history[-1]
+                    buy_hold_revenue = buy_hold_final_val - capital_per_stock
+                    buy_hold_revenue_pct = (buy_hold_revenue / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
+                else:
+                    buy_hold_final_val = capital_per_stock
+                    buy_hold_revenue = 0.0
+                    buy_hold_revenue_pct = 0.0
+                
                 print(f"\n📈 Individual Stock Performance for {worker_result['ticker']} ({period_name}):")
+                print(f"  - Initial Capital: ${capital_per_stock:,.2f}")
+                print(f"  - AI Strategy Final Value: ${final_val:,.2f}")
+                print(f"  - AI Strategy Revenue: ${revenue:,.2f} ({revenue_pct:+.2f}%)")
+                print(f"  - Buy & Hold Final Value: ${buy_hold_final_val:,.2f}")
+                print(f"  - Buy & Hold Revenue: ${buy_hold_revenue:,.2f} ({buy_hold_revenue_pct:+.2f}%)")
+                print(f"  - Revenue Difference (AI vs B&H): ${revenue - buy_hold_revenue:,.2f} ({(revenue_pct - buy_hold_revenue_pct):+.2f}%)")
                 print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
                 print(f"  - YTD Performance: {ytd_perf_benchmark:.2f}%" if pd.notna(ytd_perf_benchmark) else "  - YTD Performance: N/A")
                 print(f"  - AI Sharpe Ratio: {worker_result['perf_data']['sharpe_ratio']:.2f}")
@@ -3635,6 +3656,9 @@ def main(
 
     # Determine if optimization needs to run at all
     should_run_optimization = force_thresholds_optimization or force_percentage_optimization
+    
+    # Initialize all_tested_combinations
+    all_tested_combinations = {}
 
     if should_run_optimization:
         print("\n🔄 Step 2.5: Optimizing ML parameters for each ticker...")
@@ -3680,7 +3704,38 @@ def main(
                     SEED,  # seed
                     feature_set_for_opt  # feature_set
                 ))
-        optimized_params_per_ticker = optimize_thresholds_for_portfolio_parallel(optimization_params)
+        optimized_params_per_ticker, all_tested_combinations = optimize_thresholds_for_portfolio_parallel(optimization_params)
+
+        # Print backtest results for each tested combination
+        if all_tested_combinations:
+            print("\n" + "="*80)
+            print("📊 Backtest Results for All Tested Optimization Combinations")
+            print("="*80)
+            for ticker, combinations in all_tested_combinations.items():
+                if not combinations:
+                    continue
+                print(f"\n📈 {ticker} - Tested {len(combinations)} combinations:")
+                print("-" * 100)
+                # Sort by revenue descending
+                sorted_combinations = sorted(combinations, key=lambda x: x.get('revenue', -np.inf), reverse=True)
+                print(f"{'Rank':<6} | {'Buy Thresh':<12} | {'Sell Thresh':<12} | {'Target %':<10} | {'Horizon':<8} | {'AI Revenue':<15} | {'B&H Revenue':<15} | {'Difference':<15}")
+                print("-" * 100)
+                for idx, combo in enumerate(sorted_combinations[:20], 1):  # Show top 20
+                    revenue = combo.get('revenue', capital_per_stock_1y)
+                    buy_hold_revenue = combo.get('buy_hold_revenue', 0.0)
+                    revenue_pct = ((revenue - capital_per_stock_1y) / capital_per_stock_1y * 100) if capital_per_stock_1y > 0 else 0.0
+                    bh_revenue_pct = ((buy_hold_revenue) / capital_per_stock_1y * 100) if capital_per_stock_1y > 0 else 0.0
+                    diff = revenue - buy_hold_revenue
+                    diff_pct = revenue_pct - bh_revenue_pct
+                    
+                    print(f"{idx:<6} | {combo.get('min_proba_buy', 0.0):>11.2f} | {combo.get('min_proba_sell', 0.0):>11.2f} | "
+                          f"{combo.get('target_percentage', 0.0):>9.2%} | {combo.get('class_horizon', 0):>7} | "
+                          f"${revenue:>13,.2f} ({revenue_pct:>+6.2f}%) | ${buy_hold_revenue:>13,.2f} ({bh_revenue_pct:>+6.2f}%) | "
+                          f"${diff:>13,.2f} ({diff_pct:>+6.2f}%)")
+                if len(sorted_combinations) > 20:
+                    print(f"... and {len(sorted_combinations) - 20} more combinations")
+                print("-" * 100)
+            print("="*80 + "\n")
 
         if optimized_params_per_ticker:
             try:
@@ -3692,6 +3747,7 @@ def main(
     else:
         # If no optimization is forced, load existing or use defaults
         optimized_params_per_ticker = {}
+        all_tested_combinations = {}  # Initialize empty when optimization doesn't run
         for ticker in top_tickers_1y_filtered:
             if ticker in loaded_optimized_params:
                 optimized_params_per_ticker[ticker] = loaded_optimized_params[ticker]
