@@ -305,8 +305,11 @@ from config import (
     GRU_HIDDEN_SIZE_OPTIONS, GRU_NUM_LAYERS_OPTIONS, GRU_DROPOUT_OPTIONS,
     GRU_LEARNING_RATE_OPTIONS, GRU_BATCH_SIZE_OPTIONS, GRU_EPOCHS_OPTIONS,
     ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION, SAVE_PLOTS, MIN_PROBA_BUY, MIN_PROBA_SELL,
-    FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING
+    FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING,
+    USE_LOGISTIC_REGRESSION, USE_RANDOM_FOREST, USE_SVM, USE_MLP_CLASSIFIER,
+    USE_LSTM, USE_GRU
 )
+# PYTORCH_AVAILABLE is set locally below based on actual import, not from config
 
 # Import data fetching for training data
 from feature_engineering import fetch_training_data
@@ -388,10 +391,13 @@ def initialize_ml_libraries():
                 torch.backends.cudnn.benchmark = False
                 print("✅ CUDA is available. GPU acceleration enabled with deterministic algorithms.")
             else:
+                CUDA_AVAILABLE = False
                 print("⚠️ CUDA is not available. GPU acceleration will not be used.")
         else:
+            CUDA_AVAILABLE = False
             print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
     except NameError:
+        CUDA_AVAILABLE = False
         print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
 
     try:
@@ -409,42 +415,71 @@ def initialize_ml_libraries():
     try:
         from lightgbm import LGBMClassifier as lgbm
         LGBMClassifier = lgbm
-        if CUDA_AVAILABLE:
+        # LightGBM GPU requires OpenCL, not CUDA. Test if OpenCL is available.
+        lgbm_gpu_available = False
+        try:
+            # Try to create and fit a tiny test model with device='gpu' to see if OpenCL is available
+            import numpy as np
+            test_X = np.random.rand(10, 5).astype(np.float32)
+            test_y = np.random.randint(0, 2, 10).astype(np.int32)
+            test_model = LGBMClassifier(device='gpu', n_estimators=1, verbosity=-1)
+            test_model.fit(test_X, test_y)
+            lgbm_gpu_available = True
+        except Exception:
+            lgbm_gpu_available = False
+        
+        if lgbm_gpu_available:
             lgbm_model_params = {
                 "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='gpu'),
                 "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
             }
             models_and_params["LightGBM (GPU)"] = lgbm_model_params
-            print("✅ LightGBM found. Configured for GPU.")
+            print("✅ LightGBM found. Configured for GPU (OpenCL).")
         else:
-            print("ℹ️ LightGBM found. Will use CPU (CUDA not available).")
             lgbm_model_params = {
                 "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
                 "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
             }
             models_and_params["LightGBM (CPU)"] = lgbm_model_params
+            print("ℹ️ LightGBM found. Will use CPU (OpenCL GPU not available).")
     except ImportError:
         print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
 
     if XGBOOST_AVAILABLE:
         XGBClassifier = xgb.XGBClassifier
-        xgb_model_params = {
-            "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1),
-            "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
-        }
+        # Check if XGBoost GPU support is actually available by trying to fit a small model
+        xgb_gpu_available = False
         if CUDA_AVAILABLE:
-            xgb_model_params["model"].set_params(tree_method='gpu_hist')
+            try:
+                # Try to create and fit a tiny test model with gpu_hist to see if it's actually supported
+                import numpy as np
+                test_X = np.random.rand(10, 5).astype(np.float32)
+                test_y = np.random.randint(0, 2, 10).astype(np.int32)
+                test_model = XGBClassifier(tree_method='gpu_hist', n_estimators=1, verbosity=0)
+                test_model.fit(test_X, test_y)
+                xgb_gpu_available = True
+            except Exception:
+                xgb_gpu_available = False
+        
+        if xgb_gpu_available:
+            xgb_model_params = {
+                "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1, tree_method='gpu_hist'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
+            }
             models_and_params["XGBoost (GPU)"] = xgb_model_params
             print("✅ XGBoost found. Configured for GPU (gpu_hist tree_method).")
         else:
-            xgb_model_params["model"].set_params(tree_method='hist') # Fallback to CPU hist
+            xgb_model_params = {
+                "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1, tree_method='hist'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
+            }
             models_and_params["XGBoost (CPU)"] = xgb_model_params
-            print("ℹ️ XGBoost found. Will use CPU (CUDA not available).")
+            print("ℹ️ XGBoost found. Will use CPU (GPU support not available).")
 
     _ml_libraries_initialized = True
     return models_and_params
 
-def analyze_shap_for_gru(model: GRUClassifier, scaler: MinMaxScaler, X_df: pd.DataFrame, feature_names: List[str], ticker: str, target_col: str):
+def analyze_shap_for_gru(model, scaler: MinMaxScaler, X_df: pd.DataFrame, feature_names: List[str], ticker: str, target_col: str):
     """
     Calculates and visualizes SHAP values for a GRU model.
     """
@@ -452,7 +487,8 @@ def analyze_shap_for_gru(model: GRUClassifier, scaler: MinMaxScaler, X_df: pd.Da
         print(f"  [{ticker}] SHAP is not available. Skipping SHAP analysis.")
         return
 
-    if isinstance(model, GRUClassifier):
+    # Check if model is a GRU model (GRUClassifier might not be defined if PyTorch is not available)
+    if PYTORCH_AVAILABLE and hasattr(model, '__class__') and 'GRU' in model.__class__.__name__:
         print(f"  [{ticker}] SHAP KernelExplainer is not directly compatible with GRU models due to sequential input. Skipping SHAP analysis for GRU.")
         return
 
@@ -719,7 +755,20 @@ def train_and_evaluate_models(
         }
 
     if LGBMClassifier:
-        if CUDA_AVAILABLE:
+        # LightGBM GPU requires OpenCL, not CUDA. Test if OpenCL is available.
+        lgbm_gpu_available = False
+        try:
+            # Try to create and fit a tiny test model with device='gpu' to see if OpenCL is available
+            import numpy as np
+            test_X = np.random.rand(10, 5).astype(np.float32)
+            test_y = np.random.randint(0, 2, 10).astype(np.int32)
+            test_model = LGBMClassifier(device='gpu', n_estimators=1, verbosity=-1)
+            test_model.fit(test_X, test_y)
+            lgbm_gpu_available = True
+        except Exception:
+            lgbm_gpu_available = False
+        
+        if lgbm_gpu_available:
             lgbm_model_params = {
                 "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='gpu'),
                 "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
@@ -733,7 +782,21 @@ def train_and_evaluate_models(
             models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
 
     if XGBOOST_AVAILABLE and XGBClassifier:
+        # Check if XGBoost GPU support is actually available by trying to fit a small model
+        xgb_gpu_available = False
         if CUDA_AVAILABLE:
+            try:
+                # Try to create and fit a tiny test model with gpu_hist to see if it's actually supported
+                import numpy as np
+                test_X = np.random.rand(10, 5).astype(np.float32)
+                test_y = np.random.randint(0, 2, 10).astype(np.int32)
+                test_model = XGBClassifier(tree_method='gpu_hist', n_estimators=1, verbosity=0)
+                test_model.fit(test_X, test_y)
+                xgb_gpu_available = True
+            except Exception:
+                xgb_gpu_available = False
+        
+        if xgb_gpu_available:
             xgb_model_params = {
                 "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1, tree_method='gpu_hist'),
                 "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
@@ -920,7 +983,7 @@ def train_and_evaluate_models(
                             try:
                                 from sklearn.metrics import roc_auc_score
                                 auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
-                                print(f"            GRU AUC: {auc_gru:.4f}")
+                                print(f"            GRU AUC: {auc_gru:.4f} | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
 
                                 if auc_gru > best_gru_auc:
                                     best_gru_auc = auc_gru
@@ -928,7 +991,7 @@ def train_and_evaluate_models(
                                     best_gru_scaler = dl_scaler # dl_scaler is already fitted
                                     best_gru_hyperparams = temp_hyperparams.copy() # Update best_gru_hyperparams
                             except ValueError:
-                                print(f"            GRU AUC: Not enough samples with positive class for AUC calculation.")
+                                print(f"            GRU AUC: Not enough samples with positive class for AUC calculation. | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
                                 
                     if best_gru_model:
                         models_and_params_local["GRU"] = {"model": best_gru_model, "scaler": best_gru_scaler, "auc": best_gru_auc, "hyperparams": best_gru_hyperparams}

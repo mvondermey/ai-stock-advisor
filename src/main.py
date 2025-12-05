@@ -105,7 +105,14 @@ import warnings # Added for warning suppression
 from data_utils import load_prices, fetch_training_data, load_prices_robust, _ensure_dir
 
 # Import ML model related functions and classes from ml_models.py
-from ml_models import initialize_ml_libraries, LSTMClassifier, GRUClassifier, CUML_AVAILABLE, LGBMClassifier, XGBClassifier, models_and_params, cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler, SHAP_AVAILABLE
+from ml_models import initialize_ml_libraries, CUML_AVAILABLE, LGBMClassifier, XGBClassifier, models_and_params, cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler, SHAP_AVAILABLE
+
+# Conditionally import LSTM/GRU classes if PyTorch is available
+try:
+    from ml_models import LSTMClassifier, GRUClassifier
+except ImportError:
+    LSTMClassifier = None
+    GRUClassifier = None
 
 # --- Force UTF-8 output on Windows ---
 if sys.stdout.encoding != 'utf-8':
@@ -1589,17 +1596,56 @@ def train_and_evaluate_models(
             }
 
         if LGBMClassifier and USE_LIGHTGBM:
-            lgbm_model_params = {
-                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'), # Always set to CPU
-                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
-            }
-            models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
-            print("ℹ️ LightGBM found. Will use CPU.") # Update message
+            # LightGBM GPU requires OpenCL, not CUDA. Test if OpenCL is available.
+            lgbm_gpu_available = False
+            try:
+                # Try to create and fit a tiny test model with device='gpu' to see if OpenCL is available
+                import numpy as np
+                test_X = np.random.rand(10, 5).astype(np.float32)
+                test_y = np.random.randint(0, 2, 10).astype(np.int32)
+                test_model = LGBMClassifier(device='gpu', n_estimators=1, verbosity=-1)
+                test_model.fit(test_X, test_y)
+                lgbm_gpu_available = True
+            except Exception:
+                lgbm_gpu_available = False
+            
+            if lgbm_gpu_available:
+                lgbm_model_params = {
+                    "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='gpu'),
+                    "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+                }
+                models_and_params_local["LightGBM (GPU)"] = lgbm_model_params
+            else:
+                lgbm_model_params = {
+                    "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
+                    "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+                }
+                models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
 
         if XGBOOST_AVAILABLE and XGBClassifier and USE_XGBOOST:
-            xgb_device = 'cuda' if CUDA_AVAILABLE else 'cpu'
-            xgb_tree_method = 'gpu_hist' if CUDA_AVAILABLE else 'hist'
-            xgb_predictor = 'gpu_predictor' if CUDA_AVAILABLE else 'cpu_predictor'
+            # Check if XGBoost GPU support is actually available by trying to fit a small model
+            xgb_gpu_available = False
+            if CUDA_AVAILABLE:
+                try:
+                    # Try to create and fit a tiny test model with gpu_hist to see if it's actually supported
+                    import numpy as np
+                    test_X = np.random.rand(10, 5).astype(np.float32)
+                    test_y = np.random.randint(0, 2, 10).astype(np.int32)
+                    test_model = XGBClassifier(tree_method='gpu_hist', n_estimators=1, verbosity=0)
+                    test_model.fit(test_X, test_y)
+                    xgb_gpu_available = True
+                except Exception:
+                    xgb_gpu_available = False
+            
+            if xgb_gpu_available:
+                xgb_device = 'cuda'
+                xgb_tree_method = 'gpu_hist'
+                xgb_predictor = 'gpu_predictor'
+            else:
+                xgb_device = 'cpu'
+                xgb_tree_method = 'hist'
+                xgb_predictor = 'cpu_predictor'
+            
             xgb_model_params = {
                 "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1, tree_method=xgb_tree_method, predictor=xgb_predictor),
                 "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
@@ -1706,6 +1752,9 @@ def train_and_evaluate_models(
                         else:
                             criterion_trial = nn.BCEWithLogitsLoss()
 
+                        if GRUClassifier is None:
+                            print(f"    [DIAGNOSTIC] {ticker}: GRUClassifier is not available (PyTorch not installed). Skipping GRU model.")
+                            continue
                         gru_model = GRUClassifier(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]).to(device)
                         optimizer_gru = optim.Adam(gru_model.parameters(), lr=temp_hyperparams["learning_rate"])
                         
@@ -1733,7 +1782,7 @@ def train_and_evaluate_models(
                         try:
                             from sklearn.metrics import roc_auc_score
                             auc_gru = roc_auc_score(y_sequences_trial.cpu().numpy(), y_pred_proba_gru)
-                            print(f"            GRU AUC: {auc_gru:.4f}")
+                            print(f"            GRU AUC: {auc_gru:.4f} | HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']}, CH={temp_hyperparams['class_horizon']}, TP={temp_hyperparams['target_percentage']:.4f}")
 
                             if auc_gru > best_gru_auc:
                                 best_gru_auc = auc_gru
@@ -1741,7 +1790,7 @@ def train_and_evaluate_models(
                                 best_gru_scaler = dl_scaler_trial # Store the scaler for this best model
                                 best_gru_hyperparams = temp_hyperparams.copy()
                         except ValueError:
-                            print(f"            GRU AUC: Not enough samples with positive class for AUC calculation.")
+                            print(f"            GRU AUC: Not enough samples with positive class for AUC calculation. | HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']}, CH={temp_hyperparams['class_horizon']}, TP={temp_hyperparams['target_percentage']:.4f}")
                                 
                     if best_gru_model:
                         models_and_params_local["GRU"] = {"model": best_gru_model, "scaler": best_gru_scaler, "auc": best_gru_auc, "hyperparams": best_gru_hyperparams}
@@ -1817,47 +1866,50 @@ def train_and_evaluate_models(
                                 else:
                                     criterion_fixed_gru = nn.BCEWithLogitsLoss()
 
-                                gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
-                                if initial_model and isinstance(initial_model, GRUClassifier):
+                                if GRUClassifier is None:
+                                    print(f"    [DIAGNOSTIC] {ticker}: GRUClassifier is not available (PyTorch not installed). Skipping GRU model.")
+                                else:
+                                    gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
+                                    if initial_model and isinstance(initial_model, GRUClassifier):
+                                        try:
+                                            gru_model.load_state_dict(initial_model.state_dict())
+                                            print(f"    - Loaded existing GRU model state for {ticker} to continue training.")
+                                        except Exception as e:
+                                            print(f"    - Error loading GRU model state for {ticker}: {e}. Training from scratch.")
+                                    
+                                    optimizer_gru = optim.Adam(gru_model.parameters(), lr=learning_rate)
+                                    
+                                    current_dataloader = DataLoader(TensorDataset(X_sequences_fixed_gru, y_sequences_fixed_gru), batch_size=batch_size, shuffle=True)
+
+                                    for epoch in range(epochs):
+                                        for batch_X, batch_y in current_dataloader:
+                                            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                                            optimizer_gru.zero_grad()
+                                            outputs = gru_model(batch_X)
+                                            loss = criterion_fixed_gru(outputs, batch_y)
+                                            loss.backward()
+                                            optimizer_gru.step()
+                                    
+                                    gru_model.eval()
+                                    with torch.no_grad():
+                                        all_outputs = []
+                                        for batch_X, _ in current_dataloader:
+                                            batch_X = batch_X.to(device)
+                                            outputs = gru_model(batch_X)
+                                            all_outputs.append(torch.sigmoid(outputs).cpu().numpy())
+                                        y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+
                                     try:
-                                        gru_model.load_state_dict(initial_model.state_dict())
-                                        print(f"    - Loaded existing GRU model state for {ticker} to continue training.")
-                                    except Exception as e:
-                                        print(f"    - Error loading GRU model state for {ticker}: {e}. Training from scratch.")
-                                
-                                optimizer_gru = optim.Adam(gru_model.parameters(), lr=learning_rate)
-                                
-                                current_dataloader = DataLoader(TensorDataset(X_sequences_fixed_gru, y_sequences_fixed_gru), batch_size=batch_size, shuffle=True)
-
-                                for epoch in range(epochs):
-                                    for batch_X, batch_y in current_dataloader:
-                                        batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                                        optimizer_gru.zero_grad()
-                                        outputs = gru_model(batch_X)
-                                        loss = criterion_fixed_gru(outputs, batch_y)
-                                        loss.backward()
-                                        optimizer_gru.step()
-                                
-                                gru_model.eval()
-                                with torch.no_grad():
-                                    all_outputs = []
-                                    for batch_X, _ in current_dataloader:
-                                        batch_X = batch_X.to(device)
-                                        outputs = gru_model(batch_X)
-                                        all_outputs.append(torch.sigmoid(outputs).cpu().numpy())
-                                    y_pred_proba_gru = np.concatenate(all_outputs).flatten()
-
-                                try:
-                                    from sklearn.metrics import roc_auc_score
-                                    auc_gru = roc_auc_score(y_sequences_fixed_gru.cpu().numpy(), y_pred_proba_gru)
-                                    current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs, "class_horizon": class_horizon_fixed, "target_percentage": target_percentage_fixed}
-                                    models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler_fixed_gru, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
-                                    print(f"      GRU AUC (fixed/loaded params): {auc_gru:.4f}")
-                                    if SAVE_PLOTS and SHAP_AVAILABLE:
-                                        analyze_shap_for_gru(gru_model, dl_scaler_fixed_gru, X_df_fixed_gru, actual_feature_set_fixed_gru, ticker, target_col)
-                                except ValueError:
-                                    print(f"      GRU AUC (fixed/loaded params): Not enough samples with positive class for AUC calculation.")
-                                    models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler_fixed_gru, "auc": 0.0}
+                                        from sklearn.metrics import roc_auc_score
+                                        auc_gru = roc_auc_score(y_sequences_fixed_gru.cpu().numpy(), y_pred_proba_gru)
+                                        current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs, "class_horizon": class_horizon_fixed, "target_percentage": target_percentage_fixed}
+                                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler_fixed_gru, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
+                                        print(f"      GRU AUC (fixed/loaded params): {auc_gru:.4f}")
+                                        if SAVE_PLOTS and SHAP_AVAILABLE:
+                                            analyze_shap_for_gru(gru_model, dl_scaler_fixed_gru, X_df_fixed_gru, actual_feature_set_fixed_gru, ticker, target_col)
+                                    except ValueError:
+                                        print(f"      GRU AUC (fixed/loaded params): Not enough samples with positive class for AUC calculation.")
+                                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler_fixed_gru, "auc": 0.0}
             if USE_LSTM:
                 # LSTM will use the same logic as fixed GRU, but with LSTM_HIDDEN_SIZE, etc.
                 # For simplicity, I'll assume LSTM does not get hyperparameter optimization for class_horizon/target_percentage
@@ -1901,43 +1953,47 @@ def train_and_evaluate_models(
                             else:
                                 criterion_fixed_lstm = nn.BCEWithLogitsLoss()
 
-                            lstm_model = LSTMClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
-                            if initial_model and isinstance(initial_model, LSTMClassifier):
+                            if LSTMClassifier is None:
+                                print(f"    [DIAGNOSTIC] {ticker}: LSTMClassifier is not available (PyTorch not installed). Skipping LSTM model.")
+                            else:
+                                lstm_model = LSTMClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
+                                if initial_model and isinstance(initial_model, LSTMClassifier):
+                                    try:
+                                        lstm_model.load_state_dict(initial_model.state_dict())
+                                        print(f"    - Loaded existing LSTM model state for {ticker} to continue training.")
+                                    except Exception as e:
+                                        print(f"    - Error loading LSTM model state for {ticker}: {e}. Training from scratch.")
+                                
+                                optimizer_lstm = optim.Adam(lstm_model.parameters(), lr=LSTM_LEARNING_RATE)
+                                
+                                current_dataloader = DataLoader(TensorDataset(X_sequences_fixed_lstm, y_sequences_fixed_lstm), batch_size=LSTM_BATCH_SIZE, shuffle=True)
+
+                                for epoch in range(LSTM_EPOCHS):
+                                    for batch_X, batch_y in current_dataloader:
+                                        batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                                        optimizer_lstm.zero_grad()
+                                        outputs = lstm_model(batch_X)
+                                        loss = criterion_fixed_lstm(outputs, batch_y)
+                                        loss.backward()
+                                        optimizer_lstm.step()
+                                
+                                lstm_model.eval()
+                                with torch.no_grad():
+                                    all_outputs = []
+                                    for batch_X, _ in current_dataloader:
+                                        batch_X = batch_X.to(device)
+                                        outputs = lstm_model(batch_X)
+                                        all_outputs.append(torch.sigmoid(outputs).cpu().numpy())
+                                    y_pred_proba_lstm = np.concatenate(all_outputs).flatten()
+
                                 try:
-                                    lstm_model.load_state_dict(initial_model.state_dict())
-                                    print(f"    - Loaded existing LSTM model state for {ticker} to continue training.")
-                                except Exception as e:
-                                    print(f"    - Error loading LSTM model state for {ticker}: {e}. Training from scratch.")
-                            
-                            optimizer_lstm = optim.Adam(lstm_model.parameters(), lr=LSTM_LEARNING_RATE)
-                            
-                            current_dataloader = DataLoader(TensorDataset(X_sequences_fixed_lstm, y_sequences_fixed_lstm), batch_size=LSTM_BATCH_SIZE, shuffle=True)
-
-                            for epoch in range(LSTM_EPOCHS):
-                                for batch_X, batch_y in current_dataloader:
-                                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                                    optimizer_lstm.zero_grad()
-                                    loss = criterion_fixed_lstm(outputs, batch_y)
-                                    loss.backward()
-                                    optimizer_lstm.step()
-                            
-                            lstm_model.eval()
-                            with torch.no_grad():
-                                all_outputs = []
-                                for batch_X, _ in current_dataloader:
-                                    batch_X = batch_X.to(device)
-                                    outputs = lstm_model(batch_X)
-                                    all_outputs.append(torch.sigmoid(outputs).cpu().numpy())
-                                y_pred_proba_lstm = np.concatenate(all_outputs).flatten()
-
-                            try:
-                                from sklearn.metrics import roc_auc_score
-                                auc_lstm = roc_auc_score(y_sequences_fixed_lstm.cpu().numpy(), y_pred_proba_lstm)
-                                models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler_fixed_lstm, "auc": auc_lstm}
-                                print(f"      LSTM AUC: {auc_lstm:.4f}")
-                            except ValueError:
-                                print(f"      LSTM AUC: Not enough samples with positive class for AUC calculation.")
-                                models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler_fixed_lstm, "auc": 0.0}
+                                    from sklearn.metrics import roc_auc_score
+                                    auc_lstm = roc_auc_score(y_sequences_fixed_lstm.cpu().numpy(), y_pred_proba_lstm)
+                                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler_fixed_lstm, "auc": auc_lstm}
+                                    print(f"      LSTM AUC: {auc_lstm:.4f}")
+                                except ValueError:
+                                    print(f"      LSTM AUC: Not enough samples with positive class for AUC calculation.")
+                                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler_fixed_lstm, "auc": 0.0}
 
     best_model_overall = None
     best_auc_overall = -np.inf
@@ -2311,16 +2367,30 @@ class RuleTradingEnv:
         """Helper to get a single model's prediction probability."""
         if not self.use_gate or model is None:
             return 0.0
-        row = self.df.loc[i]
         
         # Use the feature names that the scaler was fitted with
         model_feature_names = self.scaler.feature_names_in_ if hasattr(self.scaler, 'feature_names_in_') else self.feature_set
         
+        # Filter to only include features that actually exist in the DataFrame
+        available_features = [f for f in model_feature_names if f in self.df.columns]
+        missing_features = set(model_feature_names) - set(available_features)
+        
+        if missing_features and i == 0:  # Only warn once per ticker
+            print(f"  [{self.ticker}] Warning: Missing features in DataFrame: {missing_features}. Using available features only.")
+        
+        if not available_features:
+            print(f"  [{self.ticker}] Error: No model features available in DataFrame at step {i}. Skipping prediction.")
+            return 0.0
+        
+        # If we have missing features, we need to handle them by creating a DataFrame with all expected features
+        # and filling missing ones with 0.0
+        row = self.df.loc[i]
+        
         # Create a dictionary for the current row's feature values
         # Fill missing features with 0 or a suitable default
-        feature_values = {f: row.get(f, 0.0) for f in model_feature_names}
+        feature_values = {f: row.get(f, 0.0) if f in available_features else 0.0 for f in model_feature_names}
         
-        # Create DataFrame with all expected features
+        # Create DataFrame with all expected features (including missing ones filled with 0.0)
         X_df = pd.DataFrame([feature_values], columns=model_feature_names)
         
         # Ensure all values are numeric, fill any remaining NaNs (e.g., from get(f, 0.0) if f was not in row)
@@ -2347,8 +2417,16 @@ class RuleTradingEnv:
                     # For now, return 0.0 (no strong signal)
                     return 0.0
                 
-                # Get the relevant historical data for sequencing
-                historical_data_for_seq = self.df.loc[start_idx:end_idx-1, model_feature_names].copy()
+                # Get the relevant historical data for sequencing - only use available features
+                # For missing features, we'll create them with 0.0 values
+                historical_data_for_seq = self.df.loc[start_idx:end_idx-1, available_features].copy()
+                
+                # Add missing features as columns filled with 0.0
+                for missing_feat in missing_features:
+                    historical_data_for_seq[missing_feat] = 0.0
+                
+                # Reorder columns to match model_feature_names order
+                historical_data_for_seq = historical_data_for_seq[model_feature_names]
                 
                 # Ensure all columns are numeric and fill any NaNs
                 for col in historical_data_for_seq.columns:
@@ -4414,295 +4492,6 @@ def main(
             print(f"  ✅ Saved models for {ticker} from {best_period_name} period.")
         except Exception as e:
             print(f"  ⚠️ Error saving models for {ticker} from {best_period_name} period: {e}")
-
-    best_class_horizon = initial_class_horizon
-
-    # Define parameter distributions for RandomizedSearchCV for thresholds
-    # Use uniform distribution for probabilities (0.0 to 1.0)
-    min_proba_buy_dist = uniform(loc=0.0, scale=1.0)
-    min_proba_sell_dist = uniform(loc=0.0, scale=1.0)
-
-    # Determine target_percentage_range
-    if force_percentage_optimization:
-        target_percentage_range = GRU_TARGET_PERCENTAGE_OPTIONS
-    else:
-        target_percentage_range = sorted(list(set([
-            max(0.001, round(initial_target_percentage - 0.001, 4)),
-            initial_target_percentage,
-            round(initial_target_percentage + 0.001, 4)
-        ])))
-    
-    # Determine class_horizon_range
-    if force_thresholds_optimization: # Assuming force_thresholds_optimization implies a broader search for class_horizon too
-        class_horizon_range = GRU_CLASS_HORIZON_OPTIONS
-    else:
-        class_horizon_range = sorted(list(set([
-            max(1, initial_class_horizon - 1),
-            initial_class_horizon,
-            initial_class_horizon + 1
-        ])))
-    
-    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Loading prices for optimization...\n")
-    df_backtest_opt = load_prices(ticker, train_start, train_end)
-    if df_backtest_opt.empty:
-        sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: No data for optimization. Returning default.\n")
-        return {'ticker': ticker, 'min_proba_buy': current_min_proba_buy, 'min_proba_sell': current_min_proba_sell, 'target_percentage': initial_target_percentage, 'class_horizon': initial_class_horizon, 'optimization_status': "Failed (no data)"}
-    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Prices loaded. Starting optimization loops.\n")
-
-    models_cache = {}
-    n_threshold_trials = 10 # Number of random trials for thresholds per (p_target, c_horizon) combination
-
-    for p_target in target_percentage_range:
-        for c_horizon in class_horizon_range:
-            cache_key = (p_target, c_horizon)
-            if cache_key not in models_cache:
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Re-fetching training data and re-training models for target_percentage={p_target:.4f}, class_horizon={c_horizon}\n")
-                df_train, actual_feature_set = fetch_training_data(ticker, df_backtest_opt.copy(), p_target, c_horizon)
-                if df_train.empty:
-                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Insufficient training data for target_percentage={p_target:.4f}, class_horizon={c_horizon}. Skipping.\n")
-                    continue
-                
-                global_models_and_params = initialize_ml_libraries()
-                model_buy_for_opt, scaler_buy_for_opt, _ = train_and_evaluate_models(
-                    df_train, "TargetClassBuy", actual_feature_set, ticker=ticker,
-                    models_and_params_global=global_models_and_params,
-                    perform_gru_hp_optimization=False, # Disable internal GRU HP opt
-                    default_target_percentage=p_target, # Pass current p_target from outer loop
-                    default_class_horizon=c_horizon # Pass current c_horizon from outer loop
-                )
-                model_sell_for_opt, scaler_sell_for_opt, _ = train_and_evaluate_models(
-                    df_train, "TargetClassSell", actual_feature_set, ticker=ticker,
-                    models_and_params_global=global_models_and_params,
-                    perform_gru_hp_optimization=False, # Disable internal GRU HP opt
-                    default_target_percentage=p_target, # Pass current p_target from outer loop
-                    default_class_horizon=c_horizon # Pass current c_horizon from outer loop
-                )
-                
-                if model_buy_for_opt and model_sell_for_opt and scaler_buy_for_opt:
-                    models_cache[cache_key] = (model_buy_for_opt, model_sell_for_opt, scaler_buy_for_opt)
-                else:
-                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Failed to train models for target_percentage={p_target:.4f}, class_horizon={c_horizon}. Skipping.\n")
-                    continue
-            
-            current_model_buy, current_model_sell, current_scaler = models_cache[cache_key]
-
-            for trial_idx in range(n_threshold_trials):
-                # Randomly sample min_proba_buy and min_proba_sell
-                p_buy = round(min_proba_buy_dist.rvs(random_state=SEED + trial_idx), 2)
-                p_sell = round(min_proba_sell_dist.rvs(random_state=SEED + trial_idx + n_threshold_trials), 2)
-
-                    
-                env = RuleTradingEnv(
-                    df=df_backtest_opt.copy(),
-                    ticker=ticker,
-                    initial_balance=capital_per_stock,
-                    transaction_cost=TRANSACTION_COST,
-                    model_buy=current_model_buy,
-                    model_sell=current_model_sell,
-                    scaler=current_scaler,
-                    per_ticker_min_proba_buy=None,
-                    per_ticker_min_proba_sell=None,
-                    use_gate=USE_MODEL_GATE,
-                    feature_set=feature_set,
-                    use_simple_rule_strategy=False
-                )
-                final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, _ = env.run()
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Getting final value.\n")
-                
-                current_revenue = final_val
-
-                
-                if current_revenue > best_revenue:
-                    best_revenue = current_revenue
-                    best_min_proba_buy = p_buy
-                    best_min_proba_sell = p_sell
-                    best_target_percentage = p_target
-                    best_class_horizon = c_horizon
-    
-    optimization_status = "No Change"
-    if not np.isclose(best_min_proba_buy, current_min_proba_buy) or \
-       not np.isclose(best_min_proba_sell, current_min_proba_sell) or \
-       not np.isclose(best_target_percentage, initial_target_percentage) or \
-       not np.isclose(best_class_horizon, initial_class_horizon):
-        optimization_status = "Optimized"
-
-    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Revenue=${best_revenue:,.2f}, Status: {optimization_status}\n")
-    return {
-        'ticker': ticker,
-        'min_proba_buy': best_min_proba_buy,
-        'min_proba_sell': best_min_proba_sell,
-        'target_percentage': best_target_percentage,
-        'class_horizon': best_class_horizon,
-        'best_revenue': best_revenue, # Changed from best_sharpe to best_revenue
-        'optimization_status': optimization_status
-    }
-
-# ============================
-# Main
-# ============================
-    sorted_final_results: List[Dict],
-    models_buy: Dict,
-    models_sell: Dict,
-    scalers: Dict,
-    optimized_params_per_ticker: Dict[str, Dict[str, float]],
-    final_strategy_value_1y: float,
-    final_buy_hold_value_1y: float,
-    ai_1y_return: float,
-    final_strategy_value_ytd: float,
-    final_buy_hold_value_ytd: float,
-    ai_ytd_return: float,
-    final_strategy_value_3month: float,
-    final_buy_hold_value_3month: float,
-    ai_3month_return: float,
-    initial_balance_used: float, # Added parameter
-    num_tickers_analyzed: int,
-    final_strategy_value_1month: float, # Added parameter
-    ai_1month_return: float, # Added parameter
-    final_buy_hold_value_1month: float, # Added parameter
-    final_simple_rule_value_1y: float, # New parameter
-    simple_rule_1y_return: float, # New parameter
-    final_simple_rule_value_ytd: float, # New parameter
-    simple_rule_ytd_return: float, # New parameter
-    final_simple_rule_value_3month: float, # New parameter
-    simple_rule_3month_return: float, # New parameter
-    final_simple_rule_value_1month: float, # New parameter
-    simple_rule_1month_return: float, # New parameter
-    performance_metrics_simple_rule_1y: List[Dict], # New parameter for simple rule performance
-    performance_metrics_buy_hold_1y: List[Dict], # New parameter for Buy & Hold performance
-    top_performers_data: List[Tuple] # Add top_performers_data here
-) -> None:
-    """Prints the final summary of the backtest results."""
-    print("\n" + "="*80)
-    print("                     🚀 AI-POWERED STOCK ADVISOR FINAL SUMMARY 🚀")
-    print("="*80)
-
-    print("\n📊 Overall Portfolio Performance:")
-    print(f"  Initial Capital: ${initial_balance_used:,.2f}") # Use the passed initial_balance_used
-    print(f"  Number of Tickers Analyzed: {num_tickers_analyzed}")
-    print("-" * 40)
-    print(f"  1-Year AI Strategy Value: ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)")
-    print(f"  1-Year Simple Rule Value: ${final_simple_rule_value_1y:,.2f} ({simple_rule_1y_return:+.2f}%)") # New
-    print(f"  1-Year Buy & Hold Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
-    print("-" * 40)
-    print(f"  YTD AI Strategy Value: ${final_strategy_value_ytd:,.2f} ({ai_ytd_return:+.2f}%)")
-    print(f"  YTD Simple Rule Value: ${final_simple_rule_value_ytd:,.2f} ({simple_rule_ytd_return:+.2f}%)") # New
-    print(f"  YTD Buy & Hold Value: ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
-    print("-" * 40)
-    print(f"  3-Month AI Strategy Value: ${final_strategy_value_3month:,.2f} ({ai_3month_return:+.2f}%)")
-    print(f"  3-Month Simple Rule Value: ${final_simple_rule_value_3month:,.2f} ({simple_rule_3month_return:+.2f}%)") # New
-    print(f"  3-Month Buy & Hold Value: ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
-    print("-" * 40)
-    print(f"  1-Month AI Strategy Value: ${final_strategy_value_1month:,.2f} ({ai_1month_return:+.2f}%)")
-    print(f"  1-Month Simple Rule Value: ${final_simple_rule_value_1month:,.2f} ({simple_rule_1month_return:+.2f}%)") # New
-    print(f"  1-Month Buy & Hold Value: ${final_buy_hold_value_1month:,.2f} ({((final_buy_hold_value_1month - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
-    print("="*80)
-
-    print("\n📈 Individual Ticker Performance (AI Strategy - Sorted by 1-Year Performance):")
-    print("-" * 290)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10} | {'Class Horiz':>13} | {'Opt. Status':<25} | {'Shares Before Liquidation':>25}")
-    print("-" * 290)
-    for res in sorted_final_results:
-        # --- Safely get ticker and parameters ---
-        ticker = str(res.get('ticker', 'N/A'))
-        optimized_params = optimized_params_per_ticker.get(ticker, {})
-        buy_thresh = optimized_params.get('min_proba_buy', MIN_PROBA_BUY)
-        sell_thresh = optimized_params.get('min_proba_sell', MIN_PROBA_SELL)
-        target_perc = optimized_params.get('target_percentage', TARGET_PERCENTAGE)
-        class_horiz = optimized_params.get('class_horizon', CLASS_HORIZON) # Get class_horizon
-        opt_status = optimized_params.get('optimization_status', 'N/A') # Get optimization status
-
-        # --- Calculate allocated capital and strategy gain ---
-        allocated_capital = INVESTMENT_PER_STOCK
-        strategy_gain = res.get('performance', 0.0) - allocated_capital
-
-        # --- Safely format performance numbers ---
-        one_year_perf_str = f"{res.get('one_year_perf', 0.0):>9.2f}%" if pd.notna(res.get('one_year_perf')) else "N/A".rjust(10)
-        ytd_perf_str = f"{res.get('ytd_perf', 0.0):>9.2f}%" if pd.notna(res.get('ytd_perf')) else "N/A".rjust(10)
-        sharpe_str = f"{res.get('sharpe', 0.0):>11.2f}" if pd.notna(res.get('sharpe')) else "N/A".rjust(12)
-        buy_prob_str = f"{res.get('buy_prob', 0.0):>9.2f}" if pd.notna(res.get('buy_prob')) else "N/A".rjust(10)
-        sell_prob_str = f"{res.get('sell_prob', 0.0):>9.2f}" if pd.notna(res.get('sell_prob')) else "N/A".rjust(10)
-        last_ai_action_str = str(res.get('last_ai_action', 'HOLD'))
-        shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}" # New: Shares Before Liquidation
-        
-        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {buy_thresh:>11.2f} | {sell_thresh:>11.2f} | {target_perc:>9.2%} | {class_horiz:>12} | {opt_status:<25} | {shares_before_liquidation_str}")
-    print("-" * 290)
-
-    # --- Simple Rule Strategy Individual Ticker Performance ---
-    print("\n📈 Individual Ticker Performance (Simple Rule Strategy - Sorted by 1-Year Performance):")
-    print("-" * 136)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Last Action':<16} | {'Shares Before Liquidation':>25}")
-    print("-" * 136)
-    
-    # Sort simple rule results by 1Y performance for the table
-    sorted_simple_rule_results = sorted(performance_metrics_simple_rule_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
-
-    for res in sorted_simple_rule_results:
-        ticker = str(res.get('ticker', 'N/A'))
-        allocated_capital = INVESTMENT_PER_STOCK
-        strategy_gain = res.get('final_val', 0.0) - allocated_capital
-        
-        # Find the corresponding 1Y and YTD performance from top_performers_data
-        one_year_perf_benchmark, ytd_perf_benchmark = np.nan, np.nan
-        for t, p1y, pytd in top_performers_data: # Assuming top_performers_data is available in this scope
-            if t == ticker:
-                one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
-                ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
-                break
-
-        one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
-        ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
-        sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
-        last_action_str = str(res.get('last_ai_action', 'HOLD')) # Renamed from last_ai_action to last_action for clarity
-        shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}" # New: Shares Before Liquidation
-
-        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_action_str:<16} | {shares_before_liquidation_str}")
-    print("-" * 136)
-
-    # --- Buy & Hold Strategy Individual Ticker Performance ---
-    print("\n📈 Individual Ticker Performance (Buy & Hold Strategy - Sorted by 1-Year Performance):")
-    print("-" * 136)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
-    print("-" * 136)
-    
-    # Sort Buy & Hold results by 1Y performance for the table
-    sorted_buy_hold_results = sorted(performance_metrics_buy_hold_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
-
-    for res in sorted_buy_hold_results:
-        ticker = str(res.get('ticker', 'N/A'))
-        allocated_capital = INVESTMENT_PER_STOCK
-        strategy_gain = (res.get('final_val', 0.0) - allocated_capital) if res.get('final_val') is not None else 0.0
-        
-        # Find the corresponding 1Y and YTD performance from top_performers_data
-        one_year_perf_benchmark, ytd_perf_benchmark = np.nan, np.nan
-        for t, p1y, pytd in top_performers_data:
-            if t == ticker:
-                one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
-                ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
-                break
-
-        one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
-        ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
-        sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
-        shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}" # New: Shares Before Liquidation
-
-        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
-    print("-" * 136)
-
-    print("\n🤖 ML Model Status:")
-    for ticker in sorted_final_results:
-        t = ticker['ticker']
-        buy_model_status = "✅ Trained" if models_buy.get(t) else "❌ Not Trained"
-        sell_model_status = "✅ Trained" if models_sell.get(t) else "❌ Not Trained"
-        print(f"  - {t}: Buy Model: {buy_model_status}, Sell Model: {sell_model_status}")
-    print("="*80)
-
-    print("\n💡 Next Steps:")
-    print("  - Review individual ticker performance and trade logs for deeper insights.")
-    print("  - Experiment with different `MARKET_SELECTION` options and `N_TOP_TICKERS`.")
-    print("  - Adjust `TARGET_PERCENTAGE` and `RISK_PER_TRADE` for different risk appetites.")
-    print("  - Consider enabling `USE_MARKET_FILTER` and `USE_PERFORMANCE_BENCHMARK` for additional filtering.")
-    print("  - Explore advanced ML models or feature engineering for further improvements.")
-    print("="*80)
 
 # ============================
 # Main
