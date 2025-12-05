@@ -276,14 +276,27 @@ class RuleTradingEnv:
     def _get_model_prediction(self, i: int, model) -> float:
         if not self.use_gate or model is None:
             return 0.0
-        row = self.df.loc[i]
         
         model_feature_names = self.scaler.feature_names_in_ if hasattr(self.scaler, 'feature_names_in_') else self.feature_set
         
-        feature_values = {f: row.get(f, 0.0) for f in model_feature_names}
+        # Create a dictionary with default 0.0 values for all required features
+        feature_dict = {feature: 0.0 for feature in model_feature_names}
         
-        X_df = pd.DataFrame([feature_values], columns=model_feature_names)
+        # Update with available values from the DataFrame
+        row = self.df.iloc[i]
+        for feature in model_feature_names:
+            if feature in row.index:
+                try:
+                    feature_dict[feature] = row[feature]
+                except (KeyError, IndexError):
+                    # Feature exists in index but access failed, use default
+                    pass
+            # If feature not in row.index, it stays as 0.0 from initialization
         
+        # Create DataFrame with one row
+        X_df = pd.DataFrame([list(feature_dict.values())], columns=model_feature_names)
+        
+        # Ensure all values are numeric
         X_df = X_df.apply(pd.to_numeric, errors='coerce').fillna(0.0)
 
         if X_df.isnull().all().any():
@@ -295,8 +308,25 @@ class RuleTradingEnv:
                 start_idx = max(0, i - SEQUENCE_LENGTH + 1)
                 end_idx = i + 1
                 
-                historical_data_for_seq = self.df.loc[start_idx:end_idx-1, model_feature_names].copy()
+                # Filter model_feature_names to only include features that exist in the DataFrame
+                available_features = [f for f in model_feature_names if f in self.df.columns]
                 
+                if not available_features:
+                    print(f"  [{self.ticker}] Warning: No model features available in DataFrame at step {i}. Skipping prediction.")
+                    return 0.0
+                
+                # Create a DataFrame with all required features, filling missing ones with 0.0
+                historical_data_for_seq = self.df.loc[start_idx:end_idx-1].copy()
+                
+                # Ensure all required features exist in the historical data
+                for feature in model_feature_names:
+                    if feature not in historical_data_for_seq.columns:
+                        historical_data_for_seq[feature] = 0.0
+                
+                # Select only the features we need, in the correct order
+                historical_data_for_seq = historical_data_for_seq[model_feature_names].copy()
+                
+                # Convert to numeric and fill NaNs
                 for col in historical_data_for_seq.columns:
                     historical_data_for_seq[col] = pd.to_numeric(historical_data_for_seq[col], errors='coerce').fillna(0.0)
 

@@ -307,7 +307,7 @@ from config import (
     ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION, SAVE_PLOTS, MIN_PROBA_BUY, MIN_PROBA_SELL,
     FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING,
     USE_LOGISTIC_REGRESSION, USE_RANDOM_FOREST, USE_SVM, USE_MLP_CLASSIFIER,
-    USE_LSTM, USE_GRU
+    USE_LSTM, USE_GRU, USE_LIGHTGBM, USE_XGBOOST
 )
 # PYTORCH_AVAILABLE is set locally below based on actual import, not from config
 
@@ -320,6 +320,9 @@ CUDA_AVAILABLE = False
 CUML_AVAILABLE = False
 LGBMClassifier = None
 XGBClassifier = None
+# Cache GPU availability to avoid retesting in worker processes
+_lgbm_gpu_available = None
+_xgb_gpu_available = None
 cuMLRandomForestClassifier = None
 cuMLLogisticRegression = None
 cuMLStandardScaler = None
@@ -373,7 +376,7 @@ if PYTORCH_AVAILABLE:
 def initialize_ml_libraries():
     """Initializes ML libraries and prints their status only once."""
     global _ml_libraries_initialized, CUDA_AVAILABLE, CUML_AVAILABLE, LGBMClassifier, XGBClassifier, models_and_params, \
-           cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler
+           cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler, _lgbm_gpu_available, _xgb_gpu_available
     
     if _ml_libraries_initialized:
         return models_and_params
@@ -382,8 +385,9 @@ def initialize_ml_libraries():
     # The explicit disablement and fallback message are removed to allow cuML to be enabled if available.
 
     try:
-        if PYTORCH_AVAILABLE:
+        if PYTORCH_AVAILABLE and (USE_LSTM or USE_GRU):
             torch.manual_seed(SEED)
+            # Check CUDA availability once and configure PyTorch accordingly
             if torch.cuda.is_available():
                 CUDA_AVAILABLE = True
                 torch.cuda.manual_seed_all(SEED)
@@ -392,13 +396,22 @@ def initialize_ml_libraries():
                 print("✅ CUDA is available. GPU acceleration enabled with deterministic algorithms.")
             else:
                 CUDA_AVAILABLE = False
-                print("⚠️ CUDA is not available. GPU acceleration will not be used.")
+                if USE_LSTM or USE_GRU:
+                    print("⚠️ CUDA is not available. GPU acceleration will not be used.")
+        elif PYTORCH_AVAILABLE:
+            # PyTorch is available but LSTM/GRU are not enabled, still check CUDA for other models
+            if torch.cuda.is_available():
+                CUDA_AVAILABLE = True
+            else:
+                CUDA_AVAILABLE = False
         else:
             CUDA_AVAILABLE = False
-            print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
+            if USE_LSTM or USE_GRU:
+                print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
     except NameError:
         CUDA_AVAILABLE = False
-        print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
+        if USE_LSTM or USE_GRU:
+            print("⚠️ PyTorch not installed. Run: pip install torch. CUDA availability check skipped.")
 
     try:
         from cuml.ensemble import RandomForestClassifier as cuMLRandomForestClassifier_
@@ -412,69 +425,43 @@ def initialize_ml_libraries():
     except Exception as e:
         pass
 
-    try:
-        from lightgbm import LGBMClassifier as lgbm
-        LGBMClassifier = lgbm
-        # LightGBM GPU requires OpenCL, not CUDA. Test if OpenCL is available.
-        lgbm_gpu_available = False
+    if USE_LIGHTGBM:
         try:
-            # Try to create and fit a tiny test model with device='gpu' to see if OpenCL is available
-            import numpy as np
-            test_X = np.random.rand(10, 5).astype(np.float32)
-            test_y = np.random.randint(0, 2, 10).astype(np.int32)
-            test_model = LGBMClassifier(device='gpu', n_estimators=1, verbosity=-1)
-            test_model.fit(test_X, test_y)
-            lgbm_gpu_available = True
-        except Exception:
-            lgbm_gpu_available = False
-        
-        if lgbm_gpu_available:
-            lgbm_model_params = {
-                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='gpu'),
-                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
-            }
-            models_and_params["LightGBM (GPU)"] = lgbm_model_params
-            print("✅ LightGBM found. Configured for GPU (OpenCL).")
-        else:
-            lgbm_model_params = {
-                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
-                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
-            }
-            models_and_params["LightGBM (CPU)"] = lgbm_model_params
-            print("ℹ️ LightGBM found. Will use CPU (OpenCL GPU not available).")
-    except ImportError:
-        print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
+            from lightgbm import LGBMClassifier as lgbm
+            LGBMClassifier = lgbm
+            # LightGBM GPU requires OpenCL, not CUDA. If CUDA is available, try GPU (OpenCL might be available too).
+            # If GPU fails during training, it will be caught by error handling.
+            if CUDA_AVAILABLE:
+                lgbm_model_params = {
+                    "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='gpu'),
+                    "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+                }
+                models_and_params["LightGBM (GPU)"] = lgbm_model_params
+                print("✅ LightGBM found. Configured for GPU (OpenCL).")
+            else:
+                lgbm_model_params = {
+                    "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
+                    "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+                }
+                models_and_params["LightGBM (CPU)"] = lgbm_model_params
+                print("ℹ️ LightGBM found. Will use CPU (CUDA not available).")
+        except ImportError:
+            print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
 
-    if XGBOOST_AVAILABLE:
+    if USE_XGBOOST and XGBOOST_AVAILABLE:
         XGBClassifier = xgb.XGBClassifier
-        # Check if XGBoost GPU support is actually available by trying to fit a small model
-        xgb_gpu_available = False
+        xgb_model_params = {
+            "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1),
+            "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
+        }
         if CUDA_AVAILABLE:
-            try:
-                # Try to create and fit a tiny test model with gpu_hist to see if it's actually supported
-                import numpy as np
-                test_X = np.random.rand(10, 5).astype(np.float32)
-                test_y = np.random.randint(0, 2, 10).astype(np.int32)
-                test_model = XGBClassifier(tree_method='gpu_hist', n_estimators=1, verbosity=0)
-                test_model.fit(test_X, test_y)
-                xgb_gpu_available = True
-            except Exception:
-                xgb_gpu_available = False
-        
-        if xgb_gpu_available:
-            xgb_model_params = {
-                "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1, tree_method='gpu_hist'),
-                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
-            }
+            xgb_model_params["model"].set_params(tree_method='gpu_hist')
             models_and_params["XGBoost (GPU)"] = xgb_model_params
             print("✅ XGBoost found. Configured for GPU (gpu_hist tree_method).")
         else:
-            xgb_model_params = {
-                "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1, tree_method='hist'),
-                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
-            }
+            xgb_model_params["model"].set_params(tree_method='hist')
             models_and_params["XGBoost (CPU)"] = xgb_model_params
-            print("ℹ️ XGBoost found. Will use CPU (GPU support not available).")
+            print("ℹ️ XGBoost found. Will use CPU (CUDA not available).")
 
     _ml_libraries_initialized = True
     return models_and_params
@@ -754,21 +741,10 @@ def train_and_evaluate_models(
             "params": {'hidden_layer_sizes': [(100,), (100, 50), (50, 25)], 'activation': ['relu', 'tanh'], 'alpha': [0.0001, 0.001, 0.01], 'learning_rate_init': [0.001, 0.01]}
         }
 
-    if LGBMClassifier:
-        # LightGBM GPU requires OpenCL, not CUDA. Test if OpenCL is available.
-        lgbm_gpu_available = False
-        try:
-            # Try to create and fit a tiny test model with device='gpu' to see if OpenCL is available
-            import numpy as np
-            test_X = np.random.rand(10, 5).astype(np.float32)
-            test_y = np.random.randint(0, 2, 10).astype(np.int32)
-            test_model = LGBMClassifier(device='gpu', n_estimators=1, verbosity=-1)
-            test_model.fit(test_X, test_y)
-            lgbm_gpu_available = True
-        except Exception:
-            lgbm_gpu_available = False
-        
-        if lgbm_gpu_available:
+    if USE_LIGHTGBM and LGBMClassifier:
+        # LightGBM GPU requires OpenCL, not CUDA. If CUDA is available, try GPU (OpenCL might be available too).
+        # If GPU fails during training, it will be caught by error handling.
+        if CUDA_AVAILABLE:
             lgbm_model_params = {
                 "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='gpu'),
                 "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
@@ -781,22 +757,8 @@ def train_and_evaluate_models(
             }
             models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
 
-    if XGBOOST_AVAILABLE and XGBClassifier:
-        # Check if XGBoost GPU support is actually available by trying to fit a small model
-        xgb_gpu_available = False
+    if USE_XGBOOST and XGBOOST_AVAILABLE and XGBClassifier:
         if CUDA_AVAILABLE:
-            try:
-                # Try to create and fit a tiny test model with gpu_hist to see if it's actually supported
-                import numpy as np
-                test_X = np.random.rand(10, 5).astype(np.float32)
-                test_y = np.random.randint(0, 2, 10).astype(np.int32)
-                test_model = XGBClassifier(tree_method='gpu_hist', n_estimators=1, verbosity=0)
-                test_model.fit(test_X, test_y)
-                xgb_gpu_available = True
-            except Exception:
-                xgb_gpu_available = False
-        
-        if xgb_gpu_available:
             xgb_model_params = {
                 "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1, tree_method='gpu_hist'),
                 "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}

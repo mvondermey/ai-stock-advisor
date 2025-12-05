@@ -1,22 +1,4 @@
-
 from __future__ import annotations
-def _gpu_diag():
-    try:
-        import torch
-        print(f"[GPU] torch.cuda.is_available(): {torch.cuda.is_available()}")
-    except Exception as e:
-        print("[GPU] torch check failed:", e)
-    try:
-        import xgboost as xgb
-        print("[GPU] XGBoost version:", getattr(xgb, "__version__", "?"))
-    except Exception as e:
-        print("[GPU] XGBoost check failed:", e)
-    try:
-        import lightgbm as lgb
-        print("[GPU] LightGBM version:", getattr(lgb, "__version__", "?"))
-    except Exception as e:
-        print("[GPU] LightGBM check failed:", e)
-_gpu_diag() # Call directly, let exceptions propagate if not handled internally
 
 # -*- coding: utf-8 -*-
 
@@ -69,6 +51,36 @@ from alpha_training import select_threshold_by_alpha, AlphaThresholdConfig
 # Toggle: use alpha-optimized probability threshold for buys/sells
 USE_ALPHA_THRESHOLD_BUY = True
 USE_ALPHA_THRESHOLD_SELL = True
+
+def _gpu_diag():
+    """Run GPU diagnostics only for enabled models"""
+    # Only check PyTorch if LSTM or GRU are enabled
+    if USE_LSTM or USE_GRU:
+        try:
+            import torch
+            print(f"[GPU] torch.cuda.is_available(): {torch.cuda.is_available()}")
+        except Exception as e:
+            print("[GPU] torch check failed:", e)
+    
+    # Only check XGBoost if it's enabled
+    if USE_XGBOOST:
+        try:
+            import xgboost as xgb
+            print("[GPU] XGBoost version:", getattr(xgb, "__version__", "?"))
+        except Exception as e:
+            print("[GPU] XGBoost check failed:", e)
+    
+    # Only check LightGBM if it's enabled
+    if USE_LIGHTGBM:
+        try:
+            import lightgbm as lgb
+            print("[GPU] LightGBM version:", getattr(lgb, "__version__", "?"))
+        except Exception as e:
+            print("[GPU] LightGBM check failed:", e)
+
+# Run GPU diagnostics
+_gpu_diag()
+
 def setup_logging(verbose: bool = False) -> None:
     """Central logging config; safe for multiprocessing (basic)."""
     import logging, os, sys
@@ -1596,20 +1608,9 @@ def train_and_evaluate_models(
             }
 
         if LGBMClassifier and USE_LIGHTGBM:
-            # LightGBM GPU requires OpenCL, not CUDA. Test if OpenCL is available.
-            lgbm_gpu_available = False
-            try:
-                # Try to create and fit a tiny test model with device='gpu' to see if OpenCL is available
-                import numpy as np
-                test_X = np.random.rand(10, 5).astype(np.float32)
-                test_y = np.random.randint(0, 2, 10).astype(np.int32)
-                test_model = LGBMClassifier(device='gpu', n_estimators=1, verbosity=-1)
-                test_model.fit(test_X, test_y)
-                lgbm_gpu_available = True
-            except Exception:
-                lgbm_gpu_available = False
-            
-            if lgbm_gpu_available:
+            # LightGBM GPU requires OpenCL, not CUDA. If CUDA is available, try GPU (OpenCL might be available too).
+            # If GPU fails during training, it will be caught by error handling.
+            if CUDA_AVAILABLE:
                 lgbm_model_params = {
                     "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='gpu'),
                     "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
@@ -1623,29 +1624,9 @@ def train_and_evaluate_models(
                 models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
 
         if XGBOOST_AVAILABLE and XGBClassifier and USE_XGBOOST:
-            # Check if XGBoost GPU support is actually available by trying to fit a small model
-            xgb_gpu_available = False
-            if CUDA_AVAILABLE:
-                try:
-                    # Try to create and fit a tiny test model with gpu_hist to see if it's actually supported
-                    import numpy as np
-                    test_X = np.random.rand(10, 5).astype(np.float32)
-                    test_y = np.random.randint(0, 2, 10).astype(np.int32)
-                    test_model = XGBClassifier(tree_method='gpu_hist', n_estimators=1, verbosity=0)
-                    test_model.fit(test_X, test_y)
-                    xgb_gpu_available = True
-                except Exception:
-                    xgb_gpu_available = False
-            
-            if xgb_gpu_available:
-                xgb_device = 'cuda'
-                xgb_tree_method = 'gpu_hist'
-                xgb_predictor = 'gpu_predictor'
-            else:
-                xgb_device = 'cpu'
-                xgb_tree_method = 'hist'
-                xgb_predictor = 'cpu_predictor'
-            
+            xgb_device = 'cuda' if CUDA_AVAILABLE else 'cpu'
+            xgb_tree_method = 'gpu_hist' if CUDA_AVAILABLE else 'hist'
+            xgb_predictor = 'gpu_predictor' if CUDA_AVAILABLE else 'cpu_predictor'
             xgb_model_params = {
                 "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1, tree_method=xgb_tree_method, predictor=xgb_predictor),
                 "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
