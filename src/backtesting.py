@@ -49,7 +49,7 @@ def optimize_single_ticker_worker(params):
         alpha_config, current_min_proba_buy, current_min_proba_sell,
         initial_target_percentage, initial_class_horizon,
         target_percentage_options, class_horizon_options,
-        seed, feature_set
+        seed, feature_set, model_buy, model_sell, scaler
     ) = params
 
     sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Starting optimization...\n")
@@ -67,123 +67,131 @@ def optimize_single_ticker_worker(params):
             'optimization_status': "Failed (no data)"
         }
 
+    if model_buy is None or model_sell is None or scaler is None:
+        sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Models or scaler not provided. Skipping optimization.\n")
+        return {
+            'ticker': ticker,
+            'min_proba_buy': current_min_proba_buy,
+            'min_proba_sell': current_min_proba_sell,
+            'target_percentage': initial_target_percentage,
+            'class_horizon': initial_class_horizon,
+            'best_revenue': capital_per_stock,
+            'optimization_status': "Failed (no models)"
+        }
+
+    best_alpha = -np.inf
     best_revenue = -np.inf
     best_min_proba_buy = current_min_proba_buy
     best_min_proba_sell = current_min_proba_sell
     best_target_percentage = initial_target_percentage
     best_class_horizon = initial_class_horizon
 
-    # Define search ranges
-    target_percentage_range = GRU_TARGET_PERCENTAGE_OPTIONS if force_percentage_optimization else [initial_target_percentage]
-    class_horizon_range = GRU_CLASS_HORIZON_OPTIONS if force_percentage_optimization else [initial_class_horizon]
-
     n_threshold_trials = 10
-
-    # Cache trained models to avoid retraining for same (target%, horizon)
-    models_cache = {}
     
     # Store all tested combinations for backtesting
     tested_combinations = []  # List of dicts with params and revenue
 
-    for p_target in target_percentage_range:
-        for c_horizon in class_horizon_range:
-            cache_key = (p_target, c_horizon)
-            if cache_key not in models_cache:
-                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Re-fetching training data and re-training models for target_percentage={p_target:.4f}, class_horizon={c_horizon}\n")
-                df_train, actual_feature_set = fetch_training_data(ticker, df_backtest_opt.copy(), p_target, c_horizon)
-                if df_train.empty:
-                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Insufficient training data for target_percentage={p_target:.4f}, class_horizon={c_horizon}. Skipping.\n")
-                    continue
-                
-                global_models_and_params = initialize_ml_libraries()
-                model_buy_for_opt, scaler_buy_for_opt, _ = train_and_evaluate_models(
-                    df_train, "TargetClassBuy", actual_feature_set, ticker=ticker,
-                    models_and_params_global=global_models_and_params,
-                    perform_gru_hp_optimization=False, # Disable internal GRU HP opt
-                    default_target_percentage=p_target, # Pass current p_target from outer loop
-                    default_class_horizon=c_horizon # Pass current c_horizon from outer loop
-                )
-                model_sell_for_opt, scaler_sell_for_opt, _ = train_and_evaluate_models(
-                    df_train, "TargetClassSell", actual_feature_set, ticker=ticker,
-                    models_and_params_global=global_models_and_params,
-                    perform_gru_hp_optimization=False, # Disable internal GRU HP opt
-                    default_target_percentage=p_target, # Pass current p_target from outer loop
-                    default_class_horizon=c_horizon # Pass current c_horizon from outer loop
-                )
-                
-                if model_buy_for_opt and model_sell_for_opt and scaler_buy_for_opt:
-                    models_cache[cache_key] = (model_buy_for_opt, model_sell_for_opt, scaler_buy_for_opt)
-                else:
-                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Failed to train models for target_percentage={p_target:.4f}, class_horizon={c_horizon}. Skipping.\n")
-                    continue
+    # Use the already-trained models - no retraining needed
+    min_proba_buy_dist = beta(3, 7)   # Peaked around 0.3
+    min_proba_sell_dist = beta(3, 7)
+
+    for trial_idx in range(n_threshold_trials):
+        # Randomly sample min_proba_buy and min_proba_sell
+        p_buy = round(min_proba_buy_dist.rvs(random_state=SEED + trial_idx), 2)
+        p_sell = round(min_proba_sell_dist.rvs(random_state=SEED + trial_idx + n_threshold_trials), 2)
+
+        env = RuleTradingEnv(
+            df=df_backtest_opt.copy(),
+            ticker=ticker,
+            initial_balance=capital_per_stock,
+            transaction_cost=TRANSACTION_COST,
+            model_buy=model_buy,
+            model_sell=model_sell,
+            scaler=scaler,
+            per_ticker_min_proba_buy=p_buy,
+            per_ticker_min_proba_sell=p_sell,
+            use_gate=USE_MODEL_GATE,
+            feature_set=feature_set,
+            use_simple_rule_strategy=False
+        )
+        final_val, _, _, _, _, _ = env.run()
+        revenue = final_val
+        
+        # Calculate buy & hold for this combination
+        start_price_bh = float(df_backtest_opt["Close"].iloc[0])
+        end_price_bh = float(df_backtest_opt["Close"].iloc[-1])
+        shares_bh = int(capital_per_stock / start_price_bh) if start_price_bh > 0 else 0
+        cash_bh = capital_per_stock - shares_bh * start_price_bh
+        buy_hold_final_val = cash_bh + shares_bh * end_price_bh
+        buy_hold_revenue = buy_hold_final_val - capital_per_stock
+        
+        # Calculate alpha from portfolio history vs buy & hold
+        portfolio_history = env.portfolio_history
+        if len(portfolio_history) > 1 and len(df_backtest_opt) > 1:
+            # Calculate daily returns for strategy (portfolio value changes)
+            strategy_values = pd.Series(portfolio_history)
+            strategy_returns = strategy_values.pct_change().dropna()
             
-            current_model_buy, current_model_sell, current_scaler = models_cache[cache_key]
-
-            min_proba_buy_dist = beta(3, 7)   # Peaked around 0.3
-            min_proba_sell_dist = beta(3, 7)
-
-            for trial_idx in range(n_threshold_trials):
-                # Randomly sample min_proba_buy and min_proba_sell
-                p_buy = round(min_proba_buy_dist.rvs(random_state=SEED + trial_idx), 2)
-                p_sell = round(min_proba_sell_dist.rvs(random_state=SEED + trial_idx + n_threshold_trials), 2)
-
-                    
-                env = RuleTradingEnv(
-                    df=df_backtest_opt.copy(),
-                    ticker=ticker,
-                    initial_balance=capital_per_stock,
-                    transaction_cost=TRANSACTION_COST,
-                    model_buy=current_model_buy,
-                    model_sell=current_model_sell,
-                    scaler=current_scaler,
-                    per_ticker_min_proba_buy=p_buy,
-                    per_ticker_min_proba_sell=p_sell,
-                    use_gate=USE_MODEL_GATE,
-                    feature_set=feature_set,
-                    use_simple_rule_strategy=False
-                )
-                final_val, _, _, _, _, _ = env.run()
-                revenue = final_val
+            # Calculate daily returns for buy & hold (price changes)
+            close_prices = pd.to_numeric(df_backtest_opt["Close"], errors='coerce').dropna()
+            bh_returns = close_prices.pct_change().dropna()
+            
+            # Align returns - portfolio_history has same length as df_backtest_opt rows
+            # Both should start from index 1 (after pct_change().dropna())
+            min_len = min(len(strategy_returns), len(bh_returns))
+            if min_len > 1:  # Need at least 2 data points for regression
+                strategy_returns_aligned = strategy_returns.iloc[:min_len].values
+                bh_returns_aligned = bh_returns.iloc[:min_len].values
                 
-                # Calculate buy & hold for this combination
-                start_price_bh = float(df_backtest_opt["Close"].iloc[0])
-                end_price_bh = float(df_backtest_opt["Close"].iloc[-1])
-                shares_bh = int(capital_per_stock / start_price_bh) if start_price_bh > 0 else 0
-                cash_bh = capital_per_stock - shares_bh * start_price_bh
-                buy_hold_final_val = cash_bh + shares_bh * end_price_bh
-                buy_hold_revenue = buy_hold_final_val - capital_per_stock
-                
-                # Calculate percentages
-                revenue_pct = ((revenue - capital_per_stock) / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
-                bh_revenue_pct = (buy_hold_revenue / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
-                diff = revenue - buy_hold_final_val
-                diff_pct = revenue_pct - bh_revenue_pct
-                
-                # Print immediately after each combination is tested
-                print(f"  [{ticker}] Target={p_target:.4f}, Horizon={c_horizon}, Buy={p_buy:.2f}, Sell={p_sell:.2f} → "
-                      f"AI: ${revenue:,.2f} ({revenue_pct:+.2f}%), B&H: ${buy_hold_final_val:,.2f} ({bh_revenue_pct:+.2f}%), "
-                      f"Diff: ${diff:,.2f} ({diff_pct:+.2f}%)")
-                
-                # Store this combination
-                tested_combinations.append({
-                    'min_proba_buy': p_buy,
-                    'min_proba_sell': p_sell,
-                    'target_percentage': p_target,
-                    'class_horizon': c_horizon,
-                    'revenue': revenue,
-                    'buy_hold_revenue': buy_hold_revenue,
-                    'buy_hold_final_val': buy_hold_final_val,
-                    'model_buy': current_model_buy,
-                    'model_sell': current_model_sell,
-                    'scaler': current_scaler
-                })
+                # Calculate alpha using OLS regression: strategy_ret = alpha + beta * bh_ret
+                # Alpha is the intercept, annualized
+                try:
+                    X = np.column_stack([np.ones_like(bh_returns_aligned), bh_returns_aligned])
+                    beta_coeffs = np.linalg.lstsq(X, strategy_returns_aligned, rcond=None)[0]
+                    alpha_per_day = float(beta_coeffs[0])
+                    alpha_annualized = alpha_per_day * 252  # Annualize (252 trading days)
+                except Exception as e:
+                    alpha_annualized = 0.0
+            else:
+                alpha_annualized = 0.0
+        else:
+            alpha_annualized = 0.0
+        
+        # Calculate percentages
+        revenue_pct = ((revenue - capital_per_stock) / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
+        bh_revenue_pct = (buy_hold_revenue / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
+        diff = revenue - buy_hold_final_val
+        diff_pct = revenue_pct - bh_revenue_pct
+        
+        # Print immediately after each combination is tested
+        # Use sys.stdout.write with flush to ensure ticker-specific output doesn't get mixed
+        sys.stdout.write(f"  [{ticker}] Buy={p_buy:.2f}, Sell={p_sell:.2f} → "
+              f"AI: ${revenue:,.2f} ({revenue_pct:+.2f}%), B&H: ${buy_hold_final_val:,.2f} ({bh_revenue_pct:+.2f}%), "
+              f"Alpha: {alpha_annualized:.4f}\n")
+        sys.stdout.flush()
+        
+        # Store this combination
+        tested_combinations.append({
+            'min_proba_buy': p_buy,
+            'min_proba_sell': p_sell,
+            'target_percentage': initial_target_percentage,
+            'class_horizon': initial_class_horizon,
+            'revenue': revenue,
+            'buy_hold_revenue': buy_hold_revenue,
+            'buy_hold_final_val': buy_hold_final_val,
+            'alpha_annualized': alpha_annualized,
+            'model_buy': model_buy,
+            'model_sell': model_sell,
+            'scaler': scaler
+        })
 
-                if revenue > best_revenue:
-                    best_revenue = revenue
-                    best_min_proba_buy = p_buy
-                    best_min_proba_sell = p_sell
-                    best_target_percentage = p_target
-                    best_class_horizon = c_horizon
+        if alpha_annualized > best_alpha:
+            best_alpha = alpha_annualized
+            best_revenue = revenue
+            best_min_proba_buy = p_buy
+            best_min_proba_sell = p_sell
+            best_target_percentage = initial_target_percentage
+            best_class_horizon = initial_class_horizon
     
     optimization_status = "No Change"
     if not np.isclose(best_min_proba_buy, current_min_proba_buy) or \
@@ -204,22 +212,84 @@ def optimize_single_ticker_worker(params):
     diff_best = best_revenue - buy_hold_final_val_best
     diff_pct_best = revenue_pct_best - bh_revenue_pct_best
 
+    # Recalculate alpha for the best combination
+    best_alpha_final = 0.0
+    if best_revenue > -np.inf:
+        # Find the best combination in tested_combinations
+        for combo in tested_combinations:
+            if (np.isclose(combo['min_proba_buy'], best_min_proba_buy) and
+                np.isclose(combo['min_proba_sell'], best_min_proba_sell) and
+                np.isclose(combo['target_percentage'], best_target_percentage) and
+                np.isclose(combo['class_horizon'], best_class_horizon)):
+                best_alpha_final = combo.get('alpha_annualized', 0.0)
+                break
+    
+    # Validation: Check if selected parameters beat B&H in revenue
+    # If not, find the best combination that beats B&H (by revenue)
+    revenue_beats_bh = best_revenue > buy_hold_final_val_best
+    if not revenue_beats_bh and tested_combinations:
+        # Find combinations that beat B&H
+        combinations_beating_bh = [c for c in tested_combinations if c['revenue'] > c['buy_hold_final_val']]
+        
+        if combinations_beating_bh:
+            # Among those that beat B&H, find the one with highest alpha
+            best_beating_bh = max(combinations_beating_bh, key=lambda x: x.get('alpha_annualized', -np.inf))
+            
+            # If the best alpha combination doesn't beat B&H, but we found one that does, use it
+            if best_beating_bh.get('alpha_annualized', -np.inf) > -np.inf:
+                print(f"  ⚠️ [{ticker}] WARNING: Best alpha combination (Alpha={best_alpha_final:.4f}) does NOT beat B&H in revenue.")
+                print(f"     Selecting alternative: Alpha={best_beating_bh.get('alpha_annualized', 0.0):.4f} that beats B&H")
+                best_alpha_final = best_beating_bh.get('alpha_annualized', 0.0)
+                best_revenue = best_beating_bh['revenue']
+                best_min_proba_buy = best_beating_bh['min_proba_buy']
+                best_min_proba_sell = best_beating_bh['min_proba_sell']
+                best_target_percentage = best_beating_bh['target_percentage']
+                best_class_horizon = best_beating_bh['class_horizon']
+                buy_hold_final_val_best = best_beating_bh['buy_hold_final_val']
+                buy_hold_revenue_best = best_beating_bh['buy_hold_revenue']
+                revenue_pct_best = ((best_revenue - capital_per_stock) / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
+                bh_revenue_pct_best = (buy_hold_revenue_best / capital_per_stock * 100) if capital_per_stock > 0 else 0.0
+                diff_best = best_revenue - buy_hold_final_val_best
+                diff_pct_best = revenue_pct_best - bh_revenue_pct_best
+                revenue_beats_bh = True
+        else:
+            # No combination beats B&H - warn but keep the best alpha
+            print(f"  ⚠️ [{ticker}] WARNING: No tested combination beats Buy & Hold in revenue!")
+            print(f"     Best alpha combination selected, but revenue is ${best_revenue:,.2f} vs B&H ${buy_hold_final_val_best:,.2f}")
+    
+    # Final validation: Ensure selected values beat B&H
+    # Recalculate to be absolutely sure
+    final_revenue_beats_bh = best_revenue > buy_hold_final_val_best
+    
     # Print summary of selected values
-    print(f"\n  ✅ [{ticker}] Optimization complete - Selected values:")
+    revenue_status = "✅ Beats B&H" if final_revenue_beats_bh else "❌ Below B&H"
+    print(f"\n  ✅ [{ticker}] Optimization complete - Selected values (optimized for highest alpha):")
     print(f"     Target={best_target_percentage:.4f}, Horizon={best_class_horizon}, Buy={best_min_proba_buy:.2f}, Sell={best_min_proba_sell:.2f}")
-    print(f"     Best AI Revenue: ${best_revenue:,.2f} ({revenue_pct_best:+.2f}%)")
+    print(f"     Best Alpha (annualized): {best_alpha_final:.4f}")
+    print(f"     Best AI Revenue: ${best_revenue:,.2f} ({revenue_pct_best:+.2f}%) {revenue_status}")
     print(f"     Buy & Hold Revenue: ${buy_hold_final_val_best:,.2f} ({bh_revenue_pct_best:+.2f}%)")
     print(f"     Difference: ${diff_best:,.2f} ({diff_pct_best:+.2f}%)")
+    
+    # Add explicit check result
+    if not final_revenue_beats_bh:
+        print(f"     ⚠️  WARNING: Selected parameters do NOT beat Buy & Hold in revenue!")
+        print(f"        AI Strategy: ${best_revenue:,.2f} vs Buy & Hold: ${buy_hold_final_val_best:,.2f}")
+        print(f"        Shortfall: ${buy_hold_final_val_best - best_revenue:,.2f}")
+    else:
+        print(f"     ✅ SUCCESS: Selected parameters beat Buy & Hold by ${diff_best:,.2f} ({diff_pct_best:+.2f}%)")
+    
     print(f"     Status: {optimization_status}\n")
 
-    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Revenue=${best_revenue:,.2f}, Status: {optimization_status}\n")
+    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Alpha={best_alpha_final:.4f}, Best Revenue=${best_revenue:,.2f}, Beats B&H={final_revenue_beats_bh}, Status: {optimization_status}\n")
     return {
         'ticker': ticker,
         'min_proba_buy': best_min_proba_buy,
         'min_proba_sell': best_min_proba_sell,
         'target_percentage': best_target_percentage,
         'class_horizon': best_class_horizon,
-        'best_revenue': best_revenue, # Changed from best_sharpe to best_revenue
+        'best_revenue': best_revenue,
+        'buy_hold_revenue': buy_hold_final_val_best,
+        'revenue_beats_bh': final_revenue_beats_bh,  # Add explicit flag
         'optimization_status': optimization_status,
         'tested_combinations': tested_combinations  # Return all tested combinations
     }
@@ -241,12 +311,13 @@ def optimize_thresholds_for_portfolio_parallel(optimization_params, num_processe
     for res in results:
         if res and res.get('ticker'):
             optimized_params[res['ticker']] = {
-                k: res[k] for k in ['min_proba_buy', 'min_proba_sell', 'target_percentage', 'class_horizon', 'optimization_status']
+                k: res[k] for k in ['min_proba_buy', 'min_proba_sell', 'target_percentage', 'class_horizon', 'optimization_status', 'revenue_beats_bh']
             }
             if 'tested_combinations' in res and res['tested_combinations']:
                 all_tested_combinations[res['ticker']] = res['tested_combinations']
+            beats_bh_status = "✅ Beats B&H" if res.get('revenue_beats_bh', False) else "❌ Below B&H"
             print(f"Optimized {res['ticker']}: Buy>{res['min_proba_buy']:.2f}, Sell>{res['min_proba_sell']:.2f}, "
-                  f"Target={res['target_percentage']:.3%}, Horizon={res['class_horizon']}d → {res['optimization_status']}")
+                  f"Target={res['target_percentage']:.3%}, Horizon={res['class_horizon']}d → {res['optimization_status']} | {beats_bh_status}")
 
     return optimized_params, all_tested_combinations
 

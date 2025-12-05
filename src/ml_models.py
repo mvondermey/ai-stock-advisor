@@ -1081,11 +1081,10 @@ def train_and_evaluate_models(
         return None, None, None
 
     best_model_name = max(results, key=results.get)
-    print(f"  🏆 Best model: {best_model_name} with AUC = {best_auc_overall:.4f}")
     # Alpha metrics (validation-like quick check)
     try:
-        if 'best_model' in locals() and 'X_df' in locals() and hasattr(best_model, 'predict_proba'):
-            _proba = best_model.predict_proba(X_df)[:, 1]
+        if best_model_overall is not None and 'X_df' in locals() and hasattr(best_model_overall, 'predict_proba'):
+            _proba = best_model_overall.predict_proba(X_df)[:, 1]
             _alpha_metrics_report("Best model (quick)", _proba, d if 'd' in locals() else X_df)
     except Exception as _e:
         print(f"    - Alpha metrics (quick) skipped: {_e}")
