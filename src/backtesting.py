@@ -1,15 +1,36 @@
-
 """
 backtesting.py
 Final version – includes 1D sequential optimisation, compatible with main.py and accepts extra kwargs (e.g., top_tickers).
 """
 
 import numpy as np
+import sys
 from multiprocessing import Pool, cpu_count, current_process
 from tqdm import tqdm
 from backtesting_env import RuleTradingEnv
+from ml_models import initialize_ml_libraries, train_and_evaluate_models
+from data_utils import load_prices, fetch_training_data, _ensure_dir
 import logging
 from pathlib import Path
+from config import (
+    GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS, MIN_PROBA_BUY, MIN_PROBA_SELL,
+    USE_MODEL_GATE, TRANSACTION_COST, SEED, INVESTMENT_PER_STOCK,
+    BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, BACKTEST_DAYS_3MONTH, BACKTEST_DAYS_1MONTH,
+    N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
+    DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
+    FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD
+)
+from config import (
+    ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, TARGET_PERCENTAGE, CLASS_HORIZON,
+    PYTORCH_AVAILABLE, CUDA_AVAILABLE, USE_LSTM, USE_GRU # Moved from ml_models
+)
+from alpha_training import AlphaThresholdConfig, select_threshold_by_alpha
+from scipy.stats import uniform, beta
+import os
+import json
+import pandas as pd
+from typing import List, Dict, Tuple, Optional
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -22,137 +43,434 @@ Path("logs").mkdir(exist_ok=True)
 # -----------------------------------------------------------------------------
 def optimize_single_ticker_worker(params):
     (
-        ticker,
-        X_train,
-        y_train,
-        X_test,
-        y_test,
-        model_buy,
-        model_sell,
-        scaler,
-        prices_dict,
-        signals_dict,
-        p_target_range,
-        p_buy_range,
-        p_sell_range,
-        c_horizon_range
+        ticker, train_data, capital_per_stock, target_percentage, class_horizon,
+        force_thresholds_optimization, force_percentage_optimization,
+        use_alpha_threshold_buy, use_alpha_threshold_sell,
+        alpha_config, current_min_proba_buy, current_min_proba_sell,
+        initial_target_percentage, initial_class_horizon,
+        target_percentage_options, class_horizon_options,
+        seed, feature_set
     ) = params
 
-    def evaluate_thresholds(p_buy, p_sell, p_target, c_horizon):
-        try:
-            env = RuleTradingEnv(
-                ticker=ticker,
-                model_buy=model_buy,
-                model_sell=model_sell,
-                scaler=scaler,
-                capital_per_stock=capital_per_stock,
-                train_start=train_start,
-                train_end=train_end,
-                feature_set=feature_set
-            )
+    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Starting optimization...\n")
 
-            if hasattr(env, "set_thresholds"):
-                env.set_thresholds(
-                    p_buy=p_buy,
-                    p_sell=p_sell,
-                    p_target=p_target,
-                    c_horizon=c_horizon
+    df_backtest_opt = train_data.copy()
+    if df_backtest_opt.empty:
+        sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: No backtest data. Skipping optimization.\n")
+        return {
+            'ticker': ticker,
+            'min_proba_buy': current_min_proba_buy,
+            'min_proba_sell': current_min_proba_sell,
+            'target_percentage': initial_target_percentage,
+            'class_horizon': initial_class_horizon,
+            'best_revenue': capital_per_stock,
+            'optimization_status': "Failed (no data)"
+        }
+
+    best_revenue = -np.inf
+    best_min_proba_buy = current_min_proba_buy
+    best_min_proba_sell = current_min_proba_sell
+    best_target_percentage = initial_target_percentage
+    best_class_horizon = initial_class_horizon
+
+    # Define search ranges
+    target_percentage_range = GRU_TARGET_PERCENTAGE_OPTIONS if force_percentage_optimization else [initial_target_percentage]
+    class_horizon_range = GRU_CLASS_HORIZON_OPTIONS if force_percentage_optimization else [initial_class_horizon]
+
+    n_threshold_trials = 10
+
+    # Cache trained models to avoid retraining for same (target%, horizon)
+    models_cache = {}
+
+    for p_target in target_percentage_range:
+        for c_horizon in class_horizon_range:
+            cache_key = (p_target, c_horizon)
+            if cache_key not in models_cache:
+                sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Re-fetching training data and re-training models for target_percentage={p_target:.4f}, class_horizon={c_horizon}\n")
+                df_train, actual_feature_set = fetch_training_data(ticker, df_backtest_opt.copy(), p_target, c_horizon)
+                if df_train.empty:
+                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Insufficient training data for target_percentage={p_target:.4f}, class_horizon={c_horizon}. Skipping.\n")
+                    continue
+                
+                global_models_and_params = initialize_ml_libraries()
+                model_buy_for_opt, scaler_buy_for_opt, _ = train_and_evaluate_models(
+                    df_train, "TargetClassBuy", actual_feature_set, ticker=ticker,
+                    models_and_params_global=global_models_and_params,
+                    perform_gru_hp_optimization=False, # Disable internal GRU HP opt
+                    default_target_percentage=p_target, # Pass current p_target from outer loop
+                    default_class_horizon=c_horizon # Pass current c_horizon from outer loop
                 )
-            else:
-                env.p_buy = p_buy
-                env.p_sell = p_sell
-                env.p_target = p_target
-                env.c_horizon = c_horizon
+                model_sell_for_opt, scaler_sell_for_opt, _ = train_and_evaluate_models(
+                    df_train, "TargetClassSell", actual_feature_set, ticker=ticker,
+                    models_and_params_global=global_models_and_params,
+                    perform_gru_hp_optimization=False, # Disable internal GRU HP opt
+                    default_target_percentage=p_target, # Pass current p_target from outer loop
+                    default_class_horizon=c_horizon # Pass current c_horizon from outer loop
+                )
+                
+                if model_buy_for_opt and model_sell_for_opt and scaler_buy_for_opt:
+                    models_cache[cache_key] = (model_buy_for_opt, model_sell_for_opt, scaler_buy_for_opt)
+                else:
+                    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Failed to train models for target_percentage={p_target:.4f}, class_horizon={c_horizon}. Skipping.\n")
+                    continue
+            
+            current_model_buy, current_model_sell, current_scaler = models_cache[cache_key]
 
-            result = env.run()
-            return result.get("revenue", 0.0)
-        except Exception as e:
-            logger.error(f"[{ticker}] Evaluation failed for ({p_buy}, {p_sell}, {p_target}, {c_horizon}): {e}")
-            return -np.inf
+            min_proba_buy_dist = beta(3, 7)   # Peaked around 0.3
+            min_proba_sell_dist = beta(3, 7)
 
-    print(f"\n🔍 [{ticker}] Starting sequential 1D threshold optimisation...")
+            for trial_idx in range(n_threshold_trials):
+                # Randomly sample min_proba_buy and min_proba_sell
+                p_buy = round(min_proba_buy_dist.rvs(random_state=SEED + trial_idx), 2)
+                p_sell = round(min_proba_sell_dist.rvs(random_state=SEED + trial_idx + n_threshold_trials), 2)
 
-    best_p_buy = current_buy_proba
-    best_p_sell = current_sell_proba
-    best_p_target = current_target_perc
-    best_c_horizon = current_class_horizon
+                    
+                env = RuleTradingEnv(
+                    df=df_backtest_opt.copy(),
+                    ticker=ticker,
+                    initial_balance=capital_per_stock,
+                    transaction_cost=TRANSACTION_COST,
+                    model_buy=current_model_buy,
+                    model_sell=current_model_sell,
+                    scaler=current_scaler,
+                    per_ticker_min_proba_buy=p_buy,
+                    per_ticker_min_proba_sell=p_sell,
+                    use_gate=USE_MODEL_GATE,
+                    feature_set=feature_set,
+                    use_simple_rule_strategy=False
+                )
+                final_val, _, _, _, _, _ = env.run()
+                revenue = final_val
 
-    # 1️⃣ Optimise p_buy
-    best_metric = -np.inf
-    for pb in np.arange(0.0, 0.55, 0.05):
-        metric = evaluate_thresholds(pb, best_p_sell, best_p_target, best_c_horizon)
-        if metric > best_metric:
-            best_metric, best_p_buy = metric, pb
-    print(f"[{ticker}] ✅ Best p_buy={best_p_buy:.3f}")
+                if revenue > best_revenue:
+                    best_revenue = revenue
+                    best_min_proba_buy = p_buy
+                    best_min_proba_sell = p_sell
+                    best_target_percentage = p_target
+                    best_class_horizon = c_horizon
+    
+    optimization_status = "No Change"
+    if not np.isclose(best_min_proba_buy, current_min_proba_buy) or \
+       not np.isclose(best_min_proba_sell, current_min_proba_sell) or \
+       not np.isclose(best_target_percentage, initial_target_percentage) or \
+       not np.isclose(best_class_horizon, initial_class_horizon):
+        optimization_status = "Optimized"
 
-    # 2️⃣ Optimise p_sell
-    best_metric = -np.inf
-    for ps in np.arange(0.0, 0.55, 0.05):
-        metric = evaluate_thresholds(best_p_buy, ps, best_p_target, best_c_horizon)
-        if metric > best_metric:
-            best_metric, best_p_sell = metric, ps
-    print(f"[{ticker}] ✅ Best p_sell={best_p_sell:.3f}")
-
-    # 3️⃣ Optimise p_target
-    best_metric = -np.inf
-    for pt in np.arange(0.002, 0.020, 0.002):
-        metric = evaluate_thresholds(best_p_buy, best_p_sell, pt, best_c_horizon)
-        if metric > best_metric:
-            best_metric, best_p_target = metric, pt
-    print(f"[{ticker}] ✅ Best p_target={best_p_target:.4f}")
-
-    # 4️⃣ Optimise c_horizon
-    best_metric = -np.inf
-    for ch in [1, 3, 5, 10]:
-        metric = evaluate_thresholds(best_p_buy, best_p_sell, best_p_target, ch)
-        if metric > best_metric:
-            best_metric, best_c_horizon = metric, ch
-    print(f"[{ticker}] ✅ Best c_horizon={best_c_horizon}")
-
+    sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Revenue=${best_revenue:,.2f}, Status: {optimization_status}\n")
     return {
-        "ticker": ticker,
-        "min_proba_buy": best_p_buy,
-        "min_proba_sell": best_p_sell,
-        "target_percentage": best_p_target,
-        "class_horizon": best_c_horizon,
-        "optimization_status": "1D-OPTIMIZED"
+        'ticker': ticker,
+        'min_proba_buy': best_min_proba_buy,
+        'min_proba_sell': best_min_proba_sell,
+        'target_percentage': best_target_percentage,
+        'class_horizon': best_class_horizon,
+        'best_revenue': best_revenue, # Changed from best_sharpe to best_revenue
+        'optimization_status': optimization_status
     }
 
-
-# -----------------------------------------------------------------------------
-# Portfolio-level parallel optimisation
-# -----------------------------------------------------------------------------
-def optimize_thresholds_for_portfolio_parallel(optimization_params, num_processes=None, **kwargs):
-    num_processes = num_processes or max(1, cpu_count() - 1)
-    print(f"\n⚙️ Launching parallel 1D optimisation for {len(optimization_params)} tickers "
-          f"on {num_processes} CPU cores...")
+def optimize_thresholds_for_portfolio_parallel(optimization_params, num_processes=None):
+    num_processes = num_processes or max(1, cpu_count() - 5)
+    print(f"\nOptimizing thresholds for {len(optimization_params)} tickers using {num_processes} processes...")
 
     with Pool(processes=num_processes) as pool:
-        results = list(
-            tqdm(
-                pool.imap(optimize_single_ticker_worker, optimization_params),
-                total=len(optimization_params),
-                desc="Optimizing Thresholds (1D)"
-            )
-        )
+        results = list(tqdm(
+            pool.imap_unordered(optimize_single_ticker_worker, optimization_params),
+            total=len(optimization_params),
+            desc="Optimizing Thresholds"
+        ))
 
-    optimized_params_per_ticker = {}
+    optimized_params = {}
     for res in results:
-        if res and res["ticker"]:
-            optimized_params_per_ticker[res["ticker"]] = {
-                "min_proba_buy": res["min_proba_buy"],
-                "min_proba_sell": res["min_proba_sell"],
-                "target_percentage": res["target_percentage"],
-                "class_horizon": res["class_horizon"],
-                "optimization_status": res["optimization_status"]
+        if res and res['ticker']:
+            optimized_params[res['ticker']] = {
+                k: res[k] for k in ['min_proba_buy', 'min_proba_sell', 'target_percentage', 'class_horizon', 'optimization_status']
             }
-            print(f"✅ {res['ticker']} optimised: "
-                  f"Buy={res['min_proba_buy']:.2f}, "
-                  f"Sell={res['min_proba_sell']:.2f}, "
-                  f"Target={res['target_percentage']:.3%}, "
-                  f"CH={res['class_horizon']}")
+            print(f"Optimized {res['ticker']}: Buy>{res['min_proba_buy']:.2f}, Sell>{res['min_proba_sell']:.2f}, "
+                  f"Target={res['target_percentage']:.3%}, Horizon={res['class_horizon']}d → {res['optimization_status']}")
 
-    return optimized_params_per_ticker
+    return optimized_params
+
+
+# -----------------------------------------------------------------------------
+# Portfolio-level backtesting
+# -----------------------------------------------------------------------------
+def _run_portfolio_backtest(
+    all_tickers_data: pd.DataFrame,
+    start_date: datetime,
+    end_date: datetime,
+    top_tickers: List[str],
+    models_buy: Dict,
+    models_sell: Dict,
+    scalers: Dict,
+    optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]],
+    capital_per_stock: float,
+    target_percentage: float,
+    run_parallel: bool,
+    period_name: str,
+    top_performers_data: List[Tuple],
+    use_simple_rule_strategy: bool = False
+) -> Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]]]:
+    """Helper function to run portfolio backtest for a given period."""
+    num_processes = cpu_count() - 5 # Use NUM_PROCESSES from config if available, otherwise default
+
+    backtest_params = []
+    for ticker in top_tickers:
+        # Use optimized parameters if available, otherwise fall back to global defaults
+        min_proba_buy_ticker = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
+        min_proba_sell_ticker = optimized_params_per_ticker.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
+        target_percentage_ticker = optimized_params_per_ticker.get(ticker, {}).get('target_percentage', target_percentage)
+
+        # Ensure feature_set is passed to backtest_worker
+        feature_set_for_worker = scalers.get(ticker).feature_names_in_ if scalers.get(ticker) and hasattr(scalers.get(ticker), 'feature_names_in_') else None
+        
+        # Slice the main DataFrame for the backtest period for this specific ticker
+        try:
+            ticker_backtest_data = all_tickers_data.loc[start_date:end_date, (slice(None), ticker)]
+            ticker_backtest_data.columns = ticker_backtest_data.columns.droplevel(1)
+            if ticker_backtest_data.empty:
+                print(f"  ⚠️ Sliced backtest data for {ticker} for period {period_name} is empty. Skipping.")
+                continue
+        except (KeyError, IndexError):
+            print(f"  ⚠️ Could not slice backtest data for {ticker} for period {period_name}. Skipping.")
+            continue
+
+        backtest_params.append((
+            ticker, ticker_backtest_data.copy(), capital_per_stock,
+            models_buy.get(ticker), models_sell.get(ticker), scalers.get(ticker),
+            feature_set_for_worker, min_proba_buy_ticker, min_proba_sell_ticker, target_percentage_ticker,
+            top_performers_data, use_simple_rule_strategy
+        ))
+
+    portfolio_values = []
+    processed_tickers = []
+    performance_metrics = []
+    buy_hold_histories_per_ticker: Dict[str, List[float]] = {}
+    
+    total_tickers_to_process = len(top_tickers)
+    processed_count = 0
+
+    if run_parallel:
+        print(f"📈 Running {period_name} backtest in parallel for {total_tickers_to_process} tickers using {num_processes} processes...")
+        with Pool(processes=num_processes) as pool:
+            results = []
+            for res in tqdm(pool.imap(backtest_worker, backtest_params), total=total_tickers_to_process, desc=f"Backtesting {period_name}"):
+                if res:
+                    print(f"  [DEBUG] Ticker: {res['ticker']}, Final Value: {res['final_val']}")
+                    portfolio_values.append(res['final_val'])
+                    processed_tickers.append(res['ticker'])
+                    performance_metrics.append(res)
+                    buy_hold_histories_per_ticker[res['ticker']] = res.get('buy_hold_history', [])
+                    
+                    perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
+                    for t, p1y, pytd in top_performers_data:
+                        if t == res['ticker']:
+                            perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
+                            perf_ytd_benchmark = pytd if np.isfinite(pytd) else np.nan
+                            break
+                    
+                    print(f"\n📈 Individual Stock Performance for {res['ticker']} ({period_name}):")
+                    print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
+                    print(f"  - YTD Performance: {perf_ytd_benchmark:.2f}%" if pd.notna(perf_ytd_benchmark) else "  - YTD Performance: N/A")
+                    print(f"  - AI Sharpe Ratio: {res['perf_data']['sharpe_ratio']:.2f}")
+                    print(f"  - Last AI Action: {res['last_ai_action']}")
+                    print(f"  - Optimized Buy Threshold: {optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY):.2f}")
+                    print(f"  - Optimized Sell Threshold: {optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL):.2f}")
+                    print(f"  - Optimized Target Percentage: {optimized_params_per_ticker.get(res['ticker'], {}).get('target_percentage', TARGET_PERCENTAGE):.2%}")
+                    print("-" * 40)
+                processed_count += 1
+    else:
+        print(f"📈 Running {period_name} backtest sequentially for {total_tickers_to_process} tickers...")
+        results = []
+        for res in tqdm(backtest_params, desc=f"Backtesting {period_name}"):
+            worker_result = backtest_worker(res)
+            if worker_result:
+                print(f"  [DEBUG] Ticker: {worker_result['ticker']}, Final Value: {worker_result['final_val']}")
+                portfolio_values.append(worker_result['final_val'])
+                processed_tickers.append(worker_result['ticker'])
+                performance_metrics.append(worker_result)
+                buy_hold_histories_per_ticker[worker_result['ticker']] = worker_result.get('buy_hold_history', [])
+                
+                perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
+                for t, p1y, pytd in top_performers_data:
+                    if t == worker_result['ticker']:
+                        perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
+                        ytd_perf_benchmark = pytd if np.isfinite(pytd) else np.nan
+                        break
+                
+                print(f"\n📈 Individual Stock Performance for {worker_result['ticker']} ({period_name}):")
+                print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
+                print(f"  - YTD Performance: {ytd_perf_benchmark:.2f}%" if pd.notna(ytd_perf_benchmark) else "  - YTD Performance: N/A")
+                print(f"  - AI Sharpe Ratio: {worker_result['perf_data']['sharpe_ratio']:.2f}")
+                print(f"  - Last AI Action: {worker_result['last_ai_action']}")
+                print(f"  - Optimized Buy Threshold: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY):.2f}")
+                print(f"  - Optimized Sell Threshold: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL):.2f}")
+                print(f"  - Optimized Target Percentage: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('target_percentage', TARGET_PERCENTAGE):.2%}")
+                print("-" * 40)
+            processed_count += 1
+
+    valid_portfolio_values = [v for v in portfolio_values if v is not None and np.isfinite(v)]
+    
+    final_portfolio_value = sum(valid_portfolio_values) + (total_tickers_to_process - len(processed_tickers)) * capital_per_stock
+    print(f"✅ {period_name} Backtest complete. Final portfolio value: ${final_portfolio_value:,.2f}\n")
+    return final_portfolio_value, portfolio_values, processed_tickers, performance_metrics, buy_hold_histories_per_ticker
+
+# -----------------------------------------------------------------------------
+# Final Summary Printing
+# -----------------------------------------------------------------------------
+def print_final_summary(
+    sorted_final_results: List[Dict],
+    models_buy: Dict,
+    models_sell: Dict,
+    scalers: Dict,
+    optimized_params_per_ticker: Dict[str, Dict[str, float]],
+    final_strategy_value_1y: float,
+    final_buy_hold_value_1y: float,
+    ai_1y_return: float,
+    final_strategy_value_ytd: float,
+    final_buy_hold_value_ytd: float,
+    ai_ytd_return: float,
+    final_strategy_value_3month: float,
+    final_buy_hold_value_3month: float,
+    ai_3month_return: float,
+    initial_balance_used: float,
+    num_tickers_analyzed: int,
+    final_strategy_value_1month: float,
+    ai_1month_return: float,
+    final_buy_hold_value_1month: float,
+    final_simple_rule_value_1y: float,
+    simple_rule_1y_return: float,
+    final_simple_rule_value_ytd: float,
+    simple_rule_ytd_return: float,
+    final_simple_rule_value_3month: float,
+    simple_rule_3month_return: float,
+    final_simple_rule_value_1month: float,
+    simple_rule_1month_return: float,
+    performance_metrics_simple_rule_1y: List[Dict],
+    performance_metrics_buy_hold_1y: List[Dict],
+    top_performers_data: List[Tuple]
+) -> None:
+    """Prints the final summary of the backtest results."""
+    print("\n" + "="*80)
+    print("                     🚀 AI-POWERED STOCK ADVISOR FINAL SUMMARY 🚀")
+    print("="*80)
+
+    print("\n📊 Overall Portfolio Performance:")
+    print(f"  Initial Capital: ${initial_balance_used:,.2f}")
+    print(f"  Number of Tickers Analyzed: {num_tickers_analyzed}")
+    print("-" * 40)
+    print(f"  1-Year AI Strategy Value: ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)")
+    print(f"  1-Year Simple Rule Value: ${final_simple_rule_value_1y:,.2f} ({simple_rule_1y_return:+.2f}%)")
+    print(f"  1-Year Buy & Hold Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
+    print("-" * 40)
+    print(f"  YTD AI Strategy Value: ${final_strategy_value_ytd:,.2f} ({ai_ytd_return:+.2f}%)")
+    print(f"  YTD Simple Rule Value: ${final_simple_rule_value_ytd:,.2f} ({simple_rule_ytd_return:+.2f}%)")
+    print(f"  YTD Buy & Hold Value: ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
+    print("-" * 40)
+    print(f"  3-Month AI Strategy Value: ${final_strategy_value_3month:,.2f} ({ai_3month_return:+.2f}%)")
+    print(f"  3-Month Simple Rule Value: ${final_simple_rule_value_3month:,.2f} ({simple_rule_3month_return:+.2f}%)")
+    print(f"  3-Month Buy & Hold Value: ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
+    print("-" * 40)
+    print(f"  1-Month AI Strategy Value: ${final_strategy_value_1month:,.2f} ({ai_1month_return:+.2f}%)")
+    print(f"  1-Month Simple Rule Value: ${final_simple_rule_value_1month:,.2f} ({simple_rule_1month_return:+.2f}%)")
+    print(f"  1-Month Buy & Hold Value: ${final_buy_hold_value_1month:,.2f} ({((final_buy_hold_value_1month - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
+    print("="*80)
+
+    print("\n📈 Individual Ticker Performance (AI Strategy - Sorted by 1-Year Performance):")
+    print("-" * 290)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10} | {'Class Horiz':>13} | {'Opt. Status':<25} | {'Shares Before Liquidation':>25}")
+    print("-" * 290)
+    for res in sorted_final_results:
+        ticker = str(res.get('ticker', 'N/A'))
+        optimized_params = optimized_params_per_ticker.get(ticker, {})
+        buy_thresh = optimized_params.get('min_proba_buy', MIN_PROBA_BUY)
+        sell_thresh = optimized_params.get('min_proba_sell', MIN_PROBA_SELL)
+        target_perc = optimized_params.get('target_percentage', TARGET_PERCENTAGE)
+        class_horiz = optimized_params.get('class_horizon', CLASS_HORIZON)
+        opt_status = optimized_params.get('optimization_status', 'N/A')
+
+        allocated_capital = INVESTMENT_PER_STOCK
+        strategy_gain = res.get('performance', 0.0) - allocated_capital
+
+        one_year_perf_str = f"{res.get('one_year_perf', 0.0):>9.2f}%" if pd.notna(res.get('one_year_perf')) else "N/A".rjust(10)
+        ytd_perf_str = f"{res.get('ytd_perf', 0.0):>9.2f}%" if pd.notna(res.get('ytd_perf')) else "N/A".rjust(10)
+        sharpe_str = f"{res.get('sharpe', 0.0):>11.2f}" if pd.notna(res.get('sharpe')) else "N/A".rjust(12)
+        buy_prob_str = f"{res.get('buy_prob', 0.0):>9.2f}" if pd.notna(res.get('buy_prob')) else "N/A".rjust(10)
+        sell_prob_str = f"{res.get('sell_prob', 0.0):>9.2f}" if pd.notna(res.get('sell_prob')) else "N/A".rjust(10)
+        last_ai_action_str = str(res.get('last_ai_action', 'HOLD'))
+        shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}"
+        
+        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {buy_thresh:>11.2f} | {sell_thresh:>11.2f} | {target_perc:>9.2%} | {class_horiz:>12} | {opt_status:<25} | {shares_before_liquidation_str}")
+    print("-" * 290)
+
+    print("\n📈 Individual Ticker Performance (Simple Rule Strategy - Sorted by 1-Year Performance):")
+    print("-" * 136)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Last Action':<16} | {'Shares Before Liquidation':>25}")
+    print("-" * 136)
+    
+    sorted_simple_rule_results = sorted(performance_metrics_simple_rule_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
+
+    for res in sorted_simple_rule_results:
+        ticker = str(res.get('ticker', 'N/A'))
+        allocated_capital = INVESTMENT_PER_STOCK
+        strategy_gain = res.get('final_val', 0.0) - allocated_capital
+        
+        one_year_perf_benchmark, ytd_perf_benchmark = np.nan, np.nan
+        for t, p1y, pytd in top_performers_data:
+            if t == ticker:
+                one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
+                ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
+                break
+
+        one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
+        ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
+        sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
+        last_action_str = str(res.get('last_ai_action', 'HOLD'))
+        shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}"
+
+        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_action_str:<16} | {shares_before_liquidation_str}")
+    print("-" * 136)
+
+    print("\n📈 Individual Ticker Performance (Buy & Hold Strategy - Sorted by 1-Year Performance):")
+    print("-" * 136)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
+    print("-" * 136)
+    
+    sorted_buy_hold_results = sorted(performance_metrics_buy_hold_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
+
+    for res in sorted_buy_hold_results:
+        ticker = str(res.get('ticker', 'N/A'))
+        allocated_capital = INVESTMENT_PER_STOCK
+        strategy_gain = (res.get('final_val', 0.0) - allocated_capital) if res.get('final_val') is not None else 0.0
+        
+        one_year_perf_benchmark, ytd_perf_benchmark = np.nan, np.nan
+        for t, p1y, pytd in top_performers_data:
+            if t == ticker:
+                one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
+                ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
+                break
+
+        one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
+        ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
+        sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
+        shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}"
+
+        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
+    print("-" * 136)
+
+    print("\n🤖 ML Model Status:")
+    for ticker in sorted_final_results:
+        t = ticker['ticker']
+        buy_model_status = "✅ Trained" if models_buy.get(t) else "❌ Not Trained"
+        sell_model_status = "✅ Trained" if models_sell.get(t) else "❌ Not Trained"
+        print(f"  - {t}: Buy Model: {buy_model_status}, Sell Model: {sell_model_status}")
+    print("="*80)
+
+    print("\n💡 Next Steps:")
+    print("  - Review individual ticker performance and trade logs for deeper insights.")
+    print("  - Experiment with different `MARKET_SELECTION` options and `N_TOP_TICKERS`.")
+    print("  - Adjust `TARGET_PERCENTAGE` and `RISK_PER_TRADE` for different risk appetites.")
+    print("  - Consider enabling `USE_MARKET_FILTER` and `USE_PERFORMANCE_BENCHMARK` for additional filtering.")
+    print("  - Explore advanced ML models or feature engineering for further improvements.")
+    print("="*80)
 
 
 if __name__ == "__main__":

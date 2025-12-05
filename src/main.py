@@ -32,6 +32,39 @@ Trading AI — Improved Rule-Based System with Optional ML Gate
 - Optional ML classification gate (5-day horizon) to filter entries
 """
 
+# Import config FIRST before any other local imports to avoid circular dependencies
+import sys
+from pathlib import Path
+
+# --- Add project root to sys.path ---
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
+
+from config import (
+    PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
+    MIN_PROBA_BUY, MIN_PROBA_SELL, TARGET_PERCENTAGE, CLASS_HORIZON,
+    FORCE_THRESHOLDS_OPTIMIZATION, FORCE_PERCENTAGE_OPTIMIZATION,
+    USE_SIMPLE_RULE_STRATEGY, SIMPLE_RULE_TRAILING_STOP_PERCENT, SIMPLE_RULE_TAKE_PROFIT_PERCENT,
+    INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
+    BACKTEST_DAYS, BACKTEST_DAYS_3MONTH, BACKTEST_DAYS_1MONTH, TRAIN_LOOKBACK_DAYS,
+    TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
+    ENABLE_1YEAR_TRAINING, ENABLE_YTD_TRAINING, ENABLE_3MONTH_TRAINING, ENABLE_1MONTH_TRAINING,
+    ENABLE_1YEAR_BACKTEST, ENABLE_YTD_BACKTEST, ENABLE_3MONTH_BACKTEST, ENABLE_1MONTH_BACKTEST,
+    FEAT_SMA_SHORT, FEAT_SMA_LONG, FEAT_VOL_WINDOW, ATR_PERIOD,
+    GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS,
+    GRU_HIDDEN_SIZE_OPTIONS, GRU_NUM_LAYERS_OPTIONS, GRU_DROPOUT_OPTIONS,
+    GRU_LEARNING_RATE_OPTIONS, GRU_BATCH_SIZE_OPTIONS, GRU_EPOCHS_OPTIONS,
+    USE_MODEL_GATE, USE_GRU, USE_LSTM, USE_LOGISTIC_REGRESSION, USE_RANDOM_FOREST,
+    USE_SVM, USE_MLP_CLASSIFIER, USE_LIGHTGBM, USE_XGBOOST,
+    FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING,
+    USE_PERFORMANCE_BENCHMARK, DATA_PROVIDER, USE_YAHOO_FALLBACK,
+    DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
+    SEED, SAVE_PLOTS, MARKET_SELECTION,
+    SEQUENCE_LENGTH, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, LSTM_DROPOUT,
+    LSTM_LEARNING_RATE, LSTM_BATCH_SIZE, LSTM_EPOCHS,
+    ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION
+)
+
 from alpha_training import select_threshold_by_alpha, AlphaThresholdConfig
 # Toggle: use alpha-optimized probability threshold for buys/sells
 USE_ALPHA_THRESHOLD_BUY = True
@@ -58,25 +91,21 @@ from backtesting import optimize_thresholds_for_portfolio_parallel
 import json
 import time
 import re
-from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
 import numpy as np
 import pandas as pd
 import gymnasium as gym
-import sys
 import codecs
+import random
 from io import StringIO
 from multiprocessing import Pool, cpu_count, current_process
 import joblib # Added for model saving/loading
 import warnings # Added for warning suppression
-
-# --- Add project root to sys.path ---
-project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(project_root))
+from data_utils import load_prices, fetch_training_data, load_prices_robust, _ensure_dir
 
 # Import ML model related functions and classes from ml_models.py
-from ml_models import initialize_ml_libraries, LSTMClassifier, GRUClassifier, PYTORCH_AVAILABLE, CUDA_AVAILABLE, CUML_AVAILABLE, LGBMClassifier, XGBClassifier, models_and_params, cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler, SHAP_AVAILABLE
+from ml_models import initialize_ml_libraries, LSTMClassifier, GRUClassifier, CUML_AVAILABLE, LGBMClassifier, XGBClassifier, models_and_params, cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler, SHAP_AVAILABLE
 
 # --- Force UTF-8 output on Windows ---
 if sys.stdout.encoding != 'utf-8':
@@ -107,162 +136,146 @@ try:
     from alpaca.trading.client import TradingClient # Added for trading account access
     from alpaca.trading.requests import MarketOrderRequest, GetAssetsRequest # For submitting orders
     from alpaca.trading.enums import OrderSide, TimeInForce, AssetClass, AssetStatus # For order details
-    from alpaca.common.exceptions import APIError
-    ALPACA_AVAILABLE = True
 except ImportError:
     print("⚠️ Alpaca SDK not installed. Run: pip install alpaca-py. Alpaca data provider will be skipped.")
-    ALPACA_AVAILABLE = False
 
 # TwelveData SDK client
 try:
     from twelvedata import TDClient
-    TWELVEDATA_SDK_AVAILABLE = True
 except ImportError:
     print("⚠️ TwelveData SDK client not found. TwelveData data provider will be skipped.")
-    TWELVEDATA_SDK_AVAILABLE = False
 # ============================
 # Configuration / Hyperparams
 # ============================
 
-SEED                    = 42
-np.random.seed(SEED)
-import random
-random.seed(SEED)
-
 # --- Provider & caching
-DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', 'alpaca', or 'twelvedata'
-USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin
-DATA_CACHE_DIR          = Path("data_cache")
-TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
-VALID_TICKERS_CACHE_PATH = Path("logs/valid_tickers.json")
-CACHE_DAYS              = 7
+# DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', 'alpaca', or 'twelvedata' # Moved to config.py
+# USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin # Moved to config.py
+# DATA_CACHE_DIR          = Path("data_cache") # Moved to config.py
+# TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json") # Moved to config.py
+# VALID_TICKERS_CACHE_PATH = Path("logs/valid_tickers.json") # Moved to config.py
+# CACHE_DAYS              = 7 # Moved to config.py
 
 # Alpaca API credentials (set as environment variables for security)
-ALPACA_API_KEY          = os.environ.get("ALPACA_API_KEY")
-ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
+# ALPACA_API_KEY          = os.environ.get("ALPACA_API_KEY") # Moved to config.py
+# ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY") # Moved to config.py
 
 # TwelveData API credentials
-TWELVEDATA_API_KEY      = os.environ.get("TWELVEDATA_API_KEY", "YOUR_DEFAULT_KEY_OR_EMPTY_STRING") # Load from environment variable
+# TWELVEDATA_API_KEY      = os.environ.get("TWELVEDATA_API_KEY", "YOUR_DEFAULT_KEY_OR_EMPTY_STRING") # Load from environment variable # Moved to config.py
 
 # --- Universe / selection
-MARKET_SELECTION = {
-    "ALPACA_STOCKS": False, # Fetch all tradable US equities from Alpaca
-    "NASDAQ_ALL": False,
-    "NASDAQ_100": True,
-    "SP500": False,
-    "DOW_JONES": False,
-    "POPULAR_ETFS": False,
-    "CRYPTO": False,
-    "DAX": False,
-    "MDAX": False,
-    "SMI": False,
-    "FTSE_MIB": False,
-}
-N_TOP_TICKERS           = 2        # Number of top performers to select (0 to disable limit)
-BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
-PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
-PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
+# MARKET_SELECTION = { # Moved to config.py
+#     "ALPACA_STOCKS": False, # Fetch all tradable US equities from Alpaca
+#     "NASDAQ_ALL": False,
+#     "NASDAQ_100": True,
+#     "SP500": False,
+#     "DOW_JONES": False,
+#     "POPULAR_ETFS": False,
+#     "CRYPTO": False,
+#     "DAX": False,
+#     "MDAX": False,
+#     "SMI": False,
+#     "FTSE_MIB": False,
+# }
+# N_TOP_TICKERS           = 2        # Number of top performers to select (0 to disable limit) # Moved to config.py
+# BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability # Moved to config.py
+# PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability # Moved to config.py
+# PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals # Moved to config.py
 
 # --- Parallel Processing
-NUM_PROCESSES           = max(1, cpu_count() - 5) # Use all but one CPU core for parallel processing
+# NUM_PROCESSES           = max(1, cpu_count() - 5) # Use all but one CPU core for parallel processing # Moved to config.py
 
 # --- Backtest & training windows
-BACKTEST_DAYS           = 365        # 1 year for backtest
-BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest
-BACKTEST_DAYS_1MONTH    = 32         # 1 month for backtest
-TRAIN_LOOKBACK_DAYS     = 360        # more data for model (e.g., 1 year)
+# BACKTEST_DAYS           = 365        # 1 year for backtest # Moved to config.py
+# BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest # Moved to config.py
+# BACKTEST_DAYS_1MONTH    = 32         # 1 month for backtest # Moved to config.py
+# TRAIN_LOOKBACK_DAYS     = 360        # more data for model (e.g., 1 year) # Moved to config.py
 
 # --- Backtest Period Enable/Disable Flags ---
-ENABLE_1YEAR_BACKTEST   = True
-ENABLE_YTD_BACKTEST     = True
-ENABLE_3MONTH_BACKTEST  = True
-ENABLE_1MONTH_BACKTEST  = True
+# ENABLE_1YEAR_BACKTEST   = True # Moved to config.py
+# ENABLE_YTD_BACKTEST     = True # Moved to config.py
+# ENABLE_3MONTH_BACKTEST  = True # Moved to config.py
+# ENABLE_1MONTH_BACKTEST  = True # Moved to config.py
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = True
-ENABLE_YTD_TRAINING     = True
-ENABLE_3MONTH_TRAINING  = True
-ENABLE_1MONTH_TRAINING  = True
+# ENABLE_1YEAR_TRAINING   = True # Moved to config.py
+# ENABLE_YTD_TRAINING     = True # Moved to config.py
+# ENABLE_3MONTH_TRAINING  = True # Moved to config.py
+# ENABLE_1MONTH_TRAINING  = True # Moved to config.py
 
 # --- Strategy (separate from feature windows)
-STRAT_SMA_SHORT         = 10
-STRAT_SMA_LONG          = 50
-ATR_PERIOD              = 14
-ATR_MULT_TRAIL          = 2.0
-ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
-INVESTMENT_PER_STOCK    = 15000.0    # Fixed amount to invest per stock
-TRANSACTION_COST        = 0.001      # 0.1%
+# STRAT_SMA_SHORT         = 10 # Moved to config.py
+# STRAT_SMA_LONG          = 50 # Moved to config.py
+# ATR_PERIOD              = 14 # Moved to config.py
+# ATR_MULT_TRAIL          = 2.0 # Moved to config.py
+# ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing # Moved to config.py
+# INVESTMENT_PER_STOCK    = 15000.0    # Fixed amount to invest per stock # Moved to config.py
+# TRANSACTION_COST        = 0.001      # 0.1% # Moved to config.py
 
 # --- Feature windows (for ML only)
-FEAT_SMA_SHORT          = 5
-FEAT_SMA_LONG           = 20
-FEAT_VOL_WINDOW         = 10
-CLASS_HORIZON           = 5          # days ahead for classification target
-MIN_PROBA_BUY           = 0.20      # ML gate threshold for buy model
-MIN_PROBA_SELL          = 0.20       # ML gate threshold for sell model
-TARGET_PERCENTAGE       = 0.008       # 0.8% target for buy/sell classification
-USE_MODEL_GATE          = True       # ENABLE ML gate
-USE_MARKET_FILTER       = False      # market filter removed as per user request
-MARKET_FILTER_TICKER    = 'SPY'
-MARKET_FILTER_SMA       = 200
-USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering
+# FEAT_SMA_SHORT          = 5 # Moved to config.py
+# FEAT_SMA_LONG           = 20 # Moved to config.py
+# FEAT_VOL_WINDOW         = 10 # Moved to config.py
+# CLASS_HORIZON           = 5          # days ahead for classification target # Moved to config.py
+# MIN_PROBA_BUY           = 0.20      # ML gate threshold for buy model # Moved to config.py
+# MIN_PROBA_SELL          = 0.20       # ML gate threshold for sell model # Moved to config.py
+# TARGET_PERCENTAGE       = 0.008       # 0.8% target for buy/sell classification # Moved to config.py
+# USE_MODEL_GATE          = True       # ENABLE ML gate # Moved to config.py
+# USE_MARKET_FILTER       = False      # market filter removed as per user request # Moved to config.py
+# MARKET_FILTER_TICKER    = 'SPY' # Moved to config.py
+# MARKET_FILTER_SMA       = 200 # Moved to config.py
+# USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering # Moved to config.py
 
 # --- ML Model Selection Flags ---
-USE_LOGISTIC_REGRESSION = False
-USE_SVM                 = False
-USE_MLP_CLASSIFIER      = False
-USE_LIGHTGBM            = False # Enable LightGBM - GOOD
-#GOOD
-USE_XGBOOST             = False # Enable XGBoost
-USE_LSTM                = False
-#Not so GOOD
-USE_GRU                 = True # Enable GRU - BEST
-#BEST
-USE_RANDOM_FOREST       = False # Enable RandomForest
-#WORST
+# USE_LOGISTIC_REGRESSION = False # Moved to config.py
+# USE_SVM                 = False # Moved to config.py
+# USE_MLP_CLASSIFIER      = False # Moved to config.py
+# USE_LIGHTGBM            = False # Enable LightGBM - GOOD # Moved to config.py
+# #GOOD
+# USE_XGBOOST             = False # Enable XGBoost # Moved to config.py
+# USE_LSTM                = False # Moved to config.py
+# #Not so GOOD
+# USE_GRU                 = True # Enable GRU - BEST # Moved to config.py
+# #BEST
+# USE_RANDOM_FOREST       = False # Enable RandomForest # Moved to config.py
+# #WORST
 
 # --- Simple Rule-Based Strategy specific hyperparameters
-USE_SIMPLE_RULE_STRATEGY = False
-SIMPLE_RULE_TRAILING_STOP_PERCENT = 0.10 # 10% trailing stop
-SIMPLE_RULE_TAKE_PROFIT_PERCENT = 0.10   # 10% take profit
+# USE_SIMPLE_RULE_STRATEGY = False # Moved to config.py
+# SIMPLE_RULE_TRAILING_STOP_PERCENT = 0.10 # 10% trailing stop # Moved to config.py
+# SIMPLE_RULE_TAKE_PROFIT_PERCENT = 0.10   # 10% take profit # Moved to config.py
 
 # --- Deep Learning specific hyperparameters
-SEQUENCE_LENGTH         = 32         # Number of past days to consider for LSTM/GRU
-LSTM_HIDDEN_SIZE        = 64
-LSTM_NUM_LAYERS         = 2
-LSTM_DROPOUT            = 0.2
-LSTM_EPOCHS             = 50
-LSTM_BATCH_SIZE         = 64
-LSTM_LEARNING_RATE      = 0.001
+# SEQUENCE_LENGTH         = 32         # Number of past days to consider for LSTM/GRU # Moved to config.py
+# LSTM_HIDDEN_SIZE        = 64 # Moved to config.py
+# LSTM_NUM_LAYERS         = 2 # Moved to config.py
+# LSTM_DROPOUT            = 0.2 # Moved to config.py
+# LSTM_EPOCHS             = 50 # Moved to config.py
+# LSTM_BATCH_SIZE         = 64 # Moved to config.py
+# LSTM_LEARNING_RATE      = 0.001 # Moved to config.py
 
 # --- GRU Hyperparameter Search Ranges ---
-GRU_HIDDEN_SIZE_OPTIONS = [16, 32, 64, 128, 256]
-GRU_NUM_LAYERS_OPTIONS  = [1, 2, 3, 4]
-GRU_DROPOUT_OPTIONS     = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
-GRU_LEARNING_RATE_OPTIONS = [0.0001, 0.0005, 0.001, 0.005, 0.01]
-GRU_BATCH_SIZE_OPTIONS  = [16, 32, 64, 128, 256]
-GRU_EPOCHS_OPTIONS      = [10, 30, 50, 70, 100]
-GRU_CLASS_HORIZON_OPTIONS = [1, 2, 3, 4, 5, 7, 10, 15, 20] # New: Options for class_horizon
-GRU_TARGET_PERCENTAGE_OPTIONS = [0.005, 0.008, 0.01, 0.015, 0.02, 0.03, 0.05] # New: Options for target_percentage
-ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True # Set to True to enable GRU hyperparameter search
+# GRU_HIDDEN_SIZE_OPTIONS = [16, 32, 64, 128, 256] # Moved to config.py
+# GRU_NUM_LAYERS_OPTIONS  = [1, 2, 3, 4] # Moved to config.py
+# GRU_DROPOUT_OPTIONS     = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5] # Moved to config.py
+# GRU_LEARNING_RATE_OPTIONS = [0.0001, 0.0005, 0.001, 0.005, 0.01] # Moved to config.py
+# GRU_BATCH_SIZE_OPTIONS  = [16, 32, 64, 128, 256] # Moved to config.py
+# GRU_EPOCHS_OPTIONS      = [10, 30, 50, 70, 100] # Moved to config.py
+# GRU_CLASS_HORIZON_OPTIONS = [1, 2, 3, 4, 5, 7, 10, 15, 20] # New: Options for class_horizon # Moved to config.py
+# GRU_TARGET_PERCENTAGE_OPTIONS = [0.005, 0.008, 0.01, 0.015, 0.02, 0.03, 0.05] # New: Options for target_percentage # Moved to config.py
+# ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True # Set to True to enable GRU hyperparameter search # Moved to config.py
 
 # --- Misc
-INITIAL_BALANCE         = 100_000.0
-SAVE_PLOTS              = True
-FORCE_TRAINING          = True      # Set to True to force re-training of ML models
-CONTINUE_TRAINING_FROM_EXISTING = False # Set to True to load existing models and continue training
-FORCE_THRESHOLDS_OPTIMIZATION = True # Set to True to force re-optimization of ML thresholds
-FORCE_PERCENTAGE_OPTIMIZATION = True # Set to True to force re-optimization of TARGET_PERCENTAGE
+# INITIAL_BALANCE         = 100_000.0 # Moved to config.py
+# SAVE_PLOTS              = True # Moved to config.py
+# FORCE_TRAINING          = True      # Set to True to force re-training of ML models # Moved to config.py
+# CONTINUE_TRAINING_FROM_EXISTING = False # Set to True to load existing models and continue training # Moved to config.py
+# FORCE_THRESHOLDS_OPTIMIZATION = True # Set to True to force re-optimization of ML thresholds # Moved to config.py
+# FORCE_PERCENTAGE_OPTIMIZATION = True # Set to True to force re-optimization of TARGET_PERCENTAGE # Moved to config.py
 
 # ============================
 # Helpers
 # ============================
-
-def _ensure_dir(p: Path) -> None:
-    try:
-        p.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
 
 def _normalize_symbol(symbol: str, provider: str) -> str:
     """Normalizes a ticker symbol for the given data provider."""
@@ -391,35 +404,7 @@ def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime, api_key:
 # Data access
 # ============================
 
-def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
-    """A wrapper for load_prices that handles rate limiting with retries and other common API errors."""
-    import time
-    import random
-    max_retries = 5
-    base_wait_time = 5  # seconds, increased for more tolerance
 
-    for attempt in range(max_retries):
-        try:
-            return load_prices(ticker, start, end)
-        except Exception as e:
-            error_str = str(e).lower()
-            # Handle YFTzMissingError for delisted stocks gracefully
-            if "yftzmissingerror" in error_str or "no timezone found" in error_str:
-                print(f"  ℹ️ Skipping {ticker}: Data not available (possibly delisted).")
-                return pd.DataFrame()
-            
-            # Handle rate limiting with exponential backoff
-            if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str:
-                wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, 1)
-                print(f"  ⚠️ Rate limited trying to fetch {ticker}. Retrying in {wait_time:.2f} seconds...")
-                time.sleep(wait_time)
-            else:
-                # For other unexpected errors, log it and fail for this ticker
-                print(f"  ⚠️ An unexpected error occurred for {ticker}: {e}. Skipping.")
-                return pd.DataFrame()
-    
-    print(f"  ❌ Failed to load data for {ticker} after {max_retries} retries due to persistent rate limiting.")
-    return pd.DataFrame()
 
 def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -> pd.DataFrame:
     """Wrapper for yf.download for batches with retry logic."""
@@ -531,7 +516,6 @@ def _fetch_financial_data_from_alpaca(ticker: str) -> pd.DataFrame:
     """
     return pd.DataFrame()
 
-def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Download and clean data from the selected provider, with an improved local caching mechanism."""
     _ensure_dir(DATA_CACHE_DIR)
     cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
@@ -1271,8 +1255,6 @@ def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['Historical_Volatility'] = df['Historical_Volatility'].fillna(0)
     
     return df
-
-def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: float = 0.05, class_horizon: int = CLASS_HORIZON) -> Tuple[pd.DataFrame, List[str]]:
     """Compute ML features from a given DataFrame."""
     print(f"  [DIAGNOSTIC] {ticker}: fetch_training_data - Initial data rows: {len(data)}")
     if data.empty or len(data) < FEAT_SMA_LONG + 10:
@@ -2996,147 +2978,6 @@ def _finalize_single_ticker_performance(params: Tuple[str, float, pd.DataFrame, 
         print(f"  ⚠️ Error deriving YTD or applying benchmark for {ticker}: {e}. Skipping.")
         return None
 
-def optimize_single_ticker_worker(params: Tuple) -> Dict:
-    """Worker function to optimize thresholds and target percentage for a single ticker."""
-    ticker, train_start, train_end, initial_target_percentage, initial_class_horizon, feature_set, \
-        model_buy, model_sell, scaler, capital_per_stock, \
-        current_min_proba_buy, current_min_proba_sell, force_percentage_optimization, \
-        force_thresholds_optimization = params # Add force_thresholds_optimization here
-    
-    print(f"  [DEBUG] {current_process().name} - Optimizing for ticker: {ticker}")
-
-    best_revenue = -np.inf # Initialize best_revenue
-    best_min_proba_buy = current_min_proba_buy
-    best_min_proba_sell = current_min_proba_sell
-    best_target_percentage = initial_target_percentage
-    best_class_horizon = initial_class_horizon
-
-    # Determine min_proba_buy_range and min_proba_sell_range
-    if force_thresholds_optimization:
-        # Use a broader range for thresholds if forced
-        min_proba_buy_range = [round(x, 2) for x in np.arange(0.0, 1.05, 0.05)]
-        min_proba_sell_range = [round(x, 2) for x in np.arange(0.0, 1.05, 0.05)]
-    else:
-        # Otherwise, use a focused range around the current best
-        step_proba = 0.05
-        min_proba_buy_range = sorted(list(set([round(x, 2) for x in [max(0.0, current_min_proba_buy - step_proba), current_min_proba_buy, current_min_proba_buy + step_proba] if 0.0 <= x <= 1.0])))
-        min_proba_sell_range = sorted(list(set([round(x, 2) for x in [max(0.0, current_min_proba_sell - step_proba), current_min_proba_sell, current_min_proba_sell + step_proba] if 0.0 <= x <= 1.0])))
-
-    # Determine target_percentage_range
-    if force_percentage_optimization:
-        # Use the global options for a broader search if forced
-        target_percentage_range = GRU_TARGET_PERCENTAGE_OPTIONS
-    else:
-        # Otherwise, use a focused range around the current best
-        target_percentage_range = sorted(list(set([
-            max(0.001, round(initial_target_percentage - 0.001, 4)),
-            initial_target_percentage,
-            round(initial_target_percentage + 0.001, 4)
-        ])))
-    
-    # Determine class_horizon_range
-    if force_thresholds_optimization: # Assuming force_thresholds_optimization implies a broader search for class_horizon too
-        # Use the global options for a broader search if forced
-        class_horizon_range = GRU_CLASS_HORIZON_OPTIONS
-    else:
-        # Otherwise, use a focused range around the current best
-        class_horizon_range = sorted(list(set([
-            max(1, initial_class_horizon - 1),
-            initial_class_horizon,
-            initial_class_horizon + 1
-        ])))
-    
-    print(f"  [DEBUG] {current_process().name} - {ticker}: Loading prices for optimization...")
-    df_backtest_opt = load_prices(ticker, train_start, train_end)
-    if df_backtest_opt.empty:
-        print(f"  [DEBUG] {current_process().name} - {ticker}: No data for optimization. Returning default.")
-        return {'ticker': ticker, 'min_proba_buy': current_min_proba_buy, 'min_proba_sell': current_min_proba_sell, 'target_percentage': initial_target_percentage, 'class_horizon': initial_class_horizon, 'optimization_status': "Failed (no data)"}
-    print(f"  [DEBUG] {current_process().name} - {ticker}: Prices loaded. Starting optimization loops.")
-
-    models_cache = {}
-
-    for p_target in target_percentage_range:
-        for c_horizon in class_horizon_range:
-            cache_key = (p_target, c_horizon)
-            if cache_key not in models_cache:
-                print(f"  [DEBUG] {current_process().name} - {ticker}: Re-fetching training data and re-training models for target_percentage={p_target:.4f}, class_horizon={c_horizon}")
-                df_train, actual_feature_set = fetch_training_data(ticker, df_backtest_opt.copy(), p_target, c_horizon)
-                if df_train.empty:
-                    print(f"  [DEBUG] {current_process().name} - {ticker}: Insufficient training data for target_percentage={p_target:.4f}, class_horizon={c_horizon}. Skipping.")
-                    continue
-                
-                global_models_and_params = initialize_ml_libraries()
-                model_buy_for_opt, scaler_buy_for_opt, _ = train_and_evaluate_models(
-                    df_train, "TargetClassBuy", actual_feature_set, ticker=ticker,
-                    models_and_params_global=global_models_and_params,
-                    perform_gru_hp_optimization=False, # Disable internal GRU HP opt
-                    default_target_percentage=p_target, # Pass current p_target from outer loop
-                    default_class_horizon=c_horizon # Pass current c_horizon from outer loop
-                )
-                model_sell_for_opt, scaler_sell_for_opt, _ = train_and_evaluate_models(
-                    df_train, "TargetClassSell", actual_feature_set, ticker=ticker,
-                    models_and_params_global=global_models_and_params,
-                    perform_gru_hp_optimization=False, # Disable internal GRU HP opt
-                    default_target_percentage=p_target, # Pass current p_target from outer loop
-                    default_class_horizon=c_horizon # Pass current c_horizon from outer loop
-                )
-                
-                if model_buy_for_opt and model_sell_for_opt and scaler_buy_for_opt:
-                    models_cache[cache_key] = (model_buy_for_opt, model_sell_for_opt, scaler_buy_for_opt)
-                else:
-                    print(f"  [DEBUG] {current_process().name} - {ticker}: Failed to train models for target_percentage={p_target:.4f}, class_horizon={c_horizon}. Skipping.")
-                    continue
-            
-            current_model_buy, current_model_sell, current_scaler = models_cache[cache_key]
-
-            for p_buy in min_proba_buy_range:
-                for p_sell in min_proba_sell_range:
-                    
-                    env = RuleTradingEnv(
-                        df=df_backtest_opt.copy(),
-                        ticker=ticker,
-                        initial_balance=capital_per_stock,
-                        transaction_cost=TRANSACTION_COST,
-                        model_buy=current_model_buy,
-                        model_sell=current_model_sell,
-                        scaler=current_scaler,
-                        per_ticker_min_proba_buy=None,
-                        per_ticker_min_proba_sell=None,
-                        use_gate=USE_MODEL_GATE,
-                        feature_set=feature_set,
-                        use_simple_rule_strategy=False
-                    )
-                    final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, _ = env.run()
-                    print(f"  [DEBUG] {current_process().name} - {ticker}: env.run() completed. Getting final value.")
-                    
-                    current_revenue = final_val
-
-                    
-                    if current_revenue > best_revenue:
-                        best_revenue = current_revenue
-                        best_min_proba_buy = p_buy
-                        best_min_proba_sell = p_sell
-                        best_target_percentage = p_target
-                        best_class_horizon = c_horizon
-    
-    optimization_status = "No Change"
-    if not np.isclose(best_min_proba_buy, current_min_proba_buy) or \
-       not np.isclose(best_min_proba_sell, current_min_proba_sell) or \
-       not np.isclose(best_target_percentage, initial_target_percentage) or \
-       not np.isclose(best_class_horizon, initial_class_horizon):
-        optimization_status = "Optimized"
-
-    print(f"  [DEBUG] {current_process().name} - {ticker}: Optimization complete. Best Revenue=${best_revenue:,.2f}, Status: {optimization_status}")
-    return {
-        'ticker': ticker,
-        'min_proba_buy': best_min_proba_buy,
-        'min_proba_sell': best_min_proba_sell,
-        'target_percentage': best_target_percentage,
-        'class_horizon': best_class_horizon,
-        'best_revenue': best_revenue,
-        'optimization_status': optimization_status
-    }
-
 def _run_portfolio_backtest(
     all_tickers_data: pd.DataFrame,
     start_date: datetime,
@@ -3688,21 +3529,8 @@ def main(
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
     prices_dict, signals_dict = {}, {}
 
-    # Populate dictionaries per trained ticker if data exists in memory
-    for ticker in top_tickers_1y_filtered:
-        try:
-            if 'X_train' in locals(): X_train_dict[ticker] = X_train
-            if 'y_train' in locals(): y_train_dict[ticker] = y_train
-            if 'X_test' in locals(): X_test_dict[ticker] = X_test
-            if 'y_test' in locals(): y_test_dict[ticker] = y_test
-            if 'df_prices' in locals(): prices_dict[ticker] = df_prices.get(ticker, None)
-            if 'signal_data' in locals(): signals_dict[ticker] = signal_data.get(ticker, None)
-        except Exception as e:
-            print(f"[WARN] Could not populate training dicts for {ticker}: {e}")
-
-
-        if not models_buy and USE_MODEL_GATE:
-            print("⚠️ No models were trained for 1-Year backtest. Model-gating will be disabled for this run.\n")
+    if not models_buy and USE_MODEL_GATE:
+        print("⚠️ No models were trained for 1-Year backtest. Model-gating will be disabled for this run.\n")
     
     # Filter out failed tickers from top_tickers for subsequent steps
     top_tickers_1y_filtered = [t for t in top_tickers if t not in failed_training_tickers_1y]
@@ -3751,23 +3579,48 @@ def main(
 
     if should_run_optimization:
         print("\n🔄 Step 2.5: Optimizing ML parameters for each ticker...")
-        optimization_params = {
-            "top_tickers": top_tickers_1y_filtered,
-            "train_start": train_start_1y,
-            "train_end": train_end_1y,
-            "default_target_percentage": target_percentage,
-            "default_class_horizon": class_horizon,
-            "feature_set": feature_set,
-            "models_buy": models_buy,
-            "models_sell": models_sell,
-            "scalers": scalers,
-            "capital_per_stock": capital_per_stock_1y,
-            "run_parallel": run_parallel,
-            "force_percentage_optimization": force_percentage_optimization,
-            "force_thresholds_optimization": force_thresholds_optimization,
-            "current_optimized_params_per_ticker": loaded_optimized_params
-        }
+        optimization_params = []
+        for ticker in top_tickers_1y_filtered:
+            if ticker in models_buy and ticker in models_sell and ticker in scalers:
+                # Get current_min_proba_buy and current_min_proba_sell from loaded_optimized_params or defaults
+                current_min_proba_buy_for_opt = loaded_optimized_params.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
+                current_min_proba_sell_for_opt = loaded_optimized_params.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
+                current_target_percentage_for_opt = loaded_optimized_params.get(ticker, {}).get('target_percentage', target_percentage)
+                current_class_horizon_for_opt = loaded_optimized_params.get(ticker, {}).get('class_horizon', class_horizon)
 
+                feature_set_for_opt = scalers[ticker].feature_names_in_ if hasattr(scalers[ticker], 'feature_names_in_') else None
+
+                # Get training data for optimization (use evaluation period data)
+                try:
+                    ticker_train_data = all_tickers_data.loc[train_start_1y_calc:train_end_1y, (slice(None), ticker)]
+                    ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
+                    if ticker_train_data.empty:
+                        print(f"  ⚠️ Could not get training data for {ticker} for optimization. Skipping.")
+                        continue
+                except (KeyError, IndexError):
+                    print(f"  ⚠️ Could not slice training data for {ticker} for optimization. Skipping.")
+                    continue
+
+                optimization_params.append((
+                    ticker,
+                    ticker_train_data.copy(),  # train_data (DataFrame, not dates!)
+                    capital_per_stock_1y,  # capital_per_stock
+                    current_target_percentage_for_opt,  # target_percentage
+                    current_class_horizon_for_opt,  # class_horizon
+                    force_thresholds_optimization,  # force_thresholds_optimization
+                    force_percentage_optimization,  # force_percentage_optimization
+                    USE_ALPHA_THRESHOLD_BUY,  # use_alpha_threshold_buy
+                    USE_ALPHA_THRESHOLD_SELL,  # use_alpha_threshold_sell
+                    AlphaThresholdConfig(rebalance_freq="D", metric="alpha", costs_bps=5.0, slippage_bps=2.0),  # alpha_config
+                    current_min_proba_buy_for_opt,  # current_min_proba_buy
+                    current_min_proba_sell_for_opt,  # current_min_proba_sell
+                    current_target_percentage_for_opt,  # initial_target_percentage
+                    current_class_horizon_for_opt,  # initial_class_horizon
+                    GRU_TARGET_PERCENTAGE_OPTIONS,  # target_percentage_options
+                    GRU_CLASS_HORIZON_OPTIONS,  # class_horizon_options
+                    SEED,  # seed
+                    feature_set_for_opt  # feature_set
+                ))
         optimized_params_per_ticker = optimize_thresholds_for_portfolio_parallel(optimization_params)
 
         if optimized_params_per_ticker:
@@ -4684,132 +4537,9 @@ def main(
         'optimization_status': optimization_status
     }
 
-def _run_portfolio_backtest(
-    all_tickers_data: pd.DataFrame,
-    start_date: datetime,
-    end_date: datetime,
-    top_tickers: List[str],
-    models_buy: Dict,
-    models_sell: Dict,
-    scalers: Dict,
-    optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]],
-    capital_per_stock: float,
-    target_percentage: float,
-    run_parallel: bool,
-    period_name: str,
-    top_performers_data: List[Tuple], # Added top_performers_data
-    use_simple_rule_strategy: bool = False # New parameter for simple rule strategy
-) -> Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]]]: # Added Dict[str, List[float]] for buy_hold_histories_per_ticker
-    """Helper function to run portfolio backtest for a given period."""
-    num_processes = NUM_PROCESSES
-
-    backtest_params = []
-    for ticker in top_tickers:
-        # Use optimized parameters if available, otherwise fall back to global defaults
-        min_proba_buy_ticker = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
-        min_proba_sell_ticker = optimized_params_per_ticker.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
-        target_percentage_ticker = optimized_params_per_ticker.get(ticker, {}).get('target_percentage', target_percentage)
-
-        # Ensure feature_set is passed to backtest_worker
-        feature_set_for_worker = scalers.get(ticker).feature_names_in_ if scalers.get(ticker) and hasattr(scalers.get(ticker), 'feature_names_in_') else None
-        
-        # Slice the main DataFrame for the backtest period for this specific ticker
-        try:
-            ticker_backtest_data = all_tickers_data.loc[start_date:end_date, (slice(None), ticker)]
-            ticker_backtest_data.columns = ticker_backtest_data.columns.droplevel(1)
-            if ticker_backtest_data.empty:
-                print(f"  ⚠️ Sliced backtest data for {ticker} for period {period_name} is empty. Skipping.")
-                continue
-        except (KeyError, IndexError):
-            print(f"  ⚠️ Could not slice backtest data for {ticker} for period {period_name}. Skipping.")
-            continue
-
-        backtest_params.append((
-            ticker, ticker_backtest_data.copy(), capital_per_stock,
-            models_buy.get(ticker), models_sell.get(ticker), scalers.get(ticker),
-            feature_set_for_worker, min_proba_buy_ticker, min_proba_sell_ticker, target_percentage_ticker,
-            top_performers_data, use_simple_rule_strategy # Pass new parameter
-        ))
-
-    portfolio_values = []
-    processed_tickers = []
-    performance_metrics = []
-    buy_hold_histories_per_ticker: Dict[str, List[float]] = {} # New: Store buy_hold_histories
-    
-    total_tickers_to_process = len(top_tickers)
-    processed_count = 0
-
-    if run_parallel:
-        print(f"📈 Running {period_name} backtest in parallel for {total_tickers_to_process} tickers using {num_processes} processes...")
-        with Pool(processes=num_processes) as pool:
-            results = []
-            for res in tqdm(pool.imap(backtest_worker, backtest_params), total=total_tickers_to_process, desc=f"Backtesting {period_name}"):
-                if res:
-                    print(f"  [DEBUG] Ticker: {res['ticker']}, Final Value: {res['final_val']}")
-                    portfolio_values.append(res['final_val'])
-                    processed_tickers.append(res['ticker'])
-                    performance_metrics.append(res)
-                    buy_hold_histories_per_ticker[res['ticker']] = res.get('buy_hold_history', []) # Store history
-                    
-                    # Find the corresponding performance data (1Y and YTD from top_performers_data)
-                    perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
-                    for t, p1y, pytd in top_performers_data:
-                        if t == res['ticker']:
-                            perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
-                            perf_ytd_benchmark = pytd if np.isfinite(pytd) else np.nan
-                            break
-                    
-                    # Print individual stock performance immediately
-                    print(f"\n📈 Individual Stock Performance for {res['ticker']} ({period_name}):")
-                    print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
-                    print(f"  - YTD Performance: {perf_ytd_benchmark:.2f}%" if pd.notna(perf_ytd_benchmark) else "  - YTD Performance: N/A")
-                    print(f"  - AI Sharpe Ratio: {res['perf_data']['sharpe_ratio']:.2f}")
-                    print(f"  - Last AI Action: {res['last_ai_action']}")
-                    print(f"  - Optimized Buy Threshold: {optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY):.2f}")
-                    print(f"  - Optimized Sell Threshold: {optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL):.2f}")
-                    print(f"  - Optimized Target Percentage: {optimized_params_per_ticker.get(res['ticker'], {}).get('target_percentage', TARGET_PERCENTAGE):.2%}")
-                    print("-" * 40)
-                processed_count += 1
-    else:
-        print(f"📈 Running {period_name} backtest sequentially for {total_tickers_to_process} tickers...")
-        results = []
-        for res in tqdm(backtest_params, desc=f"Backtesting {period_name}"):
-            worker_result = backtest_worker(res)
-            if worker_result:
-                print(f"  [DEBUG] Ticker: {worker_result['ticker']}, Final Value: {worker_result['final_val']}")
-                portfolio_values.append(worker_result['final_val'])
-                processed_tickers.append(worker_result['ticker'])
-                performance_metrics.append(worker_result)
-                buy_hold_histories_per_ticker[worker_result['ticker']] = worker_result.get('buy_hold_history', []) # Store history
-                
-                # Find the corresponding performance data (1Y and YTD from top_performers_data)
-                perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
-                for t, p1y, pytd in top_performers_data:
-                    if t == worker_result['ticker']:
-                        perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
-                        ytd_perf_benchmark = pytd if np.isfinite(pytd) else np.nan
-                        break
-                
-                # Print individual stock performance immediately
-                print(f"\n📈 Individual Stock Performance for {worker_result['ticker']} ({period_name}):")
-                print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
-                print(f"  - YTD Performance: {ytd_perf_benchmark:.2f}%" if pd.notna(ytd_perf_benchmark) else "  - YTD Performance: N/A")
-                print(f"  - AI Sharpe Ratio: {worker_result['perf_data']['sharpe_ratio']:.2f}")
-                print(f"  - Last AI Action: {worker_result['last_ai_action']}")
-                print(f"  - Optimized Buy Threshold: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY):.2f}")
-                print(f"  - Optimized Sell Threshold: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL):.2f}")
-                print(f"  - Optimized Target Percentage: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('target_percentage', TARGET_PERCENTAGE):.2%}")
-                print("-" * 40)
-            processed_count += 1
-
-    # Filter out any None values from portfolio_values before summing
-    valid_portfolio_values = [v for v in portfolio_values if v is not None and np.isfinite(v)]
-    
-    final_portfolio_value = sum(valid_portfolio_values) + (total_tickers_to_process - len(processed_tickers)) * capital_per_stock
-    print(f"✅ {period_name} Backtest complete. Final portfolio value: ${final_portfolio_value:,.2f}\n")
-    return final_portfolio_value, portfolio_values, processed_tickers, performance_metrics, buy_hold_histories_per_ticker
-
-def print_final_summary(
+# ============================
+# Main
+# ============================
     sorted_final_results: List[Dict],
     models_buy: Dict,
     models_sell: Dict,

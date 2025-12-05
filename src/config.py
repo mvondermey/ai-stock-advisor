@@ -22,6 +22,14 @@ ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
 # TwelveData API credentials
 TWELVEDATA_API_KEY      = "aed912386d7c47939ebc28a86a96a021"
 
+# --- ML Library Availability Flags (initialized to False, updated in main.py) ---
+ALPACA_AVAILABLE = False
+TWELVEDATA_SDK_AVAILABLE = False
+PYTORCH_AVAILABLE = False
+CUDA_AVAILABLE = False
+USE_LSTM = False
+USE_GRU = False
+
 # --- Universe / selection
 MARKET_SELECTION = {
     "ALPACA_STOCKS": False, # Fetch all tradable US equities from Alpaca

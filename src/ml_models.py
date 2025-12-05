@@ -587,7 +587,18 @@ def analyze_shap_for_tree_model(model, X_df: pd.DataFrame, feature_names: List[s
         import traceback
         traceback.print_exc()
 
-def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBuy", feature_set: Optional[List[str]] = None, ticker: str = "UNKNOWN", initial_model=None, loaded_gru_hyperparams: Optional[Dict] = None):
+def train_and_evaluate_models(
+    df: pd.DataFrame,
+    target_col: str = "TargetClassBuy",
+    feature_set: Optional[List[str]] = None,
+    ticker: str = "UNKNOWN",
+    initial_model=None,
+    loaded_gru_hyperparams: Optional[Dict] = None,
+    models_and_params_global: Optional[Dict] = None,
+    perform_gru_hp_optimization: bool = True,
+    default_target_percentage: float = None,  # Will be set from config if None
+    default_class_horizon: int = None  # Will be set from config if None
+):
     # --- Alpha-aware weights (optional) ---
     _fit_params = None
     if 'd' in locals() and 'X_df' in locals():
@@ -598,7 +609,15 @@ def train_and_evaluate_models(df: pd.DataFrame, target_col: str = "TargetClassBu
                 _fit_params = None
     
     """Train and compare multiple classifiers for a given target, returning the best one."""
-    models_and_params = initialize_ml_libraries()
+    models_and_params = models_and_params_global if models_and_params_global is not None else initialize_ml_libraries()
+    
+    # Use default values from config if not provided
+    if default_target_percentage is None:
+        from config import TARGET_PERCENTAGE
+        default_target_percentage = TARGET_PERCENTAGE
+    if default_class_horizon is None:
+        from config import CLASS_HORIZON
+        default_class_horizon = CLASS_HORIZON
     d = df.copy()
     
     if target_col not in d.columns:
