@@ -4528,7 +4528,16 @@ def main(
         simple_rule_1month_return,
         performance_metrics_simple_rule_1y,
         performance_metrics_buy_hold_1y_actual, # Pass performance_metrics_buy_hold_1y_actual for Buy & Hold
-        top_performers_data
+        top_performers_data,
+        strategy_results_ytd=strategy_results_ytd,
+        strategy_results_3month=strategy_results_3month,
+        strategy_results_1month=strategy_results_1month,
+        performance_metrics_simple_rule_ytd=performance_metrics_simple_rule_ytd,
+        performance_metrics_simple_rule_3month=performance_metrics_simple_rule_3month,
+        performance_metrics_simple_rule_1month=performance_metrics_simple_rule_1month,
+        performance_metrics_buy_hold_ytd=performance_metrics_buy_hold_ytd,
+        performance_metrics_buy_hold_3month=performance_metrics_buy_hold_3month,
+        performance_metrics_buy_hold_1month=performance_metrics_buy_hold_1month
     )
     print("\n✅ Final summary prepared and printed.")
 

@@ -49,7 +49,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 3        # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 5        # Number of top performers to select (increased for more opportunities)
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -90,10 +90,10 @@ FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
 CLASS_HORIZON           = 3          # days ahead for classification target (balanced for short-term trading)
-MIN_PROBA_BUY           = 0.20      # ML gate threshold for buy model
-MIN_PROBA_BUY_OPTIONS   = [0.15, 0.18, 0.20, 0.22, 0.25]  # Wider range for optimization
-MIN_PROBA_SELL          = 0.20       # ML gate threshold for sell model
-MIN_PROBA_SELL_OPTIONS  = [0.15, 0.18, 0.20, 0.22, 0.25]  # Wider range for optimization
+MIN_PROBA_BUY           = 0.15      # ML gate threshold for buy model (lowered to increase trading activity)
+MIN_PROBA_BUY_OPTIONS   = [0.10, 0.13, 0.15, 0.18, 0.20, 0.22, 0.25]  # Wider range for optimization
+MIN_PROBA_SELL          = 0.15       # ML gate threshold for sell model (lowered to increase trading activity)
+MIN_PROBA_SELL_OPTIONS  = [0.10, 0.13, 0.15, 0.18, 0.20, 0.22, 0.25]  # Wider range for optimization
 TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification (balanced for 3-day moves)
 USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request
@@ -143,3 +143,8 @@ FORCE_TRAINING          = True
 CONTINUE_TRAINING_FROM_EXISTING = False
 FORCE_THRESHOLDS_OPTIMIZATION = True
 FORCE_PERCENTAGE_OPTIMIZATION = False  # Use B&H-based targets for each period
+
+# --- Live Trading Model Selection ---
+# Which period's model to use for live trading
+# Options: "Best" (auto-select highest performer), "3-Month", "1-Month", "YTD", "1-Year"
+LIVE_TRADING_MODEL_PERIOD = "Best"  # "Best" = highest revenue period
