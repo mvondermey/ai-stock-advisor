@@ -60,6 +60,7 @@ class RuleTradingEnv:
         self.current_step = 0
         self.cash = self.initial_balance
         self.shares = 0.0
+        self.max_shares_held = 0.0  # Track maximum position size
         self.entry_price: Optional[float] = None
         self.highest_since_entry: Optional[float] = None
         self.entry_atr: Optional[float] = None
@@ -395,6 +396,7 @@ class RuleTradingEnv:
 
         self.cash -= cost
         self.shares += qty
+        self.max_shares_held = max(self.max_shares_held, self.shares)  # Track max position
         self.entry_price = price
         self.entry_atr = atr if atr is not None and not np.isnan(atr) else None
         self.highest_since_entry = price
@@ -491,4 +493,6 @@ class RuleTradingEnv:
             last_price = float(self.df.iloc[-1]["Close"])
             self._sell(last_price, self._date_at(len(self.df)-1))
             self.portfolio_history[-1] = self.cash
-        return self.portfolio_history[-1], self.trade_log, self.last_ai_action, self.last_buy_prob, self.last_sell_prob, shares_before_liquidation
+        
+        # Return max_shares_held instead of shares_before_liquidation for better visibility
+        return self.portfolio_history[-1], self.trade_log, self.last_ai_action, self.last_buy_prob, self.last_sell_prob, self.max_shares_held
