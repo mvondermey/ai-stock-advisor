@@ -4405,22 +4405,24 @@ def main(
             'reason': None
         })
     
-    # Add failed tickers to the final results
+    # Add failed tickers to the final results (only if they didn't succeed in 1Y)
+    # Don't add tickers that already appear in processed_tickers_1y
     for ticker, reason in all_failed_tickers.items():
-        final_results.append({
-            'ticker': ticker,
-            'performance': INVESTMENT_PER_STOCK, # Assign initial capital for failed tickers
-            'sharpe': np.nan,
-            'one_year_perf': np.nan,
-            'ytd_perf': np.nan,
-            'individual_bh_return': np.nan,
-            'last_ai_action': "FAILED",
-            'buy_prob': np.nan,
-            'sell_prob': np.nan,
-            'final_shares': 0.0, # Set to 0.0 for failed tickers
-            'status': 'failed',
-            'reason': reason
-        })
+        if ticker not in processed_tickers_1y:  # ✅ FIX: Skip if ticker succeeded in 1Y
+            final_results.append({
+                'ticker': ticker,
+                'performance': INVESTMENT_PER_STOCK, # Assign initial capital for failed tickers
+                'sharpe': np.nan,
+                'one_year_perf': np.nan,
+                'ytd_perf': np.nan,
+                'individual_bh_return': np.nan,
+                'last_ai_action': "FAILED",
+                'buy_prob': np.nan,
+                'sell_prob': np.nan,
+                'final_shares': 0.0, # Set to 0.0 for failed tickers
+                'status': 'failed',
+                'reason': reason
+            })
 
     # Sort by 1Y performance for the final table, handling potential NaN values
     sorted_final_results = sorted(final_results, key=lambda x: x.get('one_year_perf', -np.inf) if pd.notna(x.get('one_year_perf')) else -np.inf, reverse=True)
@@ -4433,13 +4435,17 @@ def main(
     print(f"  - final_strategy_value_3month: ${final_strategy_value_3month:,.2f}")
     print(f"  - final_strategy_value_1month: ${final_strategy_value_1month:,.2f}\n")
     
+    # ✅ FIX: Use actual capital invested (only for tickers that were backtested)
+    actual_initial_capital_1y = INVESTMENT_PER_STOCK * len(processed_tickers_1y)
+    actual_tickers_analyzed = len(processed_tickers_1y)
+    
     print_final_summary(
         sorted_final_results, models_buy, models_sell, scalers, optimized_params_per_ticker,
         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
         final_strategy_value_ytd, final_buy_hold_value_ytd, ai_ytd_return,
         final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return,
-        (INVESTMENT_PER_STOCK * len(top_tickers)),
-        len(top_tickers),
+        actual_initial_capital_1y,
+        actual_tickers_analyzed,
         final_strategy_value_1month,
         ai_1month_return,
         final_buy_hold_value_1month,

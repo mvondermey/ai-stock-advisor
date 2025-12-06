@@ -160,11 +160,15 @@ def print_final_summary(
     print("-" * 136)
 
     print("\n🤖 ML Model Status:")
+    # ✅ FIX: Only show unique tickers (avoid duplicates)
+    seen_tickers = set()
     for ticker in sorted_final_results:
         t = ticker['ticker']
-        buy_model_status = "✅ Trained" if models_buy.get(t) else "❌ Not Trained"
-        sell_model_status = "✅ Trained" if models_sell.get(t) else "❌ Not Trained"
-        print(f"  - {t}: Buy Model: {buy_model_status}, Sell Model: {sell_model_status}")
+        if t not in seen_tickers:
+            seen_tickers.add(t)
+            buy_model_status = "✅ Trained" if models_buy.get(t) else "❌ Not Trained"
+            sell_model_status = "✅ Trained" if models_sell.get(t) else "❌ Not Trained"
+            print(f"  - {t}: Buy Model: {buy_model_status}, Sell Model: {sell_model_status}")
     print("="*80)
 
     print("\n💡 Next Steps:")
