@@ -90,8 +90,13 @@ def print_final_summary(
         class_horiz = optimized_params.get('class_horizon', CLASS_HORIZON)
         opt_status = optimized_params.get('optimization_status', 'N/A')
 
-        allocated_capital = INVESTMENT_PER_STOCK
-        strategy_gain = res.get('performance', 0.0) - allocated_capital
+        # ✅ FIX: Show $0 allocated capital for failed tickers (they weren't actually traded)
+        if res.get('status') == 'failed':
+            allocated_capital = 0.0
+            strategy_gain = 0.0
+        else:
+            allocated_capital = INVESTMENT_PER_STOCK
+            strategy_gain = res.get('performance', 0.0) - allocated_capital
 
         one_year_perf_str = f"{res.get('one_year_perf', 0.0):>9.2f}%" if pd.notna(res.get('one_year_perf')) else "N/A".rjust(10)
         ytd_perf_str = f"{res.get('ytd_perf', 0.0):>9.2f}%" if pd.notna(res.get('ytd_perf')) else "N/A".rjust(10)
@@ -99,7 +104,12 @@ def print_final_summary(
         buy_prob_str = f"{res.get('buy_prob', 0.0):>9.2f}" if pd.notna(res.get('buy_prob')) else "N/A".rjust(10)
         sell_prob_str = f"{res.get('sell_prob', 0.0):>9.2f}" if pd.notna(res.get('sell_prob')) else "N/A".rjust(10)
         last_ai_action_str = str(res.get('last_ai_action', 'HOLD'))
-        shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}"
+        
+        # ✅ FIX: Show N/A for shares if ticker failed (wasn't traded)
+        if res.get('status') == 'failed':
+            shares_before_liquidation_str = "N/A".rjust(25)
+        else:
+            shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}"
         
         print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {buy_thresh:>11.2f} | {sell_thresh:>11.2f} | {target_perc:>9.2%} | {class_horiz:>12} | {opt_status:<25} | {shares_before_liquidation_str}")
     print("-" * 290)
