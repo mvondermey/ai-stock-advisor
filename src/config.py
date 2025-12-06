@@ -49,13 +49,13 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 2        # Number of top performers to select (0 to disable limit)
+N_TOP_TICKERS           = 3        # Number of top performers to select (0 to disable limit)
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
 
 # --- Parallel Processing
-NUM_PROCESSES           = 4 # Use all but one CPU core for parallel processing (changed from max(1, cpu_count() - 5) for simplicity in config)
+NUM_PROCESSES           = None  # Will be set to cpu_count() - 2 in main.py
 
 # --- Backtest & training windows
 BACKTEST_DAYS           = 365        # 1 year for backtest

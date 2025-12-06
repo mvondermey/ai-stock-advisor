@@ -2912,6 +2912,12 @@ def main(
     use_simple_rule_strategy: bool = USE_SIMPLE_RULE_STRATEGY # New parameter for simple rule strategy
 ) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[Dict]]:
     
+    # Set NUM_PROCESSES if not already set
+    global NUM_PROCESSES
+    if NUM_PROCESSES is None:
+        NUM_PROCESSES = max(1, cpu_count() - 2)
+        print(f"✅ NUM_PROCESSES set to {NUM_PROCESSES} (cpu_count() - 2)")
+    
     # Set the start method for multiprocessing to 'spawn'
     # This is crucial for CUDA compatibility with multiprocessing
     try:
