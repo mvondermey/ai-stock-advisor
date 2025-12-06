@@ -3386,12 +3386,7 @@ def main(
     if ENABLE_3MONTH_TRAINING:
         print("\n🔍 Step 7: Training AI models for 3-Month backtest...")
         bt_start_3month = bt_end - timedelta(days=BACKTEST_DAYS_3MONTH)
-        
-        # ✅ FIX 4: Add validation period for 3-Month
-        valid_end_3month = bt_start_3month - timedelta(days=1)
-        valid_start_3month = valid_end_3month - timedelta(days=30)  # Shorter validation for 3M
-        
-        train_end_3month = valid_start_3month - timedelta(days=1)
+        train_end_3month = bt_start_3month - timedelta(days=1)
         train_start_3month = train_end_3month - timedelta(days=TRAIN_LOOKBACK_DAYS)
 
         training_params_3month = []
@@ -3848,15 +3843,15 @@ def main(
 
                     feature_set_for_opt = scalers_3month[ticker].feature_names_in_ if hasattr(scalers_3month[ticker], 'feature_names_in_') else None
 
-                    # ✅ FIX 4 (SIMPLIFIED): Use 3-Month backtest period for optimization  
+                    # Get training data for 3-Month optimization (REVERTED)
                     try:
-                        ticker_valid_data = all_tickers_data.loc[bt_start_3month:bt_end, (slice(None), ticker)]
-                        ticker_valid_data.columns = ticker_valid_data.columns.droplevel(1)
-                        if ticker_valid_data.empty:
-                            print(f"  ⚠️ Could not get 3-Month backtest data for {ticker} for optimization. Skipping.")
+                        ticker_train_data = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
+                        ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
+                        if ticker_train_data.empty:
+                            print(f"  ⚠️ Could not get 3-Month training data for {ticker} for optimization. Skipping.")
                             continue
                     except (KeyError, IndexError):
-                        print(f"  ⚠️ Could not slice 3-Month backtest data for {ticker} for optimization. Skipping.")
+                        print(f"  ⚠️ Could not slice 3-Month training data for {ticker} for optimization. Skipping.")
                         continue
 
                     # Prepare PyTorch models for multiprocessing (extract state dict)
@@ -3865,7 +3860,7 @@ def main(
                     
                     optimization_params_3month.append((
                         ticker,
-                        ticker_valid_data.copy(),  # Pass validation data!
+                        ticker_train_data.copy(),
                         capital_per_stock_3month,
                         current_target_percentage_for_opt,
                         current_class_horizon_for_opt,
@@ -4042,6 +4037,14 @@ def main(
             use_simple_rule_strategy=False
         )
         ai_1y_return = ((final_strategy_value_1y - (capital_per_stock_1y * len(top_tickers_1y_filtered))) / abs(capital_per_stock_1y * len(top_tickers_1y_filtered))) * 100 if (capital_per_stock_1y * len(top_tickers_1y_filtered)) != 0 else 0
+        
+        # 🔍 DEBUG: Check backtest results
+        print(f"\n[DEBUG] 1-Year Backtest Results:")
+        print(f"  - top_tickers_1y_filtered: {top_tickers_1y_filtered}")
+        print(f"  - final_strategy_value_1y: ${final_strategy_value_1y:,.2f}")
+        print(f"  - processed_tickers_1y: {processed_tickers_1y}")
+        print(f"  - strategy_results_1y count: {len(strategy_results_1y)}")
+        print(f"  - ai_1y_return: {ai_1y_return:.2f}%\n")
 
         # --- Run 1-Year Backtest (Simple Rule Strategy) ---
         print("\n🔍 Running 1-Year Backtest (Simple Rule Strategy)...")
@@ -4421,6 +4424,14 @@ def main(
 
     # Sort by 1Y performance for the final table, handling potential NaN values
     sorted_final_results = sorted(final_results, key=lambda x: x.get('one_year_perf', -np.inf) if pd.notna(x.get('one_year_perf')) else -np.inf, reverse=True)
+    
+    # 🔍 DEBUG: Check values before summary
+    print(f"\n[DEBUG] Before print_final_summary:")
+    print(f"  - final_strategy_value_1y: ${final_strategy_value_1y:,.2f}")
+    print(f"  - final_buy_hold_value_1y: ${final_buy_hold_value_1y:,.2f}")
+    print(f"  - final_strategy_value_ytd: ${final_strategy_value_ytd:,.2f}")
+    print(f"  - final_strategy_value_3month: ${final_strategy_value_3month:,.2f}")
+    print(f"  - final_strategy_value_1month: ${final_strategy_value_1month:,.2f}\n")
     
     print_final_summary(
         sorted_final_results, models_buy, models_sell, scalers, optimized_params_per_ticker,

@@ -45,6 +45,13 @@ def print_final_summary(
     top_performers_data: List[Tuple]
 ) -> None:
     """Prints the final summary of the backtest results."""
+    
+    # 🔍 DEBUG: Check what the function received
+    print(f"\n[DEBUG] Inside print_final_summary - Received parameters:")
+    print(f"  - final_strategy_value_1y: ${final_strategy_value_1y:,.2f}")
+    print(f"  - final_buy_hold_value_1y: ${final_buy_hold_value_1y:,.2f}")
+    print(f"  - ai_1y_return: {ai_1y_return:.2f}%\n")
+    
     print("\n" + "="*80)
     print("                     🚀 AI-POWERED STOCK ADVISOR FINAL SUMMARY 🚀")
     print("="*80)
