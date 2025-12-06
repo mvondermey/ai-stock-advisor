@@ -305,14 +305,14 @@ from config import (
     GRU_HIDDEN_SIZE_OPTIONS, GRU_NUM_LAYERS_OPTIONS, GRU_DROPOUT_OPTIONS,
     GRU_LEARNING_RATE_OPTIONS, GRU_BATCH_SIZE_OPTIONS, GRU_EPOCHS_OPTIONS,
     ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION, SAVE_PLOTS, MIN_PROBA_BUY, MIN_PROBA_SELL,
-    FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING,
+    FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING, FORCE_PERCENTAGE_OPTIMIZATION,
     USE_LOGISTIC_REGRESSION, USE_RANDOM_FOREST, USE_SVM, USE_MLP_CLASSIFIER,
     USE_LSTM, USE_GRU, USE_LIGHTGBM, USE_XGBOOST
 )
 # PYTORCH_AVAILABLE is set locally below based on actual import, not from config
 
 # Import data fetching for training data
-from feature_engineering import fetch_training_data
+from data_utils import fetch_training_data
 
 # --- Globals for ML library status ---
 _ml_libraries_initialized = False
@@ -329,11 +329,8 @@ cuMLStandardScaler = None
 models_and_params: Dict = {}
 
 # Helper function (copied from main.py)
-def _ensure_dir(p: Path) -> None:
-    try:
-        p.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
+# _ensure_dir moved to utils.py to avoid duplication
+from utils import _ensure_dir
 
 # Define LSTM/GRU model architecture
 if PYTORCH_AVAILABLE:
@@ -683,9 +680,11 @@ def train_and_evaluate_models(
         print(f"  [DIAGNOSTIC] {ticker}: Not enough class diversity for '{target_col}' (only 1 class found: {unique_classes}). Skipping.")
         return None, None, None
     
-    n_splits = 5
-    if any(c < n_splits for c in counts):
-        print(f"  [DIAGNOSTIC] {ticker}: Least populated class in '{target_col}' has {min(counts)} members (needs >= {n_splits}). Skipping.")
+    # Use 3-fold CV for small datasets to allow training with fewer examples
+    n_splits = min(3, min(counts))  # Adaptive: use 3-fold CV, or less if needed
+    min_samples_required = 2  # Minimum 2 samples per class
+    if any(c < min_samples_required for c in counts):
+        print(f"  [DIAGNOSTIC] {ticker}: Least populated class in '{target_col}' has {min(counts)} members (needs >= {min_samples_required}). Skipping.")
         return None, None, None
 
     if CUML_AVAILABLE and cuMLStandardScaler:
@@ -965,7 +964,8 @@ def train_and_evaluate_models(
                     else:
                         models_and_params_local["GRU"] = {"model": None, "scaler": None, "auc": 0.0}
                 else: # ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION is False, use fixed or loaded hyperparameters
-                    if loaded_gru_hyperparams:
+                    if loaded_gru_hyperparams and not FORCE_PERCENTAGE_OPTIMIZATION:
+                        # Use loaded hyperparams only if FORCE_PERCENTAGE_OPTIMIZATION is False
                         print(f"    - Training GRU for {ticker} ({target_col}) with loaded hyperparameters (HP_OPT={perform_gru_hp_optimization}, ENABLE_HP_OPT={ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION})...")
                         hidden_size = loaded_gru_hyperparams.get("hidden_size", LSTM_HIDDEN_SIZE)
                         num_layers = loaded_gru_hyperparams.get("num_layers", LSTM_NUM_LAYERS)
@@ -974,6 +974,18 @@ def train_and_evaluate_models(
                         batch_size = loaded_gru_hyperparams.get("batch_size", LSTM_BATCH_SIZE)
                         epochs = LSTM_EPOCHS
                         print(f"      Loaded GRU Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}, Target={default_target_percentage:.4f}, Horizon={default_class_horizon}")
+                    elif loaded_gru_hyperparams and FORCE_PERCENTAGE_OPTIMIZATION:
+                        # FORCE_PERCENTAGE_OPTIMIZATION is True: Use model architecture from loaded, but Target/Horizon from config
+                        print(f"    - Training GRU for {ticker} ({target_col}) with loaded model architecture but FORCED config Target/Horizon (FORCE_PCT_OPT=True)...")
+                        hidden_size = loaded_gru_hyperparams.get("hidden_size", LSTM_HIDDEN_SIZE)
+                        num_layers = loaded_gru_hyperparams.get("num_layers", LSTM_NUM_LAYERS)
+                        dropout_rate = loaded_gru_hyperparams.get("dropout_rate", LSTM_DROPOUT)
+                        learning_rate = loaded_gru_hyperparams.get("learning_rate", LSTM_LEARNING_RATE)
+                        batch_size = loaded_gru_hyperparams.get("batch_size", LSTM_BATCH_SIZE)
+                        epochs = LSTM_EPOCHS
+                        # *** KEY FIX: Use config values for Target and Horizon, not loaded ones ***
+                        print(f"      Forced Config: Target={default_target_percentage:.4f}, Horizon={default_class_horizon} (ignoring loaded Target/Horizon)")
+                        print(f"      Loaded Model Arch: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
                     else:
                         print(f"    - Training GRU for {ticker} ({target_col}) with default fixed hyperparameters (HP_OPT={perform_gru_hp_optimization}, ENABLE_HP_OPT={ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION})...")
                         hidden_size = LSTM_HIDDEN_SIZE

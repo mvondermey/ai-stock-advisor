@@ -262,6 +262,74 @@ def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['Historical_Volatility'] = df['Log_Returns'].rolling(window=20).std() * np.sqrt(252)
     df['Historical_Volatility'] = df['Historical_Volatility'].fillna(0)
     
+    # ========================================
+    # NEW: Momentum & Trend Features for AI
+    # ========================================
+    
+    # 1. Multi-timeframe momentum (returns over different periods)
+    df['Momentum_3d'] = (df['Close'] / df['Close'].shift(3) - 1.0).fillna(0)
+    df['Momentum_5d'] = (df['Close'] / df['Close'].shift(5) - 1.0).fillna(0)
+    df['Momentum_10d'] = (df['Close'] / df['Close'].shift(10) - 1.0).fillna(0)
+    df['Momentum_20d'] = (df['Close'] / df['Close'].shift(20) - 1.0).fillna(0)
+    df['Momentum_40d'] = (df['Close'] / df['Close'].shift(40) - 1.0).fillna(0)  # Reduced from 60 to 40
+    
+    # 2. Trend strength (distance from moving averages)
+    df['Dist_From_SMA10'] = (df['Close'] / df['Close'].rolling(10, min_periods=5).mean() - 1.0).fillna(0)
+    df['Dist_From_SMA20'] = (df['Close'] / df['Close'].rolling(20, min_periods=10).mean() - 1.0).fillna(0)
+    df['Dist_From_SMA50'] = (df['Close'] / df['Close'].rolling(50, min_periods=20).mean() - 1.0).fillna(0)
+    # Removed SMA200 to reduce data loss - 200 days is too long for short-term trading
+    
+    # 3. Moving average slopes (trend direction)
+    sma20 = df['Close'].rolling(20, min_periods=10).mean()
+    sma50 = df['Close'].rolling(50, min_periods=20).mean()
+    df['SMA20_Slope'] = (sma20 / sma20.shift(5) - 1.0).fillna(0)
+    df['SMA50_Slope'] = (sma50 / sma50.shift(10) - 1.0).fillna(0)
+    
+    # 4. Price acceleration (momentum of momentum)
+    df['Price_Accel_5d'] = (df['Momentum_5d'] - df['Momentum_5d'].shift(1)).fillna(0)
+    df['Price_Accel_20d'] = (df['Momentum_20d'] - df['Momentum_20d'].shift(5)).fillna(0)
+    
+    # 5. Volatility regime (current vs historical)
+    df['Vol_Regime'] = (df['Volatility'] / df['Volatility'].rolling(30, min_periods=10).mean()).fillna(1.0)
+    df['Vol_Spike'] = (df['Volatility'] / df['Volatility'].shift(1) - 1.0).fillna(0)
+    
+    # 6. Volume momentum
+    df['Volume_Ratio_5d'] = (df['Volume'] / df['Volume'].rolling(5, min_periods=1).mean()).fillna(1.0)
+    df['Volume_Ratio_20d'] = (df['Volume'] / df['Volume'].rolling(20, min_periods=1).mean()).fillna(1.0)
+    df['Volume_Trend'] = (df['Volume'].rolling(5, min_periods=1).mean() / df['Volume'].rolling(20, min_periods=1).mean()).fillna(1.0)
+    
+    # 7. High-Low range expansion/contraction
+    df['Range_Expansion'] = ((df['High'] - df['Low']) / df['Close']).fillna(0)
+    df['Range_vs_Avg'] = (df['Range_Expansion'] / df['Range_Expansion'].rolling(20, min_periods=5).mean()).fillna(1.0)
+    
+    # 8. Consecutive up/down days (streak detection)
+    df['Daily_Direction'] = np.where(df['Close'] > df['Close'].shift(1), 1, 
+                                     np.where(df['Close'] < df['Close'].shift(1), -1, 0))
+    df['Streak'] = 0
+    streak = 0
+    for i in range(len(df)):
+        if df.iloc[i, df.columns.get_loc('Daily_Direction')] == 0:
+            streak = 0
+        elif i == 0:
+            streak = df.iloc[i, df.columns.get_loc('Daily_Direction')]
+        elif df.iloc[i, df.columns.get_loc('Daily_Direction')] == df.iloc[i-1, df.columns.get_loc('Daily_Direction')]:
+            streak += df.iloc[i, df.columns.get_loc('Daily_Direction')]
+        else:
+            streak = df.iloc[i, df.columns.get_loc('Daily_Direction')]
+        df.iloc[i, df.columns.get_loc('Streak')] = streak
+    
+    # 9. Momentum divergence (price vs RSI)
+    if 'RSI_feat' in df.columns:
+        price_change = df['Close'] / df['Close'].shift(10) - 1.0
+        rsi_change = df['RSI_feat'] - df['RSI_feat'].shift(10)
+        df['Momentum_Divergence'] = (price_change * rsi_change).fillna(0)
+    else:
+        df['Momentum_Divergence'] = 0.0
+    
+    # 10. Trend consistency (% of days above SMA in last 20 days)
+    df['Days_Above_SMA20'] = (df['Close'] > df['Close'].rolling(20, min_periods=10).mean()).rolling(20, min_periods=10).sum() / 20.0
+    df['Days_Above_SMA20'] = df['Days_Above_SMA20'].fillna(0.5)
+    
     return df
 
 # Define financial data fetching functions here to avoid circular imports
@@ -362,11 +430,8 @@ SAVE_PLOTS = False
 SEED = 42
 
 
-def _ensure_dir(p: Path) -> None:
-    try:
-        p.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
+# _ensure_dir moved to utils.py to avoid duplication
+from utils import _ensure_dir
 
 CLASS_HORIZON           = 5          # days ahead for classification target
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:

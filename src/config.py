@@ -89,12 +89,12 @@ TRANSACTION_COST        = 0.001      # 0.1%
 FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
-CLASS_HORIZON           = 5          # days ahead for classification target
+CLASS_HORIZON           = 3          # days ahead for classification target (balanced for short-term trading)
 MIN_PROBA_BUY           = 0.20      # ML gate threshold for buy model
-MIN_PROBA_BUY_OPTIONS   = [0.19, 0.20, 0.21]
+MIN_PROBA_BUY_OPTIONS   = [0.15, 0.18, 0.20, 0.22, 0.25]  # Wider range for optimization
 MIN_PROBA_SELL          = 0.20       # ML gate threshold for sell model
-MIN_PROBA_SELL_OPTIONS  = [0.19, 0.20, 0.21]
-TARGET_PERCENTAGE       = 0.008       # 0.8% target for buy/sell classification
+MIN_PROBA_SELL_OPTIONS  = [0.15, 0.18, 0.20, 0.22, 0.25]  # Wider range for optimization
+TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification (balanced for 3-day moves)
 USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
@@ -117,7 +117,7 @@ SIMPLE_RULE_TRAILING_STOP_PERCENT = 0.10 # 10% trailing stop
 SIMPLE_RULE_TAKE_PROFIT_PERCENT = 0.10   # 10% take profit
 
 # --- Deep Learning specific hyperparameters
-SEQUENCE_LENGTH         = 32         # Number of past days to consider for LSTM/GRU
+SEQUENCE_LENGTH         = 15         # Number of past days to consider for LSTM/GRU (balanced for pattern recognition)
 LSTM_HIDDEN_SIZE        = 64
 LSTM_NUM_LAYERS         = 2
 LSTM_DROPOUT            = 0.2
@@ -126,15 +126,15 @@ LSTM_BATCH_SIZE         = 64
 LSTM_LEARNING_RATE      = 0.001
 
 # --- GRU Hyperparameter Search Ranges ---
-GRU_HIDDEN_SIZE_OPTIONS = [16, 32, 64, 128, 256]
-GRU_NUM_LAYERS_OPTIONS  = [1, 2, 3, 4]
-GRU_DROPOUT_OPTIONS     = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
-GRU_LEARNING_RATE_OPTIONS = [0.0001, 0.0005, 0.001, 0.005, 0.01]
-GRU_BATCH_SIZE_OPTIONS  = [16, 32, 64, 128, 256]
-GRU_EPOCHS_OPTIONS      = [10, 30, 50, 70, 100]
-GRU_CLASS_HORIZON_OPTIONS = [1, 2, 3, 4, 5, 7, 10, 15, 20]
-GRU_TARGET_PERCENTAGE_OPTIONS = [0.007, 0.008, 0.009]
-ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True
+GRU_HIDDEN_SIZE_OPTIONS = [32, 64, 128]  # Focus on mid-range (removed 16, 256)
+GRU_NUM_LAYERS_OPTIONS  = [1, 2, 3]      # Reduced (removed 4 - too deep for short sequences)
+GRU_DROPOUT_OPTIONS     = [0.1, 0.2, 0.3]  # Narrowed range
+GRU_LEARNING_RATE_OPTIONS = [0.0005, 0.001, 0.005]  # Focus on effective range
+GRU_BATCH_SIZE_OPTIONS  = [32, 64, 128]  # Removed 16, 256
+GRU_EPOCHS_OPTIONS      = [30, 50, 70]   # Reduced for faster iteration
+GRU_CLASS_HORIZON_OPTIONS = [2, 3, 5]  # Short-term focus (removed 1 - too noisy, removed 7+)
+GRU_TARGET_PERCENTAGE_OPTIONS = [0.005, 0.006, 0.007]  # Narrow range for short-term moves
+ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True  # Enable hyperparameter search for new features
 
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
@@ -142,4 +142,4 @@ SAVE_PLOTS              = True
 FORCE_TRAINING          = True
 CONTINUE_TRAINING_FROM_EXISTING = False
 FORCE_THRESHOLDS_OPTIMIZATION = True
-FORCE_PERCENTAGE_OPTIMIZATION = True
+FORCE_PERCENTAGE_OPTIMIZATION = False  # Use B&H-based targets for each period

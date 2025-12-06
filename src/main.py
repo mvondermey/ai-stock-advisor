@@ -739,7 +739,7 @@ def _fetch_financial_data_from_alpaca(ticker: str) -> pd.DataFrame:
 def _fetch_intermarket_data(start: datetime, end: datetime) -> pd.DataFrame:
     """Fetches intermarket data (e.g., bond yields, commodities, currencies)."""
     intermarket_tickers = {
-        '^VIX': 'VIX_Index',  # CBOE Volatility Index
+        # '^VIX': 'VIX_Index',  # CBOE Volatility Index (disabled - Yahoo API issues)
         'DX-Y.NYB': 'DXY_Index', # U.S. Dollar Index
         'GC=F': 'Gold_Futures', # Gold Futures
         'CL=F': 'Oil_Futures',  # Crude Oil Futures
@@ -1327,7 +1327,16 @@ def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         "Market_Momentum_SPY",
         "Sentiment_Score",
         "VIX_Index_Returns", "DXY_Index_Returns", "Gold_Futures_Returns", "Oil_Futures_Returns", "US10Y_Yield_Returns",
-        "Oil_Price_Returns", "Gold_Price_Returns"
+        "Oil_Price_Returns", "Gold_Price_Returns",
+        # NEW: Momentum & Trend Features
+        "Momentum_3d", "Momentum_5d", "Momentum_10d", "Momentum_20d", "Momentum_40d",
+        "Dist_From_SMA10", "Dist_From_SMA20", "Dist_From_SMA50",
+        "SMA20_Slope", "SMA50_Slope",
+        "Price_Accel_5d", "Price_Accel_20d",
+        "Vol_Regime", "Vol_Spike",
+        "Volume_Ratio_5d", "Volume_Ratio_20d", "Volume_Trend",
+        "Range_Expansion", "Range_vs_Avg",
+        "Streak", "Momentum_Divergence", "Days_Above_SMA20"
     ]
     
     # Filter to only include technical features that are actually in df.columns
@@ -2295,14 +2304,29 @@ class RuleTradingEnv:
         self.last_sell_prob = self._get_model_prediction(i, self.model_sell)
         return self.last_sell_prob >= self.min_proba_sell
 
-    def _position_size_from_atr(self, price: float, atr: float) -> int:
+    def _position_size_from_atr(self, price: float, atr: float, buy_probability: float = 1.0) -> int:
+        """
+        Calculate position size based on fixed capital and model confidence.
+        Higher AI confidence = larger position size.
+        """
         if atr is None or np.isnan(atr) or atr <= 0 or price <= 0:
             return 0
-        # Use a fixed investment amount per stock
-        investment_amount = INVESTMENT_PER_STOCK
         
-        # Calculate quantity based on the fixed investment amount
-        qty = int(investment_amount / price)
+        # Base investment amount per stock
+        base_investment = INVESTMENT_PER_STOCK
+        
+        # Scale by model confidence (probability above threshold)
+        # Map [min_proba_buy, 1.0] to [0.25, 1.0]
+        # Even marginal signals get 25% position; high confidence gets 100%
+        if buy_probability >= self.min_proba_buy:
+            edge = buy_probability - self.min_proba_buy
+            max_edge = 1.0 - self.min_proba_buy
+            confidence_scaler = 0.25 + 0.75 * (edge / max_edge)
+        else:
+            confidence_scaler = 0.0
+        
+        scaled_investment = base_investment * confidence_scaler
+        qty = int(scaled_investment / price)
         
         return max(qty, 0)
 
@@ -2310,8 +2334,13 @@ class RuleTradingEnv:
         if self.cash <= 0:
             return
 
-        # 1. Determine initial quantity based on risk model
-        qty = self._position_size_from_atr(price, atr if atr is not None else np.nan)
+        # 1. Determine initial quantity based on risk model and AI confidence
+        # Pass the buy probability to scale position size
+        qty = self._position_size_from_atr(
+            price, 
+            atr if atr is not None else np.nan,
+            self.last_buy_prob  # AI confidence drives position sizing
+        )
         if qty <= 0:
             return
 
@@ -2323,7 +2352,7 @@ class RuleTradingEnv:
         if qty <= 0:
             return
 
-        # 4. Finalize cost and fee, then update the backtester's state
+        # 3. Finalize cost and fee, then update the backtester's state
         fee = price * qty * self.transaction_cost
         cost = price * qty + fee
 
@@ -3132,22 +3161,28 @@ def main(
                     break
             
             # Calculate period-specific parameters
-            # Use a shorter horizon for more balanced training labels
-            # Instead of 365 days, use 20 days (1 month) for more frequent signals
-            period_horizon_1y = 20  # 1 month lookback for more samples
-            # Convert annual return to equivalent per-period return
-            # Annual return / (365/20) periods = per-period return
-            num_periods = 365.0 / period_horizon_1y
-            period_target_pct_1y = abs(ticker_bh_return_1y / num_periods) if num_periods > 0 else 0.01
-            # Ensure minimum reasonable target
-            period_target_pct_1y = max(period_target_pct_1y, 0.005)  # At least 0.5%
+            if FORCE_PERCENTAGE_OPTIMIZATION:
+                # *** KEY FIX: When FORCE_PERCENTAGE_OPTIMIZATION is True, use config values ***
+                period_horizon_1y = CLASS_HORIZON
+                period_target_pct_1y = TARGET_PERCENTAGE
+                print(f"    📊 {ticker} 1Y Training: Horizon={period_horizon_1y}d, Target={period_target_pct_1y:.2%} (FORCED from config, B&H: {ticker_bh_return_1y:.2%})")
+            else:
+                # Use a shorter horizon for more balanced training labels
+                # Instead of 365 days, use 20 days (1 month) for more frequent signals
+                period_horizon_1y = 20  # 1 month lookback for more samples
+                # Convert annual return to equivalent per-period return
+                # Annual return / (365/20) periods = per-period return
+                num_periods = 365.0 / period_horizon_1y
+                period_target_pct_1y = abs(ticker_bh_return_1y / num_periods) if num_periods > 0 else 0.01
+                # Ensure minimum reasonable target
+                period_target_pct_1y = max(period_target_pct_1y, 0.005)  # At least 0.5%
+                print(f"    📊 {ticker} 1Y Training: Horizon={period_horizon_1y}d, Target={period_target_pct_1y:.2%} (B&H: {ticker_bh_return_1y:.2%})")
             
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_1y_calc:train_end_1y, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
                 training_params_1y.append((ticker, ticker_train_data.copy(), period_target_pct_1y, period_horizon_1y, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
-                print(f"    📊 {ticker} 1Y Training: Horizon={period_horizon_1y}d, Target={period_target_pct_1y:.2%} (B&H: {ticker_bh_return_1y:.2%})")
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 1-Year period. Skipping.")
                 continue
@@ -3334,19 +3369,24 @@ def main(
                     ticker_bh_return_ytd = perf_ytd / 100.0  # Convert percentage to decimal
                     break
             
-            # YTD: Use 20-day horizon with proportional target
-            period_horizon_ytd = 20
-            ytd_days = (train_end_ytd - train_start_ytd).days
-            num_periods_ytd = max(ytd_days / period_horizon_ytd, 1)
-            period_target_pct_ytd = abs(ticker_bh_return_ytd / num_periods_ytd)
-            period_target_pct_ytd = max(period_target_pct_ytd, 0.005)
+            # YTD: Use config values if FORCE_PERCENTAGE_OPTIMIZATION, else calculate from B&H
+            if FORCE_PERCENTAGE_OPTIMIZATION:
+                period_horizon_ytd = CLASS_HORIZON
+                period_target_pct_ytd = TARGET_PERCENTAGE
+                print(f"    📊 {ticker} YTD Training: Horizon={period_horizon_ytd}d, Target={period_target_pct_ytd:.2%} (FORCED from config, B&H: {ticker_bh_return_ytd:.2%})")
+            else:
+                period_horizon_ytd = 20
+                ytd_days = (train_end_ytd - train_start_ytd).days
+                num_periods_ytd = max(ytd_days / period_horizon_ytd, 1)
+                period_target_pct_ytd = abs(ticker_bh_return_ytd / num_periods_ytd)
+                period_target_pct_ytd = max(period_target_pct_ytd, 0.005)
+                print(f"    📊 {ticker} YTD Training: Horizon={period_horizon_ytd}d, Target={period_target_pct_ytd:.2%} (B&H: {ticker_bh_return_ytd:.2%})")
             
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_ytd:train_end_ytd, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
                 training_params_ytd.append((ticker, ticker_train_data.copy(), period_target_pct_ytd, period_horizon_ytd, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
-                print(f"    📊 {ticker} YTD Training: Horizon={period_horizon_ytd}d, Target={period_target_pct_ytd:.2%} (B&H: {ticker_bh_return_ytd:.2%})")
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for YTD period. Skipping.")
                 continue
@@ -3415,9 +3455,9 @@ def main(
                 except Exception as e:
                     print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
 
-            # Calculate 3-Month Buy & Hold return
+            # Calculate 3-Month Buy & Hold return (use BACKTEST period, not training period!)
             try:
-                ticker_data_3m = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
+                ticker_data_3m = all_tickers_data.loc[bt_start_3month:bt_end, (slice(None), ticker)]
                 ticker_data_3m.columns = ticker_data_3m.columns.droplevel(1)
                 if not ticker_data_3m.empty and 'Close' in ticker_data_3m.columns:
                     start_price_3m = ticker_data_3m['Close'].iloc[0]
@@ -3428,20 +3468,24 @@ def main(
             except:
                 ticker_bh_return_3m = 0.01
             
-            # ✅ FIX 2: Use 15-day horizon with REALISTIC target (cap at 20% per period)
-            period_horizon_3m = 15
-            num_periods_3m = 90.0 / period_horizon_3m  # 6 periods in 3 months
-            period_target_pct_3m = abs(ticker_bh_return_3m / num_periods_3m)
-            # Cap at 20% per 15-day period to ensure sufficient training samples
-            period_target_pct_3m = min(period_target_pct_3m, 0.20)  # Max 20% per period
-            period_target_pct_3m = max(period_target_pct_3m, 0.005)  # Min 0.5% per period
+            # Use config values if FORCE_PERCENTAGE_OPTIMIZATION, else calculate from B&H
+            if FORCE_PERCENTAGE_OPTIMIZATION:
+                period_horizon_3m = CLASS_HORIZON
+                period_target_pct_3m = TARGET_PERCENTAGE
+                print(f"    📊 {ticker} 3M Training: Horizon={period_horizon_3m}d, Target={period_target_pct_3m:.2%} (FORCED from config, B&H: {ticker_bh_return_3m:.2%})")
+            else:
+                period_horizon_3m = 15
+                num_periods_3m = 90.0 / period_horizon_3m  # 6 periods in 3 months
+                period_target_pct_3m = abs(ticker_bh_return_3m / num_periods_3m)
+                # Ensure minimum reasonable target (no max cap - let it learn high momentum!)
+                period_target_pct_3m = max(period_target_pct_3m, 0.005)  # Min 0.5% per period
+                print(f"    📊 {ticker} 3M Training: Horizon={period_horizon_3m}d, Target={period_target_pct_3m:.2%} (B&H: {ticker_bh_return_3m:.2%})")
             
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
                 training_params_3month.append((ticker, ticker_train_data.copy(), period_target_pct_3m, period_horizon_3m, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
-                print(f"    📊 {ticker} 3M Training: Horizon={period_horizon_3m}d, Target={period_target_pct_3m:.2%} (B&H: {ticker_bh_return_3m:.2%})")
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 3-Month period. Skipping.")
                 continue
@@ -3509,9 +3553,9 @@ def main(
                 except Exception as e:
                     print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
 
-            # Calculate 1-Month Buy & Hold return
+            # Calculate 1-Month Buy & Hold return (use BACKTEST period, not training period!)
             try:
-                ticker_data_1m = all_tickers_data.loc[train_start_1month:train_end_1month, (slice(None), ticker)]
+                ticker_data_1m = all_tickers_data.loc[bt_start_1month:bt_end, (slice(None), ticker)]
                 ticker_data_1m.columns = ticker_data_1m.columns.droplevel(1)
                 if not ticker_data_1m.empty and 'Close' in ticker_data_1m.columns:
                     start_price_1m = ticker_data_1m['Close'].iloc[0]
@@ -3522,20 +3566,24 @@ def main(
             except:
                 ticker_bh_return_1m = 0.01
             
-            # ✅ FIX 2: Use 10-day horizon with REALISTIC target (cap at 15% per period)
-            period_horizon_1m = 10
-            num_periods_1m = 30.0 / period_horizon_1m  # 3 periods in a month
-            period_target_pct_1m = abs(ticker_bh_return_1m / num_periods_1m)
-            # Cap at 15% per 10-day period to ensure sufficient training samples
-            period_target_pct_1m = min(period_target_pct_1m, 0.15)  # Max 15% per period
-            period_target_pct_1m = max(period_target_pct_1m, 0.005)  # Min 0.5% per period
+            # Use config values if FORCE_PERCENTAGE_OPTIMIZATION, else calculate from B&H
+            if FORCE_PERCENTAGE_OPTIMIZATION:
+                period_horizon_1m = CLASS_HORIZON
+                period_target_pct_1m = TARGET_PERCENTAGE
+                print(f"    📊 {ticker} 1M Training: Horizon={period_horizon_1m}d, Target={period_target_pct_1m:.2%} (FORCED from config, B&H: {ticker_bh_return_1m:.2%})")
+            else:
+                period_horizon_1m = 10
+                num_periods_1m = 30.0 / period_horizon_1m  # 3 periods in a month
+                period_target_pct_1m = abs(ticker_bh_return_1m / num_periods_1m)
+                # Ensure minimum reasonable target
+                period_target_pct_1m = max(period_target_pct_1m, 0.005)  # Min 0.5% per period
+                print(f"    📊 {ticker} 1M Training: Horizon={period_horizon_1m}d, Target={period_target_pct_1m:.2%} (B&H: {ticker_bh_return_1m:.2%})")
             
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_1month:train_end_1month, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
                 training_params_1month.append((ticker, ticker_train_data.copy(), period_target_pct_1m, period_horizon_1m, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
-                print(f"    📊 {ticker} 1M Training: Horizon={period_horizon_1m}d, Target={period_target_pct_1m:.2%} (B&H: {ticker_bh_return_1m:.2%})")
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 1-Month period. Skipping.")
                 continue
@@ -3604,24 +3652,29 @@ def main(
                 current_min_proba_buy_for_opt = loaded_optimized_params.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
                 current_min_proba_sell_for_opt = loaded_optimized_params.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
                 
-                # ✅ FIX 1: Use the SAME training parameters that the model was trained with
-                # Get the training params from training_params_1y or reconstruct them
-                ticker_bh_return_1y = 0.01
-                for t, perf_1y, perf_ytd in top_performers_data:
-                    if t == ticker:
-                        ticker_bh_return_1y = perf_1y / 100.0
-                        break
-                
-                period_horizon_1y = 20
-                num_periods = 365.0 / period_horizon_1y
-                period_target_pct_1y = abs(ticker_bh_return_1y / num_periods) if num_periods > 0 else 0.01
-                period_target_pct_1y = max(period_target_pct_1y, 0.005)
-                
-                # Use training parameters for optimization (not defaults!)
-                current_target_percentage_for_opt = period_target_pct_1y
-                current_class_horizon_for_opt = period_horizon_1y
-                
-                print(f"     📊 Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
+                # Use the SAME training parameters that the model was trained with
+                if FORCE_PERCENTAGE_OPTIMIZATION:
+                    # *** KEY FIX: Use config values for optimization too ***
+                    current_target_percentage_for_opt = TARGET_PERCENTAGE
+                    current_class_horizon_for_opt = CLASS_HORIZON
+                    print(f"     📊 Optimization using FORCED config: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
+                else:
+                    # Reconstruct from B&H performance
+                    ticker_bh_return_1y = 0.01
+                    for t, perf_1y, perf_ytd in top_performers_data:
+                        if t == ticker:
+                            ticker_bh_return_1y = perf_1y / 100.0
+                            break
+                    
+                    period_horizon_1y = 20
+                    num_periods = 365.0 / period_horizon_1y
+                    period_target_pct_1y = abs(ticker_bh_return_1y / num_periods) if num_periods > 0 else 0.01
+                    period_target_pct_1y = max(period_target_pct_1y, 0.005)
+                    
+                    current_target_percentage_for_opt = period_target_pct_1y
+                    current_class_horizon_for_opt = period_horizon_1y
+                    
+                    print(f"     📊 Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
 
                 feature_set_for_opt = scalers[ticker].feature_names_in_ if hasattr(scalers[ticker], 'feature_names_in_') else None
 
@@ -3729,22 +3782,27 @@ def main(
                     current_min_proba_buy_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
                     current_min_proba_sell_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
                     
-                    # ✅ FIX 1: Use YTD training parameters
-                    ticker_bh_return_ytd = 0.01
-                    for t, perf_1y, perf_ytd in top_performers_data:
-                        if t == ticker:
-                            ticker_bh_return_ytd = perf_ytd / 100.0
-                            break
-                    
-                    period_horizon_ytd = 20
-                    num_periods_ytd = 340.0 / period_horizon_ytd  # ~340 trading days YTD
-                    period_target_pct_ytd = abs(ticker_bh_return_ytd / num_periods_ytd) if num_periods_ytd > 0 else 0.01
-                    period_target_pct_ytd = max(period_target_pct_ytd, 0.005)
-                    
-                    current_target_percentage_for_opt = period_target_pct_ytd
-                    current_class_horizon_for_opt = period_horizon_ytd
-                    
-                    print(f"     📊 YTD Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
+                    # Use YTD training parameters
+                    if FORCE_PERCENTAGE_OPTIMIZATION:
+                        current_target_percentage_for_opt = TARGET_PERCENTAGE
+                        current_class_horizon_for_opt = CLASS_HORIZON
+                        print(f"     📊 YTD Optimization using FORCED config: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
+                    else:
+                        ticker_bh_return_ytd = 0.01
+                        for t, perf_1y, perf_ytd in top_performers_data:
+                            if t == ticker:
+                                ticker_bh_return_ytd = perf_ytd / 100.0
+                                break
+                        
+                        period_horizon_ytd = 20
+                        num_periods_ytd = 340.0 / period_horizon_ytd  # ~340 trading days YTD
+                        period_target_pct_ytd = abs(ticker_bh_return_ytd / num_periods_ytd) if num_periods_ytd > 0 else 0.01
+                        period_target_pct_ytd = max(period_target_pct_ytd, 0.005)
+                        
+                        current_target_percentage_for_opt = period_target_pct_ytd
+                        current_class_horizon_for_opt = period_horizon_ytd
+                        
+                        print(f"     📊 YTD Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
 
                     feature_set_for_opt = scalers_ytd[ticker].feature_names_in_ if hasattr(scalers_ytd[ticker], 'feature_names_in_') else None
 
@@ -3824,28 +3882,33 @@ def main(
                     current_min_proba_buy_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
                     current_min_proba_sell_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
                     
-                    # ✅ FIX 1: Use 3-Month training parameters
-                    try:
-                        ticker_data_3m = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
-                        ticker_data_3m.columns = ticker_data_3m.columns.droplevel(1)
-                        if not ticker_data_3m.empty and 'Close' in ticker_data_3m.columns:
-                            start_price_3m = ticker_data_3m['Close'].iloc[0]
-                            end_price_3m = ticker_data_3m['Close'].iloc[-1]
-                            ticker_bh_return_3m = (end_price_3m - start_price_3m) / start_price_3m if start_price_3m > 0 else 0.01
-                        else:
+                    # Use 3-Month training parameters
+                    if FORCE_PERCENTAGE_OPTIMIZATION:
+                        current_target_percentage_for_opt = TARGET_PERCENTAGE
+                        current_class_horizon_for_opt = CLASS_HORIZON
+                        print(f"     📊 3M Optimization using FORCED config: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
+                    else:
+                        try:
+                            ticker_data_3m = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
+                            ticker_data_3m.columns = ticker_data_3m.columns.droplevel(1)
+                            if not ticker_data_3m.empty and 'Close' in ticker_data_3m.columns:
+                                start_price_3m = ticker_data_3m['Close'].iloc[0]
+                                end_price_3m = ticker_data_3m['Close'].iloc[-1]
+                                ticker_bh_return_3m = (end_price_3m - start_price_3m) / start_price_3m if start_price_3m > 0 else 0.01
+                            else:
+                                ticker_bh_return_3m = 0.01
+                        except:
                             ticker_bh_return_3m = 0.01
-                    except:
-                        ticker_bh_return_3m = 0.01
-                    
-                    period_horizon_3m = 15
-                    num_periods_3m = 63.0 / period_horizon_3m  # ~63 trading days in 3 months
-                    period_target_pct_3m = abs(ticker_bh_return_3m / num_periods_3m) if num_periods_3m > 0 else 0.01
-                    period_target_pct_3m = max(period_target_pct_3m, 0.005)
-                    
-                    current_target_percentage_for_opt = period_target_pct_3m
-                    current_class_horizon_for_opt = period_horizon_3m
-                    
-                    print(f"     📊 3M Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
+                        
+                        period_horizon_3m = 15
+                        num_periods_3m = 63.0 / period_horizon_3m  # ~63 trading days in 3 months
+                        period_target_pct_3m = abs(ticker_bh_return_3m / num_periods_3m) if num_periods_3m > 0 else 0.01
+                        period_target_pct_3m = max(period_target_pct_3m, 0.005)
+                        
+                        current_target_percentage_for_opt = period_target_pct_3m
+                        current_class_horizon_for_opt = period_horizon_3m
+                        
+                        print(f"     📊 3M Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
 
                     feature_set_for_opt = scalers_3month[ticker].feature_names_in_ if hasattr(scalers_3month[ticker], 'feature_names_in_') else None
 
