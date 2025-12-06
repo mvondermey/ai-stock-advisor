@@ -25,8 +25,13 @@ TWELVEDATA_API_KEY      = "aed912386d7c47939ebc28a86a96a021"
 # --- ML Library Availability Flags (initialized to False, updated in main.py) ---
 ALPACA_AVAILABLE = False
 TWELVEDATA_SDK_AVAILABLE = False
-PYTORCH_AVAILABLE = False
-CUDA_AVAILABLE = False
+try:
+    import torch
+    PYTORCH_AVAILABLE = True
+    CUDA_AVAILABLE = torch.cuda.is_available()
+except ImportError:
+    PYTORCH_AVAILABLE = False
+    CUDA_AVAILABLE = False
 USE_LSTM = False
 USE_GRU = False
 
@@ -56,7 +61,8 @@ NUM_PROCESSES           = 4 # Use all but one CPU core for parallel processing (
 BACKTEST_DAYS           = 365        # 1 year for backtest
 BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest
 BACKTEST_DAYS_1MONTH    = 32         # 1 month for backtest
-TRAIN_LOOKBACK_DAYS     = 360        # more data for model (e.g., 1 year)
+TRAIN_LOOKBACK_DAYS     = 270        # Training data (reduced to make room for validation)
+VALIDATION_DAYS         = 90         # ✅ FIX 4: Validation period for threshold optimization
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True

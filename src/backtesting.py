@@ -18,7 +18,7 @@ from config import (
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, BACKTEST_DAYS_3MONTH, BACKTEST_DAYS_1MONTH,
     N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
     DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
-    FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD
+    FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD, NUM_PROCESSES
 )
 from config import (
     ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, TARGET_PERCENTAGE, CLASS_HORIZON,
@@ -36,6 +36,129 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 Path("logs").mkdir(exist_ok=True)
+
+
+def _prepare_model_for_multiprocessing(model):
+    """Prepare PyTorch models for multiprocessing by converting to numpy arrays.
+    
+    Returns a dict with model info that can be pickled (numpy arrays only),
+    and the model will be reconstructed on GPU in the worker process.
+    """
+    if model is None:
+        return None
+    if PYTORCH_AVAILABLE:
+        try:
+            import torch
+            import numpy as np
+            from ml_models import LSTMClassifier, GRUClassifier
+            if isinstance(model, (LSTMClassifier, GRUClassifier)):
+                # Force model to CPU first to ensure all tensors are on CPU
+                model_cpu = model.cpu()
+                
+                # Extract state dict and convert tensors to numpy arrays for safe pickling
+                state_dict = model_cpu.state_dict()
+                numpy_state_dict = {}
+                for key, value in state_dict.items():
+                    if isinstance(value, torch.Tensor):
+                        # Convert to numpy array (detach to break computation graph, cpu to ensure no CUDA context)
+                        numpy_state_dict[key] = value.detach().cpu().numpy().copy()
+                    else:
+                        numpy_state_dict[key] = value
+                
+                # Extract architecture info from model and state dict
+                hidden_size = model_cpu.hidden_size if hasattr(model_cpu, 'hidden_size') else None
+                num_layers = model_cpu.num_layers if hasattr(model_cpu, 'num_layers') else None
+                
+                # Infer input_size and output_size from state dict
+                input_size = None
+                output_size = None
+                dropout = 0.0
+                
+                for key in numpy_state_dict.keys():
+                    if 'weight_ih_l0' in key:  # First layer input weights
+                        # Shape is [hidden_size*3 (GRU) or hidden_size*4 (LSTM), input_size]
+                        input_size = numpy_state_dict[key].shape[1]
+                    elif 'fc.weight' in key:
+                        output_size = numpy_state_dict[key].shape[0]
+                
+                # Get dropout from model's RNN layer
+                if hasattr(model_cpu, 'gru'):
+                    dropout = model_cpu.gru.dropout if hasattr(model_cpu.gru, 'dropout') else 0.0
+                elif hasattr(model_cpu, 'lstm'):
+                    dropout = model_cpu.lstm.dropout if hasattr(model_cpu.lstm, 'dropout') else 0.0
+                
+                # Clear CUDA cache to ensure all references are gone
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                model_info = {
+                    'type': type(model_cpu).__name__,
+                    'state_dict': numpy_state_dict,  # Now contains numpy arrays, not tensors
+                    'input_size': input_size,
+                    'hidden_size': hidden_size,
+                    'num_layers': num_layers,
+                    'output_size': output_size,
+                    'dropout': dropout,
+                }
+                return model_info
+            else:
+                # For non-PyTorch models (LightGBM, XGBoost, etc.), return as-is
+                return model
+        except (ImportError, AttributeError, Exception) as e:
+            print(f"  ⚠️ Error preparing model for multiprocessing: {e}")
+            return None
+    return model  # For non-PyTorch models, return as-is
+
+
+def _reconstruct_model_from_info(model_info, device='cuda'):
+    """Reconstruct a PyTorch model from model_info (with numpy arrays) on the specified device."""
+    if model_info is None:
+        return None
+    if isinstance(model_info, dict) and 'type' in model_info:
+        try:
+            import torch
+            import numpy as np
+            from ml_models import LSTMClassifier, GRUClassifier
+            
+            model_type = model_info['type']
+            numpy_state_dict = model_info['state_dict']
+            
+            # Convert numpy arrays back to tensors on the target device
+            state_dict = {}
+            for key, value in numpy_state_dict.items():
+                if isinstance(value, np.ndarray):
+                    # Convert numpy array to tensor and move to device
+                    state_dict[key] = torch.from_numpy(value).to(device)
+                else:
+                    state_dict[key] = value
+            
+            # Reconstruct model based on type
+            if model_type == 'GRUClassifier':
+                model = GRUClassifier(
+                    model_info['input_size'],
+                    model_info['hidden_size'],
+                    model_info['num_layers'],
+                    model_info['output_size'],
+                    model_info.get('dropout', 0.0)
+                )
+            elif model_type == 'LSTMClassifier':
+                model = LSTMClassifier(
+                    model_info['input_size'],
+                    model_info['hidden_size'],
+                    model_info['num_layers'],
+                    model_info['output_size'],
+                    model_info.get('dropout', 0.0)
+                )
+            else:
+                return None
+            
+            # Load state dict (already on device) and set to eval mode
+            model.load_state_dict(state_dict)
+            model.eval()
+            return model
+        except (ImportError, AttributeError, Exception) as e:
+            return None
+    return model_info  # For non-PyTorch models, return as-is
 
 
 # -----------------------------------------------------------------------------
@@ -67,6 +190,13 @@ def optimize_single_ticker_worker(params):
             'optimization_status': "Failed (no data)"
         }
 
+    # Reconstruct PyTorch models on GPU if they were passed as model_info dicts
+    if PYTORCH_AVAILABLE:
+        import torch
+        device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+        model_buy = _reconstruct_model_from_info(model_buy, device)
+        model_sell = _reconstruct_model_from_info(model_sell, device)
+    
     if model_buy is None or model_sell is None or scaler is None:
         sys.stderr.write(f"  [DEBUG] {current_process().name} - {ticker}: Models or scaler not provided. Skipping optimization.\n")
         return {
@@ -323,6 +453,132 @@ def optimize_thresholds_for_portfolio_parallel(optimization_params, num_processe
 
 
 # -----------------------------------------------------------------------------
+# Backtest worker function
+# -----------------------------------------------------------------------------
+def backtest_worker(params: Tuple) -> Optional[Dict]:
+    """Worker function for parallel backtesting."""
+    ticker, df_backtest, capital_per_stock, model_buy, model_sell, scaler, \
+        feature_set, min_proba_buy, min_proba_sell, target_percentage, \
+        top_performers_data, use_simple_rule_strategy = params
+    
+    # Initial log to confirm the worker has started for a ticker
+    with open("logs/worker_debug.log", "a") as f:
+        f.write(f"Worker started for ticker: {ticker}\n")
+
+    if df_backtest.empty:
+        print(f"  ⚠️ Skipping backtest for {ticker}: DataFrame is empty.")
+        return None
+        
+    try:
+        env = RuleTradingEnv(
+            df=df_backtest.copy(),
+            ticker=ticker,
+            initial_balance=capital_per_stock,
+            transaction_cost=TRANSACTION_COST,
+            model_buy=model_buy,
+            model_sell=model_sell,
+            scaler=scaler,
+            use_gate=USE_MODEL_GATE,
+            feature_set=feature_set,
+            per_ticker_min_proba_buy=None,
+            per_ticker_min_proba_sell=None,
+            use_simple_rule_strategy=use_simple_rule_strategy
+        )
+        final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, shares_before_liquidation = env.run()
+
+        # Calculate individual Buy & Hold for the same period
+        start_price_bh = float(df_backtest["Close"].iloc[0])
+        end_price_bh = float(df_backtest["Close"].iloc[-1])
+        individual_bh_return = ((end_price_bh - start_price_bh) / start_price_bh) * 100 if start_price_bh > 0 else 0.0
+        
+        # Analyze performance for this ticker
+        perf_data = analyze_performance(trade_log, env.portfolio_history, df_backtest["Close"].tolist(), ticker)
+
+        # Calculate Buy & Hold history for this ticker
+        bh_history_for_ticker = []
+        if not df_backtest.empty:
+            start_price = float(df_backtest["Close"].iloc[0])
+            shares_bh = int(capital_per_stock / start_price) if start_price > 0 else 0
+            cash_bh = capital_per_stock - shares_bh * start_price
+            for price_day in df_backtest["Close"].tolist():
+                bh_history_for_ticker.append(cash_bh + shares_bh * price_day)
+        else:
+            bh_history_for_ticker.append(capital_per_stock)
+
+        return {
+            'ticker': ticker,
+            'final_val': final_val,
+            'perf_data': perf_data,
+            'individual_bh_return': individual_bh_return,
+            'last_ai_action': last_ai_action,
+            'buy_prob': last_buy_prob,
+            'sell_prob': last_sell_prob,
+            'shares_before_liquidation': shares_before_liquidation,
+            'buy_hold_history': bh_history_for_ticker
+        }
+    finally:
+        # This block will execute whether an exception occurred or not.
+        with open("logs/worker_debug.log", "a") as f:
+            final_val_to_log = 'Error' if 'final_val' not in locals() else final_val
+            f.write(f"Worker finished for ticker: {ticker}. Final Value: {final_val_to_log}\n")
+
+
+def analyze_performance(
+    trade_log: List[tuple],
+    strategy_history: List[float],
+    buy_hold_history: List[float],
+    ticker: str
+) -> Dict[str, float]:
+    """Analyzes trades and calculates key performance metrics."""
+    # --- Trade Analysis ---
+    buys = [t for t in trade_log if t[1] == "BUY"]
+    sells = [t for t in trade_log if t[1] == "SELL"]
+    profits = []
+    n = min(len(buys), len(sells))
+    for i in range(n):
+        pb, sb = float(buys[i][2]), float(sells[i][2])
+        qb, qs = float(buys[i][3]), float(sells[i][3])
+        qty = min(qb, qs)
+        fee_b = float(buys[i][6]) if len(buys[i]) > 6 else 0.0
+        fee_s = float(sells[i][6]) if len(sells[i]) > 6 else 0.0
+        profits.append((sb - pb) * qty - (fee_b + fee_s))
+
+    total_pnl = float(sum(profits))
+    win_rate = (sum(1 for p in profits if p > 0) / len(profits)) if profits else 0.0
+    print(f"\n📊 {ticker} Trade Analysis:")
+    print(f"  - Trades: {n}, Win Rate: {win_rate:.2%}")
+    print(f"  - Total PnL: ${total_pnl:,.2f}")
+
+    # --- Performance Metrics ---
+    strat_returns = pd.Series(strategy_history).pct_change(fill_method=None).dropna()
+    bh_returns = pd.Series(buy_hold_history).pct_change(fill_method=None).dropna()
+
+    # Sharpe Ratio (annualized, assuming 252 trading days)
+    sharpe_strat = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252) if strat_returns.std() > 0 else 0
+    sharpe_bh = (bh_returns.mean() / bh_returns.std()) * np.sqrt(252) if bh_returns.std() > 0 else 0
+
+    # Max Drawdown
+    strat_series = pd.Series(strategy_history)
+    strat_cummax = strat_series.cummax()
+    strat_drawdown = ((strat_series - strat_cummax) / strat_cummax).min()
+
+    bh_series = pd.Series(buy_hold_history)
+    bh_cummax = bh_series.cummax()
+    bh_drawdown = ((bh_series - bh_cummax) / bh_cummax).min()
+
+    print(f"\n📈 {ticker} Performance Metrics:")
+    print(f"  | Metric         | Strategy      | Buy & Hold    |")
+    print(f"  |----------------|---------------|---------------|")
+    print(f"  | Sharpe Ratio   | {sharpe_strat:13.2f} | {sharpe_bh:13.2f} |")
+    print(f"  | Max Drawdown   | {strat_drawdown:12.2%} | {bh_drawdown:12.2%} |")
+
+    return {
+        "trades": n, "win_rate": win_rate, "total_pnl": total_pnl,
+        "sharpe_ratio": sharpe_strat, "max_drawdown": strat_drawdown
+    }
+
+
+# -----------------------------------------------------------------------------
 # Portfolio-level backtesting
 # -----------------------------------------------------------------------------
 def _run_portfolio_backtest(
@@ -407,6 +663,21 @@ def _run_portfolio_backtest(
                     print(f"  - Optimized Buy Threshold: {optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY):.2f}")
                     print(f"  - Optimized Sell Threshold: {optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL):.2f}")
                     print(f"  - Optimized Target Percentage: {optimized_params_per_ticker.get(res['ticker'], {}).get('target_percentage', TARGET_PERCENTAGE):.2%}")
+                    
+                    # ✅ FIX 3: Add diagnostic for 0 trades
+                    total_trades = res.get('perf_data', {}).get('total_trades', 0)
+                    if total_trades == 0 and res.get('last_ai_action') == 'HOLD':
+                        buy_prob = res.get('buy_prob', 0.0)
+                        sell_prob = res.get('sell_prob', 0.0)
+                        buy_thresh = optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY)
+                        sell_thresh = optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL)
+                        print(f"\n  ⚠️  WARNING: {res['ticker']} made 0 trades!")
+                        print(f"      Last Buy Probability: {buy_prob:.4f} (threshold: {buy_thresh:.2f})")
+                        print(f"      Last Sell Probability: {sell_prob:.4f} (threshold: {sell_thresh:.2f})")
+                        if buy_prob < buy_thresh and sell_prob < sell_thresh:
+                            print(f"      💡 Model probabilities never exceeded thresholds.")
+                            print(f"         Consider: 1) Lowering thresholds, 2) Retraining with different targets, or 3) Using Simple Rule strategy")
+                    
                     print("-" * 40)
                 processed_count += 1
     else:
@@ -436,6 +707,21 @@ def _run_portfolio_backtest(
                 print(f"  - Optimized Buy Threshold: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY):.2f}")
                 print(f"  - Optimized Sell Threshold: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL):.2f}")
                 print(f"  - Optimized Target Percentage: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('target_percentage', TARGET_PERCENTAGE):.2%}")
+                
+                # ✅ FIX 3: Add diagnostic for 0 trades
+                total_trades = worker_result.get('perf_data', {}).get('total_trades', 0)
+                if total_trades == 0 and worker_result.get('last_ai_action') == 'HOLD':
+                    buy_prob = worker_result.get('buy_prob', 0.0)
+                    sell_prob = worker_result.get('sell_prob', 0.0)
+                    buy_thresh = optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY)
+                    sell_thresh = optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL)
+                    print(f"\n  ⚠️  WARNING: {worker_result['ticker']} made 0 trades!")
+                    print(f"      Last Buy Probability: {buy_prob:.4f} (threshold: {buy_thresh:.2f})")
+                    print(f"      Last Sell Probability: {sell_prob:.4f} (threshold: {sell_thresh:.2f})")
+                    if buy_prob < buy_thresh and sell_prob < sell_thresh:
+                        print(f"      💡 Model probabilities never exceeded thresholds.")
+                        print(f"         Consider: 1) Lowering thresholds, 2) Retraining with different targets, or 3) Using Simple Rule strategy")
+                
                 print("-" * 40)
             processed_count += 1
 

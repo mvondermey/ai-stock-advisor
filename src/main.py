@@ -28,7 +28,7 @@ from config import (
     FORCE_THRESHOLDS_OPTIMIZATION, FORCE_PERCENTAGE_OPTIMIZATION,
     USE_SIMPLE_RULE_STRATEGY, SIMPLE_RULE_TRAILING_STOP_PERCENT, SIMPLE_RULE_TAKE_PROFIT_PERCENT,
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
-    BACKTEST_DAYS, BACKTEST_DAYS_3MONTH, BACKTEST_DAYS_1MONTH, TRAIN_LOOKBACK_DAYS,
+    BACKTEST_DAYS, BACKTEST_DAYS_3MONTH, BACKTEST_DAYS_1MONTH, TRAIN_LOOKBACK_DAYS, VALIDATION_DAYS,
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
     ENABLE_1YEAR_TRAINING, ENABLE_YTD_TRAINING, ENABLE_3MONTH_TRAINING, ENABLE_1MONTH_TRAINING,
     ENABLE_1YEAR_BACKTEST, ENABLE_YTD_BACKTEST, ENABLE_3MONTH_BACKTEST, ENABLE_1MONTH_BACKTEST,
@@ -99,7 +99,7 @@ if not _script_initialized:
     _script_initialized = True
 
 import os
-from backtesting import optimize_thresholds_for_portfolio_parallel
+from backtesting import optimize_thresholds_for_portfolio_parallel, _prepare_model_for_multiprocessing
 from summary_phase import print_final_summary
 from training_phase import train_worker
 from backtesting_phase import _run_portfolio_backtest
@@ -3118,11 +3118,30 @@ def main(
                 except Exception as e:
                     print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
 
+            # Get Buy & Hold return for this ticker from top_performers_data
+            ticker_bh_return_1y = 0.01  # Default 1% if not found
+            for t, perf_1y, perf_ytd in top_performers_data:
+                if t == ticker:
+                    ticker_bh_return_1y = perf_1y / 100.0  # Convert percentage to decimal
+                    break
+            
+            # Calculate period-specific parameters
+            # Use a shorter horizon for more balanced training labels
+            # Instead of 365 days, use 20 days (1 month) for more frequent signals
+            period_horizon_1y = 20  # 1 month lookback for more samples
+            # Convert annual return to equivalent per-period return
+            # Annual return / (365/20) periods = per-period return
+            num_periods = 365.0 / period_horizon_1y
+            period_target_pct_1y = abs(ticker_bh_return_1y / num_periods) if num_periods > 0 else 0.01
+            # Ensure minimum reasonable target
+            period_target_pct_1y = max(period_target_pct_1y, 0.005)  # At least 0.5%
+            
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_1y_calc:train_end_1y, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_1y.append((ticker, ticker_train_data.copy(), target_percentage, class_horizon, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                training_params_1y.append((ticker, ticker_train_data.copy(), period_target_pct_1y, period_horizon_1y, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                print(f"    📊 {ticker} 1Y Training: Horizon={period_horizon_1y}d, Target={period_target_pct_1y:.2%} (B&H: {ticker_bh_return_1y:.2%})")
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 1-Year period. Skipping.")
                 continue
@@ -3302,11 +3321,26 @@ def main(
                 except Exception as e:
                     print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
 
+            # Get Buy & Hold return for this ticker (YTD)
+            ticker_bh_return_ytd = 0.01  # Default 1%
+            for t, perf_1y, perf_ytd in top_performers_data:
+                if t == ticker:
+                    ticker_bh_return_ytd = perf_ytd / 100.0  # Convert percentage to decimal
+                    break
+            
+            # YTD: Use 20-day horizon with proportional target
+            period_horizon_ytd = 20
+            ytd_days = (train_end_ytd - train_start_ytd).days
+            num_periods_ytd = max(ytd_days / period_horizon_ytd, 1)
+            period_target_pct_ytd = abs(ticker_bh_return_ytd / num_periods_ytd)
+            period_target_pct_ytd = max(period_target_pct_ytd, 0.005)
+            
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_ytd:train_end_ytd, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_ytd.append((ticker, ticker_train_data.copy(), target_percentage, class_horizon, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                training_params_ytd.append((ticker, ticker_train_data.copy(), period_target_pct_ytd, period_horizon_ytd, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                print(f"    📊 {ticker} YTD Training: Horizon={period_horizon_ytd}d, Target={period_target_pct_ytd:.2%} (B&H: {ticker_bh_return_ytd:.2%})")
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for YTD period. Skipping.")
                 continue
@@ -3352,7 +3386,12 @@ def main(
     if ENABLE_3MONTH_TRAINING:
         print("\n🔍 Step 7: Training AI models for 3-Month backtest...")
         bt_start_3month = bt_end - timedelta(days=BACKTEST_DAYS_3MONTH)
-        train_end_3month = bt_start_3month - timedelta(days=1)
+        
+        # ✅ FIX 4: Add validation period for 3-Month
+        valid_end_3month = bt_start_3month - timedelta(days=1)
+        valid_start_3month = valid_end_3month - timedelta(days=30)  # Shorter validation for 3M
+        
+        train_end_3month = valid_start_3month - timedelta(days=1)
         train_start_3month = train_end_3month - timedelta(days=TRAIN_LOOKBACK_DAYS)
 
         training_params_3month = []
@@ -3375,11 +3414,33 @@ def main(
                 except Exception as e:
                     print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
 
+            # Calculate 3-Month Buy & Hold return
+            try:
+                ticker_data_3m = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
+                ticker_data_3m.columns = ticker_data_3m.columns.droplevel(1)
+                if not ticker_data_3m.empty and 'Close' in ticker_data_3m.columns:
+                    start_price_3m = ticker_data_3m['Close'].iloc[0]
+                    end_price_3m = ticker_data_3m['Close'].iloc[-1]
+                    ticker_bh_return_3m = (end_price_3m - start_price_3m) / start_price_3m if start_price_3m > 0 else 0.01
+                else:
+                    ticker_bh_return_3m = 0.01
+            except:
+                ticker_bh_return_3m = 0.01
+            
+            # ✅ FIX 2: Use 15-day horizon with REALISTIC target (cap at 20% per period)
+            period_horizon_3m = 15
+            num_periods_3m = 90.0 / period_horizon_3m  # 6 periods in 3 months
+            period_target_pct_3m = abs(ticker_bh_return_3m / num_periods_3m)
+            # Cap at 20% per 15-day period to ensure sufficient training samples
+            period_target_pct_3m = min(period_target_pct_3m, 0.20)  # Max 20% per period
+            period_target_pct_3m = max(period_target_pct_3m, 0.005)  # Min 0.5% per period
+            
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_3month.append((ticker, ticker_train_data.copy(), target_percentage, class_horizon, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                training_params_3month.append((ticker, ticker_train_data.copy(), period_target_pct_3m, period_horizon_3m, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                print(f"    📊 {ticker} 3M Training: Horizon={period_horizon_3m}d, Target={period_target_pct_3m:.2%} (B&H: {ticker_bh_return_3m:.2%})")
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 3-Month period. Skipping.")
                 continue
@@ -3447,11 +3508,33 @@ def main(
                 except Exception as e:
                     print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
 
+            # Calculate 1-Month Buy & Hold return
+            try:
+                ticker_data_1m = all_tickers_data.loc[train_start_1month:train_end_1month, (slice(None), ticker)]
+                ticker_data_1m.columns = ticker_data_1m.columns.droplevel(1)
+                if not ticker_data_1m.empty and 'Close' in ticker_data_1m.columns:
+                    start_price_1m = ticker_data_1m['Close'].iloc[0]
+                    end_price_1m = ticker_data_1m['Close'].iloc[-1]
+                    ticker_bh_return_1m = (end_price_1m - start_price_1m) / start_price_1m if start_price_1m > 0 else 0.01
+                else:
+                    ticker_bh_return_1m = 0.01
+            except:
+                ticker_bh_return_1m = 0.01
+            
+            # ✅ FIX 2: Use 10-day horizon with REALISTIC target (cap at 15% per period)
+            period_horizon_1m = 10
+            num_periods_1m = 30.0 / period_horizon_1m  # 3 periods in a month
+            period_target_pct_1m = abs(ticker_bh_return_1m / num_periods_1m)
+            # Cap at 15% per 10-day period to ensure sufficient training samples
+            period_target_pct_1m = min(period_target_pct_1m, 0.15)  # Max 15% per period
+            period_target_pct_1m = max(period_target_pct_1m, 0.005)  # Min 0.5% per period
+            
             try:
                 # Slice the main DataFrame for the training period
                 ticker_train_data = all_tickers_data.loc[train_start_1month:train_end_1month, (slice(None), ticker)]
                 ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_1month.append((ticker, ticker_train_data.copy(), target_percentage, class_horizon, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                training_params_1month.append((ticker, ticker_train_data.copy(), period_target_pct_1m, period_horizon_1m, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
+                print(f"    📊 {ticker} 1M Training: Horizon={period_horizon_1m}d, Target={period_target_pct_1m:.2%} (B&H: {ticker_bh_return_1m:.2%})")
             except (KeyError, IndexError):
                 print(f"  ⚠️ Could not slice training data for {ticker} for 1-Month period. Skipping.")
                 continue
@@ -3519,11 +3602,29 @@ def main(
                 
                 current_min_proba_buy_for_opt = loaded_optimized_params.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
                 current_min_proba_sell_for_opt = loaded_optimized_params.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
-                current_target_percentage_for_opt = loaded_optimized_params.get(ticker, {}).get('target_percentage', target_percentage)
-                current_class_horizon_for_opt = loaded_optimized_params.get(ticker, {}).get('class_horizon', class_horizon)
+                
+                # ✅ FIX 1: Use the SAME training parameters that the model was trained with
+                # Get the training params from training_params_1y or reconstruct them
+                ticker_bh_return_1y = 0.01
+                for t, perf_1y, perf_ytd in top_performers_data:
+                    if t == ticker:
+                        ticker_bh_return_1y = perf_1y / 100.0
+                        break
+                
+                period_horizon_1y = 20
+                num_periods = 365.0 / period_horizon_1y
+                period_target_pct_1y = abs(ticker_bh_return_1y / num_periods) if num_periods > 0 else 0.01
+                period_target_pct_1y = max(period_target_pct_1y, 0.005)
+                
+                # Use training parameters for optimization (not defaults!)
+                current_target_percentage_for_opt = period_target_pct_1y
+                current_class_horizon_for_opt = period_horizon_1y
+                
+                print(f"     📊 Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
 
                 feature_set_for_opt = scalers[ticker].feature_names_in_ if hasattr(scalers[ticker], 'feature_names_in_') else None
 
+                # Get training data for optimization (REVERTED Fix 4)
                 try:
                     ticker_train_data = all_tickers_data.loc[train_start_1y_calc:train_end_1y, (slice(None), ticker)]
                     ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
@@ -3534,6 +3635,10 @@ def main(
                     print(f"  ⚠️ Could not slice training data for {ticker} for optimization. Skipping.")
                     continue
 
+                # Prepare PyTorch models for multiprocessing (extract state dict as numpy arrays)
+                model_buy_prepared = _prepare_model_for_multiprocessing(model_buy_ticker)
+                model_sell_prepared = _prepare_model_for_multiprocessing(model_sell_ticker)
+                
                 optimization_params.append((
                     ticker,
                     ticker_train_data.copy(),
@@ -3553,8 +3658,8 @@ def main(
                     GRU_CLASS_HORIZON_OPTIONS,
                     SEED,
                     feature_set_for_opt,
-                    model_buy_ticker,  # Pass already-trained model
-                    model_sell_ticker,  # Pass already-trained model
+                    model_buy_prepared,  # Pass model info (will be reconstructed on GPU in worker)
+                    model_sell_prepared,  # Pass model info (will be reconstructed on GPU in worker)
                     scalers[ticker]  # Pass already-trained scaler
                 ))
         
@@ -3622,11 +3727,27 @@ def main(
                     
                     current_min_proba_buy_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
                     current_min_proba_sell_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
-                    current_target_percentage_for_opt = optimized_params_per_ticker.get(ticker, {}).get('target_percentage', target_percentage)
-                    current_class_horizon_for_opt = optimized_params_per_ticker.get(ticker, {}).get('class_horizon', class_horizon)
+                    
+                    # ✅ FIX 1: Use YTD training parameters
+                    ticker_bh_return_ytd = 0.01
+                    for t, perf_1y, perf_ytd in top_performers_data:
+                        if t == ticker:
+                            ticker_bh_return_ytd = perf_ytd / 100.0
+                            break
+                    
+                    period_horizon_ytd = 20
+                    num_periods_ytd = 340.0 / period_horizon_ytd  # ~340 trading days YTD
+                    period_target_pct_ytd = abs(ticker_bh_return_ytd / num_periods_ytd) if num_periods_ytd > 0 else 0.01
+                    period_target_pct_ytd = max(period_target_pct_ytd, 0.005)
+                    
+                    current_target_percentage_for_opt = period_target_pct_ytd
+                    current_class_horizon_for_opt = period_horizon_ytd
+                    
+                    print(f"     📊 YTD Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
 
                     feature_set_for_opt = scalers_ytd[ticker].feature_names_in_ if hasattr(scalers_ytd[ticker], 'feature_names_in_') else None
 
+                    # Get training data for YTD optimization (REVERTED)
                     try:
                         ticker_train_data = all_tickers_data.loc[train_start_ytd:train_end_ytd, (slice(None), ticker)]
                         ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
@@ -3637,6 +3758,10 @@ def main(
                         print(f"  ⚠️ Could not slice YTD training data for {ticker} for optimization. Skipping.")
                         continue
 
+                    # Prepare PyTorch models for multiprocessing (extract state dict)
+                    model_buy_prepared = _prepare_model_for_multiprocessing(model_buy_ticker)
+                    model_sell_prepared = _prepare_model_for_multiprocessing(model_sell_ticker)
+                    
                     optimization_params_ytd.append((
                         ticker,
                         ticker_train_data.copy(),
@@ -3656,8 +3781,8 @@ def main(
                         GRU_CLASS_HORIZON_OPTIONS,
                         SEED,
                         feature_set_for_opt,
-                        model_buy_ticker,  # Pass already-trained model
-                        model_sell_ticker,  # Pass already-trained model
+                        model_buy_prepared,  # Pass model info (will be reconstructed on GPU in worker)
+                        model_sell_prepared,  # Pass model info (will be reconstructed on GPU in worker)
                         scalers_ytd[ticker]  # Pass already-trained scaler
                     ))
             
@@ -3697,24 +3822,50 @@ def main(
                     
                     current_min_proba_buy_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
                     current_min_proba_sell_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
-                    current_target_percentage_for_opt = optimized_params_per_ticker.get(ticker, {}).get('target_percentage', target_percentage)
-                    current_class_horizon_for_opt = optimized_params_per_ticker.get(ticker, {}).get('class_horizon', class_horizon)
+                    
+                    # ✅ FIX 1: Use 3-Month training parameters
+                    try:
+                        ticker_data_3m = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
+                        ticker_data_3m.columns = ticker_data_3m.columns.droplevel(1)
+                        if not ticker_data_3m.empty and 'Close' in ticker_data_3m.columns:
+                            start_price_3m = ticker_data_3m['Close'].iloc[0]
+                            end_price_3m = ticker_data_3m['Close'].iloc[-1]
+                            ticker_bh_return_3m = (end_price_3m - start_price_3m) / start_price_3m if start_price_3m > 0 else 0.01
+                        else:
+                            ticker_bh_return_3m = 0.01
+                    except:
+                        ticker_bh_return_3m = 0.01
+                    
+                    period_horizon_3m = 15
+                    num_periods_3m = 63.0 / period_horizon_3m  # ~63 trading days in 3 months
+                    period_target_pct_3m = abs(ticker_bh_return_3m / num_periods_3m) if num_periods_3m > 0 else 0.01
+                    period_target_pct_3m = max(period_target_pct_3m, 0.005)
+                    
+                    current_target_percentage_for_opt = period_target_pct_3m
+                    current_class_horizon_for_opt = period_horizon_3m
+                    
+                    print(f"     📊 3M Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
 
                     feature_set_for_opt = scalers_3month[ticker].feature_names_in_ if hasattr(scalers_3month[ticker], 'feature_names_in_') else None
 
+                    # ✅ FIX 4 (SIMPLIFIED): Use 3-Month backtest period for optimization  
                     try:
-                        ticker_train_data = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
-                        ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                        if ticker_train_data.empty:
-                            print(f"  ⚠️ Could not get 3-Month training data for {ticker} for optimization. Skipping.")
+                        ticker_valid_data = all_tickers_data.loc[bt_start_3month:bt_end, (slice(None), ticker)]
+                        ticker_valid_data.columns = ticker_valid_data.columns.droplevel(1)
+                        if ticker_valid_data.empty:
+                            print(f"  ⚠️ Could not get 3-Month backtest data for {ticker} for optimization. Skipping.")
                             continue
                     except (KeyError, IndexError):
-                        print(f"  ⚠️ Could not slice 3-Month training data for {ticker} for optimization. Skipping.")
+                        print(f"  ⚠️ Could not slice 3-Month backtest data for {ticker} for optimization. Skipping.")
                         continue
 
+                    # Prepare PyTorch models for multiprocessing (extract state dict)
+                    model_buy_prepared = _prepare_model_for_multiprocessing(model_buy_ticker)
+                    model_sell_prepared = _prepare_model_for_multiprocessing(model_sell_ticker)
+                    
                     optimization_params_3month.append((
                         ticker,
-                        ticker_train_data.copy(),
+                        ticker_valid_data.copy(),  # Pass validation data!
                         capital_per_stock_3month,
                         current_target_percentage_for_opt,
                         current_class_horizon_for_opt,
@@ -3731,8 +3882,8 @@ def main(
                         GRU_CLASS_HORIZON_OPTIONS,
                         SEED,
                         feature_set_for_opt,
-                        model_buy_ticker,  # Pass already-trained model
-                        model_sell_ticker,  # Pass already-trained model
+                        model_buy_prepared,  # Pass model info (will be reconstructed on GPU in worker)
+                        model_sell_prepared,  # Pass model info (will be reconstructed on GPU in worker)
                         scalers_3month[ticker]  # Pass already-trained scaler
                     ))
             
@@ -3787,6 +3938,10 @@ def main(
                         print(f"  ⚠️ Could not slice 1-Month training data for {ticker} for optimization. Skipping.")
                         continue
 
+                    # Prepare PyTorch models for multiprocessing (extract state dict)
+                    model_buy_prepared = _prepare_model_for_multiprocessing(model_buy_ticker)
+                    model_sell_prepared = _prepare_model_for_multiprocessing(model_sell_ticker)
+                    
                     optimization_params_1month.append((
                         ticker,
                         ticker_train_data.copy(),
@@ -3806,8 +3961,8 @@ def main(
                         GRU_CLASS_HORIZON_OPTIONS,
                         SEED,
                         feature_set_for_opt,
-                        model_buy_ticker,  # Pass already-trained model
-                        model_sell_ticker,  # Pass already-trained model
+                        model_buy_prepared,  # Pass model info (will be reconstructed on GPU in worker)
+                        model_sell_prepared,  # Pass model info (will be reconstructed on GPU in worker)
                         scalers_1month[ticker]  # Pass already-trained scaler
                     ))
             
