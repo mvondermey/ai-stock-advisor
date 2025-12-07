@@ -44,6 +44,23 @@ from config import (
 )
 from utils import _ensure_dir, _to_utc
 
+
+def _normalize_symbol(symbol: str, provider: str) -> str:
+    """Normalize ticker symbol based on provider requirements."""
+    symbol = symbol.upper().strip()
+    
+    if provider == 'stooq':
+        # Stooq uses .US suffix for US stocks
+        if not symbol.endswith('.US'):
+            return f"{symbol}.US"
+    elif provider in ['alpaca', 'twelvedata', 'yahoo']:
+        # Remove .US suffix if present
+        if symbol.endswith('.US'):
+            return symbol[:-3]
+    
+    return symbol
+
+
 def _fetch_from_stooq(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """Fetch OHLCV from Stooq. Try both 'TICKER' and 'TICKER.US'."""
     if pdr is None:

@@ -7,7 +7,7 @@ from config import (
     MIN_PROBA_BUY, MIN_PROBA_SELL, USE_MODEL_GATE, USE_SIMPLE_RULE_STRATEGY,
     SIMPLE_RULE_TRAILING_STOP_PERCENT, SIMPLE_RULE_TAKE_PROFIT_PERCENT,
     INVESTMENT_PER_STOCK, TRANSACTION_COST, ATR_PERIOD, FEAT_SMA_SHORT,
-    FEAT_SMA_LONG, FEAT_VOL_WINDOW, SEQUENCE_LENGTH
+    FEAT_SMA_LONG, FEAT_VOL_WINDOW, SEQUENCE_LENGTH, USE_REGRESSION_MODEL
 )
 
 # Import PyTorch models if available
@@ -15,10 +15,14 @@ try:
     import torch
     import torch.nn as nn
     PYTORCH_AVAILABLE = True
-    from ml_models import LSTMClassifier, GRUClassifier, CUDA_AVAILABLE # Import the classes and CUDA_AVAILABLE
+    from ml_models import LSTMClassifier, GRUClassifier, GRURegressor, CUDA_AVAILABLE # Import all model classes
 except ImportError:
     PYTORCH_AVAILABLE = False
     CUDA_AVAILABLE = False
+    # Define dummy classes
+    class LSTMClassifier: pass
+    class GRUClassifier: pass
+    class GRURegressor: pass
 
 class RuleTradingEnv:
     """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
@@ -72,6 +76,10 @@ class RuleTradingEnv:
         self.last_sell_prob: float = 0.0
         self.trailing_stop_price: Optional[float] = None
         self.take_profit_price: Optional[float] = None
+        
+        # Track predictions for analysis
+        self.all_predictions_buy = []
+        self.all_predictions_sell = []
         
     def _prepare_data(self):
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
@@ -306,7 +314,7 @@ class RuleTradingEnv:
             return 0.0
 
         try:
-            if PYTORCH_AVAILABLE and isinstance(model, (LSTMClassifier, GRUClassifier)):
+            if PYTORCH_AVAILABLE and isinstance(model, (LSTMClassifier, GRUClassifier, GRURegressor)):
                 start_idx = max(0, i - SEQUENCE_LENGTH + 1)
                 end_idx = i + 1
                 
@@ -352,19 +360,41 @@ class RuleTradingEnv:
                     output = model(X_tensor)
                     return float(output.cpu().numpy()[0][0])
             else:
+                # For sklearn models
                 X_scaled_np = self.scaler.transform(X_df)
                 X = pd.DataFrame(X_scaled_np, columns=model_feature_names)
-                return float(model.predict_proba(X)[0][1])
+                # Check if regression or classification
+                if USE_REGRESSION_MODEL or not hasattr(model, 'predict_proba'):
+                    return float(model.predict(X)[0])  # Regression
+                else:
+                    return float(model.predict_proba(X)[0][1])  # Classification
         except Exception as e:
             print(f"  [{self.ticker}] Error in model prediction at step {i}: {e}")
             return 0.0
 
     def _allow_buy_by_model(self, i: int) -> bool:
         self.last_buy_prob = self._get_model_prediction(i, self.model_buy)
+        
+        # Track all predictions
+        self.all_predictions_buy.append(self.last_buy_prob)
+        
+        # DEBUG: Log predictions vs actual returns for first 30 days
+        if i < 30 and i % 5 == 0:  # Every 5th day for first 30 days
+            current_price = self.df.loc[i, "Close"]
+            # Calculate actual 20-day forward return if we have data
+            if i + 20 < len(self.df):
+                future_price = self.df.loc[i + 20, "Close"]
+                actual_return_20d = (future_price / current_price - 1.0) * 100
+                print(f"  [{self.ticker}] Day {i}: BUY Predicted={self.last_buy_prob*100:.2f}%, Actual 20d Return={actual_return_20d:.2f}%, Threshold={self.min_proba_buy*100:.2f}%")
+        
         return self.last_buy_prob >= self.min_proba_buy
 
     def _allow_sell_by_model(self, i: int) -> bool:
         self.last_sell_prob = self._get_model_prediction(i, self.model_sell)
+        
+        # Track all predictions
+        self.all_predictions_sell.append(self.last_sell_prob)
+        
         return self.last_sell_prob >= self.min_proba_sell
 
     def _position_size_from_atr(self, price: float, atr: float) -> int:

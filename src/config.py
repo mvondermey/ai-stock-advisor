@@ -61,7 +61,7 @@ NUM_PROCESSES           = None  # Will be set to cpu_count() - 2 in main.py
 BACKTEST_DAYS           = 365        # 1 year for backtest
 BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest
 BACKTEST_DAYS_1MONTH    = 32         # 1 month for backtest
-TRAIN_LOOKBACK_DAYS     = 270        # Training data (reduced to make room for validation)
+TRAIN_LOOKBACK_DAYS     = 400        # Training data (increased for more samples with shorter horizons)
 VALIDATION_DAYS         = 90         # ✅ FIX 4: Validation period for threshold optimization
 
 # --- Backtest Period Enable/Disable Flags ---
@@ -89,11 +89,12 @@ TRANSACTION_COST        = 0.001      # 0.1%
 FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
-CLASS_HORIZON           = 3          # days ahead for classification target (balanced for short-term trading)
-MIN_PROBA_BUY           = 0.15      # ML gate threshold for buy model (lowered to increase trading activity)
-MIN_PROBA_BUY_OPTIONS   = [0.10, 0.13, 0.15, 0.18, 0.20, 0.22, 0.25]  # Wider range for optimization
-MIN_PROBA_SELL          = 0.15       # ML gate threshold for sell model (lowered to increase trading activity)
-MIN_PROBA_SELL_OPTIONS  = [0.10, 0.13, 0.15, 0.18, 0.20, 0.22, 0.25]  # Wider range for optimization
+CLASS_HORIZON           = 20         # days ahead for return prediction (aligned with holding period)
+# ✅ REGRESSION MODE: Thresholds based on predicted return percentages, not probabilities
+MIN_PROBA_BUY           = 0.05      # Predicted return threshold (5% minimum return to buy)
+MIN_PROBA_BUY_OPTIONS   = [0.03, 0.05, 0.07, 0.10]  # Return thresholds to optimize
+MIN_PROBA_SELL          = -0.02     # Exit if predicted return drops below -2%
+MIN_PROBA_SELL_OPTIONS  = [-0.05, -0.02, 0.00, 0.02]  # Sell thresholds to optimize
 TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification (balanced for 3-day moves)
 USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request
@@ -117,7 +118,7 @@ SIMPLE_RULE_TRAILING_STOP_PERCENT = 0.10 # 10% trailing stop
 SIMPLE_RULE_TAKE_PROFIT_PERCENT = 0.10   # 10% take profit
 
 # --- Deep Learning specific hyperparameters
-SEQUENCE_LENGTH         = 15         # Number of past days to consider for LSTM/GRU (balanced for pattern recognition)
+SEQUENCE_LENGTH         = 30         # Number of past days to consider for LSTM/GRU (balanced for learning)
 LSTM_HIDDEN_SIZE        = 64
 LSTM_NUM_LAYERS         = 2
 LSTM_DROPOUT            = 0.2
@@ -141,10 +142,25 @@ INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = True
 FORCE_TRAINING          = True
 CONTINUE_TRAINING_FROM_EXISTING = False
-FORCE_THRESHOLDS_OPTIMIZATION = True
+FORCE_THRESHOLDS_OPTIMIZATION = False  # ✅ Kelly Criterion makes threshold optimization unnecessary
 FORCE_PERCENTAGE_OPTIMIZATION = False  # Use B&H-based targets for each period
 
 # --- Live Trading Model Selection ---
 # Which period's model to use for live trading
 # Options: "Best" (auto-select highest performer), "3-Month", "1-Month", "YTD", "1-Year"
-LIVE_TRADING_MODEL_PERIOD = "Best"  # "Best" = highest revenue period
+LIVE_TRADING_MODEL_PERIOD = "Best"
+
+# --- Regression-Based Return Prediction ---
+USE_REGRESSION_MODEL = True  # Use regression to predict actual returns instead of classification
+
+# Period-specific horizons (trading days)
+PERIOD_HORIZONS = {
+    "1-Year": 252,   # Trading days in a year
+    "YTD": None,     # Will be calculated dynamically based on YTD days
+    "3-Month": 63,   # ~3 months trading days
+    "1-Month": 21    # ~1 month trading days
+}
+
+MIN_PREDICTED_RETURN = 0.05  # Only buy if predicted return > 5%
+MIN_SELL_RETURN = -0.02  # Sell if predicted return drops below -2% (cut losses)
+POSITION_SCALING_BY_CONFIDENCE = True  # Scale position size by predicted return magnitude

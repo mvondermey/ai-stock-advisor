@@ -50,8 +50,8 @@ def _prepare_model_for_multiprocessing(model):
         try:
             import torch
             import numpy as np
-            from ml_models import LSTMClassifier, GRUClassifier
-            if isinstance(model, (LSTMClassifier, GRUClassifier)):
+            from ml_models import LSTMClassifier, GRUClassifier, GRURegressor
+            if isinstance(model, (LSTMClassifier, GRUClassifier, GRURegressor)):
                 # Force model to CPU first to ensure all tensors are on CPU
                 model_cpu = model.cpu()
                 
@@ -118,7 +118,7 @@ def _reconstruct_model_from_info(model_info, device='cuda'):
         try:
             import torch
             import numpy as np
-            from ml_models import LSTMClassifier, GRUClassifier
+            from ml_models import LSTMClassifier, GRUClassifier, GRURegressor
             
             model_type = model_info['type']
             numpy_state_dict = model_info['state_dict']
@@ -135,6 +135,14 @@ def _reconstruct_model_from_info(model_info, device='cuda'):
             # Reconstruct model based on type
             if model_type == 'GRUClassifier':
                 model = GRUClassifier(
+                    model_info['input_size'],
+                    model_info['hidden_size'],
+                    model_info['num_layers'],
+                    model_info['output_size'],
+                    model_info.get('dropout', 0.0)
+                )
+            elif model_type == 'GRURegressor':
+                model = GRURegressor(
                     model_info['input_size'],
                     model_info['hidden_size'],
                     model_info['num_layers'],
@@ -216,20 +224,27 @@ def optimize_single_ticker_worker(params):
     best_target_percentage = initial_target_percentage
     best_class_horizon = initial_class_horizon
 
-    n_threshold_trials = 10
-    
     # Store all tested combinations for backtesting
     tested_combinations = []  # List of dicts with params and revenue
 
-    # Use the already-trained models - no retraining needed
-    min_proba_buy_dist = beta(3, 7)   # Peaked around 0.3
-    min_proba_sell_dist = beta(3, 7)
-
-    for trial_idx in range(n_threshold_trials):
-        # Randomly sample min_proba_buy and min_proba_sell
-        p_buy = round(min_proba_buy_dist.rvs(random_state=SEED + trial_idx), 2)
-        p_sell = round(min_proba_sell_dist.rvs(random_state=SEED + trial_idx + n_threshold_trials), 2)
-
+    # ITERATIVE HILL-CLIMBING OPTIMIZATION
+    # Start from current saved thresholds, try one step up/down, move if better
+    from config import MIN_PROBA_BUY_OPTIONS, MIN_PROBA_SELL_OPTIONS
+    
+    buy_options = sorted(MIN_PROBA_BUY_OPTIONS if MIN_PROBA_BUY_OPTIONS else [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70])
+    sell_options = sorted(MIN_PROBA_SELL_OPTIONS if MIN_PROBA_SELL_OPTIONS else [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95])
+    
+    # Find closest indices to current thresholds
+    current_buy_idx = min(range(len(buy_options)), key=lambda i: abs(buy_options[i] - current_min_proba_buy))
+    current_sell_idx = min(range(len(sell_options)), key=lambda i: abs(sell_options[i] - current_min_proba_sell))
+    
+    p_buy = buy_options[current_buy_idx]
+    p_sell = sell_options[current_sell_idx]
+    
+    print(f"  🔍 Iterative optimization for {ticker} starting from Buy={p_buy:.2f}, Sell={p_sell:.2f}...")
+    
+    # Helper function to test a single combination
+    def _test_combination(p_buy, p_sell):
         env = RuleTradingEnv(
             df=df_backtest_opt.copy(),
             ticker=ticker,
@@ -300,30 +315,90 @@ def optimize_single_ticker_worker(params):
               f"Alpha: {alpha_annualized:.4f}\n")
         sys.stdout.flush()
         
-        # Store this combination
-        tested_combinations.append({
-            'min_proba_buy': p_buy,
-            'min_proba_sell': p_sell,
-            'target_percentage': initial_target_percentage,
-            'class_horizon': initial_class_horizon,
-            'revenue': revenue,
-            'buy_hold_revenue': buy_hold_revenue,
-            'buy_hold_final_val': buy_hold_final_val,
-            'alpha_annualized': alpha_annualized,
-            'model_buy': model_buy,
-            'model_sell': model_sell,
-            'scaler': scaler
-        })
-
-        if alpha_annualized > best_alpha:
-            best_alpha = alpha_annualized
-            best_revenue = revenue
-            best_min_proba_buy = p_buy
-            best_min_proba_sell = p_sell
-            best_target_percentage = initial_target_percentage
-            best_class_horizon = initial_class_horizon
+        return revenue, alpha_annualized, buy_hold_final_val, buy_hold_revenue
     
-    optimization_status = "No Change"
+    # Test initial position
+    revenue_current, alpha_current, bh_val_current, bh_rev_current = _test_combination(p_buy, p_sell)
+    best_revenue = revenue_current
+    best_alpha = alpha_current
+    best_min_proba_buy = p_buy
+    best_min_proba_sell = p_sell
+    
+    tested_combinations.append({
+        'min_proba_buy': p_buy,
+        'min_proba_sell': p_sell,
+        'target_percentage': initial_target_percentage,
+        'class_horizon': initial_class_horizon,
+        'revenue': revenue_current,
+        'buy_hold_revenue': bh_rev_current,
+        'buy_hold_final_val': bh_val_current,
+        'alpha_annualized': alpha_current,
+        'model_buy': model_buy,
+        'model_sell': model_sell,
+        'scaler': scaler
+    })
+    
+    # Iterative hill-climbing: Test one step in each direction until no improvement
+    max_iterations = 20  # Safety limit
+    iteration = 0
+    improvement_found = True
+    
+    while improvement_found and iteration < max_iterations:
+        improvement_found = False
+        iteration += 1
+        
+        # Get current indices
+        current_buy_idx = buy_options.index(best_min_proba_buy)
+        current_sell_idx = sell_options.index(best_min_proba_sell)
+        
+        # Test 4 neighbors: buy-1, buy+1, sell-1, sell+1
+        neighbors = []
+        
+        if current_buy_idx > 0:
+            neighbors.append((buy_options[current_buy_idx - 1], best_min_proba_sell, 'buy_down'))
+        if current_buy_idx < len(buy_options) - 1:
+            neighbors.append((buy_options[current_buy_idx + 1], best_min_proba_sell, 'buy_up'))
+        if current_sell_idx > 0:
+            neighbors.append((best_min_proba_buy, sell_options[current_sell_idx - 1], 'sell_down'))
+        if current_sell_idx < len(sell_options) - 1:
+            neighbors.append((best_min_proba_buy, sell_options[current_sell_idx + 1], 'sell_up'))
+        
+        # Test each neighbor
+        for test_buy, test_sell, direction in neighbors:
+            revenue, alpha, bh_val, bh_rev = _test_combination(test_buy, test_sell)
+            
+            tested_combinations.append({
+                'min_proba_buy': test_buy,
+                'min_proba_sell': test_sell,
+                'target_percentage': initial_target_percentage,
+                'class_horizon': initial_class_horizon,
+                'revenue': revenue,
+                'buy_hold_revenue': bh_rev,
+                'buy_hold_final_val': bh_val,
+                'alpha_annualized': alpha,
+                'model_buy': model_buy,
+                'model_sell': model_sell,
+                'scaler': scaler
+            })
+            
+            # If this neighbor is better, move there
+            if alpha > best_alpha:
+                best_alpha = alpha
+                best_revenue = revenue
+                best_min_proba_buy = test_buy
+                best_min_proba_sell = test_sell
+                improvement_found = True
+                sys.stdout.write(f"  [{ticker}] ✨ Improvement found ({direction}): Buy={test_buy:.2f}, Sell={test_sell:.2f}, Alpha={alpha:.4f}\n")
+                sys.stdout.flush()
+                break  # Move to this position and start again
+    
+    if iteration > 1:
+        sys.stdout.write(f"  [{ticker}] 🎯 Converged after {iteration} iterations with {len(tested_combinations)} tests\n")
+        sys.stdout.flush()
+    
+    best_target_percentage = initial_target_percentage
+    best_class_horizon = initial_class_horizon
+    optimization_status = "Optimized" if iteration > 1 else "No Change"
     if not np.isclose(best_min_proba_buy, current_min_proba_buy) or \
        not np.isclose(best_min_proba_sell, current_min_proba_sell) or \
        not np.isclose(best_target_percentage, initial_target_percentage) or \
@@ -465,6 +540,13 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
     with open("logs/worker_debug.log", "a") as f:
         f.write(f"Worker started for ticker: {ticker}\n")
 
+    # Reconstruct PyTorch models from prepared dict format
+    if PYTORCH_AVAILABLE:
+        import torch
+        device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+        model_buy = _reconstruct_model_from_info(model_buy, device)
+        model_sell = _reconstruct_model_from_info(model_sell, device)
+
     if df_backtest.empty:
         print(f"  ⚠️ Skipping backtest for {ticker}: DataFrame is empty.")
         return None
@@ -504,6 +586,15 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
                 bh_history_for_ticker.append(cash_bh + shares_bh * price_day)
         else:
             bh_history_for_ticker.append(capital_per_stock)
+
+        # Print prediction summary
+        if hasattr(env, 'all_predictions_buy') and len(env.all_predictions_buy) > 0:
+            import numpy as np
+            preds_buy = np.array(env.all_predictions_buy)
+            print(f"\n📊 [{ticker}] BUY Prediction Summary:")
+            print(f"   Min: {np.min(preds_buy)*100:.4f}%, Max: {np.max(preds_buy)*100:.4f}%, Mean: {np.mean(preds_buy)*100:.4f}%")
+            print(f"   Above 5% threshold: {np.sum(preds_buy >= 0.05)} out of {len(preds_buy)} days ({np.sum(preds_buy >= 0.05)/len(preds_buy)*100:.1f}%)")
+            print(f"   Threshold: {min_proba_buy*100:.2f}%")
 
         return {
             'ticker': ticker,
@@ -621,9 +712,13 @@ def _run_portfolio_backtest(
             print(f"  ⚠️ Could not slice backtest data for {ticker} for period {period_name}. Skipping.")
             continue
 
+        # Prepare PyTorch models for multiprocessing
+        model_buy_prepared = _prepare_model_for_multiprocessing(models_buy.get(ticker))
+        model_sell_prepared = _prepare_model_for_multiprocessing(models_sell.get(ticker))
+        
         backtest_params.append((
             ticker, ticker_backtest_data.copy(), capital_per_stock,
-            models_buy.get(ticker), models_sell.get(ticker), scalers.get(ticker),
+            model_buy_prepared, model_sell_prepared, scalers.get(ticker),
             feature_set_for_worker, min_proba_buy_ticker, min_proba_sell_ticker, target_percentage_ticker,
             top_performers_data, use_simple_rule_strategy
         ))

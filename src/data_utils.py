@@ -704,11 +704,15 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
 
     df["Target"]     = df["Close"].shift(-1)
 
-    # Classification label for BUY model: class_horizon-day forward > +target_percentage
+    # Future price for return calculation
     fwd = df["Close"].shift(-class_horizon)
+    
+    # REGRESSION TARGETS: Actual forward returns (as percentages, e.g., 0.15 = 15%)
+    df["TargetReturnBuy"] = (fwd / df["Close"] - 1.0).fillna(0)  # Predict actual return
+    df["TargetReturnSell"] = (fwd / df["Close"] - 1.0).fillna(0)  # Same for sell model
+    
+    # CLASSIFICATION TARGETS (legacy - for backward compatibility)
     df["TargetClassBuy"] = ((fwd / df["Close"] - 1.0) > target_percentage).astype(float)
-
-    # Classification label for SELL model: class_horizon-day forward < -target_percentage
     df["TargetClassSell"] = ((fwd / df["Close"] - 1.0) < -target_percentage).astype(float)
 
     # Dynamically build the list of features that are actually present in the DataFrame
@@ -733,7 +737,7 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     all_present_features = present_technical_features + financial_features
     
     # Also include target columns for the initial DataFrame selection before dropna
-    target_cols = ["Target", "TargetClassBuy", "TargetClassSell"]
+    target_cols = ["Target", "TargetClassBuy", "TargetClassSell", "TargetReturnBuy", "TargetReturnSell"]
     cols_for_ready = all_present_features + target_cols
     
     # Filter cols_for_ready to ensure all are actually in df.columns (redundant but safe)

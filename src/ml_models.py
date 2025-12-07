@@ -307,7 +307,8 @@ from config import (
     ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION, SAVE_PLOTS, MIN_PROBA_BUY, MIN_PROBA_SELL,
     FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING, FORCE_PERCENTAGE_OPTIMIZATION,
     USE_LOGISTIC_REGRESSION, USE_RANDOM_FOREST, USE_SVM, USE_MLP_CLASSIFIER,
-    USE_LSTM, USE_GRU, USE_LIGHTGBM, USE_XGBOOST
+    USE_LSTM, USE_GRU, USE_LIGHTGBM, USE_XGBOOST,
+    USE_REGRESSION_MODEL, PREDICTION_HORIZON_DAYS
 )
 # PYTORCH_AVAILABLE is set locally below based on actual import, not from config
 
@@ -368,6 +369,26 @@ if PYTORCH_AVAILABLE:
             out, _ = self.gru(x, h0)
             out = self.fc(out[:, -1, :])
             out = self.sigmoid(out)
+            return out
+    
+    class GRURegressor(nn.Module):
+        """GRU for regression - predicts continuous values (e.g., return percentages)"""
+        def __init__(self, input_size, hidden_size, num_layers, output_size, dropout_rate=0.5):
+            super(GRURegressor, self).__init__()
+            self.hidden_size = hidden_size
+            self.num_layers = num_layers
+            self.gru = nn.GRU(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate)
+            self.fc = nn.Linear(hidden_size, output_size)
+            # NO sigmoid - regression outputs can be any real number
+
+        def forward(self, x):
+            if x.dim() == 4:
+                x = x.squeeze(0)
+
+            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+            out, _ = self.gru(x, h0)
+            out = self.fc(out[:, -1, :])
+            # Return raw output for regression
             return out
 
 def initialize_ml_libraries():
@@ -646,7 +667,7 @@ def train_and_evaluate_models(
 
     if feature_set is None:
         print("⚠️ feature_set was None in train_and_evaluate_models. Inferring features from DataFrame columns.")
-        final_feature_names = [col for col in d.columns if col not in ["Target", "TargetClassBuy", "TargetClassSell"]]
+        final_feature_names = [col for col in d.columns if col not in ["Target", "TargetClassBuy", "TargetClassSell", "TargetReturnBuy", "TargetReturnSell"]]
         if not final_feature_names:
             print("⚠️ No features found in DataFrame after excluding target columns. Skipping model training.")
             return None, None, None
@@ -675,17 +696,26 @@ def train_and_evaluate_models(
     X_df = d[final_feature_names]
     y = d[target_col].values
 
-    unique_classes, counts = np.unique(y, return_counts=True)
-    if len(unique_classes) < 2:
-        print(f"  [DIAGNOSTIC] {ticker}: Not enough class diversity for '{target_col}' (only 1 class found: {unique_classes}). Skipping.")
-        return None, None, None
-    
-    # Use 3-fold CV for small datasets to allow training with fewer examples
-    n_splits = min(3, min(counts))  # Adaptive: use 3-fold CV, or less if needed
-    min_samples_required = 2  # Minimum 2 samples per class
-    if any(c < min_samples_required for c in counts):
-        print(f"  [DIAGNOSTIC] {ticker}: Least populated class in '{target_col}' has {min(counts)} members (needs >= {min_samples_required}). Skipping.")
-        return None, None, None
+    # For classification, check class balance. For regression, skip this check.
+    if USE_REGRESSION_MODEL:
+        # Regression: no class balance needed, just check we have enough samples
+        if len(y) < 10:
+            print(f"  [DIAGNOSTIC] {ticker}: Not enough samples for '{target_col}' (only {len(y)} samples, need >= 10). Skipping.")
+            return None, None, None
+        n_splits = min(3, len(y) // 5)  # Use 3-fold or less if dataset is tiny
+    else:
+        # Classification: check class balance
+        unique_classes, counts = np.unique(y, return_counts=True)
+        if len(unique_classes) < 2:
+            print(f"  [DIAGNOSTIC] {ticker}: Not enough class diversity for '{target_col}' (only 1 class found: {unique_classes}). Skipping.")
+            return None, None, None
+        
+        # Use 3-fold CV for small datasets to allow training with fewer examples
+        n_splits = min(3, min(counts))  # Adaptive: use 3-fold CV, or less if needed
+        min_samples_required = 2  # Minimum 2 samples per class
+        if any(c < min_samples_required for c in counts):
+            print(f"  [DIAGNOSTIC] {ticker}: Least populated class in '{target_col}' has {min(counts)} members (needs >= {min_samples_required}). Skipping.")
+            return None, None, None
 
     if CUML_AVAILABLE and cuMLStandardScaler:
         try:
@@ -792,7 +822,14 @@ def train_and_evaluate_models(
             dataloader = DataLoader(dataset, batch_size=LSTM_BATCH_SIZE, shuffle=True)
 
             input_size = X_sequences.shape[2]
-            criterion = nn.BCELoss()
+            
+            # Choose loss function based on model type
+            if USE_REGRESSION_MODEL:
+                criterion = nn.MSELoss()  # Mean Squared Error for regression
+                print(f"    - Using MSE loss for regression (predicting returns)")
+            else:
+                criterion = nn.BCELoss()  # Binary Cross Entropy for classification
+                print(f"    - Using BCE loss for classification (predicting up/down)")
 
             if USE_LSTM:
                 lstm_model = LSTMClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT).to(device)
@@ -824,9 +861,23 @@ def train_and_evaluate_models(
                     y_pred_proba_lstm = np.concatenate(all_outputs).flatten()
                 
                 try:
-                    from sklearn.metrics import roc_auc_score
-                    auc_lstm = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_lstm)
-                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": auc_lstm}
+                    if USE_REGRESSION_MODEL:
+                        from sklearn.metrics import mean_squared_error, r2_score
+                        y_true = y_sequences.cpu().numpy()
+                        y_pred = y_pred_proba_lstm
+                        mse_lstm = mean_squared_error(y_true, y_pred)
+                        r2_lstm = r2_score(y_true, y_pred)
+                        rmse_lstm = mse_lstm ** 0.5
+                        models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": -mse_lstm}  # Negative MSE (higher is better)
+                        print(f"      📊 LSTM Regression Metrics:")
+                        print(f"         MSE: {mse_lstm:.6f}")
+                        print(f"         RMSE: {rmse_lstm:.6f}")
+                        print(f"         R² Score: {r2_lstm:.4f} ({'Good' if r2_lstm > 0.5 else 'Poor'} - {abs(r2_lstm)*100:.1f}% variance explained)")
+                    else:
+                        from sklearn.metrics import roc_auc_score
+                        auc_lstm = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_lstm)
+                        models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": auc_lstm}
+                        print(f"      LSTM AUC (classification): {auc_lstm:.4f}")
                 except ValueError:
                     models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": 0.0}
 
@@ -919,7 +970,11 @@ def train_and_evaluate_models(
                             current_dropout_rate = temp_hyperparams["dropout_rate"] if temp_hyperparams["num_layers"] > 1 else 0.0
                             temp_hyperparams["dropout_rate"] = current_dropout_rate
 
-                            gru_model = GRUClassifier(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]).to(device)
+                            # Choose model based on regression vs classification
+                            if USE_REGRESSION_MODEL:
+                                gru_model = GRURegressor(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]).to(device)
+                            else:
+                                gru_model = GRUClassifier(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]).to(device)
                             optimizer_gru = optim.Adam(gru_model.parameters(), lr=temp_hyperparams["learning_rate"])
                             
                             current_dataloader = DataLoader(dataset, batch_size=temp_hyperparams["batch_size"], shuffle=True)
@@ -943,9 +998,18 @@ def train_and_evaluate_models(
                                 y_pred_proba_gru = np.concatenate(all_outputs).flatten()
 
                             try:
-                                from sklearn.metrics import roc_auc_score
-                                auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
-                                print(f"            GRU AUC: {auc_gru:.4f} | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
+                                if USE_REGRESSION_MODEL:
+                                    from sklearn.metrics import mean_squared_error, r2_score
+                                    y_true = y_sequences.cpu().numpy()
+                                    y_pred = y_pred_proba_gru
+                                    mse_gru = mean_squared_error(y_true, y_pred)
+                                    r2_gru = r2_score(y_true, y_pred)
+                                    auc_gru = -mse_gru  # Negative MSE (higher is better for comparison)
+                                    print(f"            GRU MSE: {mse_gru:.6f}, R²: {r2_gru:.4f} | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
+                                else:
+                                    from sklearn.metrics import roc_auc_score
+                                    auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
+                                    print(f"            GRU AUC: {auc_gru:.4f} | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
 
                                 if auc_gru > best_gru_auc:
                                     best_gru_auc = auc_gru
@@ -996,13 +1060,23 @@ def train_and_evaluate_models(
                         epochs = LSTM_EPOCHS
                         print(f"      Default GRU Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}, Target={default_target_percentage:.4f}, Horizon={default_class_horizon}")
 
-                    gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
-                    if initial_model and isinstance(initial_model, GRUClassifier):
-                        try:
-                            gru_model.load_state_dict(initial_model.state_dict())
-                            print(f"    - Loaded existing GRU model state for {ticker} to continue training.")
-                        except Exception as e:
-                            print(f"    - Error loading GRU model state for {ticker}: {e}. Training from scratch.")
+                    # Choose model based on regression vs classification
+                    if USE_REGRESSION_MODEL:
+                        gru_model = GRURegressor(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
+                        if initial_model and isinstance(initial_model, GRURegressor):
+                            try:
+                                gru_model.load_state_dict(initial_model.state_dict())
+                                print(f"    - Loaded existing GRU regressor state for {ticker} to continue training.")
+                            except Exception as e:
+                                print(f"    - Error loading GRU regressor state for {ticker}: {e}. Training from scratch.")
+                    else:
+                        gru_model = GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
+                        if initial_model and isinstance(initial_model, GRUClassifier):
+                            try:
+                                gru_model.load_state_dict(initial_model.state_dict())
+                                print(f"    - Loaded existing GRU model state for {ticker} to continue training.")
+                            except Exception as e:
+                                print(f"    - Error loading GRU model state for {ticker}: {e}. Training from scratch.")
                     
                     optimizer_gru = optim.Adam(gru_model.parameters(), lr=learning_rate)
                     
@@ -1029,11 +1103,26 @@ def train_and_evaluate_models(
                         y_pred_proba_gru = np.concatenate(all_outputs).flatten()
 
                     try:
-                        from sklearn.metrics import roc_auc_score
-                        auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
-                        current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
-                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
-                        print(f"      GRU AUC (fixed/loaded params): {auc_gru:.4f}")
+                        if USE_REGRESSION_MODEL:
+                            from sklearn.metrics import mean_squared_error, r2_score
+                            y_true = y_sequences.cpu().numpy()
+                            y_pred = y_pred_proba_gru
+                            mse_gru = mean_squared_error(y_true, y_pred)
+                            r2_gru = r2_score(y_true, y_pred)
+                            rmse_gru = mse_gru ** 0.5  # Root Mean Squared Error
+                            auc_gru = -mse_gru  # Negative MSE (higher is better for comparison)
+                            current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
+                            models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
+                            print(f"      📊 GRU Regression Metrics:")
+                            print(f"         MSE: {mse_gru:.6f}")
+                            print(f"         RMSE: {rmse_gru:.6f}")
+                            print(f"         R² Score: {r2_gru:.4f} ({'Good' if r2_gru > 0.5 else 'Poor'} - {abs(r2_gru)*100:.1f}% variance explained)")
+                        else:
+                            from sklearn.metrics import roc_auc_score
+                            auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
+                            current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
+                            models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
+                            print(f"      GRU AUC (classification, fixed/loaded params): {auc_gru:.4f}")
                         print(f"DEBUG: SAVE_PLOTS={SAVE_PLOTS}, SHAP_AVAILABLE={SHAP_AVAILABLE}")
                         if SAVE_PLOTS and SHAP_AVAILABLE:
                             analyze_shap_for_gru(gru_model, dl_scaler, X_df, final_feature_names, ticker, target_col)
@@ -1044,8 +1133,14 @@ def train_and_evaluate_models(
     best_model_overall = None
     best_auc_overall = -np.inf
     best_hyperparams_overall: Optional[Dict] = None # New: To store GRU hyperparams if GRU is best
-    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
-    results = {} # Initialize the results dictionary here
+    
+    # Use KFold for regression, StratifiedKFold for classification
+    if USE_REGRESSION_MODEL:
+        from sklearn.model_selection import KFold
+        cv = KFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    else:
+        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    
     results = {} # Initialize the results dictionary here
 
     print("  🔬 Comparing classifier performance (AUC score via 5-fold cross-validation with GridSearchCV):")

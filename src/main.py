@@ -44,7 +44,8 @@ from config import (
     SEED, SAVE_PLOTS, MARKET_SELECTION,
     SEQUENCE_LENGTH, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, LSTM_DROPOUT,
     LSTM_LEARNING_RATE, LSTM_BATCH_SIZE, LSTM_EPOCHS,
-    ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION
+    ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION,
+    USE_REGRESSION_MODEL, PERIOD_HORIZONS, MIN_PREDICTED_RETURN, MIN_SELL_RETURN, POSITION_SCALING_BY_CONFIDENCE
 )
 
 from alpha_training import select_threshold_by_alpha, AlphaThresholdConfig
@@ -101,7 +102,7 @@ if not _script_initialized:
 import os
 from backtesting import optimize_thresholds_for_portfolio_parallel, _prepare_model_for_multiprocessing
 from summary_phase import print_final_summary
-from training_phase import train_worker
+from training_phase import train_worker, train_models_for_period
 from backtesting_phase import _run_portfolio_backtest
 import json
 import time
@@ -118,16 +119,29 @@ from multiprocessing import Pool, cpu_count, current_process
 import joblib # Added for model saving/loading
 import warnings # Added for warning suppression
 from data_utils import load_prices, fetch_training_data, load_prices_robust, _ensure_dir
+from data_fetcher import (
+    _normalize_symbol, _fetch_from_stooq, _fetch_from_alpaca, _fetch_from_twelvedata,
+    _download_batch_robust, _fetch_financial_data, _fetch_financial_data_from_alpaca,
+    _fetch_intermarket_data
+)
+from ticker_selection import get_tickers_for_backtest, get_all_tickers, find_top_performers
+from backtesting_env import RuleTradingEnv
+from summary_phase import (
+    print_final_summary, print_prediction_vs_actual_comparison,
+    print_horizon_validation_summary, print_training_phase_summary,
+    print_portfolio_comparison_summary
+)
 
 # Import ML model related functions and classes from ml_models.py
 from ml_models import initialize_ml_libraries, CUML_AVAILABLE, LGBMClassifier, XGBClassifier, models_and_params, cuMLRandomForestClassifier, cuMLLogisticRegression, cuMLStandardScaler, SHAP_AVAILABLE
 
 # Conditionally import LSTM/GRU classes if PyTorch is available
 try:
-    from ml_models import LSTMClassifier, GRUClassifier
+    from ml_models import LSTMClassifier, GRUClassifier, GRURegressor
 except ImportError:
     LSTMClassifier = None
     GRUClassifier = None
+    GRURegressor = None
 
 # --- Force UTF-8 output on Windows ---
 if sys.stdout.encoding != 'utf-8':
@@ -1386,9 +1400,24 @@ try:
     import torch.optim as optim
     from torch.utils.data import TensorDataset, DataLoader
     PYTORCH_AVAILABLE = True
+    # Import PyTorch model classes from ml_models
+    try:
+        from ml_models import LSTMClassifier, GRUClassifier, GRURegressor
+        LSTMRegressor = None  # Not implemented yet
+    except (ImportError, AttributeError):
+        # If classes don't exist yet (shouldn't happen), define dummies
+        class LSTMClassifier: pass
+        class GRUClassifier: pass
+        class GRURegressor: pass
+        LSTMRegressor = None
 except ImportError:
     print("⚠️ PyTorch not installed. Run: pip install torch. Deep learning models will be skipped.")
     PYTORCH_AVAILABLE = False
+    # Define dummy classes so isinstance checks don't fail
+    class LSTMClassifier: pass
+    class GRUClassifier: pass
+    class GRURegressor: pass
+    LSTMRegressor = None
 
 # Added for SHAP
 try:
@@ -2170,6 +2199,9 @@ class RuleTradingEnv:
         self.trailing_stop_price: Optional[float] = None # New: For simple rule strategy
         self.take_profit_price: Optional[float] = None # New: For simple rule strategy
         
+        # Regression model tracking
+        self.last_predicted_return: float = 0.0  # Store last predicted return percentage
+        
     def _prepare_data(self):
         # --- Data Cleaning ---
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
@@ -2243,9 +2275,24 @@ class RuleTradingEnv:
             print(f"  [{self.ticker}] Critical: Feature column is all NaN after fillna at step {i}. Skipping prediction.")
             return 0.0
 
+        # DEBUG: Print at entry
+        model_type_name_entry = type(model).__name__
+        if model_type_name_entry in ['GRURegressor', 'GRUClassifier']:
+            print(f"  [{self.ticker}] DEBUG ENTRY: model_type={model_type_name_entry}, step={i}")
+        
         try:
             # Handle PyTorch models (LSTM/GRU) separately
-            if PYTORCH_AVAILABLE and isinstance(model, (LSTMClassifier, GRUClassifier)):
+            model_type_name = type(model).__name__
+            is_pytorch_model = PYTORCH_AVAILABLE and isinstance(model, (LSTMClassifier, GRUClassifier, GRURegressor))
+            
+            # DEBUG: Log what's happening
+            if model_type_name in ['GRURegressor', 'GRUClassifier', 'LSTMClassifier', 'LSTMRegressor']:
+                print(f"  [{self.ticker}] DEBUG PATH CHECK: is_pytorch_model={is_pytorch_model}, PYTORCH_AVAILABLE={PYTORCH_AVAILABLE}")
+                if not is_pytorch_model:
+                    print(f"  [{self.ticker}] WARNING: {model_type_name} not recognized by isinstance! PYTORCH_AVAILABLE={PYTORCH_AVAILABLE}")
+            
+            # Use either isinstance check OR class name check for PyTorch models
+            if is_pytorch_model or model_type_name in ['GRURegressor', 'GRUClassifier', 'LSTMClassifier', 'LSTMRegressor']:
                 # For PyTorch models, we need to scale the data and create sequences
                 # The scaler for DL models is MinMaxScaler, which was fitted on unsequenced data
                 # We need to get the last SEQUENCE_LENGTH rows for prediction
@@ -2286,46 +2333,106 @@ class RuleTradingEnv:
                 model.eval() # Set model to evaluation mode
                 with torch.no_grad():
                     output = model(X_tensor)
-                    return float(torch.sigmoid(output).cpu().numpy()[0][0]) # Apply sigmoid to get probability
+                    if USE_REGRESSION_MODEL:
+                        # For regression, return raw output (predicted return %)
+                        return float(output.cpu().numpy()[0][0])
+                    else:
+                        # For classification, apply sigmoid to get probability
+                        return float(torch.sigmoid(output).cpu().numpy()[0][0])
             else:
-                # For traditional ML models, use the existing scaling and prediction logic
-                X_scaled_np = self.scaler.transform(X_df)
-                X = pd.DataFrame(X_scaled_np, columns=model_feature_names)
-                return float(model.predict_proba(X)[0][1])
+                # For traditional ML models OR if PyTorch model check failed
+                # Check model type by class name or method availability
+                model_type_name = type(model).__name__
+                
+                # If it's a regressor (by name or lack of predict_proba), use predict()
+                has_predict_proba = hasattr(model, 'predict_proba')
+                is_regressor_name = 'Regressor' in model_type_name
+                
+                # DEBUG
+                if model_type_name in ['GRURegressor', 'LSTMRegressor']:
+                    print(f"  [{self.ticker}] DEBUG: model_type={model_type_name}, USE_REGRESSION_MODEL={USE_REGRESSION_MODEL}, has_predict_proba={has_predict_proba}, is_regressor_name={is_regressor_name}")
+                
+                if is_regressor_name or USE_REGRESSION_MODEL or not has_predict_proba:
+                    # For PyTorch regression models that fell through, handle specially
+                    if model_type_name in ['GRURegressor', 'LSTMRegressor']:
+                        print(f"  [{self.ticker}] Warning: {model_type_name} should use PyTorch path but fell through to sklearn path")
+                        # Return 0 to avoid crash - model should have been handled above
+                        return 0.0
+                    # For sklearn regression models
+                    X_scaled_np = self.scaler.transform(X_df)
+                    X = pd.DataFrame(X_scaled_np, columns=model_feature_names)
+                    return float(model.predict(X)[0])
+                else:
+                    # For classification, use predict_proba()
+                    X_scaled_np = self.scaler.transform(X_df)
+                    X = pd.DataFrame(X_scaled_np, columns=model_feature_names)
+                    return float(model.predict_proba(X)[0][1])
         except Exception as e:
             print(f"  [{self.ticker}] Error in model prediction at step {i}: {e}")
             return 0.0
 
-    def _allow_buy_by_model(self, i: int) -> bool: # Removed feature_set from signature
-        self.last_buy_prob = self._get_model_prediction(i, self.model_buy)
-        return self.last_buy_prob >= self.min_proba_buy
-
-    def _allow_sell_by_model(self, i: int) -> bool: # Removed feature_set from signature
-        self.last_sell_prob = self._get_model_prediction(i, self.model_sell)
-        return self.last_sell_prob >= self.min_proba_sell
-
-    def _position_size_from_atr(self, price: float, atr: float, buy_probability: float = 1.0) -> int:
+    def _allow_buy_by_model(self, i: int) -> bool:
         """
-        Calculate position size based on fixed capital and model confidence.
-        Higher AI confidence = larger position size.
+        For REGRESSION mode: Model predicts actual return percentage.
+        Buy if predicted return exceeds minimum threshold (e.g., 5%).
+        """
+        if USE_REGRESSION_MODEL:
+            # Get predicted return from buy model (regression output)
+            self.last_predicted_return = self._get_model_prediction(i, self.model_buy)
+            # Buy if predicted return is positive and above threshold
+            return self.last_predicted_return >= MIN_PREDICTED_RETURN
+        else:
+            # Legacy classification mode
+            self.last_buy_prob = self._get_model_prediction(i, self.model_buy)
+            return self.last_buy_prob >= self.min_proba_buy
+
+    def _allow_sell_by_model(self, i: int) -> bool:
+        """
+        For REGRESSION mode: Sell if predicted return turns negative or drops below threshold.
+        This allows us to exit when the model predicts losses.
+        """
+        if USE_REGRESSION_MODEL:
+            # Get predicted return (can reuse or get fresh prediction)
+            predicted_return = self._get_model_prediction(i, self.model_sell)
+            # Sell if predicted return drops below sell threshold (e.g., -2%)
+            return predicted_return < MIN_SELL_RETURN
+        else:
+            # Legacy classification mode
+            self.last_sell_prob = self._get_model_prediction(i, self.model_sell)
+            return self.last_sell_prob >= self.min_proba_sell
+
+    def _position_size_from_atr(self, price: float, atr: float, predicted_return: float = 0.0) -> int:
+        """
+        Calculate position size based on predicted return from regression model.
+        
+        Higher predicted return = larger position size.
+        Uses predicted return directly instead of binary classification.
         """
         if atr is None or np.isnan(atr) or atr <= 0 or price <= 0:
             return 0
         
+        if predicted_return < MIN_PREDICTED_RETURN:
+            return 0  # Only buy if predicted return exceeds minimum threshold
+        
         # Base investment amount per stock
         base_investment = INVESTMENT_PER_STOCK
         
-        # Scale by model confidence (probability above threshold)
-        # Map [min_proba_buy, 1.0] to [0.25, 1.0]
-        # Even marginal signals get 25% position; high confidence gets 100%
-        if buy_probability >= self.min_proba_buy:
-            edge = buy_probability - self.min_proba_buy
-            max_edge = 1.0 - self.min_proba_buy
-            confidence_scaler = 0.25 + 0.75 * (edge / max_edge)
+        if POSITION_SCALING_BY_CONFIDENCE:
+            # Scale position size by predicted return magnitude
+            # Map predicted returns to position size
+            # 5% return → 25% position, 20% return → 100% position
+            if predicted_return >= 0.20:  # 20%+ return
+                position_fraction = 1.0
+            elif predicted_return >= MIN_PREDICTED_RETURN:
+                # Linear scaling from MIN_PREDICTED_RETURN to 20%
+                position_fraction = 0.25 + 0.75 * ((predicted_return - MIN_PREDICTED_RETURN) / (0.20 - MIN_PREDICTED_RETURN))
+            else:
+                position_fraction = 0.0
+            
+            scaled_investment = base_investment * position_fraction
         else:
-            confidence_scaler = 0.0
+            scaled_investment = base_investment  # Fixed position size
         
-        scaled_investment = base_investment * confidence_scaler
         qty = int(scaled_investment / price)
         
         return max(qty, 0)
@@ -2334,12 +2441,12 @@ class RuleTradingEnv:
         if self.cash <= 0:
             return
 
-        # 1. Determine initial quantity based on risk model and AI confidence
-        # Pass the buy probability to scale position size
+        # 1. Determine initial quantity based on predicted return
+        # Pass the predicted return to scale position size
         qty = self._position_size_from_atr(
             price, 
             atr if atr is not None else np.nan,
-            self.last_buy_prob  # AI confidence drives position sizing
+            self.last_predicted_return  # Predicted return drives position sizing
         )
         if qty <= 0:
             return
@@ -2362,6 +2469,7 @@ class RuleTradingEnv:
         self.entry_atr = atr if atr is not None and not np.isnan(atr) else None
         self.highest_since_entry = price
         self.holding_bars = 0
+        
         self.trade_log.append((date, "BUY", price, qty, self.ticker, {"fee": fee}, fee))
         self.last_ai_action = "BUY"
         # print(f"  [{self.ticker}] BUY: {date}, Price: {price:.2f}, Qty: {qty}, Cash: {self.cash:,.2f}, Shares: {self.shares:.2f}")
@@ -2373,6 +2481,7 @@ class RuleTradingEnv:
         proceeds = price * qty
         fee = proceeds * self.transaction_cost
         self.cash += proceeds - fee
+        
         self.shares -= qty
         self.entry_price = None
         self.entry_atr = None
@@ -3126,87 +3235,23 @@ def main(
     models_buy, models_sell, scalers = {}, {}, {}
     gru_hyperparams_buy_dict, gru_hyperparams_sell_dict = {}, {} # New: To store GRU hyperparams
     failed_training_tickers_1y = {} # New: Store failed tickers and their reasons
+    
     if ENABLE_1YEAR_TRAINING:
-        print("🔍 Step 3: Training AI models for 1-Year backtest...")
         bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)
         train_end_1y = bt_start_1y - timedelta(days=1)
         train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
         
-        training_params_1y = []
-        for ticker in top_tickers:
-            # Load existing GRU hyperparams for this ticker if available
-            loaded_gru_hyperparams_buy = None
-            loaded_gru_hyperparams_sell = None
-            gru_hyperparams_buy_path = Path("logs/models") / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
-            gru_hyperparams_sell_path = Path("logs/models") / f"{ticker}_TargetClassSell_gru_optimized_params.json"
-
-            if gru_hyperparams_buy_path.exists():
-                try:
-                    with open(gru_hyperparams_buy_path, 'r') as f:
-                        loaded_gru_hyperparams_buy = json.load(f)
-                except Exception as e:
-                    print(f"  ⚠️ Error loading existing GRU buy hyperparams for {ticker}: {e}")
-            if gru_hyperparams_sell_path.exists():
-                try:
-                    with open(gru_hyperparams_sell_path, 'r') as f:
-                        loaded_gru_hyperparams_sell = json.load(f)
-                except Exception as e:
-                    print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
-
-            # Get Buy & Hold return for this ticker from top_performers_data
-            ticker_bh_return_1y = 0.01  # Default 1% if not found
-            for t, perf_1y, perf_ytd in top_performers_data:
-                if t == ticker:
-                    ticker_bh_return_1y = perf_1y / 100.0  # Convert percentage to decimal
-                    break
-            
-            # Calculate period-specific parameters
-            if FORCE_PERCENTAGE_OPTIMIZATION:
-                # *** KEY FIX: When FORCE_PERCENTAGE_OPTIMIZATION is True, use config values ***
-                period_horizon_1y = CLASS_HORIZON
-                period_target_pct_1y = TARGET_PERCENTAGE
-                print(f"    📊 {ticker} 1Y Training: Horizon={period_horizon_1y}d, Target={period_target_pct_1y:.2%} (FORCED from config, B&H: {ticker_bh_return_1y:.2%})")
-            else:
-                # Use a shorter horizon for more balanced training labels
-                # Instead of 365 days, use 20 days (1 month) for more frequent signals
-                period_horizon_1y = 20  # 1 month lookback for more samples
-                # Convert annual return to equivalent per-period return
-                # Annual return / (365/20) periods = per-period return
-                num_periods = 365.0 / period_horizon_1y
-                period_target_pct_1y = abs(ticker_bh_return_1y / num_periods) if num_periods > 0 else 0.01
-                # Ensure minimum reasonable target
-                period_target_pct_1y = max(period_target_pct_1y, 0.005)  # At least 0.5%
-                print(f"    📊 {ticker} 1Y Training: Horizon={period_horizon_1y}d, Target={period_target_pct_1y:.2%} (B&H: {ticker_bh_return_1y:.2%})")
-            
-            try:
-                # Slice the main DataFrame for the training period
-                ticker_train_data = all_tickers_data.loc[train_start_1y_calc:train_end_1y, (slice(None), ticker)]
-                ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_1y.append((ticker, ticker_train_data.copy(), period_target_pct_1y, period_horizon_1y, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
-            except (KeyError, IndexError):
-                print(f"  ⚠️ Could not slice training data for {ticker} for 1-Year period. Skipping.")
-                continue
-        
-        if run_parallel:
-            print(f"🤖 Training 1-Year models in parallel for {len(top_tickers)} tickers using {NUM_PROCESSES} processes...")
-            with Pool(processes=NUM_PROCESSES) as pool:
-                training_results_1y = list(tqdm(pool.imap(train_worker, training_params_1y), total=len(training_params_1y), desc="Training 1-Year Models"))
-        else:
-            print(f"🤖 Training 1-Year models sequentially for {len(top_tickers)} tickers...")
-            training_results_1y = [train_worker(p) for p in tqdm(training_params_1y, desc="Training 1-Year Models")]
-
-        for res in training_results_1y:
-            if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
-                models_buy[res['ticker']] = res['model_buy']
-                models_sell[res['ticker']] = res['model_sell']
-                scalers[res['ticker']] = res['scaler']
-                if res.get('gru_hyperparams_buy'):
-                    gru_hyperparams_buy_dict[res['ticker']] = res['gru_hyperparams_buy']
-                if res.get('gru_hyperparams_sell'):
-                    gru_hyperparams_sell_dict[res['ticker']] = res['gru_hyperparams_sell']
-            elif res and res.get('status') == 'failed':
-                failed_training_tickers_1y[res['ticker']] = res['reason']
-        print(f"  [DIAGNOSTIC] After 1-Year training loop, models_buy has {len(models_buy)} entries.")
+        # Use the new train_models_for_period function
+        models_buy, models_sell, scalers = train_models_for_period(
+            period_name="1-Year",
+            tickers=top_tickers,
+            all_tickers_data=all_tickers_data,
+            train_start=train_start_1y_calc,
+            train_end=train_end_1y,
+            top_performers_data=top_performers_data,
+            feature_set=feature_set,
+            run_parallel=run_parallel
+        )
 
     # 🧠 Initialize dictionaries for model training data before threshold optimization
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
@@ -3333,85 +3378,26 @@ def main(
 
     # --- Training Models (for YTD Backtest) ---
     models_buy_ytd, models_sell_ytd, scalers_ytd = {}, {}, {}
-    gru_hyperparams_buy_dict_ytd, gru_hyperparams_sell_dict_ytd = {}, {} # New: To store GRU hyperparams
-    failed_training_tickers_ytd = {} # New: Store failed tickers and their reasons
+    gru_hyperparams_buy_dict_ytd, gru_hyperparams_sell_dict_ytd = {}, {}
+    failed_training_tickers_ytd = {}
+    
     if ENABLE_YTD_TRAINING:
-        print("\n🔍 Step 5: Training AI models for YTD backtest...")
         ytd_start_date = datetime(bt_end.year, 1, 1, tzinfo=timezone.utc)
         train_end_ytd = ytd_start_date - timedelta(days=1)
         train_start_ytd = train_end_ytd - timedelta(days=TRAIN_LOOKBACK_DAYS)
         
-        training_params_ytd = []
-        for ticker in top_tickers_1y_filtered: # Use filtered tickers for YTD training
-            # Load existing GRU hyperparams for this ticker if available
-            loaded_gru_hyperparams_buy = None
-            loaded_gru_hyperparams_sell = None
-            gru_hyperparams_buy_path = Path("logs/models") / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
-            gru_hyperparams_sell_path = Path("logs/models") / f"{ticker}_TargetClassSell_gru_optimized_params.json"
-
-            if gru_hyperparams_buy_path.exists():
-                try:
-                    with open(gru_hyperparams_buy_path, 'r') as f:
-                        loaded_gru_hyperparams_buy = json.load(f)
-                except Exception as e:
-                    print(f"  ⚠️ Error loading existing GRU buy hyperparams for {ticker}: {e}")
-            if gru_hyperparams_sell_path.exists():
-                try:
-                    with open(gru_hyperparams_sell_path, 'r') as f:
-                        loaded_gru_hyperparams_sell = json.load(f)
-                except Exception as e:
-                    print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
-
-            # Get Buy & Hold return for this ticker (YTD)
-            ticker_bh_return_ytd = 0.01  # Default 1%
-            for t, perf_1y, perf_ytd in top_performers_data:
-                if t == ticker:
-                    ticker_bh_return_ytd = perf_ytd / 100.0  # Convert percentage to decimal
-                    break
-            
-            # YTD: Use config values if FORCE_PERCENTAGE_OPTIMIZATION, else calculate from B&H
-            if FORCE_PERCENTAGE_OPTIMIZATION:
-                period_horizon_ytd = CLASS_HORIZON
-                period_target_pct_ytd = TARGET_PERCENTAGE
-                print(f"    📊 {ticker} YTD Training: Horizon={period_horizon_ytd}d, Target={period_target_pct_ytd:.2%} (FORCED from config, B&H: {ticker_bh_return_ytd:.2%})")
-            else:
-                period_horizon_ytd = 20
-                ytd_days = (train_end_ytd - train_start_ytd).days
-                num_periods_ytd = max(ytd_days / period_horizon_ytd, 1)
-                period_target_pct_ytd = abs(ticker_bh_return_ytd / num_periods_ytd)
-                period_target_pct_ytd = max(period_target_pct_ytd, 0.005)
-                print(f"    📊 {ticker} YTD Training: Horizon={period_horizon_ytd}d, Target={period_target_pct_ytd:.2%} (B&H: {ticker_bh_return_ytd:.2%})")
-            
-            try:
-                # Slice the main DataFrame for the training period
-                ticker_train_data = all_tickers_data.loc[train_start_ytd:train_end_ytd, (slice(None), ticker)]
-                ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_ytd.append((ticker, ticker_train_data.copy(), period_target_pct_ytd, period_horizon_ytd, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
-            except (KeyError, IndexError):
-                print(f"  ⚠️ Could not slice training data for {ticker} for YTD period. Skipping.")
-                continue
+        # Use the new train_models_for_period function
+        models_buy_ytd, models_sell_ytd, scalers_ytd = train_models_for_period(
+            period_name="YTD",
+            tickers=top_tickers_1y_filtered,
+            all_tickers_data=all_tickers_data,
+            train_start=train_start_ytd,
+            train_end=train_end_ytd,
+            top_performers_data=top_performers_data,
+            feature_set=feature_set,
+            run_parallel=run_parallel
+        )
         
-        if run_parallel:
-            print(f"🤖 Training YTD models in parallel for {len(top_tickers_1y_filtered)} tickers using {NUM_PROCESSES} processes...")
-            with Pool(processes=NUM_PROCESSES) as pool:
-                training_results_ytd = list(tqdm(pool.imap(train_worker, training_params_ytd), total=len(training_params_ytd), desc="Training YTD Models"))
-        else:
-            print(f"🤖 Training YTD models sequentially for {len(top_tickers_1y_filtered)} tickers...")
-            training_results_ytd = [train_worker(p) for p in tqdm(training_params_ytd, desc="Training YTD Models")]
-
-        for res in training_results_ytd:
-            if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
-                models_buy_ytd[res['ticker']] = res['model_buy']
-                models_sell_ytd[res['ticker']] = res['model_sell']
-                scalers_ytd[res['ticker']] = res['scaler']
-                if res.get('gru_hyperparams_buy'):
-                    gru_hyperparams_buy_dict_ytd[res['ticker']] = res['gru_hyperparams_buy']
-                if res.get('gru_hyperparams_sell'):
-                    gru_hyperparams_sell_dict_ytd[res['ticker']] = res['gru_hyperparams_sell']
-            elif res and res.get('status') == 'failed':
-                failed_training_tickers_ytd[res['ticker']] = res['reason']
-        print(f"  [DIAGNOSTIC] After YTD training loop, models_buy_ytd has {len(models_buy_ytd)} entries.")
-
         if not models_buy_ytd and USE_MODEL_GATE:
             print("⚠️ No models were trained for YTD backtest. Model-gating will be disabled for this run.\n")
 
@@ -3427,90 +3413,26 @@ def main(
 
     # --- Training Models (for 3-Month Backtest) ---
     models_buy_3month, models_sell_3month, scalers_3month = {}, {}, {}
-    gru_hyperparams_buy_dict_3month, gru_hyperparams_sell_dict_3month = {}, {} # New: To store GRU hyperparams
-    failed_training_tickers_3month = {} # New: Store failed tickers and their reasons
+    gru_hyperparams_buy_dict_3month, gru_hyperparams_sell_dict_3month = {}, {}
+    failed_training_tickers_3month = {}
+    
     if ENABLE_3MONTH_TRAINING:
-        print("\n🔍 Step 7: Training AI models for 3-Month backtest...")
         bt_start_3month = bt_end - timedelta(days=BACKTEST_DAYS_3MONTH)
         train_end_3month = bt_start_3month - timedelta(days=1)
         train_start_3month = train_end_3month - timedelta(days=TRAIN_LOOKBACK_DAYS)
-
-        training_params_3month = []
-        for ticker in top_tickers_ytd_filtered: # Use filtered tickers for 3-Month training
-            loaded_gru_hyperparams_buy = None
-            loaded_gru_hyperparams_sell = None
-            gru_hyperparams_buy_path = Path("logs/models") / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
-            gru_hyperparams_sell_path = Path("logs/models") / f"{ticker}_TargetClassSell_gru_optimized_params.json"
-
-            if gru_hyperparams_buy_path.exists():
-                try:
-                    with open(gru_hyperparams_buy_path, 'r') as f:
-                        loaded_gru_hyperparams_buy = json.load(f)
-                except Exception as e:
-                    print(f"  ⚠️ Error loading existing GRU buy hyperparams for {ticker}: {e}")
-            if gru_hyperparams_sell_path.exists():
-                try:
-                    with open(gru_hyperparams_sell_path, 'r') as f:
-                        loaded_gru_hyperparams_sell = json.load(f)
-                except Exception as e:
-                    print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
-
-            # Calculate 3-Month Buy & Hold return (use BACKTEST period, not training period!)
-            try:
-                ticker_data_3m = all_tickers_data.loc[bt_start_3month:bt_end, (slice(None), ticker)]
-                ticker_data_3m.columns = ticker_data_3m.columns.droplevel(1)
-                if not ticker_data_3m.empty and 'Close' in ticker_data_3m.columns:
-                    start_price_3m = ticker_data_3m['Close'].iloc[0]
-                    end_price_3m = ticker_data_3m['Close'].iloc[-1]
-                    ticker_bh_return_3m = (end_price_3m - start_price_3m) / start_price_3m if start_price_3m > 0 else 0.01
-                else:
-                    ticker_bh_return_3m = 0.01
-            except:
-                ticker_bh_return_3m = 0.01
-            
-            # Use config values if FORCE_PERCENTAGE_OPTIMIZATION, else calculate from B&H
-            if FORCE_PERCENTAGE_OPTIMIZATION:
-                period_horizon_3m = CLASS_HORIZON
-                period_target_pct_3m = TARGET_PERCENTAGE
-                print(f"    📊 {ticker} 3M Training: Horizon={period_horizon_3m}d, Target={period_target_pct_3m:.2%} (FORCED from config, B&H: {ticker_bh_return_3m:.2%})")
-            else:
-                period_horizon_3m = 15
-                num_periods_3m = 90.0 / period_horizon_3m  # 6 periods in 3 months
-                period_target_pct_3m = abs(ticker_bh_return_3m / num_periods_3m)
-                # Ensure minimum reasonable target (no max cap - let it learn high momentum!)
-                period_target_pct_3m = max(period_target_pct_3m, 0.005)  # Min 0.5% per period
-                print(f"    📊 {ticker} 3M Training: Horizon={period_horizon_3m}d, Target={period_target_pct_3m:.2%} (B&H: {ticker_bh_return_3m:.2%})")
-            
-            try:
-                # Slice the main DataFrame for the training period
-                ticker_train_data = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
-                ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_3month.append((ticker, ticker_train_data.copy(), period_target_pct_3m, period_horizon_3m, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
-            except (KeyError, IndexError):
-                print(f"  ⚠️ Could not slice training data for {ticker} for 3-Month period. Skipping.")
-                continue
         
-        if run_parallel:
-            print(f"🤖 Training 3-Month models in parallel for {len(top_tickers_ytd_filtered)} tickers using {NUM_PROCESSES} processes...")
-            with Pool(processes=NUM_PROCESSES) as pool:
-                training_results_3month = list(tqdm(pool.imap(train_worker, training_params_3month), total=len(training_params_3month), desc="Training 3-Month Models"))
-        else:
-            print(f"🤖 Training 3-Month models sequentially for {len(top_tickers_ytd_filtered)} tickers...")
-            training_results_3month = [train_worker(p) for p in tqdm(training_params_3month, desc="Training 3-Month Models")]
-
-        for res in training_results_3month:
-            if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
-                models_buy_3month[res['ticker']] = res['model_buy']
-                models_sell_3month[res['ticker']] = res['model_sell']
-                scalers_3month[res['ticker']] = res['scaler']
-                if res.get('gru_hyperparams_buy'):
-                    gru_hyperparams_buy_dict_3month[res['ticker']] = res['gru_hyperparams_buy']
-                if res.get('gru_hyperparams_sell'):
-                    gru_hyperparams_sell_dict_3month[res['ticker']] = res['gru_hyperparams_sell']
-            elif res and res.get('status') == 'failed':
-                failed_training_tickers_3month[res['ticker']] = res['reason']
-        print(f"  [DIAGNOSTIC] After 3-Month training loop, models_buy_3month has {len(models_buy_3month)} entries.")
-
+        # Use the new train_models_for_period function
+        models_buy_3month, models_sell_3month, scalers_3month = train_models_for_period(
+            period_name="3-Month",
+            tickers=top_tickers_ytd_filtered,
+            all_tickers_data=all_tickers_data,
+            train_start=train_start_3month,
+            train_end=train_end_3month,
+            top_performers_data=top_performers_data,
+            feature_set=feature_set,
+            run_parallel=run_parallel
+        )
+        
         if not models_buy_3month and USE_MODEL_GATE:
             print("⚠️ No models were trained for 3-Month backtest. Model-gating will be disabled for this run.\n")
 
@@ -3526,89 +3448,25 @@ def main(
 
     # --- Training Models (for 1-Month Backtest) ---
     models_buy_1month, models_sell_1month, scalers_1month = {}, {}, {}
-    failed_training_tickers_1month = {} # New: Store failed tickers and their reasons
+    failed_training_tickers_1month = {}
+    
     if ENABLE_1MONTH_TRAINING:
-        print("\n🔍 Step 9: Training AI models for 1-Month backtest...")
         bt_start_1month = bt_end - timedelta(days=BACKTEST_DAYS_1MONTH)
         train_end_1month = bt_start_1month - timedelta(days=1)
         train_start_1month = train_end_1month - timedelta(days=TRAIN_LOOKBACK_DAYS)
-
-        training_params_1month = []
-        for ticker in top_tickers_3month_filtered: # Use filtered tickers for 1-Month training
-            loaded_gru_hyperparams_buy = None
-            loaded_gru_hyperparams_sell = None
-            gru_hyperparams_buy_path = Path("logs/models") / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
-            gru_hyperparams_sell_path = Path("logs/models") / f"{ticker}_TargetClassSell_gru_optimized_params.json"
-
-            if gru_hyperparams_buy_path.exists():
-                try:
-                    with open(gru_hyperparams_buy_path, 'r') as f:
-                        loaded_gru_hyperparams_buy = json.load(f)
-                except Exception as e:
-                    print(f"  ⚠️ Error loading existing GRU buy hyperparams for {ticker}: {e}")
-            if gru_hyperparams_sell_path.exists():
-                try:
-                    with open(gru_hyperparams_sell_path, 'r') as f:
-                        loaded_gru_hyperparams_sell = json.load(f)
-                except Exception as e:
-                    print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
-
-            # Calculate 1-Month Buy & Hold return (use BACKTEST period, not training period!)
-            try:
-                ticker_data_1m = all_tickers_data.loc[bt_start_1month:bt_end, (slice(None), ticker)]
-                ticker_data_1m.columns = ticker_data_1m.columns.droplevel(1)
-                if not ticker_data_1m.empty and 'Close' in ticker_data_1m.columns:
-                    start_price_1m = ticker_data_1m['Close'].iloc[0]
-                    end_price_1m = ticker_data_1m['Close'].iloc[-1]
-                    ticker_bh_return_1m = (end_price_1m - start_price_1m) / start_price_1m if start_price_1m > 0 else 0.01
-                else:
-                    ticker_bh_return_1m = 0.01
-            except:
-                ticker_bh_return_1m = 0.01
-            
-            # Use config values if FORCE_PERCENTAGE_OPTIMIZATION, else calculate from B&H
-            if FORCE_PERCENTAGE_OPTIMIZATION:
-                period_horizon_1m = CLASS_HORIZON
-                period_target_pct_1m = TARGET_PERCENTAGE
-                print(f"    📊 {ticker} 1M Training: Horizon={period_horizon_1m}d, Target={period_target_pct_1m:.2%} (FORCED from config, B&H: {ticker_bh_return_1m:.2%})")
-            else:
-                period_horizon_1m = 10
-                num_periods_1m = 30.0 / period_horizon_1m  # 3 periods in a month
-                period_target_pct_1m = abs(ticker_bh_return_1m / num_periods_1m)
-                # Ensure minimum reasonable target
-                period_target_pct_1m = max(period_target_pct_1m, 0.005)  # Min 0.5% per period
-                print(f"    📊 {ticker} 1M Training: Horizon={period_horizon_1m}d, Target={period_target_pct_1m:.2%} (B&H: {ticker_bh_return_1m:.2%})")
-            
-            try:
-                # Slice the main DataFrame for the training period
-                ticker_train_data = all_tickers_data.loc[train_start_1month:train_end_1month, (slice(None), ticker)]
-                ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                training_params_1month.append((ticker, ticker_train_data.copy(), period_target_pct_1m, period_horizon_1m, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell))
-            except (KeyError, IndexError):
-                print(f"  ⚠️ Could not slice training data for {ticker} for 1-Month period. Skipping.")
-                continue
         
-        if run_parallel:
-            print(f"🤖 Training 1-Month models in parallel for {len(top_tickers_3month_filtered)} tickers using {NUM_PROCESSES} processes...")
-            with Pool(processes=NUM_PROCESSES) as pool:
-                training_results_1month = list(tqdm(pool.imap(train_worker, training_params_1month), total=len(training_params_1month), desc="Training 1-Month Models"))
-        else:
-            print(f"🤖 Training 1-Month models sequentially for {len(top_tickers_3month_filtered)} tickers...")
-            training_results_1month = [train_worker(p) for p in tqdm(training_params_1month, desc="Training 1-Month Models")]
-
-        for res in training_results_1month:
-            if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'): # Check for both 'trained' and 'loaded'
-                models_buy_1month[res['ticker']] = res['model_buy']
-                models_sell_1month[res['ticker']] = res['model_sell']
-                scalers_1month[res['ticker']] = res['scaler']
-                if res.get('gru_hyperparams_buy'):
-                    gru_hyperparams_buy_dict_1month[res['ticker']] = res['gru_hyperparams_buy']
-                if res.get('gru_hyperparams_sell'):
-                    gru_hyperparams_sell_dict_1month[res['ticker']] = res['gru_hyperparams_sell']
-            elif res and res.get('status') == 'failed':
-                failed_training_tickers_1month[res['ticker']] = res['reason']
-        print(f"  [DIAGNOSTIC] After 1-Month training loop, models_buy_1month has {len(models_buy_1month)} entries.")
-
+        # Use the new train_models_for_period function
+        models_buy_1month, models_sell_1month, scalers_1month = train_models_for_period(
+            period_name="1-Month",
+            tickers=top_tickers_3month_filtered,
+            all_tickers_data=all_tickers_data,
+            train_start=train_start_1month,
+            train_end=train_end_1month,
+            top_performers_data=top_performers_data,
+            feature_set=feature_set,
+            run_parallel=run_parallel
+        )
+        
         if not models_buy_1month and USE_MODEL_GATE:
             print("⚠️ No models were trained for 1-Month backtest. Model-gating will be disabled for this run.\n")
 
@@ -3666,10 +3524,10 @@ def main(
                             ticker_bh_return_1y = perf_1y / 100.0
                             break
                     
-                    period_horizon_1y = 20
-                    num_periods = 365.0 / period_horizon_1y
-                    period_target_pct_1y = abs(ticker_bh_return_1y / num_periods) if num_periods > 0 else 0.01
-                    period_target_pct_1y = max(period_target_pct_1y, 0.005)
+                    period_horizon_1y = 20  # Shorter horizon for better learning
+                    num_periods = 252.0 / period_horizon_1y
+                    period_target_pct_1y = abs(ticker_bh_return_1y / num_periods)
+                    period_target_pct_1y = max(period_target_pct_1y, 0.01)
                     
                     current_target_percentage_for_opt = period_target_pct_1y
                     current_class_horizon_for_opt = period_horizon_1y
@@ -3794,10 +3652,12 @@ def main(
                                 ticker_bh_return_ytd = perf_ytd / 100.0
                                 break
                         
-                        period_horizon_ytd = 20
-                        num_periods_ytd = 340.0 / period_horizon_ytd  # ~340 trading days YTD
-                        period_target_pct_ytd = abs(ticker_bh_return_ytd / num_periods_ytd) if num_periods_ytd > 0 else 0.01
-                        period_target_pct_ytd = max(period_target_pct_ytd, 0.005)
+                        period_horizon_ytd = 20  # Shorter horizon
+                        ytd_days = (train_end_ytd - train_start_ytd).days
+                        ytd_trading_days = int(ytd_days * 0.7)
+                        num_periods_ytd = max(ytd_trading_days / period_horizon_ytd, 1)
+                        period_target_pct_ytd = abs(ticker_bh_return_ytd / num_periods_ytd)
+                        period_target_pct_ytd = max(period_target_pct_ytd, 0.01)
                         
                         current_target_percentage_for_opt = period_target_pct_ytd
                         current_class_horizon_for_opt = period_horizon_ytd
@@ -3900,10 +3760,10 @@ def main(
                         except:
                             ticker_bh_return_3m = 0.01
                         
-                        period_horizon_3m = 15
-                        num_periods_3m = 63.0 / period_horizon_3m  # ~63 trading days in 3 months
-                        period_target_pct_3m = abs(ticker_bh_return_3m / num_periods_3m) if num_periods_3m > 0 else 0.01
-                        period_target_pct_3m = max(period_target_pct_3m, 0.005)
+                        period_horizon_3m = 15  # Shorter horizon
+                        num_periods_3m = 63.0 / period_horizon_3m
+                        period_target_pct_3m = abs(ticker_bh_return_3m / num_periods_3m)
+                        period_target_pct_3m = max(period_target_pct_3m, 0.01)
                         
                         current_target_percentage_for_opt = period_target_pct_3m
                         current_class_horizon_for_opt = period_horizon_3m
@@ -4535,9 +4395,9 @@ def main(
         performance_metrics_simple_rule_ytd=performance_metrics_simple_rule_ytd,
         performance_metrics_simple_rule_3month=performance_metrics_simple_rule_3month,
         performance_metrics_simple_rule_1month=performance_metrics_simple_rule_1month,
-        performance_metrics_buy_hold_ytd=performance_metrics_buy_hold_ytd,
-        performance_metrics_buy_hold_3month=performance_metrics_buy_hold_3month,
-        performance_metrics_buy_hold_1month=performance_metrics_buy_hold_1month
+        performance_metrics_buy_hold_ytd=performance_metrics_buy_hold_ytd_actual,
+        performance_metrics_buy_hold_3month=performance_metrics_buy_hold_3month_actual,
+        performance_metrics_buy_hold_1month=performance_metrics_buy_hold_1month_actual
     )
     print("\n✅ Final summary prepared and printed.")
 
