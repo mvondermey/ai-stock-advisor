@@ -21,7 +21,7 @@ from ml_models import initialize_ml_libraries, train_and_evaluate_models
 
 # Conditionally import LSTM/GRU classes if PyTorch is available
 try:
-    from ml_models import LSTMClassifier, GRUClassifier
+    from ml_models import LSTMClassifier, GRUClassifier, GRURegressor  # ✅ Added GRURegressor
 except ImportError:
     LSTMClassifier = None
     GRUClassifier = None
@@ -81,9 +81,9 @@ def train_worker(params: Tuple) -> Dict:
             print(f"  ✅ Loaded existing models and GRU hyperparams for {ticker} (FORCE_TRAINING is False).")
             # Before returning, ensure PyTorch models are on CPU if they are deep learning models
             if PYTORCH_AVAILABLE:
-                if isinstance(model_buy, (LSTMClassifier, GRUClassifier)):
+                if isinstance(model_buy, (LSTMClassifier, GRUClassifier, GRURegressor)):  # ✅ Added GRURegressor
                     model_buy = model_buy.cpu()
-                if isinstance(model_sell, (LSTMClassifier, GRUClassifier)):
+                if isinstance(model_sell, (LSTMClassifier, GRUClassifier, GRURegressor)):  # ✅ Added GRURegressor
                     model_sell = model_sell.cpu()
             return {
                 'ticker': ticker,
@@ -106,7 +106,7 @@ def train_worker(params: Tuple) -> Dict:
 
     if df_train.empty:
         print(f"  ❌ Skipping {ticker}: Insufficient training data.")
-        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None}
+        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None, 'y_scaler': None}
 
     print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for BUY target.")
     # Train BUY model, passing the potentially loaded model and GRU hyperparams
@@ -118,7 +118,7 @@ def train_worker(params: Tuple) -> Dict:
     buy_target = "TargetReturnBuy" if USE_REGRESSION_MODEL else "TargetClassBuy"
     sell_target = "TargetReturnSell" if USE_REGRESSION_MODEL else "TargetClassSell"
     
-    model_buy, scaler_buy, gru_hyperparams_buy = train_and_evaluate_models(
+    model_buy, scaler_buy, y_scaler_buy, gru_hyperparams_buy = train_and_evaluate_models(
         df_train, buy_target, actual_feature_set, ticker=ticker,
         initial_model=model_buy if loaded_for_retraining else None,
         loaded_gru_hyperparams=loaded_gru_hyperparams_buy,
@@ -129,7 +129,7 @@ def train_worker(params: Tuple) -> Dict:
     )
     print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for SELL target.")
     # Train SELL model, passing the potentially loaded model and GRU hyperparams
-    model_sell, scaler_sell, gru_hyperparams_sell = train_and_evaluate_models(
+    model_sell, scaler_sell, y_scaler_sell, gru_hyperparams_sell = train_and_evaluate_models(
         df_train, sell_target, actual_feature_set, ticker=ticker,
         initial_model=model_sell if loaded_for_retraining else None,
         loaded_gru_hyperparams=loaded_gru_hyperparams_sell,
@@ -142,12 +142,18 @@ def train_worker(params: Tuple) -> Dict:
     # For simplicity, we'll use the scaler from the buy model for both if they are different.
     # In a more complex scenario, you might want to ensure feature_set consistency or use separate scalers.
     final_scaler = scaler_buy if scaler_buy else scaler_sell
+    final_y_scaler = y_scaler_buy if y_scaler_buy else y_scaler_sell  # ✅ Also choose y_scaler
 
     if model_buy and model_sell and final_scaler:
         try:
             joblib.dump(model_buy, model_buy_path)
             joblib.dump(model_sell, model_sell_path)
             joblib.dump(final_scaler, scaler_path)
+            
+            # ✅ Save y_scaler if it exists
+            if final_y_scaler is not None:
+                y_scaler_path = models_dir / f"{ticker}_y_scaler.joblib"
+                joblib.dump(final_y_scaler, y_scaler_path)
             
             if gru_hyperparams_buy:
                 with open(gru_hyperparams_buy_path, 'w') as f:
@@ -156,15 +162,15 @@ def train_worker(params: Tuple) -> Dict:
                 with open(gru_hyperparams_sell_path, 'w') as f:
                     json.dump(gru_hyperparams_sell, f, indent=4)
 
-            print(f"  ✅ Models, scaler, and GRU hyperparams saved for {ticker}.")
+            print(f"  ✅ Models, scaler, y_scaler, and GRU hyperparams saved for {ticker}.")
         except Exception as e:
             print(f"  ⚠️ Error saving models or GRU hyperparams for {ticker}: {e}")
             
         # Before returning, ensure PyTorch models are on CPU if they are deep learning models
         if PYTORCH_AVAILABLE:
-            if isinstance(model_buy, (LSTMClassifier, GRUClassifier)):
+            if isinstance(model_buy, (LSTMClassifier, GRUClassifier, GRURegressor)):  # ✅ Added GRURegressor
                 model_buy = model_buy.cpu()
-            if isinstance(model_sell, (LSTMClassifier, GRUClassifier)):
+            if isinstance(model_sell, (LSTMClassifier, GRUClassifier, GRURegressor)):  # ✅ Added GRURegressor
                 model_sell = model_sell.cpu()
 
         return {
@@ -172,6 +178,7 @@ def train_worker(params: Tuple) -> Dict:
             'model_buy': model_buy,
             'model_sell': model_sell,
             'scaler': final_scaler,
+            'y_scaler': final_y_scaler,  # ✅ Return y_scaler
             'gru_hyperparams_buy': gru_hyperparams_buy,
             'gru_hyperparams_sell': gru_hyperparams_sell,
             'status': 'trained',
@@ -185,7 +192,7 @@ def train_worker(params: Tuple) -> Dict:
             reason = f"Not enough rows after feature prep ({len(df_train)} rows, need >= 50)"
         
         print(f"  ❌ Failed to train models for {ticker}. Reason: {reason}")
-        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None, 'status': 'failed', 'reason': reason}
+        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None, 'y_scaler': None, 'status': 'failed', 'reason': reason}
 
 
 def train_models_for_period(
@@ -197,7 +204,7 @@ def train_models_for_period(
     top_performers_data: List[Tuple[str, float, float]],
     feature_set: Optional[List[str]] = None,
     run_parallel: bool = True
-) -> Tuple[Dict, Dict, Dict]:
+) -> Tuple[Dict, Dict, Dict, Dict]:
     """
     Train models for a specific period (1-Year, YTD, 3-Month, 1-Month).
     
@@ -212,7 +219,7 @@ def train_models_for_period(
         run_parallel: Whether to use parallel processing
         
     Returns:
-        Tuple of (models_buy, models_sell, scalers) dictionaries
+        Tuple of (models_buy, models_sell, scalers, y_scalers) dictionaries
     """
     print(f"\n🔍 Step 3: Training AI models for {period_name} backtest...")
     
@@ -223,7 +230,8 @@ def train_models_for_period(
     # Calculate period-specific horizon
     if period_name == "YTD":
         # Calculate YTD trading days dynamically
-        ytd_start = datetime(datetime.today().year, 1, 1)
+        from datetime import timezone
+        ytd_start = datetime(datetime.today().year, 1, 1, tzinfo=timezone.utc)
         ytd_days = (train_end - ytd_start).days
         period_horizon = int(ytd_days * 0.7)  # Approximate trading days
         if period_horizon <= 0:
@@ -259,6 +267,14 @@ def train_models_for_period(
         except Exception as e:
             print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
         
+        # Helper to extract a close series (prefers 'Close', falls back to 'close')
+        def _get_close_series(df: pd.DataFrame) -> Optional[pd.Series]:
+            if 'Close' in df.columns:
+                return df['Close']
+            if 'close' in df.columns:
+                return df['close']
+            return None
+
         # Get Buy & Hold return for this ticker
         ticker_bh_return = 0.01  # Default 1% if not found
         for t, perf_1y, perf_ytd in top_performers_data:
@@ -274,8 +290,9 @@ def train_models_for_period(
                         ticker_data.columns = ticker_data.columns.droplevel(1)
                         train_3m_start = train_end - pd.Timedelta(days=90)
                         ticker_3m = ticker_data.loc[train_3m_start:train_end]
-                        if len(ticker_3m) > 0:
-                            ticker_bh_return = (ticker_3m['close'].iloc[-1] - ticker_3m['close'].iloc[0]) / ticker_3m['close'].iloc[0]
+                        close_series = _get_close_series(ticker_3m)
+                        if close_series is not None and len(close_series) > 1:
+                            ticker_bh_return = (close_series.iloc[-1] - close_series.iloc[0]) / close_series.iloc[0]
                         else:
                             ticker_bh_return = 0.01
                     except:
@@ -287,8 +304,9 @@ def train_models_for_period(
                         ticker_data.columns = ticker_data.columns.droplevel(1)
                         train_1m_start = train_end - pd.Timedelta(days=32)
                         ticker_1m = ticker_data.loc[train_1m_start:train_end]
-                        if len(ticker_1m) > 0:
-                            ticker_bh_return = (ticker_1m['close'].iloc[-1] - ticker_1m['close'].iloc[0]) / ticker_1m['close'].iloc[0]
+                        close_series = _get_close_series(ticker_1m)
+                        if close_series is not None and len(close_series) > 1:
+                            ticker_bh_return = (close_series.iloc[-1] - close_series.iloc[0]) / close_series.iloc[0]
                         else:
                             ticker_bh_return = 0.01
                     except:
@@ -332,13 +350,15 @@ def train_models_for_period(
         training_results = [train_worker(p) for p in tqdm(training_params, desc=f"Training {period_name} Models")]
     
     # Collect results
+    y_scalers = {}  # ✅ Initialize y_scalers dictionary
     for res in training_results:
         if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'):
             models_buy[res['ticker']] = res['model_buy']
             models_sell[res['ticker']] = res['model_sell']
             scalers[res['ticker']] = res['scaler']
+            y_scalers[res['ticker']] = res.get('y_scaler', None)  # ✅ Collect y_scaler
     
     print(f"✅ {period_name} training complete: {len(models_buy)} models trained/loaded.")
     
-    return models_buy, models_sell, scalers
+    return models_buy, models_sell, scalers, y_scalers  # ✅ Return y_scalers
 

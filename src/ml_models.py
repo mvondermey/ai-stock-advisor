@@ -377,9 +377,17 @@ if PYTORCH_AVAILABLE:
             super(GRURegressor, self).__init__()
             self.hidden_size = hidden_size
             self.num_layers = num_layers
-            self.gru = nn.GRU(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate)
-            self.fc = nn.Linear(hidden_size, output_size)
-            # NO sigmoid - regression outputs can be any real number
+            self.gru = nn.GRU(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout_rate if num_layers > 1 else 0.0)
+            # ✅ Add Batch Normalization for stable training
+            self.bn = nn.BatchNorm1d(hidden_size)
+            # ✅ Multi-layer output with Tanh to bound predictions to [-1, 1]
+            self.fc = nn.Sequential(
+                nn.Linear(hidden_size, hidden_size),
+                nn.ReLU(),
+                nn.Dropout(dropout_rate),
+                nn.Linear(hidden_size, output_size),
+                nn.Tanh()  # ✅ Bound output to [-1, 1] range
+            )
 
         def forward(self, x):
             if x.dim() == 4:
@@ -387,8 +395,11 @@ if PYTORCH_AVAILABLE:
 
             h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
             out, _ = self.gru(x, h0)
-            out = self.fc(out[:, -1, :])
-            # Return raw output for regression
+            out = out[:, -1, :]
+            # ✅ Apply batch normalization
+            out = self.bn(out)
+            # ✅ Apply FC layers with Tanh activation
+            out = self.fc(out)
             return out
 
 def initialize_ml_libraries():
@@ -801,14 +812,19 @@ def train_and_evaluate_models(
             models_and_params_local["XGBoost (CPU)"] = xgb_model_params
 
     if PYTORCH_AVAILABLE:
+        # Scale features to [0, 1]
         dl_scaler = MinMaxScaler(feature_range=(0, 1))
         X_scaled_dl = dl_scaler.fit_transform(X_df)
+        
+        # ✅ CRITICAL FIX: Scale targets (y) to [-1, 1] to match GRU Tanh output
+        y_scaler = MinMaxScaler(feature_range=(-1, 1))
+        y_scaled = y_scaler.fit_transform(y.reshape(-1, 1)).flatten()
         
         X_sequences = []
         y_sequences = []
         for i in range(len(X_scaled_dl) - SEQUENCE_LENGTH):
             X_sequences.append(X_scaled_dl[i:i + SEQUENCE_LENGTH])
-            y_sequences.append(y[i + SEQUENCE_LENGTH])
+            y_sequences.append(y_scaled[i + SEQUENCE_LENGTH])  # Use scaled y
         
         if not X_sequences:
             print(f"  [DIAGNOSTIC] {ticker}: Not enough data to create sequences for DL models (need > {SEQUENCE_LENGTH} rows). Skipping DL models.")
@@ -1020,13 +1036,13 @@ def train_and_evaluate_models(
                                 print(f"            GRU AUC: Not enough samples with positive class for AUC calculation. | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
                                 
                     if best_gru_model:
-                        models_and_params_local["GRU"] = {"model": best_gru_model, "scaler": best_gru_scaler, "auc": best_gru_auc, "hyperparams": best_gru_hyperparams}
+                        models_and_params_local["GRU"] = {"model": best_gru_model, "scaler": best_gru_scaler, "y_scaler": y_scaler, "auc": best_gru_auc, "hyperparams": best_gru_hyperparams}
                         print(f"      Best GRU found for {ticker} ({target_col}) with AUC: {best_gru_auc:.4f}, Hyperparams: {best_gru_hyperparams}")
                         print(f"DEBUG: SAVE_PLOTS={SAVE_PLOTS}, SHAP_AVAILABLE={SHAP_AVAILABLE}")
                         if SAVE_PLOTS and SHAP_AVAILABLE:
                             analyze_shap_for_gru(best_gru_model, best_gru_scaler, X_df, final_feature_names, ticker, target_col)
                     else:
-                        models_and_params_local["GRU"] = {"model": None, "scaler": None, "auc": 0.0}
+                        models_and_params_local["GRU"] = {"model": None, "scaler": None, "y_scaler": None, "auc": 0.0}
                 else: # ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION is False, use fixed or loaded hyperparameters
                     if loaded_gru_hyperparams and not FORCE_PERCENTAGE_OPTIMIZATION:
                         # Use loaded hyperparams only if FORCE_PERCENTAGE_OPTIMIZATION is False
@@ -1112,7 +1128,7 @@ def train_and_evaluate_models(
                             rmse_gru = mse_gru ** 0.5  # Root Mean Squared Error
                             auc_gru = -mse_gru  # Negative MSE (higher is better for comparison)
                             current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
-                            models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
+                            models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
                             print(f"      📊 GRU Regression Metrics:")
                             print(f"         MSE: {mse_gru:.6f}")
                             print(f"         RMSE: {rmse_gru:.6f}")
@@ -1121,14 +1137,14 @@ def train_and_evaluate_models(
                             from sklearn.metrics import roc_auc_score
                             auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
                             current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
-                            models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
+                            models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
                             print(f"      GRU AUC (classification, fixed/loaded params): {auc_gru:.4f}")
                         print(f"DEBUG: SAVE_PLOTS={SAVE_PLOTS}, SHAP_AVAILABLE={SHAP_AVAILABLE}")
                         if SAVE_PLOTS and SHAP_AVAILABLE:
                             analyze_shap_for_gru(gru_model, dl_scaler, X_df, final_feature_names, ticker, target_col)
                     except ValueError:
                         print(f"      GRU AUC (fixed/loaded params): Not enough samples with positive class for AUC calculation.")
-                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "auc": 0.0}
+                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": 0.0}
 
     best_model_overall = None
     best_auc_overall = -np.inf
@@ -1198,12 +1214,13 @@ def train_and_evaluate_models(
 
     # If the best model is a DL model, ensure its specific scaler is returned
     if best_model_name in ["LSTM", "GRU"]:
-        return models_and_params_local[best_model_name]["model"], models_and_params_local[best_model_name]["scaler"], best_hyperparams_overall
+        y_scaler = models_and_params_local[best_model_name].get("y_scaler", None)
+        return models_and_params_local[best_model_name]["model"], models_and_params_local[best_model_name]["scaler"], y_scaler, best_hyperparams_overall
     else:
         # Otherwise, return the best traditional ML model and the StandardScaler
         if SAVE_PLOTS and SHAP_AVAILABLE and isinstance(best_model_overall, (RandomForestClassifier, XGBClassifier)):
             analyze_shap_for_tree_model(best_model_overall, X_df, final_feature_names, ticker, target_col)
-        return best_model_overall, scaler, best_hyperparams_overall
+        return best_model_overall, scaler, None, best_hyperparams_overall  # None for y_scaler (not used in traditional ML)
 
 def train_worker(params: Tuple) -> Dict:
     """Worker function for parallel model training."""

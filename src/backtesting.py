@@ -18,7 +18,7 @@ from config import (
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, BACKTEST_DAYS_3MONTH, BACKTEST_DAYS_1MONTH,
     N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
     DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
-    FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD, NUM_PROCESSES
+    FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD, NUM_PROCESSES, SEQUENCE_LENGTH
 )
 from config import (
     ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, TARGET_PERCENTAGE, CLASS_HORIZON,
@@ -79,13 +79,37 @@ def _prepare_model_for_multiprocessing(model):
                         # Shape is [hidden_size*3 (GRU) or hidden_size*4 (LSTM), input_size]
                         input_size = numpy_state_dict[key].shape[1]
                     elif 'fc.weight' in key:
+                        # For simple fc layer: 'fc.weight'
                         output_size = numpy_state_dict[key].shape[0]
+                    elif 'fc.2.weight' in key:
+                        # For nn.Sequential fc layer (GRURegressor): 'fc.2.weight' is the final layer
+                        output_size = numpy_state_dict[key].shape[0]
+
+                # Fallback: try to get output_size from model attributes or final Linear in fc
+                if output_size is None and hasattr(model_cpu, 'output_size'):
+                    output_size = model_cpu.output_size
+                if output_size is None and hasattr(model_cpu, 'fc'):
+                    try:
+                        import torch.nn as nn
+                        for module in reversed(list(model_cpu.fc.modules())):
+                            if isinstance(module, nn.Linear):
+                                output_size = module.out_features
+                                break
+                    except Exception:
+                        pass
                 
                 # Get dropout from model's RNN layer
                 if hasattr(model_cpu, 'gru'):
                     dropout = model_cpu.gru.dropout if hasattr(model_cpu.gru, 'dropout') else 0.0
                 elif hasattr(model_cpu, 'lstm'):
                     dropout = model_cpu.lstm.dropout if hasattr(model_cpu.lstm, 'dropout') else 0.0
+
+                # Defensive guard: ensure we have all dims
+                if any(v is None for v in [input_size, hidden_size, num_layers, output_size]):
+                    sys.stderr.write("  ⚠️ ERROR in _prepare_model_for_multiprocessing: missing model dimensions\n")
+                    sys.stderr.write(f"     input_size={input_size}, hidden_size={hidden_size}, num_layers={num_layers}, output_size={output_size}\n")
+                    sys.stderr.flush()
+                    return None
                 
                 # Clear CUDA cache to ensure all references are gone
                 if torch.cuda.is_available():
@@ -100,12 +124,17 @@ def _prepare_model_for_multiprocessing(model):
                     'output_size': output_size,
                     'dropout': dropout,
                 }
+                # DEBUG: Log model architecture for verification
+                sys.stderr.write(f"  [PREP] {model_info['type']}: in={input_size}, hid={hidden_size}, layers={num_layers}, out={output_size}, dropout={dropout}\n")
+                sys.stderr.flush()
                 return model_info
             else:
                 # For non-PyTorch models (LightGBM, XGBoost, etc.), return as-is
                 return model
         except (ImportError, AttributeError, Exception) as e:
-            print(f"  ⚠️ Error preparing model for multiprocessing: {e}")
+            sys.stderr.write(f"  ⚠️ ERROR in _prepare_model_for_multiprocessing: {e}\n")
+            sys.stderr.write(f"     Model type: {type(model).__name__ if model else 'None'}\n")
+            sys.stderr.flush()
             return None
     return model  # For non-PyTorch models, return as-is
 
@@ -119,20 +148,24 @@ def _reconstruct_model_from_info(model_info, device='cuda'):
             import torch
             import numpy as np
             from ml_models import LSTMClassifier, GRUClassifier, GRURegressor
-            
+
+            # Resolve device
+            if device == 'cuda' and not torch.cuda.is_available():
+                device = 'cpu'
+            torch_device = torch.device(device)
+
             model_type = model_info['type']
             numpy_state_dict = model_info['state_dict']
-            
-            # Convert numpy arrays back to tensors on the target device
+
+            # Convert numpy arrays back to tensors on CPU first
             state_dict = {}
             for key, value in numpy_state_dict.items():
                 if isinstance(value, np.ndarray):
-                    # Convert numpy array to tensor and move to device
-                    state_dict[key] = torch.from_numpy(value).to(device)
+                    state_dict[key] = torch.from_numpy(value)  # keep on CPU for load_state_dict
                 else:
                     state_dict[key] = value
-            
-            # Reconstruct model based on type
+
+            # Reconstruct model based on type (on CPU)
             if model_type == 'GRUClassifier':
                 model = GRUClassifier(
                     model_info['input_size'],
@@ -159,12 +192,17 @@ def _reconstruct_model_from_info(model_info, device='cuda'):
                 )
             else:
                 return None
-            
-            # Load state dict (already on device) and set to eval mode
+
+            # Load state dict on CPU, then move to target device
             model.load_state_dict(state_dict)
+            model = model.to(torch_device)
             model.eval()
             return model
         except (ImportError, AttributeError, Exception) as e:
+            import sys
+            sys.stderr.write(f"  ⚠️ ERROR in _reconstruct_model_from_info: {e}\n")
+            sys.stderr.write(f"     Model type: {model_info.get('type', 'unknown')}\n")
+            sys.stderr.flush()
             return None
     return model_info  # For non-PyTorch models, return as-is
 
@@ -532,9 +570,9 @@ def optimize_thresholds_for_portfolio_parallel(optimization_params, num_processe
 # -----------------------------------------------------------------------------
 def backtest_worker(params: Tuple) -> Optional[Dict]:
     """Worker function for parallel backtesting."""
-    ticker, df_backtest, capital_per_stock, model_buy, model_sell, scaler, \
+    ticker, df_backtest, capital_per_stock, model_buy, model_sell, scaler, y_scaler, \
         feature_set, min_proba_buy, min_proba_sell, target_percentage, \
-        top_performers_data, use_simple_rule_strategy = params
+        top_performers_data, use_simple_rule_strategy, horizon_days = params
     
     # Initial log to confirm the worker has started for a ticker
     with open("logs/worker_debug.log", "a") as f:
@@ -551,6 +589,17 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
         print(f"  ⚠️ Skipping backtest for {ticker}: DataFrame is empty.")
         return None
         
+    # DEBUG: Log what we're passing to the environment
+    import sys
+    sys.stderr.write(f"\n[DEBUG {ticker}] Backtest worker starting:\n")
+    sys.stderr.write(f"  - model_buy type: {type(model_buy).__name__ if model_buy else 'None'}\n")
+    sys.stderr.write(f"  - model_sell type: {type(model_sell).__name__ if model_sell else 'None'}\n")
+    sys.stderr.write(f"  - scaler type: {type(scaler).__name__ if scaler else 'None'}\n")
+    sys.stderr.write(f"  - y_scaler type: {type(y_scaler).__name__ if y_scaler else 'None'}\n")
+    sys.stderr.write(f"  - use_gate: {USE_MODEL_GATE}\n")
+    sys.stderr.write(f"  - use_simple_rule_strategy: {use_simple_rule_strategy}\n")
+    sys.stderr.flush()
+    
     try:
         env = RuleTradingEnv(
             df=df_backtest.copy(),
@@ -560,11 +609,13 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             model_buy=model_buy,
             model_sell=model_sell,
             scaler=scaler,
+            y_scaler=y_scaler,  # ✅ Pass y_scaler
             use_gate=USE_MODEL_GATE,
             feature_set=feature_set,
             per_ticker_min_proba_buy=None,
             per_ticker_min_proba_sell=None,
-            use_simple_rule_strategy=use_simple_rule_strategy
+            use_simple_rule_strategy=use_simple_rule_strategy,
+            horizon_days=horizon_days
         )
         final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, shares_before_liquidation = env.run()
 
@@ -680,18 +731,46 @@ def _run_portfolio_backtest(
     models_buy: Dict,
     models_sell: Dict,
     scalers: Dict,
+    y_scalers: Dict,  # ✅ Added y_scalers parameter
     optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]],
     capital_per_stock: float,
     target_percentage: float,
     run_parallel: bool,
     period_name: str,
     top_performers_data: List[Tuple],
-    use_simple_rule_strategy: bool = False
+    use_simple_rule_strategy: bool = False,
+    horizon_days: int = 20
 ) -> Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]]]:
     """Helper function to run portfolio backtest for a given period."""
     num_processes = cpu_count() - 5 # Use NUM_PROCESSES from config if available, otherwise default
 
     backtest_params = []
+    preview_predictions: List[Tuple[str, float]] = []
+
+    def quick_last_prediction(ticker: str, df_slice: pd.DataFrame, model, scaler, y_scaler, feature_set, horizon_days: int):
+        """Compute a single prediction on the latest window for ranking."""
+        try:
+            if model is None or scaler is None:
+                return -np.inf
+            if len(df_slice) < SEQUENCE_LENGTH + horizon_days:
+                return -np.inf
+            df_work = df_slice.copy()
+            cols_to_use = feature_set if feature_set else [c for c in df_work.columns if c not in ["TargetReturnBuy", "TargetReturnSell"]]
+            df_feats = df_work[cols_to_use].tail(SEQUENCE_LENGTH)
+            X_scaled = scaler.transform(df_feats)
+            import torch
+            model.eval()
+            with torch.no_grad():
+                X_tensor = torch.tensor(X_scaled, dtype=torch.float32).unsqueeze(0)
+                out = model(X_tensor)
+                pred_scaled = float(out.cpu().numpy()[0][0])
+                if y_scaler is not None:
+                    pred = y_scaler.inverse_transform([[pred_scaled]])[0][0]
+                else:
+                    pred = pred_scaled
+                return pred
+        except Exception:
+            return -np.inf
     for ticker in top_tickers:
         # Use optimized parameters if available, otherwise fall back to global defaults
         min_proba_buy_ticker = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
@@ -712,16 +791,34 @@ def _run_portfolio_backtest(
             print(f"  ⚠️ Could not slice backtest data for {ticker} for period {period_name}. Skipping.")
             continue
 
+        # Quick prediction for ranking (use buy model)
+        preview_pred = quick_last_prediction(
+            ticker,
+            ticker_backtest_data,
+            models_buy.get(ticker),
+            scalers.get(ticker),
+            y_scalers.get(ticker),
+            feature_set_for_worker,
+            horizon_days
+        )
+        preview_predictions.append((ticker, preview_pred))
+
         # Prepare PyTorch models for multiprocessing
         model_buy_prepared = _prepare_model_for_multiprocessing(models_buy.get(ticker))
         model_sell_prepared = _prepare_model_for_multiprocessing(models_sell.get(ticker))
         
         backtest_params.append((
             ticker, ticker_backtest_data.copy(), capital_per_stock,
-            model_buy_prepared, model_sell_prepared, scalers.get(ticker),
+            model_buy_prepared, model_sell_prepared, scalers.get(ticker), y_scalers.get(ticker),  # ✅ Added y_scaler
             feature_set_for_worker, min_proba_buy_ticker, min_proba_sell_ticker, target_percentage_ticker,
-            top_performers_data, use_simple_rule_strategy
+            top_performers_data, use_simple_rule_strategy, horizon_days
         ))
+
+    # Keep only top 3 tickers by AI-predicted return
+    preview_predictions = sorted(preview_predictions, key=lambda x: x[1], reverse=True)
+    allowed_tickers = set([t for t, _ in preview_predictions[:3]])
+    backtest_params = [p for p in backtest_params if p[0] in allowed_tickers]
+    top_tickers = [p[0] for p in backtest_params]
 
     portfolio_values = []
     processed_tickers = []

@@ -49,7 +49,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 5        # Number of top performers to select (increased for more opportunities)
+N_TOP_TICKERS           = 3        # Always pick top 3 predicted performers
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -91,10 +91,10 @@ FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
 CLASS_HORIZON           = 20         # days ahead for return prediction (aligned with holding period)
 # ✅ REGRESSION MODE: Thresholds based on predicted return percentages, not probabilities
-MIN_PROBA_BUY           = 0.05      # Predicted return threshold (5% minimum return to buy)
-MIN_PROBA_BUY_OPTIONS   = [0.03, 0.05, 0.07, 0.10]  # Return thresholds to optimize
-MIN_PROBA_SELL          = -0.02     # Exit if predicted return drops below -2%
-MIN_PROBA_SELL_OPTIONS  = [-0.05, -0.02, 0.00, 0.02]  # Sell thresholds to optimize
+MIN_PROBA_BUY           = -1.0      # Disable buy threshold (always eligible)
+MIN_PROBA_BUY_OPTIONS   = [-1.0]    # No optimization, keep disabled
+MIN_PROBA_SELL          = 1.0       # Disable sell threshold via gate
+MIN_PROBA_SELL_OPTIONS  = [1.0]     # No optimization, keep disabled
 TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification (balanced for 3-day moves)
 USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request

@@ -27,12 +27,13 @@ except ImportError:
 class RuleTradingEnv:
     """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
     def __init__(self, df: pd.DataFrame, ticker: str, initial_balance: float, transaction_cost: float,
-                 model_buy=None, model_sell=None, scaler=None, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, use_gate: bool = USE_MODEL_GATE,
+                 model_buy=None, model_sell=None, scaler=None, y_scaler=None, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, use_gate: bool = USE_MODEL_GATE,
                  feature_set: Optional[List[str]] = None,
                  per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None,
                  use_simple_rule_strategy: bool = USE_SIMPLE_RULE_STRATEGY,
                  simple_rule_trailing_stop_percent: float = SIMPLE_RULE_TRAILING_STOP_PERCENT,
-                 simple_rule_take_profit_percent: float = SIMPLE_RULE_TAKE_PROFIT_PERCENT):
+                 simple_rule_take_profit_percent: float = SIMPLE_RULE_TAKE_PROFIT_PERCENT,
+                 horizon_days: int = 20):
         if "Close" not in df.columns:
             raise ValueError("DataFrame must contain 'Close' column.")
         self.df = df.reset_index()
@@ -42,12 +43,24 @@ class RuleTradingEnv:
         self.model_buy = model_buy
         self.model_sell = model_sell
         self.scaler = scaler
+        self.y_scaler = y_scaler  # ✅ Store y_scaler for inverse transforming predictions
         self.min_proba_buy = float(per_ticker_min_proba_buy if per_ticker_min_proba_buy is not None else min_proba_buy)
         self.min_proba_sell = float(per_ticker_min_proba_sell if per_ticker_min_proba_sell is not None else min_proba_sell)
         self.use_gate = bool(use_gate) and (scaler is not None)
         self.use_simple_rule_strategy = use_simple_rule_strategy
         self.simple_rule_trailing_stop_percent = simple_rule_trailing_stop_percent
+        
+        # DEBUG: Log environment initialization
+        import sys
+        sys.stderr.write(f"[ENV {ticker}] RuleTradingEnv initialized:\n")
+        sys.stderr.write(f"  - use_gate (computed): {self.use_gate} (input use_gate={use_gate}, scaler={'OK' if scaler else 'None'})\n")
+        sys.stderr.write(f"  - model_buy: {type(model_buy).__name__ if model_buy else 'None'}\n")
+        sys.stderr.write(f"  - model_sell: {type(model_sell).__name__ if model_sell else 'None'}\n")
+        sys.stderr.write(f"  - y_scaler: {type(y_scaler).__name__ if y_scaler else 'None'}\n")
+        sys.stderr.write(f"  - use_simple_rule_strategy: {use_simple_rule_strategy}\n")
+        sys.stderr.flush()
         self.simple_rule_take_profit_percent = simple_rule_take_profit_percent
+        self.horizon_days = int(horizon_days)  # Prediction horizon for evaluation
         self.feature_set = feature_set if feature_set is not None else [
             "Close", "Volume", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "ATR",
             "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
@@ -284,7 +297,13 @@ class RuleTradingEnv:
         return str(i)
 
     def _get_model_prediction(self, i: int, model) -> float:
+        # DEBUG: Log first prediction attempt
+        if i == 0:
+            print(f"  [DEBUG {self.ticker}] Step 0: use_gate={self.use_gate}, model={type(model).__name__ if model else 'None'}, scaler={type(self.scaler).__name__ if self.scaler else 'None'}, y_scaler={type(self.y_scaler).__name__ if self.y_scaler else 'None'}")
+        
         if not self.use_gate or model is None:
+            if i == 0:
+                print(f"  [DEBUG {self.ticker}] Step 0: Returning 0.0 early! use_gate={self.use_gate}, model_is_None={model is None}")
             return 0.0
         
         model_feature_names = self.scaler.feature_names_in_ if hasattr(self.scaler, 'feature_names_in_') else self.feature_set
@@ -358,14 +377,31 @@ class RuleTradingEnv:
                 model.eval()
                 with torch.no_grad():
                     output = model(X_tensor)
-                    return float(output.cpu().numpy()[0][0])
+                    scaled_prediction = float(output.cpu().numpy()[0][0])
+                    
+                    # ✅ Inverse transform if y_scaler is available (for regression)
+                    if self.y_scaler is not None and USE_REGRESSION_MODEL:
+                        prediction = self.y_scaler.inverse_transform([[scaled_prediction]])[0][0]
+                        # DEBUG: Log first few predictions
+                        if i < 3:
+                            print(f"  [DEBUG {self.ticker}] Step {i}: scaled_pred={scaled_prediction:.6f}, inverse_pred={prediction:.6f}, scaler_min={self.y_scaler.data_min_[0]:.4f}, scaler_max={self.y_scaler.data_max_[0]:.4f}")
+                        return prediction
+                    else:
+                        return scaled_prediction
             else:
                 # For sklearn models
                 X_scaled_np = self.scaler.transform(X_df)
                 X = pd.DataFrame(X_scaled_np, columns=model_feature_names)
                 # Check if regression or classification
                 if USE_REGRESSION_MODEL or not hasattr(model, 'predict_proba'):
-                    return float(model.predict(X)[0])  # Regression
+                    scaled_prediction = float(model.predict(X)[0])  # Regression
+                    
+                    # ✅ Inverse transform if y_scaler is available
+                    if self.y_scaler is not None:
+                        prediction = self.y_scaler.inverse_transform([[scaled_prediction]])[0][0]
+                        return prediction
+                    else:
+                        return scaled_prediction
                 else:
                     return float(model.predict_proba(X)[0][1])  # Classification
         except Exception as e:
@@ -381,11 +417,11 @@ class RuleTradingEnv:
         # DEBUG: Log predictions vs actual returns for first 30 days
         if i < 30 and i % 5 == 0:  # Every 5th day for first 30 days
             current_price = self.df.loc[i, "Close"]
-            # Calculate actual 20-day forward return if we have data
-            if i + 20 < len(self.df):
-                future_price = self.df.loc[i + 20, "Close"]
-                actual_return_20d = (future_price / current_price - 1.0) * 100
-                print(f"  [{self.ticker}] Day {i}: BUY Predicted={self.last_buy_prob*100:.2f}%, Actual 20d Return={actual_return_20d:.2f}%, Threshold={self.min_proba_buy*100:.2f}%")
+            # Calculate actual forward return based on the model's horizon
+            if i + self.horizon_days < len(self.df):
+                future_price = self.df.loc[i + self.horizon_days, "Close"]
+                actual_return = (future_price / current_price - 1.0) * 100
+                print(f"  [{self.ticker}] Day {i}: BUY Predicted={self.last_buy_prob*100:.2f}%, Actual {self.horizon_days}d Return={actual_return:.2f}%, Threshold={self.min_proba_buy*100:.2f}%")
         
         return self.last_buy_prob >= self.min_proba_buy
 
