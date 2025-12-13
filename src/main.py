@@ -101,6 +101,7 @@ if not _script_initialized:
 
 import os
 from backtesting import optimize_thresholds_for_portfolio_parallel, _prepare_model_for_multiprocessing
+from portfolio_rebalancing import run_portfolio_rebalancing_backtest
 from summary_phase import print_final_summary
 from training_phase import train_worker, train_models_for_period
 from backtesting_phase import _run_portfolio_backtest
@@ -460,6 +461,14 @@ def main(
         all_tickers_data.index = all_tickers_data.index.tz_convert('UTC')
     print("✅ Comprehensive data download complete.")
 
+    # Cap bt_end to the latest available data to avoid future-dated slices
+    last_available = all_tickers_data.index.max()
+    if last_available < bt_end:
+        print(f"ℹ️ Capping backtest end date from {bt_end.date()} to last available data {last_available.date()}")
+        end_date = last_available
+        bt_end = last_available
+    print(f"📅 Using backtest end date: {bt_end.date()} (last available: {last_available.date()})")
+
     # --- Fetch SPY data for Market Momentum feature ---
     print("🔍 Fetching SPY data for Market Momentum feature...")
     spy_df = load_prices_robust('SPY', earliest_date_needed, end_date)
@@ -715,7 +724,7 @@ def main(
     capital_per_stock_ytd = INVESTMENT_PER_STOCK
 
     # --- Training Models (for 3-Month Backtest) ---
-    models_buy_3month, models_sell_3month, scalers_3month = {}, {}, {}
+    models_buy_3month, models_sell_3month, scalers_3month, y_scalers_3month = {}, {}, {}, {}
     gru_hyperparams_buy_dict_3month, gru_hyperparams_sell_dict_3month = {}, {}
     failed_training_tickers_3month = {}
     
@@ -739,8 +748,8 @@ def main(
         if not models_buy_3month and USE_MODEL_GATE:
             print("⚠️ No models were trained for 3-Month backtest. Model-gating will be disabled for this run.\n")
 
-    # Filter out failed tickers from top_tickers_ytd_filtered for subsequent steps
-    top_tickers_3month_filtered = [t for t in top_tickers_ytd_filtered if t not in failed_training_tickers_3month]
+    # Filter to only tickers with trained models (skip failures/absent models)
+    top_tickers_3month_filtered = [t for t in top_tickers_ytd_filtered if t in models_buy_3month and t in scalers_3month]
     print(f"  ℹ️ {len(failed_training_tickers_3month)} tickers failed 3-Month model training and will be skipped: {', '.join(failed_training_tickers_3month.keys())}")
 
     # Update top_performers_data to reflect only successfully trained tickers
@@ -750,7 +759,7 @@ def main(
     capital_per_stock_3month = INVESTMENT_PER_STOCK
 
     # --- Training Models (for 1-Month Backtest) ---
-    models_buy_1month, models_sell_1month, scalers_1month = {}, {}, {}
+    models_buy_1month, models_sell_1month, scalers_1month, y_scalers_1month = {}, {}, {}, {}
     failed_training_tickers_1month = {}
     
     if ENABLE_1MONTH_TRAINING:
@@ -773,8 +782,8 @@ def main(
         if not models_buy_1month and USE_MODEL_GATE:
             print("⚠️ No models were trained for 1-Month backtest. Model-gating will be disabled for this run.\n")
 
-    # Filter out failed tickers from top_tickers_3month_filtered for subsequent steps
-    top_tickers_1month_filtered = [t for t in top_tickers_3month_filtered if t not in failed_training_tickers_1month]
+    # Filter to only tickers with trained models (skip failures/absent models)
+    top_tickers_1month_filtered = [t for t in top_tickers_3month_filtered if t in models_buy_1month and t in scalers_1month]
     print(f"  ℹ️ {len(failed_training_tickers_1month)} tickers failed 1-Month model training and will be skipped: {', '.join(failed_training_tickers_1month.keys())}")
 
     # Update top_performers_data to reflect only successfully trained tickers
@@ -1255,27 +1264,31 @@ def main(
         print(f"[DEBUG MAIN] 1-Year models_buy values types: {[type(v).__name__ if v else 'None' for v in models_buy.values()]}")
         print(f"[DEBUG MAIN] 1-Year models_sell keys: {list(models_sell.keys())}")
         
-        # --- Run 1-Year Backtest (AI Strategy) ---
-        print("\n🔍 Step 8: Running 1-Year Backtest (AI Strategy)...")
-        final_strategy_value_1y, strategy_results_1y, processed_tickers_1y, performance_metrics_1y, _ = _run_portfolio_backtest(
+        # --- Run 1-Year Backtest (AI Strategy with Daily Rebalancing) ---
+        print("\n🔍 Step 8: Running 1-Year Backtest (AI Strategy - Daily Rebalancing)...")
+        # Keep initial capital aligned with the number of positions we intend to hold (top N)
+        n_top_rebal = 3
+        rebal_results_1y = run_portfolio_rebalancing_backtest(
             all_tickers_data=all_tickers_data,
+            candidate_tickers=top_tickers_1y_filtered,
+            models_buy=models_buy,
+            scalers=scalers,
+            y_scalers=y_scalers,
             start_date=bt_start_1y,
             end_date=bt_end,
-            top_tickers=top_tickers_1y_filtered,
-            models_buy=models_buy,
-            models_sell=models_sell,
-            scalers=scalers,
-            y_scalers=y_scalers,  # ✅ Pass y_scalers
-            optimized_params_per_ticker=optimized_params_per_ticker,
-            capital_per_stock=capital_per_stock_1y,
-            target_percentage=target_percentage, 
-            run_parallel=run_parallel,
-            period_name="1-Year (AI)",
-            top_performers_data=top_performers_data_1y_filtered,
-            use_simple_rule_strategy=False,
-            horizon_days=PERIOD_HORIZONS["1-Year"]  # 252 trading days
+            initial_capital=capital_per_stock_1y * n_top_rebal,
+            n_top=n_top_rebal
         )
-        ai_1y_return = ((final_strategy_value_1y - (capital_per_stock_1y * len(top_tickers_1y_filtered))) / abs(capital_per_stock_1y * len(top_tickers_1y_filtered))) * 100 if (capital_per_stock_1y * len(top_tickers_1y_filtered)) != 0 else 0
+        
+        initial_capital_1y = capital_per_stock_1y * n_top_rebal
+        final_strategy_value_1y = rebal_results_1y.get('final_value', initial_capital_1y)
+        ai_1y_return = rebal_results_1y.get('total_return', 0) * 100
+        prediction_stats_1y = rebal_results_1y.get('prediction_stats', {})
+        # Limit processed tickers to the final holdings (top N) if available
+        final_holdings_1y = rebal_results_1y.get('final_holdings', {})
+        processed_tickers_1y = list(final_holdings_1y.keys()) if final_holdings_1y else top_tickers_1y_filtered[:3]
+        strategy_results_1y = []  # No per-ticker results in portfolio strategy
+        performance_metrics_1y = []
         
         # 🔍 DEBUG: Check backtest results
         print(f"\n[DEBUG] 1-Year Backtest Results:")
@@ -1342,6 +1355,19 @@ def main(
                     'individual_bh_return': 0.0,
                     'final_shares': 0.0
                 })
+        
+        # Build prediction vs B&H rows for all candidate tickers (whether AI held them or not)
+        bh_returns_lookup = {d['ticker']: d.get('individual_bh_return') for d in performance_metrics_buy_hold_1y_actual}
+        prediction_vs_bh_1y = []
+        for ticker in top_tickers_1y_filtered:
+            stats = prediction_stats_1y.get(ticker, {}) if 'prediction_stats_1y' in locals() else {}
+            prediction_vs_bh_1y.append({
+                'ticker': ticker,
+                'pred_mean_pct': stats.get('pred_mean_pct'),
+                'pred_min_pct': stats.get('pred_min_pct'),
+                'pred_max_pct': stats.get('pred_max_pct'),
+                'individual_bh_return': bh_returns_lookup.get(ticker)
+            })
         final_buy_hold_value_1y = sum(buy_hold_results_1y) + (len(top_tickers_1y_filtered) - len(buy_hold_results_1y)) * capital_per_stock_1y
         print("✅ 1-Year Buy & Hold calculation complete.")
     else:
@@ -1355,27 +1381,28 @@ def main(
         ytd_horizon = int(ytd_days * 0.7)  # Approximate trading days
         if ytd_horizon <= 0:
             ytd_horizon = 252
-        # --- Run YTD Backtest (AI Strategy) ---
-        print("\n🔍 Step 9: Running YTD Backtest (AI Strategy)...")
-        final_strategy_value_ytd, strategy_results_ytd, processed_tickers_ytd_local, performance_metrics_ytd, _ = _run_portfolio_backtest(
+        # --- Run YTD Backtest (AI Strategy - Daily Rebalancing) ---
+        print("\n🔍 Step 9: Running YTD Backtest (AI Strategy - Daily Rebalancing)...")
+        n_top_rebal_ytd = 3
+        rebal_results_ytd = run_portfolio_rebalancing_backtest(
             all_tickers_data=all_tickers_data,
+            candidate_tickers=top_tickers_ytd_filtered,
+            models_buy=models_buy_ytd,
+            scalers=scalers_ytd,
+            y_scalers=y_scalers_ytd,
             start_date=ytd_start_date,
             end_date=bt_end,
-            top_tickers=top_tickers_ytd_filtered,
-            models_buy=models_buy_ytd,
-            models_sell=models_sell_ytd,
-            scalers=scalers_ytd,
-            y_scalers=y_scalers_ytd,  # ✅ Pass y_scalers
-            optimized_params_per_ticker=optimized_params_per_ticker_ytd,
-            capital_per_stock=capital_per_stock_ytd,
-            target_percentage=target_percentage,
-            run_parallel=run_parallel,
-            period_name="YTD (AI)",
-            top_performers_data=top_performers_data_ytd_filtered,
-            use_simple_rule_strategy=False,
-            horizon_days=ytd_horizon  # Dynamic YTD horizon
+            initial_capital=capital_per_stock_ytd * n_top_rebal_ytd,
+            n_top=n_top_rebal_ytd
         )
-        ai_ytd_return = ((final_strategy_value_ytd - (capital_per_stock_ytd * len(top_tickers_ytd_filtered))) / abs(capital_per_stock_ytd * len(top_tickers_ytd_filtered))) * 100 if (capital_per_stock_ytd * len(top_tickers_ytd_filtered)) != 0 else 0
+        initial_capital_ytd = capital_per_stock_ytd * n_top_rebal_ytd
+        final_strategy_value_ytd = rebal_results_ytd.get('final_value', initial_capital_ytd)
+        ai_ytd_return = rebal_results_ytd.get('total_return', 0) * 100
+        prediction_stats_ytd = rebal_results_ytd.get('prediction_stats', {})
+        final_holdings_ytd = rebal_results_ytd.get('final_holdings', {})
+        processed_tickers_ytd = list(final_holdings_ytd.keys()) if final_holdings_ytd else top_tickers_ytd_filtered[:n_top_rebal_ytd]
+        strategy_results_ytd = []  # No per-ticker results in portfolio strategy
+        performance_metrics_ytd = []
 
         # --- Run YTD Backtest (Simple Rule Strategy) ---
         print("\n🔍 Running YTD Backtest (Simple Rule Strategy)...")
@@ -1434,33 +1461,47 @@ def main(
                 })
         final_buy_hold_value_ytd = sum(buy_hold_results_ytd) + (len(top_tickers_ytd_filtered) - len(buy_hold_results_ytd)) * capital_per_stock_ytd
         print("✅ YTD Buy & Hold calculation complete.")
+
+        # Build prediction vs B&H rows for YTD
+        bh_returns_lookup_ytd = {d['ticker']: d.get('individual_bh_return') for d in performance_metrics_buy_hold_ytd_actual}
+        prediction_vs_bh_ytd = []
+        for ticker in top_tickers_ytd_filtered:
+            stats = prediction_stats_ytd.get(ticker, {}) if 'prediction_stats_ytd' in locals() else {}
+            prediction_vs_bh_ytd.append({
+                'ticker': ticker,
+                'pred_mean_pct': stats.get('pred_mean_pct'),
+                'pred_min_pct': stats.get('pred_min_pct'),
+                'pred_max_pct': stats.get('pred_max_pct'),
+                'individual_bh_return': bh_returns_lookup_ytd.get(ticker)
+            })
     else:
         print("\nℹ️ YTD Backtest is disabled by ENABLE_YTD_BACKTEST flag.")
 
     # --- Run 3-Month Backtest ---
     if ENABLE_3MONTH_BACKTEST:
         print("\n🔍 Step 10: Running 3-Month Backtest...")
-        # --- Run 3-Month Backtest (AI Strategy) ---
-        print("\n🔍 Step 10: Running 3-Month Backtest (AI Strategy)...")
-        final_strategy_value_3month, strategy_results_3month, processed_tickers_3month_local, performance_metrics_3month, _ = _run_portfolio_backtest(
+        # --- Run 3-Month Backtest (AI Strategy - Daily Rebalancing) ---
+        print("\n🔍 Step 10: Running 3-Month Backtest (AI Strategy - Daily Rebalancing)...")
+        n_top_rebal_3m = 3
+        rebal_results_3month = run_portfolio_rebalancing_backtest(
             all_tickers_data=all_tickers_data,
+            candidate_tickers=top_tickers_3month_filtered,
+            models_buy=models_buy_3month,
+            scalers=scalers_3month,
+            y_scalers=y_scalers_3month,
             start_date=bt_start_3month,
             end_date=bt_end,
-            top_tickers=top_tickers_3month_filtered,
-            models_buy=models_buy_3month,
-            models_sell=models_sell_3month,
-            scalers=scalers_3month,
-            y_scalers=y_scalers_3month,  # ✅ Pass y_scalers
-            optimized_params_per_ticker=optimized_params_per_ticker_3month,
-            capital_per_stock=capital_per_stock_3month,
-            target_percentage=target_percentage,
-            run_parallel=run_parallel,
-            period_name="3-Month (AI)",
-            top_performers_data=top_performers_data_3month_filtered,
-            use_simple_rule_strategy=False,
-            horizon_days=PERIOD_HORIZONS["3-Month"]  # 63 trading days
+            initial_capital=capital_per_stock_3month * n_top_rebal_3m,
+            n_top=n_top_rebal_3m
         )
-        ai_3month_return = ((final_strategy_value_3month - (capital_per_stock_3month * len(top_tickers_3month_filtered))) / abs(capital_per_stock_3month * len(top_tickers_3month_filtered))) * 100 if (capital_per_stock_3month * len(top_tickers_3month_filtered)) != 0 else 0
+        initial_capital_3month = capital_per_stock_3month * n_top_rebal_3m
+        final_strategy_value_3month = rebal_results_3month.get('final_value', initial_capital_3month)
+        ai_3month_return = rebal_results_3month.get('total_return', 0) * 100
+        prediction_stats_3month = rebal_results_3month.get('prediction_stats', {})
+        final_holdings_3month = rebal_results_3month.get('final_holdings', {})
+        processed_tickers_3month = list(final_holdings_3month.keys()) if final_holdings_3month else top_tickers_3month_filtered[:n_top_rebal_3m]
+        strategy_results_3month = []  # No per-ticker results in portfolio strategy
+        performance_metrics_3month = []
 
         # --- Run 3-Month Backtest (Simple Rule Strategy) ---
         print("\n🔍 Running 3-Month Backtest (Simple Rule Strategy)...")
@@ -1519,33 +1560,47 @@ def main(
                 })
         final_buy_hold_value_3month = sum(buy_hold_results_3month) + (len(top_tickers_3month_filtered) - len(buy_hold_results_3month)) * capital_per_stock_3month
         print("✅ 3-Month Buy & Hold calculation complete.")
+
+        # Build prediction vs B&H rows for 3-Month
+        bh_returns_lookup_3m = {d['ticker']: d.get('individual_bh_return') for d in performance_metrics_buy_hold_3month_actual}
+        prediction_vs_bh_3month = []
+        for ticker in top_tickers_3month_filtered:
+            stats = prediction_stats_3month.get(ticker, {}) if 'prediction_stats_3month' in locals() else {}
+            prediction_vs_bh_3month.append({
+                'ticker': ticker,
+                'pred_mean_pct': stats.get('pred_mean_pct'),
+                'pred_min_pct': stats.get('pred_min_pct'),
+                'pred_max_pct': stats.get('pred_max_pct'),
+                'individual_bh_return': bh_returns_lookup_3m.get(ticker)
+            })
     else:
         print("\nℹ️ 3-Month Backtest is disabled by ENABLE_3MONTH_BACKTEST flag.")
 
     # --- Run 1-Month Backtest ---
     if ENABLE_1MONTH_BACKTEST:
         print("\n🔍 Step 11: Running 1-Month Backtest...")
-        # --- Run 1-Month Backtest (AI Strategy) ---
-        print("\n🔍 Step 11: Running 1-Month Backtest (AI Strategy)...")
-        final_strategy_value_1month, strategy_results_1month, processed_tickers_1month_local, performance_metrics_1month, _ = _run_portfolio_backtest(
+        # --- Run 1-Month Backtest (AI Strategy - Daily Rebalancing) ---
+        print("\n🔍 Step 11: Running 1-Month Backtest (AI Strategy - Daily Rebalancing)...")
+        n_top_rebal_1m = 3
+        rebal_results_1month = run_portfolio_rebalancing_backtest(
             all_tickers_data=all_tickers_data,
+            candidate_tickers=top_tickers_1month_filtered,
+            models_buy=models_buy_1month,
+            scalers=scalers_1month,
+            y_scalers=y_scalers_1month,
             start_date=bt_start_1month,
             end_date=bt_end,
-            top_tickers=top_tickers_1month_filtered,
-            models_buy=models_buy_1month,
-            models_sell=models_sell_1month,
-            scalers=scalers_1month,
-            y_scalers=y_scalers_1month,  # ✅ Pass y_scalers
-            optimized_params_per_ticker=optimized_params_per_ticker_1month,
-            capital_per_stock=capital_per_stock_1month,
-            target_percentage=target_percentage, 
-            run_parallel=run_parallel,
-            period_name="1-Month (AI)",
-            top_performers_data=top_performers_data_1month_filtered,
-            use_simple_rule_strategy=False,
-            horizon_days=PERIOD_HORIZONS["1-Month"]  # 21 trading days
+            initial_capital=capital_per_stock_1month * n_top_rebal_1m,
+            n_top=n_top_rebal_1m
         )
-        ai_1month_return = ((final_strategy_value_1month - (capital_per_stock_1month * len(top_tickers_1month_filtered))) / abs(capital_per_stock_1month * len(top_tickers_1month_filtered))) * 100 if (capital_per_stock_1month * len(top_tickers_1month_filtered)) != 0 else 0
+        initial_capital_1month = capital_per_stock_1month * n_top_rebal_1m
+        final_strategy_value_1month = rebal_results_1month.get('final_value', initial_capital_1month)
+        ai_1month_return = rebal_results_1month.get('total_return', 0) * 100
+        prediction_stats_1month = rebal_results_1month.get('prediction_stats', {})
+        final_holdings_1month = rebal_results_1month.get('final_holdings', {})
+        processed_tickers_1month = list(final_holdings_1month.keys()) if final_holdings_1month else top_tickers_1month_filtered[:n_top_rebal_1m]
+        strategy_results_1month = []  # No per-ticker results in portfolio strategy
+        performance_metrics_1month = []
 
         # --- Run 1-Month Backtest (Simple Rule Strategy) ---
         print("\n🔍 Running 1-Month Backtest (Simple Rule Strategy)...")
@@ -1604,6 +1659,19 @@ def main(
                 })
         final_buy_hold_value_1month = sum(buy_hold_results_1month) + (len(top_tickers_1month_filtered) - len(buy_hold_results_1month)) * capital_per_stock_1month
         print("✅ 1-Month Buy & Hold calculation complete.")
+
+        # Build prediction vs B&H rows for 1-Month
+        bh_returns_lookup_1m = {d['ticker']: d.get('individual_bh_return') for d in performance_metrics_buy_hold_1month_actual}
+        prediction_vs_bh_1month = []
+        for ticker in top_tickers_1month_filtered:
+            stats = prediction_stats_1month.get(ticker, {}) if 'prediction_stats_1month' in locals() else {}
+            prediction_vs_bh_1month.append({
+                'ticker': ticker,
+                'pred_mean_pct': stats.get('pred_mean_pct'),
+                'pred_min_pct': stats.get('pred_min_pct'),
+                'pred_max_pct': stats.get('pred_max_pct'),
+                'individual_bh_return': bh_returns_lookup_1m.get(ticker)
+            })
     else:
         print("\nℹ️ 1-Month Backtest is disabled by ENABLE_1MONTH_BACKTEST flag.")
 
@@ -1621,6 +1689,9 @@ def main(
     all_failed_tickers.update(failed_training_tickers_ytd)
     all_failed_tickers.update(failed_training_tickers_3month)
     all_failed_tickers.update(failed_training_tickers_1month) # Add 1-month failed tickers
+
+    # Distribute the portfolio-level final value across tickers for display (no per-ticker result in rebalancing mode)
+    per_ticker_portfolio_value_1y = (final_strategy_value_1y / len(processed_tickers_1y)) if processed_tickers_1y else INVESTMENT_PER_STOCK
 
     # Add successfully processed tickers
     for i, ticker in enumerate(processed_tickers_1y):
@@ -1650,7 +1721,7 @@ def main(
         
         final_results.append({
             'ticker': ticker,
-            'performance': strategy_results_1y[i],
+            'performance': per_ticker_portfolio_value_1y,
             'sharpe': perf_data['sharpe_ratio'],
             'one_year_perf': perf_1y_benchmark,
             'ytd_perf': ytd_perf_benchmark,
@@ -1693,8 +1764,8 @@ def main(
     print(f"  - final_strategy_value_3month: ${final_strategy_value_3month:,.2f}")
     print(f"  - final_strategy_value_1month: ${final_strategy_value_1month:,.2f}\n")
     
-    # ✅ FIX: Use actual capital invested (only for tickers that were backtested)
-    actual_initial_capital_1y = INVESTMENT_PER_STOCK * len(processed_tickers_1y)
+    # ✅ FIX: Use the same initial capital that was allocated to the portfolio backtest
+    actual_initial_capital_1y = initial_capital_1y
     actual_tickers_analyzed = len(processed_tickers_1y)
     
     print_final_summary(
@@ -1726,7 +1797,11 @@ def main(
         performance_metrics_simple_rule_1month=performance_metrics_simple_rule_1month,
         performance_metrics_buy_hold_ytd=performance_metrics_buy_hold_ytd_actual,
         performance_metrics_buy_hold_3month=performance_metrics_buy_hold_3month_actual,
-        performance_metrics_buy_hold_1month=performance_metrics_buy_hold_1month_actual
+        performance_metrics_buy_hold_1month=performance_metrics_buy_hold_1month_actual,
+        prediction_vs_bh_1y=prediction_vs_bh_1y if 'prediction_vs_bh_1y' in locals() else None,
+        prediction_vs_bh_ytd=prediction_vs_bh_ytd if 'prediction_vs_bh_ytd' in locals() else None,
+        prediction_vs_bh_3month=prediction_vs_bh_3month if 'prediction_vs_bh_3month' in locals() else None,
+        prediction_vs_bh_1month=prediction_vs_bh_1month if 'prediction_vs_bh_1month' in locals() else None
     )
     print("\n✅ Final summary prepared and printed.")
 

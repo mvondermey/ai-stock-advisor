@@ -15,9 +15,9 @@ TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
 VALID_TICKERS_CACHE_PATH = Path("logs/valid_tickers.json")
 CACHE_DAYS              = 7
 
-# Alpaca API credentials (set as environment variables for security)
-ALPACA_API_KEY          = os.environ.get("ALPACA_API_KEY")
-ALPACA_SECRET_KEY       = os.environ.get("ALPACA_SECRET_KEY")
+# Alpaca API credentials
+ALPACA_API_KEY          = "PK3FDQLRMEVFOAOU7VHD3Z6THE"
+ALPACA_SECRET_KEY       = "8By7ituNTmspLsWc191hQfviD3xaNNdd2opB8tJAfmK6"
 
 # TwelveData API credentials
 TWELVEDATA_API_KEY      = "aed912386d7c47939ebc28a86a96a021"
@@ -49,7 +49,7 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 3        # Always pick top 3 predicted performers
+N_TOP_TICKERS           = 5        # Evaluate 5 candidates; backtest ranks and picks top 3
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -61,7 +61,7 @@ NUM_PROCESSES           = None  # Will be set to cpu_count() - 2 in main.py
 BACKTEST_DAYS           = 365        # 1 year for backtest
 BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest
 BACKTEST_DAYS_1MONTH    = 32         # 1 month for backtest
-TRAIN_LOOKBACK_DAYS     = 400        # Training data (increased for more samples with shorter horizons)
+TRAIN_LOOKBACK_DAYS     = 1000       # Training data (increased for more samples - need 1000+ for neural networks)
 VALIDATION_DAYS         = 90         # ✅ FIX 4: Validation period for threshold optimization
 
 # --- Backtest Period Enable/Disable Flags ---
@@ -89,7 +89,7 @@ TRANSACTION_COST        = 0.001      # 0.1%
 FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
-CLASS_HORIZON           = 20         # days ahead for return prediction (aligned with holding period)
+CLASS_HORIZON           = 60         # days ahead for return prediction (default - quarterly outlook)
 # ✅ REGRESSION MODE: Thresholds based on predicted return percentages, not probabilities
 MIN_PROBA_BUY           = -1.0      # Disable buy threshold (always eligible)
 MIN_PROBA_BUY_OPTIONS   = [-1.0]    # No optimization, keep disabled
@@ -106,11 +106,14 @@ USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering
 USE_LOGISTIC_REGRESSION = False
 USE_SVM                 = False
 USE_MLP_CLASSIFIER      = False
-USE_LIGHTGBM            = False
-USE_XGBOOST             = False
+USE_LIGHTGBM            = True       # enable LightGBM
+USE_XGBOOST             = True       # enable XGBoost
 USE_LSTM                = False
-USE_GRU                 = True
-USE_RANDOM_FOREST       = False
+USE_GRU                 = True       # keep GRU enabled
+USE_RANDOM_FOREST       = True       # enable Random Forest
+USE_TCN                 = True       # Temporal Convolutional Network (sequence)
+USE_ELASTIC_NET         = True       # Baseline linear regressor (tabular)
+USE_RIDGE               = True       # Baseline linear regressor (tabular)
 
 # --- Simple Rule-Based Strategy specific hyperparameters
 USE_SIMPLE_RULE_STRATEGY = False
@@ -118,7 +121,7 @@ SIMPLE_RULE_TRAILING_STOP_PERCENT = 0.10 # 10% trailing stop
 SIMPLE_RULE_TAKE_PROFIT_PERCENT = 0.10   # 10% take profit
 
 # --- Deep Learning specific hyperparameters
-SEQUENCE_LENGTH         = 30         # Number of past days to consider for LSTM/GRU (balanced for learning)
+SEQUENCE_LENGTH         = 60         # 60 days lookback for longer horizon predictions
 LSTM_HIDDEN_SIZE        = 64
 LSTM_NUM_LAYERS         = 2
 LSTM_DROPOUT            = 0.2
@@ -127,19 +130,19 @@ LSTM_BATCH_SIZE         = 64
 LSTM_LEARNING_RATE      = 0.001
 
 # --- GRU Hyperparameter Search Ranges ---
-GRU_HIDDEN_SIZE_OPTIONS = [32, 64, 128]  # Focus on mid-range (removed 16, 256)
-GRU_NUM_LAYERS_OPTIONS  = [1, 2, 3]      # Reduced (removed 4 - too deep for short sequences)
-GRU_DROPOUT_OPTIONS     = [0.1, 0.2, 0.3]  # Narrowed range
-GRU_LEARNING_RATE_OPTIONS = [0.0005, 0.001, 0.005]  # Focus on effective range
-GRU_BATCH_SIZE_OPTIONS  = [32, 64, 128]  # Removed 16, 256
-GRU_EPOCHS_OPTIONS      = [30, 50, 70]   # Reduced for faster iteration
-GRU_CLASS_HORIZON_OPTIONS = [2, 3, 5]  # Short-term focus (removed 1 - too noisy, removed 7+)
+GRU_HIDDEN_SIZE_OPTIONS = [32, 64]         # Simplified for small datasets
+GRU_NUM_LAYERS_OPTIONS  = [1, 2]           # Shallow networks for small data
+GRU_DROPOUT_OPTIONS     = [0.1, 0.2, 0.3]  # Stable range
+GRU_LEARNING_RATE_OPTIONS = [0.0005, 0.001, 0.002]  # Slightly tighter top-end
+GRU_BATCH_SIZE_OPTIONS  = [64, 128]        # Practical batch sizes for GPU
+GRU_EPOCHS_OPTIONS      = [50, 70, 90]     # Allow a bit more training
+GRU_CLASS_HORIZON_OPTIONS = [10, 20, 40, 60]  # Match period horizons for optimization
 GRU_TARGET_PERCENTAGE_OPTIONS = [0.005, 0.006, 0.007]  # Narrow range for short-term moves
 ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True  # Enable hyperparameter search for new features
 
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
-SAVE_PLOTS              = True
+SAVE_PLOTS              = False     # Disable SHAP (causes errors with XGBoost Regressor)
 FORCE_TRAINING          = True
 CONTINUE_TRAINING_FROM_EXISTING = False
 FORCE_THRESHOLDS_OPTIMIZATION = False  # ✅ Kelly Criterion makes threshold optimization unnecessary
@@ -151,16 +154,20 @@ FORCE_PERCENTAGE_OPTIMIZATION = False  # Use B&H-based targets for each period
 LIVE_TRADING_MODEL_PERIOD = "Best"
 
 # --- Regression-Based Return Prediction ---
-USE_REGRESSION_MODEL = True  # Use regression to predict actual returns instead of classification
+USE_REGRESSION_MODEL = True  # keep regression targets (GRU regressor)
 
-# Period-specific horizons (trading days)
+# Period-specific horizons (trading days) - matched to period scale
 PERIOD_HORIZONS = {
-    "1-Year": 252,   # Trading days in a year
-    "YTD": None,     # Will be calculated dynamically based on YTD days
-    "3-Month": 63,   # ~3 months trading days
-    "1-Month": 21    # ~1 month trading days
+    "1-Year": 60,    # 1-Year (252d) → predict 60 days (quarterly outlook)
+    "YTD": 40,       # YTD (varies) → predict 40 days (2 months ahead)
+    "3-Month": 20,   # 3-Month (63d) → predict 20 days (monthly outlook)
+    "1-Month": 10    # 1-Month (21d) → predict 10 days (2 weeks ahead)
 }
 
 MIN_PREDICTED_RETURN = 0.05  # Only buy if predicted return > 5%
 MIN_SELL_RETURN = -0.02  # Sell if predicted return drops below -2% (cut losses)
 POSITION_SCALING_BY_CONFIDENCE = True  # Scale position size by predicted return magnitude
+
+
+# Architecture options
+TRY_LSTM_INSTEAD_OF_GRU = False  # Set to True to try LSTM instead of GRU for comparison

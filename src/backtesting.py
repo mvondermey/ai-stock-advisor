@@ -9,7 +9,7 @@ from multiprocessing import Pool, cpu_count, current_process
 from tqdm import tqdm
 from backtesting_env import RuleTradingEnv
 from ml_models import initialize_ml_libraries, train_and_evaluate_models
-from data_utils import load_prices, fetch_training_data, _ensure_dir
+from data_utils import load_prices, fetch_training_data, _ensure_dir, _calculate_technical_indicators
 import logging
 from pathlib import Path
 from config import (
@@ -638,7 +638,7 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
         else:
             bh_history_for_ticker.append(capital_per_stock)
 
-        # Print prediction summary
+        # Print prediction summary and store stats for final summary
         if hasattr(env, 'all_predictions_buy') and len(env.all_predictions_buy) > 0:
             import numpy as np
             preds_buy = np.array(env.all_predictions_buy)
@@ -646,6 +646,11 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             print(f"   Min: {np.min(preds_buy)*100:.4f}%, Max: {np.max(preds_buy)*100:.4f}%, Mean: {np.mean(preds_buy)*100:.4f}%")
             print(f"   Above 5% threshold: {np.sum(preds_buy >= 0.05)} out of {len(preds_buy)} days ({np.sum(preds_buy >= 0.05)/len(preds_buy)*100:.1f}%)")
             print(f"   Threshold: {min_proba_buy*100:.2f}%")
+            pred_min_pct = float(np.min(preds_buy) * 100)
+            pred_max_pct = float(np.max(preds_buy) * 100)
+            pred_mean_pct = float(np.mean(preds_buy) * 100)
+        else:
+            pred_min_pct = pred_max_pct = pred_mean_pct = None
 
         return {
             'ticker': ticker,
@@ -656,6 +661,9 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             'buy_prob': last_buy_prob,
             'sell_prob': last_sell_prob,
             'shares_before_liquidation': shares_before_liquidation,
+            'pred_min_pct': pred_min_pct,
+            'pred_max_pct': pred_max_pct,
+            'pred_mean_pct': pred_mean_pct,
             'buy_hold_history': bh_history_for_ticker
         }
     finally:
@@ -742,34 +750,91 @@ def _run_portfolio_backtest(
     horizon_days: int = 20
 ) -> Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]]]:
     """Helper function to run portfolio backtest for a given period."""
-    num_processes = cpu_count() - 5 # Use NUM_PROCESSES from config if available, otherwise default
+    num_processes = max(1, cpu_count() - 5) # Use NUM_PROCESSES from config if available, otherwise default
 
     backtest_params = []
     preview_predictions: List[Tuple[str, float]] = []
 
     def quick_last_prediction(ticker: str, df_slice: pd.DataFrame, model, scaler, y_scaler, feature_set, horizon_days: int):
-        """Compute a single prediction on the latest window for ranking."""
+        """
+        Use the trained model to predict returns for ranking.
+        Engineers features from raw OHLCV data first.
+        """
         try:
             if model is None or scaler is None:
+                # For simple rule strategy, allow neutral score so tickers are retained
+                if use_simple_rule_strategy:
+                    return 0.0
                 return -np.inf
-            if len(df_slice) < SEQUENCE_LENGTH + horizon_days:
+            
+            # Check if we have required OHLCV data
+            required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+            if not all(col in df_slice.columns for col in required_cols):
                 return -np.inf
-            df_work = df_slice.copy()
-            cols_to_use = feature_set if feature_set else [c for c in df_work.columns if c not in ["TargetReturnBuy", "TargetReturnSell"]]
-            df_feats = df_work[cols_to_use].tail(SEQUENCE_LENGTH)
-            X_scaled = scaler.transform(df_feats)
-            import torch
-            model.eval()
-            with torch.no_grad():
-                X_tensor = torch.tensor(X_scaled, dtype=torch.float32).unsqueeze(0)
-                out = model(X_tensor)
-                pred_scaled = float(out.cpu().numpy()[0][0])
-                if y_scaler is not None:
-                    pred = y_scaler.inverse_transform([[pred_scaled]])[0][0]
-                else:
-                    pred = pred_scaled
-                return pred
-        except Exception:
+            
+            # STEP 1: Engineer features from raw OHLCV data
+            df_with_features = df_slice.copy()
+            df_with_features = _calculate_technical_indicators(df_with_features)
+            df_with_features = df_with_features.dropna()
+
+            # If not enough rows remain after feature calc, bail out early
+            if df_with_features.empty:
+                return -np.inf
+
+            # STEP 2: Prepare feature columns
+            if feature_set:
+                # Use only features that exist and match what model was trained on
+                cols_to_use = [c for c in feature_set if c in df_with_features.columns]
+            else:
+                # Fallback: use all feature columns (exclude OHLCV and targets)
+                cols_to_use = [c for c in df_with_features.columns if c not in 
+                              ['Open', 'High', 'Low', 'Close', 'Volume', 'TargetReturnBuy', 'TargetReturnSell', 'Target']]
+            
+            if not cols_to_use:
+                return -np.inf
+            
+            # STEP 3: Get model type and predict
+            model_type = type(model).__name__
+            
+            if model_type in ['GRURegressor', 'GRUClassifier', 'LSTMClassifier']:
+                if len(df_with_features) < SEQUENCE_LENGTH:
+                    return -np.inf
+                # GRU/LSTM: Use sequence (last SEQUENCE_LENGTH rows)
+                df_feats = df_with_features[cols_to_use].tail(SEQUENCE_LENGTH).copy()
+                for col in df_feats.columns:
+                    df_feats[col] = pd.to_numeric(df_feats[col], errors='coerce').fillna(0.0)
+                if df_feats.empty or len(df_feats) < SEQUENCE_LENGTH:
+                    return -np.inf
+                X_scaled = scaler.transform(df_feats)
+                import torch
+                model.eval()
+                with torch.no_grad():
+                    X_tensor = torch.tensor(X_scaled, dtype=torch.float32).unsqueeze(0)
+                    out = model(X_tensor)
+                    pred_scaled = float(out.cpu().numpy()[0][0])
+                    if y_scaler is not None:
+                        pred = y_scaler.inverse_transform([[pred_scaled]])[0][0]
+                    else:
+                        pred = pred_scaled
+                    return float(pred * 100)  # Return as percentage
+            else:
+                # XGBoost/RandomForest: Use last row only (no sequence length requirement)
+                df_feats = df_with_features[cols_to_use].tail(1).copy()
+                for col in df_feats.columns:
+                    df_feats[col] = pd.to_numeric(df_feats[col], errors='coerce').fillna(0.0)
+                if df_feats.empty:
+                    return -np.inf
+                X_scaled = scaler.transform(df_feats)
+                # Preserve feature names when predicting
+                X_scaled_df = pd.DataFrame(X_scaled, columns=df_feats.columns)
+                pred = float(model.predict(X_scaled_df)[0])
+                return float(pred * 100)  # Return as percentage
+            
+        except Exception as e:
+            # Log the error for debugging
+            import sys
+            sys.stderr.write(f"  ⚠️ quick_last_prediction error for {ticker}: {e}\n")
+            sys.stderr.flush()
             return -np.inf
     for ticker in top_tickers:
         # Use optimized parameters if available, otherwise fall back to global defaults
@@ -817,6 +882,12 @@ def _run_portfolio_backtest(
     # Keep only top 3 tickers by AI-predicted return
     preview_predictions = sorted(preview_predictions, key=lambda x: x[1], reverse=True)
     allowed_tickers = set([t for t, _ in preview_predictions[:3]])
+    # DEBUG: show all candidate predictions and the selected top 3
+    print(f"\n[DEBUG] Candidate predicted returns for {period_name}:")
+    for t, p in preview_predictions:
+        print(f"  - {t}: {p:.4f}")
+    print(f"[DEBUG] Selected top 3 for backtest: {list(allowed_tickers)}")
+
     backtest_params = [p for p in backtest_params if p[0] in allowed_tickers]
     top_tickers = [p[0] for p in backtest_params]
 
@@ -852,23 +923,15 @@ def _run_portfolio_backtest(
                     print(f"  - YTD Performance: {perf_ytd_benchmark:.2f}%" if pd.notna(perf_ytd_benchmark) else "  - YTD Performance: N/A")
                     print(f"  - AI Sharpe Ratio: {res['perf_data']['sharpe_ratio']:.2f}")
                     print(f"  - Last AI Action: {res['last_ai_action']}")
-                    print(f"  - Optimized Buy Threshold: {optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY):.2f}")
-                    print(f"  - Optimized Sell Threshold: {optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL):.2f}")
-                    print(f"  - Optimized Target Percentage: {optimized_params_per_ticker.get(res['ticker'], {}).get('target_percentage', TARGET_PERCENTAGE):.2%}")
                     
                     # ✅ FIX 3: Add diagnostic for 0 trades
                     total_trades = res.get('perf_data', {}).get('total_trades', 0)
                     if total_trades == 0 and res.get('last_ai_action') == 'HOLD':
                         buy_prob = res.get('buy_prob', 0.0)
                         sell_prob = res.get('sell_prob', 0.0)
-                        buy_thresh = optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY)
-                        sell_thresh = optimized_params_per_ticker.get(res['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL)
                         print(f"\n  ⚠️  WARNING: {res['ticker']} made 0 trades!")
-                        print(f"      Last Buy Probability: {buy_prob:.4f} (threshold: {buy_thresh:.2f})")
-                        print(f"      Last Sell Probability: {sell_prob:.4f} (threshold: {sell_thresh:.2f})")
-                        if buy_prob < buy_thresh and sell_prob < sell_thresh:
-                            print(f"      💡 Model probabilities never exceeded thresholds.")
-                            print(f"         Consider: 1) Lowering thresholds, 2) Retraining with different targets, or 3) Using Simple Rule strategy")
+                        print(f"      Last Buy Probability: {buy_prob:.4f}")
+                        print(f"      Last Sell Probability: {sell_prob:.4f}")
                     
                     print("-" * 40)
                 processed_count += 1
@@ -896,23 +959,15 @@ def _run_portfolio_backtest(
                 print(f"  - YTD Performance: {ytd_perf_benchmark:.2f}%" if pd.notna(ytd_perf_benchmark) else "  - YTD Performance: N/A")
                 print(f"  - AI Sharpe Ratio: {worker_result['perf_data']['sharpe_ratio']:.2f}")
                 print(f"  - Last AI Action: {worker_result['last_ai_action']}")
-                print(f"  - Optimized Buy Threshold: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY):.2f}")
-                print(f"  - Optimized Sell Threshold: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL):.2f}")
-                print(f"  - Optimized Target Percentage: {optimized_params_per_ticker.get(worker_result['ticker'], {}).get('target_percentage', TARGET_PERCENTAGE):.2%}")
                 
                 # ✅ FIX 3: Add diagnostic for 0 trades
                 total_trades = worker_result.get('perf_data', {}).get('total_trades', 0)
                 if total_trades == 0 and worker_result.get('last_ai_action') == 'HOLD':
                     buy_prob = worker_result.get('buy_prob', 0.0)
                     sell_prob = worker_result.get('sell_prob', 0.0)
-                    buy_thresh = optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_buy', MIN_PROBA_BUY)
-                    sell_thresh = optimized_params_per_ticker.get(worker_result['ticker'], {}).get('min_proba_sell', MIN_PROBA_SELL)
                     print(f"\n  ⚠️  WARNING: {worker_result['ticker']} made 0 trades!")
-                    print(f"      Last Buy Probability: {buy_prob:.4f} (threshold: {buy_thresh:.2f})")
-                    print(f"      Last Sell Probability: {sell_prob:.4f} (threshold: {sell_thresh:.2f})")
-                    if buy_prob < buy_thresh and sell_prob < sell_thresh:
-                        print(f"      💡 Model probabilities never exceeded thresholds.")
-                        print(f"         Consider: 1) Lowering thresholds, 2) Retraining with different targets, or 3) Using Simple Rule strategy")
+                    print(f"      Last Buy Probability: {buy_prob:.4f}")
+                    print(f"      Last Sell Probability: {sell_prob:.4f}")
                 
                 print("-" * 40)
             processed_count += 1

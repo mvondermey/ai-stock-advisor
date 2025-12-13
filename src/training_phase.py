@@ -40,17 +40,21 @@ def train_worker(params: Tuple) -> Dict:
     gru_hyperparams_buy_path = models_dir / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
     gru_hyperparams_sell_path = models_dir / f"{ticker}_TargetClassSell_gru_optimized_params.json"
 
-    model_buy, model_sell, scaler = None, None, None
+    model_buy, model_sell, scaler, y_scaler_loaded = None, None, None, None
     
     # Flag to indicate if we successfully loaded a model to continue training
     loaded_for_retraining = False
 
     # Attempt to load models and GRU hyperparams if CONTINUE_TRAINING_FROM_EXISTING is True
+    y_scaler_path = models_dir / f"{ticker}_y_scaler.joblib"
+
     if CONTINUE_TRAINING_FROM_EXISTING and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
         try:
             model_buy = joblib.load(model_buy_path)
             model_sell = joblib.load(model_sell_path)
             scaler = joblib.load(scaler_path)
+            if y_scaler_path.exists():
+                y_scaler_loaded = joblib.load(y_scaler_path)
             
             if gru_hyperparams_buy_path.exists():
                 with open(gru_hyperparams_buy_path, 'r') as f:
@@ -70,6 +74,8 @@ def train_worker(params: Tuple) -> Dict:
             model_buy = joblib.load(model_buy_path)
             model_sell = joblib.load(model_sell_path)
             scaler = joblib.load(scaler_path)
+            if y_scaler_path.exists():
+                y_scaler_loaded = joblib.load(y_scaler_path)
             
             if gru_hyperparams_buy_path.exists():
                 with open(gru_hyperparams_buy_path, 'r') as f:
@@ -90,6 +96,7 @@ def train_worker(params: Tuple) -> Dict:
                 'model_buy': model_buy,
                 'model_sell': model_sell,
                 'scaler': scaler,
+                'y_scaler': y_scaler_loaded,
                 'gru_hyperparams_buy': loaded_gru_hyperparams_buy,
                 'gru_hyperparams_sell': loaded_gru_hyperparams_sell,
                 'status': 'loaded',
@@ -108,7 +115,6 @@ def train_worker(params: Tuple) -> Dict:
         print(f"  ❌ Skipping {ticker}: Insufficient training data.")
         return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None, 'y_scaler': None}
 
-    print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for BUY target.")
     # Train BUY model, passing the potentially loaded model and GRU hyperparams
     # Pass the global models_and_params to avoid re-initialization in worker processes
     global_models_and_params = initialize_ml_libraries() # Ensure it's initialized in the worker process too
@@ -123,18 +129,17 @@ def train_worker(params: Tuple) -> Dict:
         initial_model=model_buy if loaded_for_retraining else None,
         loaded_gru_hyperparams=loaded_gru_hyperparams_buy,
         models_and_params_global=global_models_and_params,
-        perform_gru_hp_optimization=False,
+        perform_gru_hp_optimization=True,  # enable HP search
         default_target_percentage=target_percentage, # Pass current target_percentage
         default_class_horizon=class_horizon # Pass current class_horizon
     )
-    print(f"  [DEBUG] {current_process().name} - {ticker}: Calling train_and_evaluate_models for SELL target.")
     # Train SELL model, passing the potentially loaded model and GRU hyperparams
     model_sell, scaler_sell, y_scaler_sell, gru_hyperparams_sell = train_and_evaluate_models(
         df_train, sell_target, actual_feature_set, ticker=ticker,
         initial_model=model_sell if loaded_for_retraining else None,
         loaded_gru_hyperparams=loaded_gru_hyperparams_sell,
         models_and_params_global=global_models_and_params,
-        perform_gru_hp_optimization=False,
+        perform_gru_hp_optimization=True,  # enable HP search
         default_target_percentage=target_percentage, # Pass current target_percentage
         default_class_horizon=class_horizon # Pass current class_horizon
     )
@@ -313,11 +318,12 @@ def train_models_for_period(
                         ticker_bh_return = 0.01
                 break
         
-        # Target is the B&H return for the period
-        period_target_pct = abs(ticker_bh_return)
-        period_target_pct = max(period_target_pct, 0.01)  # At least 1%
+        # Scale the B&H return to the training horizon so Target matches the lookahead
+        days_in_period = max((train_end - train_start).days, 1)
+        horizon_scale = min(1.0, period_horizon / days_in_period)
+        period_target_pct = max(abs(ticker_bh_return) * horizon_scale, 0.01)  # keep at least 1%
         
-        print(f"    📊 {ticker} {period_name[:2]} Training: Horizon={period_horizon}d, Target={period_target_pct:.2%} (B&H: {ticker_bh_return:.2%})")
+        print(f"    📊 {ticker} {period_name[:2]} Training: Horizon={period_horizon}d, Target={period_target_pct:.2%} (B&H: {ticker_bh_return:.2%}, Scale={horizon_scale:.3f})")
         
         try:
             # Slice the main DataFrame for the training period
