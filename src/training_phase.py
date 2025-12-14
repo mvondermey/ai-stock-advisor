@@ -9,6 +9,7 @@ import json
 import joblib
 import pandas as pd
 from datetime import datetime
+import multiprocessing
 from multiprocessing import Pool, current_process
 from tqdm import tqdm
 
@@ -18,6 +19,22 @@ from config import (
 )
 from data_utils import fetch_training_data, _ensure_dir
 from ml_models import initialize_ml_libraries, train_and_evaluate_models
+
+# Set multiprocessing start method to 'spawn' for CUDA safety
+# This must be done before any Pool is created
+try:
+    if PYTORCH_AVAILABLE:
+        import torch
+        if torch.cuda.is_available():
+            # Only set if not already set
+            if multiprocessing.get_start_method(allow_none=True) is None:
+                multiprocessing.set_start_method('spawn', force=False)
+                print("🔧 Set multiprocessing start method to 'spawn' for CUDA compatibility")
+            elif multiprocessing.get_start_method() != 'spawn':
+                print(f"⚠️  Multiprocessing start method is '{multiprocessing.get_start_method()}', but 'spawn' is recommended for CUDA")
+except RuntimeError:
+    # Already set, ignore
+    pass
 
 # Conditionally import LSTM/GRU classes if PyTorch is available
 try:
@@ -124,7 +141,7 @@ def train_worker(params: Tuple) -> Dict:
     buy_target = "TargetReturnBuy" if USE_REGRESSION_MODEL else "TargetClassBuy"
     sell_target = "TargetReturnSell" if USE_REGRESSION_MODEL else "TargetClassSell"
     
-    model_buy, scaler_buy, y_scaler_buy, gru_hyperparams_buy = train_and_evaluate_models(
+    model_buy, scaler_buy, y_scaler_buy, gru_hyperparams_buy, winner_buy = train_and_evaluate_models(
         df_train, buy_target, actual_feature_set, ticker=ticker,
         initial_model=model_buy if loaded_for_retraining else None,
         loaded_gru_hyperparams=loaded_gru_hyperparams_buy,
@@ -134,7 +151,7 @@ def train_worker(params: Tuple) -> Dict:
         default_class_horizon=class_horizon # Pass current class_horizon
     )
     # Train SELL model, passing the potentially loaded model and GRU hyperparams
-    model_sell, scaler_sell, y_scaler_sell, gru_hyperparams_sell = train_and_evaluate_models(
+    model_sell, scaler_sell, y_scaler_sell, gru_hyperparams_sell, winner_sell = train_and_evaluate_models(
         df_train, sell_target, actual_feature_set, ticker=ticker,
         initial_model=model_sell if loaded_for_retraining else None,
         loaded_gru_hyperparams=loaded_gru_hyperparams_sell,
@@ -186,6 +203,8 @@ def train_worker(params: Tuple) -> Dict:
             'y_scaler': final_y_scaler,  # ✅ Return y_scaler
             'gru_hyperparams_buy': gru_hyperparams_buy,
             'gru_hyperparams_sell': gru_hyperparams_sell,
+            'winner_buy': winner_buy,  # ✅ Track which model won for Buy
+            'winner_sell': winner_sell,  # ✅ Track which model won for Sell
             'status': 'trained',
             'reason': None
         }
@@ -233,16 +252,8 @@ def train_models_for_period(
     scalers = {}
     
     # Calculate period-specific horizon
-    if period_name == "YTD":
-        # Calculate YTD trading days dynamically
-        from datetime import timezone
-        ytd_start = datetime(datetime.today().year, 1, 1, tzinfo=timezone.utc)
-        ytd_days = (train_end - ytd_start).days
-        period_horizon = int(ytd_days * 0.7)  # Approximate trading days
-        if period_horizon <= 0:
-            period_horizon = 252  # Fallback to full year
-    else:
-        period_horizon = PERIOD_HORIZONS[period_name]
+    # Use configured horizon for all periods
+    period_horizon = PERIOD_HORIZONS.get(period_name, 60)
     
     # Prepare training parameters for each ticker
     training_params = []
@@ -357,14 +368,33 @@ def train_models_for_period(
     
     # Collect results
     y_scalers = {}  # ✅ Initialize y_scalers dictionary
+    model_winners = {}  # ✅ Track model selection statistics
     for res in training_results:
         if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'):
             models_buy[res['ticker']] = res['model_buy']
             models_sell[res['ticker']] = res['model_sell']
             scalers[res['ticker']] = res['scaler']
             y_scalers[res['ticker']] = res.get('y_scaler', None)  # ✅ Collect y_scaler
+            # Track winners for statistics
+            if 'winner_buy' in res:
+                winner_key = f"{res['ticker']}_Buy"
+                model_winners[winner_key] = res['winner_buy']
+            if 'winner_sell' in res:
+                winner_key = f"{res['ticker']}_Sell"
+                model_winners[winner_key] = res['winner_sell']
     
     print(f"✅ {period_name} training complete: {len(models_buy)} models trained/loaded.")
+    
+    # Print model selection statistics
+    if model_winners:
+        from collections import Counter
+        winner_counts = Counter(model_winners.values())
+        print(f"\n📊 Model Selection Statistics for {period_name}:")
+        print(f"{'Model Name':<30} {'Times Selected':>15}")
+        print("=" * 50)
+        for model_name, count in sorted(winner_counts.items(), key=lambda x: x[1], reverse=True):
+            print(f"{model_name:<30} {count:>15}")
+        print()
     
     return models_buy, models_sell, scalers, y_scalers  # ✅ Return y_scalers
 

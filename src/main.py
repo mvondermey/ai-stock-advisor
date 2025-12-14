@@ -26,7 +26,6 @@ from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
     MIN_PROBA_BUY, MIN_PROBA_SELL, TARGET_PERCENTAGE, CLASS_HORIZON,
     FORCE_THRESHOLDS_OPTIMIZATION, FORCE_PERCENTAGE_OPTIMIZATION,
-    USE_SIMPLE_RULE_STRATEGY, SIMPLE_RULE_TRAILING_STOP_PERCENT, SIMPLE_RULE_TAKE_PROFIT_PERCENT,
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
     BACKTEST_DAYS, BACKTEST_DAYS_3MONTH, BACKTEST_DAYS_1MONTH, TRAIN_LOOKBACK_DAYS, VALIDATION_DAYS,
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
@@ -102,6 +101,7 @@ if not _script_initialized:
 import os
 from backtesting import optimize_thresholds_for_portfolio_parallel, _prepare_model_for_multiprocessing
 from portfolio_rebalancing import run_portfolio_rebalancing_backtest
+from rule_based_strategy import run_rule_based_portfolio_strategy
 from summary_phase import print_final_summary
 from training_phase import train_worker, train_models_for_period
 from backtesting_phase import _run_portfolio_backtest
@@ -282,10 +282,6 @@ except ImportError:
 # USE_RANDOM_FOREST       = False # Enable RandomForest # Moved to config.py
 # #WORST
 
-# --- Simple Rule-Based Strategy specific hyperparameters
-# USE_SIMPLE_RULE_STRATEGY = False # Moved to config.py
-# SIMPLE_RULE_TRAILING_STOP_PERCENT = 0.10 # 10% trailing stop # Moved to config.py
-# SIMPLE_RULE_TAKE_PROFIT_PERCENT = 0.10   # 10% take profit # Moved to config.py
 
 # --- Deep Learning specific hyperparameters
 # SEQUENCE_LENGTH         = 32         # Number of past days to consider for LSTM/GRU # Moved to config.py
@@ -350,8 +346,7 @@ def main(
     feature_set: Optional[List[str]] = None,
     run_parallel: bool = True,
     single_ticker: Optional[str] = None,
-    optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None,
-    use_simple_rule_strategy: bool = USE_SIMPLE_RULE_STRATEGY # New parameter for simple rule strategy
+    optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None
 ) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[Dict]]:
     
     # Set NUM_PROCESSES if not already set
@@ -378,9 +373,9 @@ def main(
     # Initialize ML libraries to determine CUDA availability
     initialize_ml_libraries()
     
-    # Disable parallel processing if deep learning models are used with CUDA
-    if PYTORCH_AVAILABLE and CUDA_AVAILABLE and (USE_LSTM or USE_GRU):
-        print("⚠️ CUDA is available and deep learning models are enabled.")
+    # Note: multiprocessing with CUDA-enabled DL models uses 'spawn' start method for stability
+    if PYTORCH_AVAILABLE and CUDA_AVAILABLE and (USE_LSTM or USE_GRU or ("USE_TCN" in globals() and USE_TCN)):
+        print("✅ CUDA + DL enabled: multiprocessing ON with 'spawn' start method for stability.")
         run_parallel = True
     
     # Initialize initial_balance_used here with a default value
@@ -1277,7 +1272,8 @@ def main(
             start_date=bt_start_1y,
             end_date=bt_end,
             initial_capital=capital_per_stock_1y * n_top_rebal,
-            n_top=n_top_rebal
+            n_top=n_top_rebal,
+            horizon_days=PERIOD_HORIZONS.get("1-Year", 60)
         )
         
         initial_capital_1y = capital_per_stock_1y * n_top_rebal
@@ -1298,27 +1294,26 @@ def main(
         print(f"  - strategy_results_1y count: {len(strategy_results_1y)}")
         print(f"  - ai_1y_return: {ai_1y_return:.2f}%\n")
 
-        # --- Run 1-Year Backtest (Simple Rule Strategy) ---
-        print("\n🔍 Running 1-Year Backtest (Simple Rule Strategy)...")
-        final_simple_rule_value_1y, simple_rule_results_1y, processed_simple_rule_tickers_1y, performance_metrics_simple_rule_1y, _ = _run_portfolio_backtest(
+        # --- Run Rule-Based Strategy for 1-Year ---
+        print("\n📊 Running Rule-Based Strategy for 1-Year period...")
+        rule_results_1y = run_rule_based_portfolio_strategy(
             all_tickers_data=all_tickers_data,
+            candidate_tickers=top_tickers_1y_filtered,
             start_date=bt_start_1y,
             end_date=bt_end,
-            top_tickers=top_tickers_1y_filtered,
-            models_buy={},
-            models_sell={},
-            scalers={},
-            y_scalers={},  # ✅ Empty y_scalers for simple rule strategy
-            optimized_params_per_ticker={},
-            capital_per_stock=capital_per_stock_1y,
-            target_percentage=target_percentage,
-            run_parallel=run_parallel,
-            period_name="1-Year (Simple Rule)",
-            top_performers_data=top_performers_data_1y_filtered,
-            use_simple_rule_strategy=True,
-            horizon_days=PERIOD_HORIZONS["1-Year"]  # 252 trading days
+            initial_capital=capital_per_stock_1y * n_top_rebal,
+            n_top=n_top_rebal,
+            momentum_lookback=20,
+            rebalance_frequency=5
         )
-        simple_rule_1y_return = ((final_simple_rule_value_1y - (capital_per_stock_1y * len(top_tickers_1y_filtered))) / abs(capital_per_stock_1y * len(top_tickers_1y_filtered))) * 100 if (capital_per_stock_1y * len(top_tickers_1y_filtered)) != 0 else 0
+        final_rule_value_1y = rule_results_1y.get('final_value', initial_capital_1y)
+        rule_1y_return = rule_results_1y.get('total_return', 0) * 100
+        
+        # Simple Rule Strategy removed - using AI strategy only
+        final_simple_rule_value_1y = None
+        simple_rule_results_1y = []
+        performance_metrics_simple_rule_1y = []
+        simple_rule_1y_return = None
 
         # --- Calculate Buy & Hold for 1-Year ---
         print("\n📊 Calculating Buy & Hold performance for 1-Year period...")
@@ -1366,6 +1361,7 @@ def main(
                 'pred_mean_pct': stats.get('pred_mean_pct'),
                 'pred_min_pct': stats.get('pred_min_pct'),
                 'pred_max_pct': stats.get('pred_max_pct'),
+                'bh_horizon_return_pct': stats.get('bh_horizon_return_pct'),
                 'individual_bh_return': bh_returns_lookup.get(ticker)
             })
         final_buy_hold_value_1y = sum(buy_hold_results_1y) + (len(top_tickers_1y_filtered) - len(buy_hold_results_1y)) * capital_per_stock_1y
@@ -1393,7 +1389,8 @@ def main(
             start_date=ytd_start_date,
             end_date=bt_end,
             initial_capital=capital_per_stock_ytd * n_top_rebal_ytd,
-            n_top=n_top_rebal_ytd
+            n_top=n_top_rebal_ytd,
+            horizon_days=PERIOD_HORIZONS.get("YTD", 40)
         )
         initial_capital_ytd = capital_per_stock_ytd * n_top_rebal_ytd
         final_strategy_value_ytd = rebal_results_ytd.get('final_value', initial_capital_ytd)
@@ -1402,29 +1399,28 @@ def main(
         final_holdings_ytd = rebal_results_ytd.get('final_holdings', {})
         processed_tickers_ytd = list(final_holdings_ytd.keys()) if final_holdings_ytd else top_tickers_ytd_filtered[:n_top_rebal_ytd]
         strategy_results_ytd = []  # No per-ticker results in portfolio strategy
-        performance_metrics_ytd = []
-
-        # --- Run YTD Backtest (Simple Rule Strategy) ---
-        print("\n🔍 Running YTD Backtest (Simple Rule Strategy)...")
-        final_simple_rule_value_ytd, simple_rule_results_ytd, processed_simple_rule_tickers_ytd, performance_metrics_simple_rule_ytd, _ = _run_portfolio_backtest(
+        
+        # --- Run Rule-Based Strategy for YTD ---
+        print("\n📊 Running Rule-Based Strategy for YTD period...")
+        rule_results_ytd = run_rule_based_portfolio_strategy(
             all_tickers_data=all_tickers_data,
+            candidate_tickers=top_tickers_ytd_filtered,
             start_date=ytd_start_date,
             end_date=bt_end,
-            top_tickers=top_tickers_ytd_filtered,
-            models_buy={},
-            models_sell={},
-            scalers={},
-            y_scalers={},  # ✅ Empty y_scalers for simple rule strategy
-            optimized_params_per_ticker={},
-            horizon_days=ytd_horizon,  # Dynamic YTD horizon
-            capital_per_stock=capital_per_stock_ytd,
-            target_percentage=target_percentage,
-            run_parallel=run_parallel,
-            period_name="YTD (Simple Rule)",
-            top_performers_data=top_performers_data_ytd_filtered,
-            use_simple_rule_strategy=True
+            initial_capital=initial_capital_ytd,
+            n_top=n_top_rebal_ytd,
+            momentum_lookback=15,
+            rebalance_frequency=3
         )
-        simple_rule_ytd_return = ((final_simple_rule_value_ytd - (capital_per_stock_ytd * len(top_tickers_ytd_filtered))) / abs(capital_per_stock_ytd * len(top_tickers_ytd_filtered))) * 100 if (capital_per_stock_ytd * len(top_tickers_ytd_filtered)) != 0 else 0
+        final_rule_value_ytd = rule_results_ytd.get('final_value', initial_capital_ytd)
+        rule_ytd_return = rule_results_ytd.get('total_return', 0) * 100
+        performance_metrics_ytd = []
+
+        # Simple Rule Strategy removed - using AI strategy only
+        final_simple_rule_value_ytd = None
+        simple_rule_results_ytd = []
+        performance_metrics_simple_rule_ytd = []
+        simple_rule_ytd_return = None
 
         # --- Calculate Buy & Hold for YTD ---
         print("\n📊 Calculating Buy & Hold performance for YTD period...")
@@ -1472,6 +1468,7 @@ def main(
                 'pred_mean_pct': stats.get('pred_mean_pct'),
                 'pred_min_pct': stats.get('pred_min_pct'),
                 'pred_max_pct': stats.get('pred_max_pct'),
+                'bh_horizon_return_pct': stats.get('bh_horizon_return_pct'),
                 'individual_bh_return': bh_returns_lookup_ytd.get(ticker)
             })
     else:
@@ -1492,38 +1489,38 @@ def main(
             start_date=bt_start_3month,
             end_date=bt_end,
             initial_capital=capital_per_stock_3month * n_top_rebal_3m,
-            n_top=n_top_rebal_3m
+            n_top=n_top_rebal_3m,
+            horizon_days=PERIOD_HORIZONS.get("3-Month", 20)
         )
         initial_capital_3month = capital_per_stock_3month * n_top_rebal_3m
         final_strategy_value_3month = rebal_results_3month.get('final_value', initial_capital_3month)
         ai_3month_return = rebal_results_3month.get('total_return', 0) * 100
         prediction_stats_3month = rebal_results_3month.get('prediction_stats', {})
         final_holdings_3month = rebal_results_3month.get('final_holdings', {})
+        
+        # --- Run Rule-Based Strategy for 3-Month ---
+        print("\n📊 Running Rule-Based Strategy for 3-Month period...")
+        rule_results_3month = run_rule_based_portfolio_strategy(
+            all_tickers_data=all_tickers_data,
+            candidate_tickers=top_tickers_3month_filtered,
+            start_date=bt_start_3month,
+            end_date=bt_end,
+            initial_capital=initial_capital_3month,
+            n_top=n_top_rebal_3m,
+            momentum_lookback=10,
+            rebalance_frequency=2
+        )
+        final_rule_value_3month = rule_results_3month.get('final_value', initial_capital_3month)
+        rule_3month_return = rule_results_3month.get('total_return', 0) * 100
         processed_tickers_3month = list(final_holdings_3month.keys()) if final_holdings_3month else top_tickers_3month_filtered[:n_top_rebal_3m]
         strategy_results_3month = []  # No per-ticker results in portfolio strategy
         performance_metrics_3month = []
 
-        # --- Run 3-Month Backtest (Simple Rule Strategy) ---
-        print("\n🔍 Running 3-Month Backtest (Simple Rule Strategy)...")
-        final_simple_rule_value_3month, simple_rule_results_3month, processed_simple_rule_tickers_3month, performance_metrics_simple_rule_3month, _ = _run_portfolio_backtest(
-            all_tickers_data=all_tickers_data,
-            start_date=bt_start_3month,
-            end_date=bt_end,
-            top_tickers=top_tickers_3month_filtered,
-            models_buy={},
-            models_sell={},
-            scalers={},
-            y_scalers={},  # ✅ Empty y_scalers for simple rule strategy
-            optimized_params_per_ticker={},
-            capital_per_stock=capital_per_stock_3month,
-            target_percentage=target_percentage,
-            run_parallel=run_parallel,
-            period_name="3-Month (Simple Rule)",
-            top_performers_data=top_performers_data_3month_filtered,
-            use_simple_rule_strategy=True,
-            horizon_days=PERIOD_HORIZONS["3-Month"]  # 63 trading days
-        )
-        simple_rule_3month_return = ((final_simple_rule_value_3month - (capital_per_stock_3month * len(top_tickers_3month_filtered))) / abs(capital_per_stock_3month * len(top_tickers_3month_filtered))) * 100 if (capital_per_stock_3month * len(top_tickers_3month_filtered)) != 0 else 0
+        # Simple Rule Strategy removed - using AI strategy only
+        final_simple_rule_value_3month = None
+        simple_rule_results_3month = []
+        performance_metrics_simple_rule_3month = []
+        simple_rule_3month_return = None
 
         # --- Calculate Buy & Hold for 3-Month ---
         print("\n📊 Calculating Buy & Hold performance for 3-Month period...")
@@ -1571,6 +1568,7 @@ def main(
                 'pred_mean_pct': stats.get('pred_mean_pct'),
                 'pred_min_pct': stats.get('pred_min_pct'),
                 'pred_max_pct': stats.get('pred_max_pct'),
+                'bh_horizon_return_pct': stats.get('bh_horizon_return_pct'),
                 'individual_bh_return': bh_returns_lookup_3m.get(ticker)
             })
     else:
@@ -1591,7 +1589,8 @@ def main(
             start_date=bt_start_1month,
             end_date=bt_end,
             initial_capital=capital_per_stock_1month * n_top_rebal_1m,
-            n_top=n_top_rebal_1m
+            n_top=n_top_rebal_1m,
+            horizon_days=PERIOD_HORIZONS.get("1-Month", 10)
         )
         initial_capital_1month = capital_per_stock_1month * n_top_rebal_1m
         final_strategy_value_1month = rebal_results_1month.get('final_value', initial_capital_1month)
@@ -1602,27 +1601,11 @@ def main(
         strategy_results_1month = []  # No per-ticker results in portfolio strategy
         performance_metrics_1month = []
 
-        # --- Run 1-Month Backtest (Simple Rule Strategy) ---
-        print("\n🔍 Running 1-Month Backtest (Simple Rule Strategy)...")
-        final_simple_rule_value_1month, simple_rule_results_1month, processed_simple_rule_tickers_1month, performance_metrics_simple_rule_1month, _ = _run_portfolio_backtest(
-            all_tickers_data=all_tickers_data,
-            start_date=bt_start_1month,
-            end_date=bt_end,
-            top_tickers=top_tickers_1month_filtered,
-            models_buy={},
-            models_sell={},
-            scalers={},
-            y_scalers={},  # ✅ Empty y_scalers for simple rule strategy
-            optimized_params_per_ticker={},
-            capital_per_stock=capital_per_stock_1month,
-            target_percentage=target_percentage,
-            run_parallel=run_parallel,
-            period_name="1-Month (Simple Rule)",
-            top_performers_data=top_performers_data_1month_filtered,
-            use_simple_rule_strategy=True,
-            horizon_days=PERIOD_HORIZONS["1-Month"]  # 21 trading days
-        )
-        simple_rule_1month_return = ((final_simple_rule_value_1month - (capital_per_stock_1month * len(top_tickers_1month_filtered))) / abs(capital_per_stock_1month * len(top_tickers_1month_filtered))) * 100 if (capital_per_stock_1month * len(top_tickers_1month_filtered)) != 0 else 0
+        # Simple Rule Strategy removed - using AI strategy only
+        final_simple_rule_value_1month = None
+        simple_rule_results_1month = []
+        performance_metrics_simple_rule_1month = []
+        simple_rule_1month_return = None
 
         # --- Calculate Buy & Hold for 1-Month ---
         print("\n📊 Calculating Buy & Hold performance for 1-Month period...")
@@ -1670,6 +1653,7 @@ def main(
                 'pred_mean_pct': stats.get('pred_mean_pct'),
                 'pred_min_pct': stats.get('pred_min_pct'),
                 'pred_max_pct': stats.get('pred_max_pct'),
+                'bh_horizon_return_pct': stats.get('bh_horizon_return_pct'),
                 'individual_bh_return': bh_returns_lookup_1m.get(ticker)
             })
     else:
@@ -1778,30 +1762,22 @@ def main(
         final_strategy_value_1month,
         ai_1month_return,
         final_buy_hold_value_1month,
-        final_simple_rule_value_1y,
-        simple_rule_1y_return,
-        final_simple_rule_value_ytd,
-        simple_rule_ytd_return,
-        final_simple_rule_value_3month,
-        simple_rule_3month_return,
-        final_simple_rule_value_1month,
-        simple_rule_1month_return,
-        performance_metrics_simple_rule_1y,
         performance_metrics_buy_hold_1y_actual, # Pass performance_metrics_buy_hold_1y_actual for Buy & Hold
         top_performers_data,
         strategy_results_ytd=strategy_results_ytd,
         strategy_results_3month=strategy_results_3month,
         strategy_results_1month=strategy_results_1month,
-        performance_metrics_simple_rule_ytd=performance_metrics_simple_rule_ytd,
-        performance_metrics_simple_rule_3month=performance_metrics_simple_rule_3month,
-        performance_metrics_simple_rule_1month=performance_metrics_simple_rule_1month,
         performance_metrics_buy_hold_ytd=performance_metrics_buy_hold_ytd_actual,
         performance_metrics_buy_hold_3month=performance_metrics_buy_hold_3month_actual,
         performance_metrics_buy_hold_1month=performance_metrics_buy_hold_1month_actual,
         prediction_vs_bh_1y=prediction_vs_bh_1y if 'prediction_vs_bh_1y' in locals() else None,
         prediction_vs_bh_ytd=prediction_vs_bh_ytd if 'prediction_vs_bh_ytd' in locals() else None,
         prediction_vs_bh_3month=prediction_vs_bh_3month if 'prediction_vs_bh_3month' in locals() else None,
-        prediction_vs_bh_1month=prediction_vs_bh_1month if 'prediction_vs_bh_1month' in locals() else None
+        prediction_vs_bh_1month=prediction_vs_bh_1month if 'prediction_vs_bh_1month' in locals() else None,
+        final_rule_value_1y=final_rule_value_1y if 'final_rule_value_1y' in locals() else None,
+        rule_1y_return=rule_1y_return if 'rule_1y_return' in locals() else None,
+        final_rule_value_ytd=final_rule_value_ytd if 'final_rule_value_ytd' in locals() else None,
+        rule_ytd_return=rule_ytd_return if 'rule_ytd_return' in locals() else None
     )
     print("\n✅ Final summary prepared and printed.")
 

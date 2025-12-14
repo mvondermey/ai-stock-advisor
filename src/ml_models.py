@@ -308,7 +308,8 @@ from config import (
     FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING, FORCE_PERCENTAGE_OPTIMIZATION,
     USE_LOGISTIC_REGRESSION, USE_RANDOM_FOREST, USE_SVM, USE_MLP_CLASSIFIER,
     USE_LSTM, USE_GRU, USE_LIGHTGBM, USE_XGBOOST,
-    USE_REGRESSION_MODEL, TRY_LSTM_INSTEAD_OF_GRU
+    USE_REGRESSION_MODEL, TRY_LSTM_INSTEAD_OF_GRU,
+    USE_TCN, USE_ELASTIC_NET, USE_RIDGE
 )
 # PYTORCH_AVAILABLE is set locally below based on actual import, not from config
 
@@ -330,6 +331,9 @@ cuMLRandomForestClassifier = None
 cuMLLogisticRegression = None
 cuMLStandardScaler = None
 models_and_params: Dict = {}
+
+# --- Global tracking for model selection statistics ---
+_model_selection_stats = {}
 
 # Helper function (copied from main.py)
 # _ensure_dir moved to utils.py to avoid duplication
@@ -444,6 +448,36 @@ if PYTORCH_AVAILABLE:
             out = self.fc(out)
             return out
 
+    class TCNRegressor(nn.Module):
+        """Temporal Convolutional Network for regression"""
+        def __init__(self, input_size, num_filters=32, kernel_size=3, num_levels=2, dropout=0.1):
+            super().__init__()
+            layers = []
+            in_ch = input_size
+            for _ in range(num_levels):
+                layers.append(nn.Conv1d(in_ch, num_filters, kernel_size, padding="same"))
+                layers.append(nn.ReLU())
+                layers.append(nn.Dropout(dropout))
+                in_ch = num_filters
+            self.net = nn.Sequential(*layers)
+            self.head = nn.Linear(num_filters, 1)
+        
+        def forward(self, x):
+            if x.dim() == 4:
+                x = x.squeeze(0)
+            x = x.transpose(1, 2)  # (batch, seq, feat) -> (batch, feat, seq)
+            x = self.net(x)
+            x = x.mean(dim=2)      # global average pool over time
+            return self.head(x).squeeze(-1)
+
+            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+            c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+            out, _ = self.lstm(x, (h0, c0))
+            out = out[:, -1, :]
+            out = self.bn(out)
+            out = self.fc(out)
+            return out
+
 def initialize_ml_libraries():
     """Initializes ML libraries and prints their status only once."""
     global _ml_libraries_initialized, CUDA_AVAILABLE, CUML_AVAILABLE, LGBMClassifier, XGBClassifier, XGBRegressor, models_and_params, \
@@ -512,22 +546,17 @@ def initialize_ml_libraries():
         try:
             from lightgbm import LGBMClassifier as lgbm
             LGBMClassifier = lgbm
-            # LightGBM GPU requires OpenCL, not CUDA. If CUDA is available, try GPU (OpenCL might be available too).
-            # If GPU fails during training, it will be caught by error handling.
-            if CUDA_AVAILABLE:
-                lgbm_model_params = {
-                    "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='gpu'),
-                    "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
-                }
-                models_and_params["LightGBM (GPU)"] = lgbm_model_params
-                print("✅ LightGBM found. Configured for GPU (OpenCL).")
-            else:
-                lgbm_model_params = {
-                    "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
-                    "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
-                }
-                models_and_params["LightGBM (CPU)"] = lgbm_model_params
-                print("ℹ️ LightGBM found. Will use CPU (CUDA not available).")
+            
+            # Force CPU for LightGBM due to OpenCL/PoCL compatibility issues with NVIDIA in WSL2
+            # OpenCL requires a different runtime than CUDA and often fails with PoCL
+            _lgbm_gpu_available = False
+            
+            lgbm_model_params = {
+                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+            }
+            models_and_params["LightGBM (CPU)"] = lgbm_model_params
+            print("ℹ️ LightGBM: using CPU (OpenCL not compatible with NVIDIA/PoCL in WSL2).")
         except ImportError:
             print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
 
@@ -833,7 +862,7 @@ def train_and_evaluate_models(
         }
     if USE_RIDGE and USE_REGRESSION_MODEL:
         models_and_params_local["Ridge"] = {
-            "model": Ridge(random_state=SEED, max_iter=2000),
+            "model": Ridge(random_state=SEED, max_iter=2000, solver="lsqr"),
             "params": {'alpha': [0.1, 1.0, 5.0, 10.0]}
         }
     if USE_RANDOM_FOREST:
@@ -860,51 +889,54 @@ def train_and_evaluate_models(
 
     if USE_LIGHTGBM:
         try:
-            # Import here to avoid hard dependency if flag is off
             from lightgbm import LGBMRegressor, LGBMClassifier as LGBMClf
         except Exception as e:
             print(f"⚠️ LightGBM not available: {e}")
             LGBMRegressor = None
             LGBMClf = None
         if USE_REGRESSION_MODEL and LGBMRegressor:
-            if CUDA_AVAILABLE:
-                lgbm_model_params = {
-                    "model": LGBMRegressor(random_state=SEED, verbosity=-1, device='gpu'),
-                    "params": {'n_estimators': [100, 200], 'learning_rate': [0.01, 0.05, 0.1], 'max_depth': [-1, 5, 7]}
-                }
-                models_and_params_local["LightGBM Regressor (GPU)"] = lgbm_model_params
-            else:
-                lgbm_model_params = {
-                    "model": LGBMRegressor(random_state=SEED, verbosity=-1, device='cpu'),
-                    "params": {'n_estimators': [100, 200], 'learning_rate': [0.01, 0.05, 0.1], 'max_depth': [-1, 5, 7]}
-                }
-                models_and_params_local["LightGBM Regressor (CPU)"] = lgbm_model_params
+            lgbm_model_params = {
+                "model": LGBMRegressor(random_state=SEED, verbosity=-1, device='cpu'),
+                "params": {'n_estimators': [100, 200], 'learning_rate': [0.01, 0.05, 0.1], 'max_depth': [-1, 5, 7]}
+            }
+            models_and_params_local["LightGBM Regressor (CPU)"] = lgbm_model_params
         elif not USE_REGRESSION_MODEL and LGBMClf:
-            if CUDA_AVAILABLE:
-                lgbm_model_params = {
-                    "model": LGBMClf(random_state=SEED, class_weight="balanced", verbosity=-1, device='gpu'),
-                    "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
-                }
-                models_and_params_local["LightGBM (GPU)"] = lgbm_model_params
-            else:
-                lgbm_model_params = {
-                    "model": LGBMClf(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
-                    "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
-                }
-                models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
+            lgbm_model_params = {
+                "model": LGBMClf(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
+                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
+            }
+            models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
 
     if USE_XGBOOST and XGBOOST_AVAILABLE and XGBClassifier:
-        # Prefer GPU if available; fall back to CPU hist
-        xgb_tree_method = 'gpu_hist' if CUDA_AVAILABLE else 'hist'
-        xgb_predictor = 'gpu_predictor' if CUDA_AVAILABLE else 'auto'
+        # Prefer GPU if the build supports CUDA; use new device API (XGBoost>=2.0)
+        use_cuda_in_xgb = False
+        if hasattr(xgb, "build_info"):
+            try:
+                use_cuda_in_xgb = bool(xgb.build_info().get("USE_CUDA", False)) and CUDA_AVAILABLE
+            except Exception:
+                use_cuda_in_xgb = False
+
+        device_param = "cuda" if use_cuda_in_xgb else None  # None => CPU
+        common_kwargs = {
+            "random_state": SEED,
+            "tree_method": "hist",  # recommended with device param
+        }
+        if device_param:
+            common_kwargs["device"] = device_param
+
         if USE_REGRESSION_MODEL:
             xgb_model_params = {
-                "model": XGBRegressor(random_state=SEED, tree_method=xgb_tree_method, predictor=xgb_predictor),
+                "model": XGBRegressor(**common_kwargs),
                 "params": {'n_estimators': [100, 200], 'learning_rate': [0.05, 0.1], 'max_depth': [5, 7]}  # Reduced grid
             }
         else:
             xgb_model_params = {
-                "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1, tree_method=xgb_tree_method, predictor=xgb_predictor),
+                "model": XGBClassifier(
+                    **common_kwargs,
+                    eval_metric='logloss',
+                    use_label_encoder=False,
+                    scale_pos_weight=1
+                ),
                 "params": {'n_estimators': [100, 200], 'learning_rate': [0.05, 0.1], 'max_depth': [5, 7]}  # Reduced grid
             }
         models_and_params_local["XGBoost"] = xgb_model_params
@@ -1026,6 +1058,74 @@ def train_and_evaluate_models(
                         print(f"      LSTM AUC (classification): {auc_lstm:.4f}")
                 except ValueError:
                     models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": 0.0}
+
+            # --- TCN Regressor (lightweight) ---
+            if USE_TCN and USE_REGRESSION_MODEL:
+                tcn_model = safe_to_device(TCNRegressor(input_size, num_filters=32, kernel_size=3, num_levels=2, dropout=0.1), device)
+                optimizer_tcn = optim.Adam(tcn_model.parameters(), lr=LSTM_LEARNING_RATE)
+
+                for epoch in range(LSTM_EPOCHS):
+                    try:
+                        for batch_X, batch_y in dataloader:
+                            try:
+                                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                            except RuntimeError as e:
+                                if "CUDA" in str(e):
+                                    device = torch.device("cpu")
+                                    tcn_model = tcn_model.cpu()
+                                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                                else:
+                                    raise
+                            optimizer_tcn.zero_grad()
+                            outputs = tcn_model(batch_X)
+                            loss = criterion(outputs, batch_y.squeeze())
+                            loss.backward()
+                            optimizer_tcn.step()
+                    except RuntimeError as e:
+                        if "CUDA" in str(e):
+                            print(f"⚠️ CUDA error during TCN training epoch {epoch}, falling back to CPU...")
+                            device = torch.device("cpu")
+                            tcn_model = tcn_model.cpu()
+                            for batch_X, batch_y in dataloader:
+                                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                                optimizer_tcn.zero_grad()
+                                outputs = tcn_model(batch_X)
+                                loss = criterion(outputs, batch_y.squeeze())
+                                loss.backward()
+                                optimizer_tcn.step()
+                        else:
+                            raise
+
+                tcn_model.eval()
+                with torch.no_grad():
+                    all_outputs = []
+                    for batch_X, _ in dataloader:
+                        try:
+                            batch_X = batch_X.to(device)
+                        except RuntimeError as e:
+                            if "CUDA" in str(e):
+                                device = torch.device("cpu")
+                                tcn_model = tcn_model.cpu()
+                                batch_X = batch_X.to(device)
+                            else:
+                                raise
+                        outputs = tcn_model(batch_X)
+                        all_outputs.append(outputs.cpu().numpy())
+                    y_pred_tcn = np.concatenate(all_outputs).flatten()
+
+                try:
+                    from sklearn.metrics import mean_squared_error, r2_score
+                    y_true = y_sequences.cpu().numpy()
+                    mse_tcn = mean_squared_error(y_true, y_pred_tcn)
+                    r2_tcn = r2_score(y_true, y_pred_tcn)
+                    rmse_tcn = mse_tcn ** 0.5
+                    models_and_params_local["TCN"] = {"model": tcn_model, "scaler": dl_scaler, "auc": -mse_tcn, "params": None}
+                    print(f"      📊 TCN Regression Metrics:")
+                    print(f"         MSE: {mse_tcn:.6f}")
+                    print(f"         RMSE: {rmse_tcn:.6f}")
+                    print(f"         R² Score: {r2_tcn:.4f}")
+                except ValueError:
+                    models_and_params_local["TCN"] = {"model": tcn_model, "scaler": dl_scaler, "auc": 0.0, "params": None}
 
             if USE_GRU:
                 if perform_gru_hp_optimization and ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION:
@@ -1377,8 +1477,13 @@ def train_and_evaluate_models(
                         models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": 0.0}
 
     best_model_overall = None
-    best_auc_overall = -np.inf
-    best_hyperparams_overall: Optional[Dict] = None # New: To store GRU hyperparams if GRU is best
+    best_hyperparams_overall: Optional[Dict] = None  # New: To store GRU hyperparams if GRU is best
+    if USE_REGRESSION_MODEL:
+        best_mse_overall = np.inf  # lower is better
+        best_auc_overall = None    # unused in regression mode
+    else:
+        best_mse_overall = None
+        best_auc_overall = -np.inf
     
     # Use KFold for regression, StratifiedKFold for classification
     if USE_REGRESSION_MODEL:
@@ -1393,21 +1498,40 @@ def train_and_evaluate_models(
         print("  🔬 Comparing regressor performance (MSE via cross-validation with GridSearchCV):")
     else:
         print("  🔬 Comparing classifier performance (AUC score via 5-fold cross-validation with GridSearchCV):")
-    for name, mp in models_and_params_local.items(): # Iterate over local models_and_params
-        if name in ["LSTM", "GRU"]:
-            # For DL models, we already have AUC from direct training
-            current_auc = mp["auc"]
-            results[name] = current_auc
-            print(f"    - {name}: {current_auc:.4f}")
-            if current_auc > best_auc_overall:
-                best_auc_overall = current_auc
-                best_model_overall = mp["model"]
-                scaler = mp["scaler"] # Use the DL scaler for DL models
-                if name == "GRU": # If GRU is the best, store its hyperparams
-                    best_hyperparams_overall = mp.get("hyperparams")
+    for name, mp in models_and_params_local.items():  # Iterate over local models_and_params
+        if name in ["LSTM", "GRU", "TCN"]:
+            # For DL models, we stored negative MSE in "auc" for compatibility.
+            if USE_REGRESSION_MODEL:
+                current_mse = -mp["auc"]  # convert back to positive MSE
+                results[name] = current_mse
+                print(f"    - {name}: MSE={current_mse:.4f}")
+                if current_mse < best_mse_overall:
+                    best_mse_overall = current_mse
+                    best_model_overall = mp["model"]
+                    scaler = mp["scaler"]  # Use the DL scaler for DL models
+                    if name == "GRU":  # If GRU is the best, store its hyperparams
+                        best_hyperparams_overall = mp.get("hyperparams")
+            else:
+                current_auc = mp["auc"]
+                results[name] = current_auc
+                print(f"    - {name}: {current_auc:.4f}")
+                if current_auc > best_auc_overall:
+                    best_auc_overall = current_auc
+                    best_model_overall = mp["model"]
+                    scaler = mp["scaler"]  # Use the DL scaler for DL models
+                    if name == "GRU":  # If GRU is the best, store its hyperparams
+                        best_hyperparams_overall = mp.get("hyperparams")
         else:
             model = mp["model"]
             params = mp["params"]
+            
+            def _run_grid(estimator):
+                if USE_REGRESSION_MODEL:
+                    gs = GridSearchCV(estimator, params, cv=cv, scoring='neg_mean_squared_error', n_jobs=-1, verbose=0)
+                else:
+                    gs = GridSearchCV(estimator, params, cv=cv, scoring='roc_auc', n_jobs=-1, verbose=0)
+                gs.fit(X, y)
+                return gs
             
             try:
                 with warnings.catch_warnings():
@@ -1415,23 +1539,16 @@ def train_and_evaluate_models(
                     warnings.filterwarnings("ignore", category=UserWarning)
                     warnings.filterwarnings("ignore", category=FutureWarning, module='xgboost')
                     
-                    # Use GridSearchCV for hyperparameter tuning
+                    grid_search = _run_grid(model)
                     if USE_REGRESSION_MODEL:
-                        # For regression: use negative MSE (higher is better)
-                        grid_search = GridSearchCV(model, params, cv=cv, scoring='neg_mean_squared_error', n_jobs=-1, verbose=0)
-                        grid_search.fit(X, y)
-                        best_score = -grid_search.best_score_  # Convert back to positive MSE (lower is better)
+                        best_score = -grid_search.best_score_
                         results[name] = best_score
                         print(f"    - {name}: MSE={best_score:.4f} (Best Params: {grid_search.best_params_})")
-                        # For regression, lower MSE is better, so invert comparison
-                        if best_auc_overall == -np.inf or best_score < best_auc_overall:
-                            best_auc_overall = best_score
+                        if best_score < best_mse_overall:
+                            best_mse_overall = best_score
                             best_model_overall = grid_search.best_estimator_
                             best_hyperparams_overall = None
                     else:
-                        # For classification: use ROC AUC (higher is better)
-                        grid_search = GridSearchCV(model, params, cv=cv, scoring='roc_auc', n_jobs=-1, verbose=0)
-                        grid_search.fit(X, y)
                         best_score = grid_search.best_score_
                         results[name] = best_score
                         print(f"    - {name}: {best_score:.4f} (Best Params: {grid_search.best_params_})")
@@ -1441,6 +1558,31 @@ def train_and_evaluate_models(
                             best_hyperparams_overall = None
 
             except Exception as e:
+                # LightGBM GPU fallback to CPU if build/device fails at fit time
+                if "LightGBM" in name and hasattr(model, "get_params"):
+                    try:
+                        print(f"    - {name}: GPU fit failed ({e}), retrying on CPU.")
+                        model_cpu = model.__class__(**{**model.get_params(), "device": "cpu"})
+                        grid_search = _run_grid(model_cpu)
+                        if USE_REGRESSION_MODEL:
+                            best_score = -grid_search.best_score_
+                            results[name] = best_score
+                            print(f"    - {name} (CPU fallback): MSE={best_score:.4f} (Best Params: {grid_search.best_params_})")
+                            if best_score < best_mse_overall:
+                                best_mse_overall = best_score
+                                best_model_overall = grid_search.best_estimator_
+                                best_hyperparams_overall = None
+                        else:
+                            best_score = grid_search.best_score_
+                            results[name] = best_score
+                            print(f"    - {name} (CPU fallback): {best_score:.4f} (Best Params: {grid_search.best_params_})")
+                            if best_score > best_auc_overall:
+                                best_auc_overall = best_score
+                                best_model_overall = grid_search.best_estimator_
+                                best_hyperparams_overall = None
+                        continue
+                    except Exception as e2:
+                        print(f"    - {name}: CPU fallback also failed ({e2}).")
                 print(f"    - {name}: Failed evaluation. Error: {e}")
                 results[name] = 0.0
 
@@ -1452,11 +1594,16 @@ def train_and_evaluate_models(
     if USE_REGRESSION_MODEL:
         best_model_name = min(results, key=results.get)  # Lowest MSE wins
         best_score = results[best_model_name]
-        print(f"  🏆 WINNER: {best_model_name} with MSE={best_score:.4f}")
+        print(f"  🏆 WINNER for {ticker} ({target_col}): {best_model_name} with MSE={best_score:.4f}")
     else:
         best_model_name = max(results, key=results.get)  # Highest AUC wins
         best_score = results[best_model_name]
-        print(f"  🏆 WINNER: {best_model_name} with AUC={best_score:.4f}")
+        print(f"  🏆 WINNER for {ticker} ({target_col}): {best_model_name} with AUC={best_score:.4f}")
+    
+    # Track model selection for statistics (store in a way that can be aggregated later)
+    global _model_selection_stats
+    key = f"{ticker}_{target_col}"
+    _model_selection_stats[key] = best_model_name
     
     # Alpha metrics (validation-like quick check)
     try:
@@ -1469,7 +1616,7 @@ def train_and_evaluate_models(
     # If the best model is a DL model, ensure its specific scaler is returned
     if best_model_name in ["LSTM", "GRU"]:
         y_scaler = models_and_params_local[best_model_name].get("y_scaler", None)
-        return models_and_params_local[best_model_name]["model"], models_and_params_local[best_model_name]["scaler"], y_scaler, best_hyperparams_overall
+        return models_and_params_local[best_model_name]["model"], models_and_params_local[best_model_name]["scaler"], y_scaler, best_hyperparams_overall, best_model_name
     else:
         # Otherwise, return the best traditional ML model and the StandardScaler
         from sklearn.ensemble import RandomForestRegressor as RFRegressor
@@ -1480,7 +1627,7 @@ def train_and_evaluate_models(
         
         if SAVE_PLOTS and SHAP_AVAILABLE and isinstance(best_model_overall, (RandomForestClassifier, XGBClassifier, RFRegressor, XGBReg)):
             analyze_shap_for_tree_model(best_model_overall, X_df, final_feature_names, ticker, target_col)
-        return best_model_overall, scaler, None, best_hyperparams_overall  # None for y_scaler (not used in traditional ML)
+        return best_model_overall, scaler, None, best_hyperparams_overall, best_model_name  # None for y_scaler (not used in traditional ML)
 
 def train_worker(params: Tuple) -> Dict:
     """Worker function for parallel model training."""

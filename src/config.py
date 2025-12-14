@@ -109,16 +109,13 @@ USE_MLP_CLASSIFIER      = False
 USE_LIGHTGBM            = True       # enable LightGBM
 USE_XGBOOST             = True       # enable XGBoost
 USE_LSTM                = False
-USE_GRU                 = True       # keep GRU enabled
+USE_GRU                 = False      # GRU disabled
 USE_RANDOM_FOREST       = True       # enable Random Forest
 USE_TCN                 = True       # Temporal Convolutional Network (sequence)
 USE_ELASTIC_NET         = True       # Baseline linear regressor (tabular)
 USE_RIDGE               = True       # Baseline linear regressor (tabular)
 
-# --- Simple Rule-Based Strategy specific hyperparameters
-USE_SIMPLE_RULE_STRATEGY = False
-SIMPLE_RULE_TRAILING_STOP_PERCENT = 0.10 # 10% trailing stop
-SIMPLE_RULE_TAKE_PROFIT_PERCENT = 0.10   # 10% take profit
+# Simple Rule-Based Strategy removed - using AI strategy only
 
 # --- Deep Learning specific hyperparameters
 SEQUENCE_LENGTH         = 60         # 60 days lookback for longer horizon predictions

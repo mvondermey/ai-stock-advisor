@@ -4,8 +4,7 @@ from typing import List, Dict, Tuple, Optional
 
 # Import configuration from config.py
 from config import (
-    MIN_PROBA_BUY, MIN_PROBA_SELL, USE_MODEL_GATE, USE_SIMPLE_RULE_STRATEGY,
-    SIMPLE_RULE_TRAILING_STOP_PERCENT, SIMPLE_RULE_TAKE_PROFIT_PERCENT,
+    MIN_PROBA_BUY, MIN_PROBA_SELL, USE_MODEL_GATE,
     INVESTMENT_PER_STOCK, TRANSACTION_COST, ATR_PERIOD, FEAT_SMA_SHORT,
     FEAT_SMA_LONG, FEAT_VOL_WINDOW, SEQUENCE_LENGTH, USE_REGRESSION_MODEL
 )
@@ -30,9 +29,6 @@ class RuleTradingEnv:
                  model_buy=None, model_sell=None, scaler=None, y_scaler=None, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, use_gate: bool = USE_MODEL_GATE,
                  feature_set: Optional[List[str]] = None,
                  per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None,
-                 use_simple_rule_strategy: bool = USE_SIMPLE_RULE_STRATEGY,
-                 simple_rule_trailing_stop_percent: float = SIMPLE_RULE_TRAILING_STOP_PERCENT,
-                 simple_rule_take_profit_percent: float = SIMPLE_RULE_TAKE_PROFIT_PERCENT,
                  horizon_days: int = 20):
         if "Close" not in df.columns:
             raise ValueError("DataFrame must contain 'Close' column.")
@@ -47,8 +43,6 @@ class RuleTradingEnv:
         self.min_proba_buy = float(per_ticker_min_proba_buy if per_ticker_min_proba_buy is not None else min_proba_buy)
         self.min_proba_sell = float(per_ticker_min_proba_sell if per_ticker_min_proba_sell is not None else min_proba_sell)
         self.use_gate = bool(use_gate) and (scaler is not None)
-        self.use_simple_rule_strategy = use_simple_rule_strategy
-        self.simple_rule_trailing_stop_percent = simple_rule_trailing_stop_percent
         
         # DEBUG: Log environment initialization
         import sys
@@ -57,9 +51,7 @@ class RuleTradingEnv:
         sys.stderr.write(f"  - model_buy: {type(model_buy).__name__ if model_buy else 'None'}\n")
         sys.stderr.write(f"  - model_sell: {type(model_sell).__name__ if model_sell else 'None'}\n")
         sys.stderr.write(f"  - y_scaler: {type(y_scaler).__name__ if y_scaler else 'None'}\n")
-        sys.stderr.write(f"  - use_simple_rule_strategy: {use_simple_rule_strategy}\n")
         sys.stderr.flush()
-        self.simple_rule_take_profit_percent = simple_rule_take_profit_percent
         self.horizon_days = int(horizon_days)  # Prediction horizon for evaluation
         self.feature_set = feature_set if feature_set is not None else [
             "Close", "Volume", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "ATR",
@@ -500,43 +492,16 @@ class RuleTradingEnv:
         date = self._date_at(self.current_step)
         atr = float(row.get("ATR", np.nan)) if pd.notna(row.get("ATR", np.nan)) else None
 
-        ai_signal = False
-        if not self.use_simple_rule_strategy:
-            ai_signal = self._allow_buy_by_model(self.current_step)
-        
-        simple_rule_entry_signal = False
-        if self.use_simple_rule_strategy:
-            sma_short = self.df.loc[self.current_step, "SMA_F_S"]
-            sma_long = self.df.loc[self.current_step, "SMA_F_L"]
-            prev_sma_short = self.df.loc[self.current_step - 1, "SMA_F_S"]
-            prev_sma_long = self.df.loc[self.current_step - 1, "SMA_F_L"]
-            if prev_sma_short <= prev_sma_long and sma_short > sma_long:
-                simple_rule_entry_signal = True
+        # AI Strategy: Get buy signal from model
+        ai_signal = self._allow_buy_by_model(self.current_step)
 
-        if self.shares == 0 and (ai_signal or simple_rule_entry_signal):
+        if self.shares == 0 and ai_signal:
             self._buy(price, atr, date)
         
-        ai_exit_signal = False
-        if not self.use_simple_rule_strategy:
-            ai_exit_signal = self._allow_sell_by_model(self.current_step)
+        # AI Strategy: Get sell signal from model
+        ai_exit_signal = self._allow_sell_by_model(self.current_step)
 
-        simple_rule_exit_signal = False
-        if self.shares > 0 and self.use_simple_rule_strategy:
-            if self.highest_since_entry is None or price > self.highest_since_entry:
-                self.highest_since_entry = price
-            
-            if self.entry_price is not None:
-                self.trailing_stop_price = self.highest_since_entry * (1 - self.simple_rule_trailing_stop_percent)
-                self.take_profit_price = self.entry_price * (1 + self.simple_rule_take_profit_percent)
-            
-            if self.trailing_stop_price is not None and price <= self.trailing_stop_price:
-                simple_rule_exit_signal = True
-                self.last_ai_action = "SELL (Trailing Stop)"
-            elif self.take_profit_price is not None and price >= self.take_profit_price:
-                simple_rule_exit_signal = True
-                self.last_ai_action = "SELL (Take Profit)"
-
-        if self.shares > 0 and (ai_exit_signal or simple_rule_exit_signal):
+        if self.shares > 0 and ai_exit_signal:
             self._sell(price, date)
         else:
             self.last_ai_action = "HOLD"
