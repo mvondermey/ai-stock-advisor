@@ -1599,6 +1599,21 @@ def main(
         final_holdings_1month = rebal_results_1month.get('final_holdings', {})
         processed_tickers_1month = list(final_holdings_1month.keys()) if final_holdings_1month else top_tickers_1month_filtered[:n_top_rebal_1m]
         strategy_results_1month = []  # No per-ticker results in portfolio strategy
+        
+        # --- Run Rule-Based Strategy for 1-Month ---
+        print("\n📊 Running Rule-Based Strategy for 1-Month period...")
+        rule_results_1month = run_rule_based_portfolio_strategy(
+            all_tickers_data=all_tickers_data,
+            candidate_tickers=top_tickers_1month_filtered,
+            start_date=bt_start_1month,
+            end_date=bt_end,
+            initial_capital=initial_capital_1month,
+            n_top=n_top_rebal_1m,
+            momentum_lookback=5,
+            rebalance_frequency=1
+        )
+        final_rule_value_1month = rule_results_1month.get('final_value', initial_capital_1month)
+        rule_1month_return = rule_results_1month.get('total_return', 0) * 100
         performance_metrics_1month = []
 
         # Simple Rule Strategy removed - using AI strategy only
@@ -1777,7 +1792,11 @@ def main(
         final_rule_value_1y=final_rule_value_1y if 'final_rule_value_1y' in locals() else None,
         rule_1y_return=rule_1y_return if 'rule_1y_return' in locals() else None,
         final_rule_value_ytd=final_rule_value_ytd if 'final_rule_value_ytd' in locals() else None,
-        rule_ytd_return=rule_ytd_return if 'rule_ytd_return' in locals() else None
+        rule_ytd_return=rule_ytd_return if 'rule_ytd_return' in locals() else None,
+        final_rule_value_3month=final_rule_value_3month if 'final_rule_value_3month' in locals() else None,
+        rule_3month_return=rule_3month_return if 'rule_3month_return' in locals() else None,
+        final_rule_value_1month=final_rule_value_1month if 'final_rule_value_1month' in locals() else None,
+        rule_1month_return=rule_1month_return if 'rule_1month_return' in locals() else None
     )
     print("\n✅ Final summary prepared and printed.")
 
