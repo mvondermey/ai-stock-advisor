@@ -14,11 +14,18 @@ import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
+# Import financial data fetching function
+try:
+    from data_fetcher import _fetch_financial_data
+except ImportError:
+    _fetch_financial_data = None
+
 # Import from config and data_fetcher
 from config import (
     DATA_PROVIDER, N_TOP_TICKERS, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES,
     PAUSE_BETWEEN_YF_CALLS, MARKET_SELECTION, USE_PERFORMANCE_BENCHMARK,
-    ALPACA_API_KEY, ALPACA_SECRET_KEY, TOP_CACHE_PATH, VALID_TICKERS_CACHE_PATH
+    ALPACA_API_KEY, ALPACA_SECRET_KEY, TOP_CACHE_PATH, VALID_TICKERS_CACHE_PATH,
+    ALPACA_STOCKS_LIMIT
 )
 from data_fetcher import load_prices_robust, _download_batch_robust
 from utils import _ensure_dir, _normalize_symbol, _to_utc
@@ -50,10 +57,17 @@ def get_all_tickers() -> List[str]:
                 assets = trading_client.get_all_assets(search_params)
                 tradable_assets = [a for a in assets if a.tradable]
                 alpaca_tickers = [asset.symbol for asset in tradable_assets]
+
+                # Apply ALPACA_STOCKS_LIMIT to prevent downloading too many stocks
+                if len(alpaca_tickers) > ALPACA_STOCKS_LIMIT:
+                    alpaca_tickers = alpaca_tickers[:ALPACA_STOCKS_LIMIT]
+                    print(f"[LIMITED] Fetched {len(alpaca_tickers)} tradable US equity tickers from Alpaca (limited to {ALPACA_STOCKS_LIMIT}).")
+                else:
+                    print(f"[SUCCESS] Fetched {len(alpaca_tickers)} tradable US equity tickers from Alpaca.")
+
                 all_tickers.update(alpaca_tickers)
-                print(f"✅ Fetched {len(alpaca_tickers)} tradable US equity tickers from Alpaca.")
             except Exception as e:
-                print(f"⚠️ Could not fetch asset list from Alpaca ({e}).")
+                print(f"[WARNING] Could not fetch asset list from Alpaca ({e}).")
         else:
             print("⚠️ Alpaca stock selection is enabled, but SDK/API keys are not available.")
 
@@ -511,20 +525,57 @@ def _finalize_single_ticker_performance(params: Tuple) -> Optional[Tuple[str, fl
     return (ticker, perf_1y, ytd_perf)
 
 def _apply_fundamental_screen_worker(params: Tuple) -> Optional[Tuple[str, float, float]]:
-    """Worker to apply fundamental screens."""
+    """Worker to apply fundamental screens using yfinance with proper fallback."""
     ticker, perf_1y, perf_ytd, fcf_min_threshold, ebitda_min_threshold = params
 
-    df_financial = load_prices_robust(ticker, datetime(2020, 1, 1, tzinfo=timezone.utc), datetime.now(timezone.utc))
-    
-    if df_financial.empty or 'Fin_FreeCashFlow' not in df_financial.columns or 'Fin_EBITDA' not in df_financial.columns:
+    # Use yfinance directly for fundamental data - same as _fetch_financial_data but simplified
+    try:
+        import yfinance as yf
+        import time
+
+        # Small delay to be respectful to APIs
+        time.sleep(0.1)  # Shorter delay for multiprocessing
+
+        yf_ticker = yf.Ticker(ticker)
+        financial_data = {}
+
+        # Get income statement data (EBITDA)
+        try:
+            income_stmt = yf_ticker.quarterly_income_stmt
+            if not income_stmt.empty and 'EBITDA' in income_stmt.index:
+                latest_ebitda = income_stmt.loc['EBITDA'].iloc[-1]
+                if not pd.isna(latest_ebitda):
+                    financial_data['EBITDA'] = float(latest_ebitda)
+        except Exception as e:
+            pass  # Silently continue if this fails
+
+        # Get cash flow data (Free Cash Flow)
+        try:
+            cash_flow = yf_ticker.quarterly_cash_flow
+            if not cash_flow.empty and 'Free Cash Flow' in cash_flow.index:
+                latest_fcf = cash_flow.loc['Free Cash Flow'].iloc[-1]
+                if not pd.isna(latest_fcf):
+                    financial_data['FCF'] = float(latest_fcf)
+        except Exception as e:
+            pass  # Silently continue if this fails
+
+        # Apply thresholds (fcf_min_threshold and ebitda_min_threshold are 0.0 by default)
+        should_exclude = False
+
+        if 'EBITDA' in financial_data and ebitda_min_threshold is not None:
+            if financial_data['EBITDA'] < ebitda_min_threshold:
+                should_exclude = True
+
+        if 'FCF' in financial_data and fcf_min_threshold is not None:
+            if financial_data['FCF'] < fcf_min_threshold:
+                should_exclude = True
+
+        if should_exclude:
+            return None  # Exclude stocks that don't meet financial criteria
+
+        # Include stocks that pass financial screening or have no data available
         return (ticker, perf_1y, perf_ytd)
 
-    latest_fcf = df_financial['Fin_FreeCashFlow'].iloc[-1] if not df_financial['Fin_FreeCashFlow'].empty else np.nan
-    latest_ebitda = df_financial['Fin_EBITDA'].iloc[-1] if not df_financial['Fin_EBITDA'].empty else np.nan
-
-    if fcf_min_threshold is not None and (np.isnan(latest_fcf) or latest_fcf < fcf_min_threshold):
-        return None
-    if ebitda_min_threshold is not None and (np.isnan(latest_ebitda) or latest_ebitda < ebitda_min_threshold):
-        return None
-
-    return (ticker, perf_1y, perf_ytd)
+    except Exception as e:
+        # If anything fails, include the stock by default (fail-open approach)
+        return (ticker, perf_1y, perf_ytd)

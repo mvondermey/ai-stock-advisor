@@ -112,20 +112,17 @@ def print_final_summary(
     print(f"  Initial Capital: ${initial_balance_used:,.2f}")
     print(f"  Number of Tickers Analyzed: {num_tickers_analyzed}")
     print("-" * 80)
-    print(f"{'Period':<15} | {'AI Strategy':<25} | {'Rule-Based':<25} | {'Buy & Hold':<25}")
-    print("-" * 80)
+    print(f"{'Period':<15} | {'AI Strategy':<25} | {'Buy & Hold':<25}")
+    print("-" * 60)
     
     # 1-Year
-    rule_1y_str = f"${final_rule_value_1y:,.2f} ({rule_1y_return:+.2f}%)" if final_rule_value_1y is not None else "N/A"
-    print(f"{'1-Year':<15} | ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)".ljust(43) + f"| {rule_1y_str}".ljust(28) + f"| ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
+    print(f"{'1-Year':<15} | ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)".ljust(28) + f"| ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
     
     # YTD
-    rule_ytd_str = f"${final_rule_value_ytd:,.2f} ({rule_ytd_return:+.2f}%)" if final_rule_value_ytd is not None else "N/A"
-    print(f"{'YTD':<15} | ${final_strategy_value_ytd:,.2f} ({ai_ytd_return:+.2f}%)".ljust(43) + f"| {rule_ytd_str}".ljust(28) + f"| ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
+    print(f"{'YTD':<15} | ${final_strategy_value_ytd:,.2f} ({ai_ytd_return:+.2f}%)".ljust(28) + f"| ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
     
     # 3-Month
-    rule_3m_str = f"${final_rule_value_3month:,.2f} ({rule_3month_return:+.2f}%)" if final_rule_value_3month is not None else "N/A"
-    print(f"{'3-Month':<15} | ${final_strategy_value_3month:,.2f} ({ai_3month_return:+.2f}%)".ljust(43) + f"| {rule_3m_str}".ljust(28) + f"| ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
+    print(f"{'3-Month':<15} | ${final_strategy_value_3month:,.2f} ({ai_3month_return:+.2f}%)".ljust(28) + f"| ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
     
     # 1-Month
     rule_1m_str = f"${final_rule_value_1month:,.2f} ({rule_1month_return:+.2f}%)" if final_rule_value_1month is not None else "N/A"
@@ -133,7 +130,7 @@ def print_final_summary(
     ai_1month_return_str = "N/A" if final_strategy_value_1month == 0 else f"{ai_1month_return:+.2f}%"
     bh_1month_value_str = "N/A" if final_buy_hold_value_1month == 0 else f"${final_buy_hold_value_1month:,.2f}"
     
-    print(f"{'1-Month':<15} | ${final_strategy_value_1month:,.2f} ({ai_1month_return_str})".ljust(43) + f"| {rule_1m_str}".ljust(28) + f"| {bh_1month_value_str} ({bh_1month_return_str})")
+    print(f"{'1-Month':<15} | ${final_strategy_value_1month:,.2f} ({ai_1month_return_str})".ljust(28) + f"| {bh_1month_value_str} ({bh_1month_return_str})")
     print("="*80)
 
     print("\n📈 Individual Ticker Performance (AI Strategy - Sorted by 1-Year Performance):")

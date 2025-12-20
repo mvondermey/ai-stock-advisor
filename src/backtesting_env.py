@@ -478,37 +478,37 @@ class RuleTradingEnv:
         self.last_ai_action = "SELL"
 
     def step(self):
+        """Simplified: Buy at start, hold until end of period."""
         if self.current_step < 1:
-            self.current_step += 1
-            self.portfolio_history.append(self.initial_balance)
-            return False
+            # Buy at the beginning of the period
+            if len(self.df) > 0:
+                first_row = self.df.iloc[0]
+                first_price = float(first_row["Close"])
+                first_date = self._date_at(0)
+                atr = float(first_row.get("ATR", np.nan)) if pd.notna(first_row.get("ATR", np.nan)) else None
 
+                # Buy immediately (no AI decision needed for selection-based system)
+                self._buy(first_price, atr, first_date)
+                self.last_ai_action = "BUY"
+                self.last_buy_prob = 1.0  # Full confidence in selection
+                self.last_sell_prob = 0.0
+
+            self.portfolio_history.append(self.initial_balance)
+            self.current_step = len(self.df)  # Skip to end
+            return True
+
+        # Hold until end of period
         if self.current_step >= len(self.df):
             return True
 
+        # Track portfolio value but don't trade
         row = self.df.iloc[self.current_step]
-        
         price = float(row["Close"])
-        date = self._date_at(self.current_step)
-        atr = float(row.get("ATR", np.nan)) if pd.notna(row.get("ATR", np.nan)) else None
-
-        # AI Strategy: Get buy signal from model
-        ai_signal = self._allow_buy_by_model(self.current_step)
-
-        if self.shares == 0 and ai_signal:
-            self._buy(price, atr, date)
-        
-        # AI Strategy: Get sell signal from model
-        ai_exit_signal = self._allow_sell_by_model(self.current_step)
-
-        if self.shares > 0 and ai_exit_signal:
-            self._sell(price, date)
-        else:
-            self.last_ai_action = "HOLD"
-
         port_val = self.cash + self.shares * price
         self.portfolio_history.append(port_val)
         self.current_step += 1
+
+        self.last_ai_action = "HOLD"
         return self.current_step >= len(self.df)
 
     def run(self) -> Tuple[float, List[Tuple], str, float, float, float]:

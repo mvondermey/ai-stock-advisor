@@ -10,6 +10,7 @@ SEED                    = 42
 # --- Provider & caching
 DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', 'alpaca', or 'twelvedata'
 USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin
+DATA_INTERVAL           = '1d'       # '1m', '5m', '15m', '30m', '1h', '1d', '1wk', '1mo'
 DATA_CACHE_DIR          = Path("data_cache")
 TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
 VALID_TICKERS_CACHE_PATH = Path("logs/valid_tickers.json")
@@ -37,10 +38,10 @@ USE_GRU = False
 
 # --- Universe / selection
 MARKET_SELECTION = {
-    "ALPACA_STOCKS": False, # Fetch all tradable US equities from Alpaca
+    "ALPACA_STOCKS": True,   # ✅ ENABLED - ALL Alpaca tradable stocks
     "NASDAQ_ALL": False,
-    "NASDAQ_100": True,
-    "SP500": False,
+    "NASDAQ_100": False,
+    "SP500": False,          # Disabled - using ALL Alpaca stocks instead
     "DOW_JONES": False,
     "POPULAR_ETFS": False,
     "CRYPTO": False,
@@ -49,7 +50,14 @@ MARKET_SELECTION = {
     "SMI": False,
     "FTSE_MIB": False,
 }
-N_TOP_TICKERS           = 5        # Evaluate 5 candidates; backtest ranks and picks top 3
+
+# If ALPACA_STOCKS is enabled, Alpaca can return thousands of symbols.
+# Set very high to effectively include (almost) all Alpaca-tradable US equities.
+ALPACA_STOCKS_LIMIT = 100  # High limit = train models for ALL tradable stocks
+
+# Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
+ALPACA_STOCKS_EXCHANGES = []  # Empty = all exchanges (NYSE, NASDAQ, AMEX, etc.)
+N_TOP_TICKERS           = 40       # Evaluate top 40 candidates by 1-year momentum; backtest ranks and picks top 3
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -58,23 +66,32 @@ PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls f
 NUM_PROCESSES           = None  # Will be set to cpu_count() - 2 in main.py
 
 # --- Backtest & training windows
-BACKTEST_DAYS           = 365        # 1 year for backtest
+BACKTEST_DAYS           = 60         # 2 months for backtest (faster testing)
 BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest
 BACKTEST_DAYS_1MONTH    = 32         # 1 month for backtest
-TRAIN_LOOKBACK_DAYS     = 1000       # Training data (increased for more samples - need 1000+ for neural networks)
+TRAIN_LOOKBACK_DAYS     = 365        # Train on ~1 year of history (user request)
 VALIDATION_DAYS         = 90         # ✅ FIX 4: Validation period for threshold optimization
 
+# --- Walk-Forward Retraining Frequency ---
+# How often to retrain models during walk-forward backtest
+# Options:
+#   5  = Weekly retraining (aggressive, best for high volatility/penny stocks)
+#   10 = Bi-weekly retraining (balanced, recommended for volatile stocks)
+#   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
+#   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
+RETRAIN_FREQUENCY_DAYS = 10  # Bi-weekly retraining - consider 20 for S&P 500
+
 # --- Backtest Period Enable/Disable Flags ---
-ENABLE_1YEAR_BACKTEST   = True
-ENABLE_YTD_BACKTEST     = True
-ENABLE_3MONTH_BACKTEST  = True
-ENABLE_1MONTH_BACKTEST  = True
+ENABLE_1YEAR_BACKTEST   = True   # ✅ Enabled - For simulation and strategy validation
+ENABLE_YTD_BACKTEST     = False  # Disabled - only using 1-year
+ENABLE_3MONTH_BACKTEST  = False  # Disabled - only using 1-year
+ENABLE_1MONTH_BACKTEST  = False  # Disabled - only using 1-year
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = True
-ENABLE_YTD_TRAINING     = True
-ENABLE_3MONTH_TRAINING  = True
-ENABLE_1MONTH_TRAINING  = True
+ENABLE_1YEAR_TRAINING   = True   # ✅ Enabled - Train models
+ENABLE_YTD_TRAINING     = False  # Disabled - only using 1-year
+ENABLE_3MONTH_TRAINING  = False  # Disabled - only using 1-year
+ENABLE_1MONTH_TRAINING  = False  # Disabled - only using 1-year
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -89,7 +106,15 @@ TRANSACTION_COST        = 0.001      # 0.1%
 FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
-CLASS_HORIZON           = 60         # days ahead for return prediction (default - quarterly outlook)
+CLASS_HORIZON           = 10         # days ahead for return prediction (longer horizon to capture trends)
+
+# --- AI Portfolio Rebalancing Strategy knobs ---
+# Rebalance less frequently than daily to reduce turnover/fees and align holding period with the prediction horizon.
+# Typical values: 1 (daily), 2 (match horizon=2d), 5 (weekly).
+AI_REBALANCE_FREQUENCY_DAYS = CLASS_HORIZON
+# Smooth per-ticker predictions before ranking to reduce noisy day-to-day flips.
+# Typical values: 1 (no smoothing), 3, 5.
+AI_PREDICTION_SMOOTHING_DAYS = 3
 # ✅ REGRESSION MODE: Thresholds based on predicted return percentages, not probabilities
 MIN_PROBA_BUY           = -1.0      # Disable buy threshold (always eligible)
 MIN_PROBA_BUY_OPTIONS   = [-1.0]    # No optimization, keep disabled
@@ -100,7 +125,7 @@ USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
 MARKET_FILTER_SMA       = 200
-USE_PERFORMANCE_BENCHMARK = True   # Set to True to enable benchmark filtering
+USE_PERFORMANCE_BENCHMARK = False  # Disable strict benchmark filtering for small universes
 
 # --- ML Model Selection Flags ---
 USE_LOGISTIC_REGRESSION = False
@@ -155,10 +180,11 @@ USE_REGRESSION_MODEL = True  # keep regression targets (GRU regressor)
 
 # Period-specific horizons (trading days) - matched to period scale
 PERIOD_HORIZONS = {
-    "1-Year": 60,    # 1-Year (252d) → predict 60 days (quarterly outlook)
-    "YTD": 40,       # YTD (varies) → predict 40 days (2 months ahead)
-    "3-Month": 20,   # 3-Month (63d) → predict 20 days (monthly outlook)
-    "1-Month": 10    # 1-Month (21d) → predict 10 days (2 weeks ahead)
+    # 10-day horizon to capture medium-term trends instead of noise
+    "1-Year": 10,     # Predict 10 trading days ahead (~2 weeks)
+    "YTD": 10,
+    "3-Month": 10,
+    "1-Month": 10
 }
 
 MIN_PREDICTED_RETURN = 0.05  # Only buy if predicted return > 5%

@@ -11,7 +11,7 @@ import time
 # Import config values
 try:
     from config import (
-        PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK, DATA_CACHE_DIR, CACHE_DAYS, 
+        PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK, DATA_INTERVAL, DATA_CACHE_DIR, CACHE_DAYS,
         TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
         FEAT_SMA_SHORT, FEAT_SMA_LONG, FEAT_VOL_WINDOW, ATR_PERIOD
     )
@@ -405,6 +405,7 @@ def _fetch_financial_data_from_alpaca(ticker: str) -> pd.DataFrame:
 DATA_CACHE_DIR = Path("data_cache")
 DATA_PROVIDER = 'yahoo'
 USE_YAHOO_FALLBACK = True
+DATA_INTERVAL = '1d'
 CACHE_DAYS = 7
 TWELVEDATA_API_KEY = "YOUR_DEFAULT_KEY_OR_EMPTY_STRING"
 ALPACA_API_KEY = None
@@ -475,7 +476,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 elif USE_YAHOO_FALLBACK:
                     print(f"  ℹ️ TwelveData fetch failed for {ticker}. Trying Yahoo Finance fallback...")
                     try:
-                        downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
+                        downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, interval=DATA_INTERVAL, auto_adjust=True, progress=False)
                         if downloaded_df is not None and not downloaded_df.empty:
                             price_df = downloaded_df.dropna()
                         else:
@@ -494,7 +495,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 elif USE_YAHOO_FALLBACK:
                     print(f"  ℹ️ Alpaca fetch failed for {ticker}. Trying Yahoo Finance fallback...")
                     try:
-                        downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
+                        downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, interval=DATA_INTERVAL, auto_adjust=True, progress=False)
                         if downloaded_df is not None and not downloaded_df.empty:
                             price_df = downloaded_df.dropna()
                         else:
