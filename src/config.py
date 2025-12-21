@@ -157,8 +157,7 @@ INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False     # Disable SHAP (causes errors with XGBoost Regressor)
 FORCE_TRAINING          = True
 CONTINUE_TRAINING_FROM_EXISTING = False
-FORCE_THRESHOLDS_OPTIMIZATION = False  # ✅ Kelly Criterion makes threshold optimization unnecessary
-FORCE_PERCENTAGE_OPTIMIZATION = False  # Use B&H-based targets for each period
+# Threshold optimization removed - system uses simplified buy-and-hold
 
 # --- Live Trading Model Selection ---
 # Which period's model to use for live trading

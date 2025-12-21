@@ -25,7 +25,6 @@ sys.path.insert(0, str(project_root))
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
     TARGET_PERCENTAGE, CLASS_HORIZON,
-    FORCE_THRESHOLDS_OPTIMIZATION, FORCE_PERCENTAGE_OPTIMIZATION,
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, VALIDATION_DAYS,
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
@@ -99,12 +98,11 @@ if not _script_initialized:
     _script_initialized = True
 
 import os
-from backtesting import optimize_thresholds_for_portfolio_parallel, _prepare_model_for_multiprocessing
 # from portfolio_rebalancing import run_portfolio_rebalancing_backtest  # Module deleted
 # from rule_based_strategy import run_rule_based_portfolio_strategy  # Module deleted
 from summary_phase import print_final_summary
 from training_phase import train_worker, train_models_for_period
-from backtesting_phase import _run_portfolio_backtest, _run_portfolio_backtest_walk_forward
+from backtesting_phase import _run_portfolio_backtest_walk_forward
 import json
 import time
 import re
@@ -130,8 +128,7 @@ from data_fetcher import (
     _download_batch_robust, _fetch_financial_data, _fetch_financial_data_from_alpaca,
     _fetch_intermarket_data
 )
-from ticker_selection import get_tickers_for_backtest, get_all_tickers, find_top_performers
-from backtesting_env import RuleTradingEnv
+from ticker_selection import get_all_tickers, find_top_performers
 from summary_phase import (
     print_final_summary, print_prediction_vs_actual_comparison,
     print_horizon_validation_summary, print_training_phase_summary,
@@ -367,9 +364,8 @@ def get_internet_time():
 def main(
     fcf_threshold: float = 0.0,
     ebitda_threshold: float = 0.0,
-    target_percentage: float = TARGET_PERCENTAGE, # This will now be the initial/default target_percentage for optimization
-    class_horizon: int = CLASS_HORIZON, # New parameter for initial/default class_horizon for optimization
-    force_percentage_optimization: bool = FORCE_PERCENTAGE_OPTIMIZATION, # New parameter
+    target_percentage: float = TARGET_PERCENTAGE,
+    class_horizon: int = CLASS_HORIZON,
     top_performers_data=None,
     feature_set: Optional[List[str]] = None,
     run_parallel: bool = True,
@@ -595,50 +591,18 @@ def main(
     capital_per_stock_1y = INVESTMENT_PER_STOCK
     # Ensure logs directory exists for optimized parameters
     _ensure_dir(TOP_CACHE_PATH.parent)
-    optimized_params_file = TOP_CACHE_PATH.parent / "optimized_per_ticker_params.json"
-    
-    # If force_thresholds_optimization is True and the file exists, delete it to force re-optimization
-    if force_thresholds_optimization and optimized_params_file.exists():
-        try:
-            os.remove(optimized_params_file)
-            print(f"🗑️ Deleted existing optimized parameters file: {optimized_params_file} to force re-optimization.")
-        except Exception as e:
-            print(f"⚠️ Could not delete optimized parameters file: {e}")
-
+    # Initialize optimized_params_per_ticker with default values (no optimization)
     optimized_params_per_ticker = {}
-    loaded_optimized_params = {}
+    for ticker in top_tickers_1y_filtered:
+        optimized_params_per_ticker[ticker] = {
+            'target_percentage': target_percentage,
+            'optimization_status': "Using defaults (no optimization)"
+        }
 
-    # Try to load existing optimized parameters if not forcing re-optimization
-    if optimized_params_file.exists():
-        try:
-            with open(optimized_params_file, 'r') as f:
-                loaded_optimized_params = json.load(f)
-            print(f"\n✅ Loaded existing optimized parameters from {optimized_params_file}.")
-        except Exception as e:
-            print(f"⚠️ Could not load optimized parameters from file: {e}. Starting with default thresholds.")
-
-    # Determine if optimization needs to run at all
-    should_run_optimization = force_thresholds_optimization or force_percentage_optimization
-    
-    # Initialize all_tested_combinations
+    # Initialize all_tested_combinations (empty since no optimization)
     all_tested_combinations = {}
-    
-    # Initialize optimized_params_per_ticker (will be populated during optimization phase)
-    optimized_params_per_ticker = {}
-    if not should_run_optimization:
-        # If no optimization is forced, load existing or use defaults
-        for ticker in top_tickers_1y_filtered:
-            if ticker in loaded_optimized_params:
-                optimized_params_per_ticker[ticker] = loaded_optimized_params[ticker]
-                optimized_params_per_ticker[ticker]['optimization_status'] = "Loaded"
-            else:
-                optimized_params_per_ticker[ticker] = {
-                    'target_percentage': target_percentage,
-                    'optimization_status': "Not Optimized (using defaults)"
-                }
-        print(f"\n✅ Using loaded or default parameters (set 'force_thresholds_optimization=True' or 'force_percentage_optimization=True' in main() call to re-run optimization).")
-        if not optimized_params_per_ticker:
-            print("\nℹ️ No optimized parameters found for current tickers. Using default thresholds.")
+
+    print(f"\n✅ Using default parameters for all tickers (threshold optimization removed).")
 
     # Initialize all backtest related variables to default values
     final_strategy_value_1y = initial_balance_used
@@ -666,133 +630,6 @@ def main(
     
     # Initialize optimized_params dictionaries (only 1-year period supported)
     
-    if should_run_optimization:
-        # --- Optimize 1-Year Period ---
-        print("\n🔄 Step 4: Optimizing ML parameters for 1-Year period...")
-        optimization_params = []
-        for ticker in top_tickers_1y_filtered:
-            if ticker in models and ticker in scalers:
-                model_ticker = models[ticker]
-
-                model_type = type(model_ticker).__name__ if model_ticker else 'None'
-
-                if model_ticker is None:
-                    print(f"  ⏭️  Skipping optimization for {ticker}: Missing model (Type: {model_type})")
-                    continue
-
-                print(f"  ✅ Optimizing {ticker}: Model={model_type}")
-                
-                # Use the SAME training parameters that the model was trained with
-                if FORCE_PERCENTAGE_OPTIMIZATION:
-                    # *** KEY FIX: Use config values for optimization too ***
-                    current_target_percentage_for_opt = TARGET_PERCENTAGE
-                    current_class_horizon_for_opt = CLASS_HORIZON
-                    print(f"     📊 Optimization using FORCED config: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
-                else:
-                    # Reconstruct from B&H performance
-                    ticker_bh_return_1y = 0.01
-                    for t, perf_1y in top_performers_data:
-                        if t == ticker:
-                            ticker_bh_return_1y = perf_1y / 100.0
-                            break
-                    
-                    period_horizon_1y = 20  # Shorter horizon for better learning
-                    num_periods = 252.0 / period_horizon_1y
-                    period_target_pct_1y = abs(ticker_bh_return_1y / num_periods)
-                    period_target_pct_1y = max(period_target_pct_1y, 0.01)
-                    
-                    current_target_percentage_for_opt = period_target_pct_1y
-                    current_class_horizon_for_opt = period_horizon_1y
-                    
-                    print(f"     📊 Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
-
-                feature_set_for_opt = scalers[ticker].feature_names_in_ if hasattr(scalers[ticker], 'feature_names_in_') else None
-
-                # Get training data for optimization (REVERTED Fix 4)
-                try:
-                    ticker_train_data = all_tickers_data.loc[train_start_1y_calc:train_end_1y, (slice(None), ticker)]
-                    ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                    if ticker_train_data.empty:
-                        print(f"  ⚠️ Could not get training data for {ticker} for optimization. Skipping.")
-                        continue
-                except (KeyError, IndexError):
-                    print(f"  ⚠️ Could not slice training data for {ticker} for optimization. Skipping.")
-                    continue
-
-                # Prepare PyTorch model for multiprocessing (extract state dict as numpy arrays)
-                model_prepared = _prepare_model_for_multiprocessing(model_ticker)
-                
-                optimization_params.append((
-                    ticker,
-                    ticker_train_data.copy(),
-                    capital_per_stock_1y,
-                    current_target_percentage_for_opt,
-                    current_class_horizon_for_opt,
-                    force_thresholds_optimization,
-                    force_percentage_optimization,
-                    False,  # USE_ALPHA_THRESHOLD_BUY (disabled)
-                    False,  # USE_ALPHA_THRESHOLD_SELL (disabled)
-                    AlphaThresholdConfig(rebalance_freq="D", metric="alpha", costs_bps=5.0, slippage_bps=2.0),
-                    0.0,  # current_min_proba_buy_for_opt (disabled)
-                    1.0,  # current_min_proba_sell_for_opt (disabled)
-                    current_target_percentage_for_opt,
-                    current_class_horizon_for_opt,
-                    GRU_TARGET_PERCENTAGE_OPTIONS,
-                    GRU_CLASS_HORIZON_OPTIONS,
-                    SEED,
-                    feature_set_for_opt,
-                    model_prepared,  # Pass model info (will be reconstructed on GPU in worker)
-                    model_prepared,  # Use same model for both buy and sell signals
-                    scalers[ticker]  # Pass already-trained scaler
-                ))
-        
-        if optimization_params:
-            optimized_params_per_ticker, all_tested_combinations = optimize_thresholds_for_portfolio_parallel(optimization_params)
-            
-            # Print backtest results for each tested combination
-            if all_tested_combinations:
-                print("\n" + "="*80)
-                print("📊 Backtest Results for All Tested Optimization Combinations (1-Year)")
-                print("="*80)
-                for ticker, combinations in all_tested_combinations.items():
-                    if not combinations:
-                        continue
-                    print(f"\n📈 {ticker} - Tested {len(combinations)} combinations:")
-                    print("-" * 100)
-                    sorted_combinations = sorted(combinations, key=lambda x: x.get('revenue', -np.inf), reverse=True)
-                    print(f"{'Rank':<6} | {'Buy Thresh':<12} | {'Sell Thresh':<12} | {'AI Revenue':<15} | {'B&H Revenue':<15} | {'Difference':<15} | {'Alpha':<10}")
-                    print("-" * 100)
-                    for idx, combo in enumerate(sorted_combinations[:20], 1):
-                        revenue = combo.get('revenue', capital_per_stock_1y)
-                        buy_hold_revenue = combo.get('buy_hold_revenue', 0.0)
-                        revenue_pct = ((revenue - capital_per_stock_1y) / capital_per_stock_1y * 100) if capital_per_stock_1y > 0 else 0.0
-                        bh_revenue_pct = ((buy_hold_revenue) / capital_per_stock_1y * 100) if capital_per_stock_1y > 0 else 0.0
-                        diff = revenue - buy_hold_revenue
-                        diff_pct = revenue_pct - bh_revenue_pct
-                        alpha = combo.get('alpha_annualized', 0.0)
-                        
-                        print(f"{idx:<6} | {combo.get('min_proba_buy', 0.0):>11.2f} | {combo.get('min_proba_sell', 0.0):>11.2f} | "
-                              f"${revenue:>13,.2f} ({revenue_pct:>+6.2f}%) | ${buy_hold_revenue:>13,.2f} ({bh_revenue_pct:>+6.2f}%) | "
-                              f"${diff:>13,.2f} ({diff_pct:>+6.2f}%) | {alpha:>9.4f}")
-                    if len(sorted_combinations) > 20:
-                        print(f"... and {len(sorted_combinations) - 20} more combinations")
-                    print("-" * 100)
-                print("="*80 + "\n")
-
-            if optimized_params_per_ticker:
-                try:
-                    with open(optimized_params_file, 'w') as f:
-                        json.dump(optimized_params_per_ticker, f, indent=4)
-                    print(f"✅ Optimized parameters saved to {optimized_params_file}")
-                except Exception as e:
-                    print(f"⚠️ Could not save optimized parameters to file: {e}")
-        else:
-            optimized_params_per_ticker = {}
-            all_tested_combinations = {}
-        
-        
-        
-
     # ========================================================================
     # PHASE 3: RUN ALL BACKTESTS
     # ========================================================================

@@ -305,7 +305,7 @@ from config import (
     GRU_HIDDEN_SIZE_OPTIONS, GRU_NUM_LAYERS_OPTIONS, GRU_DROPOUT_OPTIONS,
     GRU_LEARNING_RATE_OPTIONS, GRU_BATCH_SIZE_OPTIONS, GRU_EPOCHS_OPTIONS,
     ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION, SAVE_PLOTS,
-    FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING, FORCE_PERCENTAGE_OPTIMIZATION,
+    FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING,
     USE_LOGISTIC_REGRESSION, USE_RANDOM_FOREST, USE_SVM, USE_MLP_CLASSIFIER,
     USE_LSTM, USE_GRU, USE_LIGHTGBM, USE_XGBOOST,
     TRY_LSTM_INSTEAD_OF_GRU,
@@ -1258,29 +1258,17 @@ def train_and_evaluate_models(
                     else:
                         models_and_params_local["GRU"] = {"model": None, "scaler": None, "y_scaler": None, "auc": 0.0}
                 else: # ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION is False, use fixed or loaded hyperparameters
-                    if loaded_gru_hyperparams and not FORCE_PERCENTAGE_OPTIMIZATION:
-                        # Use loaded hyperparams only if FORCE_PERCENTAGE_OPTIMIZATION is False
+                    if loaded_gru_hyperparams:
+                        # Use loaded hyperparameters
                         model_name = "LSTM" if TRY_LSTM_INSTEAD_OF_GRU else "GRU"
-                        print(f"    - Training {model_name} for {ticker} ({target_col}) with loaded hyperparameters (HP_OPT={perform_gru_hp_optimization}, ENABLE_HP_OPT={ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION})...")
+                        print(f"    - Training {model_name} for {ticker} ({target_col}) with loaded hyperparameters...")
                         hidden_size = loaded_gru_hyperparams.get("hidden_size", LSTM_HIDDEN_SIZE)
                         num_layers = loaded_gru_hyperparams.get("num_layers", LSTM_NUM_LAYERS)
                         dropout_rate = loaded_gru_hyperparams.get("dropout_rate", LSTM_DROPOUT)
                         learning_rate = loaded_gru_hyperparams.get("learning_rate", LSTM_LEARNING_RATE)
                         batch_size = loaded_gru_hyperparams.get("batch_size", LSTM_BATCH_SIZE)
                         epochs = LSTM_EPOCHS
-                        print(f"      Loaded {model_name} Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}, Horizon={default_class_horizon}")
-                    elif loaded_gru_hyperparams and FORCE_PERCENTAGE_OPTIMIZATION:
-                        # FORCE_PERCENTAGE_OPTIMIZATION is True: Use model architecture from loaded, but Target/Horizon from config
-                        print(f"    - Training GRU for {ticker} ({target_col}) with loaded model architecture but FORCED config Target/Horizon (FORCE_PCT_OPT=True)...")
-                        hidden_size = loaded_gru_hyperparams.get("hidden_size", LSTM_HIDDEN_SIZE)
-                        num_layers = loaded_gru_hyperparams.get("num_layers", LSTM_NUM_LAYERS)
-                        dropout_rate = loaded_gru_hyperparams.get("dropout_rate", LSTM_DROPOUT)
-                        learning_rate = loaded_gru_hyperparams.get("learning_rate", LSTM_LEARNING_RATE)
-                        batch_size = loaded_gru_hyperparams.get("batch_size", LSTM_BATCH_SIZE)
-                        epochs = LSTM_EPOCHS
-                        # *** KEY FIX: Use config values for Target and Horizon, not loaded ones ***
-                        print(f"      Forced Config: Horizon={default_class_horizon} (ignoring loaded Target/Horizon)")
-                        print(f"      Loaded Model Arch: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
+                        print(f"      Loaded {model_name} Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}")
                     else:
                         model_name = "LSTM" if TRY_LSTM_INSTEAD_OF_GRU else "GRU"
                         print(f"    - Training {model_name} for {ticker} ({target_col}) with default fixed hyperparameters (HP_OPT={perform_gru_hp_optimization}, ENABLE_HP_OPT={ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION})...")
