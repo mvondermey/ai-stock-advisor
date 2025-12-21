@@ -7,7 +7,7 @@ from typing import List, Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
 from config import (
-    MIN_PROBA_BUY, MIN_PROBA_SELL, TARGET_PERCENTAGE, CLASS_HORIZON,
+    TARGET_PERCENTAGE, CLASS_HORIZON,
     INVESTMENT_PER_STOCK, PERIOD_HORIZONS
 )
 

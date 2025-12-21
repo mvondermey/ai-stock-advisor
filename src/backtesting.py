@@ -13,7 +13,7 @@ from data_utils import load_prices, fetch_training_data, _ensure_dir, _calculate
 import logging
 from pathlib import Path
 from config import (
-    GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS, MIN_PROBA_BUY, MIN_PROBA_SELL,
+    GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS,
     USE_MODEL_GATE, TRANSACTION_COST, SEED, INVESTMENT_PER_STOCK,
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS,
     N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
@@ -268,10 +268,9 @@ def optimize_single_ticker_worker(params):
 
     # ITERATIVE HILL-CLIMBING OPTIMIZATION
     # Start from current saved thresholds, try one step up/down, move if better
-    from config import MIN_PROBA_BUY_OPTIONS, MIN_PROBA_SELL_OPTIONS
-    
-    buy_options = sorted(MIN_PROBA_BUY_OPTIONS if MIN_PROBA_BUY_OPTIONS else [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70])
-    sell_options = sorted(MIN_PROBA_SELL_OPTIONS if MIN_PROBA_SELL_OPTIONS else [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95])
+    # Probability threshold optimization removed - using simplified trading logic
+    buy_options = [0.0]  # Single disabled threshold
+    sell_options = [1.0]  # Single disabled threshold
     
     # Find closest indices to current thresholds
     current_buy_idx = min(range(len(buy_options)), key=lambda i: abs(buy_options[i] - current_min_proba_buy))
@@ -1318,8 +1317,9 @@ def _run_portfolio_backtest_single_chunk(
             return -np.inf
     for ticker in top_tickers:
         # Use optimized parameters if available, otherwise fall back to global defaults
-        min_proba_buy_ticker = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
-        min_proba_sell_ticker = optimized_params_per_ticker.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
+        # Probability thresholds removed - using simplified trading logic
+        min_proba_buy_ticker = 0.0  # Disabled
+        min_proba_sell_ticker = 1.0  # Disabled
         target_percentage_ticker = optimized_params_per_ticker.get(ticker, {}).get('target_percentage', target_percentage)
 
         # Ensure feature_set is passed to backtest_worker
@@ -1511,8 +1511,9 @@ def print_final_summary(
     for res in sorted_final_results:
         ticker = str(res.get('ticker', 'N/A'))
         optimized_params = optimized_params_per_ticker.get(ticker, {})
-        buy_thresh = optimized_params.get('min_proba_buy', MIN_PROBA_BUY)
-        sell_thresh = optimized_params.get('min_proba_sell', MIN_PROBA_SELL)
+        # Probability thresholds removed
+        buy_thresh = 0.0  # Disabled
+        sell_thresh = 1.0  # Disabled
         target_perc = optimized_params.get('target_percentage', TARGET_PERCENTAGE)
         class_horiz = optimized_params.get('class_horizon', CLASS_HORIZON)
         opt_status = optimized_params.get('optimization_status', 'N/A')

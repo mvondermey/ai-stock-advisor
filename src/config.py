@@ -109,11 +109,7 @@ AI_REBALANCE_FREQUENCY_DAYS = 1
 # Smooth per-ticker predictions before ranking to reduce noisy day-to-day flips.
 # Typical values: 1 (no smoothing), 3, 5.
 AI_PREDICTION_SMOOTHING_DAYS = 3
-# ✅ REGRESSION MODE: Thresholds based on predicted return percentages, not probabilities
-MIN_PROBA_BUY           = -1.0      # Disable buy threshold (always eligible)
-MIN_PROBA_BUY_OPTIONS   = [-1.0]    # No optimization, keep disabled
-MIN_PROBA_SELL          = 1.0       # Disable sell threshold via gate
-MIN_PROBA_SELL_OPTIONS  = [1.0]     # No optimization, keep disabled
+# ✅ REGRESSION MODE: Probability thresholds removed - using simplified trading logic
 TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification (balanced for 3-day moves)
 USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request

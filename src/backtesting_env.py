@@ -4,7 +4,7 @@ from typing import List, Dict, Tuple, Optional
 
 # Import configuration from config.py
 from config import (
-    MIN_PROBA_BUY, MIN_PROBA_SELL, USE_MODEL_GATE,
+    USE_MODEL_GATE,
     INVESTMENT_PER_STOCK, TRANSACTION_COST, ATR_PERIOD, FEAT_SMA_SHORT,
     FEAT_SMA_LONG, FEAT_VOL_WINDOW, SEQUENCE_LENGTH,
     USE_SINGLE_REGRESSION_MODEL

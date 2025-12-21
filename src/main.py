@@ -24,7 +24,7 @@ sys.path.insert(0, str(project_root))
 
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
-    MIN_PROBA_BUY, MIN_PROBA_SELL, TARGET_PERCENTAGE, CLASS_HORIZON,
+    TARGET_PERCENTAGE, CLASS_HORIZON,
     FORCE_THRESHOLDS_OPTIMIZATION, FORCE_PERCENTAGE_OPTIMIZATION,
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, VALIDATION_DAYS,
@@ -367,11 +367,8 @@ def get_internet_time():
 def main(
     fcf_threshold: float = 0.0,
     ebitda_threshold: float = 0.0,
-    min_proba_buy: float = MIN_PROBA_BUY,
-    min_proba_sell: float = MIN_PROBA_SELL,
     target_percentage: float = TARGET_PERCENTAGE, # This will now be the initial/default target_percentage for optimization
     class_horizon: int = CLASS_HORIZON, # New parameter for initial/default class_horizon for optimization
-    force_thresholds_optimization: bool = FORCE_THRESHOLDS_OPTIMIZATION, # New parameter
     force_percentage_optimization: bool = FORCE_PERCENTAGE_OPTIMIZATION, # New parameter
     top_performers_data=None,
     feature_set: Optional[List[str]] = None,
@@ -636,8 +633,6 @@ def main(
                 optimized_params_per_ticker[ticker]['optimization_status'] = "Loaded"
             else:
                 optimized_params_per_ticker[ticker] = {
-                    'min_proba_buy': MIN_PROBA_BUY,
-                    'min_proba_sell': MIN_PROBA_SELL,
                     'target_percentage': target_percentage,
                     'optimization_status': "Not Optimized (using defaults)"
                 }
@@ -669,10 +664,7 @@ def main(
     # PHASE 2: OPTIMIZE THRESHOLDS FOR ALL PERIODS
     # ========================================================================
     
-    # Initialize optimized_params dictionaries for all periods
-    optimized_params_per_ticker_ytd = {}
-    optimized_params_per_ticker_3month = {}
-    optimized_params_per_ticker_1month = {}
+    # Initialize optimized_params dictionaries (only 1-year period supported)
     
     if should_run_optimization:
         # --- Optimize 1-Year Period ---
@@ -689,9 +681,6 @@ def main(
                     continue
 
                 print(f"  ✅ Optimizing {ticker}: Model={model_type}")
-
-                current_min_proba_buy_for_opt = loaded_optimized_params.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
-                current_min_proba_sell_for_opt = loaded_optimized_params.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
                 
                 # Use the SAME training parameters that the model was trained with
                 if FORCE_PERCENTAGE_OPTIMIZATION:
@@ -741,11 +730,11 @@ def main(
                     current_class_horizon_for_opt,
                     force_thresholds_optimization,
                     force_percentage_optimization,
-                    USE_ALPHA_THRESHOLD_BUY,
-                    USE_ALPHA_THRESHOLD_SELL,
+                    False,  # USE_ALPHA_THRESHOLD_BUY (disabled)
+                    False,  # USE_ALPHA_THRESHOLD_SELL (disabled)
                     AlphaThresholdConfig(rebalance_freq="D", metric="alpha", costs_bps=5.0, slippage_bps=2.0),
-                    current_min_proba_buy_for_opt,
-                    current_min_proba_sell_for_opt,
+                    0.0,  # current_min_proba_buy_for_opt (disabled)
+                    1.0,  # current_min_proba_sell_for_opt (disabled)
                     current_target_percentage_for_opt,
                     current_class_horizon_for_opt,
                     GRU_TARGET_PERCENTAGE_OPTIONS,
@@ -803,40 +792,6 @@ def main(
         
         
         
-    else:
-        # If no optimization is forced, use defaults for all periods
-        optimized_params_per_ticker_ytd = {k: v for k, v in optimized_params_per_ticker.items() if k in top_tickers_ytd_filtered} if optimized_params_per_ticker else {}
-        for ticker in top_tickers_ytd_filtered:
-            if ticker not in optimized_params_per_ticker_ytd:
-                optimized_params_per_ticker_ytd[ticker] = {
-                    'min_proba_buy': MIN_PROBA_BUY,
-                    'min_proba_sell': MIN_PROBA_SELL,
-                    'target_percentage': target_percentage,
-                    'class_horizon': class_horizon,
-                    'optimization_status': "Using 1-Year optimized params"
-                }
-        
-        optimized_params_per_ticker_3month = {k: v for k, v in optimized_params_per_ticker.items() if k in top_tickers_3month_filtered} if optimized_params_per_ticker else {}
-        for ticker in top_tickers_3month_filtered:
-            if ticker not in optimized_params_per_ticker_3month:
-                optimized_params_per_ticker_3month[ticker] = {
-                    'min_proba_buy': MIN_PROBA_BUY,
-                    'min_proba_sell': MIN_PROBA_SELL,
-                    'target_percentage': target_percentage,
-                    'class_horizon': class_horizon,
-                    'optimization_status': "Using 1-Year optimized params"
-                }
-        
-        optimized_params_per_ticker_1month = {k: v for k, v in optimized_params_per_ticker.items() if k in top_tickers_1month_filtered} if optimized_params_per_ticker else {}
-        for ticker in top_tickers_1month_filtered:
-            if ticker not in optimized_params_per_ticker_1month:
-                optimized_params_per_ticker_1month[ticker] = {
-                    'min_proba_buy': MIN_PROBA_BUY,
-                    'min_proba_sell': MIN_PROBA_SELL,
-                    'target_percentage': target_percentage,
-                    'class_horizon': class_horizon,
-                    'optimization_status': "Using 1-Year optimized params"
-                }
 
     # ========================================================================
     # PHASE 3: RUN ALL BACKTESTS
