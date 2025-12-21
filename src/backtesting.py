@@ -1148,24 +1148,53 @@ def _run_portfolio_backtest_walk_forward(
                             for stock in individual_returns:
                                 print(f"      • {stock['ticker']}: {stock['total_return_pct']:+.1f}% total ({stock['annualized_return_pct']:+.1f}% annualized)")
 
+                        # Update portfolio value with BH performance for tracking
+                        total_portfolio_value = bh_portfolio_value
+
                     # In real implementation: execute trades here
                     # For simulation: allocate capital to new stocks
 
                 # Even if no rebalancing, track that we evaluated the portfolio daily
                 # This shows the system is actively monitoring and ready to act when needed
+                else:
+                    # No rebalancing needed, but still calculate current portfolio value
+                    if current_portfolio_stocks:
+                        try:
+                            current_bh_portfolio_value = 0.0
+                            days_elapsed = (current_date - backtest_start_date).days
+                            years_elapsed = days_elapsed / 365.25
+
+                            for ticker in current_portfolio_stocks:
+                                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                                if not ticker_data.empty:
+                                    ticker_data = ticker_data.set_index('date')
+                                    backtest_data = ticker_data.loc[backtest_start_date:current_date]
+
+                                    if not backtest_data.empty and len(backtest_data) > 1:
+                                        start_price = backtest_data['Close'].iloc[0]
+                                        end_price = backtest_data['Close'].iloc[-1]
+
+                                        if start_price > 0:
+                                            bh_return = (end_price / start_price - 1) * capital_per_stock
+                                            current_bh_portfolio_value += capital_per_stock + bh_return
+                                        else:
+                                            current_bh_portfolio_value += capital_per_stock
+                                    else:
+                                        current_bh_portfolio_value += capital_per_stock
+                                else:
+                                    current_bh_portfolio_value += capital_per_stock
+
+                            total_portfolio_value = current_bh_portfolio_value
+                        except Exception as e:
+                            # Keep previous value if calculation fails
+                            pass
 
         except Exception as e:
             print(f"   ⚠️ Day {day_count}: Stock selection failed: {e}")
             # Keep existing portfolio if selection fails
 
-        # Simplified portfolio value tracking
-        # In full implementation, this would be calculated by actual trading simulation
-        if current_portfolio_stocks:
-            # Placeholder: assume portfolio maintains value
-            # Real implementation would track actual returns from selected stocks
-            portfolio_values_history.append(total_portfolio_value)
-        else:
-            portfolio_values_history.append(total_portfolio_value)
+        # Update portfolio value history
+        portfolio_values_history.append(total_portfolio_value)
 
         # Periodic progress update
         if day_count % 50 == 0:
