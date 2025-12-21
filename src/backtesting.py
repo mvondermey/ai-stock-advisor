@@ -1599,5 +1599,4 @@ def print_final_summary(
     print("="*80)
 
 
-if __name__ == "__main__":
-    # Threshold optimization removed
+# Module for backtesting functions - not meant to be run directly
