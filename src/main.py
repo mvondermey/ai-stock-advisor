@@ -559,17 +559,17 @@ def main(
                 f.write(f"{ticker}\n")
 
     # --- Training Models (for 1-Year Backtest) ---
-    models_buy, models_sell, scalers = {}, {}, {}
-    gru_hyperparams_buy_dict, gru_hyperparams_sell_dict = {}, {} # New: To store GRU hyperparams
+    models, scalers = {}, {}
+    gru_hyperparams_dict = {} # Single hyperparams dict for single model
     failed_training_tickers_1y = {} # New: Store failed tickers and their reasons
-    
+
     if ENABLE_1YEAR_TRAINING:
         bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)
         train_end_1y = bt_start_1y - timedelta(days=1)
         train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
-        
+
         # Use the new train_models_for_period function
-        models_buy, models_sell, scalers, y_scalers = train_models_for_period(
+        models, _, scalers, y_scalers = train_models_for_period(
             period_name="1-Year",
             tickers=top_tickers,
             all_tickers_data=all_tickers_data,
@@ -584,7 +584,7 @@ def main(
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
     prices_dict, signals_dict = {}, {}
 
-    if not models_buy and USE_MODEL_GATE:
+    if not models and USE_MODEL_GATE:
         print("⚠️ No models were trained for 1-Year backtest. Model-gating will be disabled for this run.\n")
     
     # Filter out failed tickers from top_tickers for subsequent steps
@@ -679,19 +679,17 @@ def main(
         print("\n🔄 Step 4: Optimizing ML parameters for 1-Year period...")
         optimization_params = []
         for ticker in top_tickers_1y_filtered:
-            if ticker in models_buy and ticker in models_sell and ticker in scalers:
-                model_buy_ticker = models_buy[ticker]
-                model_sell_ticker = models_sell[ticker]
-                
-                buy_model_type = type(model_buy_ticker).__name__ if model_buy_ticker else 'None'
-                sell_model_type = type(model_sell_ticker).__name__ if model_sell_ticker else 'None'
-                
-                if model_buy_ticker is None or model_sell_ticker is None:
-                    print(f"  ⏭️  Skipping optimization for {ticker}: Missing model (Buy: {buy_model_type}, Sell: {sell_model_type})")
+            if ticker in models and ticker in scalers:
+                model_ticker = models[ticker]
+
+                model_type = type(model_ticker).__name__ if model_ticker else 'None'
+
+                if model_ticker is None:
+                    print(f"  ⏭️  Skipping optimization for {ticker}: Missing model (Type: {model_type})")
                     continue
-                
-                print(f"  ✅ Optimizing {ticker}: Buy={buy_model_type}, Sell={sell_model_type}")
-                
+
+                print(f"  ✅ Optimizing {ticker}: Model={model_type}")
+
                 current_min_proba_buy_for_opt = loaded_optimized_params.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
                 current_min_proba_sell_for_opt = loaded_optimized_params.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
                 
@@ -732,9 +730,8 @@ def main(
                     print(f"  ⚠️ Could not slice training data for {ticker} for optimization. Skipping.")
                     continue
 
-                # Prepare PyTorch models for multiprocessing (extract state dict as numpy arrays)
-                model_buy_prepared = _prepare_model_for_multiprocessing(model_buy_ticker)
-                model_sell_prepared = _prepare_model_for_multiprocessing(model_sell_ticker)
+                # Prepare PyTorch model for multiprocessing (extract state dict as numpy arrays)
+                model_prepared = _prepare_model_for_multiprocessing(model_ticker)
                 
                 optimization_params.append((
                     ticker,
@@ -755,8 +752,8 @@ def main(
                     GRU_CLASS_HORIZON_OPTIONS,
                     SEED,
                     feature_set_for_opt,
-                    model_buy_prepared,  # Pass model info (will be reconstructed on GPU in worker)
-                    model_sell_prepared,  # Pass model info (will be reconstructed on GPU in worker)
+                    model_prepared,  # Pass model info (will be reconstructed on GPU in worker)
+                    model_prepared,  # Use same model for both buy and sell signals
                     scalers[ticker]  # Pass already-trained scaler
                 ))
         
@@ -851,7 +848,6 @@ def main(
         # DEBUG: Check what's in models dictionaries
         print(f"\n[DEBUG MAIN] 1-Year models_buy keys: {list(models_buy.keys())}")
         print(f"[DEBUG MAIN] 1-Year models_buy values types: {[type(v).__name__ if v else 'None' for v in models_buy.values()]}")
-        print(f"[DEBUG MAIN] 1-Year models_sell keys: {list(models_sell.keys())}")
         
         # --- Run 1-Year Backtest (AI Strategy) ---
         print("\n🔍 Step 8: Running 1-Year Backtest (AI Strategy)...")
@@ -865,8 +861,7 @@ def main(
             backtest_start_date=bt_start_1y,
             backtest_end_date=bt_end,
             initial_top_tickers=top_tickers_1y_filtered,
-            initial_models_buy=models_buy,
-            initial_models_sell=models_sell,
+            initial_models=models,  # Single model per stock
             initial_scalers=scalers,
             initial_y_scalers=y_scalers,
             capital_per_stock=capital_per_stock_1y,
@@ -1068,7 +1063,7 @@ def main(
     actual_tickers_analyzed = len(processed_tickers_1y)
     
     print_final_summary(
-        sorted_final_results, models_buy, models_sell, scalers, optimized_params_per_ticker,
+        sorted_final_results, models_buy, models_buy, scalers, optimized_params_per_ticker,
         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
         0, 0, 0,  # Placeholder values for removed YTD parameters
         0, 0, 0,  # Placeholder values for removed 3-Month parameters
@@ -1091,8 +1086,7 @@ def main(
     best_period_name = max(performance_values, key=performance_values.get)
     
     # Get the models and scalers corresponding to the best period (only 1-Year available)
-    best_models_buy_dict = models_buy
-    best_models_sell_dict = models_sell
+    best_models_dict = models_buy  # Single model per stock
     best_scalers_dict = scalers
 
     # Save the best models and scalers for each ticker to the paths used by live_trading.py
@@ -1101,14 +1095,13 @@ def main(
 
     print(f"\n🏆 Saving best performing models for live trading from {best_period_name} period...")
 
-    for ticker in best_models_buy_dict.keys():
+    for ticker in best_models_dict.keys():
         try:
-            joblib.dump(best_models_buy_dict[ticker], models_dir / f"{ticker}_model_buy.joblib")
-            joblib.dump(best_models_sell_dict[ticker], models_dir / f"{ticker}_model_sell.joblib")
+            joblib.dump(best_models_dict[ticker], models_dir / f"{ticker}_model.joblib")
             joblib.dump(best_scalers_dict[ticker], models_dir / f"{ticker}_scaler.joblib")
-            print(f"  ✅ Saved models for {ticker} from {best_period_name} period.")
+            print(f"  ✅ Saved model for {ticker} from {best_period_name} period.")
         except Exception as e:
-            print(f"  ⚠️ Error saving models for {ticker} from {best_period_name} period: {e}")
+            print(f"  ⚠️ Error saving model for {ticker} from {best_period_name} period: {e}")
 
 # ============================
 # Main

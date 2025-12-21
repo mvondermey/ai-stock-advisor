@@ -218,7 +218,7 @@ def train_models_for_period(
     top_performers_data: List[Tuple[str, float, float]],
     feature_set: Optional[List[str]] = None,
     run_parallel: bool = True
-) -> List[Dict]:
+) -> Tuple[Dict, Dict, Dict, Dict]:
     """
     Train single regression models for 1-Year period.
 
@@ -339,36 +339,14 @@ def train_models_for_period(
                 winner_key = f"{res['ticker']}_Regression"
                 model_winners[winner_key] = res['winner']
     
-    # Collect results into list format
-    results = []
-    for ticker in tickers:
-        if ticker in models_buy and ticker in scalers:
-            results.append({
-                'ticker': ticker,
-                'model': models_buy[ticker],  # Single model
-                'scaler': scalers[ticker],
-                'y_scaler': y_scalers.get(ticker),
-                'gru_hyperparams': gru_hyperparams_buy_dict.get(ticker),
-                'winner': model_winners.get(f"{ticker}_Buy"),
-                'status': 'trained',
-                'reason': None
-            })
-        else:
-            results.append({
-                'ticker': ticker,
-                'model': None,
-                'scaler': None,
-                'y_scaler': None,
-                'gru_hyperparams': None,
-                'winner': None,
-                'status': 'failed',
-                'reason': 'Training failed'
-            })
+    # Return separate dictionaries as expected by callers
+    # Since we want only one model per stock, we use models_buy as the single model dict
+    models = models_buy  # Single model per stock (previously models_buy)
 
-    print(f"✅ {period_name} training complete: {len([r for r in results if r['status'] == 'trained'])} models trained/loaded.")
+    print(f"✅ {period_name} training complete: {len([t for t in tickers if t in models])} models trained/loaded.")
 
     # Print model selection statistics
-    winner_list = [r['winner'] for r in results if r['winner']]
+    winner_list = [model_winners.get(f"{ticker}_Buy") for ticker in tickers if model_winners.get(f"{ticker}_Buy")]
     if winner_list:
         from collections import Counter
         winner_counts = Counter(winner_list)
@@ -379,5 +357,5 @@ def train_models_for_period(
             print(f"{model_name:<30} {count:>15}")
         print()
 
-    return results
+    return models, {}, scalers, y_scalers
 

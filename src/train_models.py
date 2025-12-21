@@ -130,7 +130,7 @@ print(f"\n🤖 Step 4: Training models for {len(tickers)} tickers...")
 print("⏱️  This may take 2-5 hours for 50 tickers...\n")
 
 try:
-    models_buy, models_sell, scalers, y_scalers = train_models_for_period(
+    models, _, scalers, y_scalers = train_models_for_period(
         period_name="Live Trading",
         tickers=tickers,
         all_tickers_data=all_tickers_data,
@@ -145,7 +145,7 @@ try:
     print("\n" + "=" * 80)
     print("✅ TRAINING COMPLETE!")
     print("=" * 80)
-    print(f"📊 Models trained: {len(models_buy)}")
+    print(f"📊 Models trained: {len(models)}")
     print(f"📁 Saved to: logs/models/")
     print(f"🎯 Ready for live trading: python src/live_trading.py")
     print("=" * 80)
