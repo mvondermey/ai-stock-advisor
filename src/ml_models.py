@@ -869,18 +869,13 @@ def train_and_evaluate_models(
             print(f"⚠️ LightGBM not available: {e}")
             LGBMRegressor = None
             LGBMClf = None
-        if USE_REGRESSION_MODEL and LGBMRegressor:
+        # Always use regression (default behavior)
+        if LGBMRegressor:
             lgbm_model_params = {
                 "model": LGBMRegressor(random_state=SEED, verbosity=-1, device='cpu'),
                 "params": {'n_estimators': [100, 200], 'learning_rate': [0.01, 0.05, 0.1], 'max_depth': [-1, 5, 7]}
             }
             models_and_params_local["LightGBM Regressor (CPU)"] = lgbm_model_params
-        elif not USE_REGRESSION_MODEL and LGBMClf:
-            lgbm_model_params = {
-                "model": LGBMClf(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
-                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
-            }
-            models_and_params_local["LightGBM (CPU)"] = lgbm_model_params
 
     if USE_XGBOOST and XGBOOST_AVAILABLE and XGBClassifier:
         # Prefer GPU if the build supports CUDA; use new device API (XGBoost>=2.0)
@@ -1000,28 +995,23 @@ def train_and_evaluate_models(
                     y_pred_proba_lstm = np.concatenate(all_outputs).flatten()
                 
                 try:
-                    if USE_REGRESSION_MODEL:
-                        from sklearn.metrics import mean_squared_error, r2_score
-                        y_true = y_sequences.cpu().numpy()
-                        y_pred = y_pred_proba_lstm
-                        mse_lstm = mean_squared_error(y_true, y_pred)
-                        r2_lstm = r2_score(y_true, y_pred)
-                        rmse_lstm = mse_lstm ** 0.5
-                        models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": -mse_lstm}  # Negative MSE (higher is better)
-                        print(f"      📊 LSTM Regression Metrics:")
-                        print(f"         MSE: {mse_lstm:.6f}")
-                        print(f"         RMSE: {rmse_lstm:.6f}")
-                        print(f"         R² Score: {r2_lstm:.4f} ({'Good' if r2_lstm > 0.5 else 'Poor'} - {abs(r2_lstm)*100:.1f}% variance explained)")
-                    else:
-                        from sklearn.metrics import roc_auc_score
-                        auc_lstm = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_lstm)
-                        models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": auc_lstm}
-                        print(f"      LSTM AUC (classification): {auc_lstm:.4f}")
+                    # Always use regression (default behavior)
+                    from sklearn.metrics import mean_squared_error, r2_score
+                    y_true = y_sequences.cpu().numpy()
+                    y_pred = y_pred_proba_lstm
+                    mse_lstm = mean_squared_error(y_true, y_pred)
+                    r2_lstm = r2_score(y_true, y_pred)
+                    rmse_lstm = mse_lstm ** 0.5
+                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": -mse_lstm}  # Negative MSE (higher is better)
+                    print(f"      📊 LSTM Regression Metrics:")
+                    print(f"         MSE: {mse_lstm:.6f}")
+                    print(f"         RMSE: {rmse_lstm:.6f}")
+                    print(f"         R² Score: {r2_lstm:.4f} ({'Good' if r2_lstm > 0.5 else 'Poor'} - {abs(r2_lstm)*100:.1f}% variance explained)")
                 except ValueError:
                     models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": 0.0}
 
             # --- TCN Regressor (lightweight) ---
-            if USE_TCN and USE_REGRESSION_MODEL:
+            if USE_TCN:
                 tcn_model = safe_to_device(TCNRegressor(input_size, num_filters=32, kernel_size=3, num_levels=2, dropout=0.1), device)
                 optimizer_tcn = optim.Adam(tcn_model.parameters(), lr=LSTM_LEARNING_RATE)
 
@@ -1238,24 +1228,19 @@ def train_and_evaluate_models(
                                 y_pred_proba_gru = np.concatenate(all_outputs).flatten()
 
                             try:
-                                if USE_REGRESSION_MODEL:
-                                    from sklearn.metrics import mean_squared_error, r2_score
-                                    y_true = y_sequences.cpu().numpy()
-                                    y_pred = y_pred_proba_gru
-                                    mse_gru = mean_squared_error(y_true, y_pred)
-                                    r2_gru = r2_score(y_true, y_pred)
-                                    auc_gru = -mse_gru  # keep legacy key; negative MSE for compatibility
-                                    print(f"            GRU MSE: {mse_gru:.6f}, R²: {r2_gru:.4f} | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
-                                    better = mse_gru < best_gru_mse
-                                else:
-                                    from sklearn.metrics import roc_auc_score
-                                    auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
-                                    print(f"            GRU AUC: {auc_gru:.4f} | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
-                                    better = auc_gru > best_gru_auc
+                                # Always use regression (default behavior)
+                                from sklearn.metrics import mean_squared_error, r2_score
+                                y_true = y_sequences.cpu().numpy()
+                                y_pred = y_pred_proba_gru
+                                mse_gru = mean_squared_error(y_true, y_pred)
+                                r2_gru = r2_score(y_true, y_pred)
+                                auc_gru = -mse_gru  # keep legacy key; negative MSE for compatibility
+                                print(f"            GRU MSE: {mse_gru:.6f}, R²: {r2_gru:.4f} | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
+                                better = mse_gru < best_gru_mse
 
                                 if better:
                                     best_gru_auc = auc_gru
-                                    best_gru_mse = mse_gru if USE_REGRESSION_MODEL else best_gru_mse
+                                    best_gru_mse = mse_gru
                                     best_gru_model = gru_model
                                     best_gru_scaler = dl_scaler # dl_scaler is already fitted
                                     best_gru_hyperparams = temp_hyperparams.copy() # Update best_gru_hyperparams
@@ -1265,10 +1250,8 @@ def train_and_evaluate_models(
                     if best_gru_model:
                         models_and_params_local["GRU"] = {"model": best_gru_model, "scaler": best_gru_scaler, "y_scaler": y_scaler, "auc": best_gru_auc, "hyperparams": best_gru_hyperparams}
                         model_name = "LSTM" if TRY_LSTM_INSTEAD_OF_GRU else "GRU"
-                        if USE_REGRESSION_MODEL:
-                            print(f"      Best {model_name} found for {ticker} ({target_col}) with MSE: {best_gru_mse:.6f}, Hyperparams: {best_gru_hyperparams}")
-                        else:
-                            print(f"      Best {model_name} found for {ticker} ({target_col}) with AUC: {best_gru_auc:.4f}, Hyperparams: {best_gru_hyperparams}")
+                        # Always use regression (default behavior)
+                        print(f"      Best {model_name} found for {ticker} ({target_col}) with MSE: {best_gru_mse:.6f}, Hyperparams: {best_gru_hyperparams}")
                         print(f"DEBUG: SAVE_PLOTS={SAVE_PLOTS}, SHAP_AVAILABLE={SHAP_AVAILABLE}")
                         if SAVE_PLOTS and SHAP_AVAILABLE:
                             analyze_shap_for_gru(best_gru_model, best_gru_scaler, X_df, final_feature_names, ticker, target_col)
@@ -1319,12 +1302,6 @@ def train_and_evaluate_models(
                                 print(f"    - Loaded existing LSTM regressor state for {ticker} to continue training.")
                             except Exception as e:
                                 print(f"    - Error loading LSTM regressor state for {ticker}: {e}. Training from scratch.")
-                    else:
-                                try:
-                                    gru_model.load_state_dict(initial_model.state_dict())
-                                    print(f"    - Loaded existing GRU model state for {ticker} to continue training.")
-                                except Exception as e:
-                                    print(f"    - Error loading GRU model state for {ticker}: {e}. Training from scratch.")
                     else:
                         model_type = "GRU"
                         gru_model = safe_to_device(GRURegressor(input_size, hidden_size, num_layers, 1, dropout_rate), device)
@@ -1389,26 +1366,20 @@ def train_and_evaluate_models(
                         y_pred_proba_gru = np.concatenate(all_outputs).flatten()
 
                     try:
-                        if USE_REGRESSION_MODEL:
-                            from sklearn.metrics import mean_squared_error, r2_score
-                            y_true = y_sequences.cpu().numpy()
-                            y_pred = y_pred_proba_gru
-                            mse_gru = mean_squared_error(y_true, y_pred)
-                            r2_gru = r2_score(y_true, y_pred)
-                            rmse_gru = mse_gru ** 0.5  # Root Mean Squared Error
-                            auc_gru = -mse_gru  # Negative MSE (higher is better for comparison)
-                            current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
-                            models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
-                            print(f"      📊 GRU Regression Metrics:")
-                            print(f"         MSE: {mse_gru:.6f}")
-                            print(f"         RMSE: {rmse_gru:.6f}")
-                            print(f"         R² Score: {r2_gru:.4f} ({'Good' if r2_gru > 0.5 else 'Poor'} - {abs(r2_gru)*100:.1f}% variance explained)")
-                        else:
-                            from sklearn.metrics import roc_auc_score
-                            auc_gru = roc_auc_score(y_sequences.cpu().numpy(), y_pred_proba_gru)
-                            current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
-                            models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
-                            print(f"      GRU AUC (classification, fixed/loaded params): {auc_gru:.4f}")
+                        # Always use regression (default behavior)
+                        from sklearn.metrics import mean_squared_error, r2_score
+                        y_true = y_sequences.cpu().numpy()
+                        y_pred = y_pred_proba_gru
+                        mse_gru = mean_squared_error(y_true, y_pred)
+                        r2_gru = r2_score(y_true, y_pred)
+                        rmse_gru = mse_gru ** 0.5  # Root Mean Squared Error
+                        auc_gru = -mse_gru  # Negative MSE (higher is better for comparison)
+                        current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
+                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
+                        print(f"      📊 GRU Regression Metrics:")
+                        print(f"         MSE: {mse_gru:.6f}")
+                        print(f"         RMSE: {rmse_gru:.6f}")
+                        print(f"         R² Score: {r2_gru:.4f} ({'Good' if r2_gru > 0.5 else 'Poor'} - {abs(r2_gru)*100:.1f}% variance explained)")
                         print(f"DEBUG: SAVE_PLOTS={SAVE_PLOTS}, SHAP_AVAILABLE={SHAP_AVAILABLE}")
                         if SAVE_PLOTS and SHAP_AVAILABLE:
                             analyze_shap_for_gru(gru_model, dl_scaler, X_df, final_feature_names, ticker, target_col)
@@ -1418,49 +1389,31 @@ def train_and_evaluate_models(
 
     best_model_overall = None
     best_hyperparams_overall: Optional[Dict] = None  # New: To store GRU hyperparams if GRU is best
-    if USE_REGRESSION_MODEL:
-        best_mse_overall = np.inf  # lower is better
-        best_auc_overall = None    # unused in regression mode
-    else:
-        best_mse_overall = None
-        best_auc_overall = -np.inf
+    # Always use regression (default behavior)
+    best_mse_overall = np.inf  # lower is better
+    best_auc_overall = None    # unused in regression mode
     
-    # Use KFold for regression, StratifiedKFold for classification
-    if USE_REGRESSION_MODEL:
-        from sklearn.model_selection import KFold
-        cv = KFold(n_splits=n_splits, shuffle=True, random_state=SEED)
-    else:
-        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    # Always use KFold for regression (default behavior)
+    from sklearn.model_selection import KFold
+    cv = KFold(n_splits=n_splits, shuffle=True, random_state=SEED)
     
     results = {} # Initialize the results dictionary here
 
-    if USE_REGRESSION_MODEL:
-        print("  🔬 Comparing regressor performance (MSE via cross-validation with GridSearchCV):")
-    else:
-        print("  🔬 Comparing classifier performance (AUC score via 5-fold cross-validation with GridSearchCV):")
+    # Always use regression (default behavior)
+    print("  🔬 Comparing regressor performance (MSE via cross-validation with GridSearchCV):")
     for name, mp in models_and_params_local.items():  # Iterate over local models_and_params
         if name in ["LSTM", "GRU", "TCN"]:
             # For DL models, we stored negative MSE in "auc" for compatibility.
-            if USE_REGRESSION_MODEL:
-                current_mse = -mp["auc"]  # convert back to positive MSE
-                results[name] = current_mse
-                print(f"    - {name}: MSE={current_mse:.4f}")
-                if current_mse < best_mse_overall:
-                    best_mse_overall = current_mse
-                    best_model_overall = mp["model"]
-                    scaler = mp["scaler"]  # Use the DL scaler for DL models
-                    if name == "GRU":  # If GRU is the best, store its hyperparams
-                        best_hyperparams_overall = mp.get("hyperparams")
-            else:
-                current_auc = mp["auc"]
-                results[name] = current_auc
-                print(f"    - {name}: {current_auc:.4f}")
-                if current_auc > best_auc_overall:
-                    best_auc_overall = current_auc
-                    best_model_overall = mp["model"]
-                    scaler = mp["scaler"]  # Use the DL scaler for DL models
-                    if name == "GRU":  # If GRU is the best, store its hyperparams
-                        best_hyperparams_overall = mp.get("hyperparams")
+            # Always use regression (default behavior)
+            current_mse = -mp["auc"]  # convert back to positive MSE
+            results[name] = current_mse
+            print(f"    - {name}: MSE={current_mse:.4f}")
+            if current_mse < best_mse_overall:
+                best_mse_overall = current_mse
+                best_model_overall = mp["model"]
+                scaler = mp["scaler"]  # Use the DL scaler for DL models
+                if name == "GRU":  # If GRU is the best, store its hyperparams
+                    best_hyperparams_overall = mp.get("hyperparams")
         else:
             model = mp["model"]
             params = mp["params"]
