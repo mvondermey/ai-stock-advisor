@@ -704,8 +704,8 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
 
     df["Target"]     = df["Close"].shift(-1)
 
-    # Calculate Buy & Hold annualized performance as target
-    # Use available historical data to compute annualized return
+    # Calculate Buy & Hold annualized performance as a feature (provides historical context)
+    # This gives the model information about long-term performance trends
     if len(df) > 1:
         start_price = df["Close"].iloc[0]
         end_price = df["Close"].iloc[-1]
@@ -715,25 +715,31 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
             total_return = (end_price / start_price) - 1.0
             # Annualize the return: (1 + total_return)^(365/total_days) - 1
             annualized_return = (1 + total_return) ** (365.0 / total_days) - 1
-            df["TargetReturn"] = annualized_return
+            df["Annualized_BH_Return"] = annualized_return
         else:
-            df["TargetReturn"] = 0.0
+            df["Annualized_BH_Return"] = 0.0
     else:
-        df["TargetReturn"] = 0.0
+        df["Annualized_BH_Return"] = 0.0
+
+    # Calculate forward BH return over the prediction horizon as target
+    # TargetReturn = (price in class_horizon days) / current_price - 1
+    # This gives the model the actual market return it needs to predict
+    df["TargetReturn"] = (df["Close"].shift(-class_horizon) / df["Close"] - 1)
 
     # Dynamically build the list of features that are actually present in the DataFrame
     # This is the most critical part to ensure consistency
     
     # Define a base set of expected technical features
     expected_technical_features = [
-        "Close", "Volume", "High", "Low", "Open", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", 
+        "Close", "Volume", "High", "Low", "Open", "Returns", "SMA_F_S", "SMA_F_L", "Volatility",
         "ATR", "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
         "OBV", "CMF", "ROC", "ROC_20", "ROC_60", "CMO", "KAMA", "EFI", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
         "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
         "Market_Momentum_SPY",
         "Sentiment_Score",
         "VIX_Index_Returns", "DXY_Index_Returns", "Gold_Futures_Returns", "Oil_Futures_Returns", "US10Y_Yield_Returns",
-        "Oil_Price_Returns", "Gold_Price_Returns"
+        "Oil_Price_Returns", "Gold_Price_Returns",
+        "Annualized_BH_Return"
     ]
     
     # Filter to only include technical features that are actually in df.columns

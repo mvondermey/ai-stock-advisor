@@ -38,10 +38,11 @@ except RuntimeError:
 
 # Conditionally import LSTM/GRU classes if PyTorch is available
 try:
-    from ml_models import LSTMClassifier, GRUClassifier, GRURegressor  # ✅ Added GRURegressor
+    from ml_models import LSTMClassifier, GRUClassifier, GRURegressor, LSTMRegressor  # ✅ Added LSTMRegressor
 except ImportError:
     LSTMClassifier = None
     GRUClassifier = None
+    LSTMRegressor = None
 
 
 def train_worker(params: Tuple) -> Dict:
@@ -92,8 +93,9 @@ def train_worker(params: Tuple) -> Dict:
             print(f"  ✅ Loaded existing models and GRU hyperparams for {ticker} (FORCE_TRAINING is False).")
             # Before returning, ensure PyTorch models are on CPU if they are deep learning models
             if PYTORCH_AVAILABLE:
-                if isinstance(model, (LSTMRegressor, GRURegressor)):
-                    model = model.cpu()
+                if LSTMRegressor is not None and GRURegressor is not None:
+                    if isinstance(model, (LSTMRegressor, GRURegressor)):
+                        model = model.cpu()
             return {
                 'ticker': ticker,
                 'model': model,
@@ -179,8 +181,9 @@ def train_worker(params: Tuple) -> Dict:
 
         # Before returning, ensure PyTorch models are on CPU if they are deep learning models
         if PYTORCH_AVAILABLE:
-            if isinstance(model, (LSTMRegressor, GRURegressor)):
-                model = model.cpu()
+            if LSTMRegressor is not None and GRURegressor is not None:
+                if isinstance(model, (LSTMRegressor, GRURegressor)):
+                    model = model.cpu()
 
         return {
             'ticker': ticker,
