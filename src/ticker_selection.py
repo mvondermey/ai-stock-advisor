@@ -481,7 +481,7 @@ def find_top_performers(
     print(f"{'Rank':<5} | {'Ticker':<10} | {'Performance':>15}")
     print("-" * 60)
     
-    for i, (ticker, perf, _) in enumerate(final_performers, 1):
+    for i, (ticker, perf) in enumerate(final_performers, 1):
         print(f"{i:<5} | {ticker:<10} | {perf:14.2f}%")
     
     print("-" * 60)

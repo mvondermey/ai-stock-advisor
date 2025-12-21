@@ -540,13 +540,13 @@ def main(
         )
         
 
-        top_performers_data = market_selected_performers
-                
+    top_performers_data = market_selected_performers
+
     if not top_performers_data:
         print("❌ Could not identify top tickers. Aborting backtest.")
         return (None,) * 15
-    
-    top_tickers = [ticker for ticker, _, _ in top_performers_data]
+
+    top_tickers = [ticker for ticker, _ in top_performers_data]
     print(f"\n✅ Identified {len(top_tickers)} stocks for backtesting: {', '.join(top_tickers)}\n")
 
     # Log skipped tickers
