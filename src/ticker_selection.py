@@ -460,7 +460,7 @@ def find_top_performers(
         
         fundamental_screen_params = [
             (ticker, perf_1y, fcf_min_threshold, ebitda_min_threshold)
-            for ticker, perf_1y, perf_ytd in final_performers
+            for ticker, perf_1y in final_performers
         ]
         screened_performers = []
 
@@ -487,25 +487,15 @@ def find_top_performers(
     print("-" * 60)
     return list(final_tickers)
 
-def _finalize_single_ticker_performance(params: Tuple) -> Optional[Tuple[str, float, float]]:
-    """Worker to apply performance benchmarks and fetch YTD performance."""
+def _finalize_single_ticker_performance(params: Tuple) -> Optional[Tuple[str, float]]:
+    """Worker to apply performance benchmarks."""
     ticker, perf_1y, df_1y, ytd_start_date, end_date, final_benchmark_perf, ytd_benchmark_perf, use_performance_benchmark = params
 
     if use_performance_benchmark and perf_1y < final_benchmark_perf:
         return None
 
-    ytd_perf = 0.0
-    df_ytd = df_1y.loc[ytd_start_date:end_date].dropna(subset=['Close'])
-    if not df_ytd.empty:
-        start_price_ytd = df_ytd['Close'].iloc[0]
-        end_price_ytd = df_ytd['Close'].iloc[-1]
-        if start_price_ytd > 0:
-            ytd_perf = ((end_price_ytd - start_price_ytd) / start_price_ytd) * 100
-    
-    if use_performance_benchmark and ytd_perf < ytd_benchmark_perf:
-        return None
-
-    return (ticker, perf_1y, ytd_perf)
+    # YTD performance calculation removed since YTD support was removed
+    return (ticker, perf_1y)
 
 def _apply_fundamental_screen_worker(params: Tuple) -> Optional[Tuple[str, float]]:
     """Worker to apply fundamental screens using yfinance with proper fallback."""

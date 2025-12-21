@@ -433,17 +433,8 @@ def main(
             else:
                 perf_1y = np.nan
 
-        df_ytd = load_prices_robust(single_ticker, ytd_start_date, end_date)
-        perf_ytd = np.nan
-        if df_ytd is not None and not df_ytd.empty:
-            start_price = df_ytd['Close'].iloc[0]
-            end_price = df_ytd['Close'].iloc[-1]
-            if start_price > 0:
-                perf_ytd = ((end_price - start_price) / start_price) * 100
-            else:
-                perf_ytd = np.nan
-        
-        top_performers_data = [(single_ticker, perf_1y, perf_ytd)]
+        # YTD performance calculation removed since YTD support was removed
+        top_performers_data = [(single_ticker, perf_1y)]
     
     # --- Step 1: Get all tickers and perform a single, comprehensive data download ---
     all_available_tickers = get_all_tickers()
@@ -713,7 +704,7 @@ def main(
                 else:
                     # Reconstruct from B&H performance
                     ticker_bh_return_1y = 0.01
-                    for t, perf_1y, perf_ytd in top_performers_data:
+                    for t, perf_1y in top_performers_data:
                         if t == ticker:
                             ticker_bh_return_1y = perf_1y / 100.0
                             break
@@ -1023,11 +1014,11 @@ def main(
             sell_prob = 0.0
             final_shares = 0.0 # Set to 0.0 for tickers that didn't have a backtest result
 
-        perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
-        for t, p1y, pytd in top_performers_data:
+        perf_1y_benchmark = np.nan
+        ytd_perf_benchmark = np.nan  # YTD performance not available since YTD support removed
+        for t, p1y in top_performers_data:
             if t == ticker:
                 perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
-                ytd_perf_benchmark = pytd if np.isfinite(pytd) else np.nan
                 break
         
         final_results.append({
