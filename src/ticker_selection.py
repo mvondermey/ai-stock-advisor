@@ -96,7 +96,17 @@ def get_all_tickers() -> List[str]:
             all_tickers.update(nasdaq_100_tickers)
             print(f"✅ Fetched {len(nasdaq_100_tickers)} tickers from NASDAQ 100.")
         except Exception as e:
-            print(f"⚠️ Could not fetch NASDAQ 100 list ({e}).")
+            print(f"⚠️ Could not fetch NASDAQ 100 list ({e}). Using fallback list.")
+            # Fallback list of popular NASDAQ 100 stocks
+            nasdaq_100_tickers = [
+                'AAPL', 'MSFT', 'AMZN', 'GOOGL', 'GOOG', 'TSLA', 'NVDA', 'META', 'NFLX', 'AMD',
+                'INTC', 'CMCSA', 'PEP', 'COST', 'ADBE', 'AVGO', 'TXN', 'QCOM', 'HON', 'AMGN',
+                'SBUX', 'INTU', 'AMD', 'ISRG', 'BKNG', 'MDLZ', 'GILD', 'REGN', 'VRTX', 'ILMN',
+                'IDXX', 'LRCX', 'KLAC', 'AMAT', 'MU', 'WBD', 'PLTR', 'APP', 'SHOP', 'AZN',
+                'ASML', 'MNST', 'CSCO', 'EA', 'TTWO', 'ADI', 'AEP', 'AMGN', 'CCEP', 'EXC'
+            ]
+            all_tickers.update(nasdaq_100_tickers)
+            print(f"✅ Using fallback list with {len(nasdaq_100_tickers)} NASDAQ 100 tickers.")
 
     if MARKET_SELECTION.get("SP500"):
         try:

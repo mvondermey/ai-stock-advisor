@@ -954,6 +954,14 @@ def _run_portfolio_backtest_walk_forward(
     total_portfolio_value = 0.0  # Start with no capital invested
     portfolio_values_history = [total_portfolio_value]
 
+    # Track actual positions for proper portfolio management
+    positions = {}  # ticker -> {'shares': float, 'avg_price': float, 'value': float}
+    cash_balance = 0.0  # Available cash
+
+    # Calculate initial capital that should be allocated (3 stocks * capital_per_stock)
+    initial_capital_needed = 3 * capital_per_stock
+    cash_balance = initial_capital_needed  # Start with cash available for initial purchases
+
     all_processed_tickers = []
     all_performance_metrics = []
     all_buy_hold_histories = {}
@@ -1054,137 +1062,101 @@ def _run_portfolio_backtest_walk_forward(
                     old_portfolio = current_portfolio_stocks.copy()
                     current_portfolio_stocks = selected_stocks
 
-                    if old_portfolio:
-                        print(f"   🔄 Rebalanced from {old_portfolio} to {selected_stocks} (transaction costs)")
-                    else:
-                        print(f"   🆕 Initial portfolio: {selected_stocks}")
+                    # Execute actual trades for rebalancing
+                    try:
+                        executed_trades = _execute_portfolio_rebalance(
+                            old_portfolio, selected_stocks, current_date, all_tickers_data,
+                            positions, cash_balance, capital_per_stock, target_percentage
+                        )
 
-                    # Calculate estimated Buy & Hold performance for current portfolio
+                        # Update cash balance after trades
+                        cash_balance = executed_trades['cash_balance']
+
+                        if old_portfolio:
+                            print(f"   🔄 Rebalanced from {old_portfolio} to {selected_stocks}")
+                            if executed_trades['sold_stocks']:
+                                print(f"      💰 Sold: {', '.join(executed_trades['sold_stocks'])}")
+                            if executed_trades['bought_stocks']:
+                                print(f"      🛒 Bought: {', '.join(executed_trades['bought_stocks'])}")
+                            print(f"      💸 Transaction costs: ${executed_trades['transaction_costs']:.2f}")
+                        else:
+                            print(f"   🆕 Initial portfolio: {selected_stocks}")
+                            if executed_trades['bought_stocks']:
+                                print(f"      🛒 Bought: {', '.join(executed_trades['bought_stocks'])}")
+                            print(f"      💸 Transaction costs: ${executed_trades['transaction_costs']:.2f}")
+
+                    except Exception as e:
+                        print(f"   ⚠️ Rebalancing failed: {e}. Keeping current portfolio.")
+
+                    # Calculate actual portfolio value based on current positions
                     if selected_stocks:
-                        bh_portfolio_value = 0.0
-                        ai_portfolio_value = capital_per_stock * len(selected_stocks)
+                        # Calculate current portfolio value from positions
+                        invested_value = 0.0
                         individual_returns = []
 
-                        # Calculate days elapsed for annualized returns
-                        days_elapsed = (current_date - backtest_start_date).days
-                        years_elapsed = days_elapsed / 365.25
-
                         for ticker in selected_stocks:
-                            try:
-                                # Get ticker data from start of backtest to current date
-                                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                                if not ticker_data.empty:
-                                    ticker_data = ticker_data.set_index('date')
-                                    backtest_data = ticker_data.loc[backtest_start_date:current_date]
+                            if ticker in positions and positions[ticker]['shares'] > 0:
+                                # Get current price
+                                try:
+                                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                                    if not ticker_data.empty:
+                                        ticker_data = ticker_data.set_index('date')
+                                        current_price_data = ticker_data.loc[:current_date]
+                                        if not current_price_data.empty:
+                                            current_price = current_price_data['Close'].iloc[-1]
+                                            position_value = positions[ticker]['shares'] * current_price
+                                            invested_value += position_value
 
-                                    if not backtest_data.empty and len(backtest_data) > 1:
-                                        # Calculate BH return: (end_price / start_price) * capital_per_stock
-                                        start_price = backtest_data['Close'].iloc[0]
-                                        end_price = backtest_data['Close'].iloc[-1]
+                                            # Calculate individual stock performance
+                                            entry_price = positions[ticker]['avg_price']
+                                            if entry_price > 0:
+                                                stock_return_pct = (current_price / entry_price - 1) * 100
+                                                individual_returns.append({
+                                                    'ticker': ticker,
+                                                    'total_return_pct': stock_return_pct,
+                                                    'current_price': current_price,
+                                                    'entry_price': entry_price,
+                                                    'shares': positions[ticker]['shares'],
+                                                    'value': position_value
+                                                })
+                                except Exception as e:
+                                    print(f"   ⚠️ Could not calculate value for {ticker}: {e}")
 
-                                        if start_price > 0:
-                                            total_return_pct = (end_price / start_price - 1) * 100
-                                            annualized_return_pct = ((end_price / start_price) ** (1 / years_elapsed) - 1) * 100 if years_elapsed > 0 else 0
+                        # Portfolio value = invested value + cash balance
+                        total_portfolio_value = invested_value + cash_balance
 
-                                            bh_return = (end_price / start_price - 1) * capital_per_stock
-                                            bh_portfolio_value += capital_per_stock + bh_return
-
-                                            individual_returns.append({
-                                                'ticker': ticker,
-                                                'total_return_pct': total_return_pct,
-                                                'annualized_return_pct': annualized_return_pct,
-                                                'bh_value': capital_per_stock + bh_return
-                                            })
-                                        else:
-                                            bh_portfolio_value += capital_per_stock
-                                            individual_returns.append({
-                                                'ticker': ticker,
-                                                'total_return_pct': 0.0,
-                                                'annualized_return_pct': 0.0,
-                                                'bh_value': capital_per_stock
-                                            })
-                                    else:
-                                        bh_portfolio_value += capital_per_stock
-                                        individual_returns.append({
-                                            'ticker': ticker,
-                                            'total_return_pct': 0.0,
-                                            'annualized_return_pct': 0.0,
-                                            'bh_value': capital_per_stock
-                                        })
-                                else:
-                                    bh_portfolio_value += capital_per_stock
-                                    individual_returns.append({
-                                        'ticker': ticker,
-                                        'total_return_pct': 0.0,
-                                        'annualized_return_pct': 0.0,
-                                        'bh_value': capital_per_stock
-                                    })
-                            except Exception as e:
-                                # Fallback: assume no return
-                                bh_portfolio_value += capital_per_stock
-                                individual_returns.append({
-                                    'ticker': ticker,
-                                    'total_return_pct': 0.0,
-                                    'annualized_return_pct': 0.0,
-                                    'bh_value': capital_per_stock
-                                })
-
-                        # Calculate portfolio-level returns
-                        portfolio_total_return_pct = ((bh_portfolio_value / ai_portfolio_value - 1) * 100)
-                        portfolio_annualized_return_pct = ((bh_portfolio_value / ai_portfolio_value) ** (1 / years_elapsed) - 1) * 100 if years_elapsed > 0 else 0
-
-                        # Print portfolio comparison
-                        print(f"   💼 Portfolio Status: {len(selected_stocks)} stocks, ${ai_portfolio_value:,.0f} allocated")
-                        print(f"   📊 BH Portfolio Value: ${bh_portfolio_value:,.0f}")
-                        print(f"   🤖 AI Portfolio Value: ${ai_portfolio_value:,.0f} (estimated)")
-                        print(f"   📈 Portfolio Performance:")
-                        print(f"      • Total Return: {portfolio_total_return_pct:+.1f}%")
-                        print(f"      • Annualized Return: {portfolio_annualized_return_pct:+.1f}%")
-                        print(f"      • BH vs AI: {((bh_portfolio_value / ai_portfolio_value - 1) * 100):+.1f}%")
+                        # Print portfolio status
+                        print(f"   💼 Portfolio Status: ${total_portfolio_value:,.0f} total (${invested_value:,.0f} invested + ${cash_balance:,.0f} cash)")
+                        print(f"   📊 Positions: {len([p for p in positions.values() if p['shares'] > 0])} stocks held")
 
                         # Print individual stock performance
                         if individual_returns:
                             print(f"   📋 Individual Stock Performance:")
                             for stock in individual_returns:
-                                print(f"      • {stock['ticker']}: {stock['total_return_pct']:+.1f}% total ({stock['annualized_return_pct']:+.1f}% annualized)")
-
-                        # Update portfolio value with BH performance for tracking
-                        total_portfolio_value = bh_portfolio_value
+                                print(f"      • {stock['ticker']}: {stock['total_return_pct']:+.1f}% (${stock['current_price']:.2f} vs ${stock['entry_price']:.2f})")
 
                     # In real implementation: execute trades here
                     # For simulation: allocate capital to new stocks
 
-                # Even if no rebalancing, track that we evaluated the portfolio daily
-                # This shows the system is actively monitoring and ready to act when needed
+                # Even if no rebalancing, update portfolio value based on current positions
                 else:
-                    # No rebalancing needed, but still calculate current portfolio value
+                    # No rebalancing needed, but update portfolio value for current prices
                     if current_portfolio_stocks:
                         try:
-                            current_bh_portfolio_value = 0.0
-                            days_elapsed = (current_date - backtest_start_date).days
-                            years_elapsed = days_elapsed / 365.25
-
+                            invested_value = 0.0
                             for ticker in current_portfolio_stocks:
-                                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                                if not ticker_data.empty:
-                                    ticker_data = ticker_data.set_index('date')
-                                    backtest_data = ticker_data.loc[backtest_start_date:current_date]
+                                if ticker in positions and positions[ticker]['shares'] > 0:
+                                    # Get current price
+                                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                                    if not ticker_data.empty:
+                                        ticker_data = ticker_data.set_index('date')
+                                        current_price_data = ticker_data.loc[:current_date]
+                                        if not current_price_data.empty:
+                                            current_price = current_price_data['Close'].iloc[-1]
+                                            position_value = positions[ticker]['shares'] * current_price
+                                            invested_value += position_value
 
-                                    if not backtest_data.empty and len(backtest_data) > 1:
-                                        start_price = backtest_data['Close'].iloc[0]
-                                        end_price = backtest_data['Close'].iloc[-1]
-
-                                        if start_price > 0:
-                                            bh_return = (end_price / start_price - 1) * capital_per_stock
-                                            current_bh_portfolio_value += capital_per_stock + bh_return
-                                        else:
-                                            current_bh_portfolio_value += capital_per_stock
-                                    else:
-                                        current_bh_portfolio_value += capital_per_stock
-                                else:
-                                    current_bh_portfolio_value += capital_per_stock
-
-                            total_portfolio_value = current_bh_portfolio_value
+                            total_portfolio_value = invested_value + cash_balance
                         except Exception as e:
                             # Keep previous value if calculation fails
                             pass
@@ -1207,6 +1179,101 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   💰 Transaction costs minimized - daily monitoring, trading only when portfolio changes")
 
     return total_portfolio_value, portfolio_values_history, initial_top_tickers, [], {}
+
+
+def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all_tickers_data,
+                               positions, cash_balance, capital_per_stock, target_percentage):
+    """
+    Execute actual portfolio rebalancing by selling removed stocks and buying new ones.
+
+    Returns dict with trade execution details.
+    """
+    transaction_costs = 0.0
+    sold_stocks = []
+    bought_stocks = []
+
+    # Get current prices for all stocks involved
+    stocks_to_trade = set(old_portfolio + new_portfolio)
+    current_prices = {}
+
+    for ticker in stocks_to_trade:
+        try:
+            ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+            if not ticker_data.empty:
+                ticker_data = ticker_data.set_index('date')
+                # Get the most recent price available up to current_date
+                price_data = ticker_data.loc[:current_date]
+                if not price_data.empty:
+                    current_prices[ticker] = price_data['Close'].iloc[-1]
+        except Exception as e:
+            print(f"   ⚠️ Could not get price for {ticker}: {e}")
+            continue
+
+    # Sell stocks that are no longer in portfolio
+    stocks_to_sell = set(old_portfolio) - set(new_portfolio)
+    for ticker in stocks_to_sell:
+        if ticker in positions and positions[ticker]['shares'] > 0:
+            if ticker in current_prices:
+                sell_price = current_prices[ticker]
+                shares_to_sell = positions[ticker]['shares']
+                sell_value = shares_to_sell * sell_price
+
+                # Apply transaction cost (simplified - percentage of trade value)
+                cost = sell_value * TRANSACTION_COST
+                net_sell_value = sell_value - cost
+                transaction_costs += cost
+
+                # Update cash and positions
+                cash_balance += net_sell_value
+                positions[ticker]['shares'] = 0
+                positions[ticker]['value'] = 0
+
+                sold_stocks.append(f"{ticker} ({shares_to_sell:.0f} shares @ ${sell_price:.2f})")
+                print(f"      💰 Sold {ticker}: {shares_to_sell:.0f} shares @ ${sell_price:.2f} = ${sell_value:.2f} (-${cost:.2f} cost)")
+
+    # Buy stocks that are newly added to portfolio
+    stocks_to_buy = set(new_portfolio) - set(old_portfolio)
+    if stocks_to_buy:
+        # Calculate capital available for buying (cash + proceeds from sales)
+        capital_for_new_stocks = cash_balance if cash_balance > 0 else capital_per_stock * len(stocks_to_buy)
+
+        if capital_for_new_stocks > 0:
+            capital_per_new_stock = capital_for_new_stocks / len(stocks_to_buy)
+
+            for ticker in stocks_to_buy:
+                if ticker in current_prices:
+                    buy_price = current_prices[ticker]
+                    if buy_price > 0:
+                        # Calculate shares to buy
+                        shares_to_buy = capital_per_new_stock / buy_price
+                        buy_value = shares_to_buy * buy_price
+
+                        # Apply transaction cost
+                        cost = buy_value * TRANSACTION_COST
+                        total_buy_cost = buy_value + cost
+                        transaction_costs += cost
+
+                        # Update cash and positions
+                        cash_balance -= total_buy_cost
+
+                        positions[ticker] = {
+                            'shares': shares_to_buy,
+                            'avg_price': buy_price,
+                            'value': buy_value
+                        }
+
+                        bought_stocks.append(f"{ticker} ({shares_to_buy:.0f} shares @ ${buy_price:.2f})")
+                        print(f"      🛒 Bought {ticker}: {shares_to_buy:.0f} shares @ ${buy_price:.2f} = ${buy_value:.2f} (+${cost:.2f} cost)")
+
+    # Handle stocks that remain in portfolio (no change needed)
+
+    return {
+        'cash_balance': cash_balance,
+        'transaction_costs': transaction_costs,
+        'sold_stocks': sold_stocks,
+        'bought_stocks': bought_stocks,
+        'positions': positions
+    }
 
 
 def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y_scaler, horizon_days: int) -> float:
