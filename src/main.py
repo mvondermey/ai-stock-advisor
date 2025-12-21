@@ -772,6 +772,12 @@ def main(
     
     # Combine all failed tickers from all periods
     all_failed_tickers = {}
+
+    # Initialize YTD/3month/1month failed tickers if not defined (when those periods are disabled)
+    failed_training_tickers_ytd = failed_training_tickers_ytd if 'failed_training_tickers_ytd' in locals() else {}
+    failed_training_tickers_3month = failed_training_tickers_3month if 'failed_training_tickers_3month' in locals() else {}
+    failed_training_tickers_1month = failed_training_tickers_1month if 'failed_training_tickers_1month' in locals() else {}
+
     all_failed_tickers.update(failed_training_tickers_1y)
     all_failed_tickers.update(failed_training_tickers_ytd)
     all_failed_tickers.update(failed_training_tickers_3month)

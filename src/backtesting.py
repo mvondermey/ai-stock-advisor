@@ -1020,7 +1020,7 @@ def _run_portfolio_backtest_walk_forward(
 
             # Get predictions for all 40 stocks using current models
             for ticker in initial_top_tickers:
-                if ticker in current_models_buy and current_models_buy[ticker] is not None:
+                if ticker in current_models and current_models[ticker] is not None:
                     try:
                         # Get data up to current date for prediction
                         ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
@@ -1058,6 +1058,95 @@ def _run_portfolio_backtest_walk_forward(
                         print(f"   🔄 Rebalanced from {old_portfolio} to {selected_stocks} (transaction costs)")
                     else:
                         print(f"   🆕 Initial portfolio: {selected_stocks}")
+
+                    # Calculate estimated Buy & Hold performance for current portfolio
+                    if selected_stocks:
+                        bh_portfolio_value = 0.0
+                        ai_portfolio_value = capital_per_stock * len(selected_stocks)
+                        individual_returns = []
+
+                        # Calculate days elapsed for annualized returns
+                        days_elapsed = (current_date - backtest_start_date).days
+                        years_elapsed = days_elapsed / 365.25
+
+                        for ticker in selected_stocks:
+                            try:
+                                # Get ticker data from start of backtest to current date
+                                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                                if not ticker_data.empty:
+                                    ticker_data = ticker_data.set_index('date')
+                                    backtest_data = ticker_data.loc[backtest_start_date:current_date]
+
+                                    if not backtest_data.empty and len(backtest_data) > 1:
+                                        # Calculate BH return: (end_price / start_price) * capital_per_stock
+                                        start_price = backtest_data['Close'].iloc[0]
+                                        end_price = backtest_data['Close'].iloc[-1]
+
+                                        if start_price > 0:
+                                            total_return_pct = (end_price / start_price - 1) * 100
+                                            annualized_return_pct = ((end_price / start_price) ** (1 / years_elapsed) - 1) * 100 if years_elapsed > 0 else 0
+
+                                            bh_return = (end_price / start_price - 1) * capital_per_stock
+                                            bh_portfolio_value += capital_per_stock + bh_return
+
+                                            individual_returns.append({
+                                                'ticker': ticker,
+                                                'total_return_pct': total_return_pct,
+                                                'annualized_return_pct': annualized_return_pct,
+                                                'bh_value': capital_per_stock + bh_return
+                                            })
+                                        else:
+                                            bh_portfolio_value += capital_per_stock
+                                            individual_returns.append({
+                                                'ticker': ticker,
+                                                'total_return_pct': 0.0,
+                                                'annualized_return_pct': 0.0,
+                                                'bh_value': capital_per_stock
+                                            })
+                                    else:
+                                        bh_portfolio_value += capital_per_stock
+                                        individual_returns.append({
+                                            'ticker': ticker,
+                                            'total_return_pct': 0.0,
+                                            'annualized_return_pct': 0.0,
+                                            'bh_value': capital_per_stock
+                                        })
+                                else:
+                                    bh_portfolio_value += capital_per_stock
+                                    individual_returns.append({
+                                        'ticker': ticker,
+                                        'total_return_pct': 0.0,
+                                        'annualized_return_pct': 0.0,
+                                        'bh_value': capital_per_stock
+                                    })
+                            except Exception as e:
+                                # Fallback: assume no return
+                                bh_portfolio_value += capital_per_stock
+                                individual_returns.append({
+                                    'ticker': ticker,
+                                    'total_return_pct': 0.0,
+                                    'annualized_return_pct': 0.0,
+                                    'bh_value': capital_per_stock
+                                })
+
+                        # Calculate portfolio-level returns
+                        portfolio_total_return_pct = ((bh_portfolio_value / ai_portfolio_value - 1) * 100)
+                        portfolio_annualized_return_pct = ((bh_portfolio_value / ai_portfolio_value) ** (1 / years_elapsed) - 1) * 100 if years_elapsed > 0 else 0
+
+                        # Print portfolio comparison
+                        print(f"   💼 Portfolio Status: {len(selected_stocks)} stocks, ${ai_portfolio_value:,.0f} allocated")
+                        print(f"   📊 BH Portfolio Value: ${bh_portfolio_value:,.0f}")
+                        print(f"   🤖 AI Portfolio Value: ${ai_portfolio_value:,.0f} (estimated)")
+                        print(f"   📈 Portfolio Performance:")
+                        print(f"      • Total Return: {portfolio_total_return_pct:+.1f}%")
+                        print(f"      • Annualized Return: {portfolio_annualized_return_pct:+.1f}%")
+                        print(f"      • BH vs AI: {((bh_portfolio_value / ai_portfolio_value - 1) * 100):+.1f}%")
+
+                        # Print individual stock performance
+                        if individual_returns:
+                            print(f"   📋 Individual Stock Performance:")
+                            for stock in individual_returns:
+                                print(f"      • {stock['ticker']}: {stock['total_return_pct']:+.1f}% total ({stock['annualized_return_pct']:+.1f}% annualized)")
 
                     # In real implementation: execute trades here
                     # For simulation: allocate capital to new stocks
