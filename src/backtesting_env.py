@@ -4,7 +4,6 @@ from typing import List, Dict, Tuple, Optional
 
 # Import configuration from config.py
 from config import (
-    USE_MODEL_GATE,
     INVESTMENT_PER_STOCK, TRANSACTION_COST, ATR_PERIOD, FEAT_SMA_SHORT,
     FEAT_SMA_LONG, FEAT_VOL_WINDOW, SEQUENCE_LENGTH,
     USE_SINGLE_REGRESSION_MODEL
@@ -27,7 +26,7 @@ except ImportError:
 class RuleTradingEnv:
     """SMA cross + ATR trailing stop/TP + risk-based sizing. Minimal ML thresholds - ranking drives portfolio decisions."""
     def __init__(self, df: pd.DataFrame, ticker: str, initial_balance: float, transaction_cost: float,
-                 model=None, scaler=None, y_scaler=None, use_gate: bool = USE_MODEL_GATE,
+                 model=None, scaler=None, y_scaler=None, use_gate: bool = False,
                  feature_set: Optional[List[str]] = None,
                  horizon_days: int = 20):
         if "Close" not in df.columns:
@@ -39,7 +38,7 @@ class RuleTradingEnv:
         self.model = model  # Single regression model
         self.scaler = scaler
         self.y_scaler = y_scaler  # ✅ Store y_scaler for inverse transforming predictions
-        self.use_gate = bool(use_gate) and (scaler is not None) and USE_SINGLE_REGRESSION_MODEL
+        self.use_gate = False  # Simplified buy-and-hold - no gating logic
         
         # DEBUG: Log environment initialization
         import sys

@@ -111,7 +111,7 @@ AI_REBALANCE_FREQUENCY_DAYS = 1
 AI_PREDICTION_SMOOTHING_DAYS = 3
 # ✅ REGRESSION MODE: Probability thresholds removed - using simplified trading logic
 TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification (balanced for 3-day moves)
-USE_MODEL_GATE          = True       # ENABLE ML gate
+# USE_MODEL_GATE removed - using simplified buy-and-hold logic
 USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
 MARKET_FILTER_SMA       = 200

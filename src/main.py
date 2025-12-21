@@ -34,7 +34,7 @@ from config import (
     GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS,
     GRU_HIDDEN_SIZE_OPTIONS, GRU_NUM_LAYERS_OPTIONS, GRU_DROPOUT_OPTIONS,
     GRU_LEARNING_RATE_OPTIONS, GRU_BATCH_SIZE_OPTIONS, GRU_EPOCHS_OPTIONS,
-    USE_MODEL_GATE, USE_GRU, USE_LSTM, USE_LOGISTIC_REGRESSION, USE_RANDOM_FOREST,
+    USE_GRU, USE_LSTM, USE_LOGISTIC_REGRESSION, USE_RANDOM_FOREST,
     USE_SVM, USE_MLP_CLASSIFIER, USE_LIGHTGBM, USE_XGBOOST,
     FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING,
     USE_PERFORMANCE_BENCHMARK, DATA_PROVIDER, USE_YAHOO_FALLBACK,
@@ -577,8 +577,6 @@ def main(
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
     prices_dict, signals_dict = {}, {}
 
-    if not models and USE_MODEL_GATE:
-        print("⚠️ No models were trained for 1-Year backtest. Model-gating will be disabled for this run.\n")
     
     # Filter out failed tickers from top_tickers for subsequent steps
     top_tickers_1y_filtered = [t for t in top_tickers if t not in failed_training_tickers_1y]
@@ -638,8 +636,8 @@ def main(
     if ENABLE_1YEAR_BACKTEST:
         print("\n🔍 Step 8: Running 1-Year Backtest...")
         # DEBUG: Check what's in models dictionaries
-        print(f"\n[DEBUG MAIN] 1-Year models_buy keys: {list(models_buy.keys())}")
-        print(f"[DEBUG MAIN] 1-Year models_buy values types: {[type(v).__name__ if v else 'None' for v in models_buy.values()]}")
+        print(f"\n[DEBUG MAIN] 1-Year models keys: {list(models.keys())}")
+        print(f"[DEBUG MAIN] 1-Year models values types: {[type(v).__name__ if v else 'None' for v in models.values()]}")
         
         # --- Run 1-Year Backtest (AI Strategy) ---
         print("\n🔍 Step 8: Running 1-Year Backtest (AI Strategy)...")
@@ -855,7 +853,7 @@ def main(
     actual_tickers_analyzed = len(processed_tickers_1y)
     
     print_final_summary(
-        sorted_final_results, models_buy, models_buy, scalers, optimized_params_per_ticker,
+        sorted_final_results, models, models, scalers, optimized_params_per_ticker,
         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
         0, 0, 0,  # Placeholder values for removed YTD parameters
         0, 0, 0,  # Placeholder values for removed 3-Month parameters
@@ -878,7 +876,7 @@ def main(
     best_period_name = max(performance_values, key=performance_values.get)
     
     # Get the models and scalers corresponding to the best period (only 1-Year available)
-    best_models_dict = models_buy  # Single model per stock
+    best_models_dict = models  # Single model per stock
     best_scalers_dict = scalers
 
     # Save the best models and scalers for each ticker to the paths used by live_trading.py

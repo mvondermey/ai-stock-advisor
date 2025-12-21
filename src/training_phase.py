@@ -46,7 +46,7 @@ except ImportError:
 
 def train_worker(params: Tuple) -> Dict:
     """Worker function for parallel model training."""
-    ticker, df_train_period, target_percentage, class_horizon, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell = params
+    ticker, df_train_period, target_percentage, class_horizon, feature_set = params
     
     models_dir = Path("logs/models")
     _ensure_dir(models_dir)
@@ -55,15 +55,15 @@ def train_worker(params: Tuple) -> Dict:
     scaler_path = models_dir / f"{ticker}_scaler.joblib"
     gru_hyperparams_path = models_dir / f"{ticker}_TargetReturn_gru_optimized_params.json"
 
-    model, scaler, y_scaler_loaded = None, None, None
-    
+    model, scaler, y_scaler_loaded, loaded_gru_hyperparams = None, None, None, None
+
     # Flag to indicate if we successfully loaded a model to continue training
     loaded_for_retraining = False
 
     # Attempt to load models and GRU hyperparams if CONTINUE_TRAINING_FROM_EXISTING is True
     y_scaler_path = models_dir / f"{ticker}_y_scaler.joblib"
 
-    if CONTINUE_TRAINING_FROM_EXISTING and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
+    if CONTINUE_TRAINING_FROM_EXISTING and model_path.exists() and scaler_path.exists():
         try:
             model = joblib.load(model_path)
             scaler = joblib.load(scaler_path)
@@ -80,20 +80,14 @@ def train_worker(params: Tuple) -> Dict:
             print(f"  ⚠️ Error loading models or GRU hyperparams for {ticker} for retraining: {e}. Training from scratch.")
 
     # If FORCE_TRAINING is False and we didn't load for retraining, then we just load and skip training
-    if not FORCE_TRAINING and not loaded_for_retraining and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
+    if not FORCE_TRAINING and not loaded_for_retraining and model_path.exists() and scaler_path.exists():
         try:
-            model_buy = joblib.load(model_buy_path)
-            model_sell = joblib.load(model_sell_path)
+            model = joblib.load(model_path)
             scaler = joblib.load(scaler_path)
             if y_scaler_path.exists():
                 y_scaler_loaded = joblib.load(y_scaler_path)
             
-            if gru_hyperparams_buy_path.exists():
-                with open(gru_hyperparams_buy_path, 'r') as f:
-                    loaded_gru_hyperparams_buy = json.load(f)
-            if gru_hyperparams_sell_path.exists():
-                with open(gru_hyperparams_sell_path, 'r') as f:
-                    loaded_gru_hyperparams_sell = json.load(f)
+            # Single regression model - no separate buy/sell hyperparams
 
             print(f"  ✅ Loaded existing models and GRU hyperparams for {ticker} (FORCE_TRAINING is False).")
             # Before returning, ensure PyTorch models are on CPU if they are deep learning models
@@ -255,22 +249,9 @@ def train_models_for_period(
         
         gru_hyperparams_path = models_dir / f"{ticker}_{period_name}_TargetReturn_gru_optimized_params.json"
         
-        loaded_gru_hyperparams_buy = None
-        loaded_gru_hyperparams_sell = None
+        # Single regression model - no separate buy/sell hyperparams
         
-        try:
-            if gru_hyperparams_buy_path.exists():
-                with open(gru_hyperparams_buy_path, 'r') as f:
-                    loaded_gru_hyperparams_buy = json.load(f)
-        except Exception as e:
-            print(f"  ⚠️ Error loading existing GRU buy hyperparams for {ticker}: {e}")
-        
-        try:
-            if gru_hyperparams_sell_path.exists():
-                with open(gru_hyperparams_sell_path, 'r') as f:
-                    loaded_gru_hyperparams_sell = json.load(f)
-        except Exception as e:
-            print(f"  ⚠️ Error loading existing GRU sell hyperparams for {ticker}: {e}")
+        # Single regression model - no separate buy/sell hyperparams to load
         
         # Helper to extract a close series (prefers 'Close', falls back to 'close')
         def _get_close_series(df: pd.DataFrame) -> Optional[pd.Series]:
@@ -303,9 +284,7 @@ def train_models_for_period(
                 ticker_train_data.copy(),
                 period_target_pct,
                 period_horizon,
-                feature_set,
-                loaded_gru_hyperparams_buy,
-                loaded_gru_hyperparams_sell
+                feature_set
             ))
         except (KeyError, IndexError):
             print(f"  ⚠️ Could not slice training data for {ticker} for {period_name} period. Skipping.")

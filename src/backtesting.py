@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from config import (
     GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS,
-    USE_MODEL_GATE, TRANSACTION_COST, SEED, INVESTMENT_PER_STOCK,
+    TRANSACTION_COST, SEED, INVESTMENT_PER_STOCK,
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS,
     N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
     DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
@@ -291,7 +291,7 @@ def optimize_single_ticker_worker(params):
             model=model_buy,  # Use single model
             scaler=scaler,
             y_scaler=y_scaler,
-            use_gate=USE_MODEL_GATE,
+            use_gate=False,  # Simplified buy-and-hold logic
             feature_set=feature_set
         )
         final_val, _, _, _, _, _ = env.run()
@@ -600,7 +600,7 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             model=model_buy,  # Use single model
             scaler=scaler,
             y_scaler=y_scaler,  # ✅ Pass y_scaler
-            use_gate=USE_MODEL_GATE,
+            use_gate=False,  # Simplified buy-and-hold logic
             feature_set=feature_set,
             horizon_days=horizon_days
         )
