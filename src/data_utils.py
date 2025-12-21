@@ -705,16 +705,22 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
 
     df["Target"]     = df["Close"].shift(-1)
 
-    # Future price for return calculation
-    fwd = df["Close"].shift(-class_horizon)
-    
-    # REGRESSION TARGETS: Actual forward returns (as percentages, e.g., 0.15 = 15%)
-    df["TargetReturnBuy"] = (fwd / df["Close"] - 1.0).fillna(0)  # Predict actual return
-    df["TargetReturnSell"] = (fwd / df["Close"] - 1.0).fillna(0)  # Same for sell model
-    
-    # CLASSIFICATION TARGETS (legacy - for backward compatibility)
-    df["TargetClassBuy"] = ((fwd / df["Close"] - 1.0) > target_percentage).astype(float)
-    df["TargetClassSell"] = ((fwd / df["Close"] - 1.0) < -target_percentage).astype(float)
+    # Calculate Buy & Hold annualized performance as target
+    # Use available historical data to compute annualized return
+    if len(df) > 1:
+        start_price = df["Close"].iloc[0]
+        end_price = df["Close"].iloc[-1]
+        total_days = (df.index[-1] - df.index[0]).days
+
+        if total_days > 0 and start_price > 0:
+            total_return = (end_price / start_price) - 1.0
+            # Annualize the return: (1 + total_return)^(365/total_days) - 1
+            annualized_return = (1 + total_return) ** (365.0 / total_days) - 1
+            df["TargetReturn"] = annualized_return
+        else:
+            df["TargetReturn"] = 0.0
+    else:
+        df["TargetReturn"] = 0.0
 
     # Dynamically build the list of features that are actually present in the DataFrame
     # This is the most critical part to ensure consistency
@@ -738,7 +744,7 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     all_present_features = present_technical_features + financial_features
     
     # Also include target columns for the initial DataFrame selection before dropna
-    target_cols = ["Target", "TargetClassBuy", "TargetClassSell", "TargetReturnBuy", "TargetReturnSell"]
+    target_cols = ["Target", "TargetReturn"]
     cols_for_ready = all_present_features + target_cols
     
     # Filter cols_for_ready to ensure all are actually in df.columns (redundant but safe)

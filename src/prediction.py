@@ -10,14 +10,14 @@ import joblib
 from pathlib import Path
 from datetime import datetime, timezone
 
-from config import USE_REGRESSION_MODEL, SEQUENCE_LENGTH, PYTORCH_AVAILABLE, CUDA_AVAILABLE
+from config import SEQUENCE_LENGTH, PYTORCH_AVAILABLE, CUDA_AVAILABLE
 from data_utils import fetch_training_data
 
 
 def predict_return_for_ticker(
     ticker: str,
     data: pd.DataFrame,
-    model_buy,
+    model,
     scaler,
     y_scaler,
     feature_set: List[str],
@@ -100,13 +100,13 @@ def predict_return_for_ticker(
                     X_tensor = X_tensor.to(device)
                     
                     # Predict
-                    model_buy.eval()
+                    model.eval()
                     with torch.no_grad():
-                        output = model_buy(X_tensor)
+                        output = model(X_tensor)
                         prediction = float(output.cpu().numpy()[0][0])
                     
                     # Inverse transform if using regression with y_scaler
-                    if USE_REGRESSION_MODEL and y_scaler is not None:
+                    if y_scaler is not None:
                         prediction = y_scaler.inverse_transform([[prediction]])[0][0]
                     
                     return prediction
@@ -116,9 +116,9 @@ def predict_return_for_ticker(
         # Traditional ML models (XGBoost, LightGBM, RandomForest, etc.)
         scaled_data = scaler.transform(latest_data)
         
-        if USE_REGRESSION_MODEL:
+        # Always use regression approach
             # Regression model: predict returns directly
-            prediction = model_buy.predict(scaled_data)[0]
+            prediction = model.predict(scaled_data)[0]
             
             # Inverse transform if we scaled the target
             if y_scaler is not None:

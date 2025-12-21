@@ -25,7 +25,7 @@ from config import (
     DATA_PROVIDER, N_TOP_TICKERS, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES,
     PAUSE_BETWEEN_YF_CALLS, MARKET_SELECTION, USE_PERFORMANCE_BENCHMARK,
     ALPACA_API_KEY, ALPACA_SECRET_KEY, TOP_CACHE_PATH, VALID_TICKERS_CACHE_PATH,
-    ALPACA_STOCKS_LIMIT
+    ALPACA_STOCKS_LIMIT, ALPACA_STOCKS_EXCHANGES
 )
 from data_fetcher import load_prices_robust, _download_batch_robust
 from utils import _ensure_dir, _normalize_symbol, _to_utc
@@ -56,14 +56,18 @@ def get_all_tickers() -> List[str]:
                 )
                 assets = trading_client.get_all_assets(search_params)
                 tradable_assets = [a for a in assets if a.tradable]
+                # Filter by exchange if specified in config
+                if ALPACA_STOCKS_EXCHANGES:
+                    tradable_assets = [a for a in tradable_assets if a.exchange in ALPACA_STOCKS_EXCHANGES]
                 alpaca_tickers = [asset.symbol for asset in tradable_assets]
 
                 # Apply ALPACA_STOCKS_LIMIT to prevent downloading too many stocks
+                exchange_filter_desc = f" ({', '.join(ALPACA_STOCKS_EXCHANGES)} only)" if ALPACA_STOCKS_EXCHANGES else ""
                 if len(alpaca_tickers) > ALPACA_STOCKS_LIMIT:
                     alpaca_tickers = alpaca_tickers[:ALPACA_STOCKS_LIMIT]
-                    print(f"[LIMITED] Fetched {len(alpaca_tickers)} tradable US equity tickers from Alpaca (limited to {ALPACA_STOCKS_LIMIT}).")
+                    print(f"[LIMITED] Fetched {len(alpaca_tickers)} tradable US equity tickers from Alpaca{exchange_filter_desc} (limited to {ALPACA_STOCKS_LIMIT}).")
                 else:
-                    print(f"[SUCCESS] Fetched {len(alpaca_tickers)} tradable US equity tickers from Alpaca.")
+                    print(f"[SUCCESS] Fetched {len(alpaca_tickers)} tradable US equity tickers from Alpaca{exchange_filter_desc}.")
 
                 all_tickers.update(alpaca_tickers)
             except Exception as e:
@@ -375,27 +379,6 @@ def find_top_performers(
             
         final_benchmark_perf = max(benchmark_perfs.values())
         print(f"  📈 Using final 1-Year performance benchmark of {final_benchmark_perf:.2f}%")
-
-        print("- Calculating YTD Performance Benchmarks...")
-        ytd_benchmark_perfs = {}
-        for bench_ticker in ['QQQ', 'SPY']:
-            try:
-                df = load_prices_robust(bench_ticker, ytd_start_date, end_date)
-                if df is not None and not df.empty:
-                    start_price = df['Close'].iloc[0]
-                    end_price = df['Close'].iloc[-1]
-                    if start_price > 0:
-                        perf = ((end_price - start_price) / start_price) * 100
-                        ytd_benchmark_perfs[bench_ticker] = perf
-                        print(f"  ✅ {bench_ticker} YTD Performance: {perf:.2f}%")
-            except Exception as e:
-                print(f"⚠️ Could not calculate {bench_ticker} YTD performance: {e}.")
-        
-        if not ytd_benchmark_perfs:
-            print("❌ Could not calculate any YTD benchmark performance. Cannot proceed.")
-            return []
-        ytd_benchmark_perf = max(ytd_benchmark_perfs.values())
-        print(f"  📈 Using YTD performance benchmark of {ytd_benchmark_perf:.2f}%")
     else:
         print("ℹ️ Performance benchmark is disabled. All tickers will be considered.")
 
@@ -448,7 +431,7 @@ def find_top_performers(
         final_performers_for_selection = sorted_all_tickers_performance_with_df
         print(f"\n✅ Analyzing all {len(final_performers_for_selection)} tickers (N_TOP_TICKERS is {n_top}).")
 
-    print(f"🔍 Applying performance benchmarks and fetching YTD for selected tickers in parallel...")
+    print(f"🔍 Applying performance benchmarks for selected tickers in parallel...")
     
     finalize_params = [
         (ticker, perf_1y, df_1y, ytd_start_date, end_date, final_benchmark_perf, ytd_benchmark_perf, USE_PERFORMANCE_BENCHMARK)
@@ -476,7 +459,7 @@ def find_top_performers(
         print(f"  🔍 Screening {len(final_performers)} strong performers for fundamental metrics in parallel...")
         
         fundamental_screen_params = [
-            (ticker, perf_1y, perf_ytd, fcf_min_threshold, ebitda_min_threshold)
+            (ticker, perf_1y, fcf_min_threshold, ebitda_min_threshold)
             for ticker, perf_1y, perf_ytd in final_performers
         ]
         screened_performers = []
@@ -524,9 +507,9 @@ def _finalize_single_ticker_performance(params: Tuple) -> Optional[Tuple[str, fl
 
     return (ticker, perf_1y, ytd_perf)
 
-def _apply_fundamental_screen_worker(params: Tuple) -> Optional[Tuple[str, float, float]]:
+def _apply_fundamental_screen_worker(params: Tuple) -> Optional[Tuple[str, float]]:
     """Worker to apply fundamental screens using yfinance with proper fallback."""
-    ticker, perf_1y, perf_ytd, fcf_min_threshold, ebitda_min_threshold = params
+    ticker, perf_1y, fcf_min_threshold, ebitda_min_threshold = params
 
     # Use yfinance directly for fundamental data - same as _fetch_financial_data but simplified
     try:
@@ -574,8 +557,8 @@ def _apply_fundamental_screen_worker(params: Tuple) -> Optional[Tuple[str, float
             return None  # Exclude stocks that don't meet financial criteria
 
         # Include stocks that pass financial screening or have no data available
-        return (ticker, perf_1y, perf_ytd)
+        return (ticker, perf_1y)
 
     except Exception as e:
         # If anything fails, include the stock by default (fail-open approach)
-        return (ticker, perf_1y, perf_ytd)
+        return (ticker, perf_1y)

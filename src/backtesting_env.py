@@ -6,7 +6,8 @@ from typing import List, Dict, Tuple, Optional
 from config import (
     MIN_PROBA_BUY, MIN_PROBA_SELL, USE_MODEL_GATE,
     INVESTMENT_PER_STOCK, TRANSACTION_COST, ATR_PERIOD, FEAT_SMA_SHORT,
-    FEAT_SMA_LONG, FEAT_VOL_WINDOW, SEQUENCE_LENGTH, USE_REGRESSION_MODEL
+    FEAT_SMA_LONG, FEAT_VOL_WINDOW, SEQUENCE_LENGTH,
+    USE_SINGLE_REGRESSION_MODEL
 )
 
 # Import PyTorch models if available
@@ -24,11 +25,10 @@ except ImportError:
     class GRURegressor: pass
 
 class RuleTradingEnv:
-    """SMA cross + ATR trailing stop/TP + risk-based sizing. Optional ML gate to allow buys."""
+    """SMA cross + ATR trailing stop/TP + risk-based sizing. Minimal ML thresholds - ranking drives portfolio decisions."""
     def __init__(self, df: pd.DataFrame, ticker: str, initial_balance: float, transaction_cost: float,
-                 model_buy=None, model_sell=None, scaler=None, y_scaler=None, min_proba_buy: float = MIN_PROBA_BUY, min_proba_sell: float = MIN_PROBA_SELL, use_gate: bool = USE_MODEL_GATE,
+                 model=None, scaler=None, y_scaler=None, use_gate: bool = USE_MODEL_GATE,
                  feature_set: Optional[List[str]] = None,
-                 per_ticker_min_proba_buy: Optional[float] = None, per_ticker_min_proba_sell: Optional[float] = None,
                  horizon_days: int = 20):
         if "Close" not in df.columns:
             raise ValueError("DataFrame must contain 'Close' column.")
@@ -36,20 +36,16 @@ class RuleTradingEnv:
         self.ticker = ticker
         self.initial_balance = float(initial_balance)
         self.transaction_cost = float(transaction_cost)
-        self.model_buy = model_buy
-        self.model_sell = model_sell
+        self.model = model  # Single regression model
         self.scaler = scaler
         self.y_scaler = y_scaler  # ✅ Store y_scaler for inverse transforming predictions
-        self.min_proba_buy = float(per_ticker_min_proba_buy if per_ticker_min_proba_buy is not None else min_proba_buy)
-        self.min_proba_sell = float(per_ticker_min_proba_sell if per_ticker_min_proba_sell is not None else min_proba_sell)
-        self.use_gate = bool(use_gate) and (scaler is not None)
+        self.use_gate = bool(use_gate) and (scaler is not None) and USE_SINGLE_REGRESSION_MODEL
         
         # DEBUG: Log environment initialization
         import sys
         sys.stderr.write(f"[ENV {ticker}] RuleTradingEnv initialized:\n")
-        sys.stderr.write(f"  - use_gate (computed): {self.use_gate} (input use_gate={use_gate}, scaler={'OK' if scaler else 'None'})\n")
-        sys.stderr.write(f"  - model_buy: {type(model_buy).__name__ if model_buy else 'None'}\n")
-        sys.stderr.write(f"  - model_sell: {type(model_sell).__name__ if model_sell else 'None'}\n")
+        sys.stderr.write(f"  - use_gate (computed): {self.use_gate} (input use_gate={use_gate}, scaler={'OK' if scaler else 'None'}, regression={USE_SINGLE_REGRESSION_MODEL})\n")
+        sys.stderr.write(f"  - model: {type(model).__name__ if model else 'None'}\n")
         sys.stderr.write(f"  - y_scaler: {type(y_scaler).__name__ if y_scaler else 'None'}\n")
         sys.stderr.flush()
         self.horizon_days = int(horizon_days)  # Prediction horizon for evaluation
@@ -288,14 +284,18 @@ class RuleTradingEnv:
             return str(self.df.loc[i, "Date"])
         return str(i)
 
-    def _get_model_prediction(self, i: int, model) -> float:
+    def _get_model_prediction(self, i: int) -> float:
+        """
+        Get prediction from single regression model at step i.
+        Returns predicted return percentage (e.g., 0.05 = 5%).
+        """
         # DEBUG: Log first prediction attempt
         if i == 0:
-            print(f"  [DEBUG {self.ticker}] Step 0: use_gate={self.use_gate}, model={type(model).__name__ if model else 'None'}, scaler={type(self.scaler).__name__ if self.scaler else 'None'}, y_scaler={type(self.y_scaler).__name__ if self.y_scaler else 'None'}")
-        
-        if not self.use_gate or model is None:
+            print(f"  [DEBUG {self.ticker}] Step 0: use_gate={self.use_gate}, model={type(self.model).__name__ if self.model else 'None'}, scaler={type(self.scaler).__name__ if self.scaler else 'None'}, y_scaler={type(self.y_scaler).__name__ if self.y_scaler else 'None'}")
+
+        if not self.use_gate or self.model is None:
             if i == 0:
-                print(f"  [DEBUG {self.ticker}] Step 0: Returning 0.0 early! use_gate={self.use_gate}, model_is_None={model is None}")
+                print(f"  [DEBUG {self.ticker}] Step 0: Returning 0.0 early! use_gate={self.use_gate}, model_is_None={self.model is None}")
             return 0.0
         
         model_feature_names = self.scaler.feature_names_in_ if hasattr(self.scaler, 'feature_names_in_') else self.feature_set
@@ -372,7 +372,7 @@ class RuleTradingEnv:
                     scaled_prediction = float(output.cpu().numpy()[0][0])
                     
                     # ✅ Inverse transform if y_scaler is available (for regression)
-                    if self.y_scaler is not None and USE_REGRESSION_MODEL:
+                    if self.y_scaler is not None:
                         prediction = self.y_scaler.inverse_transform([[scaled_prediction]])[0][0]
                         # DEBUG: Log first few predictions
                         if i < 3:
@@ -382,48 +382,22 @@ class RuleTradingEnv:
                         return scaled_prediction
             else:
                 # For sklearn models
-                X_scaled_np = self.scaler.transform(X_df)
-                X = pd.DataFrame(X_scaled_np, columns=model_feature_names)
-                # Check if regression or classification
-                if USE_REGRESSION_MODEL or not hasattr(model, 'predict_proba'):
-                    scaled_prediction = float(model.predict(X)[0])  # Regression
-                    
-                    # ✅ Inverse transform if y_scaler is available
-                    if self.y_scaler is not None:
-                        prediction = self.y_scaler.inverse_transform([[scaled_prediction]])[0][0]
-                        return prediction
-                    else:
-                        return scaled_prediction
+                X_scaled_np = self.scaler.transform(historical_data_for_seq)
+                X = pd.DataFrame(X_scaled_np, columns=model_feature_names) if model_feature_names else pd.DataFrame(X_scaled_np)
+
+                # Single regression model - predict return percentage
+                scaled_prediction = float(self.model.predict(X)[0])
+
+                # ✅ Inverse transform with y_scaler for regression
+                if self.y_scaler is not None:
+                    prediction = self.y_scaler.inverse_transform([[scaled_prediction]])[0][0]
+                    return prediction
                 else:
-                    return float(model.predict_proba(X)[0][1])  # Classification
+                    return scaled_prediction
         except Exception as e:
             print(f"  [{self.ticker}] Error in model prediction at step {i}: {e}")
             return 0.0
 
-    def _allow_buy_by_model(self, i: int) -> bool:
-        self.last_buy_prob = self._get_model_prediction(i, self.model_buy)
-        
-        # Track all predictions
-        self.all_predictions_buy.append(self.last_buy_prob)
-        
-        # DEBUG: Log predictions vs actual returns for first 30 days
-        if i < 30 and i % 5 == 0:  # Every 5th day for first 30 days
-            current_price = self.df.loc[i, "Close"]
-            # Calculate actual forward return based on the model's horizon
-            if i + self.horizon_days < len(self.df):
-                future_price = self.df.loc[i + self.horizon_days, "Close"]
-                actual_return = (future_price / current_price - 1.0) * 100
-                print(f"  [{self.ticker}] Day {i}: BUY Predicted={self.last_buy_prob*100:.2f}%, Actual {self.horizon_days}d Return={actual_return:.2f}%, Threshold={self.min_proba_buy*100:.2f}%")
-        
-        return self.last_buy_prob >= self.min_proba_buy
-
-    def _allow_sell_by_model(self, i: int) -> bool:
-        self.last_sell_prob = self._get_model_prediction(i, self.model_sell)
-        
-        # Track all predictions
-        self.all_predictions_sell.append(self.last_sell_prob)
-        
-        return self.last_sell_prob >= self.min_proba_sell
 
     def _position_size_from_atr(self, price: float, atr: float) -> int:
         if atr is None or np.isnan(atr) or atr <= 0 or price <= 0:

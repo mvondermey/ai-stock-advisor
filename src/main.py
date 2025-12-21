@@ -29,8 +29,8 @@ from config import (
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
     BACKTEST_DAYS, BACKTEST_DAYS_3MONTH, BACKTEST_DAYS_1MONTH, TRAIN_LOOKBACK_DAYS, VALIDATION_DAYS,
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
-    ENABLE_1YEAR_TRAINING, ENABLE_YTD_TRAINING, ENABLE_3MONTH_TRAINING, ENABLE_1MONTH_TRAINING,
-    ENABLE_1YEAR_BACKTEST, ENABLE_YTD_BACKTEST, ENABLE_3MONTH_BACKTEST, ENABLE_1MONTH_BACKTEST,
+    ENABLE_1YEAR_TRAINING,
+    ENABLE_1YEAR_BACKTEST,
     FEAT_SMA_SHORT, FEAT_SMA_LONG, FEAT_VOL_WINDOW, ATR_PERIOD,
     GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS,
     GRU_HIDDEN_SIZE_OPTIONS, GRU_NUM_LAYERS_OPTIONS, GRU_DROPOUT_OPTIONS,
@@ -416,9 +416,6 @@ def main(
 
     # Initialize filtered ticker lists to avoid UnboundLocalError
     top_tickers_1y_filtered = []
-    top_tickers_ytd_filtered = []
-    top_tickers_3month_filtered = []
-    top_tickers_1month_filtered = []
 
     # --- Handle single ticker case for initial performance calculation ---
     if single_ticker:
@@ -672,152 +669,10 @@ def main(
     buy_hold_results_1y = []
     performance_metrics_buy_hold_1y_actual = [] # Initialize here
 
-    final_strategy_value_ytd = initial_balance_used
-    strategy_results_ytd = []
-    processed_tickers_ytd_local = []
-    performance_metrics_ytd = []
-    ai_ytd_return = 0.0
-    final_simple_rule_value_ytd = initial_balance_used
-    simple_rule_results_ytd = []
-    processed_simple_rule_tickers_ytd = []
-    performance_metrics_simple_rule_ytd = []
-    simple_rule_ytd_return = 0.0
-    final_buy_hold_value_ytd = initial_balance_used
-    buy_hold_results_ytd = []
-    performance_metrics_buy_hold_ytd_actual = [] # Initialize here
-
-    final_strategy_value_3month = initial_balance_used
-    strategy_results_3month = []
-    processed_tickers_3month_local = []
-    performance_metrics_3month = []
-    ai_3month_return = 0.0
-    final_simple_rule_value_3month = initial_balance_used
-    simple_rule_results_3month = []
-    processed_simple_rule_tickers_3month = []
-    performance_metrics_simple_rule_3month = []
-    simple_rule_3month_return = 0.0
-    final_buy_hold_value_3month = initial_balance_used
-    buy_hold_results_3month = []
-    performance_metrics_buy_hold_3month_actual = [] # Initialize here
-
-    final_strategy_value_1month = initial_balance_used
-    strategy_results_1month = []
-    processed_tickers_1month_local = []
-    performance_metrics_1month = []
-    ai_1month_return = 0.0
-    final_simple_rule_value_1month = initial_balance_used
-    simple_rule_results_1month = []
-    processed_simple_rule_tickers_1month = []
-    performance_metrics_simple_rule_1month = []
-    simple_rule_1month_return = 0.0
-    final_buy_hold_value_1month = initial_balance_used
-    buy_hold_results_1month = []
-    performance_metrics_buy_hold_1month_actual = [] # Initialize here
     gru_hyperparams_buy_dict_1month, gru_hyperparams_sell_dict_1month = {}, {} # Initialize here
 
-    # --- Training Models (for YTD Backtest) ---
-    models_buy_ytd, models_sell_ytd, scalers_ytd = {}, {}, {}
-    gru_hyperparams_buy_dict_ytd, gru_hyperparams_sell_dict_ytd = {}, {}
-    failed_training_tickers_ytd = {}
-    
-    if ENABLE_YTD_TRAINING:
-        ytd_start_date = datetime(bt_end.year, 1, 1, tzinfo=timezone.utc)
-        train_end_ytd = ytd_start_date - timedelta(days=1)
-        train_start_ytd = train_end_ytd - timedelta(days=TRAIN_LOOKBACK_DAYS)
-        
-        # Use the new train_models_for_period function
-        models_buy_ytd, models_sell_ytd, scalers_ytd, y_scalers_ytd = train_models_for_period(
-            period_name="YTD",
-            tickers=top_tickers_1y_filtered,
-            all_tickers_data=all_tickers_data,
-            train_start=train_start_ytd,
-            train_end=train_end_ytd,
-            top_performers_data=top_performers_data,
-            feature_set=feature_set,
-            run_parallel=run_parallel
-        )
-        
-        if not models_buy_ytd and USE_MODEL_GATE:
-            print("⚠️ No models were trained for YTD backtest. Model-gating will be disabled for this run.\n")
 
-    # Filter out failed tickers from top_tickers_1y_filtered for subsequent steps
-    top_tickers_ytd_filtered = [t for t in top_tickers_1y_filtered if t not in failed_training_tickers_ytd]
-    print(f"  ℹ️ {len(failed_training_tickers_ytd)} tickers failed YTD model training and will be skipped: {', '.join(failed_training_tickers_ytd.keys())}")
 
-    # Update top_performers_data to reflect only successfully trained tickers
-    top_performers_data_ytd_filtered = [item for item in top_performers_data_1y_filtered if item[0] in top_tickers_ytd_filtered]
-
-    # Set capital_per_stock to the fixed investment amount
-    capital_per_stock_ytd = INVESTMENT_PER_STOCK
-
-    # --- Training Models (for 3-Month Backtest) ---
-    models_buy_3month, models_sell_3month, scalers_3month, y_scalers_3month = {}, {}, {}, {}
-    gru_hyperparams_buy_dict_3month, gru_hyperparams_sell_dict_3month = {}, {}
-    failed_training_tickers_3month = {}
-    
-    if ENABLE_3MONTH_TRAINING:
-        bt_start_3month = bt_end - timedelta(days=BACKTEST_DAYS_3MONTH)
-        train_end_3month = bt_start_3month - timedelta(days=1)
-        train_start_3month = train_end_3month - timedelta(days=TRAIN_LOOKBACK_DAYS)
-        
-        # Use the new train_models_for_period function
-        models_buy_3month, models_sell_3month, scalers_3month, y_scalers_3month = train_models_for_period(
-            period_name="3-Month",
-            tickers=top_tickers_ytd_filtered,
-            all_tickers_data=all_tickers_data,
-            train_start=train_start_3month,
-            train_end=train_end_3month,
-            top_performers_data=top_performers_data,
-            feature_set=feature_set,
-            run_parallel=run_parallel
-        )
-        
-        if not models_buy_3month and USE_MODEL_GATE:
-            print("⚠️ No models were trained for 3-Month backtest. Model-gating will be disabled for this run.\n")
-
-    # Filter to only tickers with trained models (skip failures/absent models)
-    top_tickers_3month_filtered = [t for t in top_tickers_ytd_filtered if t in models_buy_3month and t in scalers_3month]
-    print(f"  ℹ️ {len(failed_training_tickers_3month)} tickers failed 3-Month model training and will be skipped: {', '.join(failed_training_tickers_3month.keys())}")
-
-    # Update top_performers_data to reflect only successfully trained tickers
-    top_performers_data_3month_filtered = [item for item in top_performers_data_ytd_filtered if item[0] in top_tickers_3month_filtered]
-
-    # Set capital_per_stock to the fixed investment amount
-    capital_per_stock_3month = INVESTMENT_PER_STOCK
-
-    # --- Training Models (for 1-Month Backtest) ---
-    models_buy_1month, models_sell_1month, scalers_1month, y_scalers_1month = {}, {}, {}, {}
-    failed_training_tickers_1month = {}
-    
-    if ENABLE_1MONTH_TRAINING:
-        bt_start_1month = bt_end - timedelta(days=BACKTEST_DAYS_1MONTH)
-        train_end_1month = bt_start_1month - timedelta(days=1)
-        train_start_1month = train_end_1month - timedelta(days=TRAIN_LOOKBACK_DAYS)
-        
-        # Use the new train_models_for_period function
-        models_buy_1month, models_sell_1month, scalers_1month, y_scalers_1month = train_models_for_period(
-            period_name="1-Month",
-            tickers=top_tickers_3month_filtered,
-            all_tickers_data=all_tickers_data,
-            train_start=train_start_1month,
-            train_end=train_end_1month,
-            top_performers_data=top_performers_data,
-            feature_set=feature_set,
-            run_parallel=run_parallel
-        )
-        
-        if not models_buy_1month and USE_MODEL_GATE:
-            print("⚠️ No models were trained for 1-Month backtest. Model-gating will be disabled for this run.\n")
-
-    # Filter to only tickers with trained models (skip failures/absent models)
-    top_tickers_1month_filtered = [t for t in top_tickers_3month_filtered if t in models_buy_1month and t in scalers_1month]
-    print(f"  ℹ️ {len(failed_training_tickers_1month)} tickers failed 1-Month model training and will be skipped: {', '.join(failed_training_tickers_1month.keys())}")
-
-    # Update top_performers_data to reflect only successfully trained tickers
-    top_performers_data_1month_filtered = [item for item in top_performers_data_3month_filtered if item[0] in top_tickers_1month_filtered]
-
-    # Set capital_per_stock to the fixed investment amount
-    capital_per_stock_1month = INVESTMENT_PER_STOCK
 
     # ========================================================================
     # PHASE 2: OPTIMIZE THRESHOLDS FOR ALL PERIODS
@@ -958,292 +813,8 @@ def main(
             optimized_params_per_ticker = {}
             all_tested_combinations = {}
         
-        # --- Optimize YTD Period ---
-        if ENABLE_YTD_TRAINING:
-            print("\n🔄 Step 5: Optimizing ML parameters for YTD period...")
-            optimization_params_ytd = []
-            for ticker in top_tickers_ytd_filtered:
-                if ticker in models_buy_ytd and ticker in models_sell_ytd and ticker in scalers_ytd:
-                    model_buy_ticker = models_buy_ytd[ticker]
-                    model_sell_ticker = models_sell_ytd[ticker]
-                    
-                    buy_model_type = type(model_buy_ticker).__name__ if model_buy_ticker else 'None'
-                    sell_model_type = type(model_sell_ticker).__name__ if model_sell_ticker else 'None'
-                    
-                    if model_buy_ticker is None or model_sell_ticker is None:
-                        print(f"  ⏭️  Skipping YTD optimization for {ticker}: Missing model (Buy: {buy_model_type}, Sell: {sell_model_type})")
-                        continue
-                    
-                    print(f"  ✅ Optimizing {ticker} for YTD: Buy={buy_model_type}, Sell={sell_model_type}")
-                    
-                    current_min_proba_buy_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
-                    current_min_proba_sell_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
-                    
-                    # Use YTD training parameters
-                    if FORCE_PERCENTAGE_OPTIMIZATION:
-                        current_target_percentage_for_opt = TARGET_PERCENTAGE
-                        current_class_horizon_for_opt = CLASS_HORIZON
-                        print(f"     📊 YTD Optimization using FORCED config: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
-                    else:
-                        ticker_bh_return_ytd = 0.01
-                        for t, perf_1y, perf_ytd in top_performers_data:
-                            if t == ticker:
-                                ticker_bh_return_ytd = perf_ytd / 100.0
-                                break
-                        
-                        period_horizon_ytd = 20  # Shorter horizon
-                        ytd_days = (train_end_ytd - train_start_ytd).days
-                        ytd_trading_days = int(ytd_days * 0.7)
-                        num_periods_ytd = max(ytd_trading_days / period_horizon_ytd, 1)
-                        period_target_pct_ytd = abs(ticker_bh_return_ytd / num_periods_ytd)
-                        period_target_pct_ytd = max(period_target_pct_ytd, 0.01)
-                        
-                        current_target_percentage_for_opt = period_target_pct_ytd
-                        current_class_horizon_for_opt = period_horizon_ytd
-                        
-                        print(f"     📊 YTD Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
-
-                    feature_set_for_opt = scalers_ytd[ticker].feature_names_in_ if hasattr(scalers_ytd[ticker], 'feature_names_in_') else None
-
-                    # Get training data for YTD optimization (REVERTED)
-                    try:
-                        ticker_train_data = all_tickers_data.loc[train_start_ytd:train_end_ytd, (slice(None), ticker)]
-                        ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                        if ticker_train_data.empty:
-                            print(f"  ⚠️ Could not get YTD training data for {ticker} for optimization. Skipping.")
-                            continue
-                    except (KeyError, IndexError):
-                        print(f"  ⚠️ Could not slice YTD training data for {ticker} for optimization. Skipping.")
-                        continue
-
-                    # Prepare PyTorch models for multiprocessing (extract state dict)
-                    model_buy_prepared = _prepare_model_for_multiprocessing(model_buy_ticker)
-                    model_sell_prepared = _prepare_model_for_multiprocessing(model_sell_ticker)
-                    
-                    optimization_params_ytd.append((
-                        ticker,
-                        ticker_train_data.copy(),
-                        capital_per_stock_ytd,
-                        current_target_percentage_for_opt,
-                        current_class_horizon_for_opt,
-                        force_thresholds_optimization,
-                        force_percentage_optimization,
-                        USE_ALPHA_THRESHOLD_BUY,
-                        USE_ALPHA_THRESHOLD_SELL,
-                        AlphaThresholdConfig(rebalance_freq="D", metric="alpha", costs_bps=5.0, slippage_bps=2.0),
-                        current_min_proba_buy_for_opt,
-                        current_min_proba_sell_for_opt,
-                        current_target_percentage_for_opt,
-                        current_class_horizon_for_opt,
-                        GRU_TARGET_PERCENTAGE_OPTIONS,
-                        GRU_CLASS_HORIZON_OPTIONS,
-                        SEED,
-                        feature_set_for_opt,
-                        model_buy_prepared,  # Pass model info (will be reconstructed on GPU in worker)
-                        model_sell_prepared,  # Pass model info (will be reconstructed on GPU in worker)
-                        scalers_ytd[ticker]  # Pass already-trained scaler
-                    ))
-            
-            if optimization_params_ytd:
-                optimized_params_per_ticker_ytd, _ = optimize_thresholds_for_portfolio_parallel(optimization_params_ytd)
-            else:
-                optimized_params_per_ticker_ytd = {}
-        else:
-            optimized_params_per_ticker_ytd = {k: v for k, v in optimized_params_per_ticker.items() if k in top_tickers_ytd_filtered} if optimized_params_per_ticker else {}
-            for ticker in top_tickers_ytd_filtered:
-                if ticker not in optimized_params_per_ticker_ytd:
-                    optimized_params_per_ticker_ytd[ticker] = {
-                        'min_proba_buy': MIN_PROBA_BUY,
-                        'min_proba_sell': MIN_PROBA_SELL,
-                        'target_percentage': target_percentage,
-                        'class_horizon': class_horizon,
-                        'optimization_status': "Using 1-Year optimized params"
-                    }
         
-        # --- Optimize 3-Month Period ---
-        if ENABLE_3MONTH_TRAINING:
-            print("\n🔄 Step 6: Optimizing ML parameters for 3-Month period...")
-            optimization_params_3month = []
-            for ticker in top_tickers_3month_filtered:
-                if ticker in models_buy_3month and ticker in models_sell_3month and ticker in scalers_3month:
-                    model_buy_ticker = models_buy_3month[ticker]
-                    model_sell_ticker = models_sell_3month[ticker]
-                    
-                    buy_model_type = type(model_buy_ticker).__name__ if model_buy_ticker else 'None'
-                    sell_model_type = type(model_sell_ticker).__name__ if model_sell_ticker else 'None'
-                    
-                    if model_buy_ticker is None or model_sell_ticker is None:
-                        print(f"  ⏭️  Skipping 3-Month optimization for {ticker}: Missing model (Buy: {buy_model_type}, Sell: {sell_model_type})")
-                        continue
-                    
-                    print(f"  ✅ Optimizing {ticker} for 3-Month: Buy={buy_model_type}, Sell={sell_model_type}")
-                    
-                    current_min_proba_buy_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
-                    current_min_proba_sell_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
-                    
-                    # Use 3-Month training parameters
-                    if FORCE_PERCENTAGE_OPTIMIZATION:
-                        current_target_percentage_for_opt = TARGET_PERCENTAGE
-                        current_class_horizon_for_opt = CLASS_HORIZON
-                        print(f"     📊 3M Optimization using FORCED config: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
-                    else:
-                        try:
-                            ticker_data_3m = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
-                            ticker_data_3m.columns = ticker_data_3m.columns.droplevel(1)
-                            if not ticker_data_3m.empty and 'Close' in ticker_data_3m.columns:
-                                start_price_3m = ticker_data_3m['Close'].iloc[0]
-                                end_price_3m = ticker_data_3m['Close'].iloc[-1]
-                                ticker_bh_return_3m = (end_price_3m - start_price_3m) / start_price_3m if start_price_3m > 0 else 0.01
-                            else:
-                                ticker_bh_return_3m = 0.01
-                        except:
-                            ticker_bh_return_3m = 0.01
-                        
-                        period_horizon_3m = 15  # Shorter horizon
-                        num_periods_3m = 63.0 / period_horizon_3m
-                        period_target_pct_3m = abs(ticker_bh_return_3m / num_periods_3m)
-                        period_target_pct_3m = max(period_target_pct_3m, 0.01)
-                        
-                        current_target_percentage_for_opt = period_target_pct_3m
-                        current_class_horizon_for_opt = period_horizon_3m
-                        
-                        print(f"     📊 3M Optimization using training params: Target={current_target_percentage_for_opt:.2%}, Horizon={current_class_horizon_for_opt}d")
-
-                    feature_set_for_opt = scalers_3month[ticker].feature_names_in_ if hasattr(scalers_3month[ticker], 'feature_names_in_') else None
-
-                    # Get training data for 3-Month optimization (REVERTED)
-                    try:
-                        ticker_train_data = all_tickers_data.loc[train_start_3month:train_end_3month, (slice(None), ticker)]
-                        ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                        if ticker_train_data.empty:
-                            print(f"  ⚠️ Could not get 3-Month training data for {ticker} for optimization. Skipping.")
-                            continue
-                    except (KeyError, IndexError):
-                        print(f"  ⚠️ Could not slice 3-Month training data for {ticker} for optimization. Skipping.")
-                        continue
-
-                    # Prepare PyTorch models for multiprocessing (extract state dict)
-                    model_buy_prepared = _prepare_model_for_multiprocessing(model_buy_ticker)
-                    model_sell_prepared = _prepare_model_for_multiprocessing(model_sell_ticker)
-                    
-                    optimization_params_3month.append((
-                        ticker,
-                        ticker_train_data.copy(),
-                        capital_per_stock_3month,
-                        current_target_percentage_for_opt,
-                        current_class_horizon_for_opt,
-                        force_thresholds_optimization,
-                        force_percentage_optimization,
-                        USE_ALPHA_THRESHOLD_BUY,
-                        USE_ALPHA_THRESHOLD_SELL,
-                        AlphaThresholdConfig(rebalance_freq="D", metric="alpha", costs_bps=5.0, slippage_bps=2.0),
-                        current_min_proba_buy_for_opt,
-                        current_min_proba_sell_for_opt,
-                        current_target_percentage_for_opt,
-                        current_class_horizon_for_opt,
-                        GRU_TARGET_PERCENTAGE_OPTIONS,
-                        GRU_CLASS_HORIZON_OPTIONS,
-                        SEED,
-                        feature_set_for_opt,
-                        model_buy_prepared,  # Pass model info (will be reconstructed on GPU in worker)
-                        model_sell_prepared,  # Pass model info (will be reconstructed on GPU in worker)
-                        scalers_3month[ticker]  # Pass already-trained scaler
-                    ))
-            
-            if optimization_params_3month:
-                optimized_params_per_ticker_3month, _ = optimize_thresholds_for_portfolio_parallel(optimization_params_3month)
-            else:
-                optimized_params_per_ticker_3month = {}
-        else:
-            optimized_params_per_ticker_3month = {k: v for k, v in optimized_params_per_ticker.items() if k in top_tickers_3month_filtered} if optimized_params_per_ticker else {}
-            for ticker in top_tickers_3month_filtered:
-                if ticker not in optimized_params_per_ticker_3month:
-                    optimized_params_per_ticker_3month[ticker] = {
-                        'min_proba_buy': MIN_PROBA_BUY,
-                        'min_proba_sell': MIN_PROBA_SELL,
-                        'target_percentage': target_percentage,
-                        'class_horizon': class_horizon,
-                        'optimization_status': "Using 1-Year optimized params"
-                    }
         
-        # --- Optimize 1-Month Period ---
-        if ENABLE_1MONTH_TRAINING:
-            print("\n🔄 Step 7: Optimizing ML parameters for 1-Month period...")
-            optimization_params_1month = []
-            for ticker in top_tickers_1month_filtered:
-                if ticker in models_buy_1month and ticker in models_sell_1month and ticker in scalers_1month:
-                    model_buy_ticker = models_buy_1month[ticker]
-                    model_sell_ticker = models_sell_1month[ticker]
-                    
-                    buy_model_type = type(model_buy_ticker).__name__ if model_buy_ticker else 'None'
-                    sell_model_type = type(model_sell_ticker).__name__ if model_sell_ticker else 'None'
-                    
-                    if model_buy_ticker is None or model_sell_ticker is None:
-                        print(f"  ⏭️  Skipping 1-Month optimization for {ticker}: Missing model (Buy: {buy_model_type}, Sell: {sell_model_type})")
-                        continue
-                    
-                    print(f"  ✅ Optimizing {ticker} for 1-Month: Buy={buy_model_type}, Sell={sell_model_type}")
-                    
-                    current_min_proba_buy_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_buy', MIN_PROBA_BUY)
-                    current_min_proba_sell_for_opt = optimized_params_per_ticker.get(ticker, {}).get('min_proba_sell', MIN_PROBA_SELL)
-                    current_target_percentage_for_opt = optimized_params_per_ticker.get(ticker, {}).get('target_percentage', target_percentage)
-                    current_class_horizon_for_opt = optimized_params_per_ticker.get(ticker, {}).get('class_horizon', class_horizon)
-
-                    feature_set_for_opt = scalers_1month[ticker].feature_names_in_ if hasattr(scalers_1month[ticker], 'feature_names_in_') else None
-
-                    try:
-                        ticker_train_data = all_tickers_data.loc[train_start_1month:train_end_1month, (slice(None), ticker)]
-                        ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
-                        if ticker_train_data.empty:
-                            print(f"  ⚠️ Could not get 1-Month training data for {ticker} for optimization. Skipping.")
-                            continue
-                    except (KeyError, IndexError):
-                        print(f"  ⚠️ Could not slice 1-Month training data for {ticker} for optimization. Skipping.")
-                        continue
-
-                    # Prepare PyTorch models for multiprocessing (extract state dict)
-                    model_buy_prepared = _prepare_model_for_multiprocessing(model_buy_ticker)
-                    model_sell_prepared = _prepare_model_for_multiprocessing(model_sell_ticker)
-                    
-                    optimization_params_1month.append((
-                        ticker,
-                        ticker_train_data.copy(),
-                        capital_per_stock_1month,
-                        current_target_percentage_for_opt,
-                        current_class_horizon_for_opt,
-                        force_thresholds_optimization,
-                        force_percentage_optimization,
-                        USE_ALPHA_THRESHOLD_BUY,
-                        USE_ALPHA_THRESHOLD_SELL,
-                        AlphaThresholdConfig(rebalance_freq="D", metric="alpha", costs_bps=5.0, slippage_bps=2.0),
-                        current_min_proba_buy_for_opt,
-                        current_min_proba_sell_for_opt,
-                        current_target_percentage_for_opt,
-                        current_class_horizon_for_opt,
-                        GRU_TARGET_PERCENTAGE_OPTIONS,
-                        GRU_CLASS_HORIZON_OPTIONS,
-                        SEED,
-                        feature_set_for_opt,
-                        model_buy_prepared,  # Pass model info (will be reconstructed on GPU in worker)
-                        model_sell_prepared,  # Pass model info (will be reconstructed on GPU in worker)
-                        scalers_1month[ticker]  # Pass already-trained scaler
-                    ))
-            
-            if optimization_params_1month:
-                optimized_params_per_ticker_1month, _ = optimize_thresholds_for_portfolio_parallel(optimization_params_1month)
-            else:
-                optimized_params_per_ticker_1month = {}
-        else:
-            optimized_params_per_ticker_1month = {k: v for k, v in optimized_params_per_ticker.items() if k in top_tickers_1month_filtered} if optimized_params_per_ticker else {}
-            for ticker in top_tickers_1month_filtered:
-                if ticker not in optimized_params_per_ticker_1month:
-                    optimized_params_per_ticker_1month[ticker] = {
-                        'min_proba_buy': MIN_PROBA_BUY,
-                        'min_proba_sell': MIN_PROBA_SELL,
-                        'target_percentage': target_percentage,
-                        'class_horizon': class_horizon,
-                        'optimization_status': "Using 1-Year optimized params"
-                    }
     else:
         # If no optimization is forced, use defaults for all periods
         optimized_params_per_ticker_ytd = {k: v for k, v in optimized_params_per_ticker.items() if k in top_tickers_ytd_filtered} if optimized_params_per_ticker else {}
@@ -1412,247 +983,8 @@ def main(
     else:
         print("\nℹ️ 1-Year Backtest is disabled by ENABLE_1YEAR_BACKTEST flag.")
 
-    # --- Run YTD Backtest ---
-    if ENABLE_YTD_BACKTEST:
-        print("\n🔍 Step 9: Running YTD Backtest...")
-        # Calculate YTD horizon dynamically
-        ytd_days = (bt_end - ytd_start_date).days
-        ytd_horizon = int(ytd_days * 0.7)  # Approximate trading days
-        if ytd_horizon <= 0:
-            ytd_horizon = 252
-        # --- Run YTD Backtest (AI Strategy - Daily Rebalancing) ---
-        print("\n🔍 Step 9: Running YTD Backtest (AI Strategy - Daily Rebalancing)...")
-        n_top_rebal_ytd = 3
-        initial_capital_ytd = capital_per_stock_ytd * n_top_rebal_ytd
-        final_strategy_value_ytd = initial_capital_ytd  # Placeholder - YTD disabled
-        ai_ytd_return = 0.0
-        prediction_stats_ytd = {}
-        final_holdings_ytd = {}
-        processed_tickers_ytd = top_tickers_ytd_filtered[:n_top_rebal_ytd]
-        strategy_results_ytd = []
-        
-        # --- Rule-Based Strategy for YTD ---
-        # Rule-based strategy disabled (removed during refactoring)
-        rule_results_ytd = {}  # Placeholder - YTD disabled
-        final_rule_value_ytd = rule_results_ytd.get('final_value', initial_capital_ytd)
-        rule_ytd_return = rule_results_ytd.get('total_return', 0) * 100
-        performance_metrics_ytd = []
 
-        # Simple Rule Strategy removed - using AI strategy only
-        final_simple_rule_value_ytd = None
-        simple_rule_results_ytd = []
-        performance_metrics_simple_rule_ytd = []
-        simple_rule_ytd_return = None
 
-        # --- Calculate Buy & Hold for YTD ---
-        print("\n📊 Calculating Buy & Hold performance for YTD period...")
-        buy_hold_results_ytd = []
-        performance_metrics_buy_hold_ytd_actual = []
-        for ticker in top_tickers_ytd_filtered:
-            df_bh = load_prices_robust(ticker, ytd_start_date, bt_end)
-            if not df_bh.empty:
-                start_price = float(df_bh["Close"].iloc[0])
-                shares_bh = int(capital_per_stock_ytd / start_price) if start_price > 0 else 0
-                cash_bh = capital_per_stock_ytd - shares_bh * start_price
-                
-                bh_history_for_ticker = []
-                for price_day in df_bh["Close"].tolist():
-                    bh_history_for_ticker.append(cash_bh + shares_bh * price_day)
-                
-                final_bh_val_ticker = bh_history_for_ticker[-1] if bh_history_for_ticker else capital_per_stock_ytd
-                buy_hold_results_ytd.append(final_bh_val_ticker)
-                
-                perf_data_bh = calculate_buy_hold_performance_metrics(bh_history_for_ticker, ticker)
-                performance_metrics_buy_hold_ytd_actual.append({
-                    'ticker': ticker,
-                    'final_val': final_bh_val_ticker,
-                    'perf_data': perf_data_bh,
-                    'individual_bh_return': ((final_bh_val_ticker - capital_per_stock_ytd) / abs(capital_per_stock_ytd)) * 100 if capital_per_stock_ytd != 0 else 0.0
-                })
-            else:
-                buy_hold_results_ytd.append(capital_per_stock_ytd)
-                performance_metrics_buy_hold_ytd_actual.append({
-                    'ticker': ticker,
-                    'final_val': capital_per_stock_ytd,
-                    'perf_data': {'sharpe_ratio': np.nan, 'max_drawdown': np.nan},
-                    'individual_bh_return': 0.0
-                })
-        final_buy_hold_value_ytd = sum(buy_hold_results_ytd) + (len(top_tickers_ytd_filtered) - len(buy_hold_results_ytd)) * capital_per_stock_ytd
-        print("✅ YTD Buy & Hold calculation complete.")
-
-        # Build prediction vs B&H rows for YTD
-        bh_returns_lookup_ytd = {d['ticker']: d.get('individual_bh_return') for d in performance_metrics_buy_hold_ytd_actual}
-        prediction_vs_bh_ytd = []
-        for ticker in top_tickers_ytd_filtered:
-            stats = prediction_stats_ytd.get(ticker, {}) if 'prediction_stats_ytd' in locals() else {}
-            prediction_vs_bh_ytd.append({
-                'ticker': ticker,
-                'pred_mean_pct': stats.get('pred_mean_pct'),
-                'pred_min_pct': stats.get('pred_min_pct'),
-                'pred_max_pct': stats.get('pred_max_pct'),
-                'bh_horizon_return_pct': stats.get('bh_horizon_return_pct'),
-                'individual_bh_return': bh_returns_lookup_ytd.get(ticker)
-            })
-    else:
-        print("\nℹ️ YTD Backtest is disabled by ENABLE_YTD_BACKTEST flag.")
-
-    # --- Run 3-Month Backtest ---
-    if ENABLE_3MONTH_BACKTEST:
-        print("\n🔍 Step 10: Running 3-Month Backtest...")
-        # --- Run 3-Month Backtest (AI Strategy - Daily Rebalancing) ---
-        print("\n🔍 Step 10: Running 3-Month Backtest (AI Strategy - Daily Rebalancing)...")
-        n_top_rebal_3m = 3
-        initial_capital_3month = capital_per_stock_3month * n_top_rebal_3m
-        final_strategy_value_3month = initial_capital_3month  # Placeholder - 3-Month disabled
-        ai_3month_return = 0.0
-        prediction_stats_3month = {}
-        final_holdings_3month = {}
-        
-        # --- Rule-Based Strategy for 3-Month ---
-        # Rule-based strategy disabled (removed during refactoring)
-        rule_results_3month = {}  # Placeholder - 3-Month disabled
-        final_rule_value_3month = rule_results_3month.get('final_value', initial_capital_3month)
-        rule_3month_return = rule_results_3month.get('total_return', 0) * 100
-        processed_tickers_3month = list(final_holdings_3month.keys()) if final_holdings_3month else top_tickers_3month_filtered[:n_top_rebal_3m]
-        strategy_results_3month = []  # No per-ticker results in portfolio strategy
-        performance_metrics_3month = []
-
-        # Simple Rule Strategy removed - using AI strategy only
-        final_simple_rule_value_3month = None
-        simple_rule_results_3month = []
-        performance_metrics_simple_rule_3month = []
-        simple_rule_3month_return = None
-
-        # --- Calculate Buy & Hold for 3-Month ---
-        print("\n📊 Calculating Buy & Hold performance for 3-Month period...")
-        buy_hold_results_3month = []
-        performance_metrics_buy_hold_3month_actual = []
-        for ticker in top_tickers_3month_filtered:
-            df_bh = load_prices_robust(ticker, bt_start_3month, bt_end)
-            if not df_bh.empty:
-                start_price = float(df_bh["Close"].iloc[0])
-                shares_bh = int(capital_per_stock_3month / start_price) if start_price > 0 else 0
-                cash_bh = capital_per_stock_3month - shares_bh * start_price
-                
-                bh_history_for_ticker = []
-                for price_day in df_bh["Close"].tolist():
-                    bh_history_for_ticker.append(cash_bh + shares_bh * price_day)
-                
-                final_bh_val_ticker = bh_history_for_ticker[-1] if bh_history_for_ticker else capital_per_stock_3month
-                buy_hold_results_3month.append(final_bh_val_ticker)
-                
-                perf_data_bh = calculate_buy_hold_performance_metrics(bh_history_for_ticker, ticker)
-                performance_metrics_buy_hold_3month_actual.append({
-                    'ticker': ticker,
-                    'final_val': final_bh_val_ticker,
-                    'perf_data': perf_data_bh,
-                    'individual_bh_return': ((final_bh_val_ticker - capital_per_stock_3month) / abs(capital_per_stock_3month)) * 100 if capital_per_stock_3month != 0 else 0.0
-                })
-            else:
-                buy_hold_results_3month.append(capital_per_stock_3month)
-                performance_metrics_buy_hold_3month_actual.append({
-                    'ticker': ticker,
-                    'final_val': capital_per_stock_3month,
-                    'perf_data': {'sharpe_ratio': np.nan, 'max_drawdown': np.nan},
-                    'individual_bh_return': 0.0
-                })
-        final_buy_hold_value_3month = sum(buy_hold_results_3month) + (len(top_tickers_3month_filtered) - len(buy_hold_results_3month)) * capital_per_stock_3month
-        print("✅ 3-Month Buy & Hold calculation complete.")
-
-        # Build prediction vs B&H rows for 3-Month
-        bh_returns_lookup_3m = {d['ticker']: d.get('individual_bh_return') for d in performance_metrics_buy_hold_3month_actual}
-        prediction_vs_bh_3month = []
-        for ticker in top_tickers_3month_filtered:
-            stats = prediction_stats_3month.get(ticker, {}) if 'prediction_stats_3month' in locals() else {}
-            prediction_vs_bh_3month.append({
-                'ticker': ticker,
-                'pred_mean_pct': stats.get('pred_mean_pct'),
-                'pred_min_pct': stats.get('pred_min_pct'),
-                'pred_max_pct': stats.get('pred_max_pct'),
-                'bh_horizon_return_pct': stats.get('bh_horizon_return_pct'),
-                'individual_bh_return': bh_returns_lookup_3m.get(ticker)
-            })
-    else:
-        print("\nℹ️ 3-Month Backtest is disabled by ENABLE_3MONTH_BACKTEST flag.")
-
-    # --- Run 1-Month Backtest ---
-    if ENABLE_1MONTH_BACKTEST:
-        print("\n🔍 Step 11: Running 1-Month Backtest...")
-        # --- Run 1-Month Backtest (AI Strategy - Daily Rebalancing) ---
-        print("\n🔍 Step 11: Running 1-Month Backtest (AI Strategy - Daily Rebalancing)...")
-        n_top_rebal_1m = 3
-        initial_capital_1month = capital_per_stock_1month * n_top_rebal_1m
-        final_strategy_value_1month = initial_capital_1month  # Placeholder - 1-Month disabled
-        ai_1month_return = 0.0
-        prediction_stats_1month = {}
-        final_holdings_1month = {}
-        processed_tickers_1month = top_tickers_1month_filtered[:n_top_rebal_1m]
-        strategy_results_1month = []
-        
-        # --- Rule-Based Strategy for 1-Month ---
-        # Rule-based strategy disabled (removed during refactoring)
-        rule_results_1month = {}  # Placeholder - 1-Month disabled
-        final_rule_value_1month = rule_results_1month.get('final_value', initial_capital_1month)
-        rule_1month_return = rule_results_1month.get('total_return', 0) * 100
-        performance_metrics_1month = []
-
-        # Simple Rule Strategy removed - using AI strategy only
-        final_simple_rule_value_1month = None
-        simple_rule_results_1month = []
-        performance_metrics_simple_rule_1month = []
-        simple_rule_1month_return = None
-
-        # --- Calculate Buy & Hold for 1-Month ---
-        print("\n📊 Calculating Buy & Hold performance for 1-Month period...")
-        buy_hold_results_1month = []
-        performance_metrics_buy_hold_1month_actual = []
-        for ticker in top_tickers_1month_filtered:
-            df_bh = load_prices_robust(ticker, bt_start_1month, bt_end)
-            if not df_bh.empty:
-                start_price = float(df_bh["Close"].iloc[0])
-                shares_bh = int(capital_per_stock_1month / start_price) if start_price > 0 else 0
-                cash_bh = capital_per_stock_1month - shares_bh * start_price
-                
-                bh_history_for_ticker = []
-                for price_day in df_bh["Close"].tolist():
-                    bh_history_for_ticker.append(cash_bh + shares_bh * price_day)
-                
-                final_bh_val_ticker = bh_history_for_ticker[-1] if bh_history_for_ticker else capital_per_stock_1month
-                buy_hold_results_1month.append(final_bh_val_ticker)
-                
-                perf_data_bh = calculate_buy_hold_performance_metrics(bh_history_for_ticker, ticker)
-                performance_metrics_buy_hold_1month_actual.append({
-                    'ticker': ticker,
-                    'final_val': final_bh_val_ticker,
-                    'perf_data': perf_data_bh,
-                    'individual_bh_return': ((final_bh_val_ticker - capital_per_stock_1month) / abs(capital_per_stock_1month)) * 100 if capital_per_stock_1month != 0 else 0.0
-                })
-            else:
-                buy_hold_results_1month.append(capital_per_stock_1month)
-                performance_metrics_buy_hold_1month_actual.append({
-                    'ticker': ticker,
-                    'final_val': capital_per_stock_1month,
-                    'perf_data': {'sharpe_ratio': np.nan, 'max_drawdown': np.nan},
-                    'individual_bh_return': 0.0
-                })
-        final_buy_hold_value_1month = sum(buy_hold_results_1month) + (len(top_tickers_1month_filtered) - len(buy_hold_results_1month)) * capital_per_stock_1month
-        print("✅ 1-Month Buy & Hold calculation complete.")
-
-        # Build prediction vs B&H rows for 1-Month
-        bh_returns_lookup_1m = {d['ticker']: d.get('individual_bh_return') for d in performance_metrics_buy_hold_1month_actual}
-        prediction_vs_bh_1month = []
-        for ticker in top_tickers_1month_filtered:
-            stats = prediction_stats_1month.get(ticker, {}) if 'prediction_stats_1month' in locals() else {}
-            prediction_vs_bh_1month.append({
-                'ticker': ticker,
-                'pred_mean_pct': stats.get('pred_mean_pct'),
-                'pred_min_pct': stats.get('pred_min_pct'),
-                'pred_max_pct': stats.get('pred_max_pct'),
-                'bh_horizon_return_pct': stats.get('bh_horizon_return_pct'),
-                'individual_bh_return': bh_returns_lookup_1m.get(ticker)
-            })
-    else:
-        print("\nℹ️ 1-Month Backtest is disabled by ENABLE_1MONTH_BACKTEST flag.")
 
     # ========================================================================
     # PHASE 4: FINAL SUMMARY
@@ -1739,9 +1071,6 @@ def main(
     print(f"\n[DEBUG] Before print_final_summary:")
     print(f"  - final_strategy_value_1y: ${final_strategy_value_1y:,.2f}")
     print(f"  - final_buy_hold_value_1y: ${final_buy_hold_value_1y:,.2f}")
-    print(f"  - final_strategy_value_ytd: ${final_strategy_value_ytd:,.2f}")
-    print(f"  - final_strategy_value_3month: ${final_strategy_value_3month:,.2f}")
-    print(f"  - final_strategy_value_1month: ${final_strategy_value_1month:,.2f}\n")
     
     # ✅ FIX: Use the same initial capital that was allocated to the portfolio backtest
     actual_initial_capital_1y = initial_capital_1y
@@ -1750,64 +1079,30 @@ def main(
     print_final_summary(
         sorted_final_results, models_buy, models_sell, scalers, optimized_params_per_ticker,
         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
-        final_strategy_value_ytd, final_buy_hold_value_ytd, ai_ytd_return,
-        final_strategy_value_3month, final_buy_hold_value_3month, ai_3month_return,
+        0, 0, 0,  # Placeholder values for removed YTD parameters
+        0, 0, 0,  # Placeholder values for removed 3-Month parameters
         actual_initial_capital_1y,
         actual_tickers_analyzed,
-        final_strategy_value_1month,
-        ai_1month_return,
-        final_buy_hold_value_1month,
+        0,  # Placeholder value for removed 1-Month final_strategy_value
+        0,  # Placeholder value for removed 1-Month ai_return
+        0,  # Placeholder value for removed 1-Month buy_hold_value
         performance_metrics_buy_hold_1y_actual, # Pass performance_metrics_buy_hold_1y_actual for Buy & Hold
-        top_performers_data,
-        strategy_results_ytd=strategy_results_ytd,
-        strategy_results_3month=strategy_results_3month,
-        strategy_results_1month=strategy_results_1month,
-        performance_metrics_buy_hold_ytd=performance_metrics_buy_hold_ytd_actual,
-        performance_metrics_buy_hold_3month=performance_metrics_buy_hold_3month_actual,
-        performance_metrics_buy_hold_1month=performance_metrics_buy_hold_1month_actual,
-        prediction_vs_bh_1y=prediction_vs_bh_1y if 'prediction_vs_bh_1y' in locals() else None,
-        prediction_vs_bh_ytd=prediction_vs_bh_ytd if 'prediction_vs_bh_ytd' in locals() else None,
-        prediction_vs_bh_3month=prediction_vs_bh_3month if 'prediction_vs_bh_3month' in locals() else None,
-        prediction_vs_bh_1month=prediction_vs_bh_1month if 'prediction_vs_bh_1month' in locals() else None,
-        final_rule_value_1y=final_rule_value_1y if 'final_rule_value_1y' in locals() else None,
-        rule_1y_return=rule_1y_return if 'rule_1y_return' in locals() else None,
-        final_rule_value_ytd=final_rule_value_ytd if 'final_rule_value_ytd' in locals() else None,
-        rule_ytd_return=rule_ytd_return if 'rule_ytd_return' in locals() else None,
-        final_rule_value_3month=final_rule_value_3month if 'final_rule_value_3month' in locals() else None,
-        rule_3month_return=rule_3month_return if 'rule_3month_return' in locals() else None,
-        final_rule_value_1month=final_rule_value_1month if 'final_rule_value_1month' in locals() else None,
-        rule_1month_return=rule_1month_return if 'rule_1month_return' in locals() else None
+        top_performers_data
     )
     print("\n✅ Final summary prepared and printed.")
 
     # --- Select and save best performing models for live trading ---
     # Determine which period had the highest portfolio return
     performance_values = {
-        "1-Year": final_strategy_value_1y,
-        "YTD": final_strategy_value_ytd,
-        "3-Month": final_strategy_value_3month,
-        "1-Month": final_strategy_value_1month # Include 1-Month performance
+        "1-Year": final_strategy_value_1y
     }
     
     best_period_name = max(performance_values, key=performance_values.get)
     
-    # Get the models and scalers corresponding to the best period
-    if best_period_name == "1-Year":
-        best_models_buy_dict = models_buy
-        best_models_sell_dict = models_sell
-        best_scalers_dict = scalers
-    elif best_period_name == "YTD":
-        best_models_buy_dict = models_buy_ytd
-        best_models_sell_dict = models_sell_ytd
-        best_scalers_dict = scalers_ytd
-    elif best_period_name == "3-Month":
-        best_models_buy_dict = models_buy_3month
-        best_models_sell_dict = models_sell_3month
-        best_scalers_dict = scalers_3month
-    else: # "1-Month"
-        best_models_buy_dict = models_buy_1month
-        best_models_sell_dict = models_sell_1month
-        best_scalers_dict = scalers_1month
+    # Get the models and scalers corresponding to the best period (only 1-Year available)
+    best_models_buy_dict = models_buy
+    best_models_sell_dict = models_sell
+    best_scalers_dict = scalers
 
     # Save the best models and scalers for each ticker to the paths used by live_trading.py
     models_dir = Path("logs/models")

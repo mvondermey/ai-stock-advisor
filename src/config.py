@@ -25,7 +25,7 @@ TWELVEDATA_API_KEY      = "aed912386d7c47939ebc28a86a96a021"
 
 # --- ML Library Availability Flags (initialized to False, updated in main.py) ---
 ALPACA_AVAILABLE = False
-TWELVEDATA_SDK_AVAILABLE = False
+TWELVEDATA_SDK_AVAILABLE = True  # Runtime detection will confirm availability
 try:
     import torch
     PYTORCH_AVAILABLE = True
@@ -33,14 +33,14 @@ try:
 except ImportError:
     PYTORCH_AVAILABLE = False
     CUDA_AVAILABLE = False
-USE_LSTM = False
+USE_LSTM = True
 USE_GRU = False
 
 # --- Universe / selection
 MARKET_SELECTION = {
-    "ALPACA_STOCKS": True,   # ✅ ENABLED - ALL Alpaca tradable stocks
+    "ALPACA_STOCKS": False,   # ✅ ENABLED - ALL Alpaca tradable stocks
     "NASDAQ_ALL": False,
-    "NASDAQ_100": False,
+    "NASDAQ_100": True,
     "SP500": False,          # Disabled - using ALL Alpaca stocks instead
     "DOW_JONES": False,
     "POPULAR_ETFS": False,
@@ -56,7 +56,7 @@ MARKET_SELECTION = {
 ALPACA_STOCKS_LIMIT = 100  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
-ALPACA_STOCKS_EXCHANGES = []  # Empty = all exchanges (NYSE, NASDAQ, AMEX, etc.)
+ALPACA_STOCKS_EXCHANGES = ["NASDAQ"]  # NASDAQ only
 N_TOP_TICKERS           = 40       # Evaluate top 40 candidates by 1-year momentum; backtest ranks and picks top 3
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
@@ -83,15 +83,9 @@ RETRAIN_FREQUENCY_DAYS = 10  # Bi-weekly retraining - consider 20 for S&P 500
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # ✅ Enabled - For simulation and strategy validation
-ENABLE_YTD_BACKTEST     = False  # Disabled - only using 1-year
-ENABLE_3MONTH_BACKTEST  = False  # Disabled - only using 1-year
-ENABLE_1MONTH_BACKTEST  = False  # Disabled - only using 1-year
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = True   # ✅ Enabled - Train models
-ENABLE_YTD_TRAINING     = False  # Disabled - only using 1-year
-ENABLE_3MONTH_TRAINING  = False  # Disabled - only using 1-year
-ENABLE_1MONTH_TRAINING  = False  # Disabled - only using 1-year
+ENABLE_1YEAR_TRAINING   = True
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -109,9 +103,9 @@ FEAT_VOL_WINDOW         = 10
 CLASS_HORIZON           = 10         # days ahead for return prediction (longer horizon to capture trends)
 
 # --- AI Portfolio Rebalancing Strategy knobs ---
-# Rebalance less frequently than daily to reduce turnover/fees and align holding period with the prediction horizon.
-# Typical values: 1 (daily), 2 (match horizon=2d), 5 (weekly).
-AI_REBALANCE_FREQUENCY_DAYS = CLASS_HORIZON
+# Check portfolio daily but only rebalance when stocks actually change (cost-effective).
+# Set to 1 for daily checking, higher values for less frequent monitoring.
+AI_REBALANCE_FREQUENCY_DAYS = 1
 # Smooth per-ticker predictions before ranking to reduce noisy day-to-day flips.
 # Typical values: 1 (no smoothing), 3, 5.
 AI_PREDICTION_SMOOTHING_DAYS = 3
@@ -125,12 +119,12 @@ USE_MODEL_GATE          = True       # ENABLE ML gate
 USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
 MARKET_FILTER_SMA       = 200
-USE_PERFORMANCE_BENCHMARK = False  # Disable strict benchmark filtering for small universes
+USE_PERFORMANCE_BENCHMARK = True  # Disable strict benchmark filtering for small universes
 
 # --- ML Model Selection Flags ---
 USE_LOGISTIC_REGRESSION = False
-USE_SVM                 = False
-USE_MLP_CLASSIFIER      = False
+USE_SVM                 = True       # SVR for regression, SVM for classification
+USE_MLP_CLASSIFIER      = False      # MLPRegressor for regression, MLPClassifier for classification (disabled - using regression)
 USE_LIGHTGBM            = True       # enable LightGBM
 USE_XGBOOST             = True       # enable XGBoost
 USE_LSTM                = False
@@ -172,23 +166,19 @@ FORCE_PERCENTAGE_OPTIMIZATION = False  # Use B&H-based targets for each period
 
 # --- Live Trading Model Selection ---
 # Which period's model to use for live trading
-# Options: "Best" (auto-select highest performer), "3-Month", "1-Month", "YTD", "1-Year"
+# Options: "Best" (auto-select highest performer), "1-Year"
 LIVE_TRADING_MODEL_PERIOD = "Best"
 
 # --- Regression-Based Return Prediction ---
-USE_REGRESSION_MODEL = True  # keep regression targets (GRU regressor)
+# Regression is now the default and only approach - removed USE_REGRESSION_MODEL flag
 
 # Period-specific horizons (trading days) - matched to period scale
 PERIOD_HORIZONS = {
     # 10-day horizon to capture medium-term trends instead of noise
-    "1-Year": 10,     # Predict 10 trading days ahead (~2 weeks)
-    "YTD": 10,
-    "3-Month": 10,
-    "1-Month": 10
+    "1-Year": 10     # Predict 10 trading days ahead (~2 weeks)
 }
 
-MIN_PREDICTED_RETURN = 0.05  # Only buy if predicted return > 5%
-MIN_SELL_RETURN = -0.02  # Sell if predicted return drops below -2% (cut losses)
+USE_SINGLE_REGRESSION_MODEL = True  # Use single regression model instead of buy/sell pair
 POSITION_SCALING_BY_CONFIDENCE = True  # Scale position size by predicted return magnitude
 
 

@@ -308,7 +308,7 @@ from config import (
     FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING, FORCE_PERCENTAGE_OPTIMIZATION,
     USE_LOGISTIC_REGRESSION, USE_RANDOM_FOREST, USE_SVM, USE_MLP_CLASSIFIER,
     USE_LSTM, USE_GRU, USE_LIGHTGBM, USE_XGBOOST,
-    USE_REGRESSION_MODEL, TRY_LSTM_INSTEAD_OF_GRU,
+    TRY_LSTM_INSTEAD_OF_GRU,
     USE_TCN, USE_ELASTIC_NET, USE_RIDGE
 )
 # PYTORCH_AVAILABLE is set locally below based on actual import, not from config
@@ -563,24 +563,18 @@ def initialize_ml_libraries():
     if USE_XGBOOST and XGBOOST_AVAILABLE:
         XGBClassifier = xgb.XGBClassifier
         XGBRegressor = xgb.XGBRegressor
-        if USE_REGRESSION_MODEL:
-            xgb_model_params = {
-                "model": XGBRegressor(random_state=SEED),
-                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
-            }
-        else:
-            xgb_model_params = {
-                "model": XGBClassifier(random_state=SEED, eval_metric='logloss', use_label_encoder=False, scale_pos_weight=1),
-                "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
-            }
+        xgb_model_params = {
+            "model": XGBRegressor(random_state=SEED),
+            "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
+        }
         if CUDA_AVAILABLE:
             xgb_model_params["model"].set_params(tree_method='gpu_hist')
             models_and_params["XGBoost (GPU)"] = xgb_model_params
-            print(f"✅ XGBoost{'Regressor' if USE_REGRESSION_MODEL else 'Classifier'} found. Configured for GPU (gpu_hist tree_method).")
+            print(f"✅ XGBoostRegressor found. Configured for GPU (gpu_hist tree_method).")
         else:
             xgb_model_params["model"].set_params(tree_method='hist')
             models_and_params["XGBoost (CPU)"] = xgb_model_params
-            print(f"ℹ️ XGBoost{'Regressor' if USE_REGRESSION_MODEL else 'Classifier'} found. Will use CPU (CUDA not available).")
+            print(f"ℹ️ XGBoostRegressor found. Will use CPU (CUDA not available).")
 
     _ml_libraries_initialized = True
     return models_and_params
@@ -731,7 +725,7 @@ def analyze_shap_for_tree_model(model, X_df: pd.DataFrame, feature_names: List[s
 
 def train_and_evaluate_models(
     df: pd.DataFrame,
-    target_col: str = "TargetClassBuy",
+    target_col: str = "TargetReturnBuy",
     feature_set: Optional[List[str]] = None,
     ticker: str = "UNKNOWN",
     initial_model=None,
@@ -768,7 +762,7 @@ def train_and_evaluate_models(
 
     if feature_set is None:
         print("⚠️ feature_set was None in train_and_evaluate_models. Inferring features from DataFrame columns.")
-        final_feature_names = [col for col in d.columns if col not in ["Target", "TargetClassBuy", "TargetClassSell", "TargetReturnBuy", "TargetReturnSell"]]
+        final_feature_names = [col for col in d.columns if col not in ["Target", "TargetReturn"]]
         if not final_feature_names:
             print("⚠️ No features found in DataFrame after excluding target columns. Skipping model training.")
             return None, None, None
@@ -797,26 +791,11 @@ def train_and_evaluate_models(
     X_df = d[final_feature_names]
     y = d[target_col].values
 
-    # For classification, check class balance. For regression, skip this check.
-    if USE_REGRESSION_MODEL:
-        # Regression: no class balance needed, just check we have enough samples
-        if len(y) < 10:
-            print(f"  [DIAGNOSTIC] {ticker}: Not enough samples for '{target_col}' (only {len(y)} samples, need >= 10). Skipping.")
-            return None, None, None
-        n_splits = min(3, len(y) // 5)  # Use 3-fold or less if dataset is tiny
-    else:
-        # Classification: check class balance
-        unique_classes, counts = np.unique(y, return_counts=True)
-        if len(unique_classes) < 2:
-            print(f"  [DIAGNOSTIC] {ticker}: Not enough class diversity for '{target_col}' (only 1 class found: {unique_classes}). Skipping.")
-            return None, None, None
-        
-        # Use 3-fold CV for small datasets to allow training with fewer examples
-        n_splits = min(3, min(counts))  # Adaptive: use 3-fold CV, or less if needed
-        min_samples_required = 2  # Minimum 2 samples per class
-        if any(c < min_samples_required for c in counts):
-            print(f"  [DIAGNOSTIC] {ticker}: Least populated class in '{target_col}' has {min(counts)} members (needs >= {min_samples_required}). Skipping.")
-            return None, None, None
+    # Regression: check we have enough samples
+    if len(y) < 10:
+        print(f"  [DIAGNOSTIC] {ticker}: Not enough samples for '{target_col}' (only {len(y)} samples, need >= 10). Skipping.")
+        return None, None, None
+    n_splits = min(3, len(y) // 5)  # Use 3-fold or less if dataset is tiny
 
     if CUML_AVAILABLE and cuMLStandardScaler:
         try:
@@ -855,35 +834,31 @@ def train_and_evaluate_models(
             "model": LogisticRegression(random_state=SEED, class_weight="balanced", solver='liblinear'),
             "params": {'C': [0.1, 1.0, 10.0, 100.0]}
         }
-    if USE_ELASTIC_NET and USE_REGRESSION_MODEL:
+    if USE_ELASTIC_NET:
         models_and_params_local["ElasticNet"] = {
             "model": ElasticNet(random_state=SEED, max_iter=2000),
             "params": {'alpha': [0.0005, 0.001, 0.005, 0.01], 'l1_ratio': [0.1, 0.3, 0.5, 0.7]}
         }
-    if USE_RIDGE and USE_REGRESSION_MODEL:
+    if USE_RIDGE:
         models_and_params_local["Ridge"] = {
             "model": Ridge(random_state=SEED, max_iter=2000, solver="lsqr"),
             "params": {'alpha': [0.1, 1.0, 5.0, 10.0]}
         }
     if USE_RANDOM_FOREST:
-        if USE_REGRESSION_MODEL:
-            models_and_params_local["Random Forest"] = {
-                "model": RandomForestRegressor(random_state=SEED),
-                "params": {'n_estimators': [100, 200], 'max_depth': [10, 15]}  # Reduced grid
-            }
-        else:
-            models_and_params_local["Random Forest"] = {
-                "model": RandomForestClassifier(random_state=SEED, class_weight="balanced"),
-                "params": {'n_estimators': [100, 200], 'max_depth': [10, 15]}  # Reduced grid
-            }
+        models_and_params_local["Random Forest"] = {
+            "model": RandomForestRegressor(random_state=SEED),
+            "params": {'n_estimators': [100, 200], 'max_depth': [10, 15]}  # Reduced grid
+        }
     if USE_SVM:
-        models_and_params_local["SVM"] = {
-            "model": SVC(probability=True, random_state=SEED, class_weight="balanced"),
-            "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear']}
+        from sklearn.svm import SVR
+        models_and_params_local["SVR"] = {
+            "model": SVR(),
+            "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear'], 'epsilon': [0.01, 0.1, 1.0]}
         }
     if USE_MLP_CLASSIFIER:
-        models_and_params_local["MLPClassifier"] = {
-            "model": MLPClassifier(random_state=SEED, max_iter=500, early_stopping=True),
+        from sklearn.neural_network import MLPRegressor
+        models_and_params_local["MLPRegressor"] = {
+            "model": MLPRegressor(random_state=SEED, max_iter=500, early_stopping=True),
             "params": {'hidden_layer_sizes': [(100,), (100, 50), (50, 25)], 'activation': ['relu', 'tanh'], 'alpha': [0.0001, 0.001, 0.01], 'learning_rate_init': [0.001, 0.01]}
         }
 
@@ -924,21 +899,10 @@ def train_and_evaluate_models(
         if device_param:
             common_kwargs["device"] = device_param
 
-        if USE_REGRESSION_MODEL:
-            xgb_model_params = {
-                "model": XGBRegressor(**common_kwargs),
-                "params": {'n_estimators': [100, 200], 'learning_rate': [0.05, 0.1], 'max_depth': [5, 7]}  # Reduced grid
-            }
-        else:
-            xgb_model_params = {
-                "model": XGBClassifier(
-                    **common_kwargs,
-                    eval_metric='logloss',
-                    use_label_encoder=False,
-                    scale_pos_weight=1
-                ),
-                "params": {'n_estimators': [100, 200], 'learning_rate': [0.05, 0.1], 'max_depth': [5, 7]}  # Reduced grid
-            }
+        xgb_model_params = {
+            "model": XGBRegressor(**common_kwargs),
+            "params": {'n_estimators': [100, 200], 'learning_rate': [0.05, 0.1], 'max_depth': [5, 7]}  # Reduced grid
+        }
         models_and_params_local["XGBoost"] = xgb_model_params
 
     if PYTORCH_AVAILABLE:
@@ -969,16 +933,13 @@ def train_and_evaluate_models(
 
             input_size = X_sequences.shape[2]
             
-            # Choose loss function based on model type
-            if USE_REGRESSION_MODEL:
-                criterion = nn.MSELoss()  # Mean Squared Error for regression
-                print(f"    - Using MSE loss for regression (predicting returns)")
-            else:
-                criterion = nn.BCELoss()  # Binary Cross Entropy for classification
-                print(f"    - Using BCE loss for classification (predicting up/down)")
+            # Always use MSE loss for regression (predicting returns)
+            criterion = nn.MSELoss()
+            print(f"    - Using MSE loss for regression (predicting returns)")
 
             if USE_LSTM:
-                lstm_model = safe_to_device(LSTMClassifier(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT), device)
+                from ml_models import LSTMRegressor
+                lstm_model = safe_to_device(LSTMRegressor(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT), device)
                 if initial_model and isinstance(initial_model, LSTMClassifier):
                     try:
                         lstm_model.load_state_dict(initial_model.state_dict())
@@ -1221,16 +1182,9 @@ def train_and_evaluate_models(
 
                             # Choose model based on architecture preference and task type
                             if TRY_LSTM_INSTEAD_OF_GRU:
-                                if USE_REGRESSION_MODEL:
-                                    gru_model = safe_to_device(LSTMRegressor(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]), device)
-                                else:
-                                    # For classification, we'd need LSTMClassifier - using GRU for now
-                                    gru_model = safe_to_device(GRUClassifier(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]), device)
+                                gru_model = safe_to_device(LSTMRegressor(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]), device)
                             else:
-                                if USE_REGRESSION_MODEL:
-                                    gru_model = safe_to_device(GRURegressor(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]), device)
-                                else:
-                                    gru_model = safe_to_device(GRUClassifier(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]), device)
+                                gru_model = safe_to_device(GRURegressor(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]), device)
                             optimizer_gru = optim.Adam(gru_model.parameters(), lr=temp_hyperparams["learning_rate"])
                             
                             current_dataloader = DataLoader(dataset, batch_size=temp_hyperparams["batch_size"], shuffle=True)
@@ -1355,22 +1309,17 @@ def train_and_evaluate_models(
                         epochs = LSTM_EPOCHS
                         print(f"      Default {model_name} Hyperparams: HS={hidden_size}, NL={num_layers}, DO={dropout_rate}, LR={learning_rate}, BS={batch_size}, E={epochs}, Horizon={default_class_horizon}")
 
-                    # Choose model based on architecture preference and task type
+                    # Choose model based on architecture preference
                     if TRY_LSTM_INSTEAD_OF_GRU:
-                        if USE_REGRESSION_MODEL:
-                            gru_model = safe_to_device(LSTMRegressor(input_size, hidden_size, num_layers, 1, dropout_rate), device)
-                            model_type = "LSTM"
-                            if initial_model and isinstance(initial_model, LSTMRegressor):
-                                try:
-                                    gru_model.load_state_dict(initial_model.state_dict())
-                                    print(f"    - Loaded existing LSTM regressor state for {ticker} to continue training.")
-                                except Exception as e:
-                                    print(f"    - Error loading LSTM regressor state for {ticker}: {e}. Training from scratch.")
-                        else:
-                            # For classification, we'd need LSTMClassifier - using GRU for now
-                            gru_model = safe_to_device(GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate), device)
-                            model_type = "GRU"
-                            if initial_model and isinstance(initial_model, GRUClassifier):
+                        gru_model = safe_to_device(LSTMRegressor(input_size, hidden_size, num_layers, 1, dropout_rate), device)
+                        model_type = "LSTM"
+                        if initial_model and isinstance(initial_model, LSTMRegressor):
+                            try:
+                                gru_model.load_state_dict(initial_model.state_dict())
+                                print(f"    - Loaded existing LSTM regressor state for {ticker} to continue training.")
+                            except Exception as e:
+                                print(f"    - Error loading LSTM regressor state for {ticker}: {e}. Training from scratch.")
+                    else:
                                 try:
                                     gru_model.load_state_dict(initial_model.state_dict())
                                     print(f"    - Loaded existing GRU model state for {ticker} to continue training.")
@@ -1378,22 +1327,13 @@ def train_and_evaluate_models(
                                     print(f"    - Error loading GRU model state for {ticker}: {e}. Training from scratch.")
                     else:
                         model_type = "GRU"
-                        if USE_REGRESSION_MODEL:
-                            gru_model = safe_to_device(GRURegressor(input_size, hidden_size, num_layers, 1, dropout_rate), device)
-                            if initial_model and isinstance(initial_model, GRURegressor):
-                                try:
-                                    gru_model.load_state_dict(initial_model.state_dict())
-                                    print(f"    - Loaded existing GRU regressor state for {ticker} to continue training.")
-                                except Exception as e:
-                                    print(f"    - Error loading GRU regressor state for {ticker}: {e}. Training from scratch.")
-                        else:
-                            gru_model = safe_to_device(GRUClassifier(input_size, hidden_size, num_layers, 1, dropout_rate), device)
-                            if initial_model and isinstance(initial_model, GRUClassifier):
-                                try:
-                                    gru_model.load_state_dict(initial_model.state_dict())
-                                    print(f"    - Loaded existing GRU model state for {ticker} to continue training.")
-                                except Exception as e:
-                                    print(f"    - Error loading GRU model state for {ticker}: {e}. Training from scratch.")
+                        gru_model = safe_to_device(GRURegressor(input_size, hidden_size, num_layers, 1, dropout_rate), device)
+                        if initial_model and isinstance(initial_model, GRURegressor):
+                            try:
+                                gru_model.load_state_dict(initial_model.state_dict())
+                                print(f"    - Loaded existing GRU regressor state for {ticker} to continue training.")
+                            except Exception as e:
+                                print(f"    - Error loading GRU regressor state for {ticker}: {e}. Training from scratch.")
                     
                     optimizer_gru = optim.Adam(gru_model.parameters(), lr=learning_rate)
                     
@@ -1526,10 +1466,7 @@ def train_and_evaluate_models(
             params = mp["params"]
             
             def _run_grid(estimator):
-                if USE_REGRESSION_MODEL:
-                    gs = GridSearchCV(estimator, params, cv=cv, scoring='neg_mean_squared_error', n_jobs=-1, verbose=0)
-                else:
-                    gs = GridSearchCV(estimator, params, cv=cv, scoring='roc_auc', n_jobs=-1, verbose=0)
+                gs = GridSearchCV(estimator, params, cv=cv, scoring='neg_mean_squared_error', n_jobs=-1, verbose=0)
                 gs.fit(X, y)
                 return gs
             
@@ -1540,22 +1477,13 @@ def train_and_evaluate_models(
                     warnings.filterwarnings("ignore", category=FutureWarning, module='xgboost')
                     
                     grid_search = _run_grid(model)
-                    if USE_REGRESSION_MODEL:
-                        best_score = -grid_search.best_score_
-                        results[name] = best_score
-                        print(f"    - {name}: MSE={best_score:.4f} (Best Params: {grid_search.best_params_})")
-                        if best_score < best_mse_overall:
-                            best_mse_overall = best_score
-                            best_model_overall = grid_search.best_estimator_
-                            best_hyperparams_overall = None
-                    else:
-                        best_score = grid_search.best_score_
-                        results[name] = best_score
-                        print(f"    - {name}: {best_score:.4f} (Best Params: {grid_search.best_params_})")
-                        if best_score > best_auc_overall:
-                            best_auc_overall = best_score
-                            best_model_overall = grid_search.best_estimator_
-                            best_hyperparams_overall = None
+                    best_score = -grid_search.best_score_
+                    results[name] = best_score
+                    print(f"    - {name}: MSE={best_score:.4f} (Best Params: {grid_search.best_params_})")
+                    if best_score < best_mse_overall:
+                        best_mse_overall = best_score
+                        best_model_overall = grid_search.best_estimator_
+                        best_hyperparams_overall = None
 
             except Exception as e:
                 # LightGBM GPU fallback to CPU if build/device fails at fit time
@@ -1564,22 +1492,13 @@ def train_and_evaluate_models(
                         print(f"    - {name}: GPU fit failed ({e}), retrying on CPU.")
                         model_cpu = model.__class__(**{**model.get_params(), "device": "cpu"})
                         grid_search = _run_grid(model_cpu)
-                        if USE_REGRESSION_MODEL:
-                            best_score = -grid_search.best_score_
-                            results[name] = best_score
-                            print(f"    - {name} (CPU fallback): MSE={best_score:.4f} (Best Params: {grid_search.best_params_})")
-                            if best_score < best_mse_overall:
-                                best_mse_overall = best_score
-                                best_model_overall = grid_search.best_estimator_
-                                best_hyperparams_overall = None
-                        else:
-                            best_score = grid_search.best_score_
-                            results[name] = best_score
-                            print(f"    - {name} (CPU fallback): {best_score:.4f} (Best Params: {grid_search.best_params_})")
-                            if best_score > best_auc_overall:
-                                best_auc_overall = best_score
-                                best_model_overall = grid_search.best_estimator_
-                                best_hyperparams_overall = None
+                        best_score = -grid_search.best_score_
+                        results[name] = best_score
+                        print(f"    - {name} (CPU fallback): MSE={best_score:.4f} (Best Params: {grid_search.best_params_})")
+                        if best_score < best_mse_overall:
+                            best_mse_overall = best_score
+                            best_model_overall = grid_search.best_estimator_
+                            best_hyperparams_overall = None
                         continue
                     except Exception as e2:
                         print(f"    - {name}: CPU fallback also failed ({e2}).")
@@ -1591,14 +1510,9 @@ def train_and_evaluate_models(
         return None, None, None
 
     # Select best model based on lowest MSE (regression) or highest AUC (classification)
-    if USE_REGRESSION_MODEL:
-        best_model_name = min(results, key=results.get)  # Lowest MSE wins
-        best_score = results[best_model_name]
-        print(f"  🏆 WINNER for {ticker} ({target_col}): {best_model_name} with MSE={best_score:.4f}")
-    else:
-        best_model_name = max(results, key=results.get)  # Highest AUC wins
-        best_score = results[best_model_name]
-        print(f"  🏆 WINNER for {ticker} ({target_col}): {best_model_name} with AUC={best_score:.4f}")
+    best_model_name = min(results, key=results.get)  # Lowest MSE wins
+    best_score = results[best_model_name]
+    print(f"  🏆 WINNER for {ticker} ({target_col}): {best_model_name} with MSE={best_score:.4f}")
     
     # Track model selection for statistics (store in a way that can be aggregated later)
     global _model_selection_stats
@@ -1636,58 +1550,46 @@ def train_worker(params: Tuple) -> Dict:
     models_dir = Path("logs/models")
     _ensure_dir(models_dir)
     
-    model_buy_path = models_dir / f"{ticker}_model_buy.joblib"
-    model_sell_path = models_dir / f"{ticker}_model_sell.joblib"
+    model_path = models_dir / f"{ticker}_model.joblib"
     scaler_path = models_dir / f"{ticker}_scaler.joblib"
-    gru_hyperparams_buy_path = models_dir / f"{ticker}_TargetClassBuy_gru_optimized_params.json"
-    gru_hyperparams_sell_path = models_dir / f"{ticker}_TargetClassSell_gru_optimized_params.json"
+    gru_hyperparams_path = models_dir / f"{ticker}_TargetReturn_gru_optimized_params.json"
 
-    model_buy, model_sell, scaler = None, None, None
+    model, scaler = None, None
     
     # Flag to indicate if we successfully loaded a model to continue training
     loaded_for_retraining = False
 
-    # Attempt to load models and GRU hyperparams if CONTINUE_TRAINING_FROM_EXISTING is True
-    if CONTINUE_TRAINING_FROM_EXISTING and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
+    # Attempt to load model and GRU hyperparams if CONTINUE_TRAINING_FROM_EXISTING is True
+    if CONTINUE_TRAINING_FROM_EXISTING and model_path.exists() and scaler_path.exists():
         try:
-            model_buy = joblib.load(model_buy_path)
-            model_sell = joblib.load(model_sell_path)
+            model = joblib.load(model_path)
             scaler = joblib.load(scaler_path)
-            
-            if gru_hyperparams_buy_path.exists():
-                with open(gru_hyperparams_buy_path, 'r') as f:
-                    loaded_gru_hyperparams_buy = json.load(f)
-            if gru_hyperparams_sell_path.exists():
-                with open(gru_hyperparams_sell_path, 'r') as f:
-                    loaded_gru_hyperparams_sell = json.load(f)
 
-            print(f"  ✅ Loaded existing models and GRU hyperparams for {ticker} to continue training.")
+            if gru_hyperparams_path.exists():
+                with open(gru_hyperparams_path, 'r') as f:
+                    loaded_gru_hyperparams = json.load(f)
+
+            print(f"  ✅ Loaded existing model and GRU hyperparams for {ticker} to continue training.")
             loaded_for_retraining = True
         except Exception as e:
             print(f"  ⚠️ Error loading models or GRU hyperparams for {ticker} for retraining: {e}. Training from scratch.")
 
     # If FORCE_TRAINING is False and we didn't load for retraining, then we just load and skip training
-    if not FORCE_TRAINING and not loaded_for_retraining and model_buy_path.exists() and model_sell_path.exists() and scaler_path.exists():
+    if not FORCE_TRAINING and not loaded_for_retraining and model_path.exists() and scaler_path.exists():
         try:
-            model_buy = joblib.load(model_buy_path)
-            model_sell = joblib.load(model_sell_path)
+            model = joblib.load(model_path)
             scaler = joblib.load(scaler_path)
-            
-            if gru_hyperparams_buy_path.exists():
-                with open(gru_hyperparams_buy_path, 'r') as f:
-                    loaded_gru_hyperparams_buy = json.load(f)
-            if gru_hyperparams_sell_path.exists():
-                with open(gru_hyperparams_sell_path, 'r') as f:
-                    loaded_gru_hyperparams_sell = json.load(f)
 
-            print(f"  ✅ Loaded existing models and GRU hyperparams for {ticker} (FORCE_TRAINING is False).")
+            if gru_hyperparams_path.exists():
+                with open(gru_hyperparams_path, 'r') as f:
+                    loaded_gru_hyperparams = json.load(f)
+
+            print(f"  ✅ Loaded existing model and GRU hyperparams for {ticker} (FORCE_TRAINING is False).")
             return {
                 'ticker': ticker,
-                'model_buy': model_buy,
-                'model_sell': model_sell,
+                'model': model,
                 'scaler': scaler,
-                'gru_hyperparams_buy': loaded_gru_hyperparams_buy,
-                'gru_hyperparams_sell': loaded_gru_hyperparams_sell,
+                'gru_hyperparams': loaded_gru_hyperparams,
                 'status': 'loaded',
                 'reason': None
             }
@@ -1702,41 +1604,36 @@ def train_worker(params: Tuple) -> Dict:
 
     if df_train.empty:
         print(f"  ❌ Skipping {ticker}: Insufficient training data.")
-        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None}
+        return {'ticker': ticker, 'model': None, 'scaler': None}
 
-    # Train BUY model, passing the potentially loaded model and GRU hyperparams
-    model_buy, scaler_buy, gru_hyperparams_buy = train_and_evaluate_models(df_train, "TargetClassBuy", actual_feature_set, ticker=ticker, initial_model=model_buy if loaded_for_retraining else None, loaded_gru_hyperparams=loaded_gru_hyperparams_buy)
-    # Train SELL model, passing the potentially loaded model and GRU hyperparams
-    model_sell, scaler_sell, gru_hyperparams_sell = train_and_evaluate_models(df_train, "TargetClassSell", actual_feature_set, ticker=ticker, initial_model=model_sell if loaded_for_retraining else None, loaded_gru_hyperparams=loaded_gru_hyperparams_sell)
+    # Train single regression model for both buy and sell decisions
+    model, scaler, gru_hyperparams = train_and_evaluate_models(df_train, "TargetReturn", actual_feature_set, ticker=ticker, initial_model=model_buy if loaded_for_retraining else None, loaded_gru_hyperparams=loaded_gru_hyperparams_buy)
 
-    # For simplicity, we'll use the scaler from the buy model for both if they are different.
-    # In a more complex scenario, you might want to ensure feature_set consistency or use separate scalers.
-    final_scaler = scaler_buy if scaler_buy else scaler_sell
+    # Use same model for both buy and sell decisions (single model approach)
+    model_buy = model_sell = model
+    scaler_buy = scaler_sell = scaler
+    gru_hyperparams_buy = gru_hyperparams_sell = gru_hyperparams
 
-    if model_buy and model_sell and final_scaler:
+    final_scaler = scaler
+
+    if model and final_scaler:
         try:
-            joblib.dump(model_buy, model_buy_path)
-            joblib.dump(model_sell, model_sell_path)
+            joblib.dump(model, model_path)
             joblib.dump(final_scaler, scaler_path)
-            
-            if gru_hyperparams_buy:
-                with open(gru_hyperparams_buy_path, 'w') as f:
-                    json.dump(gru_hyperparams_buy, f, indent=4)
-            if gru_hyperparams_sell:
-                with open(gru_hyperparams_sell_path, 'w') as f:
-                    json.dump(gru_hyperparams_sell, f, indent=4)
 
-            print(f"  ✅ Models, scaler, and GRU hyperparams saved for {ticker}.")
+            if gru_hyperparams:
+                with open(gru_hyperparams_path, 'w') as f:
+                    json.dump(gru_hyperparams, f, indent=4)
+
+            print(f"  ✅ Model, scaler, and GRU hyperparams saved for {ticker}.")
         except Exception as e:
-            print(f"  ⚠️ Error saving models or GRU hyperparams for {ticker}: {e}")
+            print(f"  ⚠️ Error saving model or GRU hyperparams for {ticker}: {e}")
             
         return {
             'ticker': ticker,
-            'model_buy': model_buy,
-            'model_sell': model_sell,
+            'model': model,
             'scaler': final_scaler,
-            'gru_hyperparams_buy': gru_hyperparams_buy,
-            'gru_hyperparams_sell': gru_hyperparams_sell,
+            'gru_hyperparams': gru_hyperparams,
             'status': 'trained',
             'reason': None
         }
@@ -1748,4 +1645,4 @@ def train_worker(params: Tuple) -> Dict:
             reason = f"Not enough rows after feature prep ({len(df_train)} rows, need >= 50)"
         
         print(f"  ❌ Failed to train models for {ticker}. Reason: {reason}")
-        return {'ticker': ticker, 'model_buy': None, 'model_sell': None, 'scaler': None, 'status': 'failed', 'reason': reason}
+        return {'ticker': ticker, 'model': None, 'scaler': None, 'status': 'failed', 'reason': reason}

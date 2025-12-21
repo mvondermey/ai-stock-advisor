@@ -21,17 +21,8 @@ def print_final_summary(
     final_strategy_value_1y: float,
     final_buy_hold_value_1y: float,
     ai_1y_return: float,
-    final_strategy_value_ytd: float,
-    final_buy_hold_value_ytd: float,
-    ai_ytd_return: float,
-    final_strategy_value_3month: float,
-    final_buy_hold_value_3month: float,
-    ai_3month_return: float,
     initial_balance_used: float,
     num_tickers_analyzed: int,
-    final_strategy_value_1month: float,
-    ai_1month_return: float,
-    final_buy_hold_value_1month: float,
     performance_metrics_buy_hold_1y: List[Dict],
     top_performers_data: List[Tuple],
     strategy_results_ytd: List[Dict] = None,
@@ -98,11 +89,8 @@ def print_final_summary(
             print(f"{ticker:<10} | {mean_str} | {min_str} | {max_str} | {bh_str}")
         print("-" * 100)
     
-    # Show prediction vs B&H tables for AI strategy (per period) when metrics include prediction stats
+    # Show prediction vs B&H tables for AI strategy (1-Year period) when metrics include prediction stats
     _print_pred_vs_bh("1-Year", prediction_vs_bh_1y if prediction_vs_bh_1y is not None else sorted_final_results, PERIOD_HORIZONS.get("1-Year"))
-    _print_pred_vs_bh("YTD", prediction_vs_bh_ytd if prediction_vs_bh_ytd is not None else strategy_results_ytd, PERIOD_HORIZONS.get("YTD"))
-    _print_pred_vs_bh("3-Month", prediction_vs_bh_3month if prediction_vs_bh_3month is not None else strategy_results_3month, PERIOD_HORIZONS.get("3-Month"))
-    _print_pred_vs_bh("1-Month", prediction_vs_bh_1month if prediction_vs_bh_1month is not None else strategy_results_1month, PERIOD_HORIZONS.get("1-Month"))
     
     print("\n" + "="*80)
     print("                     🚀 AI-POWERED STOCK ADVISOR FINAL SUMMARY 🚀")
@@ -117,26 +105,12 @@ def print_final_summary(
     
     # 1-Year
     print(f"{'1-Year':<15} | ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)".ljust(28) + f"| ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
-    
-    # YTD
-    print(f"{'YTD':<15} | ${final_strategy_value_ytd:,.2f} ({ai_ytd_return:+.2f}%)".ljust(28) + f"| ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
-    
-    # 3-Month
-    print(f"{'3-Month':<15} | ${final_strategy_value_3month:,.2f} ({ai_3month_return:+.2f}%)".ljust(28) + f"| ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
-    
-    # 1-Month
-    rule_1m_str = f"${final_rule_value_1month:,.2f} ({rule_1month_return:+.2f}%)" if final_rule_value_1month is not None else "N/A"
-    bh_1month_return_str = "N/A" if final_buy_hold_value_1month == 0 else f"{((final_buy_hold_value_1month - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%"
-    ai_1month_return_str = "N/A" if final_strategy_value_1month == 0 else f"{ai_1month_return:+.2f}%"
-    bh_1month_value_str = "N/A" if final_buy_hold_value_1month == 0 else f"${final_buy_hold_value_1month:,.2f}"
-    
-    print(f"{'1-Month':<15} | ${final_strategy_value_1month:,.2f} ({ai_1month_return_str})".ljust(28) + f"| {bh_1month_value_str} ({bh_1month_return_str})")
     print("="*80)
 
     print("\n📈 Individual Ticker Performance (AI Strategy - Sorted by 1-Year Performance):")
-    print("-" * 190)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Max Shares Held':>25}")
-    print("-" * 190)
+    print("-" * 170)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Max Shares Held':>25}")
+    print("-" * 170)
     for res in sorted_final_results:
         ticker = str(res.get('ticker', 'N/A'))
         # ✅ FIX: Show $0 allocated capital for failed tickers (they weren't actually traded)
@@ -163,11 +137,11 @@ def print_final_summary(
             max_shares_str = f"{max_shares_value:>24.2f}"
         
         print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {max_shares_str}")
-    print("-" * 190)
+    print("-" * 170)
 
     print("\n📈 Individual Ticker Performance (Buy & Hold Strategy - Sorted by 1-Year Performance):")
     print("-" * 136)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
     print("-" * 136)
     
     sorted_buy_hold_results = sorted(performance_metrics_buy_hold_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
@@ -200,9 +174,9 @@ def print_final_summary(
     ]
     if bh_only_results:
         print("\n📊 Buy & Hold (Tickers not held by AI strategy):")
-        print("-" * 136)
-        print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
-        print("-" * 136)
+        print("-" * 126)
+        print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
+        print("-" * 126)
         for res in bh_only_results:
             ticker = str(res.get('ticker', 'N/A'))
             allocated_capital = INVESTMENT_PER_STOCK
@@ -216,24 +190,17 @@ def print_final_summary(
                     break
 
             one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
-            ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
             sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
             shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}"
 
-            print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
-        print("-" * 136)
+            print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
+        print("-" * 126)
 
-    # Print YTD, 3-Month, and 1-Month period tables if data is available
-    for period_name, strategy_results, buy_hold_results in [
-        ("YTD", strategy_results_ytd, performance_metrics_buy_hold_ytd),
-        ("3-Month", strategy_results_3month, performance_metrics_buy_hold_3month),
-        ("1-Month", strategy_results_1month, performance_metrics_buy_hold_1month)
-    ]:
         if strategy_results and len(strategy_results) > 0:
             print(f"\n📈 Individual Ticker Performance ({period_name} - AI Strategy):")
-            print("-" * 190)
-            print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Max Shares Held':>25}")
-            print("-" * 190)
+            print("-" * 170)
+            print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Max Shares Held':>25}")
+            print("-" * 170)
             
             # Handle both dict and non-dict items safely
             if strategy_results and len(strategy_results) > 0 and isinstance(strategy_results[0], dict):
@@ -268,13 +235,13 @@ def print_final_summary(
                     max_shares_str = f"{max_shares_value:>24.2f}"
                 
                 print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {max_shares_str}")
-            print("-" * 190)
+            print("-" * 170)
         
         if buy_hold_results and len(buy_hold_results) > 0:
             print(f"\n📈 Individual Ticker Performance ({period_name} - Buy & Hold Strategy):")
-            print("-" * 136)
-            print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
-            print("-" * 136)
+            print("-" * 126)
+            print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
+            print("-" * 126)
             
             if buy_hold_results and isinstance(buy_hold_results[0], dict):
                 sorted_buy_hold_period = sorted(buy_hold_results, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
@@ -298,8 +265,8 @@ def print_final_summary(
                 sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
                 shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}"
                 
-                print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
-            print("-" * 136)
+                print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
+            print("-" * 126)
 
     print("\n🤖 ML Model Status:")
     # ✅ FIX: Only show unique tickers (avoid duplicates)

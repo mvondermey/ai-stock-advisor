@@ -345,7 +345,9 @@ def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFr
 
         try:
 
-            return load_prices(ticker, start, end)
+            result = load_prices(ticker, start, end)
+            # Ensure we always return a DataFrame
+            return result if isinstance(result, pd.DataFrame) else pd.DataFrame()
 
         except Exception as e:
 
@@ -357,7 +359,7 @@ def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFr
 
                 return pd.DataFrame()
 
-            
+
 
             if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str:
 
@@ -575,23 +577,19 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
     price_df = pd.DataFrame()
 
-    if cache_file.exists():
+    # For benchmark tickers (QQQ, SPY), always refetch to ensure fresh data
+    cache_valid = False
+    if cache_file.exists() and ticker not in ['QQQ', 'SPY']:
 
         file_mod_time = datetime.fromtimestamp(cache_file.stat().st_mtime, timezone.utc)
 
         if (datetime.now(timezone.utc) - file_mod_time) < timedelta(days=1):
 
+            cache_valid = True
+
             try:
 
                 cached_df = pd.read_csv(cache_file, index_col='Date', parse_dates=True)
-
-                if cached_df.index.tzinfo is None:
-
-                    cached_df.index = cached_df.index.tz_localize('UTC')
-
-                else:
-
-                    cached_df.index = cached_df.index.tz_convert('UTC')
 
                 price_df = cached_df.loc[(cached_df.index >= _to_utc(start)) & (cached_df.index <= _to_utc(end))].copy()
 
@@ -599,177 +597,114 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
                 print(f"⚠️ Could not read or slice price cache file for {ticker}: {e}. Refetching prices.")
 
+                cache_valid = False
 
+    if not cache_valid:
 
-    if price_df.empty:
-
-        fetch_start = datetime.now(timezone.utc) - timedelta(days=1000)
-
-        fetch_end = datetime.now(timezone.utc)
-
-        start_utc = _to_utc(fetch_start)
-
-        end_utc   = _to_utc(fetch_end)
+        if price_df.empty:
+            fetch_start = datetime.now(timezone.utc) - timedelta(days=1000)
+            fetch_end = datetime.now(timezone.utc)
+            start_utc = _to_utc(fetch_start)
+            end_utc   = _to_utc(fetch_end)
 
         
 
-        # Try providers in order: Alpaca -> TwelveData -> Yahoo
+            # Try providers in order: Alpaca -> TwelveData -> Yahoo
+            print(f"  🔄 Fetching data for {ticker} using multi-provider fallback...")
 
-        print(f"  🔄 Fetching data for {ticker} using multi-provider fallback...")
-
-
-
-        # 1. Try Alpaca first (fastest, best quality)
-
-        if ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
-
-            alpaca_df = _fetch_from_alpaca(ticker, start_utc, end_utc)
-
-            if not alpaca_df.empty:
-
-                price_df = alpaca_df.copy()
-
-                print(f"  ✅ Successfully fetched data for {ticker} from Alpaca.")
-
+            # 1. Try Alpaca first (fastest, best quality)
+            if ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
+                alpaca_df = _fetch_from_alpaca(ticker, start_utc, end_utc)
+                if not alpaca_df.empty:
+                    price_df = alpaca_df.copy()
+                    print(f"  ✅ Successfully fetched data for {ticker} from Alpaca.")
+                else:
+                    print(f"  ℹ️ Alpaca fetch failed for {ticker}. Trying TwelveData...")
             else:
+                print(f"  ℹ️ Alpaca not available. Trying TwelveData...")
 
-                print(f"  ℹ️ Alpaca fetch failed for {ticker}. Trying TwelveData...")
-
-        else:
-
-            print(f"  ℹ️ Alpaca not available. Trying TwelveData...")
-
-
-
-        # 2. Try TwelveData second
-
-        if price_df.empty and TWELVEDATA_API_KEY:
-
-            try:
-                twelivedata_df = _fetch_from_twelivedata(ticker, start_utc, end_utc)
-                if not twelivedata_df.empty:
-                    price_df = twelivedata_df.copy()
-                    print(f"  ✅ Successfully fetched data for {ticker} from TwelveData.")
-                else:
-                    print(f"  ℹ️ TwelveData fetch failed for {ticker}. Trying Yahoo Finance...")
-            except Exception as e:
-                print(f"  ⚠️ TwelveData error for {ticker}: {e}. Trying Yahoo Finance...")
-
-        elif price_df.empty:
-
-            print(f"  ℹ️ TwelveData API key missing. Trying Yahoo Finance...")
+            # 2. Try TwelveData second (re-enabled as backup)
+            if price_df.empty and TWELVEDATA_SDK_AVAILABLE and TWELVEDATA_API_KEY:
+                try:
+                    twelivedata_df = _fetch_from_twelvedata(ticker, start_utc, end_utc)
+                    if not twelivedata_df.empty:
+                        price_df = twelivedata_df.copy()
+                        print(f"  ✅ Successfully fetched data for {ticker} from TwelveData.")
+                    else:
+                        print(f"  ℹ️ TwelveData fetch failed for {ticker}. Trying Yahoo Finance...")
+                except Exception as e:
+                    print(f"  ⚠️ TwelveData error for {ticker}: {e}. Trying Yahoo Finance...")
+            elif price_df.empty:
+                print(f"  ℹ️ TwelveData not available. Trying Yahoo Finance...")
 
 
 
-        # 3. Try Yahoo Finance as final fallback
-
-        if price_df.empty and USE_YAHOO_FALLBACK:
-
-            try:
-
-                downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, interval=DATA_INTERVAL, auto_adjust=True, progress=False)
-
-                if downloaded_df is not None and not downloaded_df.empty:
-
-                    price_df = downloaded_df.dropna()
-
-                    print(f"  ✅ Successfully fetched data for {ticker} from Yahoo Finance.")
-
-                else:
-
-                    print(f"  ⚠️ Yahoo Finance returned empty data for {ticker}.")
-
-            except Exception as e:
-
-                print(f"  ❌ Yahoo Finance failed for {ticker}: {e}")
-
-        elif price_df.empty:
-
-            print(f"  ❌ All data providers failed for {ticker}.")
 
 
 
-        # Multi-provider fallback complete
+            # 3. Try Yahoo Finance as final fallback
+            if price_df.empty and USE_YAHOO_FALLBACK:
+                try:
+                    downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, interval=DATA_INTERVAL, auto_adjust=True, progress=False)
+                    if downloaded_df is not None and not downloaded_df.empty:
+                        price_df = downloaded_df
+                        print(f"  ✅ Successfully fetched data for {ticker} from Yahoo Finance.")
+                    else:
+                        print(f"  ⚠️ Yahoo Finance returned empty data for {ticker}.")
+                except Exception as e:
+                    print(f"  ❌ Yahoo Finance failed for {ticker}: {e}")
+            elif price_df.empty:
+                print(f"  ❌ All data providers failed for {ticker}.")
 
 
 
-        if price_df.empty:
-
-            return pd.DataFrame()
+            # Multi-provider fallback complete
 
 
 
-        if isinstance(price_df.columns, pd.MultiIndex):
+            if price_df.empty:
+                return pd.DataFrame()
 
-            price_df.columns = price_df.columns.get_level_values(0)
+            if isinstance(price_df.columns, pd.MultiIndex):
+                price_df.columns = price_df.columns.get_level_values(0)
+            price_df.columns = [str(col).capitalize() for col in price_df.columns]
+            if "Close" not in price_df.columns and "Adj close" in price_df.columns:
+                price_df = price_df.rename(columns={"Adj close": "Close"})
 
-        price_df.columns = [str(col).capitalize() for col in price_df.columns]
-
-        if "Close" not in price_df.columns and "Adj close" in price_df.columns:
-
-            price_df = price_df.rename(columns={"Adj close": "Close"})
-
-
-
-        if "Volume" in price_df.columns:
-
-            price_df["Volume"] = price_df["Volume"].fillna(0).astype(int)
-
-        else:
-
-            price_df["Volume"] = 0
+            if "Volume" in price_df.columns:
+                price_df["Volume"] = price_df["Volume"].fillna(0).astype(int)
+            else:
+                price_df["Volume"] = 0
 
 
 
-        # Add financial data if available
+            # Add financial data if available
+            if financial_cache_file.exists():
+                try:
+                    financial_df = pd.read_csv(financial_cache_file, index_col='Date', parse_dates=True)
+                    if financial_df.index.tzinfo is None:
+                        financial_df.index = financial_df.index.tz_localize('UTC')
+                    else:
+                        financial_df.index = financial_df.index.tz_convert('UTC')
 
-        if financial_cache_file.exists():
+                    # Merge financial data
+                    price_df = price_df.join(financial_df, how='left')
+                except Exception as e:
+                    print(f"⚠️ Could not read financial cache file for {ticker}: {e}")
 
             try:
-
-                financial_df = pd.read_csv(financial_cache_file, index_col='Date', parse_dates=True)
-
-                if financial_df.index.tzinfo is None:
-
-                    financial_df.index = financial_df.index.tz_localize('UTC')
-
-                else:
-
-                    financial_df.index = financial_df.index.tz_convert('UTC')
-
-
-
-                # Merge financial data
-
-                price_df = price_df.join(financial_df, how='left')
-
+                price_df.to_csv(cache_file)
+                if 'Fin_' in price_df.columns.any() if hasattr(price_df.columns, 'any') else any('Fin_' in str(col) for col in price_df.columns):
+                    financial_only = price_df[[col for col in price_df.columns if str(col).startswith('Fin_')]].copy()
+                    if not financial_only.empty:
+                        financial_only.to_csv(financial_cache_file)
             except Exception as e:
-
-                print(f"⚠️ Could not read financial cache file for {ticker}: {e}")
-
-
-
-        # Cache the result
-
-        try:
-
-            price_df.to_csv(cache_file)
-
-            if 'Fin_' in price_df.columns.any() if hasattr(price_df.columns, 'any') else any('Fin_' in str(col) for col in price_df.columns):
-
-                financial_only = price_df[[col for col in price_df.columns if str(col).startswith('Fin_')]].copy()
-
-                if not financial_only.empty:
-
-                    financial_only.to_csv(financial_cache_file)
-
-        except Exception as e:
-
-            print(f"⚠️ Could not cache data for {ticker}: {e}")
+                print(f"⚠️ Could not cache data for {ticker}: {e}")
 
 
 
-        return price_df.loc[(price_df.index >= _to_utc(start)) & (price_df.index <= _to_utc(end))].copy()
+        result = price_df.loc[(price_df.index >= _to_utc(start)) & (price_df.index <= _to_utc(end))].copy()
+        return result if not result.empty else pd.DataFrame()
 
 
 
@@ -807,7 +742,7 @@ def _fetch_intermarket_data(start: datetime, end: datetime) -> pd.DataFrame:
 
             df = load_prices_robust(ticker, start, end)
 
-            if not df.empty:
+            if df is not None and not df.empty:
 
                 single_ticker_df = df[['Close']].rename(columns={'Close': name})
 

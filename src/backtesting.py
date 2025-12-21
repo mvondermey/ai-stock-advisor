@@ -15,7 +15,7 @@ from pathlib import Path
 from config import (
     GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS, MIN_PROBA_BUY, MIN_PROBA_SELL,
     USE_MODEL_GATE, TRANSACTION_COST, SEED, INVESTMENT_PER_STOCK,
-    BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, BACKTEST_DAYS_3MONTH, BACKTEST_DAYS_1MONTH,
+    BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS,
     N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
     DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
     FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD, NUM_PROCESSES, SEQUENCE_LENGTH,
@@ -289,11 +289,9 @@ def optimize_single_ticker_worker(params):
             ticker=ticker,
             initial_balance=capital_per_stock,
             transaction_cost=TRANSACTION_COST,
-            model_buy=model_buy,
-            model_sell=model_sell,
+            model=model_buy,  # Use single model
             scaler=scaler,
-            per_ticker_min_proba_buy=p_buy,
-            per_ticker_min_proba_sell=p_sell,
+            y_scaler=y_scaler,
             use_gate=USE_MODEL_GATE,
             feature_set=feature_set
         )
@@ -600,14 +598,11 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             ticker=ticker,
             initial_balance=capital_per_stock,
             transaction_cost=TRANSACTION_COST,
-            model_buy=model_buy,
-            model_sell=model_sell,
+            model=model_buy,  # Use single model
             scaler=scaler,
             y_scaler=y_scaler,  # ✅ Pass y_scaler
             use_gate=USE_MODEL_GATE,
             feature_set=feature_set,
-            per_ticker_min_proba_buy=None,
-            per_ticker_min_proba_sell=None,
             horizon_days=horizon_days
         )
         final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, shares_before_liquidation = env.run()
@@ -637,7 +632,7 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
             preds_buy = np.array(env.all_predictions_buy)
             print(f"\n📊 [{ticker}] BUY Prediction Summary:")
             print(f"   Min: {np.min(preds_buy)*100:.4f}%, Max: {np.max(preds_buy)*100:.4f}%, Mean: {np.mean(preds_buy)*100:.4f}%")
-            print(f"   Above 5% threshold: {np.sum(preds_buy >= 0.05)} out of {len(preds_buy)} days ({np.sum(preds_buy >= 0.05)/len(preds_buy)*100:.1f}%)")
+            print(f"   Positive predictions: {np.sum(preds_buy > 0)} out of {len(preds_buy)} days ({np.sum(preds_buy > 0)/len(preds_buy)*100:.1f}%)")
             print(f"   Threshold: {min_proba_buy*100:.2f}%")
             pred_min_pct = float(np.min(preds_buy) * 100)
             pred_max_pct = float(np.max(preds_buy) * 100)
@@ -922,8 +917,7 @@ def _run_portfolio_backtest_walk_forward(
     backtest_start_date: datetime,
     backtest_end_date: datetime,
     initial_top_tickers: List[str],
-    initial_models_buy: Dict,
-    initial_models_sell: Dict,
+    initial_models: Dict,  # Single regression models
     initial_scalers: Dict,
     initial_y_scalers: Dict,
     capital_per_stock: float,
@@ -952,8 +946,7 @@ def _run_portfolio_backtest_walk_forward(
     from training_phase import train_models_for_period
 
     # Initialize
-    current_models_buy = initial_models_buy.copy()
-    current_models_sell = initial_models_sell.copy()
+    current_models = initial_models.copy()  # Single regression models
     current_scalers = initial_scalers.copy()
     current_y_scalers = initial_y_scalers.copy()
 
@@ -990,7 +983,7 @@ def _run_portfolio_backtest_walk_forward(
                 # Retrain models using data up to previous day
                 train_end_date = current_date - timedelta(days=1)
 
-                new_models_buy, new_models_sell, new_scalers, new_y_scalers = train_models_for_period(
+                retraining_results = train_models_for_period(
                     period_name=f"{period_name}_retrain_{retrain_count}",
                     tickers=initial_top_tickers,  # Retrain on all 40 tickers
                     all_tickers_data=all_tickers_data,
@@ -1000,13 +993,24 @@ def _run_portfolio_backtest_walk_forward(
                     feature_set=None
                 )
 
-                # Update models
-                current_models_buy.update(new_models_buy)
-                current_models_sell.update(new_models_sell)
+                # Process and update models
+                new_models = {}
+                new_scalers = {}
+                new_y_scalers = {}
+                for result in retraining_results:
+                    if result and result.get('status') == 'trained':
+                        ticker = result['ticker']
+                        new_models[ticker] = result['model']
+                        new_scalers[ticker] = result['scaler']
+                        if result.get('y_scaler'):
+                            new_y_scalers[ticker] = result['y_scaler']
+
+                # Update current models
+                current_models.update(new_models)
                 current_scalers.update(new_scalers)
                 current_y_scalers.update(new_y_scalers)
 
-                print(f"   ✅ Retrained models for {len(new_models_buy)} stocks")
+                print(f"   ✅ Retrained models for {len(new_models)} stocks")
 
             except Exception as e:
                 print(f"   ⚠️ Retraining failed: {e}. Using existing models.")
@@ -1028,7 +1032,7 @@ def _run_portfolio_backtest_walk_forward(
                             if len(data_slice) >= 30:  # Need minimum data for prediction
                                 pred = _quick_predict_return(
                                     ticker, data_slice.tail(30),  # Use last 30 days
-                                    current_models_buy[ticker],
+                                    current_models[ticker],  # Single model
                                     current_scalers.get(ticker),
                                     current_y_scalers.get(ticker),
                                     horizon_days
@@ -1059,8 +1063,8 @@ def _run_portfolio_backtest_walk_forward(
                     # In real implementation: execute trades here
                     # For simulation: allocate capital to new stocks
 
-                # Even if no rebalancing, track that we evaluated the portfolio
-                # This shows the system is actively monitoring daily
+                # Even if no rebalancing, track that we evaluated the portfolio daily
+                # This shows the system is actively monitoring and ready to act when needed
 
         except Exception as e:
             print(f"   ⚠️ Day {day_count}: Stock selection failed: {e}")
@@ -1083,7 +1087,7 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   📊 Total days processed: {day_count}")
     print(f"   🧠 Model retrains: {retrain_count}")
     print(f"   🔄 Portfolio rebalances: {rebalance_count} (only when stocks change)")
-    print(f"   💰 Transaction costs minimized - only when portfolio changes")
+    print(f"   💰 Transaction costs minimized - daily monitoring, trading only when portfolio changes")
 
     return total_portfolio_value, portfolio_values_history, initial_top_tickers, [], {}
 
@@ -1396,7 +1400,6 @@ def _run_portfolio_backtest_single_chunk(
                     
                     print(f"\n📈 Individual Stock Performance for {res['ticker']} ({period_name}):")
                     print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
-                    print(f"  - YTD Performance: {perf_ytd_benchmark:.2f}%" if pd.notna(perf_ytd_benchmark) else "  - YTD Performance: N/A")
                     print(f"  - AI Sharpe Ratio: {res['perf_data']['sharpe_ratio']:.2f}")
                     print(f"  - Last AI Action: {res['last_ai_action']}")
                     
@@ -1427,12 +1430,10 @@ def _run_portfolio_backtest_single_chunk(
                 for t, p1y, pytd in top_performers_data:
                     if t == worker_result['ticker']:
                         perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
-                        ytd_perf_benchmark = pytd if np.isfinite(pytd) else np.nan
                         break
                 
                 print(f"\n📈 Individual Stock Performance for {worker_result['ticker']} ({period_name}):")
                 print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
-                print(f"  - YTD Performance: {ytd_perf_benchmark:.2f}%" if pd.notna(ytd_perf_benchmark) else "  - YTD Performance: N/A")
                 print(f"  - AI Sharpe Ratio: {worker_result['perf_data']['sharpe_ratio']:.2f}")
                 print(f"  - Last AI Action: {worker_result['last_ai_action']}")
                 
@@ -1501,24 +1502,12 @@ def print_final_summary(
     print(f"  1-Year AI Strategy Value: ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)")
     print(f"  1-Year Simple Rule Value: ${final_simple_rule_value_1y:,.2f} ({simple_rule_1y_return:+.2f}%)")
     print(f"  1-Year Buy & Hold Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
-    print("-" * 40)
-    print(f"  YTD AI Strategy Value: ${final_strategy_value_ytd:,.2f} ({ai_ytd_return:+.2f}%)")
-    print(f"  YTD Simple Rule Value: ${final_simple_rule_value_ytd:,.2f} ({simple_rule_ytd_return:+.2f}%)")
-    print(f"  YTD Buy & Hold Value: ${final_buy_hold_value_ytd:,.2f} ({((final_buy_hold_value_ytd - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
-    print("-" * 40)
-    print(f"  3-Month AI Strategy Value: ${final_strategy_value_3month:,.2f} ({ai_3month_return:+.2f}%)")
-    print(f"  3-Month Simple Rule Value: ${final_simple_rule_value_3month:,.2f} ({simple_rule_3month_return:+.2f}%)")
-    print(f"  3-Month Buy & Hold Value: ${final_buy_hold_value_3month:,.2f} ({((final_buy_hold_value_3month - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
-    print("-" * 40)
-    print(f"  1-Month AI Strategy Value: ${final_strategy_value_1month:,.2f} ({ai_1month_return:+.2f}%)")
-    print(f"  1-Month Simple Rule Value: ${final_simple_rule_value_1month:,.2f} ({simple_rule_1month_return:+.2f}%)")
-    print(f"  1-Month Buy & Hold Value: ${final_buy_hold_value_1month:,.2f} ({((final_buy_hold_value_1month - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
     print("="*80)
 
     print("\n📈 Individual Ticker Performance (AI Strategy - Sorted by 1-Year Performance):")
-    print("-" * 290)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10} | {'Class Horiz':>13} | {'Opt. Status':<25} | {'Shares Before Liquidation':>25}")
-    print("-" * 290)
+    print("-" * 280)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Buy Thresh':>12} | {'Sell Thresh':>12} | {'Target %':>10} | {'Class Horiz':>13} | {'Opt. Status':<25} | {'Shares Before Liquidation':>25}")
+    print("-" * 280)
     for res in sorted_final_results:
         ticker = str(res.get('ticker', 'N/A'))
         optimized_params = optimized_params_per_ticker.get(ticker, {})
@@ -1532,7 +1521,6 @@ def print_final_summary(
         strategy_gain = res.get('performance', 0.0) - allocated_capital
 
         one_year_perf_str = f"{res.get('one_year_perf', 0.0):>9.2f}%" if pd.notna(res.get('one_year_perf')) else "N/A".rjust(10)
-        ytd_perf_str = f"{res.get('ytd_perf', 0.0):>9.2f}%" if pd.notna(res.get('ytd_perf')) else "N/A".rjust(10)
         sharpe_str = f"{res.get('sharpe', 0.0):>11.2f}" if pd.notna(res.get('sharpe')) else "N/A".rjust(12)
         buy_prob_str = f"{res.get('buy_prob', 0.0):>9.2f}" if pd.notna(res.get('buy_prob')) else "N/A".rjust(10)
         sell_prob_str = f"{res.get('sell_prob', 0.0):>9.2f}" if pd.notna(res.get('sell_prob')) else "N/A".rjust(10)
@@ -1543,9 +1531,9 @@ def print_final_summary(
     print("-" * 290)
 
     print("\n📈 Individual Ticker Performance (Simple Rule Strategy - Sorted by 1-Year Performance):")
-    print("-" * 136)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Last Action':<16} | {'Shares Before Liquidation':>25}")
-    print("-" * 136)
+    print("-" * 126)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'Sharpe':>12} | {'Last Action':<16} | {'Shares Before Liquidation':>25}")
+    print("-" * 126)
     
     sorted_simple_rule_results = sorted(performance_metrics_simple_rule_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
 
@@ -1554,26 +1542,24 @@ def print_final_summary(
         allocated_capital = INVESTMENT_PER_STOCK
         strategy_gain = res.get('final_val', 0.0) - allocated_capital
         
-        one_year_perf_benchmark, ytd_perf_benchmark = np.nan, np.nan
+        one_year_perf_benchmark = np.nan
         for t, p1y, pytd in top_performers_data:
             if t == ticker:
                 one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
-                ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
                 break
 
         one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
-        ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
         sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
         last_action_str = str(res.get('last_ai_action', 'HOLD'))
         shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}"
 
-        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_action_str:<16} | {shares_before_liquidation_str}")
-    print("-" * 136)
+        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {sharpe_str} | {last_action_str:<16} | {shares_before_liquidation_str}")
+    print("-" * 126)
 
     print("\n📈 Individual Ticker Performance (Buy & Hold Strategy - Sorted by 1-Year Performance):")
-    print("-" * 136)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'YTD Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
-    print("-" * 136)
+    print("-" * 126)
+    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
+    print("-" * 126)
     
     sorted_buy_hold_results = sorted(performance_metrics_buy_hold_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
 
@@ -1582,20 +1568,18 @@ def print_final_summary(
         allocated_capital = INVESTMENT_PER_STOCK
         strategy_gain = (res.get('final_val', 0.0) - allocated_capital) if res.get('final_val') is not None else 0.0
         
-        one_year_perf_benchmark, ytd_perf_benchmark = np.nan, np.nan
+        one_year_perf_benchmark = np.nan
         for t, p1y, pytd in top_performers_data:
             if t == ticker:
                 one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
-                ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
                 break
 
         one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
-        ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
         sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
         shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}"
 
-        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
-    print("-" * 136)
+        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
+    print("-" * 126)
 
     print("\n🤖 ML Model Status:")
     for ticker in sorted_final_results:
