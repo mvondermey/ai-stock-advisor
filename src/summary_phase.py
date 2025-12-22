@@ -157,11 +157,19 @@ def print_final_summary(
         strategy_gain = (res.get('final_val', 0.0) - allocated_capital) if res.get('final_val') is not None else 0.0
         
         one_year_perf_benchmark, ytd_perf_benchmark = np.nan, np.nan
-        for t, p1y, pytd in top_performers_data:
-            if t == ticker:
-                one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
-                ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
-                break
+        for item in top_performers_data:
+            if len(item) == 3:
+                t, p1y, pytd = item
+                if t == ticker:
+                    one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
+                    ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
+                    break
+            elif len(item) == 2:
+                t, p1y = item
+                if t == ticker:
+                    one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
+                    ytd_perf_benchmark = np.nan
+                    break
 
         one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
         ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
@@ -188,11 +196,19 @@ def print_final_summary(
             strategy_gain = (res.get('final_val', 0.0) - allocated_capital) if res.get('final_val') is not None else 0.0
             
             one_year_perf_benchmark, ytd_perf_benchmark = np.nan, np.nan
-            for t, p1y, pytd in top_performers_data:
-                if t == ticker:
-                    one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
-                    ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
-                    break
+            for item in top_performers_data:
+                if len(item) == 3:
+                    t, p1y, pytd = item
+                    if t == ticker:
+                        one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
+                        ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
+                        break
+                elif len(item) == 2:
+                    t, p1y = item
+                    if t == ticker:
+                        one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
+                        ytd_perf_benchmark = np.nan
+                        break
 
             one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
             sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
@@ -259,11 +275,19 @@ def print_final_summary(
                 strategy_gain = (res.get('final_val', 0.0) - allocated_capital) if res.get('final_val') is not None else 0.0
                 
                 one_year_perf_benchmark, ytd_perf_benchmark = np.nan, np.nan
-                for t, p1y, pytd in top_performers_data:
-                    if t == ticker:
-                        one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
-                        ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
-                        break
+                for item in top_performers_data:
+                    if len(item) == 3:
+                        t, p1y, pytd = item
+                        if t == ticker:
+                            one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
+                            ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
+                            break
+                    elif len(item) == 2:
+                        t, p1y = item
+                        if t == ticker:
+                            one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
+                            ytd_perf_benchmark = np.nan
+                            break
                 
                 one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
                 ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)

@@ -1056,6 +1056,9 @@ def _run_portfolio_backtest_walk_forward(
             if day_count == 1 or day_count % 10 == 0:
                 print(f"   🔮 Day {day_count}: {valid_predictions} valid predictions from {len(initial_top_tickers)} tickers")
 
+            # Initialize selected_stocks variable
+            selected_stocks = []
+
             # Select top 3 by predicted return
             if predictions:
                 predictions.sort(key=lambda x: x[1], reverse=True)
@@ -1295,9 +1298,31 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
         if model is None or scaler is None or df_recent.empty:
             return -np.inf
 
-        # Engineer features
+        # Engineer features - same as training
         df_with_features = df_recent.copy()
+
+        # Add financial features that might be in the data (fill with 0 if missing)
+        financial_features = [col for col in df_with_features.columns if col.startswith('Fin_')]
+        for col in financial_features:
+            df_with_features[col] = pd.to_numeric(df_with_features[col], errors='coerce').fillna(0)
+
         df_with_features = _calculate_technical_indicators(df_with_features)
+
+        # Add annualized BH return feature (same as in training)
+        if len(df_with_features) > 1:
+            start_price = df_with_features["Close"].iloc[0]
+            end_price = df_with_features["Close"].iloc[-1]
+            total_days = (df_with_features.index[-1] - df_with_features.index[0]).days
+
+            if total_days > 0 and start_price > 0:
+                total_return = (end_price / start_price) - 1.0
+                annualized_return = (1 + total_return) ** (365.0 / total_days) - 1
+                df_with_features["Annualized_BH_Return"] = annualized_return
+            else:
+                df_with_features["Annualized_BH_Return"] = 0.0
+        else:
+            df_with_features["Annualized_BH_Return"] = 0.0
+
         df_with_features = df_with_features.dropna()
 
         if df_with_features.empty:
@@ -1306,11 +1331,18 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
         # Get latest data point
         latest_data = df_with_features.iloc[-1:]
 
+        # Align features to match scaler's expectations
+        scaler_features = list(scaler.feature_names_in_) if hasattr(scaler, 'feature_names_in_') else []
+        if scaler_features:
+            # Ensure we have all expected features, fill missing ones with 0
+            for feature in scaler_features:
+                if feature not in latest_data.columns:
+                    latest_data[feature] = 0.0
+            # Reorder columns to match scaler expectations
+            latest_data = latest_data[scaler_features]
+
         # Scale features
-        if scaler:
-            features_scaled = scaler.transform(latest_data.values.reshape(1, -1))
-        else:
-            features_scaled = latest_data.values.reshape(1, -1)
+        features_scaled = scaler.transform(latest_data.values.reshape(1, -1))
 
         # Predict return
         if hasattr(model, 'predict'):
