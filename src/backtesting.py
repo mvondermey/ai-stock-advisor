@@ -1027,6 +1027,7 @@ def _run_portfolio_backtest_walk_forward(
             predictions = []
 
             # Get predictions for all 40 stocks using current models
+            valid_predictions = 0
             for ticker in initial_top_tickers:
                 if ticker in current_models and current_models[ticker] is not None:
                     try:
@@ -1046,9 +1047,14 @@ def _run_portfolio_backtest_walk_forward(
                                 )
                                 if pred != -np.inf:
                                     predictions.append((ticker, pred))
+                                    valid_predictions += 1
 
                     except Exception as e:
                         continue
+
+            # Debug: Show prediction summary
+            if day_count == 1 or day_count % 10 == 0:
+                print(f"   🔮 Day {day_count}: {valid_predictions} valid predictions from {len(initial_top_tickers)} tickers")
 
             # Select top 3 by predicted return
             if predictions:
@@ -1087,6 +1093,12 @@ def _run_portfolio_backtest_walk_forward(
 
                     except Exception as e:
                         print(f"   ⚠️ Rebalancing failed: {e}. Keeping current portfolio.")
+            else:
+                # No stocks selected - this might happen on early days
+                if day_count == 1:
+                    print(f"   ⚠️ Day {day_count}: No valid predictions - portfolio remains unallocated")
+                elif day_count % 10 == 0:
+                    print(f"   📊 Day {day_count}: No portfolio changes needed")
 
                     # Calculate actual portfolio value based on current positions
                     if selected_stocks:
@@ -1138,32 +1150,33 @@ def _run_portfolio_backtest_walk_forward(
                     # In real implementation: execute trades here
                     # For simulation: allocate capital to new stocks
 
-                # Even if no rebalancing, update portfolio value based on current positions
-                else:
-                    # No rebalancing needed, but update portfolio value for current prices
-                    if current_portfolio_stocks:
-                        try:
-                            invested_value = 0.0
-                            for ticker in current_portfolio_stocks:
-                                if ticker in positions and positions[ticker]['shares'] > 0:
-                                    # Get current price
-                                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                                    if not ticker_data.empty:
-                                        ticker_data = ticker_data.set_index('date')
-                                        current_price_data = ticker_data.loc[:current_date]
-                                        if not current_price_data.empty:
-                                            current_price = current_price_data['Close'].iloc[-1]
-                                            position_value = positions[ticker]['shares'] * current_price
-                                            invested_value += position_value
-
-                            total_portfolio_value = invested_value + cash_balance
-                        except Exception as e:
-                            # Keep previous value if calculation fails
-                            pass
+                # Even if no rebalancing, portfolio value is updated at the end of the day loop
 
         except Exception as e:
             print(f"   ⚠️ Day {day_count}: Stock selection failed: {e}")
             # Keep existing portfolio if selection fails
+
+        # Update portfolio value (invested + cash) at end of each day
+        invested_value = 0.0
+        for ticker in current_portfolio_stocks:
+            if ticker in positions and positions[ticker]['shares'] > 0:
+                # Get current price
+                try:
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            current_price = current_price_data['Close'].iloc[-1]
+                            position_value = positions[ticker]['shares'] * current_price
+                            invested_value += position_value
+                            # Update stored position value
+                            positions[ticker]['value'] = position_value
+                except Exception as e:
+                    # Keep previous value if price lookup fails
+                    invested_value += positions[ticker]['value']
+
+        total_portfolio_value = invested_value + cash_balance
 
         # Update portfolio value history
         portfolio_values_history.append(total_portfolio_value)

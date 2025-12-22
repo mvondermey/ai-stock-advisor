@@ -144,7 +144,12 @@ def print_final_summary(
     print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
     print("-" * 136)
 
-    sorted_buy_hold_results = sorted(performance_metrics_buy_hold_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
+    # Handle empty or invalid performance_metrics_buy_hold_1y
+    if not performance_metrics_buy_hold_1y or not isinstance(performance_metrics_buy_hold_1y, list):
+        print(f"  ⚠️ No Buy & Hold performance metrics available")
+        sorted_buy_hold_results = []
+    else:
+        sorted_buy_hold_results = sorted(performance_metrics_buy_hold_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
 
     for res in sorted_buy_hold_results:
         ticker = str(res.get('ticker', 'N/A'))

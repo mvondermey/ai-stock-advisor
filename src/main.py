@@ -853,7 +853,9 @@ def main(
     print(f"\n[DEBUG] Before print_final_summary:")
     print(f"  - final_strategy_value_1y: ${final_strategy_value_1y:,.2f}")
     print(f"  - final_buy_hold_value_1y: ${final_buy_hold_value_1y:,.2f}")
-    
+    print(f"  - performance_metrics_buy_hold_1y_actual type: {type(performance_metrics_buy_hold_1y_actual)}")
+    print(f"  - performance_metrics_buy_hold_1y_actual length: {len(performance_metrics_buy_hold_1y_actual) if isinstance(performance_metrics_buy_hold_1y_actual, list) else 'N/A'}")
+
     # ✅ FIX: Use the same initial capital that was allocated to the portfolio backtest
     actual_initial_capital_1y = initial_capital_1y
     actual_tickers_analyzed = len(processed_tickers_1y)
@@ -861,15 +863,15 @@ def main(
     print_final_summary(
         sorted_final_results, models, models, scalers, optimized_params_per_ticker,
         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
-        0, 0, 0,  # Placeholder values for removed YTD parameters
-        0, 0, 0,  # Placeholder values for removed 3-Month parameters
-        actual_initial_capital_1y,
-        actual_tickers_analyzed,
-        0,  # Placeholder value for removed 1-Month final_strategy_value
-        0,  # Placeholder value for removed 1-Month ai_return
-        0,  # Placeholder value for removed 1-Month buy_hold_value
-        performance_metrics_buy_hold_1y_actual, # Pass performance_metrics_buy_hold_1y_actual for Buy & Hold
-        top_performers_data
+        actual_initial_capital_1y,  # initial_balance_used
+        actual_tickers_analyzed,  # num_tickers_analyzed
+        performance_metrics_buy_hold_1y_actual,  # performance_metrics_buy_hold_1y
+        top_performers_data,  # top_performers_data
+        None, None, None,  # YTD results (None)
+        None, None, None,  # 3-month results (None)  
+        None, None, None,  # 1-month results (None)
+        None, None, None, None,  # prediction_vs_bh placeholders (None)
+        None, None, None, None, None  # rule-based placeholders (None)
     )
     print("\n✅ Final summary prepared and printed.")
 
