@@ -373,15 +373,6 @@ def main(
     optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None
 ) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[Dict]]:
     
-    # Set NUM_PROCESSES if not already set
-    if NUM_PROCESSES is None:
-        # Import config module to modify the global variable
-        import config
-        config.NUM_PROCESSES = max(1, cpu_count() - 2)
-        # Update local reference
-        globals()['NUM_PROCESSES'] = config.NUM_PROCESSES
-        print(f"✅ NUM_PROCESSES set to {config.NUM_PROCESSES} (cpu_count() - 2)")
-    
     # Set the start method for multiprocessing to 'spawn'
     # This is crucial for CUDA compatibility with multiprocessing
     try:
@@ -402,7 +393,7 @@ def main(
     initialize_ml_libraries()
     
     # Note: multiprocessing with CUDA-enabled DL models uses 'spawn' start method for stability
-    if PYTORCH_AVAILABLE and CUDA_AVAILABLE and (USE_LSTM or USE_GRU or ("USE_TCN" in globals() and USE_TCN)):
+    if PYTORCH_AVAILABLE and CUDA_AVAILABLE and (USE_LSTM or USE_GRU):
         print("✅ CUDA + DL enabled: multiprocessing ON with 'spawn' start method for stability.")
         run_parallel = True
     
@@ -470,10 +461,40 @@ def main(
         all_tickers_data.index = all_tickers_data.index.tz_localize('UTC')
     else:
         all_tickers_data.index = all_tickers_data.index.tz_convert('UTC')
+    
+    # ✅ FIX 1: Convert wide-format DataFrame to long-format with 'ticker' column
+    # This is required for backtesting code to work properly
+    print("🔄 Converting data from wide format to long format...")
+    
+    # Check if we have MultiIndex columns (wide format from yfinance)
+    if isinstance(all_tickers_data.columns, pd.MultiIndex):
+        # Stack the DataFrame to convert from wide to long format
+        # Reset index to make 'date' a column
+        all_tickers_data_long = all_tickers_data.stack(level=1)
+        all_tickers_data_long.index.names = ['date', 'ticker']
+        all_tickers_data_long = all_tickers_data_long.reset_index()
+        all_tickers_data = all_tickers_data_long
+        print(f"   ✅ Converted to long format: {len(all_tickers_data)} rows, {len(all_tickers_data['ticker'].unique())} tickers")
+    else:
+        print("   ℹ️ Data already in long format, skipping conversion")
+    
+    # Ensure 'date' column is timezone-aware
+    if 'date' in all_tickers_data.columns:
+        if all_tickers_data['date'].dtype == 'object' or not hasattr(all_tickers_data['date'].iloc[0], 'tzinfo'):
+            all_tickers_data['date'] = pd.to_datetime(all_tickers_data['date'], utc=True)
+        elif all_tickers_data['date'].dt.tz is None:
+            all_tickers_data['date'] = all_tickers_data['date'].dt.tz_localize('UTC')
+        else:
+            all_tickers_data['date'] = all_tickers_data['date'].dt.tz_convert('UTC')
+    
     print("✅ Comprehensive data download complete.")
 
     # Cap bt_end to the latest available data to avoid future-dated slices
-    last_available = all_tickers_data.index.max()
+    if 'date' in all_tickers_data.columns:
+        last_available = pd.to_datetime(all_tickers_data['date'].max())
+    else:
+        last_available = all_tickers_data.index.max()
+    
     if last_available < bt_end:
         print(f"ℹ️ Capping backtest end date from {bt_end.date()} to last available data {last_available.date()}")
         end_date = last_available
@@ -486,37 +507,77 @@ def main(
     if not spy_df.empty:
         spy_df['SPY_Returns'] = spy_df['Close'].pct_change()
         spy_df['Market_Momentum_SPY'] = spy_df['SPY_Returns'].rolling(window=FEAT_VOL_WINDOW).mean()
-        spy_df = spy_df[['Market_Momentum_SPY']]
-        spy_df.columns = pd.MultiIndex.from_product([spy_df.columns, ['SPY']])
+        spy_df = spy_df[['Market_Momentum_SPY']].reset_index()
+        spy_df.columns = ['date', 'Market_Momentum_SPY']
         
-        # Merge SPY data into all_tickers_data
-        all_tickers_data = all_tickers_data.merge(spy_df, left_index=True, right_index=True, how='left')
-        # Forward fill and then back fill any NaNs introduced by the merge
-        all_tickers_data['Market_Momentum_SPY', 'SPY'] = all_tickers_data['Market_Momentum_SPY', 'SPY'].ffill().bfill().fillna(0)
-        print("✅ SPY Market Momentum data fetched and merged.")
+        # ✅ FIX 2: Merge SPY data on 'date' column (long format)
+        if 'date' in all_tickers_data.columns:
+            all_tickers_data = all_tickers_data.merge(spy_df, on='date', how='left')
+            # Forward fill and then back fill any NaNs introduced by the merge
+            all_tickers_data['Market_Momentum_SPY'] = all_tickers_data['Market_Momentum_SPY'].ffill().bfill().fillna(0)
+            print("✅ SPY Market Momentum data fetched and merged.")
+        else:
+            print("⚠️ 'date' column not found in all_tickers_data. Skipping SPY merge.")
     else:
         print("⚠️ Could not fetch SPY data. Market Momentum feature will be 0.")
         # Add a zero-filled column if SPY data couldn't be fetched
-        all_tickers_data['Market_Momentum_SPY', 'SPY'] = 0.0
+        all_tickers_data['Market_Momentum_SPY'] = 0.0
 
-    # --- Fetch and merge intermarket data ---
     # --- Fetch and merge intermarket data ---
     print("🔍 Fetching intermarket data...")
     intermarket_df = _fetch_intermarket_data(earliest_date_needed, end_date)
     if not intermarket_df.empty:
-        # Rename columns to include 'Intermarket' level for MultiIndex
-        intermarket_df.columns = pd.MultiIndex.from_product([intermarket_df.columns, ['Intermarket']])
-        all_tickers_data = all_tickers_data.merge(intermarket_df, left_index=True, right_index=True, how='left')
-        # Forward fill and then back fill any NaNs introduced by the merge
-        for col in intermarket_df.columns:
-            all_tickers_data[col] = all_tickers_data[col].ffill().bfill().fillna(0)
-        print("✅ Intermarket data fetched and merged.")
+        # ✅ FIX 3: Ensure intermarket_df index is timezone-aware before merge
+        if intermarket_df.index.tzinfo is None:
+            intermarket_df.index = intermarket_df.index.tz_localize('UTC')
+        else:
+            intermarket_df.index = intermarket_df.index.tz_convert('UTC')
+        
+        intermarket_df = intermarket_df.reset_index()
+        intermarket_df.columns = ['date'] + [f'Intermarket_{col}' for col in intermarket_df.columns[1:]]
+        
+        # Merge intermarket data on 'date' column (long format)
+        if 'date' in all_tickers_data.columns:
+            all_tickers_data = all_tickers_data.merge(intermarket_df, on='date', how='left')
+            # Forward fill and then back fill any NaNs introduced by the merge
+            for col in intermarket_df.columns[1:]:  # Skip 'date' column
+                all_tickers_data[col] = all_tickers_data[col].ffill().bfill().fillna(0)
+            print("✅ Intermarket data fetched and merged.")
+        else:
+            print("⚠️ 'date' column not found in all_tickers_data. Skipping intermarket merge.")
     else:
         print("⚠️ Could not fetch intermarket data. Intermarket features will be 0.")
         # Add zero-filled columns for intermarket features to ensure feature set consistency
         for col_name in ['VIX_Index_Returns', 'DXY_Index_Returns', 'Gold_Futures_Returns', 'Oil_Futures_Returns', 'US10Y_Yield_Returns', 'Oil_Price_Returns', 'Gold_Price_Returns']:
-            if (col_name, 'Intermarket') not in all_tickers_data.columns:
-                all_tickers_data[col_name, 'Intermarket'] = 0.0
+            feature_col = f'Intermarket_{col_name}'
+            if feature_col not in all_tickers_data.columns:
+                all_tickers_data[feature_col] = 0.0
+    # ✅ FIX 6: Add data validation before proceeding
+    print("\n🔍 Validating data structure...")
+    if 'ticker' not in all_tickers_data.columns:
+        print("❌ ERROR: 'ticker' column not found in all_tickers_data after conversion!")
+        print(f"   Available columns: {list(all_tickers_data.columns)}")
+        return (None,) * 15
+    
+    if 'date' not in all_tickers_data.columns:
+        print("❌ ERROR: 'date' column not found in all_tickers_data after conversion!")
+        print(f"   Available columns: {list(all_tickers_data.columns)}")
+        return (None,) * 15
+    
+    # Check for required OHLCV columns
+    required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+    missing_cols = [col for col in required_cols if col not in all_tickers_data.columns]
+    if missing_cols:
+        print(f"❌ ERROR: Missing required columns: {missing_cols}")
+        print(f"   Available columns: {list(all_tickers_data.columns)}")
+        return (None,) * 15
+    
+    print(f"✅ Data validation passed:")
+    print(f"   - Shape: {all_tickers_data.shape}")
+    print(f"   - Tickers: {len(all_tickers_data['ticker'].unique())}")
+    print(f"   - Date range: {all_tickers_data['date'].min()} to {all_tickers_data['date'].max()}")
+    print(f"   - Columns: {list(all_tickers_data.columns)}")
+    
     # --- Identify top performers if not provided ---
     if top_performers_data is None:
         title = "🚀 AI-Powered Momentum & Trend Strategy"

@@ -940,6 +940,25 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   🧠 Model retraining: Every {RETRAIN_FREQUENCY_DAYS} days for all {len(initial_top_tickers)} stocks")
     print(f"   🎯 Daily selection: Pick best 3 from {len(initial_top_tickers)} stocks EVERY DAY using current models")
     print(f"   💰 Rebalance only when portfolio changes (transaction costs minimized)")
+    
+    # ✅ FIX 7: Add data structure validation
+    print(f"\n🔍 Validating input data structure...")
+    print(f"   - all_tickers_data type: {type(all_tickers_data)}")
+    print(f"   - all_tickers_data shape: {all_tickers_data.shape}")
+    print(f"   - all_tickers_data columns: {list(all_tickers_data.columns)}")
+    
+    if 'ticker' in all_tickers_data.columns:
+        print(f"   ✅ 'ticker' column found")
+        print(f"   - Unique tickers in data: {len(all_tickers_data['ticker'].unique())}")
+        print(f"   - Sample tickers: {list(all_tickers_data['ticker'].unique())[:5]}")
+    else:
+        print(f"   ❌ 'ticker' column NOT found! This will cause prediction failures.")
+        print(f"   - Checking if MultiIndex columns: {isinstance(all_tickers_data.columns, pd.MultiIndex)}")
+        
+    if 'date' in all_tickers_data.columns:
+        print(f"   ✅ 'date' column found")
+    else:
+        print(f"   ❌ 'date' column NOT found!")
 
     # Implement day-by-day walk-forward backtesting with daily selection
     from training_phase import train_models_for_period
@@ -948,6 +967,20 @@ def _run_portfolio_backtest_walk_forward(
     current_models = initial_models.copy()  # Single regression models
     current_scalers = initial_scalers.copy()
     current_y_scalers = initial_y_scalers.copy()
+
+    # Debug: Check initial models/scalers
+    print(f"   🔍 Initial models: {len(current_models)} tickers, sample: {list(current_models.keys())[:3]}")
+    print(f"   🔍 Initial scalers: {len(current_scalers)} tickers, sample: {list(current_scalers.keys())[:3]}")
+    print(f"   🔍 Initial y_scalers: {len(current_y_scalers)} tickers, sample: {list(current_y_scalers.keys())[:3]}")
+
+    # Check if any models are None
+    none_models = [t for t, m in current_models.items() if m is None]
+    if none_models:
+        print(f"   ⚠️ Warning: {len(none_models)} models are None: {none_models[:5]}...")
+
+    none_scalers = [t for t, s in current_scalers.items() if s is None]
+    if none_scalers:
+        print(f"   ⚠️ Warning: {len(none_scalers)} scalers are None: {none_scalers[:5]}...")
 
     # Track current portfolio (starts empty)
     current_portfolio_stocks = []
@@ -1029,6 +1062,7 @@ def _run_portfolio_backtest_walk_forward(
             # Get predictions for all 40 stocks using current models
             valid_predictions = 0
             for ticker in initial_top_tickers:
+                print(f"   🔍 Checking {ticker}: in models={ticker in current_models}, model not None={current_models.get(ticker) is not None if ticker in current_models else False}")
                 if ticker in current_models and current_models[ticker] is not None:
                     try:
                         # Get data up to current date for prediction
@@ -1038,6 +1072,7 @@ def _run_portfolio_backtest_walk_forward(
                             data_slice = ticker_data.loc[:current_date]
 
                             if len(data_slice) >= 30:  # Need minimum data for prediction
+                                print(f"   📊 {ticker}: Calling prediction with {len(data_slice.tail(30))} rows, model={type(current_models[ticker]).__name__ if current_models[ticker] else None}, scaler={type(current_scalers.get(ticker)).__name__ if current_scalers.get(ticker) else None}")
                                 pred = _quick_predict_return(
                                     ticker, data_slice.tail(30),  # Use last 30 days
                                     current_models[ticker],  # Single model
@@ -1045,9 +1080,14 @@ def _run_portfolio_backtest_walk_forward(
                                     current_y_scalers.get(ticker),
                                     horizon_days
                                 )
+                                print(f"   📊 {ticker}: Prediction result = {pred}")
+                                # ✅ FIX 4: Only add valid predictions
                                 if pred != -np.inf:
                                     predictions.append((ticker, pred))
                                     valid_predictions += 1
+                            else:
+                                print(f"   ⚠️ {ticker}: Only {len(data_slice)} rows available, need >=30")
+                                # ✅ FIX 4: Don't reference undefined 'pred' variable
 
                     except Exception as e:
                         continue
@@ -1295,11 +1335,22 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
 def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y_scaler, horizon_days: int) -> float:
     """Quick prediction of return for stock reselection during walk-forward backtest."""
     try:
-        if model is None or scaler is None or df_recent.empty:
+        if model is None:
+            print(f"   ⚠️ {ticker}: model is None")
             return -np.inf
+        if scaler is None:
+            print(f"   ⚠️ {ticker}: scaler is None")
+            return -np.inf
+        if df_recent.empty:
+            print(f"   ⚠️ {ticker}: df_recent is empty")
+            return -np.inf
+
+        print(f"   🔍 {ticker}: Starting prediction with {len(df_recent)} rows, model type: {type(model).__name__}")
 
         # Engineer features - same as training
         df_with_features = df_recent.copy()
+
+        print(f"   🔧 {ticker}: Initial features: {list(df_with_features.columns)}")
 
         # Add financial features that might be in the data (fill with 0 if missing)
         financial_features = [col for col in df_with_features.columns if col.startswith('Fin_')]
@@ -1307,6 +1358,7 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
             df_with_features[col] = pd.to_numeric(df_with_features[col], errors='coerce').fillna(0)
 
         df_with_features = _calculate_technical_indicators(df_with_features)
+        print(f"   🔧 {ticker}: After technical indicators: {len(df_with_features)} rows, {len(df_with_features.columns)} features")
 
         # Add annualized BH return feature (same as in training)
         if len(df_with_features) > 1:
@@ -1324,15 +1376,19 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
             df_with_features["Annualized_BH_Return"] = 0.0
 
         df_with_features = df_with_features.dropna()
+        print(f"   🔧 {ticker}: After dropna: {len(df_with_features)} rows")
 
         if df_with_features.empty:
+            print(f"   ❌ {ticker}: df_with_features is empty after feature engineering")
             return -np.inf
 
         # Get latest data point
         latest_data = df_with_features.iloc[-1:]
+        print(f"   📊 {ticker}: Latest data shape: {latest_data.shape}, features: {list(latest_data.columns)}")
 
         # Align features to match scaler's expectations
         scaler_features = list(scaler.feature_names_in_) if hasattr(scaler, 'feature_names_in_') else []
+        print(f"   🔧 {ticker}: Scaler expects {len(scaler_features)} features: {scaler_features[:5]}...")
         if scaler_features:
             # Ensure we have all expected features, fill missing ones with 0
             for feature in scaler_features:
@@ -1340,24 +1396,40 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
                     latest_data[feature] = 0.0
             # Reorder columns to match scaler expectations
             latest_data = latest_data[scaler_features]
+            print(f"   🔧 {ticker}: After alignment: {latest_data.shape}")
 
         # Scale features
-        features_scaled = scaler.transform(latest_data.values.reshape(1, -1))
+        try:
+            features_scaled = scaler.transform(latest_data.values.reshape(1, -1))
+            print(f"   🔧 {ticker}: Features scaled successfully, shape: {features_scaled.shape}")
+        except Exception as e:
+            print(f"   ❌ {ticker}: Scaling failed: {e}")
+            return -np.inf
 
         # Predict return
-        if hasattr(model, 'predict'):
-            prediction = model.predict(features_scaled)[0]
-        else:
-            # Handle different model types
-            prediction = model(latest_data.values.reshape(1, -1, -1) if hasattr(model, '__call__') else features_scaled)[0]
+        try:
+            if hasattr(model, 'predict'):
+                prediction = model.predict(features_scaled)[0]
+                print(f"   🤖 {ticker}: Model.predict() successful: {float(prediction):.4f}")
+            else:
+                # Handle different model types
+                prediction = model(latest_data.values.reshape(1, -1, -1) if hasattr(model, '__call__') else features_scaled)[0]
+                print(f"   🤖 {ticker}: Model call successful: {float(prediction):.4f}")
 
-        # Unscale if y_scaler exists
-        if y_scaler and hasattr(y_scaler, 'inverse_transform'):
-            prediction = y_scaler.inverse_transform(prediction.reshape(-1, 1))[0][0]
+            # Unscale if y_scaler exists
+            if y_scaler and hasattr(y_scaler, 'inverse_transform'):
+                prediction = y_scaler.inverse_transform(prediction.reshape(-1, 1))[0][0]
+                print(f"   🔄 {ticker}: Y-scaler applied: {float(prediction):.4f}")
 
-        return float(prediction)
+            print(f"   ✅ {ticker}: Final prediction = {float(prediction):.4f}")
+            return float(prediction)
+
+        except Exception as e:
+            print(f"   ❌ {ticker}: Prediction failed: {e}")
+            return -np.inf
 
     except Exception as e:
+        print(f"   ⚠️ Prediction failed for {ticker}: {type(e).__name__}: {str(e)[:100]}")
         return -np.inf
 
 

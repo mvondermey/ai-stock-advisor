@@ -591,6 +591,12 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
                 cached_df = pd.read_csv(cache_file, index_col='Date', parse_dates=True)
 
+                # ✅ FIX 5: Ensure cached DataFrame index is timezone-aware before comparison
+                if cached_df.index.tzinfo is None:
+                    cached_df.index = cached_df.index.tz_localize('UTC')
+                else:
+                    cached_df.index = cached_df.index.tz_convert('UTC')
+
                 price_df = cached_df.loc[(cached_df.index >= _to_utc(start)) & (cached_df.index <= _to_utc(end))].copy()
 
             except Exception as e:

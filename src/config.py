@@ -63,7 +63,8 @@ PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
 
 # --- Parallel Processing
-NUM_PROCESSES           = None  # Will be set to cpu_count() - 2 in main.py
+from multiprocessing import cpu_count
+NUM_PROCESSES           = max(1, cpu_count() - 2)  # Use all but 2 CPU cores for parallel processing
 
 # --- Backtest & training windows
 BACKTEST_DAYS           = 60         # 2 months for backtest (faster testing)
