@@ -374,10 +374,13 @@ def main(
 ) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[Dict]]:
     
     # Set NUM_PROCESSES if not already set
-    global NUM_PROCESSES
     if NUM_PROCESSES is None:
-        NUM_PROCESSES = max(1, cpu_count() - 2)
-        print(f"✅ NUM_PROCESSES set to {NUM_PROCESSES} (cpu_count() - 2)")
+        # Import config module to modify the global variable
+        import config
+        config.NUM_PROCESSES = max(1, cpu_count() - 2)
+        # Update local reference
+        globals()['NUM_PROCESSES'] = config.NUM_PROCESSES
+        print(f"✅ NUM_PROCESSES set to {config.NUM_PROCESSES} (cpu_count() - 2)")
     
     # Set the start method for multiprocessing to 'spawn'
     # This is crucial for CUDA compatibility with multiprocessing
