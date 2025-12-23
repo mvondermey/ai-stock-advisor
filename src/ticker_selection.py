@@ -361,7 +361,14 @@ def find_top_performers(
         print("❌ No ticker data provided to find_top_performers. Exiting.")
         return []
 
-    end_date = all_tickers_data.index.max()
+    # ✅ FIX: Handle both long-format (with 'date' column) and wide-format (DatetimeIndex)
+    if 'date' in all_tickers_data.columns:
+        # Long format: dates are in 'date' column
+        end_date = pd.to_datetime(all_tickers_data['date']).max()
+    else:
+        # Wide format: dates are in index
+        end_date = all_tickers_data.index.max()
+    
     start_date = end_date - timedelta(days=365)
     ytd_start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
 
@@ -393,33 +400,72 @@ def find_top_performers(
         print("ℹ️ Performance benchmark is disabled. All tickers will be considered.")
 
     print("🔍 Calculating 1-Year performance from pre-fetched data...")
-    all_data = all_tickers_data.loc[start_date:end_date]
+    
+    # ✅ FIX: Handle both long-format and wide-format data
+    if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
+        # Long format: filter using boolean indexing
+        all_data = all_tickers_data[
+            (all_tickers_data['date'] >= start_date) & 
+            (all_tickers_data['date'] <= end_date)
+        ].copy()
+        valid_tickers = all_data['ticker'].unique()
+        
+        params = []
+        for ticker in valid_tickers:
+            try:
+                # Filter data for this ticker
+                ticker_data = all_data[all_data['ticker'] == ticker].copy()
+                
+                # Find Close column
+                close_col = None
+                for attr in ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']:
+                    if attr in ticker_data.columns:
+                        close_col = attr
+                        break
+                
+                if close_col is None:
+                    continue
+                
+                # Create time series with date index
+                ticker_data = ticker_data.set_index('date')
+                s = pd.to_numeric(ticker_data[close_col], errors='coerce')
+                s = s.ffill().bfill()
+                
+                if s.dropna().shape[0] < 2:
+                    continue
+                    
+                ticker_df = pd.DataFrame({'Close': s})
+                params.append((ticker, ticker_df))
+            except (KeyError, ValueError) as e:
+                pass
+    else:
+        # Wide format: use original logic
+        all_data = all_tickers_data.loc[start_date:end_date]
+        valid_tickers = all_data.columns.get_level_values(1).unique()
+
+        params = []
+        for ticker in valid_tickers:
+            try:
+                close_key = None
+                for attr in ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']:
+                    if (attr, ticker) in all_data.columns:
+                        close_key = (attr, ticker)
+                        break
+                if close_key is None:
+                    continue
+                s = pd.to_numeric(all_data.loc[:, close_key], errors='coerce')
+                s = s.ffill().bfill()
+                s = s.loc[start_date:end_date]
+                if s.dropna().shape[0] < 2:
+                    continue
+                ticker_data = pd.DataFrame({'Close': s})
+                params.append((ticker, ticker_data))
+            except KeyError:
+                pass
+    
     print("...performance calculation complete.")
 
     all_tickers_performance_with_df = []
-
-    params = []
-    valid_tickers = all_data.columns.get_level_values(1).unique()
-
-    for ticker in valid_tickers:
-        try:
-            close_key = None
-            for attr in ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']:
-                if (attr, ticker) in all_data.columns:
-                    close_key = (attr, ticker)
-                    break
-            if close_key is None:
-                continue
-            s = pd.to_numeric(all_data.loc[:, close_key], errors='coerce')
-            s = s.ffill().bfill()
-            s = s.loc[start_date:end_date]
-            if s.dropna().shape[0] < 2:
-                continue
-            ticker_data = pd.DataFrame({'Close': s})
-            params.append((ticker, ticker_data))
-        except KeyError:
-            pass
-
     with Pool() as pool: # Use default number of processes
         results = list(tqdm(pool.imap(_calculate_performance_worker, params), total=len(params), desc="Calculating 1Y Performance"))
         for res in results:

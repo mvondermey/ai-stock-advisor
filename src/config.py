@@ -57,7 +57,7 @@ ALPACA_STOCKS_LIMIT = 100  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = ["NASDAQ"]  # NASDAQ only
-N_TOP_TICKERS           = 40       # Evaluate top 40 candidates by 1-year momentum; backtest ranks and picks top 3
+N_TOP_TICKERS           = 5       # Testing with 1 stock to verify predictions work
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals

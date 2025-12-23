@@ -19,6 +19,7 @@ from config import (
 )
 from data_utils import fetch_training_data, _ensure_dir
 from ml_models import initialize_ml_libraries, train_and_evaluate_models
+from data_validation import validate_training_data, validate_features_after_engineering, InsufficientDataError
 
 # Set multiprocessing start method to 'spawn' for CUDA safety
 # This must be done before any Pool is created
@@ -215,7 +216,7 @@ def train_models_for_period(
     top_performers_data: List[Tuple[str, float, float]],
     feature_set: Optional[List[str]] = None,
     run_parallel: bool = True
-) -> Tuple[Dict, Dict, Dict, Dict]:
+) -> List[Dict]:
     """
     Train single regression models for 1-Year period.
 
@@ -230,7 +231,7 @@ def train_models_for_period(
         run_parallel: Whether to use parallel processing
 
     Returns:
-        List of training result dictionaries
+        List of training result dictionaries with keys: 'status', 'ticker', 'model', 'scaler', 'y_scaler'
     """
     print(f"\n🔍 Step 3: Training AI models for {period_name} backtest...")
     
@@ -279,9 +280,36 @@ def train_models_for_period(
         print(f"    📊 {ticker} {period_name[:2]} Training: Horizon={period_horizon}d, Target={period_target_pct:.2%} (B&H: {ticker_bh_return:.2%}, Scale={horizon_scale:.3f})")
         
         try:
-            # Slice the main DataFrame for the training period
-            ticker_train_data = all_tickers_data.loc[train_start:train_end, (slice(None), ticker)]
-            ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
+            # ✅ FIX: Handle both long-format and wide-format data
+            if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
+                # Long format: filter by ticker and date range
+                ticker_train_data = all_tickers_data[
+                    (all_tickers_data['ticker'] == ticker) &
+                    (all_tickers_data['date'] >= train_start) &
+                    (all_tickers_data['date'] <= train_end)
+                ].copy()
+                
+                if ticker_train_data.empty:
+                    print(f"  ⚠️ No training data found for {ticker} in period {train_start} to {train_end}. Skipping.")
+                    continue
+                
+                # Set date as index for training
+                ticker_train_data = ticker_train_data.set_index('date')
+                # Remove ticker column
+                if 'ticker' in ticker_train_data.columns:
+                    ticker_train_data = ticker_train_data.drop('ticker', axis=1)
+            else:
+                # Wide format: use original slicing logic
+                ticker_train_data = all_tickers_data.loc[train_start:train_end, (slice(None), ticker)]
+                ticker_train_data.columns = ticker_train_data.columns.droplevel(1)
+            
+            # ✅ VALIDATION: Check if we have enough training data
+            try:
+                validate_training_data(ticker_train_data, ticker, train_start, train_end)
+            except InsufficientDataError as e:
+                print(f"  {str(e)}")
+                continue
+            
             training_params.append((
                 ticker,
                 ticker_train_data.copy(),
@@ -289,8 +317,8 @@ def train_models_for_period(
                 period_horizon,
                 feature_set
             ))
-        except (KeyError, IndexError):
-            print(f"  ⚠️ Could not slice training data for {ticker} for {period_name} period. Skipping.")
+        except (KeyError, IndexError) as e:
+            print(f"  ⚠️ Could not slice training data for {ticker} for {period_name} period: {e}. Skipping.")
             continue
     
     # Run training in parallel or sequentially
@@ -309,6 +337,8 @@ def train_models_for_period(
     # Collect results
     y_scalers = {}  # ✅ Initialize y_scalers dictionary
     model_winners = {}  # ✅ Track model selection statistics
+    result_list = []  # ✅ NEW: Collect results as list for backtesting compatibility
+    
     for res in training_results:
         if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'):
             # Single model - use same model for both buy and sell logic
@@ -316,6 +346,10 @@ def train_models_for_period(
             models_sell[res['ticker']] = res['model']  # Same model for both
             scalers[res['ticker']] = res['scaler']
             y_scalers[res['ticker']] = res.get('y_scaler', None)  # ✅ Collect y_scaler
+            
+            # ✅ NEW: Add to result list for backtest compatibility
+            result_list.append(res)
+            
             # Track winners for statistics
             if 'winner' in res:
                 winner_key = f"{res['ticker']}_Regression"
@@ -339,5 +373,6 @@ def train_models_for_period(
             print(f"{model_name:<30} {count:>15}")
         print()
 
-    return models, {}, scalers, y_scalers
+    # ✅ FIX: Return list of results for backtesting compatibility
+    return result_list
 

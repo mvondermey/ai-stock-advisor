@@ -27,6 +27,7 @@ from config import (
 )
 from alpha_training import AlphaThresholdConfig, select_threshold_by_alpha
 from scipy.stats import uniform, beta
+from data_validation import validate_prediction_data, validate_features_after_engineering, InsufficientDataError
 import os
 import json
 import pandas as pd
@@ -1008,6 +1009,14 @@ def _run_portfolio_backtest_walk_forward(
     day_count = 0
     retrain_count = 0
     rebalance_count = 0
+    
+    # ✅ NEW: Track consecutive failures for fail-fast
+    consecutive_no_predictions = 0
+    consecutive_training_failures = 0
+    MAX_CONSECUTIVE_FAILURES = 5  # Abort if 5 days in a row fail
+    
+    # ✅ NEW: Track daily predictions vs actuals
+    daily_prediction_log = []
 
     for current_date in business_days:
         day_count += 1
@@ -1015,9 +1024,12 @@ def _run_portfolio_backtest_walk_forward(
         # Check if it's time to retrain (every RETRAIN_FREQUENCY_DAYS)
         should_retrain = (day_count % RETRAIN_FREQUENCY_DAYS == 1)  # Retrain on day 1, 11, 21, etc.
 
-        if should_retrain and day_count > 1:  # Don't retrain on first day
+        # ✅ FIX: Train models on Day 1 if initial_models is empty, OR on regular retrain schedule
+        needs_training = (day_count == 1 and not current_models) or (should_retrain and day_count > 1)
+        
+        if needs_training:
             retrain_count += 1
-            print(f"\n🧠 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): Retraining models...")
+            print(f"\n🧠 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): {'Initial training' if day_count == 1 else 'Retraining'} models...")
 
             try:
                 # Retrain models using data up to previous day
@@ -1051,9 +1063,35 @@ def _run_portfolio_backtest_walk_forward(
                 current_y_scalers.update(new_y_scalers)
 
                 print(f"   ✅ Retrained models for {len(new_models)} stocks")
+                
+                # ✅ FIX: Check if training completely failed
+                if len(new_models) == 0:
+                    consecutive_training_failures += 1
+                    print(f"   ⚠️ WARNING: No models successfully trained! ({consecutive_training_failures} consecutive failures)")
+                    
+                    if consecutive_training_failures >= MAX_CONSECUTIVE_FAILURES:
+                        print(f"\n❌ ABORT: Training has failed {consecutive_training_failures} times in a row!")
+                        print(f"   💡 Possible reasons:")
+                        print(f"      - Insufficient historical data for features")
+                        print(f"      - Data quality issues (too many NaN values)")
+                        print(f"      - Training period too short")
+                        print(f"   🔧 Solutions:")
+                        print(f"      - Increase TRAIN_LOOKBACK_DAYS in config")
+                        print(f"      - Check data sources for quality")
+                        print(f"      - Reduce number of tickers")
+                        raise InsufficientDataError("Training consistently failing - aborting backtest")
+                else:
+                    consecutive_training_failures = 0  # Reset counter on success
 
+            except InsufficientDataError:
+                raise  # Re-raise to abort
             except Exception as e:
+                consecutive_training_failures += 1
                 print(f"   ⚠️ Retraining failed: {e}. Using existing models.")
+                
+                if consecutive_training_failures >= MAX_CONSECUTIVE_FAILURES:
+                    print(f"\n❌ ABORT: Training has failed {consecutive_training_failures} times in a row!")
+                    raise InsufficientDataError(f"Training consistently failing: {e}")
 
         # Daily stock selection: Use current models to pick best 3 from 40 stocks
         try:
@@ -1071,10 +1109,10 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data = ticker_data.set_index('date')
                             data_slice = ticker_data.loc[:current_date]
 
-                            if len(data_slice) >= 30:  # Need minimum data for prediction
-                                print(f"   📊 {ticker}: Calling prediction with {len(data_slice.tail(30))} rows, model={type(current_models[ticker]).__name__ if current_models[ticker] else None}, scaler={type(current_scalers.get(ticker)).__name__ if current_scalers.get(ticker) else None}")
+                            if len(data_slice) >= 120:  # Need minimum 120 days for features
+                                print(f"   📊 {ticker}: Calling prediction with {len(data_slice.tail(120))} rows, model={type(current_models[ticker]).__name__ if current_models[ticker] else None}, scaler={type(current_scalers.get(ticker)).__name__ if current_scalers.get(ticker) else None}")
                                 pred = _quick_predict_return(
-                                    ticker, data_slice.tail(30),  # Use last 30 days
+                                    ticker, data_slice.tail(120),  # Use last 120 days for features
                                     current_models[ticker],  # Single model
                                     current_scalers.get(ticker),
                                     current_y_scalers.get(ticker),
@@ -1086,7 +1124,7 @@ def _run_portfolio_backtest_walk_forward(
                                     predictions.append((ticker, pred))
                                     valid_predictions += 1
                             else:
-                                print(f"   ⚠️ {ticker}: Only {len(data_slice)} rows available, need >=30")
+                                print(f"   ⚠️ {ticker}: Only {len(data_slice)} rows available, need >=120 for feature engineering")
                                 # ✅ FIX 4: Don't reference undefined 'pred' variable
 
                     except Exception as e:
@@ -1096,13 +1134,39 @@ def _run_portfolio_backtest_walk_forward(
             if day_count == 1 or day_count % 10 == 0:
                 print(f"   🔮 Day {day_count}: {valid_predictions} valid predictions from {len(initial_top_tickers)} tickers")
 
+            # ✅ FIX: Check if no predictions are being made
+            if valid_predictions == 0:
+                consecutive_no_predictions += 1
+                if consecutive_no_predictions >= MAX_CONSECUTIVE_FAILURES:
+                    print(f"\n❌ ABORT: No valid predictions for {consecutive_no_predictions} consecutive days!")
+                    print(f"   💡 Possible reasons:")
+                    print(f"      - Models are None or not trained")
+                    print(f"      - Insufficient data for prediction (need 120+ days)")
+                    print(f"      - All predictions returning -inf")
+                    print(f"   🔧 Solutions:")
+                    print(f"      - Check model training logs above")
+                    print(f"      - Verify data availability with diagnostics")
+                    print(f"      - Increase data period")
+                    raise InsufficientDataError("No predictions for multiple days - aborting backtest")
+            else:
+                consecutive_no_predictions = 0  # Reset on success
+            
+            # ✅ NEW: Store predictions with metadata
+            day_predictions = {
+                'date': current_date,
+                'day': day_count,
+                'predictions': [(t, p) for t, p in predictions]  # Store all predictions made
+            }
+
             # Initialize selected_stocks variable
             selected_stocks = []
 
             # Select top 3 by predicted return
             if predictions:
                 predictions.sort(key=lambda x: x[1], reverse=True)
-                selected_stocks = [ticker for ticker, _ in predictions[:3]]
+                # Select top 3 stocks (or all if fewer available)
+                num_to_select = min(3, len(predictions))
+                selected_stocks = [ticker for ticker, _ in predictions[:num_to_select]]
 
                 # Check if portfolio changed (only then incur transaction costs)
                 if set(selected_stocks) != set(current_portfolio_stocks):
@@ -1224,6 +1288,63 @@ def _run_portfolio_backtest_walk_forward(
         # Update portfolio value history
         portfolio_values_history.append(total_portfolio_value)
 
+        # ✅ NEW: Calculate actual returns vs predictions at end of each day
+        if day_predictions['predictions'] and day_count > 1:
+            # Calculate actual returns for the next prediction horizon (e.g., 20 days)
+            future_date = current_date + timedelta(days=horizon_days)
+            
+            prediction_results = []
+            for ticker, predicted_return in day_predictions['predictions']:
+                try:
+                    # Get current and future price
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        
+                        # Current price
+                        current_data = ticker_data.loc[:current_date]
+                        if not current_data.empty:
+                            current_price = current_data['Close'].iloc[-1]
+                            
+                            # Future price (if available in our data)
+                            future_data = ticker_data.loc[:future_date]
+                            if not future_data.empty and len(future_data) > len(current_data):
+                                future_price = future_data['Close'].iloc[-1]
+                                actual_return = (future_price / current_price - 1)
+                                
+                                # Calculate Buy & Hold return for comparison
+                                bh_return = actual_return  # Same as actual
+                                
+                                prediction_results.append({
+                                    'ticker': ticker,
+                                    'predicted_return': predicted_return,
+                                    'actual_return': actual_return,
+                                    'bh_return': bh_return,
+                                    'prediction_error': abs(predicted_return - actual_return),
+                                    'current_price': current_price,
+                                    'future_price': future_price
+                                })
+                except Exception:
+                    continue
+            
+            # Store results
+            if prediction_results:
+                day_predictions['results'] = prediction_results
+                daily_prediction_log.append(day_predictions)
+                
+                # Print daily comparison (every 10 days or when portfolio changes)
+                if day_count % 10 == 0 or rebalance_count > 0:
+                    print(f"\n   📊 Day {day_count} - AI Predictions vs Buy & Hold (Next {horizon_days} days):")
+                    print(f"   {'Ticker':<8} {'AI Predicted':<14} {'Buy & Hold':<12} {'Error':<10} {'Direction':<10}")
+                    print(f"   {'-'*65}")
+                    for res in prediction_results[:5]:  # Show top 5
+                        # Check if direction is correct
+                        pred_up = res['predicted_return'] > 0
+                        actual_up = res['bh_return'] > 0
+                        direction = "✓" if pred_up == actual_up else "✗"
+                        print(f"   {res['ticker']:<8} {res['predicted_return']:>12.2%}  {res['bh_return']:>10.2%}  "
+                              f"{res['prediction_error']:>8.2%}  {direction:^10}")
+        
         # Periodic progress update
         if day_count % 50 == 0:
             print(f"   📈 Processed {day_count}/{len(business_days)} days, portfolio: {current_portfolio_stocks}")
@@ -1233,6 +1354,52 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   🧠 Model retrains: {retrain_count}")
     print(f"   🔄 Portfolio rebalances: {rebalance_count} (only when stocks change)")
     print(f"   💰 Transaction costs minimized - daily monitoring, trading only when portfolio changes")
+    
+    # ✅ NEW: Print prediction accuracy summary
+    if daily_prediction_log:
+        print(f"\n📈 PREDICTION ACCURACY SUMMARY")
+        print(f"=" * 80)
+        
+        all_predictions = []
+        for day_log in daily_prediction_log:
+            if 'results' in day_log:
+                all_predictions.extend(day_log['results'])
+        
+        if all_predictions:
+            # Calculate statistics
+            avg_predicted = np.mean([p['predicted_return'] for p in all_predictions])
+            avg_bh = np.mean([p['bh_return'] for p in all_predictions])
+            avg_error = np.mean([p['prediction_error'] for p in all_predictions])
+            
+            # Direction accuracy (did we predict up/down correctly?)
+            correct_direction = sum(1 for p in all_predictions 
+                                   if (p['predicted_return'] > 0 and p['bh_return'] > 0) or 
+                                      (p['predicted_return'] < 0 and p['bh_return'] < 0))
+            direction_accuracy = (correct_direction / len(all_predictions)) * 100
+            
+            print(f"Total Predictions Made: {len(all_predictions)}")
+            print(f"Average AI Predicted Return: {avg_predicted:.2%}")
+            print(f"Average Buy & Hold Return: {avg_bh:.2%}")
+            print(f"Average Prediction Error: {avg_error:.2%}")
+            print(f"Direction Accuracy: {direction_accuracy:.1f}% ({correct_direction}/{len(all_predictions)})")
+            
+            # Show best and worst predictions
+            sorted_by_error = sorted(all_predictions, key=lambda x: x['prediction_error'])
+            print(f"\n🎯 Best Predictions (lowest error):")
+            for p in sorted_by_error[:3]:
+                print(f"   {p['ticker']}: AI Predicted {p['predicted_return']:.2%}, "
+                      f"B&H {p['bh_return']:.2%}, Error {p['prediction_error']:.2%}")
+            
+            print(f"\n❌ Worst Predictions (highest error):")
+            for p in sorted_by_error[-3:]:
+                print(f"   {p['ticker']}: AI Predicted {p['predicted_return']:.2%}, "
+                      f"B&H {p['bh_return']:.2%}, Error {p['prediction_error']:.2%}")
+            
+            print(f"=" * 80)
+        else:
+            print(f"⚠️ No prediction results available (predictions made but actuals not yet known)")
+    else:
+        print(f"\n⚠️ WARNING: No predictions were logged during backtest!")
 
     return total_portfolio_value, portfolio_values_history, initial_top_tickers, [], {}
 
@@ -1345,6 +1512,13 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
             print(f"   ⚠️ {ticker}: df_recent is empty")
             return -np.inf
 
+        # ✅ VALIDATION: Check if we have enough data for prediction
+        try:
+            validate_prediction_data(df_recent, ticker)
+        except InsufficientDataError as e:
+            print(f"   {str(e)}")
+            return -np.inf
+
         print(f"   🔍 {ticker}: Starting prediction with {len(df_recent)} rows, model type: {type(model).__name__}")
 
         # Engineer features - same as training
@@ -1378,8 +1552,11 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
         df_with_features = df_with_features.dropna()
         print(f"   🔧 {ticker}: After dropna: {len(df_with_features)} rows")
 
-        if df_with_features.empty:
-            print(f"   ❌ {ticker}: df_with_features is empty after feature engineering")
+        # ✅ VALIDATION: Check if enough rows remain after feature engineering
+        try:
+            validate_features_after_engineering(df_with_features, ticker, min_rows=1, context="prediction")
+        except InsufficientDataError as e:
+            print(f"   {str(e)}")
             return -np.inf
 
         # Get latest data point

@@ -103,6 +103,7 @@ import os
 from summary_phase import print_final_summary
 from training_phase import train_worker, train_models_for_period
 from backtesting_phase import _run_portfolio_backtest_walk_forward
+from data_validation import get_data_summary, print_data_diagnostics, InsufficientDataError
 import json
 import time
 import re
@@ -470,7 +471,7 @@ def main(
     if isinstance(all_tickers_data.columns, pd.MultiIndex):
         # Stack the DataFrame to convert from wide to long format
         # Reset index to make 'date' a column
-        all_tickers_data_long = all_tickers_data.stack(level=1)
+        all_tickers_data_long = all_tickers_data.stack(level=1, future_stack=True)
         all_tickers_data_long.index.names = ['date', 'ticker']
         all_tickers_data_long = all_tickers_data_long.reset_index()
         all_tickers_data = all_tickers_data_long
@@ -578,6 +579,25 @@ def main(
     print(f"   - Date range: {all_tickers_data['date'].min()} to {all_tickers_data['date'].max()}")
     print(f"   - Columns: {list(all_tickers_data.columns)}")
     
+    # ✅ NEW: Generate data quality diagnostics for all tickers
+    print("\n🔍 Analyzing data quality for each ticker...")
+    data_summaries = []
+    for ticker in all_available_tickers:
+        ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+        if not ticker_data.empty:
+            ticker_data = ticker_data.set_index('date')
+        summary = get_data_summary(ticker_data, ticker)
+        data_summaries.append(summary)
+    
+    # Print diagnostics table
+    print_data_diagnostics(data_summaries)
+    
+    # Warn if many tickers have insufficient data
+    insufficient_count = sum(1 for s in data_summaries if s['status'] == 'INSUFFICIENT')
+    if insufficient_count > len(data_summaries) * 0.3:  # More than 30% insufficient
+        print(f"⚠️  WARNING: {insufficient_count}/{len(data_summaries)} tickers have insufficient data!")
+        print(f"   💡 Consider using a longer data period or filtering these tickers")
+    
     # --- Identify top performers if not provided ---
     if top_performers_data is None:
         title = "🚀 AI-Powered Momentum & Trend Strategy"
@@ -626,7 +646,7 @@ def main(
         train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
 
         # Use the new train_models_for_period function
-        models, _, scalers, y_scalers = train_models_for_period(
+        training_results = train_models_for_period(
             period_name="1-Year",
             tickers=top_tickers,
             all_tickers_data=all_tickers_data,
@@ -636,6 +656,18 @@ def main(
             feature_set=feature_set,
             run_parallel=run_parallel
         )
+        
+        # ✅ FIX: Convert list of results to dictionaries
+        models = {}
+        scalers = {}
+        y_scalers = {}
+        for result in training_results:
+            if result and result.get('status') in ['trained', 'loaded']:
+                ticker = result['ticker']
+                models[ticker] = result['model']
+                scalers[ticker] = result['scaler']
+                if result.get('y_scaler'):
+                    y_scalers[ticker] = result['y_scaler']
 
     # 🧠 Initialize dictionaries for model training data before threshold optimization
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}

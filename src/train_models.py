@@ -130,7 +130,7 @@ print(f"\n🤖 Step 4: Training models for {len(tickers)} tickers...")
 print("⏱️  This may take 2-5 hours for 50 tickers...\n")
 
 try:
-    models, _, scalers, y_scalers = train_models_for_period(
+    training_results = train_models_for_period(
         period_name="Live Trading",
         tickers=tickers,
         all_tickers_data=all_tickers_data,
@@ -140,6 +140,18 @@ try:
         feature_set=None,
         run_parallel=True
     )
+    
+    # ✅ FIX: Convert list of results to dictionaries
+    models = {}
+    scalers = {}
+    y_scalers = {}
+    for result in training_results:
+        if result and result.get('status') in ['trained', 'loaded']:
+            ticker = result['ticker']
+            models[ticker] = result['model']
+            scalers[ticker] = result['scaler']
+            if result.get('y_scaler'):
+                y_scalers[ticker] = result['y_scaler']
     
     # 5. Summary
     print("\n" + "=" * 80)
