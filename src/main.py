@@ -979,12 +979,25 @@ def main(
         actual_tickers_analyzed,  # num_tickers_analyzed
         performance_metrics_buy_hold_1y_actual,  # performance_metrics_buy_hold_1y
         top_performers_data,  # top_performers_data
-        period_name=actual_period_name,  # ✅ NEW: Pass dynamic period name
-        None, None, None,  # YTD results (None)
-        None, None, None,  # 3-month results (None)  
-        None, None, None,  # 1-month results (None)
-        None, None, None, None,  # prediction_vs_bh placeholders (None)
-        None, None, None, None, None  # rule-based placeholders (None)
+        period_name=actual_period_name,  # Dynamic period name
+        strategy_results_ytd=None,
+        strategy_results_3month=None,
+        strategy_results_1month=None,
+        performance_metrics_buy_hold_ytd=None,
+        performance_metrics_buy_hold_3month=None,
+        performance_metrics_buy_hold_1month=None,
+        prediction_vs_bh_1y=None,
+        prediction_vs_bh_ytd=None,
+        prediction_vs_bh_3month=None,
+        prediction_vs_bh_1month=None,
+        final_rule_value_1y=None,
+        rule_1y_return=None,
+        final_rule_value_ytd=None,
+        rule_ytd_return=None,
+        final_rule_value_3month=None,
+        rule_3month_return=None,
+        final_rule_value_1month=None,
+        rule_1month_return=None
     )
     print("\n✅ Final summary prepared and printed.")
 
