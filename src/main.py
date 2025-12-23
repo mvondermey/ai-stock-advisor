@@ -645,9 +645,25 @@ def main(
         train_end_1y = bt_start_1y - timedelta(days=1)
         train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
 
+        # ✅ FIX: Calculate actual period name based on backtest length
+        if BACKTEST_DAYS >= 250:  # ~1 year
+            actual_period_name = "1-Year"
+        elif BACKTEST_DAYS >= 125:  # ~6 months
+            actual_period_name = "6-Month"
+        elif BACKTEST_DAYS >= 90:  # ~4-5 months
+            actual_period_name = "3-Month"
+        elif BACKTEST_DAYS >= 60:  # ~3 months
+            actual_period_name = "2-Month"
+        elif BACKTEST_DAYS >= 30:  # ~1-2 months
+            actual_period_name = "1-Month"
+        else:
+            actual_period_name = f"{BACKTEST_DAYS}-Day"
+
+        print(f"📅 Backtest configured for {BACKTEST_DAYS} days (~{actual_period_name})")
+
         # Use the new train_models_for_period function
         training_results = train_models_for_period(
-            period_name="1-Year",
+            period_name=actual_period_name,
             tickers=top_tickers,
             all_tickers_data=all_tickers_data,
             train_start=train_start_1y_calc,
@@ -735,8 +751,8 @@ def main(
         print(f"\n[DEBUG MAIN] 1-Year models keys: {list(models.keys())}")
         print(f"[DEBUG MAIN] 1-Year models values types: {[type(v).__name__ if v else 'None' for v in models.values()]}")
         
-        # --- Run 1-Year Backtest (AI Strategy) ---
-        print("\n🔍 Step 8: Running 1-Year Backtest (AI Strategy)...")
+        # --- Run Backtest (AI Strategy) ---
+        print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (AI Strategy)...")
         n_top_rebal = 3
         initial_capital_1y = capital_per_stock_1y * n_top_rebal
         
@@ -752,7 +768,7 @@ def main(
             initial_y_scalers=y_scalers,
             capital_per_stock=capital_per_stock_1y,
             target_percentage=TARGET_PERCENTAGE,
-            period_name="1-Year",
+            period_name=actual_period_name,
             top_performers_data=top_performers_data,
             horizon_days=PERIOD_HORIZONS.get("1-Year", 60)
         )
@@ -781,8 +797,8 @@ def main(
         performance_metrics_simple_rule_1y = []
         simple_rule_1y_return = None
 
-        # --- Calculate Buy & Hold for 1-Year ---
-        print("\n📊 Calculating Buy & Hold performance for 1-Year period...")
+        # --- Calculate Buy & Hold ---
+        print(f"\n📊 Calculating Buy & Hold performance for {actual_period_name} period...")
         buy_hold_results_1y = []
         performance_metrics_buy_hold_1y_actual = []
         for ticker in top_tickers_1y_filtered:
@@ -851,7 +867,7 @@ def main(
         else:
             # Fallback to original calculation
             final_buy_hold_value_1y = sum(buy_hold_results_1y) + (len(top_tickers_1y_filtered) - len(buy_hold_results_1y)) * capital_per_stock_1y
-        print("✅ 1-Year Buy & Hold calculation complete.")
+        print(f"✅ {actual_period_name} Buy & Hold calculation complete.")
     else:
         print("\nℹ️ 1-Year Backtest is disabled by ENABLE_1YEAR_BACKTEST flag.")
 
@@ -963,6 +979,7 @@ def main(
         actual_tickers_analyzed,  # num_tickers_analyzed
         performance_metrics_buy_hold_1y_actual,  # performance_metrics_buy_hold_1y
         top_performers_data,  # top_performers_data
+        period_name=actual_period_name,  # ✅ NEW: Pass dynamic period name
         None, None, None,  # YTD results (None)
         None, None, None,  # 3-month results (None)  
         None, None, None,  # 1-month results (None)
@@ -974,7 +991,7 @@ def main(
     # --- Select and save best performing models for live trading ---
     # Determine which period had the highest portfolio return
     performance_values = {
-        "1-Year": final_strategy_value_1y
+        actual_period_name: final_strategy_value_1y
     }
     
     best_period_name = max(performance_values, key=performance_values.get)

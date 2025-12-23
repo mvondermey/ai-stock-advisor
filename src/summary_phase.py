@@ -25,6 +25,7 @@ def print_final_summary(
     num_tickers_analyzed: int,
     performance_metrics_buy_hold_1y: List[Dict],
     top_performers_data: List[Tuple],
+    period_name: str = "1-Year",  # ✅ NEW: Dynamic period name
     strategy_results_ytd: List[Dict] = None,
     strategy_results_3month: List[Dict] = None,
     strategy_results_1month: List[Dict] = None,
@@ -89,8 +90,8 @@ def print_final_summary(
             print(f"{ticker:<10} | {mean_str} | {min_str} | {max_str} | {bh_str}")
         print("-" * 100)
     
-    # Show prediction vs B&H tables for AI strategy (1-Year period) when metrics include prediction stats
-    _print_pred_vs_bh("1-Year", prediction_vs_bh_1y if prediction_vs_bh_1y is not None else sorted_final_results, PERIOD_HORIZONS.get("1-Year"))
+    # Show prediction vs B&H tables for AI strategy when metrics include prediction stats
+    _print_pred_vs_bh(period_name, prediction_vs_bh_1y if prediction_vs_bh_1y is not None else sorted_final_results, PERIOD_HORIZONS.get("1-Year"))
     
     print("\n" + "="*80)
     print("                     🚀 AI-POWERED STOCK ADVISOR FINAL SUMMARY 🚀")
@@ -103,11 +104,11 @@ def print_final_summary(
     print(f"{'Period':<15} | {'AI Strategy':<25} | {'Buy & Hold':<25}")
     print("-" * 60)
     
-    # 1-Year
-    print(f"{'1-Year':<15} | ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)".ljust(28) + f"| ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
+    # Dynamic period
+    print(f"{period_name:<15} | ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)".ljust(28) + f"| ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
     print("="*80)
 
-    print("\n📈 Individual Ticker Performance (AI Strategy - Sorted by 1-Year Performance):")
+    print(f"\n📈 Individual Ticker Performance (AI Strategy - Sorted by {period_name} Performance):")
     print("-" * 170)
     print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Max Shares Held':>25}")
     print("-" * 170)
@@ -139,7 +140,7 @@ def print_final_summary(
         print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {max_shares_str}")
     print("-" * 170)
 
-    print("\n📈 Individual Ticker Performance (Buy & Hold Strategy - Sorted by 1-Year Performance):")
+    print(f"\n📈 Individual Ticker Performance (Buy & Hold Strategy - Sorted by {period_name} Performance):")
     print("-" * 136)
     print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
     print("-" * 136)
