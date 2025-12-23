@@ -67,9 +67,7 @@ from multiprocessing import cpu_count
 NUM_PROCESSES           = max(1, cpu_count() - 2)  # Use all but 2 CPU cores for parallel processing
 
 # --- Backtest & training windows
-BACKTEST_DAYS           = 60         # 2 months for backtest (faster testing)
-BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest
-BACKTEST_DAYS_1MONTH    = 32         # 1 month for backtest
+BACKTEST_DAYS           = 90         # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr)
 TRAIN_LOOKBACK_DAYS     = 365        # Train on ~1 year of history (user request)
 VALIDATION_DAYS         = 90         # ✅ FIX 4: Validation period for threshold optimization
 

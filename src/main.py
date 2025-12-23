@@ -226,11 +226,7 @@ except ImportError:
 # --- Parallel Processing
 # NUM_PROCESSES           = max(1, cpu_count() - 5) # Use all but one CPU core for parallel processing # Moved to config.py
 
-# --- Backtest & training windows
-# BACKTEST_DAYS           = 365        # 1 year for backtest # Moved to config.py
-# BACKTEST_DAYS_3MONTH    = 90         # 3 months for backtest # Moved to config.py
-# BACKTEST_DAYS_1MONTH    = 32         # 1 month for backtest # Moved to config.py
-# TRAIN_LOOKBACK_DAYS     = 360        # more data for model (e.g., 1 year) # Moved to config.py
+# --- Backtest & training windows (see config.py for BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS)
 
 # --- Backtest Period Enable/Disable Flags ---
 # ENABLE_1YEAR_BACKTEST   = True # Moved to config.py
