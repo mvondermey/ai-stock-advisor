@@ -263,6 +263,35 @@ def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['Historical_Volatility'] = df['Historical_Volatility'].fillna(0)
     
     # ========================================
+    # NORMALIZED PRICE RATIOS (replace absolute OHLC)
+    # ========================================
+    
+    # Price position relative to moving averages (normalized)
+    sma_20 = df['Close'].rolling(20, min_periods=10).mean()
+    sma_50 = df['Close'].rolling(50, min_periods=20).mean()
+    df['Close_to_SMA20'] = (df['Close'] / sma_20).fillna(1.0)  # How far from 20-day average
+    df['Close_to_SMA50'] = (df['Close'] / sma_50).fillna(1.0)  # How far from 50-day average
+    
+    # Intraday position (where price closed within day's range)
+    high_low_range = df['High'] - df['Low']
+    high_low_range = high_low_range.replace(0, np.nan)  # Avoid division by zero
+    df['Close_Position_in_Range'] = ((df['Close'] - df['Low']) / high_low_range).fillna(0.5)  # 0=low, 1=high
+    
+    # Intraday volatility (high-low spread as % of close)
+    df['Intraday_Range_Pct'] = (high_low_range / df['Close']).fillna(0)
+    
+    # Open-Close relationship (gap or continuation)
+    df['Open_to_Close_Ratio'] = (df['Close'] / df['Open']).fillna(1.0)  # >1 = up day, <1 = down day
+    
+    # Price vs recent high/low (52-week relative positioning)
+    df['Close_to_20D_High'] = (df['Close'] / df['High'].rolling(20, min_periods=10).max()).fillna(1.0)
+    df['Close_to_20D_Low'] = (df['Close'] / df['Low'].rolling(20, min_periods=10).min()).fillna(1.0)
+    
+    # Volume normalized (already partially done, but add absolute normalization)
+    volume_sma_20 = df['Volume'].rolling(20, min_periods=10).mean()
+    df['Volume_Normalized'] = (df['Volume'] / volume_sma_20).fillna(1.0)
+    
+    # ========================================
     # NEW: Momentum & Trend Features for AI
     # ========================================
     
@@ -729,17 +758,106 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     # Dynamically build the list of features that are actually present in the DataFrame
     # This is the most critical part to ensure consistency
     
-    # Define a base set of expected technical features
+    # ========================================
+    # AUDITED FEATURE SET - Only Normalized/Relative Features
+    # ========================================
+    # ❌ REMOVED: Close, High, Low, Open, Volume (absolute values cause problems)
+    # ✅ ADDED: Normalized price ratios and relative features
+    
     expected_technical_features = [
-        "Close", "Volume", "High", "Low", "Open", "Returns", "SMA_F_S", "SMA_F_L", "Volatility",
-        "ATR", "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
-        "OBV", "CMF", "ROC", "ROC_20", "ROC_60", "CMO", "KAMA", "EFI", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
-        "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
-        "Market_Momentum_SPY",
-        "Sentiment_Score",
-        "VIX_Index_Returns", "DXY_Index_Returns", "Gold_Futures_Returns", "Oil_Futures_Returns", "US10Y_Yield_Returns",
-        "Oil_Price_Returns", "Gold_Price_Returns",
-        "Annualized_BH_Return"
+        # === NORMALIZED PRICE RATIOS (NEW) ===
+        "Close_to_SMA20",           # Price vs 20-day average (trend strength)
+        "Close_to_SMA50",           # Price vs 50-day average (longer trend)
+        "Close_Position_in_Range",  # Where price closed in day's range (0-1)
+        "Intraday_Range_Pct",       # Day's volatility as % of price
+        "Open_to_Close_Ratio",      # Intraday direction (>1=up, <1=down)
+        "Close_to_20D_High",        # Distance from recent high
+        "Close_to_20D_Low",         # Distance from recent low
+        "Volume_Normalized",        # Volume vs 20-day average
+        
+        # === PRICE MOMENTUM (% returns) ===
+        "Returns",                  # 1-day return
+        "Momentum_3d",              # 3-day momentum
+        "Momentum_5d",              # 5-day momentum
+        "Momentum_10d",             # 10-day momentum
+        "Momentum_20d",             # 20-day momentum
+        "Momentum_40d",             # 40-day momentum
+        "Price_Accel_5d",           # Momentum acceleration (5-day)
+        "Price_Accel_20d",          # Momentum acceleration (20-day)
+        
+        # === TREND INDICATORS (normalized) ===
+        "SMA_F_S",                  # Fast/Slow SMA ratio
+        "SMA_F_L",                  # Fast/Long SMA ratio
+        "Dist_From_SMA10",          # Distance from 10-day SMA (%)
+        "Dist_From_SMA20",          # Distance from 20-day SMA (%)
+        "Dist_From_SMA50",          # Distance from 50-day SMA (%)
+        "SMA20_Slope",              # 20-day SMA slope (trend direction)
+        "SMA50_Slope",              # 50-day SMA slope (longer trend)
+        "Momentum_Divergence",      # Price vs momentum divergence
+        "Days_Above_SMA20",         # Consecutive days above SMA20
+        
+        # === VOLATILITY (normalized) ===
+        "Volatility",               # Rolling volatility (normalized)
+        "Historical_Volatility",    # Annualized volatility
+        "ATR_Pct",                  # ATR as % of price (not absolute ATR)
+        "Vol_Regime",               # Current vs historical volatility
+        "Vol_Spike",                # Volatility change
+        "Range_Expansion",          # Daily range as % of price
+        "Range_vs_Avg",             # Current range vs average range
+        
+        # === VOLUME INDICATORS (normalized) ===
+        "Volume_Ratio_5d",          # Volume vs 5-day average
+        "Volume_Ratio_20d",         # Volume vs 20-day average
+        "Volume_Trend",             # Volume trend (5d/20d)
+        
+        # === OSCILLATORS (0-100 bounded) ===
+        "RSI_feat",                 # RSI (0-100)
+        "%K",                       # Stochastic %K
+        "%D",                       # Stochastic %D
+        "MFI",                      # Money Flow Index (0-100)
+        "CCI",                      # Commodity Channel Index
+        
+        # === MOMENTUM OSCILLATORS (centered) ===
+        "MACD",                     # MACD line
+        "MACD_signal",              # MACD signal line
+        "CMO",                      # Chande Momentum Oscillator
+        "ROC",                      # Rate of Change (12-day)
+        "ROC_20",                   # Rate of Change (20-day)
+        "ROC_60",                   # Rate of Change (60-day)
+        
+        # === PATTERN/DIRECTION ===
+        "ADX",                      # Average Directional Index (trend strength)
+        "Daily_Direction",          # Up/down day indicator
+        "Streak",                   # Consecutive up/down days
+        
+        # === MARKET CONTEXT ===
+        "Market_Momentum_SPY",      # SPY momentum (market context)
+        "Annualized_BH_Return",     # Historical B&H performance
+        
+        # === INTERMARKET (if available) ===
+        "VIX_Index_Returns",        # VIX changes (volatility regime)
+        "DXY_Index_Returns",        # Dollar strength
+        "Gold_Futures_Returns",     # Gold (risk-off indicator)
+        "Oil_Futures_Returns",      # Oil (energy/inflation)
+        "US10Y_Yield_Returns",      # Interest rate environment
+        "Oil_Price_Returns",        # Alternative oil measure
+        "Gold_Price_Returns",       # Alternative gold measure
+        
+        # === REMOVED FEATURES (too noisy or absolute) ===
+        # ❌ "ATR" - absolute value, use ATR_Pct instead
+        # ❌ "BB_upper", "BB_lower" - absolute bands, use RSI/distance instead
+        # ❌ "OBV" - absolute cumulative, use Volume_Ratio instead
+        # ❌ "CMF" - redundant with MFI
+        # ❌ "KAMA" - absolute price
+        # ❌ "EFI" - absolute value
+        # ❌ "KC_Upper", "KC_Lower" - absolute bands
+        # ❌ "DC_Upper", "DC_Lower" - absolute bands
+        # ❌ "PSAR" - absolute price
+        # ❌ "ADL" - absolute cumulative
+        # ❌ "VWAP" - absolute price
+        # ❌ "Chaikin_Oscillator" - redundant
+        # ❌ "OBV_SMA" - absolute
+        # ❌ "Sentiment_Score" - not implemented
     ]
     
     # Filter to only include technical features that are actually in df.columns

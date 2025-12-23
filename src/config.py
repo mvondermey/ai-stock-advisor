@@ -105,9 +105,6 @@ CLASS_HORIZON           = 10         # days ahead for return prediction (longer 
 # Check portfolio daily but only rebalance when stocks actually change (cost-effective).
 # Set to 1 for daily checking, higher values for less frequent monitoring.
 AI_REBALANCE_FREQUENCY_DAYS = 1
-# Smooth per-ticker predictions before ranking to reduce noisy day-to-day flips.
-# Typical values: 1 (no smoothing), 3, 5.
-AI_PREDICTION_SMOOTHING_DAYS = 3
 # ✅ REGRESSION MODE: Probability thresholds removed - using simplified trading logic
 TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification (balanced for 3-day moves)
 # USE_MODEL_GATE removed - using simplified buy-and-hold logic
@@ -122,8 +119,8 @@ USE_SVM                 = True       # SVR for regression, SVM for classificatio
 USE_MLP_CLASSIFIER      = False      # MLPRegressor for regression, MLPClassifier for classification (disabled - using regression)
 USE_LIGHTGBM            = True       # enable LightGBM
 USE_XGBOOST             = True       # enable XGBoost
-USE_LSTM                = False
-USE_GRU                 = False      # GRU disabled
+USE_LSTM                = True
+USE_GRU                 = True      # GRU disabled
 USE_RANDOM_FOREST       = True       # enable Random Forest
 USE_TCN                 = True       # Temporal Convolutional Network (sequence)
 USE_ELASTIC_NET         = True       # Baseline linear regressor (tabular)
