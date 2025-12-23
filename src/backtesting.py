@@ -1176,10 +1176,13 @@ def _run_portfolio_backtest_walk_forward(
                     current_portfolio_stocks = selected_stocks
 
                     # Execute actual trades for rebalancing
+                    # Pass predictions for weighted allocation
+                    selected_predictions = {t: p for t, p in predictions[:num_to_select]}
                     try:
                         executed_trades = _execute_portfolio_rebalance(
                             old_portfolio, selected_stocks, current_date, all_tickers_data,
-                            positions, cash_balance, capital_per_stock, target_percentage
+                            positions, cash_balance, capital_per_stock, target_percentage,
+                            predictions=selected_predictions  # ✅ NEW: Pass predictions for weighted buying
                         )
 
                         # Update cash balance after trades
@@ -1405,9 +1408,13 @@ def _run_portfolio_backtest_walk_forward(
 
 
 def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all_tickers_data,
-                               positions, cash_balance, capital_per_stock, target_percentage):
+                               positions, cash_balance, capital_per_stock, target_percentage,
+                               predictions=None):
     """
     Execute actual portfolio rebalancing by selling removed stocks and buying new ones.
+    
+    ✅ NEW: Uses prediction-weighted allocation for buying stocks.
+    Stocks with higher predicted returns get larger allocations.
 
     Returns dict with trade execution details.
     """
@@ -1461,14 +1468,41 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
         capital_for_new_stocks = cash_balance if cash_balance > 0 else capital_per_stock * len(stocks_to_buy)
 
         if capital_for_new_stocks > 0:
-            capital_per_new_stock = capital_for_new_stocks / len(stocks_to_buy)
+            # ✅ NEW: Calculate prediction-weighted allocations
+            if predictions and len(predictions) > 0:
+                # Get predictions for stocks we're buying
+                buy_predictions = {t: predictions.get(t, 0) for t in stocks_to_buy}
+                
+                # Shift predictions to be positive (add offset if any are negative)
+                min_pred = min(buy_predictions.values())
+                if min_pred < 0:
+                    # Add offset so all weights are positive
+                    buy_predictions = {t: p - min_pred + 0.01 for t, p in buy_predictions.items()}
+                
+                # Calculate total for normalization
+                total_pred = sum(buy_predictions.values())
+                
+                if total_pred > 0:
+                    # Calculate weights (normalized to sum to 1)
+                    weights = {t: p / total_pred for t, p in buy_predictions.items()}
+                    print(f"      📊 Prediction-weighted allocation:")
+                    for t, w in sorted(weights.items(), key=lambda x: -x[1]):
+                        orig_pred = predictions.get(t, 0)
+                        print(f"         {t}: {w*100:.1f}% (predicted: {orig_pred*100:.2f}%)")
+                else:
+                    # Fall back to equal weight
+                    weights = {t: 1.0 / len(stocks_to_buy) for t in stocks_to_buy}
+            else:
+                # No predictions - use equal weight
+                weights = {t: 1.0 / len(stocks_to_buy) for t in stocks_to_buy}
 
             for ticker in stocks_to_buy:
                 if ticker in current_prices:
                     buy_price = current_prices[ticker]
                     if buy_price > 0:
-                        # Calculate shares to buy
-                        shares_to_buy = capital_per_new_stock / buy_price
+                        # Calculate shares to buy based on weighted allocation
+                        ticker_allocation = capital_for_new_stocks * weights.get(ticker, 1.0 / len(stocks_to_buy))
+                        shares_to_buy = ticker_allocation / buy_price
                         buy_value = shares_to_buy * buy_price
 
                         # Apply transaction cost
@@ -1485,8 +1519,9 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
                             'value': buy_value
                         }
 
+                        weight_pct = weights.get(ticker, 0) * 100
                         bought_stocks.append(f"{ticker} ({shares_to_buy:.0f} shares @ ${buy_price:.2f})")
-                        print(f"      🛒 Bought {ticker}: {shares_to_buy:.0f} shares @ ${buy_price:.2f} = ${buy_value:.2f} (+${cost:.2f} cost)")
+                        print(f"      🛒 Bought {ticker}: {shares_to_buy:.0f} shares @ ${buy_price:.2f} = ${buy_value:.2f} ({weight_pct:.1f}% weight, +${cost:.2f} cost)")
 
     # Handle stocks that remain in portfolio (no change needed)
 
