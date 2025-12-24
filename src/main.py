@@ -43,7 +43,8 @@ from config import (
     SEQUENCE_LENGTH, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, LSTM_DROPOUT,
     LSTM_LEARNING_RATE, LSTM_BATCH_SIZE, LSTM_EPOCHS,
     ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION,
-    PERIOD_HORIZONS, POSITION_SCALING_BY_CONFIDENCE
+    PERIOD_HORIZONS, POSITION_SCALING_BY_CONFIDENCE,
+    ENABLE_AI_PORTFOLIO
 )
 
 from alpha_training import select_threshold_by_alpha, AlphaThresholdConfig
@@ -657,29 +658,36 @@ def main(
 
         print(f"📅 Backtest configured for {BACKTEST_DAYS} days (~{actual_period_name})")
 
-        # Use the new train_models_for_period function
-        training_results = train_models_for_period(
-            period_name=actual_period_name,
-            tickers=top_tickers,
-            all_tickers_data=all_tickers_data,
-            train_start=train_start_1y_calc,
-            train_end=train_end_1y,
-            top_performers_data=top_performers_data,
-            feature_set=feature_set,
-            run_parallel=run_parallel
-        )
-        
-        # ✅ FIX: Convert list of results to dictionaries
+        # Skip training if AI portfolio is disabled
         models = {}
         scalers = {}
         y_scalers = {}
-        for result in training_results:
-            if result and result.get('status') in ['trained', 'loaded']:
-                ticker = result['ticker']
-                models[ticker] = result['model']
-                scalers[ticker] = result['scaler']
-                if result.get('y_scaler'):
-                    y_scalers[ticker] = result['y_scaler']
+        
+        if not ENABLE_AI_PORTFOLIO:
+            print(f"\n⏭️ Skipping AI model training (ENABLE_AI_PORTFOLIO = False)")
+            print(f"   Only Buy & Hold portfolios will be calculated.\n")
+            training_results = []
+        else:
+            # Use the new train_models_for_period function
+            training_results = train_models_for_period(
+                period_name=actual_period_name,
+                tickers=top_tickers,
+                all_tickers_data=all_tickers_data,
+                train_start=train_start_1y_calc,
+                train_end=train_end_1y,
+                top_performers_data=top_performers_data,
+                feature_set=feature_set,
+                run_parallel=run_parallel
+            )
+            
+            # ✅ FIX: Convert list of results to dictionaries
+            for result in training_results:
+                if result and result.get('status') in ['trained', 'loaded']:
+                    ticker = result['ticker']
+                    models[ticker] = result['model']
+                    scalers[ticker] = result['scaler']
+                    if result.get('y_scaler'):
+                        y_scalers[ticker] = result['y_scaler']
 
     # 🧠 Initialize dictionaries for model training data before threshold optimization
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
@@ -753,7 +761,7 @@ def main(
         initial_capital_1y = capital_per_stock_1y * n_top_rebal
         
         # Use walk-forward backtest with periodic retraining and rebalancing
-        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y = _run_portfolio_backtest_walk_forward(
+        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y = _run_portfolio_backtest_walk_forward(
             all_tickers_data=all_tickers_data,
             train_start_date=train_start_1y_calc,
             backtest_start_date=bt_start_1y,
@@ -795,10 +803,19 @@ def main(
 
         # --- Calculate Buy & Hold ---
         print(f"\n📊 Calculating Buy & Hold performance for {actual_period_name} period...")
+        print(f"   Processing {len(top_tickers_1y_filtered)} tickers (using cached data)...")
         buy_hold_results_1y = []
         performance_metrics_buy_hold_1y_actual = []
-        for ticker in top_tickers_1y_filtered:
-            df_bh = load_prices_robust(ticker, bt_start_1y, bt_end)
+        for idx, ticker in enumerate(top_tickers_1y_filtered):
+            if (idx + 1) % 50 == 0:
+                print(f"   [{idx+1}/{len(top_tickers_1y_filtered)}] Processed...")
+            # Use cached data instead of re-fetching
+            if ticker in all_tickers_data and not all_tickers_data[ticker].empty:
+                df_full = all_tickers_data[ticker]
+                # Filter to backtest period
+                df_bh = df_full[(df_full.index >= bt_start_1y) & (df_full.index <= bt_end)].copy()
+            else:
+                df_bh = pd.DataFrame()
             if not df_bh.empty:
                 start_price = float(df_bh["Close"].iloc[0])
                 shares_bh = int(capital_per_stock_1y / start_price) if start_price > 0 else 0
@@ -966,6 +983,8 @@ def main(
         dynamic_bh_1y_return=((dynamic_bh_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_dynamic_bh_3m_value_1y=dynamic_bh_3m_portfolio_value_1y,
         dynamic_bh_3m_1y_return=((dynamic_bh_3m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_dynamic_bh_1m_value_1y=dynamic_bh_1m_portfolio_value_1y,
+        dynamic_bh_1m_1y_return=((dynamic_bh_1m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         period_name=actual_period_name,  # Dynamic period name
         strategy_results_ytd=None,
         strategy_results_3month=None,

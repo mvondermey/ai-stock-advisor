@@ -38,11 +38,11 @@ USE_GRU = False
 
 # --- Universe / selection
 MARKET_SELECTION = {
-    "ALPACA_STOCKS": False,   # ✅ ENABLED - ALL Alpaca tradable stocks
+    "ALPACA_STOCKS": False,
     "NASDAQ_ALL": False,
-    "NASDAQ_100": True,
-    "SP500": False,          # Disabled - using ALL Alpaca stocks instead
-    "DOW_JONES": False,
+    "NASDAQ_100": True,       # ~100 stocks
+    "SP500": True,            # ~500 stocks  
+    "DOW_JONES": True,        # ~30 stocks
     "POPULAR_ETFS": False,
     "CRYPTO": False,
     "DAX": False,
@@ -57,7 +57,7 @@ ALPACA_STOCKS_LIMIT = 100  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = ["NASDAQ"]  # NASDAQ only
-N_TOP_TICKERS           = 10       # Testing with 1 stock to verify predictions work
+N_TOP_TICKERS           = 1000       # Testing with 1 stock to verify predictions work
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -85,6 +85,14 @@ ENABLE_1YEAR_BACKTEST   = True   # ✅ Enabled - For simulation and strategy val
 
 # --- Training Period Enable/Disable Flags ---
 ENABLE_1YEAR_TRAINING   = True
+
+# --- Portfolio Strategy Enable/Disable Flags ---
+# Set to False to disable specific portfolios in the backtest
+ENABLE_AI_PORTFOLIO     = False   # AI-based stock selection and trading
+ENABLE_STATIC_BH        = True   # Static Buy & Hold (top 3 at start, hold forever)
+ENABLE_DYNAMIC_BH_1Y    = True   # Dynamic BH rebalancing based on 1-year performance
+ENABLE_DYNAMIC_BH_3M    = True   # Dynamic BH rebalancing based on 3-month performance
+ENABLE_DYNAMIC_BH_1M    = True   # Dynamic BH rebalancing based on 1-month performance
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10

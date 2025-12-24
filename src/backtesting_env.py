@@ -463,16 +463,21 @@ class RuleTradingEnv:
         if self.current_step < 1:
             # Buy at the beginning of the period
             if len(self.df) > 0:
-                first_row = self.df.iloc[0]
-                first_price = float(first_row["Close"])
-                first_date = self._date_at(0)
-                atr = float(first_row.get("ATR", np.nan)) if pd.notna(first_row.get("ATR", np.nan)) else None
+                # Get first valid price (skip NaN values)
+                valid_close = self.df["Close"].dropna()
+                if len(valid_close) > 0:
+                    first_idx = valid_close.index[0]
+                    first_price = float(valid_close.iloc[0])
+                    first_date = self._date_at(0)
+                    first_row = self.df.loc[first_idx] if first_idx in self.df.index else self.df.iloc[0]
+                    atr = float(first_row.get("ATR", np.nan)) if pd.notna(first_row.get("ATR", np.nan)) else None
 
-                # Buy immediately (no AI decision needed for selection-based system)
-                self._buy(first_price, atr, first_date)
-                self.last_ai_action = "BUY"
-                self.last_buy_prob = 1.0  # Full confidence in selection
-                self.last_sell_prob = 0.0
+                    # Only buy if price is valid
+                    if not np.isnan(first_price) and first_price > 0:
+                        self._buy(first_price, atr, first_date)
+                        self.last_ai_action = "BUY"
+                        self.last_buy_prob = 1.0  # Full confidence in selection
+                        self.last_sell_prob = 0.0
 
             self.portfolio_history.append(self.initial_balance)
             self.current_step = len(self.df)  # Skip to end
@@ -485,7 +490,11 @@ class RuleTradingEnv:
         # Track portfolio value but don't trade
         row = self.df.iloc[self.current_step]
         price = float(row["Close"])
-        port_val = self.cash + self.shares * price
+        # Handle NaN prices - use last known good value
+        if np.isnan(price):
+            port_val = self.portfolio_history[-1] if self.portfolio_history else self.initial_balance
+        else:
+            port_val = self.cash + self.shares * price
         self.portfolio_history.append(port_val)
         self.current_step += 1
 
@@ -502,9 +511,18 @@ class RuleTradingEnv:
         shares_before_liquidation = self.shares
         
         if self.shares > 0 and not self.df.empty:
-            last_price = float(self.df.iloc[-1]["Close"])
-            self._sell(last_price, self._date_at(len(self.df)-1))
-            self.portfolio_history[-1] = self.cash
+            # Get last valid price (drop NaN values)
+            valid_close = self.df["Close"].dropna()
+            if len(valid_close) > 0:
+                last_price = float(valid_close.iloc[-1])
+                if not np.isnan(last_price) and last_price > 0:
+                    self._sell(last_price, self._date_at(len(self.df)-1))
+                    self.portfolio_history[-1] = self.cash
+        
+        # Ensure final value is not NaN - fall back to initial balance if needed
+        final_value = self.portfolio_history[-1] if self.portfolio_history else self.initial_balance
+        if np.isnan(final_value):
+            final_value = self.initial_balance
         
         # Return max_shares_held instead of shares_before_liquidation for better visibility
-        return self.portfolio_history[-1], self.trade_log, self.last_ai_action, self.last_buy_prob, self.last_sell_prob, self.max_shares_held
+        return final_value, self.trade_log, self.last_ai_action, self.last_buy_prob, self.last_sell_prob, self.max_shares_held

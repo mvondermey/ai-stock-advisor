@@ -753,7 +753,16 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     # Calculate forward BH return over the prediction horizon as target
     # TargetReturn = (price in class_horizon days) / current_price - 1
     # This gives the model the actual market return it needs to predict
+
+    # Option 1: Raw forward returns (current approach)
     df["TargetReturn"] = (df["Close"].shift(-class_horizon) / df["Close"] - 1)
+
+    # Option 2: Excess returns (commented out - would need benchmark data)
+    # if "BenchmarkClose" in df.columns:
+    #     bench_return = (df["BenchmarkClose"].shift(-class_horizon) / df["BenchmarkClose"] - 1)
+    #     df["TargetReturn"] = df["TargetReturn"] - bench_return  # Excess return
+    # else:
+    #     df["TargetReturn"] = (df["Close"].shift(-class_horizon) / df["Close"] - 1)
 
     # Dynamically build the list of features that are actually present in the DataFrame
     # This is the most critical part to ensure consistency

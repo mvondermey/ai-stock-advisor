@@ -43,7 +43,13 @@ def print_final_summary(
     final_rule_value_3month: float = None,
     rule_3month_return: float = None,
     final_rule_value_1month: float = None,
-    rule_1month_return: float = None
+    rule_1month_return: float = None,
+    final_dynamic_bh_value_1y: float = None,
+    dynamic_bh_1y_return: float = None,
+    final_dynamic_bh_3m_value_1y: float = None,
+    dynamic_bh_3m_1y_return: float = None,
+    final_dynamic_bh_1m_value_1y: float = None,
+    dynamic_bh_1m_1y_return: float = None
 ) -> None:
     """Prints the final summary of the backtest results."""
     
@@ -100,13 +106,28 @@ def print_final_summary(
     print("\n📊 Overall Portfolio Performance:")
     print(f"  Initial Capital: ${initial_balance_used:,.2f}")
     print(f"  Number of Tickers Analyzed: {num_tickers_analyzed}")
-    print("-" * 80)
-    print(f"{'Period':<15} | {'AI Strategy':<25} | {'Buy & Hold':<25}")
-    print("-" * 60)
-    
-    # Dynamic period
-    print(f"{period_name:<15} | ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)".ljust(28) + f"| ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
-    print("="*80)
+    print("-" * 130)
+    print(f"{'Period':<12} | {'AI Strategy':<18} | {'Static BH':<18} | {'Dyn BH 1Y':<18} | {'Dyn BH 3M':<18} | {'Dyn BH 1M':<18}")
+    print("-" * 130)
+
+    # Format each result
+    ai_result = f"${final_strategy_value_1y:,.0f} ({ai_1y_return:+.1f}%)"
+    static_bh_result = f"${final_buy_hold_value_1y:,.0f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.1f}%)"
+
+    dynamic_bh_1y_result = "N/A"
+    if final_dynamic_bh_value_1y is not None:
+        dynamic_bh_1y_result = f"${final_dynamic_bh_value_1y:,.0f} ({dynamic_bh_1y_return:+.1f}%)"
+
+    dynamic_bh_3m_result = "N/A"
+    if final_dynamic_bh_3m_value_1y is not None:
+        dynamic_bh_3m_result = f"${final_dynamic_bh_3m_value_1y:,.0f} ({dynamic_bh_3m_1y_return:+.1f}%)"
+
+    dynamic_bh_1m_result = "N/A"
+    if final_dynamic_bh_1m_value_1y is not None:
+        dynamic_bh_1m_result = f"${final_dynamic_bh_1m_value_1y:,.0f} ({dynamic_bh_1m_1y_return:+.1f}%)"
+
+    print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {dynamic_bh_1m_result:<17}")
+    print("="*130)
 
     print(f"\n📈 Individual Ticker Performance (AI Strategy - Sorted by {period_name} Performance):")
     print("-" * 170)
@@ -369,12 +390,12 @@ def print_prediction_vs_actual_comparison(
         
         # Get B&H return for this ticker
         bh_return = 0.0
-        for t, perf_1y, perf_ytd in top_performers_data:
-            if t == ticker:
+        for item in top_performers_data:
+            if len(item) >= 2 and item[0] == ticker:  # item[0] is ticker
                 if period_name == "1-Year":
-                    bh_return = perf_1y / 100.0  # Convert to decimal
-                elif period_name == "YTD":
-                    bh_return = perf_ytd / 100.0
+                    bh_return = item[1] / 100.0  # Convert to decimal (perf_1y)
+                elif period_name == "YTD" and len(item) >= 3:
+                    bh_return = item[2] / 100.0  # perf_ytd if available
                 break
         
         # Calculate differences
