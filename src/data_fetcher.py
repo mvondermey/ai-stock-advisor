@@ -385,53 +385,126 @@ def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFr
 
 def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -> pd.DataFrame:
 
-    """Wrapper for yf.download for batches with retry logic."""
+    """Wrapper for yf.download for batches with retry logic and cache checking."""
+
+    # Check cache for each ticker first
+    cached_data_frames = []
+    tickers_to_download = []
+
+    print(f"  📂 Checking cache for {len(tickers)} tickers...")
+
+    for ticker in tickers:
+        cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
+        cache_valid = False
+
+        # Skip benchmark tickers that should always be fresh
+        if cache_file.exists() and ticker not in ['QQQ', 'SPY']:
+            try:
+                cached_df = pd.read_csv(cache_file, index_col='Date', parse_dates=True)
+
+                # Ensure cached DataFrame index is timezone-aware
+                if cached_df.index.tzinfo is None:
+                    cached_df.index = cached_df.index.tz_localize('UTC')
+                else:
+                    cached_df.index = cached_df.index.tz_convert('UTC')
+
+                # Check if cached data covers the required date range
+                start_utc = _to_utc(start)
+                end_utc = _to_utc(end)
+
+                # Get available date range in cache
+                if not cached_df.empty:
+                    cache_start = cached_df.index.min()
+                    cache_end = cached_df.index.max()
+
+                    # Check if cache contains the required date range
+                    # Cache must cover 100% of requested period
+                    requested_days = (end_utc - start_utc).days
+                    overlap_start = max(start_utc, cache_start)
+                    overlap_end = min(end_utc, cache_end)
+                    overlap_days = max(0, (overlap_end - overlap_start).days)
+
+                    coverage_ratio = overlap_days / requested_days if requested_days > 0 else 0
+
+                    if coverage_ratio >= 1.0:  # Cache must cover 100% of requested period
+                        # Filter to requested date range
+                        filtered_df = cached_df.loc[(cached_df.index >= start_utc) & (cached_df.index <= end_utc)].copy()
+
+                        if not filtered_df.empty:
+                            # Reformat column names to match yfinance format (ticker as column prefix)
+                            if isinstance(filtered_df.columns, pd.MultiIndex):
+                                filtered_df.columns = filtered_df.columns.get_level_values(0)
+                            filtered_df.columns = [str(col).capitalize() for col in filtered_df.columns]
+
+                            # Add ticker prefix to match yfinance output format
+                            filtered_df = filtered_df.add_prefix(f"{ticker} ")
+
+                            cached_data_frames.append(filtered_df)
+                            cache_valid = True
+                            print(f"  ✅ Cache hit for {ticker} ({len(filtered_df)} rows, {coverage_ratio:.1%} coverage)")
+
+            except Exception as e:
+                print(f"  ⚠️ Could not read cache for {ticker}: {e}")
+
+        if not cache_valid:
+            tickers_to_download.append(ticker)
+            print(f"  📥 Cache miss for {ticker} - will download")
+
+    # If we have cached data for all tickers, combine and return
+    if not tickers_to_download:
+        print(f"  🎉 All {len(tickers)} tickers loaded from cache!")
+        if cached_data_frames:
+            combined_df = pd.concat(cached_data_frames, axis=1, join='outer')
+            return combined_df
+        else:
+            return pd.DataFrame()
+
+    # Download missing tickers
+    print(f"  🔄 Downloading {len(tickers_to_download)} tickers from {len(tickers)} total...")
 
     max_retries = 7
-
     base_wait_time = 30
 
-
+    fresh_data = pd.DataFrame()
 
     for attempt in range(max_retries):
-
         try:
+            fresh_data = yf.download(tickers_to_download, start=start, end=end, interval=DATA_INTERVAL, auto_adjust=True, progress=True, threads=False, keepna=False)
 
-            data = yf.download(tickers, start=start, end=end, interval=DATA_INTERVAL, auto_adjust=True, progress=True, threads=False, keepna=False)
-
-            
-
-            if data.empty or data.isnull().all().all():
-
+            if fresh_data.empty or fresh_data.isnull().all().all():
                 raise ValueError("Batch download failed: DataFrame is empty or all-NaN.")
 
-                
-
-            return data
+            print(f"  ✅ Successfully downloaded {len(tickers_to_download)} tickers")
+            break
 
         except Exception as e:
-
             error_str = str(e).lower()
 
             if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str or "batch download failed" in error_str:
-
                 wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, 2)
-
-                print(f"  ⚠️ Batch download failed for {len(tickers)} tickers (attempt {attempt + 1}/{max_retries}): {error_str}. Retrying in {wait_time:.2f} seconds...")
-
+                print(f"  ⚠️ Batch download failed for {len(tickers_to_download)} tickers (attempt {attempt + 1}/{max_retries}): {error_str}. Retrying in {wait_time:.2f} seconds...")
                 time.sleep(wait_time)
-
             else:
-
-                print(f"  ⚠️ An unexpected error occurred during batch download for {len(tickers)} tickers: {e}. Skipping batch.")
-
+                print(f"  ⚠️ An unexpected error occurred during batch download for {len(tickers_to_download)} tickers: {e}. Skipping batch.")
                 return pd.DataFrame()
 
-    
+    if fresh_data.empty:
+        print(f"  ❌ Failed to download data for {len(tickers_to_download)} tickers after {max_retries} retries.")
+        # Return only cached data if download failed
+        if cached_data_frames:
+            combined_df = pd.concat(cached_data_frames, axis=1, join='outer')
+            return combined_df
+        return pd.DataFrame()
 
-    print(f"  ❌ Failed to download batch data for {len(tickers)} tickers after {max_retries} retries.")
+    # Combine cached and fresh data
+    all_data_frames = cached_data_frames + [fresh_data] if not fresh_data.empty else cached_data_frames
 
-    return pd.DataFrame()
+    if all_data_frames:
+        combined_df = pd.concat(all_data_frames, axis=1, join='outer')
+        print(f"  📊 Combined data: {len(cached_data_frames)} cached + {1 if not fresh_data.empty else 0} fresh = {len(combined_df.columns)} total columns")
+        return combined_df
+
+    return fresh_data
 
 
 
