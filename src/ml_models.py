@@ -776,8 +776,8 @@ def train_and_evaluate_models(
         from config import TARGET_PERCENTAGE
         default_target_percentage = TARGET_PERCENTAGE
     if default_class_horizon is None:
-        from config import CLASS_HORIZON
-        default_class_horizon = CLASS_HORIZON
+        from config import PERIOD_HORIZONS
+        default_class_horizon = PERIOD_HORIZONS.get("1-Year", 20)
     d = df.copy()
     
     if target_col not in d.columns:

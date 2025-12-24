@@ -372,10 +372,14 @@ class RuleTradingEnv:
                     
                     # ✅ Inverse transform if y_scaler is available (for regression)
                     if self.y_scaler is not None:
-                        prediction = self.y_scaler.inverse_transform([[scaled_prediction]])[0][0]
+                        # Clip to [-1, 1] before inverse transform to prevent extrapolation
+                        scaled_prediction_clipped = np.clip(float(scaled_prediction), -1.0, 1.0)
+                        prediction = self.y_scaler.inverse_transform([[scaled_prediction_clipped]])[0][0]
+                        # Clip to reasonable return range (-100% to +200%)
+                        prediction = np.clip(float(prediction), -1.0, 2.0)
                         # DEBUG: Log first few predictions
                         if i < 3:
-                            print(f"  [DEBUG {self.ticker}] Step {i}: scaled_pred={scaled_prediction:.6f}, inverse_pred={prediction:.6f}, scaler_min={self.y_scaler.data_min_[0]:.4f}, scaler_max={self.y_scaler.data_max_[0]:.4f}")
+                            print(f"  [DEBUG {self.ticker}] Step {i}: scaled_pred={scaled_prediction:.6f}, clipped={scaled_prediction_clipped:.6f}, inverse_pred={prediction:.6f}")
                         return prediction
                     else:
                         return scaled_prediction
@@ -389,7 +393,11 @@ class RuleTradingEnv:
 
                 # ✅ Inverse transform with y_scaler for regression
                 if self.y_scaler is not None:
-                    prediction = self.y_scaler.inverse_transform([[scaled_prediction]])[0][0]
+                    # Clip to [-1, 1] before inverse transform to prevent extrapolation
+                    scaled_prediction_clipped = np.clip(float(scaled_prediction), -1.0, 1.0)
+                    prediction = self.y_scaler.inverse_transform([[scaled_prediction_clipped]])[0][0]
+                    # Clip to reasonable return range (-100% to +200%)
+                    prediction = np.clip(float(prediction), -1.0, 2.0)
                     return prediction
                 else:
                     return scaled_prediction

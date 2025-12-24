@@ -7,7 +7,7 @@ from typing import List, Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
 from config import (
-    TARGET_PERCENTAGE, CLASS_HORIZON,
+    TARGET_PERCENTAGE,
     INVESTMENT_PER_STOCK, PERIOD_HORIZONS
 )
 

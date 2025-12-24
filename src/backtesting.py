@@ -22,7 +22,7 @@ from config import (
     RETRAIN_FREQUENCY_DAYS, PREDICTION_LOOKBACK_DAYS
 )
 from config import (
-    ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, TARGET_PERCENTAGE, CLASS_HORIZON,
+    ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, TARGET_PERCENTAGE, PERIOD_HORIZONS,
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, USE_LSTM, USE_GRU # Moved from ml_models
 )
 from alpha_training import AlphaThresholdConfig, select_threshold_by_alpha
@@ -786,10 +786,13 @@ def _run_portfolio_backtest(
                 # Handle different model types
                 prediction = model(latest_data.values.reshape(1, -1, -1, -1) if hasattr(model, '__call__') else features_scaled)[0]
 
-            # Unscale if y_scaler exists
+            # Unscale if y_scaler exists with clipping to prevent extrapolation
             if y_scaler and hasattr(y_scaler, 'inverse_transform'):
-                prediction = y_scaler.inverse_transform(prediction.reshape(-1, 1))[0][0]
+                prediction_clipped = np.clip(float(prediction), -1.0, 1.0)
+                prediction = y_scaler.inverse_transform(np.array([[prediction_clipped]]))[0][0]
 
+            # Clip to reasonable return range (-100% to +200%)
+            prediction = np.clip(float(prediction), -1.0, 2.0)
             return float(prediction)
 
         except Exception as e:
@@ -2087,13 +2090,24 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
                 prediction = model(latest_data.values.reshape(1, -1, -1) if hasattr(model, '__call__') else features_scaled)[0]
                 print(f"   🤖 {ticker}: Model call successful: {float(prediction):.4f}")
 
-            # Unscale if y_scaler exists
+            # ✅ FIX: Clip prediction BEFORE inverse transform to prevent extrapolation
+            # For models outputting scaled values, clip to [-1, 1] range
             if y_scaler and hasattr(y_scaler, 'inverse_transform'):
-                prediction = y_scaler.inverse_transform(prediction.reshape(-1, 1))[0][0]
+                # Clip to valid scaled range before inverse transform
+                prediction_clipped = np.clip(float(prediction), -1.0, 1.0)
+                if abs(prediction_clipped - float(prediction)) > 0.01:
+                    print(f"   ⚠️ {ticker}: Clipped prediction from {float(prediction):.4f} to {prediction_clipped:.4f}")
+                prediction = y_scaler.inverse_transform(np.array([[prediction_clipped]]))[0][0]
                 print(f"   🔄 {ticker}: Y-scaler applied: {float(prediction):.4f}")
 
-            print(f"   ✅ {ticker}: Final prediction = {float(prediction):.4f}")
-            return float(prediction)
+            # ✅ FIX: Final validation - clip to reasonable return range (-100% to +200%)
+            # No stock can lose more than 100%, and >200% returns are rare outliers
+            final_prediction = np.clip(float(prediction), -1.0, 2.0)
+            if abs(final_prediction - float(prediction)) > 0.01:
+                print(f"   ⚠️ {ticker}: Clipped final prediction from {float(prediction)*100:.2f}% to {final_prediction*100:.2f}%")
+
+            print(f"   ✅ {ticker}: Final prediction = {final_prediction*100:.2f}%")
+            return float(final_prediction)
 
         except Exception as e:
             print(f"   ❌ {ticker}: Prediction failed: {e}")
@@ -2265,9 +2279,13 @@ def _run_portfolio_backtest_single_chunk(
                     out = model(X_tensor)
                     pred_scaled = float(out.cpu().numpy()[0][0])
                     if y_scaler is not None:
-                        pred = y_scaler.inverse_transform([[pred_scaled]])[0][0]
+                        # Clip to [-1, 1] before inverse transform to prevent extrapolation
+                        pred_scaled_clipped = np.clip(pred_scaled, -1.0, 1.0)
+                        pred = y_scaler.inverse_transform([[pred_scaled_clipped]])[0][0]
                     else:
                         pred = pred_scaled
+                    # Clip to reasonable return range (-100% to +200%)
+                    pred = np.clip(float(pred), -1.0, 2.0)
                     return float(pred * 100)  # Return as percentage
             else:
                 # XGBoost/RandomForest: Use last row only (no sequence length requirement)
@@ -2496,7 +2514,7 @@ def print_final_summary(
         buy_thresh = 0.0  # Disabled
         sell_thresh = 1.0  # Disabled
         target_perc = optimized_params.get('target_percentage', TARGET_PERCENTAGE)
-        class_horiz = optimized_params.get('class_horizon', CLASS_HORIZON)
+        class_horiz = optimized_params.get('class_horizon', PERIOD_HORIZONS.get("1-Year", 20))
         opt_status = optimized_params.get('optimization_status', 'N/A')
 
         allocated_capital = INVESTMENT_PER_STOCK

@@ -107,8 +107,12 @@ def predict_return_for_ticker(
                     
                     # Inverse transform if using regression with y_scaler
                     if y_scaler is not None:
-                        prediction = y_scaler.inverse_transform([[prediction]])[0][0]
+                        # Clip to [-1, 1] before inverse transform to prevent extrapolation
+                        prediction_clipped = np.clip(float(prediction), -1.0, 1.0)
+                        prediction = y_scaler.inverse_transform([[prediction_clipped]])[0][0]
                     
+                    # Clip to reasonable return range (-100% to +200%)
+                    prediction = np.clip(float(prediction), -1.0, 2.0)
                     return prediction
             except ImportError:
                 pass  # Fall through to traditional ML
@@ -116,22 +120,18 @@ def predict_return_for_ticker(
         # Traditional ML models (XGBoost, LightGBM, RandomForest, etc.)
         scaled_data = scaler.transform(latest_data)
         
-        # Always use regression approach
-            # Regression model: predict returns directly
-            prediction = model.predict(scaled_data)[0]
-            
-            # Inverse transform if we scaled the target
-            if y_scaler is not None:
-                prediction = y_scaler.inverse_transform([[prediction]])[0][0]
-            
-            return float(prediction)
-        else:
-            # Classification model: return probability (for backward compatibility)
-            # This shouldn't be used in the current setup, but handle it anyway
-            if hasattr(model_buy, 'predict_proba'):
-                return float(model_buy.predict_proba(scaled_data)[0][1])
-            else:
-                return float(model_buy.predict(scaled_data)[0])
+        # Always use regression approach - predict returns directly
+        prediction = model.predict(scaled_data)[0]
+        
+        # Inverse transform if we scaled the target
+        if y_scaler is not None:
+            # Clip to [-1, 1] before inverse transform to prevent extrapolation
+            prediction_clipped = np.clip(float(prediction), -1.0, 1.0)
+            prediction = y_scaler.inverse_transform([[prediction_clipped]])[0][0]
+        
+        # Clip to reasonable return range (-100% to +200%)
+        prediction = np.clip(float(prediction), -1.0, 2.0)
+        return float(prediction)
     
     except Exception as e:
         print(f"  ⚠️ Error predicting for {ticker}: {e}")

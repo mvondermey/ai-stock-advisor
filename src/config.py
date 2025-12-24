@@ -99,7 +99,7 @@ TRANSACTION_COST        = 0.001      # 0.1%
 FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
-CLASS_HORIZON           = 20         # days ahead for return prediction (longer horizon to capture trends)
+# CLASS_HORIZON removed - use PERIOD_HORIZONS instead
 
 # How many days of historical data to use when making predictions
 # Must be >= 120 to have enough data after feature calculation (indicators need 50+ days lookback)
@@ -171,8 +171,8 @@ LIVE_TRADING_MODEL_PERIOD = "Best"
 
 # Period-specific horizons (trading days) - matched to period scale
 PERIOD_HORIZONS = {
-    # 10-day horizon to capture medium-term trends instead of noise
-    "1-Year": 5     # Predict 10 trading days ahead (~2 weeks)
+    # Prediction horizon in trading days
+    "1-Year": 20     # Predict 20 trading days ahead (~1 month)
 }
 
 USE_SINGLE_REGRESSION_MODEL = True  # Use single regression model instead of buy/sell pair

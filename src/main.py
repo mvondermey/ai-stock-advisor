@@ -24,7 +24,7 @@ sys.path.insert(0, str(project_root))
 
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
-    TARGET_PERCENTAGE, CLASS_HORIZON,
+    TARGET_PERCENTAGE,
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, VALIDATION_DAYS,
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
@@ -362,7 +362,7 @@ def main(
     fcf_threshold: float = 0.0,
     ebitda_threshold: float = 0.0,
     target_percentage: float = TARGET_PERCENTAGE,
-    class_horizon: int = CLASS_HORIZON,
+    class_horizon: int = PERIOD_HORIZONS.get("1-Year", 20),
     top_performers_data=None,
     feature_set: Optional[List[str]] = None,
     run_parallel: bool = True,
