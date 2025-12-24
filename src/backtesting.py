@@ -19,7 +19,7 @@ from config import (
     N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
     DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
     FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD, NUM_PROCESSES, SEQUENCE_LENGTH,
-    RETRAIN_FREQUENCY_DAYS
+    RETRAIN_FREQUENCY_DAYS, PREDICTION_LOOKBACK_DAYS
 )
 from config import (
     ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, TARGET_PERCENTAGE, CLASS_HORIZON,
@@ -737,7 +737,7 @@ def _run_portfolio_backtest(
     top_performers_data: List[Tuple],
     use_simple_rule_strategy: bool = False,
     horizon_days: int = 20
-) -> Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]]]:
+) -> Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]], float]:
     """Helper function to run portfolio backtest for a given period."""
     num_processes = max(1, cpu_count() - 5) # Use NUM_PROCESSES from config if available, otherwise default
 
@@ -905,10 +905,35 @@ def _run_portfolio_backtest(
                 })
                 performance_metrics.append(perf_metrics)
 
-    # Calculate total portfolio value
+    # Calculate total portfolio value (AI strategy - all processed tickers)
     total_portfolio_value = sum(portfolio_values) if portfolio_values else capital_per_stock * len(top_tickers)
 
-    return total_portfolio_value, portfolio_values, processed_tickers, performance_metrics, buy_hold_histories_per_ticker
+    # Calculate BH portfolio value for TOP 3 PERFORMERS ONLY
+    # This creates a concentrated BH portfolio vs AI's broader diversification
+    bh_portfolio_value = 0.0
+    top_3_tickers = []
+
+    if top_performers_data:
+        # Sort by 1-year performance and get top 3
+        sorted_performers = sorted(top_performers_data, key=lambda x: x[1], reverse=True)
+        top_3_performers = [(ticker, perf_1y) for ticker, perf_1y, perf_ytd in sorted_performers[:3]]
+        top_3_tickers = [ticker for ticker, perf in top_3_performers]
+
+        # Sum BH final values for only the top 3 performers
+        for ticker in top_3_tickers:
+            if ticker in buy_hold_histories_per_ticker and buy_hold_histories_per_ticker[ticker]:
+                final_bh_value = buy_hold_histories_per_ticker[ticker][-1]  # Last value in history
+                bh_portfolio_value += final_bh_value
+
+        print(f"🏆 BH Portfolio ({period_name}): ${bh_portfolio_value:,.0f} across top 3: {', '.join(top_3_tickers)}")
+    else:
+        # Fallback: use first 3 tickers if no performance data
+        bh_portfolio_value = sum([buy_hold_histories_per_ticker.get(ticker, [capital_per_stock])[-1]
+                                 for ticker in processed_tickers[:3]]) if processed_tickers else capital_per_stock * 3
+        print(f"⚠️ BH Portfolio ({period_name}): Using fallback (${bh_portfolio_value:,.0f}) - no performance data")
+
+    # Store BH portfolio value in return for comparison
+    return total_portfolio_value, portfolio_values, processed_tickers, performance_metrics, buy_hold_histories_per_ticker, bh_portfolio_value
 
 
 def _run_portfolio_backtest_walk_forward(
@@ -925,7 +950,7 @@ def _run_portfolio_backtest_walk_forward(
     period_name: str,
     top_performers_data: List[Tuple],
     horizon_days: int = 20
-) -> Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]]]:
+) -> Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]], float, float, List[float], float, List[float]]:
     """
     Walk-forward backtest: Daily selection from top 40 stocks with 10-day retraining.
 
@@ -996,9 +1021,26 @@ def _run_portfolio_backtest_walk_forward(
     initial_capital_needed = 3 * capital_per_stock
     cash_balance = initial_capital_needed  # Start with cash available for initial purchases
 
+    # Track DYNAMIC BH PORTFOLIO (rebalances to top 3 performers periodically)
+    dynamic_bh_portfolio_value = 0.0
+    dynamic_bh_portfolio_history = [dynamic_bh_portfolio_value]
+    dynamic_bh_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    dynamic_bh_cash = initial_capital_needed  # Start with same capital as AI
+    current_dynamic_bh_stocks = []  # Current top 3 stocks held by dynamic BH
+
+    # Track DYNAMIC BH 3-MONTH PORTFOLIO (rebalances to top 3 based on 3-month performance)
+    dynamic_bh_3m_portfolio_value = 0.0
+    dynamic_bh_3m_portfolio_history = [dynamic_bh_3m_portfolio_value]
+    dynamic_bh_3m_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    dynamic_bh_3m_cash = initial_capital_needed  # Start with same capital as AI
+    current_dynamic_bh_3m_stocks = []  # Current top 3 stocks held by 3-month dynamic BH
+
     all_processed_tickers = []
     all_performance_metrics = []
     all_buy_hold_histories = {}
+    
+    # ✅ NEW: Track per-stock contributions
+    stock_performance_tracking = {}  # ticker -> {'days_held': int, 'contribution': float, 'max_shares': float, 'entry_value': float, 'exit_value': float}
 
     # Get all trading days in the backtest period
     date_range = pd.date_range(start=backtest_start_date, end=backtest_end_date, freq='D')
@@ -1093,6 +1135,95 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"\n❌ ABORT: Training has failed {consecutive_training_failures} times in a row!")
                     raise InsufficientDataError(f"Training consistently failing: {e}")
 
+        # DYNAMIC BH PORTFOLIO: Rebalance to current top 3 performers DAILY
+        # Uses 1-year performance (same as initial selection) to determine top performers
+            print(f"\n🔄 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): Daily Dynamic BH Rebalancing...")
+
+            try:
+                # Calculate current top 3 performers based on recent performance
+                # Use the same logic as initial selection but with data up to current date
+                current_top_performers = []
+
+                for ticker in initial_top_tickers:
+                    try:
+                        ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                        if not ticker_data.empty:
+                            ticker_data = ticker_data.set_index('date')
+                            # Use 1-year performance (same as initial selection) but updated daily
+                            # Calculate performance from available historical data up to current date
+                            perf_start_date = max(train_start_date, current_date - timedelta(days=365))
+                            perf_data = ticker_data.loc[perf_start_date:current_date]
+
+                            if len(perf_data) >= 50:  # Need minimum data
+                                start_price = perf_data['Close'].iloc[0]
+                                end_price = perf_data['Close'].iloc[-1]
+
+                                if start_price > 0:
+                                    perf_pct = ((end_price - start_price) / start_price) * 100
+                                    current_top_performers.append((ticker, perf_pct))
+
+                    except Exception as e:
+                        continue
+
+                # Sort by performance and get top 3
+                if current_top_performers:
+                    current_top_performers.sort(key=lambda x: x[1], reverse=True)
+                    new_dynamic_bh_stocks = [ticker for ticker, perf in current_top_performers[:3]]
+
+                    print(f"   🏆 Top 3 performers (1-year): {', '.join(new_dynamic_bh_stocks)}")
+
+                    # Rebalance dynamic BH portfolio
+                    _rebalance_dynamic_bh_portfolio(
+                        new_dynamic_bh_stocks, current_date, all_tickers_data,
+                        dynamic_bh_positions, dynamic_bh_cash, capital_per_stock
+                    )
+
+                    current_dynamic_bh_stocks = new_dynamic_bh_stocks
+
+                    # DYNAMIC BH 3-MONTH: Rebalance to current top 3 based on 3-month performance
+                    current_top_performers_3m = []
+
+                    for ticker in initial_top_tickers:
+                        try:
+                            ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                            if not ticker_data.empty:
+                                ticker_data = ticker_data.set_index('date')
+                                # Use 3-month (90-day) performance for selection
+                                perf_start_date_3m = max(train_start_date, current_date - timedelta(days=90))
+                                perf_data_3m = ticker_data.loc[perf_start_date_3m:current_date]
+
+                                if len(perf_data_3m) >= 30:  # Need at least 30 days
+                                    start_price = perf_data_3m['Close'].iloc[0]
+                                    end_price = perf_data_3m['Close'].iloc[-1]
+
+                                    if start_price > 0:
+                                        perf_pct_3m = ((end_price - start_price) / start_price) * 100
+                                        current_top_performers_3m.append((ticker, perf_pct_3m))
+
+                        except Exception as e:
+                            continue
+
+                    # Sort by 3-month performance and get top 3
+                    if current_top_performers_3m:
+                        current_top_performers_3m.sort(key=lambda x: x[1], reverse=True)
+                        new_dynamic_bh_3m_stocks = [ticker for ticker, perf in current_top_performers_3m[:3]]
+
+                        print(f"   🏆 Top 3 performers (3-month): {', '.join(new_dynamic_bh_3m_stocks)}")
+
+                        # Rebalance 3-month dynamic BH portfolio
+                        _rebalance_dynamic_bh_3m_portfolio(
+                            new_dynamic_bh_3m_stocks, current_date, all_tickers_data,
+                            dynamic_bh_3m_positions, dynamic_bh_3m_cash, capital_per_stock
+                        )
+
+                        current_dynamic_bh_3m_stocks = new_dynamic_bh_3m_stocks
+
+                else:
+                    print(f"   ⚠️ No valid performance data for dynamic BH rebalancing")
+
+            except Exception as e:
+                print(f"   ⚠️ Dynamic BH rebalancing failed: {e}")
+
         # Daily stock selection: Use current models to pick best 3 from 40 stocks
         try:
             predictions = []
@@ -1109,10 +1240,10 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data = ticker_data.set_index('date')
                             data_slice = ticker_data.loc[:current_date]
 
-                            if len(data_slice) >= 120:  # Need minimum 120 days for features
-                                print(f"   📊 {ticker}: Calling prediction with {len(data_slice.tail(120))} rows, model={type(current_models[ticker]).__name__ if current_models[ticker] else None}, scaler={type(current_scalers.get(ticker)).__name__ if current_scalers.get(ticker) else None}")
+                            if len(data_slice) >= PREDICTION_LOOKBACK_DAYS:  # Need minimum lookback days for features
+                                print(f"   📊 {ticker}: Calling prediction with {len(data_slice.tail(PREDICTION_LOOKBACK_DAYS))} rows, model={type(current_models[ticker]).__name__ if current_models[ticker] else None}, scaler={type(current_scalers.get(ticker)).__name__ if current_scalers.get(ticker) else None}")
                                 pred = _quick_predict_return(
-                                    ticker, data_slice.tail(120),  # Use last 120 days for features
+                                    ticker, data_slice.tail(PREDICTION_LOOKBACK_DAYS),  # Use last N days for features
                                     current_models[ticker],  # Single model
                                     current_scalers.get(ticker),
                                     current_y_scalers.get(ticker),
@@ -1141,7 +1272,7 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"\n❌ ABORT: No valid predictions for {consecutive_no_predictions} consecutive days!")
                     print(f"   💡 Possible reasons:")
                     print(f"      - Models are None or not trained")
-                    print(f"      - Insufficient data for prediction (need 120+ days)")
+                    print(f"      - Insufficient data for prediction (need {PREDICTION_LOOKBACK_DAYS}+ days)")
                     print(f"      - All predictions returning -inf")
                     print(f"   🔧 Solutions:")
                     print(f"      - Check model training logs above")
@@ -1182,7 +1313,8 @@ def _run_portfolio_backtest_walk_forward(
                         executed_trades = _execute_portfolio_rebalance(
                             old_portfolio, selected_stocks, current_date, all_tickers_data,
                             positions, cash_balance, capital_per_stock, target_percentage,
-                            predictions=selected_predictions  # ✅ NEW: Pass predictions for weighted buying
+                            predictions=selected_predictions,  # Pass predictions for weighted buying
+                            stock_performance_tracking=stock_performance_tracking  # ✅ NEW: Pass tracking dict
                         )
 
                         # Update cash balance after trades
@@ -1266,6 +1398,46 @@ def _run_portfolio_backtest_walk_forward(
             print(f"   ⚠️ Day {day_count}: Stock selection failed: {e}")
             # Keep existing portfolio if selection fails
 
+        # Update DYNAMIC BH portfolio value daily
+        dynamic_bh_invested_value = 0.0
+        for ticker in current_dynamic_bh_stocks:
+            if ticker in dynamic_bh_positions:
+                try:
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            current_price = current_price_data['Close'].iloc[-1]
+                            position_value = dynamic_bh_positions[ticker]['shares'] * current_price
+                            dynamic_bh_positions[ticker]['value'] = position_value
+                            dynamic_bh_invested_value += position_value
+                except Exception as e:
+                    print(f"   ⚠️ Error updating dynamic BH position for {ticker}: {e}")
+
+        dynamic_bh_portfolio_value = dynamic_bh_invested_value + dynamic_bh_cash
+        dynamic_bh_portfolio_history.append(dynamic_bh_portfolio_value)
+
+        # Update DYNAMIC BH 3-MONTH portfolio value daily
+        dynamic_bh_3m_invested_value = 0.0
+        for ticker in current_dynamic_bh_3m_stocks:
+            if ticker in dynamic_bh_3m_positions:
+                try:
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            current_price = current_price_data['Close'].iloc[-1]
+                            position_value = dynamic_bh_3m_positions[ticker]['shares'] * current_price
+                            dynamic_bh_3m_positions[ticker]['value'] = position_value
+                            dynamic_bh_3m_invested_value += position_value
+                except Exception as e:
+                    print(f"   ⚠️ Error updating dynamic BH 3M position for {ticker}: {e}")
+
+        dynamic_bh_3m_portfolio_value = dynamic_bh_3m_invested_value + dynamic_bh_3m_cash
+        dynamic_bh_3m_portfolio_history.append(dynamic_bh_3m_portfolio_value)
+
         # Update portfolio value (invested + cash) at end of each day
         invested_value = 0.0
         for ticker in current_portfolio_stocks:
@@ -1280,6 +1452,27 @@ def _run_portfolio_backtest_walk_forward(
                             current_price = current_price_data['Close'].iloc[-1]
                             position_value = positions[ticker]['shares'] * current_price
                             invested_value += position_value
+                            
+                            # ✅ NEW: Track daily contribution for this stock
+                            old_value = positions[ticker].get('value', position_value)
+                            daily_change = position_value - old_value
+                            
+                            if ticker not in stock_performance_tracking:
+                                stock_performance_tracking[ticker] = {
+                                    'days_held': 0,
+                                    'contribution': 0.0,
+                                    'max_shares': 0.0,
+                                    'entry_value': position_value,
+                                    'total_invested': 0.0
+                                }
+                            
+                            stock_performance_tracking[ticker]['days_held'] += 1
+                            stock_performance_tracking[ticker]['contribution'] += daily_change
+                            stock_performance_tracking[ticker]['max_shares'] = max(
+                                stock_performance_tracking[ticker]['max_shares'],
+                                positions[ticker]['shares']
+                            )
+                            
                             # Update stored position value
                             positions[ticker]['value'] = position_value
                 except Exception as e:
@@ -1404,20 +1597,260 @@ def _run_portfolio_backtest_walk_forward(
     else:
         print(f"\n⚠️ WARNING: No predictions were logged during backtest!")
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, [], {}
+    # ✅ NEW: Convert tracking dict to performance metrics
+    performance_metrics = []
+    for ticker, tracking in stock_performance_tracking.items():
+        # Calculate actual gain
+        contribution = tracking.get('contribution', 0.0)
+        days_held = tracking.get('days_held', 0)
+        max_shares = tracking.get('max_shares', 0.0)
+        total_invested = tracking.get('total_invested', 0.0)
+        
+        # Calculate return percentage
+        return_pct = (contribution / total_invested * 100) if total_invested > 0 else 0.0
+        
+        performance_metrics.append({
+            'ticker': ticker,
+            'performance': contribution + total_invested,  # Final value
+            'strategy_gain': contribution,  # Actual gain
+            'days_held': days_held,
+            'max_shares': max_shares,
+            'total_invested': total_invested,
+            'return_pct': return_pct,
+            'status': 'completed'
+        })
+    
+    # Calculate BH portfolio value for TOP 3 PERFORMERS ONLY
+    # BH buys the top 3 performers at backtest start and holds until end
+    bh_portfolio_value = 0.0
+
+    if top_performers_data:
+        # Sort by 1-year performance and get top 3
+        sorted_performers = sorted(top_performers_data, key=lambda x: x[1], reverse=True)
+        top_3_tickers = [ticker for ticker, perf_1y, perf_ytd in sorted_performers[:3]]
+
+        print(f"🏆 BH Portfolio: Investing in top 3 performers: {', '.join(top_3_tickers)}")
+
+        # Calculate BH performance for each top performer over the backtest period
+        for ticker in top_3_tickers:
+            try:
+                # Get ticker data for the backtest period
+                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                if ticker_data.empty:
+                    print(f"  ⚠️ No data for BH stock {ticker}")
+                    continue
+
+                ticker_data = ticker_data.set_index('date')
+                backtest_data = ticker_data.loc[backtest_start_date:backtest_end_date]
+
+                if backtest_data.empty or len(backtest_data) < 2:
+                    print(f"  ⚠️ Insufficient BH data for {ticker}")
+                    continue
+
+                # Buy at the beginning of backtest period
+                start_price = backtest_data['Close'].iloc[0]
+                end_price = backtest_data['Close'].iloc[-1]
+
+                if start_price > 0:
+                    shares = int(capital_per_stock / start_price)
+                    final_value = shares * end_price
+                    bh_portfolio_value += final_value
+
+                    return_pct = ((end_price - start_price) / start_price) * 100
+                    print(f"  📊 BH {ticker}: ${final_value:,.0f} ({return_pct:+.1f}%) - {shares} shares @ ${start_price:.2f} → ${end_price:.2f}")
+
+            except Exception as e:
+                print(f"  ⚠️ Error calculating BH for {ticker}: {e}")
+                continue
+
+        print(f"✅ BH Portfolio Value: ${bh_portfolio_value:,.0f} across {len(top_3_tickers)} top performers")
+
+    else:
+        # Fallback: use initial capital for 3 stocks
+        bh_portfolio_value = capital_per_stock * 3
+        print(f"⚠️ BH Portfolio: Using fallback (${bh_portfolio_value:,.0f}) - no performance data")
+
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history
+
+
+def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
+                                  dynamic_bh_positions, dynamic_bh_cash, capital_per_stock):
+    """
+    Rebalance dynamic BH portfolio to hold the new top 3 stocks.
+    Happens DAILY - sells stocks no longer in top 3 and buys new ones.
+    """
+    try:
+        # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
+        target_allocation = capital_per_stock  # $15,000 per stock
+        total_target = 3 * target_allocation   # $45,000 total
+
+        # Sell stocks no longer in top 3
+        stocks_to_sell = []
+        for ticker in list(dynamic_bh_positions.keys()):
+            if ticker not in new_stocks:
+                stocks_to_sell.append(ticker)
+
+        for ticker in stocks_to_sell:
+            if ticker in dynamic_bh_positions:
+                try:
+                    # Get current price
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            current_price = current_price_data['Close'].iloc[-1]
+                            shares_to_sell = dynamic_bh_positions[ticker]['shares']
+                            sale_value = shares_to_sell * current_price
+
+                            # Add to cash
+                            dynamic_bh_cash += sale_value
+                            print(f"   💰 Dynamic BH sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f}")
+
+                            # Remove position
+                            del dynamic_bh_positions[ticker]
+
+                except Exception as e:
+                    print(f"   ⚠️ Error selling {ticker} from dynamic BH: {e}")
+
+        # Buy new stocks (or add to existing positions)
+        stocks_to_buy = [ticker for ticker in new_stocks if ticker not in dynamic_bh_positions]
+
+        if stocks_to_buy:
+            # Split available cash among stocks to buy
+            cash_per_stock = dynamic_bh_cash / len(stocks_to_buy) if stocks_to_buy else 0
+
+            for ticker in stocks_to_buy:
+                try:
+                    # Get current price
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            current_price = current_price_data['Close'].iloc[-1]
+
+                            if current_price > 0:
+                                shares_to_buy = int(cash_per_stock / current_price)
+                                if shares_to_buy > 0:
+                                    cost = shares_to_buy * current_price
+
+                                    # Update position
+                                    dynamic_bh_positions[ticker] = {
+                                        'shares': shares_to_buy,
+                                        'entry_price': current_price,
+                                        'value': cost
+                                    }
+
+                                    # Deduct from cash
+                                    dynamic_bh_cash -= cost
+                                    print(f"   🛒 Dynamic BH bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${cost:,.0f}")
+
+                except Exception as e:
+                    print(f"   ⚠️ Error buying {ticker} for dynamic BH: {e}")
+
+        print(f"   📊 Dynamic BH portfolio: ${sum(pos['value'] for pos in dynamic_bh_positions.values()):,.0f} invested + ${dynamic_bh_cash:,.0f} cash")
+
+    except Exception as e:
+        print(f"   ⚠️ Dynamic BH rebalancing failed: {e}")
+
+
+def _rebalance_dynamic_bh_3m_portfolio(new_stocks, current_date, all_tickers_data,
+                                     dynamic_bh_3m_positions, dynamic_bh_3m_cash, capital_per_stock):
+    """
+    Rebalance dynamic BH 3-month portfolio to hold the new top 3 stocks.
+    Happens DAILY - sells stocks no longer in top 3 and buys new ones.
+    Uses 3-month performance for stock selection.
+    """
+    try:
+        # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
+        target_allocation = capital_per_stock  # $15,000 per stock
+
+        # Sell stocks no longer in top 3
+        stocks_to_sell = []
+        for ticker in list(dynamic_bh_3m_positions.keys()):
+            if ticker not in new_stocks:
+                stocks_to_sell.append(ticker)
+
+        for ticker in stocks_to_sell:
+            if ticker in dynamic_bh_3m_positions:
+                try:
+                    # Get current price
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            current_price = current_price_data['Close'].iloc[-1]
+                            shares_to_sell = dynamic_bh_3m_positions[ticker]['shares']
+                            sale_value = shares_to_sell * current_price
+
+                            # Add to cash
+                            dynamic_bh_3m_cash += sale_value
+                            print(f"   💰 Dynamic BH 3M sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f}")
+
+                            # Remove position
+                            del dynamic_bh_3m_positions[ticker]
+
+                except Exception as e:
+                    print(f"   ⚠️ Error selling {ticker} from dynamic BH 3M: {e}")
+
+        # Buy new stocks (or add to existing positions)
+        stocks_to_buy = [ticker for ticker in new_stocks if ticker not in dynamic_bh_3m_positions]
+
+        if stocks_to_buy:
+            # Split available cash among stocks to buy
+            cash_per_stock = dynamic_bh_3m_cash / len(stocks_to_buy) if stocks_to_buy else 0
+
+            for ticker in stocks_to_buy:
+                try:
+                    # Get current price
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            current_price = current_price_data['Close'].iloc[-1]
+
+                            if current_price > 0:
+                                shares_to_buy = int(cash_per_stock / current_price)
+                                if shares_to_buy > 0:
+                                    cost = shares_to_buy * current_price
+
+                                    # Update position
+                                    dynamic_bh_3m_positions[ticker] = {
+                                        'shares': shares_to_buy,
+                                        'entry_price': current_price,
+                                        'value': cost
+                                    }
+
+                                    # Deduct from cash
+                                    dynamic_bh_3m_cash -= cost
+                                    print(f"   🛒 Dynamic BH 3M bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${cost:,.0f}")
+
+                except Exception as e:
+                    print(f"   ⚠️ Error buying {ticker} for dynamic BH 3M: {e}")
+
+        print(f"   📊 Dynamic BH 3M portfolio: ${sum(pos['value'] for pos in dynamic_bh_3m_positions.values()):,.0f} invested + ${dynamic_bh_3m_cash:,.0f} cash")
+
+    except Exception as e:
+        print(f"   ⚠️ Dynamic BH 3M rebalancing failed: {e}")
 
 
 def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all_tickers_data,
                                positions, cash_balance, capital_per_stock, target_percentage,
-                               predictions=None):
+                               predictions=None, stock_performance_tracking=None):
     """
     Execute actual portfolio rebalancing by selling removed stocks and buying new ones.
     
     ✅ NEW: Uses prediction-weighted allocation for buying stocks.
     Stocks with higher predicted returns get larger allocations.
+    ✅ NEW: Tracks per-stock contributions to portfolio performance.
 
     Returns dict with trade execution details.
     """
+    if stock_performance_tracking is None:
+        stock_performance_tracking = {}
     transaction_costs = 0.0
     sold_stocks = []
     bought_stocks = []
@@ -1452,6 +1885,14 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
                 cost = sell_value * TRANSACTION_COST
                 net_sell_value = sell_value - cost
                 transaction_costs += cost
+                
+                # ✅ NEW: Finalize contribution tracking for sold stock
+                if ticker in stock_performance_tracking:
+                    entry_value = stock_performance_tracking[ticker].get('entry_value', 0)
+                    if entry_value > 0:
+                        final_contribution = net_sell_value - entry_value - stock_performance_tracking[ticker].get('total_invested', 0)
+                        stock_performance_tracking[ticker]['contribution'] += final_contribution
+                        stock_performance_tracking[ticker]['exit_value'] = net_sell_value
 
                 # Update cash and positions
                 cash_balance += net_sell_value
@@ -1518,6 +1959,24 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
                             'avg_price': buy_price,
                             'value': buy_value
                         }
+                        
+                        # ✅ NEW: Initialize tracking for newly bought stock
+                        if ticker not in stock_performance_tracking:
+                            stock_performance_tracking[ticker] = {
+                                'days_held': 0,
+                                'contribution': 0.0,
+                                'max_shares': shares_to_buy,
+                                'entry_value': buy_value,
+                                'total_invested': total_buy_cost,
+                                'exit_value': None
+                            }
+                        else:
+                            # Stock was held before, add to investment
+                            stock_performance_tracking[ticker]['total_invested'] += total_buy_cost
+                            stock_performance_tracking[ticker]['max_shares'] = max(
+                                stock_performance_tracking[ticker]['max_shares'],
+                                shares_to_buy
+                            )
 
                         weight_pct = weights.get(ticker, 0) * 100
                         bought_stocks.append(f"{ticker} ({shares_to_buy:.0f} shares @ ${buy_price:.2f})")
@@ -2002,7 +2461,11 @@ def print_final_summary(
     simple_rule_1month_return: float,
     performance_metrics_simple_rule_1y: List[Dict],
     performance_metrics_buy_hold_1y: List[Dict],
-    top_performers_data: List[Tuple]
+    top_performers_data: List[Tuple],
+    final_dynamic_bh_value_1y: float = None,
+    dynamic_bh_1y_return: float = None,
+    final_dynamic_bh_3m_value_1y: float = None,
+    dynamic_bh_3m_1y_return: float = None
 ) -> None:
     """Prints the final summary of the backtest results."""
     print("\n" + "="*80)
@@ -2015,7 +2478,11 @@ def print_final_summary(
     print("-" * 40)
     print(f"  1-Year AI Strategy Value: ${final_strategy_value_1y:,.2f} ({ai_1y_return:+.2f}%)")
     print(f"  1-Year Simple Rule Value: ${final_simple_rule_value_1y:,.2f} ({simple_rule_1y_return:+.2f}%)")
-    print(f"  1-Year Buy & Hold Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
+    print(f"  1-Year Static BH Value: ${final_buy_hold_value_1y:,.2f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.2f}%)")
+    if final_dynamic_bh_value_1y is not None:
+        print(f"  1-Year Dynamic BH Value: ${final_dynamic_bh_value_1y:,.2f} ({dynamic_bh_1y_return:+.2f}%)")
+    if final_dynamic_bh_3m_value_1y is not None:
+        print(f"  1-Year Dynamic BH 3M Value: ${final_dynamic_bh_3m_value_1y:,.2f} ({dynamic_bh_3m_1y_return:+.2f}%)")
     print("="*80)
 
     print("\n📈 Individual Ticker Performance (AI Strategy - Sorted by 1-Year Performance):")

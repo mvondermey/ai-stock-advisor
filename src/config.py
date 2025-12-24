@@ -57,14 +57,14 @@ ALPACA_STOCKS_LIMIT = 100  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = ["NASDAQ"]  # NASDAQ only
-N_TOP_TICKERS           = 5       # Testing with 1 stock to verify predictions work
+N_TOP_TICKERS           = 10       # Testing with 1 stock to verify predictions work
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
 
 # --- Parallel Processing
 from multiprocessing import cpu_count
-NUM_PROCESSES           = max(1, cpu_count() - 2)  # Use all but 2 CPU cores for parallel processing
+NUM_PROCESSES           = max(1, cpu_count() - 5)  # Use all but 2 CPU cores for parallel processing
 
 # --- Backtest & training windows
 BACKTEST_DAYS           = 90         # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr)
@@ -78,7 +78,7 @@ VALIDATION_DAYS         = 90         # ✅ FIX 4: Validation period for threshol
 #   10 = Bi-weekly retraining (balanced, recommended for volatile stocks)
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
-RETRAIN_FREQUENCY_DAYS = 10  # Bi-weekly retraining - consider 20 for S&P 500
+RETRAIN_FREQUENCY_DAYS = 5  # Bi-weekly retraining - consider 20 for S&P 500
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # ✅ Enabled - For simulation and strategy validation
@@ -88,7 +88,7 @@ ENABLE_1YEAR_TRAINING   = True
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
-STRAT_SMA_LONG          = 50
+STRAT_SMA_LONG          = 20
 ATR_PERIOD              = 14
 ATR_MULT_TRAIL          = 2.0
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
@@ -99,7 +99,13 @@ TRANSACTION_COST        = 0.001      # 0.1%
 FEAT_SMA_SHORT          = 5
 FEAT_SMA_LONG           = 20
 FEAT_VOL_WINDOW         = 10
-CLASS_HORIZON           = 10         # days ahead for return prediction (longer horizon to capture trends)
+CLASS_HORIZON           = 20         # days ahead for return prediction (longer horizon to capture trends)
+
+# How many days of historical data to use when making predictions
+# Must be >= 120 to have enough data after feature calculation (indicators need 50+ days lookback)
+# Higher = more stable predictions, Lower = more reactive to recent changes
+# Recommended: 60-250 days (120 = ~6 months, good balance)
+PREDICTION_LOOKBACK_DAYS = 120
 
 # --- AI Portfolio Rebalancing Strategy knobs ---
 # Check portfolio daily but only rebalance when stocks actually change (cost-effective).
@@ -166,7 +172,7 @@ LIVE_TRADING_MODEL_PERIOD = "Best"
 # Period-specific horizons (trading days) - matched to period scale
 PERIOD_HORIZONS = {
     # 10-day horizon to capture medium-term trends instead of noise
-    "1-Year": 10     # Predict 10 trading days ahead (~2 weeks)
+    "1-Year": 5     # Predict 10 trading days ahead (~2 weeks)
 }
 
 USE_SINGLE_REGRESSION_MODEL = True  # Use single regression model instead of buy/sell pair

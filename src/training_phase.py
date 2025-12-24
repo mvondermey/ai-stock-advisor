@@ -50,6 +50,16 @@ def train_worker(params: Tuple) -> Dict:
     """Worker function for parallel model training."""
     ticker, df_train_period, target_percentage, class_horizon, feature_set = params
     
+    # ✅ FIX: Reset CUDA state at start of each worker process to avoid context issues
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            # Reset CUDA context for this process
+            torch.cuda.init()
+    except Exception:
+        pass  # Ignore if CUDA not available
+    
     models_dir = Path("logs/models")
     _ensure_dir(models_dir)
     

@@ -114,13 +114,13 @@ def print_final_summary(
     print("-" * 170)
     for res in sorted_final_results:
         ticker = str(res.get('ticker', 'N/A'))
-        # ✅ FIX: Show $0 allocated capital for failed tickers (they weren't actually traded)
+        # ✅ UPDATED: Use new strategy_gain field from tracking
         if res.get('status') == 'failed':
             allocated_capital = 0.0
             strategy_gain = 0.0
         else:
-            allocated_capital = INVESTMENT_PER_STOCK
-            strategy_gain = res.get('performance', 0.0) - allocated_capital
+            allocated_capital = res.get('total_invested', INVESTMENT_PER_STOCK)
+            strategy_gain = res.get('strategy_gain', 0.0)  # ✅ Use tracked gain
 
         one_year_perf_str = f"{res.get('one_year_perf', 0.0):>9.2f}%" if pd.notna(res.get('one_year_perf')) else "N/A".rjust(10)
         ytd_perf_str = f"{res.get('ytd_perf', 0.0):>9.2f}%" if pd.notna(res.get('ytd_perf')) else "N/A".rjust(10)
@@ -128,13 +128,13 @@ def print_final_summary(
         buy_prob_str = f"{res.get('buy_prob', 0.0):>9.2f}" if pd.notna(res.get('buy_prob')) else "N/A".rjust(10)
         sell_prob_str = f"{res.get('sell_prob', 0.0):>9.2f}" if pd.notna(res.get('sell_prob')) else "N/A".rjust(10)
         last_ai_action_str = str(res.get('last_ai_action', 'HOLD'))
+        days_held = res.get('days_held', 0)
         
-        # ✅ FIX: Show N/A for shares if ticker failed (wasn't traded)
-        # Now showing max_shares_held instead of shares_before_liquidation
+        # ✅ UPDATED: Show actual max shares held
         if res.get('status') == 'failed':
             max_shares_str = "N/A".rjust(25)
         else:
-            max_shares_value = res.get('final_shares', res.get('shares_before_liquidation', 0.0))
+            max_shares_value = res.get('final_shares', 0.0)
             max_shares_str = f"{max_shares_value:>24.2f}"
         
         print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {max_shares_str}")

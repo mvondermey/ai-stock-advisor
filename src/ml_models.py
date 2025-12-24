@@ -10,6 +10,30 @@ import joblib # For model saving/loading
 import sys # For current_process in train_worker
 import matplotlib.pyplot as plt # For SHAP plots
 
+
+def _safe_to_cpu(model_or_tensor):
+    """Safely move a PyTorch model/tensor to CPU, handling CUDA errors gracefully.
+    
+    Returns:
+        The model/tensor on CPU, or None if failed.
+    """
+    import torch
+    if model_or_tensor is None:
+        return None
+    try:
+        return model_or_tensor.cpu()
+    except RuntimeError as e:
+        if "CUDA" in str(e):
+            try:
+                # Try to clear CUDA cache first
+                torch.cuda.empty_cache()
+                return model_or_tensor.cpu()
+            except RuntimeError:
+                # CUDA context is corrupted, can't recover this model
+                print(f"⚠️ CUDA error moving model to CPU, model lost: {e}")
+                return None
+        raise
+
 def _alpha_metrics_report(label: str, proba, df_like: pd.DataFrame, freq: str = "D") -> None:
     """Print Alpha (annualized) and Active-IR vs buy-and-hold for a probability vector aligned to df_like."""
     try:
@@ -791,6 +815,34 @@ def train_and_evaluate_models(
     X_df = d[final_feature_names]
     y = d[target_col].values
 
+    # Handle infinity and extremely large values before scaling
+    inf_mask = np.isinf(X_df.values).any(axis=1)
+    large_val_threshold = np.finfo(np.float64).max / 10  # Conservative threshold
+    large_mask = (np.abs(X_df.values) > large_val_threshold).any(axis=1)
+    invalid_mask = inf_mask | large_mask
+    
+    if invalid_mask.any():
+        n_invalid = invalid_mask.sum()
+        print(f"  [WARNING] {ticker}: Removing {n_invalid} rows with inf/extremely large values before scaling.")
+        X_df = X_df[~invalid_mask]
+        y = y[~invalid_mask]
+        
+        if len(y) < 50:
+            print(f"  [DIAGNOSTIC] {ticker}: Not enough rows after removing inf values ({len(y)} rows, need >= 50). Skipping.")
+            return None, None, None
+
+    # Also replace any remaining inf in individual columns (shouldn't happen but safety net)
+    X_df = X_df.replace([np.inf, -np.inf], np.nan)
+    # Drop any rows that now have NaN from the replacement
+    valid_rows = ~X_df.isna().any(axis=1)
+    if not valid_rows.all():
+        X_df = X_df[valid_rows]
+        y = y[valid_rows]
+        
+        if len(y) < 50:
+            print(f"  [DIAGNOSTIC] {ticker}: Not enough rows after final inf cleanup ({len(y)} rows, need >= 50). Skipping.")
+            return None, None, None
+
     # Regression: check we have enough samples
     if len(y) < 10:
         print(f"  [DIAGNOSTIC] {ticker}: Not enough samples for '{target_col}' (only {len(y)} samples, need >= 10). Skipping.")
@@ -952,10 +1004,14 @@ def train_and_evaluate_models(
                             except RuntimeError as e:
                                 if "CUDA" in str(e):
                                     device = torch.device("cpu")
-                                    lstm_model = lstm_model.cpu()
+                                    lstm_model = _safe_to_cpu(lstm_model)
+                                    if lstm_model is None:
+                                        break
                                     batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                                 else:
                                     raise
+                            if lstm_model is None:
+                                break
                             optimizer_lstm.zero_grad()
                             outputs = lstm_model(batch_X)
                             loss = criterion(outputs, batch_y)
@@ -963,17 +1019,34 @@ def train_and_evaluate_models(
                             optimizer_lstm.step()
                     except RuntimeError as e:
                         if "CUDA" in str(e):
-                            print(f"⚠️ CUDA error during LSTM training epoch {epoch}, falling back to CPU...")
-                            device = torch.device("cpu")
-                            lstm_model = lstm_model.cpu()
-                            # Restart this epoch on CPU
-                            for batch_X, batch_y in dataloader:
-                                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                                optimizer_lstm.zero_grad()
-                                outputs = lstm_model(batch_X)
-                                loss = criterion(outputs, batch_y)
-                                loss.backward()
-                                optimizer_lstm.step()
+                            print(f"⚠️ CUDA error during LSTM training epoch {epoch}, recreating model on CPU...")
+                            try:
+                                # Clear CUDA cache and recreate model on CPU
+                                torch.cuda.empty_cache()
+                                device = torch.device("cpu")
+                                # Recreate model on CPU instead of moving corrupted model
+                                lstm_model = type(lstm_model)(
+                                    input_size=lstm_model.lstm.input_size,
+                                    hidden_size=lstm_model.lstm.hidden_size,
+                                    num_layers=lstm_model.lstm.num_layers,
+                                    output_size=lstm_model.fc.out_features
+                                ).to(device)
+                                optimizer_lstm = torch.optim.Adam(lstm_model.parameters(), lr=0.001)
+                            except Exception:
+                                # If recreation fails, skip LSTM for this ticker
+                                print(f"⚠️ Could not recover LSTM, skipping...")
+                                lstm_model = None
+                                break
+                            
+                            if lstm_model is not None:
+                                # Restart this epoch on CPU
+                                for batch_X, batch_y in dataloader:
+                                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                                    optimizer_lstm.zero_grad()
+                                    outputs = lstm_model(batch_X)
+                                    loss = criterion(outputs, batch_y)
+                                    loss.backward()
+                                    optimizer_lstm.step()
                         else:
                             raise
                 
@@ -986,13 +1059,17 @@ def train_and_evaluate_models(
                         except RuntimeError as e:
                             if "CUDA" in str(e):
                                 device = torch.device("cpu")
-                                lstm_model = lstm_model.cpu()
+                                lstm_model = _safe_to_cpu(lstm_model)
+                                if lstm_model is None:
+                                    break
                                 batch_X = batch_X.to(device)
                             else:
                                 raise
+                        if lstm_model is None:
+                            break
                         outputs = lstm_model(batch_X)
                         all_outputs.append(outputs.cpu().numpy())
-                    y_pred_proba_lstm = np.concatenate(all_outputs).flatten()
+                    y_pred_proba_lstm = np.concatenate(all_outputs).flatten() if all_outputs else np.array([])
                 
                 try:
                     # Always use regression (default behavior)
@@ -1023,10 +1100,14 @@ def train_and_evaluate_models(
                             except RuntimeError as e:
                                 if "CUDA" in str(e):
                                     device = torch.device("cpu")
-                                    tcn_model = tcn_model.cpu()
+                                    tcn_model = _safe_to_cpu(tcn_model)
+                                    if tcn_model is None:
+                                        break
                                     batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                                 else:
                                     raise
+                            if tcn_model is None:
+                                break
                             optimizer_tcn.zero_grad()
                             outputs = tcn_model(batch_X)
                             loss = criterion(outputs, batch_y.squeeze())
@@ -1034,49 +1115,66 @@ def train_and_evaluate_models(
                             optimizer_tcn.step()
                     except RuntimeError as e:
                         if "CUDA" in str(e):
-                            print(f"⚠️ CUDA error during TCN training epoch {epoch}, falling back to CPU...")
-                            device = torch.device("cpu")
-                            tcn_model = tcn_model.cpu()
-                            for batch_X, batch_y in dataloader:
-                                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                                optimizer_tcn.zero_grad()
-                                outputs = tcn_model(batch_X)
-                                loss = criterion(outputs, batch_y.squeeze())
-                                loss.backward()
-                                optimizer_tcn.step()
+                            print(f"⚠️ CUDA error during TCN training epoch {epoch}, recreating model on CPU...")
+                            try:
+                                torch.cuda.empty_cache()
+                                device = torch.device("cpu")
+                                tcn_model = TCNRegressor(input_size, num_filters=32, kernel_size=3, num_levels=2, dropout=0.1).to(device)
+                                optimizer_tcn = optim.Adam(tcn_model.parameters(), lr=LSTM_LEARNING_RATE)
+                            except Exception:
+                                print(f"⚠️ Could not recover TCN, skipping...")
+                                tcn_model = None
+                                break
+                            
+                            if tcn_model is not None:
+                                for batch_X, batch_y in dataloader:
+                                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                                    optimizer_tcn.zero_grad()
+                                    outputs = tcn_model(batch_X)
+                                    loss = criterion(outputs, batch_y.squeeze())
+                                    loss.backward()
+                                    optimizer_tcn.step()
                         else:
                             raise
+                    if tcn_model is None:
+                        break
 
-                tcn_model.eval()
-                with torch.no_grad():
-                    all_outputs = []
-                    for batch_X, _ in dataloader:
-                        try:
-                            batch_X = batch_X.to(device)
-                        except RuntimeError as e:
-                            if "CUDA" in str(e):
-                                device = torch.device("cpu")
-                                tcn_model = tcn_model.cpu()
+                if tcn_model is not None:
+                    tcn_model.eval()
+                    with torch.no_grad():
+                        all_outputs = []
+                        for batch_X, _ in dataloader:
+                            try:
                                 batch_X = batch_X.to(device)
-                            else:
-                                raise
-                        outputs = tcn_model(batch_X)
-                        all_outputs.append(outputs.cpu().numpy())
-                    y_pred_tcn = np.concatenate(all_outputs).flatten()
+                            except RuntimeError as e:
+                                if "CUDA" in str(e):
+                                    device = torch.device("cpu")
+                                    tcn_model = _safe_to_cpu(tcn_model)
+                                    if tcn_model is None:
+                                        break
+                                    batch_X = batch_X.to(device)
+                                else:
+                                    raise
+                            if tcn_model is None:
+                                break
+                            outputs = tcn_model(batch_X)
+                            all_outputs.append(outputs.cpu().numpy())
+                        y_pred_tcn = np.concatenate(all_outputs).flatten() if all_outputs else np.array([])
 
-                try:
-                    from sklearn.metrics import mean_squared_error, r2_score
-                    y_true = y_sequences.cpu().numpy()
-                    mse_tcn = mean_squared_error(y_true, y_pred_tcn)
-                    r2_tcn = r2_score(y_true, y_pred_tcn)
-                    rmse_tcn = mse_tcn ** 0.5
-                    models_and_params_local["TCN"] = {"model": tcn_model, "scaler": dl_scaler, "auc": -mse_tcn, "params": None}
-                    print(f"      📊 TCN Regression Metrics:")
-                    print(f"         MSE: {mse_tcn:.6f}")
-                    print(f"         RMSE: {rmse_tcn:.6f}")
-                    print(f"         R² Score: {r2_tcn:.4f}")
-                except ValueError:
-                    models_and_params_local["TCN"] = {"model": tcn_model, "scaler": dl_scaler, "auc": 0.0, "params": None}
+                if tcn_model is not None and len(y_pred_tcn) > 0:
+                    try:
+                        from sklearn.metrics import mean_squared_error, r2_score
+                        y_true = y_sequences.cpu().numpy()
+                        mse_tcn = mean_squared_error(y_true, y_pred_tcn)
+                        r2_tcn = r2_score(y_true, y_pred_tcn)
+                        rmse_tcn = mse_tcn ** 0.5
+                        models_and_params_local["TCN"] = {"model": tcn_model, "scaler": dl_scaler, "auc": -mse_tcn, "params": None}
+                        print(f"      📊 TCN Regression Metrics:")
+                        print(f"         MSE: {mse_tcn:.6f}")
+                        print(f"         RMSE: {rmse_tcn:.6f}")
+                        print(f"         R² Score: {r2_tcn:.4f}")
+                    except ValueError:
+                        models_and_params_local["TCN"] = {"model": tcn_model, "scaler": dl_scaler, "auc": 0.0, "params": None}
 
             if USE_GRU:
                 if perform_gru_hp_optimization and ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION:
@@ -1188,10 +1286,14 @@ def train_and_evaluate_models(
                                             if "CUDA" in str(e):
                                                 # Fallback to CPU if CUDA fails during training
                                                 device = torch.device("cpu")
-                                                gru_model = gru_model.cpu()
+                                                gru_model = _safe_to_cpu(gru_model)
+                                                if gru_model is None:
+                                                    break
                                                 batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                                             else:
                                                 raise
+                                        if gru_model is None:
+                                            break
                                         optimizer_gru.zero_grad()
                                         outputs = gru_model(batch_X)
                                         loss = criterion(outputs, batch_y)
@@ -1199,53 +1301,72 @@ def train_and_evaluate_models(
                                         optimizer_gru.step()
                                 except RuntimeError as e:
                                     if "CUDA" in str(e):
-                                        print(f"⚠️ CUDA error during training epoch {epoch}, falling back to CPU...")
-                                        device = torch.device("cpu")
-                                        gru_model = gru_model.cpu()
-                                        # Restart this epoch on CPU
-                                        for batch_X, batch_y in current_dataloader:
-                                            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                                            optimizer_gru.zero_grad()
-                                            outputs = gru_model(batch_X)
-                                            loss = criterion(outputs, batch_y)
-                                            loss.backward()
-                                            optimizer_gru.step()
+                                        print(f"⚠️ CUDA error during training epoch {epoch}, recreating GRU on CPU...")
+                                        try:
+                                            torch.cuda.empty_cache()
+                                            device = torch.device("cpu")
+                                            if TRY_LSTM_INSTEAD_OF_GRU:
+                                                gru_model = LSTMRegressor(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]).to(device)
+                                            else:
+                                                gru_model = GRURegressor(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]).to(device)
+                                            optimizer_gru = optim.Adam(gru_model.parameters(), lr=temp_hyperparams["learning_rate"])
+                                        except Exception:
+                                            print(f"⚠️ Could not recover GRU, skipping...")
+                                            gru_model = None
+                                            break
+                                        
+                                        if gru_model is not None:
+                                            for batch_X, batch_y in current_dataloader:
+                                                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                                                optimizer_gru.zero_grad()
+                                                outputs = gru_model(batch_X)
+                                                loss = criterion(outputs, batch_y)
+                                                loss.backward()
+                                                optimizer_gru.step()
                                     else:
                                         raise
+                                if gru_model is None:
+                                    break
                             
-                            gru_model.eval()
-                            with torch.no_grad():
-                                all_outputs = []
-                                for batch_X, _ in current_dataloader:
-                                    try:
-                                        batch_X = batch_X.to(device)
-                                    except RuntimeError:
-                                        device = torch.device("cpu")
-                                        gru_model = gru_model.cpu()
-                                        batch_X = batch_X.to(device)
-                                    outputs = gru_model(batch_X)
-                                    all_outputs.append(outputs.cpu().numpy())
-                                y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+                            if gru_model is not None:
+                                gru_model.eval()
+                                with torch.no_grad():
+                                    all_outputs = []
+                                    for batch_X, _ in current_dataloader:
+                                        try:
+                                            batch_X = batch_X.to(device)
+                                        except RuntimeError:
+                                            device = torch.device("cpu")
+                                            gru_model = _safe_to_cpu(gru_model)
+                                            if gru_model is None:
+                                                break
+                                            batch_X = batch_X.to(device)
+                                        if gru_model is None:
+                                            break
+                                        outputs = gru_model(batch_X)
+                                        all_outputs.append(outputs.cpu().numpy())
+                                    y_pred_proba_gru = np.concatenate(all_outputs).flatten() if all_outputs else np.array([])
 
-                            try:
-                                # Always use regression (default behavior)
-                                from sklearn.metrics import mean_squared_error, r2_score
-                                y_true = y_sequences.cpu().numpy()
-                                y_pred = y_pred_proba_gru
-                                mse_gru = mean_squared_error(y_true, y_pred)
-                                r2_gru = r2_score(y_true, y_pred)
-                                auc_gru = -mse_gru  # keep legacy key; negative MSE for compatibility
-                                print(f"            GRU MSE: {mse_gru:.6f}, R²: {r2_gru:.4f} | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
-                                better = mse_gru < best_gru_mse
+                            if gru_model is not None and len(y_pred_proba_gru) > 0:
+                                try:
+                                    # Always use regression (default behavior)
+                                    from sklearn.metrics import mean_squared_error, r2_score
+                                    y_true = y_sequences.cpu().numpy()
+                                    y_pred = y_pred_proba_gru
+                                    mse_gru = mean_squared_error(y_true, y_pred)
+                                    r2_gru = r2_score(y_true, y_pred)
+                                    auc_gru = -mse_gru  # keep legacy key; negative MSE for compatibility
+                                    print(f"            GRU MSE: {mse_gru:.6f}, R²: {r2_gru:.4f} | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
+                                    better = mse_gru < best_gru_mse
 
-                                if better:
-                                    best_gru_auc = auc_gru
-                                    best_gru_mse = mse_gru
-                                    best_gru_model = gru_model
-                                    best_gru_scaler = dl_scaler # dl_scaler is already fitted
-                                    best_gru_hyperparams = temp_hyperparams.copy() # Update best_gru_hyperparams
-                            except ValueError:
-                                print(f"            GRU AUC: Not enough samples with positive class for AUC calculation. | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
+                                    if better:
+                                        best_gru_auc = auc_gru
+                                        best_gru_mse = mse_gru
+                                        best_gru_model = gru_model
+                                        best_gru_scaler = dl_scaler # dl_scaler is already fitted
+                                        best_gru_hyperparams = temp_hyperparams.copy() # Update best_gru_hyperparams
+                                except ValueError:
+                                    print(f"            GRU AUC: Not enough samples with positive class for AUC calculation. | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
                                 
                     if best_gru_model:
                         models_and_params_local["GRU"] = {"model": best_gru_model, "scaler": best_gru_scaler, "y_scaler": y_scaler, "auc": best_gru_auc, "hyperparams": best_gru_hyperparams}
@@ -1313,10 +1434,14 @@ def train_and_evaluate_models(
                                 except RuntimeError as e:
                                     if "CUDA" in str(e):
                                         device = torch.device("cpu")
-                                        gru_model = gru_model.cpu()
+                                        gru_model = _safe_to_cpu(gru_model)
+                                        if gru_model is None:
+                                            break
                                         batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                                     else:
                                         raise
+                                if gru_model is None:
+                                    break
                                 optimizer_gru.zero_grad()
                                 outputs = gru_model(batch_X)
                                 loss = criterion(outputs, batch_y)
@@ -1324,56 +1449,77 @@ def train_and_evaluate_models(
                                 optimizer_gru.step()
                         except RuntimeError as e:
                             if "CUDA" in str(e):
-                                print(f"⚠️ CUDA error during training epoch {epoch}, falling back to CPU...")
-                                device = torch.device("cpu")
-                                gru_model = gru_model.cpu()
-                                # Restart this epoch on CPU
-                                for batch_X, batch_y in current_dataloader:
-                                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                                    optimizer_gru.zero_grad()
-                                    outputs = gru_model(batch_X)
-                                    loss = criterion(outputs, batch_y)
-                                    loss.backward()
-                                    optimizer_gru.step()
+                                print(f"⚠️ CUDA error during training epoch {epoch}, recreating GRU on CPU...")
+                                try:
+                                    torch.cuda.empty_cache()
+                                    device = torch.device("cpu")
+                                    if TRY_LSTM_INSTEAD_OF_GRU:
+                                        gru_model = LSTMRegressor(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
+                                    else:
+                                        gru_model = GRURegressor(input_size, hidden_size, num_layers, 1, dropout_rate).to(device)
+                                    optimizer_gru = optim.Adam(gru_model.parameters(), lr=learning_rate)
+                                except Exception:
+                                    print(f"⚠️ Could not recover GRU, skipping...")
+                                    gru_model = None
+                                    break
+                                
+                                if gru_model is not None:
+                                    for batch_X, batch_y in current_dataloader:
+                                        batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                                        optimizer_gru.zero_grad()
+                                        outputs = gru_model(batch_X)
+                                        loss = criterion(outputs, batch_y)
+                                        loss.backward()
+                                        optimizer_gru.step()
                             else:
                                 raise
+                        if gru_model is None:
+                            break
                     
                     # Evaluate GRU
-                    gru_model.eval()
-                    with torch.no_grad():
-                        all_outputs = []
-                        for batch_X, _ in current_dataloader:
-                            try:
-                                batch_X = batch_X.to(device)
-                            except RuntimeError:
-                                device = torch.device("cpu")
-                                gru_model = gru_model.cpu()
-                                batch_X = batch_X.to(device)
-                            outputs = gru_model(batch_X)
-                            all_outputs.append(outputs.cpu().numpy())
-                        y_pred_proba_gru = np.concatenate(all_outputs).flatten()
+                    if gru_model is not None:
+                        gru_model.eval()
+                        with torch.no_grad():
+                            all_outputs = []
+                            for batch_X, _ in current_dataloader:
+                                try:
+                                    batch_X = batch_X.to(device)
+                                except RuntimeError:
+                                    device = torch.device("cpu")
+                                    gru_model = _safe_to_cpu(gru_model)
+                                    if gru_model is None:
+                                        break
+                                    batch_X = batch_X.to(device)
+                                if gru_model is None:
+                                    break
+                                outputs = gru_model(batch_X)
+                                all_outputs.append(outputs.cpu().numpy())
+                            y_pred_proba_gru = np.concatenate(all_outputs).flatten() if all_outputs else np.array([])
 
-                    try:
-                        # Always use regression (default behavior)
-                        from sklearn.metrics import mean_squared_error, r2_score
-                        y_true = y_sequences.cpu().numpy()
-                        y_pred = y_pred_proba_gru
-                        mse_gru = mean_squared_error(y_true, y_pred)
-                        r2_gru = r2_score(y_true, y_pred)
-                        rmse_gru = mse_gru ** 0.5  # Root Mean Squared Error
-                        auc_gru = -mse_gru  # Negative MSE (higher is better for comparison)
-                        current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
-                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
-                        print(f"      📊 GRU Regression Metrics:")
-                        print(f"         MSE: {mse_gru:.6f}")
-                        print(f"         RMSE: {rmse_gru:.6f}")
-                        print(f"         R² Score: {r2_gru:.4f} ({'Good' if r2_gru > 0.5 else 'Poor'} - {abs(r2_gru)*100:.1f}% variance explained)")
-                        print(f"DEBUG: SAVE_PLOTS={SAVE_PLOTS}, SHAP_AVAILABLE={SHAP_AVAILABLE}")
-                        if SAVE_PLOTS and SHAP_AVAILABLE:
-                            analyze_shap_for_gru(gru_model, dl_scaler, X_df, final_feature_names, ticker, target_col)
-                    except ValueError:
-                        print(f"      GRU AUC (fixed/loaded params): Not enough samples with positive class for AUC calculation.")
-                        models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": 0.0}
+                    if gru_model is not None and len(y_pred_proba_gru) > 0:
+                        try:
+                            # Always use regression (default behavior)
+                            from sklearn.metrics import mean_squared_error, r2_score
+                            y_true = y_sequences.cpu().numpy()
+                            y_pred = y_pred_proba_gru
+                            mse_gru = mean_squared_error(y_true, y_pred)
+                            r2_gru = r2_score(y_true, y_pred)
+                            rmse_gru = mse_gru ** 0.5  # Root Mean Squared Error
+                            auc_gru = -mse_gru  # Negative MSE (higher is better for comparison)
+                            current_gru_hyperparams = {"hidden_size": hidden_size, "num_layers": num_layers, "dropout_rate": dropout_rate, "learning_rate": learning_rate, "batch_size": batch_size, "epochs": epochs}
+                            models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": auc_gru, "hyperparams": current_gru_hyperparams}
+                            print(f"      📊 GRU Regression Metrics:")
+                            print(f"         MSE: {mse_gru:.6f}")
+                            print(f"         RMSE: {rmse_gru:.6f}")
+                            print(f"         R² Score: {r2_gru:.4f} ({'Good' if r2_gru > 0.5 else 'Poor'} - {abs(r2_gru)*100:.1f}% variance explained)")
+                            print(f"DEBUG: SAVE_PLOTS={SAVE_PLOTS}, SHAP_AVAILABLE={SHAP_AVAILABLE}")
+                            if SAVE_PLOTS and SHAP_AVAILABLE:
+                                analyze_shap_for_gru(gru_model, dl_scaler, X_df, final_feature_names, ticker, target_col)
+                        except ValueError:
+                            print(f"      GRU AUC (fixed/loaded params): Not enough samples with positive class for AUC calculation.")
+                            models_and_params_local["GRU"] = {"model": gru_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": 0.0}
+                    else:
+                        models_and_params_local["GRU"] = {"model": None, "scaler": None, "y_scaler": None, "auc": 0.0}
 
     best_model_overall = None
     best_hyperparams_overall: Optional[Dict] = None  # New: To store GRU hyperparams if GRU is best

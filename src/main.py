@@ -753,7 +753,7 @@ def main(
         initial_capital_1y = capital_per_stock_1y * n_top_rebal
         
         # Use walk-forward backtest with periodic retraining and rebalancing
-        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y = _run_portfolio_backtest_walk_forward(
+        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y = _run_portfolio_backtest_walk_forward(
             all_tickers_data=all_tickers_data,
             train_start_date=train_start_1y_calc,
             backtest_start_date=bt_start_1y,
@@ -842,27 +842,10 @@ def main(
                 'bh_horizon_return_pct': stats.get('bh_horizon_return_pct'),
                 'individual_bh_return': bh_returns_lookup.get(ticker)
             })
-        # Calculate Buy & Hold portfolio value for the SAME stocks that AI strategy used
-        # This ensures fair comparison: same stocks, same total capital allocation
-        ai_strategy_tickers = set(processed_tickers_1y)  # Tickers that AI strategy actually traded (ONDS, WBX, OMEX)
-
-        # Sum Buy & Hold final values for only the stocks that AI strategy actually traded
-        bh_portfolio_value = 0.0
-        stocks_count = 0
-
-        for i, ticker in enumerate(top_tickers_1y_filtered):
-            if ticker in ai_strategy_tickers and i < len(buy_hold_results_1y):
-                bh_portfolio_value += buy_hold_results_1y[i]
-                stocks_count += 1
-
-        # The buy_hold_results_1y values assume $15,000 initial per stock
-        # AI strategy also uses $15,000 per stock (45,000 / 3 = 15,000)
-        # So the sum gives us the correct portfolio value
-        if stocks_count > 0:
-            final_buy_hold_value_1y = bh_portfolio_value
-        else:
-            # Fallback to original calculation
-            final_buy_hold_value_1y = sum(buy_hold_results_1y) + (len(top_tickers_1y_filtered) - len(buy_hold_results_1y)) * capital_per_stock_1y
+        # BH portfolio value is now calculated in the walk-forward backtest
+        # It invests only in the top 3 highest performing stocks
+        final_buy_hold_value_1y = bh_portfolio_value_1y
+        print(f"✅ BH Portfolio (Top 3 Performers): ${final_buy_hold_value_1y:,.0f}")
         print(f"✅ {actual_period_name} Buy & Hold calculation complete.")
     else:
         print("\nℹ️ 1-Year Backtest is disabled by ENABLE_1YEAR_BACKTEST flag.")
@@ -894,27 +877,28 @@ def main(
     # Distribute the portfolio-level final value across tickers for display (no per-ticker result in rebalancing mode)
     per_ticker_portfolio_value_1y = (final_strategy_value_1y / len(processed_tickers_1y)) if processed_tickers_1y else INVESTMENT_PER_STOCK
 
-    # Add successfully processed tickers
-    for i, ticker in enumerate(processed_tickers_1y):
+    # Add successfully processed tickers (✅ Updated for new tracking system)
+    for ticker in processed_tickers_1y:
         backtest_result_for_ticker = next((res for res in performance_metrics_1y if res['ticker'] == ticker), None)
         
         if backtest_result_for_ticker:
-            perf_data = backtest_result_for_ticker['perf_data']
-            individual_bh_return = backtest_result_for_ticker['individual_bh_return']
-            last_ai_action = backtest_result_for_ticker['last_ai_action']
-            buy_prob = backtest_result_for_ticker['buy_prob']
-            sell_prob = backtest_result_for_ticker['sell_prob']
-            final_shares = backtest_result_for_ticker['shares_before_liquidation'] # This is where final_shares is retrieved
+            # ✅ NEW: Use new performance tracking structure
+            strategy_gain = backtest_result_for_ticker.get('strategy_gain', 0.0)
+            days_held = backtest_result_for_ticker.get('days_held', 0)
+            max_shares = backtest_result_for_ticker.get('max_shares', 0.0)
+            return_pct = backtest_result_for_ticker.get('return_pct', 0.0)
+            total_invested = backtest_result_for_ticker.get('total_invested', INVESTMENT_PER_STOCK)
         else:
-            perf_data = {'sharpe_ratio': 0.0}
-            individual_bh_return = 0.0
-            last_ai_action = "N/A"
-            buy_prob = 0.0
-            sell_prob = 0.0
-            final_shares = 0.0 # Set to 0.0 for tickers that didn't have a backtest result
+            # Fallback if no tracking data
+            strategy_gain = 0.0
+            days_held = 0
+            max_shares = 0.0
+            return_pct = 0.0
+            total_invested = INVESTMENT_PER_STOCK
 
+        # Get benchmark performance
         perf_1y_benchmark = np.nan
-        ytd_perf_benchmark = np.nan  # YTD performance not available since YTD support removed
+        ytd_perf_benchmark = np.nan
         for t, p1y in top_performers_data:
             if t == ticker:
                 perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
@@ -922,15 +906,18 @@ def main(
         
         final_results.append({
             'ticker': ticker,
-            'performance': per_ticker_portfolio_value_1y,
-            'sharpe': perf_data['sharpe_ratio'],
+            'performance': total_invested + strategy_gain,  # Final value
+            'strategy_gain': strategy_gain,  # ✅ NEW: Actual gain
+            'sharpe': 0.0,  # Not calculated in walk-forward
             'one_year_perf': perf_1y_benchmark,
             'ytd_perf': ytd_perf_benchmark,
-            'individual_bh_return': individual_bh_return,
-            'last_ai_action': last_ai_action,
-            'buy_prob': buy_prob,
-            'sell_prob': sell_prob,
-            'final_shares': final_shares, # Add final_shares here
+            'individual_bh_return': return_pct,
+            'last_ai_action': f"Held {days_held}d",  # Show days held
+            'buy_prob': 0.0,  # Not used in walk-forward
+            'sell_prob': 0.0,  # Not used in walk-forward
+            'final_shares': max_shares,  # ✅ NEW: Show max shares held
+            'days_held': days_held,  # ✅ NEW
+            'total_invested': total_invested,  # ✅ NEW
             'status': 'trained',
             'reason': None
         })
@@ -975,6 +962,10 @@ def main(
         actual_tickers_analyzed,  # num_tickers_analyzed
         performance_metrics_buy_hold_1y_actual,  # performance_metrics_buy_hold_1y
         top_performers_data,  # top_performers_data
+        final_dynamic_bh_value_1y=dynamic_bh_portfolio_value_1y,
+        dynamic_bh_1y_return=((dynamic_bh_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_dynamic_bh_3m_value_1y=dynamic_bh_3m_portfolio_value_1y,
+        dynamic_bh_3m_1y_return=((dynamic_bh_3m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         period_name=actual_period_name,  # Dynamic period name
         strategy_results_ytd=None,
         strategy_results_3month=None,
