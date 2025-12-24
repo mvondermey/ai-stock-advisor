@@ -24,7 +24,7 @@ from config import (
 from config import (
     ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, TARGET_PERCENTAGE, PERIOD_HORIZONS,
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, USE_LSTM, USE_GRU, # Moved from ml_models
-    ENABLE_AI_PORTFOLIO, ENABLE_STATIC_BH, ENABLE_DYNAMIC_BH_1Y, ENABLE_DYNAMIC_BH_3M, ENABLE_DYNAMIC_BH_1M, ENABLE_RISK_ADJ_MOM
+    ENABLE_AI_PORTFOLIO, ENABLE_STATIC_BH, ENABLE_DYNAMIC_BH_1Y, ENABLE_DYNAMIC_BH_3M, ENABLE_DYNAMIC_BH_1M, ENABLE_RISK_ADJ_MOM, ENABLE_MEAN_REVERSION
 )
 from alpha_training import AlphaThresholdConfig, select_threshold_by_alpha
 from scipy.stats import uniform, beta
@@ -1058,6 +1058,23 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_cash = initial_capital_needed  # Start with same capital as AI
     current_risk_adj_mom_stocks = []  # Current top 3 stocks held by risk-adjusted momentum
 
+    # MEAN REVERSION: Initialize portfolio tracking
+    mean_reversion_portfolio_value = 0.0
+    mean_reversion_portfolio_history = [mean_reversion_portfolio_value]
+    mean_reversion_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    mean_reversion_cash = initial_capital_needed  # Start with same capital as AI
+    current_mean_reversion_stocks = []  # Current bottom 3 stocks held by mean reversion
+    mean_reversion_transaction_costs = 0.0  # Track total transaction costs
+
+    # Transaction cost tracking for all strategies
+    ai_transaction_costs = 0.0
+    static_bh_transaction_costs = 0.0  # Static BH has no transaction costs (buy once, hold)
+    dynamic_bh_1y_transaction_costs = 0.0
+    dynamic_bh_3m_transaction_costs = 0.0
+    dynamic_bh_1m_transaction_costs = 0.0
+    risk_adj_mom_transaction_costs = 0.0
+    # mean_reversion_transaction_costs already initialized above
+
     all_processed_tickers = []
     all_performance_metrics = []
     all_buy_hold_histories = {}
@@ -1346,6 +1363,50 @@ def _run_portfolio_backtest_walk_forward(
 
                         current_risk_adj_mom_stocks = new_risk_adj_mom_stocks
 
+                # MEAN REVERSION: Rebalance to bottom 3 performers DAILY
+                if ENABLE_MEAN_REVERSION:
+                    try:
+                        # Calculate current bottom 3 performers based on recent short-term performance
+                        # Mean reversion: buy stocks that have declined recently (expecting bounce back)
+                        current_bottom_performers = []
+
+                        for ticker in initial_top_tickers:
+                            try:
+                                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                                if not ticker_data.empty:
+                                    ticker_data = ticker_data.set_index('date')
+                                    # Use 1-month performance for mean reversion (opposite of momentum)
+                                    data_slice = ticker_data.loc[:current_date]
+                                    if len(data_slice) >= 21:  # At least 1 month of data
+                                        recent_data = data_slice.tail(21)  # Last ~1 month
+                                        if len(recent_data) >= 2:
+                                            start_price = recent_data['Close'].iloc[0]
+                                            end_price = recent_data['Close'].iloc[-1]
+                                            if start_price > 0:
+                                                monthly_return = ((end_price - start_price) / start_price) * 100
+                                                current_bottom_performers.append((ticker, monthly_return))
+
+                            except Exception as e:
+                                continue
+
+                        if current_bottom_performers:
+                            current_bottom_performers.sort(key=lambda x: x[1])  # Sort by return (ascending = worst performers)
+                            new_mean_reversion_stocks = [ticker for ticker, ret in current_bottom_performers[:3]]
+
+                            if new_mean_reversion_stocks != current_mean_reversion_stocks:
+                                print(f"   🔄 Mean Reversion rebalancing: {current_mean_reversion_stocks} → {new_mean_reversion_stocks}")
+
+                                # Rebalance mean reversion portfolio (capture returned cash)
+                                mean_reversion_cash = _rebalance_mean_reversion_portfolio(
+                                    new_mean_reversion_stocks, current_date, all_tickers_data,
+                                    mean_reversion_positions, mean_reversion_cash, capital_per_stock
+                                )
+
+                            current_mean_reversion_stocks = new_mean_reversion_stocks
+
+                    except Exception as e:
+                        print(f"   ⚠️ Mean reversion selection failed: {e}")
+
                 else:
                     print(f"   ⚠️ No valid performance data for dynamic BH rebalancing")
 
@@ -1360,7 +1421,10 @@ def _run_portfolio_backtest_walk_forward(
 
             # Skip AI predictions if disabled - just keep empty portfolio
             if not ENABLE_AI_PORTFOLIO:
+                print(f"   🤖 AI predictions disabled (ENABLE_AI_PORTFOLIO={ENABLE_AI_PORTFOLIO})")
                 valid_predictions = 0
+                # Explicitly reset consecutive counter when AI is disabled
+                consecutive_no_predictions = 0
             else:
                 # Get predictions for all 40 stocks using current models
                 valid_predictions = 0
@@ -1397,10 +1461,20 @@ def _run_portfolio_backtest_walk_forward(
 
             # Debug: Show prediction summary
             if day_count == 1 or day_count % 10 == 0:
-                print(f"   🔮 Day {day_count}: {valid_predictions} valid predictions from {len(initial_top_tickers)} tickers")
+                if ENABLE_AI_PORTFOLIO:
+                    print(f"   🔮 Day {day_count}: {valid_predictions} valid predictions from {len(initial_top_tickers)} tickers")
+                else:
+                    print(f"   🔮 Day {day_count}: AI predictions disabled, running BH strategies only")
 
-            # ✅ FIX: Check if no predictions are being made
-            if valid_predictions == 0:
+            # ✅ FIX: Check if no predictions are being made (only when AI is enabled)
+            # DEBUG: Print current state
+            if day_count <= 3 or day_count % 10 == 0:  # Debug first few days and every 10th day
+                print(f"   🔍 DEBUG: ENABLE_AI_PORTFOLIO={ENABLE_AI_PORTFOLIO}, valid_predictions={valid_predictions}, consecutive_no_predictions={consecutive_no_predictions}")
+
+            # Explicit check: only count as failure if AI is enabled AND no predictions
+            should_count_as_failure = ENABLE_AI_PORTFOLIO and (valid_predictions == 0)
+
+            if should_count_as_failure:
                 consecutive_no_predictions += 1
                 if consecutive_no_predictions >= MAX_CONSECUTIVE_FAILURES:
                     print(f"\n❌ ABORT: No valid predictions for {consecutive_no_predictions} consecutive days!")
@@ -1413,8 +1487,8 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"      - Verify data availability with diagnostics")
                     print(f"      - Increase data period")
                     raise InsufficientDataError("No predictions for multiple days - aborting backtest")
-            else:
-                consecutive_no_predictions = 0  # Reset on success
+            elif ENABLE_AI_PORTFOLIO:
+                consecutive_no_predictions = 0  # Reset on success (only when AI is enabled)
             
             # ✅ NEW: Store predictions with metadata
             day_predictions = {
@@ -1655,6 +1729,31 @@ def _run_portfolio_backtest_walk_forward(
         risk_adj_mom_portfolio_value = risk_adj_mom_invested_value + risk_adj_mom_cash
         risk_adj_mom_portfolio_history.append(risk_adj_mom_portfolio_value)
 
+        # Update MEAN REVERSION portfolio value daily (skip if disabled)
+        mean_reversion_invested_value = 0.0
+        if ENABLE_MEAN_REVERSION:
+            for ticker in current_mean_reversion_stocks:
+                if ticker in mean_reversion_positions:
+                    try:
+                        current_price = all_tickers_data[
+                            (all_tickers_data['ticker'] == ticker) &
+                            (all_tickers_data['date'] == current_date)
+                        ]['Close'].iloc[0] if not all_tickers_data[
+                            (all_tickers_data['ticker'] == ticker) &
+                            (all_tickers_data['date'] == current_date)
+                        ].empty else None
+
+                        if current_price is not None and current_price > 0:
+                            shares = mean_reversion_positions[ticker]['shares']
+                            value = shares * current_price
+                            mean_reversion_positions[ticker]['value'] = value
+                            mean_reversion_invested_value += value
+                    except Exception as e:
+                        print(f"   ⚠️ Error updating mean reversion position for {ticker}: {e}")
+
+        mean_reversion_portfolio_value = mean_reversion_invested_value + mean_reversion_cash
+        mean_reversion_portfolio_history.append(mean_reversion_portfolio_value)
+
         # Update portfolio value (invested + cash) at end of each day
         invested_value = 0.0
         for ticker in current_portfolio_stocks:
@@ -1869,7 +1968,11 @@ def _run_portfolio_backtest_walk_forward(
             if len(item) >= 2:
                 top_3_tickers.append(item[0])  # ticker is always first element
 
-        print(f"🏆 BH Portfolio: Investing in top 3 performers: {', '.join(top_3_tickers)}")
+        print(f"🏆 BH Portfolio: Investing in top 3 performers based on 1-year performance up to {backtest_start_date.date()}:")
+        for i, item in enumerate(sorted_performers[:3]):
+            ticker = item[0]
+            perf_1y = item[1]
+            print(f"  {i+1}. {ticker}: {perf_1y:+.1f}% 1-year return")
 
         # Calculate BH performance for each top performer over the backtest period
         for ticker in top_3_tickers:
@@ -1907,7 +2010,7 @@ def _run_portfolio_backtest_walk_forward(
                     bh_portfolio_value += final_value
 
                     return_pct = ((end_price - start_price) / start_price) * 100
-                    print(f"  📊 BH {ticker}: ${final_value:,.0f} ({return_pct:+.1f}%) - {shares} shares @ ${start_price:.2f} → ${end_price:.2f}")
+                    print(f"  📊 BH {ticker}: ${final_value:,.0f} ({return_pct:+.1f}%) - {shares} shares @ ${start_price:.2f} → ${end_price:.2f} ({backtest_start_date.date()} to {backtest_end_date.date()})")
 
             except Exception as e:
                 print(f"  ⚠️ Error calculating BH for {ticker}: {e}")
@@ -1936,7 +2039,7 @@ def _run_portfolio_backtest_walk_forward(
             total_portfolio_value = initial_capital_needed
             print(f"⚠️ AI Portfolio: No positions, using initial capital (${total_portfolio_value:,.0f})")
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs
 
 
 def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
@@ -1975,9 +2078,14 @@ def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
                                     shares_to_sell = dynamic_bh_positions[ticker]['shares']
                                     sale_value = shares_to_sell * current_price
 
+                                    # Apply transaction cost
+                                    sell_cost = sale_value * TRANSACTION_COST
+                                    net_sale_value = sale_value - sell_cost
+                                    dynamic_bh_1y_transaction_costs += sell_cost
+
                                     # Add to cash
-                                    dynamic_bh_cash += sale_value
-                                    print(f"   💰 Dynamic BH sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f}")
+                                    dynamic_bh_cash += net_sale_value
+                                    print(f"   💰 Dynamic BH sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f} (-${sell_cost:.2f} cost) = ${net_sale_value:,.0f}")
 
                                     # Remove position
                                     del dynamic_bh_positions[ticker]
@@ -2008,18 +2116,23 @@ def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
                                 if not pd.isna(current_price) and current_price > 0:
                                     shares_to_buy = int(cash_per_stock / current_price)
                                     if shares_to_buy > 0:
-                                        cost = shares_to_buy * current_price
+                                        buy_value = shares_to_buy * current_price
+
+                                        # Apply transaction cost
+                                        buy_cost = buy_value * TRANSACTION_COST
+                                        total_buy_cost = buy_value + buy_cost
+                                        dynamic_bh_1y_transaction_costs += buy_cost
 
                                         # Update position
                                         dynamic_bh_positions[ticker] = {
                                             'shares': shares_to_buy,
                                             'entry_price': current_price,
-                                            'value': cost
+                                            'value': buy_value
                                         }
 
                                         # Deduct from cash
-                                        dynamic_bh_cash -= cost
-                                        print(f"   🛒 Dynamic BH bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${cost:,.0f}")
+                                        dynamic_bh_cash -= total_buy_cost
+                                        print(f"   🛒 Dynamic BH bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${buy_value:,.0f} (+${buy_cost:.2f} cost) = ${total_buy_cost:,.0f}")
 
                 except Exception as e:
                     print(f"   ⚠️ Error buying {ticker} for dynamic BH: {e}")
@@ -2066,9 +2179,14 @@ def _rebalance_dynamic_bh_3m_portfolio(new_stocks, current_date, all_tickers_dat
                                     shares_to_sell = dynamic_bh_3m_positions[ticker]['shares']
                                     sale_value = shares_to_sell * current_price
 
+                                    # Apply transaction cost
+                                    sell_cost = sale_value * TRANSACTION_COST
+                                    net_sale_value = sale_value - sell_cost
+                                    dynamic_bh_3m_transaction_costs += sell_cost
+
                                     # Add to cash
-                                    dynamic_bh_3m_cash += sale_value
-                                    print(f"   💰 Dynamic BH 3M sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f}")
+                                    dynamic_bh_3m_cash += net_sale_value
+                                    print(f"   💰 Dynamic BH 3M sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f} (-${sell_cost:.2f} cost) = ${net_sale_value:,.0f}")
 
                                     # Remove position
                                     del dynamic_bh_3m_positions[ticker]
@@ -2099,18 +2217,23 @@ def _rebalance_dynamic_bh_3m_portfolio(new_stocks, current_date, all_tickers_dat
                                 if not pd.isna(current_price) and current_price > 0:
                                     shares_to_buy = int(cash_per_stock / current_price)
                                     if shares_to_buy > 0:
-                                        cost = shares_to_buy * current_price
+                                        buy_value = shares_to_buy * current_price
+
+                                        # Apply transaction cost
+                                        buy_cost = buy_value * TRANSACTION_COST
+                                        total_buy_cost = buy_value + buy_cost
+                                        dynamic_bh_3m_transaction_costs += buy_cost
 
                                         # Update position
                                         dynamic_bh_3m_positions[ticker] = {
                                             'shares': shares_to_buy,
                                             'entry_price': current_price,
-                                            'value': cost
+                                            'value': buy_value
                                         }
 
                                         # Deduct from cash
-                                        dynamic_bh_3m_cash -= cost
-                                        print(f"   🛒 Dynamic BH 3M bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${cost:,.0f}")
+                                        dynamic_bh_3m_cash -= total_buy_cost
+                                        print(f"   🛒 Dynamic BH 3M bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${buy_value:,.0f} (+${buy_cost:.2f} cost) = ${total_buy_cost:,.0f}")
 
                 except Exception as e:
                     print(f"   ⚠️ Error buying {ticker} for dynamic BH 3M: {e}")
@@ -2157,9 +2280,14 @@ def _rebalance_dynamic_bh_1m_portfolio(new_stocks, current_date, all_tickers_dat
                                     shares_to_sell = dynamic_bh_1m_positions[ticker]['shares']
                                     sale_value = shares_to_sell * current_price
 
+                                    # Apply transaction cost
+                                    sell_cost = sale_value * TRANSACTION_COST
+                                    net_sale_value = sale_value - sell_cost
+                                    dynamic_bh_1m_transaction_costs += sell_cost
+
                                     # Add to cash
-                                    dynamic_bh_1m_cash += sale_value
-                                    print(f"   💰 Dynamic BH 1M sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f}")
+                                    dynamic_bh_1m_cash += net_sale_value
+                                    print(f"   💰 Dynamic BH 1M sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f} (-${sell_cost:.2f} cost) = ${net_sale_value:,.0f}")
 
                                     # Remove position
                                     del dynamic_bh_1m_positions[ticker]
@@ -2190,18 +2318,23 @@ def _rebalance_dynamic_bh_1m_portfolio(new_stocks, current_date, all_tickers_dat
                                 if not pd.isna(current_price) and current_price > 0:
                                     shares_to_buy = int(cash_per_stock / current_price)
                                     if shares_to_buy > 0:
-                                        cost = shares_to_buy * current_price
+                                        buy_value = shares_to_buy * current_price
+
+                                        # Apply transaction cost
+                                        buy_cost = buy_value * TRANSACTION_COST
+                                        total_buy_cost = buy_value + buy_cost
+                                        dynamic_bh_1m_transaction_costs += buy_cost
 
                                         # Update position
                                         dynamic_bh_1m_positions[ticker] = {
                                             'shares': shares_to_buy,
                                             'entry_price': current_price,
-                                            'value': cost
+                                            'value': buy_value
                                         }
 
                                         # Deduct from cash
-                                        dynamic_bh_1m_cash -= cost
-                                        print(f"   🛒 Dynamic BH 1M bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${cost:,.0f}")
+                                        dynamic_bh_1m_cash -= total_buy_cost
+                                        print(f"   🛒 Dynamic BH 1M bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${buy_value:,.0f} (+${buy_cost:.2f} cost) = ${total_buy_cost:,.0f}")
 
                 except Exception as e:
                     print(f"   ⚠️ Error buying {ticker} for dynamic BH 1M: {e}")
@@ -2248,9 +2381,14 @@ def _rebalance_risk_adj_mom_portfolio(new_stocks, current_date, all_tickers_data
                                     shares_to_sell = risk_adj_mom_positions[ticker]['shares']
                                     sale_value = shares_to_sell * current_price
 
+                                    # Apply transaction cost
+                                    sell_cost = sale_value * TRANSACTION_COST
+                                    net_sale_value = sale_value - sell_cost
+                                    risk_adj_mom_transaction_costs += sell_cost
+
                                     # Add to cash
-                                    risk_adj_mom_cash += sale_value
-                                    print(f"   💰 Risk-Adj Mom sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f}")
+                                    risk_adj_mom_cash += net_sale_value
+                                    print(f"   💰 Risk-Adj Mom sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f} (-${sell_cost:.2f} cost) = ${net_sale_value:,.0f}")
 
                                     # Remove position
                                     del risk_adj_mom_positions[ticker]
@@ -2281,18 +2419,23 @@ def _rebalance_risk_adj_mom_portfolio(new_stocks, current_date, all_tickers_data
                                 if not pd.isna(current_price) and current_price > 0:
                                     shares_to_buy = int(cash_per_stock / current_price)
                                     if shares_to_buy > 0:
-                                        cost = shares_to_buy * current_price
+                                        buy_value = shares_to_buy * current_price
+
+                                        # Apply transaction cost
+                                        buy_cost = buy_value * TRANSACTION_COST
+                                        total_buy_cost = buy_value + buy_cost
+                                        risk_adj_mom_transaction_costs += buy_cost
 
                                         # Update position
                                         risk_adj_mom_positions[ticker] = {
                                             'shares': shares_to_buy,
                                             'entry_price': current_price,
-                                            'value': cost
+                                            'value': buy_value
                                         }
 
                                         # Deduct from cash
-                                        risk_adj_mom_cash -= cost
-                                        print(f"   🛒 Risk-Adj Mom bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${cost:,.0f}")
+                                        risk_adj_mom_cash -= total_buy_cost
+                                        print(f"   🛒 Risk-Adj Mom bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${buy_value:,.0f} (+${buy_cost:.2f} cost) = ${total_buy_cost:,.0f}")
 
                 except Exception as e:
                     print(f"   ⚠️ Error buying {ticker} for risk-adjusted momentum: {e}")
@@ -2303,6 +2446,87 @@ def _rebalance_risk_adj_mom_portfolio(new_stocks, current_date, all_tickers_data
         print(f"   ⚠️ Risk-Adjusted Momentum rebalancing failed: {e}")
 
     return risk_adj_mom_cash  # Return updated cash (float passed by value)
+
+
+def _rebalance_mean_reversion_portfolio(new_stocks, current_date, all_tickers_data,
+                                       mean_reversion_positions, mean_reversion_cash, capital_per_stock):
+    """
+    Rebalance mean reversion portfolio to hold the new bottom 3 stocks.
+    Happens DAILY - sells stocks no longer in bottom 3 and buys new ones.
+    Uses 1-month performance for stock selection (buys recent losers).
+
+    Returns: Updated cash balance (since float is passed by value, not reference)
+    """
+    try:
+        # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
+        target_allocation = capital_per_stock  # $15,000 per stock
+
+        # Sell stocks no longer in bottom 3
+        stocks_to_sell = set(mean_reversion_positions.keys()) - set(new_stocks)
+        for ticker in stocks_to_sell:
+            if ticker in mean_reversion_positions:
+                try:
+                    current_price = all_tickers_data[
+                        (all_tickers_data['ticker'] == ticker) &
+                        (all_tickers_data['date'] == current_date)
+                    ]['Close'].iloc[0]
+
+                    if current_price > 0:
+                        shares = mean_reversion_positions[ticker]['shares']
+                        proceeds = shares * current_price
+
+                        # Apply transaction cost
+                        sell_cost = proceeds * TRANSACTION_COST
+                        net_proceeds = proceeds - sell_cost
+                        mean_reversion_transaction_costs += sell_cost
+                        mean_reversion_cash += net_proceeds
+
+                        print(f"   💰 Mean Reversion sold {ticker}: {shares:.0f} shares @ ${current_price:.2f} = ${proceeds:,.0f} (-${sell_cost:.2f} cost) = ${net_proceeds:,.0f}")
+
+                        # Remove from positions
+                        del mean_reversion_positions[ticker]
+                except Exception as e:
+                    print(f"   ⚠️ Error selling {ticker} from mean reversion: {e}")
+
+        # Buy new stocks
+        for ticker in new_stocks:
+            if ticker not in mean_reversion_positions:
+                try:
+                    current_price = all_tickers_data[
+                        (all_tickers_data['ticker'] == ticker) &
+                        (all_tickers_data['date'] == current_date)
+                    ]['Close'].iloc[0]
+
+                    if current_price > 0 and mean_reversion_cash >= target_allocation:
+                        shares_to_buy = int(target_allocation / current_price)
+                        cost = shares_to_buy * current_price
+
+                        if cost <= mean_reversion_cash:
+                            buy_value = cost  # cost was shares_to_buy * current_price
+
+                            # Apply transaction cost
+                            buy_cost = buy_value * TRANSACTION_COST
+                            total_buy_cost = buy_value + buy_cost
+                            mean_reversion_transaction_costs += buy_cost
+
+                            mean_reversion_positions[ticker] = {
+                                'shares': shares_to_buy,
+                                'entry_price': current_price,
+                                'value': buy_value
+                            }
+                            mean_reversion_cash -= total_buy_cost
+
+                            print(f"   🛒 Mean Reversion bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${buy_value:,.0f} (+${buy_cost:.2f} cost) = ${total_buy_cost:,.0f}")
+
+                except Exception as e:
+                    print(f"   ⚠️ Error buying {ticker} for mean reversion: {e}")
+
+        print(f"   📊 Mean Reversion portfolio: ${sum(pos['value'] for pos in mean_reversion_positions.values()):,.0f} invested + ${mean_reversion_cash:,.0f} cash")
+
+    except Exception as e:
+        print(f"   ⚠️ Mean reversion rebalancing failed: {e}")
+
+    return mean_reversion_cash  # Return updated cash (float passed by value)
 
 
 def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all_tickers_data,
@@ -2358,6 +2582,7 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
                 cost = sell_value * TRANSACTION_COST
                 net_sell_value = sell_value - cost
                 transaction_costs += cost
+                ai_transaction_costs += cost
                 
                 # ✅ NEW: Finalize contribution tracking for sold stock
                 if ticker in stock_performance_tracking:
@@ -2423,6 +2648,7 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
                         cost = buy_value * TRANSACTION_COST
                         total_buy_cost = buy_value + cost
                         transaction_costs += cost
+                        ai_transaction_costs += cost
 
                         # Update cash and positions
                         cash_balance -= total_buy_cost

@@ -94,6 +94,8 @@ ENABLE_DYNAMIC_BH_1Y    = True   # Dynamic BH rebalancing based on 1-year perfor
 ENABLE_DYNAMIC_BH_3M    = True   # Dynamic BH rebalancing based on 3-month performance
 ENABLE_DYNAMIC_BH_1M    = True   # Dynamic BH rebalancing based on 1-month performance
 ENABLE_RISK_ADJ_MOM     = True   # Risk-Adjusted Momentum (6-month returns adjusted for volatility)
+ENABLE_MEAN_REVERSION   = True  # Mean Reversion: Buy oversold stocks, sell overbought
+ENABLE_SEASONAL         = False  # Seasonal: "Sell in May and Go Away" strategy
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -101,8 +103,8 @@ STRAT_SMA_LONG          = 20
 ATR_PERIOD              = 14
 ATR_MULT_TRAIL          = 2.0
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
-INVESTMENT_PER_STOCK    = 15000.0    # Fixed amount to invest per stock
-TRANSACTION_COST        = 0.001      # 0.1%
+INVESTMENT_PER_STOCK    = 33333.33    # Fixed amount to invest per stock ($100,000 total for 3 stocks)
+TRANSACTION_COST        = 0.02       # 2%
 
 # --- Feature windows (for ML only)
 FEAT_SMA_SHORT          = 5
