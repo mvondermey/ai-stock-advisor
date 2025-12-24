@@ -106,9 +106,9 @@ def print_final_summary(
     print("\n📊 Overall Portfolio Performance:")
     print(f"  Initial Capital: ${initial_balance_used:,.2f}")
     print(f"  Number of Tickers Analyzed: {num_tickers_analyzed}")
-    print("-" * 130)
-    print(f"{'Period':<12} | {'AI Strategy':<18} | {'Static BH':<18} | {'Dyn BH 1Y':<18} | {'Dyn BH 3M':<18} | {'Dyn BH 1M':<18}")
-    print("-" * 130)
+    print("-" * 150)
+    print(f"{'Period':<12} | {'AI Strategy':<18} | {'Static BH':<18} | {'Dyn BH 1Y':<18} | {'Dyn BH 3M':<18} | {'Dyn BH 1M':<18} | {'Risk-Adj Mom':<18}")
+    print("-" * 150)
 
     # Format each result
     ai_result = f"${final_strategy_value_1y:,.0f} ({ai_1y_return:+.1f}%)"
@@ -126,8 +126,18 @@ def print_final_summary(
     if final_dynamic_bh_1m_value_1y is not None:
         dynamic_bh_1m_result = f"${final_dynamic_bh_1m_value_1y:,.0f} ({dynamic_bh_1m_1y_return:+.1f}%)"
 
-    print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {dynamic_bh_1m_result:<17}")
-    print("="*130)
+    risk_adj_mom_result = "N/A"
+    if 'final_risk_adj_mom_value_1y' in locals() or 'final_risk_adj_mom_value_1y' in globals():
+        try:
+            risk_adj_mom_value = final_risk_adj_mom_value_1y if 'final_risk_adj_mom_value_1y' in locals() else globals().get('final_risk_adj_mom_value_1y')
+            risk_adj_mom_return = risk_adj_mom_1y_return if 'risk_adj_mom_1y_return' in locals() else globals().get('risk_adj_mom_1y_return')
+            if risk_adj_mom_value is not None and risk_adj_mom_return is not None:
+                risk_adj_mom_result = f"${risk_adj_mom_value:,.0f} ({risk_adj_mom_return:+.1f}%)"
+        except:
+            pass
+
+    print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {dynamic_bh_1m_result:<17} | {risk_adj_mom_result:<17}")
+    print("="*150)
 
     print(f"\n📈 Individual Ticker Performance (AI Strategy - Sorted by {period_name} Performance):")
     print("-" * 170)

@@ -464,431 +464,128 @@ from utils import _ensure_dir
 
 CLASS_HORIZON           = 5          # days ahead for classification target
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
-    """Download and clean data from the selected provider, with an improved local caching mechanism."""
+    """
+    Download and clean data with INCREMENTAL local caching.
+    
+    - If cache exists, only fetches NEW data since the last cached date
+    - Appends new data to existing cache file
+    - Much faster on subsequent runs
+    """
     _ensure_dir(DATA_CACHE_DIR)
     cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
-    financial_cache_file = DATA_CACHE_DIR / f"{ticker}_financials.csv"
     
-    # --- Check price cache first ---
-    price_df = pd.DataFrame()
+    cached_df = pd.DataFrame()
+    new_df = pd.DataFrame()
+    fetch_start = None
+    fetch_end = datetime.now(timezone.utc)
+    needs_fetch = True
+    
+    # --- Step 1: Check existing cache and determine what to fetch ---
     if cache_file.exists():
-        file_mod_time = datetime.fromtimestamp(cache_file.stat().st_mtime, timezone.utc)
-        if (datetime.now(timezone.utc) - file_mod_time) < timedelta(days=1):
-            try:
-                cached_df = pd.read_csv(cache_file, index_col='Date', parse_dates=True)
-                if cached_df.index.tzinfo is None:
-                    cached_df.index = cached_df.index.tz_localize('UTC')
+        try:
+            cached_df = pd.read_csv(cache_file, index_col='Date', parse_dates=True)
+            if cached_df.index.tzinfo is None:
+                cached_df.index = cached_df.index.tz_localize('UTC')
+            else:
+                cached_df.index = cached_df.index.tz_convert('UTC')
+            
+            cached_df = cached_df.sort_index()
+            
+            if not cached_df.empty:
+                last_cached_date = cached_df.index[-1]
+                today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+                
+                if (today - last_cached_date).days <= 1:
+                    needs_fetch = False
                 else:
-                    cached_df.index = cached_df.index.tz_convert('UTC')
-                price_df = cached_df.loc[(cached_df.index >= _to_utc(start)) & (cached_df.index <= _to_utc(end))].copy()
-            except Exception as e:
-                print(f"⚠️ Could not read or slice price cache file for {ticker}: {e}. Refetching prices.")
-
-    # --- If not in price cache or cache is old, fetch a broad range of data ---
-    if price_df.empty:
-        fetch_start = datetime.now(timezone.utc) - timedelta(days=1000) # Fetch a generous amount of data
-        fetch_end = datetime.now(timezone.utc)
+                    fetch_start = last_cached_date + timedelta(days=1)
+                    
+        except Exception as e:
+            print(f"  Warning: Could not read cache for {ticker}: {e}. Will refetch all.")
+            cached_df = pd.DataFrame()
+    
+    # If no cache exists, fetch historical data
+    if cached_df.empty:
+        fetch_start = datetime.now(timezone.utc) - timedelta(days=1000)
+    
+    # --- Step 2: Fetch new data if needed ---
+    if needs_fetch and fetch_start is not None:
         start_utc = _to_utc(fetch_start)
-        end_utc   = _to_utc(fetch_end)
+        end_utc = _to_utc(fetch_end)
+        
+        days_to_fetch = (fetch_end - fetch_start).days
+        if days_to_fetch > 5:
+            print(f"  Fetching {days_to_fetch} days of data for {ticker}...")
+        elif days_to_fetch > 0:
+            print(f"  Updating {ticker} (+{days_to_fetch} days)...")
         
         provider = DATA_PROVIDER.lower()
         
-        if provider == 'twelvedata':
-            if not TWELVEDATA_API_KEY:
-                print("⚠️ TwelveData is selected but API key is missing. Falling back to Yahoo.")
-                provider = 'yahoo'
-            else:
-                twelvedata_df = _fetch_from_twelvedata(ticker, start_utc, end_utc)
-                if not twelvedata_df.empty:
-                    price_df = twelvedata_df.copy()
-                elif USE_YAHOO_FALLBACK:
-                    print(f"  ℹ️ TwelveData fetch failed for {ticker}. Trying Yahoo Finance fallback...")
-                    try:
-                        downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, interval=DATA_INTERVAL, auto_adjust=True, progress=False)
-                        if downloaded_df is not None and not downloaded_df.empty:
-                            price_df = downloaded_df.dropna()
-                        else:
-                            print(f"  ⚠️ Yahoo Finance fallback returned empty data for {ticker}.")
-                    except Exception as e:
-                        print(f"  ❌ Yahoo Finance fallback failed for {ticker}: {e}")
-
-        elif provider == 'alpaca':
-            if not ALPACA_AVAILABLE or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
-                print("⚠️ Alpaca is selected but API keys are missing or SDK not available. Falling back to Yahoo.")
-                provider = 'yahoo'
-            else:
-                alpaca_df = _fetch_from_alpaca(ticker, start_utc, end_utc)
-                if not alpaca_df.empty:
-                    price_df = alpaca_df.copy()
-                elif USE_YAHOO_FALLBACK:
-                    print(f"  ℹ️ Alpaca fetch failed for {ticker}. Trying Yahoo Finance fallback...")
-                    try:
-                        downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, interval=DATA_INTERVAL, auto_adjust=True, progress=False)
-                        if downloaded_df is not None and not downloaded_df.empty:
-                            price_df = downloaded_df.dropna()
-                        else:
-                            print(f"  ⚠️ Yahoo Finance fallback returned empty data for {ticker}.")
-                    except Exception as e:
-                        print(f"  ❌ Yahoo Finance fallback failed for {ticker}: {e}")
+        # Try Alpaca first
+        if provider == 'alpaca' and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
+            new_df = _fetch_from_alpaca(ticker, start_utc, end_utc)
         
-        elif provider == 'stooq':
-            stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
-            if stooq_df.empty and not ticker.upper().endswith('.US'):
-                stooq_df = _fetch_from_stooq(f"{ticker}.US", start_utc, end_utc)
-            if not stooq_df.empty:
-                price_df = stooq_df.copy()
-            elif USE_YAHOO_FALLBACK:
-                print(f"  ℹ️ Stooq data for {ticker} empty. Falling back to Yahoo.")
-                try:
-                    downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
-                    if downloaded_df is not None and not downloaded_df.empty:
-                        price_df = downloaded_df.dropna()
-                    else:
-                        print(f"  ⚠️ Yahoo Finance fallback returned empty data for {ticker}.")
-                except Exception as e:
-                    print(f"  ❌ Yahoo Finance fallback (after Stooq) failed for {ticker}: {e}")
+        # Try TwelveData second
+        if new_df.empty and provider == 'twelvedata' and TWELVEDATA_API_KEY:
+            new_df = _fetch_from_twelvedata(ticker, start_utc, end_utc)
         
-        if price_df.empty: # If previous provider failed or was yahoo
+        # Try Stooq
+        if new_df.empty and provider == 'stooq':
+            new_df = _fetch_from_stooq(ticker, start_utc, end_utc)
+            if new_df.empty and not ticker.upper().endswith('.US'):
+                new_df = _fetch_from_stooq(f"{ticker}.US", start_utc, end_utc)
+        
+        # Yahoo as final fallback
+        if new_df.empty and USE_YAHOO_FALLBACK:
             try:
-                downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, auto_adjust=True, progress=False)
+                downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, 
+                                           interval=DATA_INTERVAL, auto_adjust=True, progress=False)
                 if downloaded_df is not None and not downloaded_df.empty:
-                    price_df = downloaded_df.dropna()
-                else:
-                    print(f"  ⚠️ Final Yahoo download attempt returned empty data for {ticker}.")
-            except Exception as e:
-                print(f"  ❌ Final Yahoo download attempt failed for {ticker}: {e}")
-            if price_df.empty and pdr is not None and DATA_PROVIDER.lower() != 'stooq':
-                print(f"  ℹ️ Yahoo data for {ticker} empty. Falling back to Stooq.")
-                stooq_df = _fetch_from_stooq(ticker, start_utc, end_utc)
-                if stooq_df.empty and not ticker.upper().endswith('.US'):
-                    stooq_df = _fetch_from_stooq(f"{ticker}.US", start_utc, end_utc)
-                if not stooq_df.empty:
-                    price_df = stooq_df.copy()
-
-        if price_df.empty:
-            return pd.DataFrame()
-
-        # Clean and normalize the downloaded data
-        if isinstance(price_df.columns, pd.MultiIndex):
-            price_df.columns = price_df.columns.get_level_values(0)
-        price_df.columns = [str(col).capitalize() for col in price_df.columns]
-        if "Close" not in price_df.columns and "Adj close" in price_df.columns:
-            price_df = price_df.rename(columns={"Adj close": "Close"})
-
-        if "Close" not in price_df.columns:
-            return pd.DataFrame()
-
-        price_df.index = pd.to_datetime(price_df.index, utc=True)
-        price_df.index.name = "Date"
+                    new_df = downloaded_df.dropna()
+            except Exception:
+                pass
         
-        # Convert all relevant columns to numeric, coercing errors to NaN
-        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-            if col in price_df.columns:
-                price_df[col] = pd.to_numeric(price_df[col], errors='coerce')
-
-        # Replace infinities with NaN
-        price_df.replace([np.inf, -np.inf], np.nan, inplace=True)
-        
-        # Ensure 'Volume', 'High', 'Low', 'Open' columns exist, fill with 'Close' or 0 if missing
-        if "Volume" not in price_df.columns:
-            price_df["Volume"] = 0
-        if "High" not in price_df.columns:
-            price_df["High"] = price_df["Close"]
-        if "Low" not in price_df.columns:
-            price_df["Low"] = price_df["Close"]
-        if "Open" not in price_df.columns:
-            price_df["Open"] = price_df["Close"]
+        # Clean up new data
+        if not new_df.empty:
+            if isinstance(new_df.columns, pd.MultiIndex):
+                new_df.columns = new_df.columns.get_level_values(0)
+            new_df.columns = [str(col).capitalize() for col in new_df.columns]
+            if "Close" not in new_df.columns and "Adj close" in new_df.columns:
+                new_df = new_df.rename(columns={"Adj close": "Close"})
+            if "Volume" in new_df.columns:
+                new_df["Volume"] = new_df["Volume"].fillna(0).astype(int)
+            else:
+                new_df["Volume"] = 0
             
-       # print(f"DEBUG: In load_prices for {ticker}, 'Volume' column exists: {'Volume' in price_df.columns}, 'High' exists: {'High' in price_df.columns}, 'Low' exists: {'Low' in price_df.columns}, 'Open' exists: {'Open' in price_df.columns}") # Debug print
-        
-        price_df = price_df.dropna(subset=["Close"])
-        price_df = price_df.ffill().bfill()
-
-        # --- Save the entire fetched price data to cache ---
-        if not price_df.empty:
-            try:
-                price_df.to_csv(cache_file)
-            except Exception as e:
-                print(f"⚠️ Could not write price cache file for {ticker}: {e}")
-                
-    # --- Fetch and merge financial data ---
-    financial_df = pd.DataFrame()
-    if financial_cache_file.exists():
-        file_mod_time = datetime.fromtimestamp(financial_cache_file.stat().st_mtime, timezone.utc)
-        if (datetime.now(timezone.utc) - file_mod_time) < timedelta(days=CACHE_DAYS * 4): # Financials update less frequently
-            try:
-                financial_df = pd.read_csv(financial_cache_file, index_col='Date', parse_dates=True)
-                if financial_df.index.tzinfo is None:
-                    financial_df.index = financial_df.index.tz_localize('UTC')
-                else:
-                    financial_df.index = financial_df.index.tz_convert('UTC')
-            except Exception as e:
-                print(f"⚠️ Could not read financial cache file for {ticker}: {e}. Refetching financials.")
+            if new_df.index.tzinfo is None:
+                new_df.index = new_df.index.tz_localize('UTC')
+            else:
+                new_df.index = new_df.index.tz_convert('UTC')
     
-    if financial_df.empty:
-        if DATA_PROVIDER.lower() == 'alpaca':
-            financial_df = _fetch_financial_data_from_alpaca(ticker)
-            if financial_df.empty: # If Alpaca financial data is empty, fall back to Yahoo
-                financial_df = _fetch_financial_data(ticker) # This calls the original Yahoo-based function
-        else:
-            financial_df = _fetch_financial_data(ticker) # This calls the original Yahoo-based function
-            
-        if not financial_df.empty:
-            try:
-                financial_df.to_csv(financial_cache_file)
-            except Exception as e:
-                print(f"⚠️ Could not write financial cache file for {ticker}: {e}")
-
-    if not financial_df.empty and not price_df.empty:
-        # Merge financial data by forward-filling the latest available financial report
-        # Reindex financial_df to cover the full date range of price_df
-        full_date_range = pd.date_range(start=price_df.index.min(), end=price_df.index.max(), freq='D', tz='UTC')
-        financial_df_reindexed = financial_df.reindex(full_date_range)
-        financial_df_reindexed = financial_df_reindexed.ffill()
-        
-        # Merge with price data
-        final_df = price_df.merge(financial_df_reindexed, left_index=True, right_index=True, how='left')
-        # Fill any remaining NaNs in financial features (e.g., at the very beginning)
-        final_df.fillna(0, inplace=True)
+    # --- Step 3: Merge cached and new data ---
+    if not cached_df.empty and not new_df.empty:
+        price_df = pd.concat([cached_df, new_df])
+        price_df = price_df[~price_df.index.duplicated(keep='last')]
+        price_df = price_df.sort_index()
+    elif not cached_df.empty:
+        price_df = cached_df
+    elif not new_df.empty:
+        price_df = new_df
     else:
-        final_df = price_df.copy()
-
-    # --- Add placeholder for sentiment data (for demonstration) ---
-    # In a real scenario, this would be fetched from a sentiment API
-    if 'Sentiment_Score' not in final_df.columns:
-        final_df['Sentiment_Score'] = np.random.uniform(-1, 1, len(final_df)) # Placeholder: random sentiment
-        final_df['Sentiment_Score'] = final_df['Sentiment_Score'].rolling(window=5).mean().fillna(0) # Smooth it a bit
-
-    # Return the specifically requested slice
-    return final_df.loc[(final_df.index >= _to_utc(start)) & (final_df.index <= _to_utc(end))].copy()
-
-def _fetch_intermarket_data(start: datetime, end: datetime) -> pd.DataFrame:
-    """Fetches intermarket data (e.g., bond yields, commodities, currencies)."""
-    intermarket_tickers = {
-        '^VIX': 'VIX_Index',  # CBOE Volatility Index
-        'DX-Y.NYB': 'DXY_Index', # U.S. Dollar Index
-        'GC=F': 'Gold_Futures', # Gold Futures
-        'CL=F': 'Oil_Futures',  # Crude Oil Futures
-        '^TNX': 'US10Y_Yield',  # 10-Year Treasury Yield
-        'USO': 'Oil_Price',    # United States Oil Fund ETF
-        'GLD': 'Gold_Price',   # SPDR Gold Shares ETF
-    }
-    
-    all_intermarket_dfs = []
-    for ticker, name in intermarket_tickers.items():
-        try:
-            # Use load_prices_robust to respect DATA_PROVIDER and handle caching/fallbacks
-            df = load_prices_robust(ticker, start, end)
-            if not df.empty:
-                # load_prices_robust returns a DataFrame with 'Close' column
-                single_ticker_df = df[['Close']].rename(columns={'Close': name})
-                all_intermarket_dfs.append(single_ticker_df)
-        except Exception as e:
-            print(f"  ⚠️ Could not fetch intermarket data for {ticker} ({name}): {e}")
-            
-    if not all_intermarket_dfs:
         return pd.DataFrame()
-
-    # Concatenate all individual DataFrames
-    intermarket_df = pd.concat(all_intermarket_dfs, axis=1)
-    intermarket_df.index = pd.to_datetime(intermarket_df.index, utc=True)
-    intermarket_df.index.name = "Date"
     
-    # Calculate returns for intermarket features
-    for col in intermarket_df.columns:
-        intermarket_df[f"{col}_Returns"] = intermarket_df[col].pct_change(fill_method=None).fillna(0)
-        
-    return intermarket_df.ffill().bfill().fillna(0)
-
-
-def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: float = 0.05, class_horizon: int = CLASS_HORIZON) -> Tuple[pd.DataFrame, List[str]]:
-    """Compute ML features from a given DataFrame."""
-    print(f"  [DIAGNOSTIC] {ticker}: fetch_training_data - Initial data rows: {len(data)}")
-    if data.empty or len(data) < FEAT_SMA_LONG + 10:
-        print(f"  [DIAGNOSTIC] {ticker}: Skipping feature prep. Initial data has {len(data)} rows, required > {FEAT_SMA_LONG + 10}.")
-        return pd.DataFrame(), []
-
-    df = data.copy()
-    if "Close" not in df.columns and "Adj Close" in df.columns:
-        df = df.rename(columns={"Adj Close": "Close"})
-    # Ensure 'Close' is numeric and drop rows with NaN in 'Close'
-    df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
-    df = df.dropna(subset=["Close"])
+    # --- Step 4: Save updated cache ---
+    if needs_fetch and not new_df.empty:
+        try:
+            price_df.to_csv(cache_file)
+        except Exception as e:
+            print(f"  Warning: Could not save cache for {ticker}: {e}")
     
-    if df.empty:
-        print(f"  [DIAGNOSTIC] {ticker}: DataFrame became empty after dropping NaNs in 'Close'. Skipping feature prep.")
-        return pd.DataFrame(), []
+    # --- Step 5: Return filtered data for requested range ---
+    result = price_df.loc[(price_df.index >= _to_utc(start)) & (price_df.index <= _to_utc(end))].copy()
+    return result if not result.empty else pd.DataFrame()
 
-    # Fill missing values in other columns
-    df = df.ffill().bfill()
 
-    df = _calculate_technical_indicators(df) # Call the new function
-
-    # --- Additional Financial Features (from _fetch_financial_data) ---
-    financial_features = [col for col in df.columns if col.startswith('Fin_')]
-    
-    # Ensure these are numeric and fill NaNs if any remain
-    for col in financial_features:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
-    df["Target"]     = df["Close"].shift(-1)
-
-    # Calculate Buy & Hold annualized performance as a feature (provides historical context)
-    # This gives the model information about long-term performance trends
-    if len(df) > 1:
-        start_price = df["Close"].iloc[0]
-        end_price = df["Close"].iloc[-1]
-        total_days = (df.index[-1] - df.index[0]).days
-
-        if total_days > 0 and start_price > 0:
-            total_return = (end_price / start_price) - 1.0
-            # Annualize the return: (1 + total_return)^(365/total_days) - 1
-            annualized_return = (1 + total_return) ** (365.0 / total_days) - 1
-            df["Annualized_BH_Return"] = annualized_return
-        else:
-            df["Annualized_BH_Return"] = 0.0
-    else:
-        df["Annualized_BH_Return"] = 0.0
-
-    # Calculate forward BH return over the prediction horizon as target
-    # TargetReturn = (price in class_horizon days) / current_price - 1
-    # This gives the model the actual market return it needs to predict
-
-    # Option 1: Raw forward returns (current approach)
-    df["TargetReturn"] = (df["Close"].shift(-class_horizon) / df["Close"] - 1)
-
-    # Option 2: Excess returns (commented out - would need benchmark data)
-    # if "BenchmarkClose" in df.columns:
-    #     bench_return = (df["BenchmarkClose"].shift(-class_horizon) / df["BenchmarkClose"] - 1)
-    #     df["TargetReturn"] = df["TargetReturn"] - bench_return  # Excess return
-    # else:
-    #     df["TargetReturn"] = (df["Close"].shift(-class_horizon) / df["Close"] - 1)
-
-    # Dynamically build the list of features that are actually present in the DataFrame
-    # This is the most critical part to ensure consistency
-    
-    # ========================================
-    # AUDITED FEATURE SET - Only Normalized/Relative Features
-    # ========================================
-    # ❌ REMOVED: Close, High, Low, Open, Volume (absolute values cause problems)
-    # ✅ ADDED: Normalized price ratios and relative features
-    
-    expected_technical_features = [
-        # === NORMALIZED PRICE RATIOS (NEW) ===
-        "Close_to_SMA20",           # Price vs 20-day average (trend strength)
-        "Close_to_SMA50",           # Price vs 50-day average (longer trend)
-        "Close_Position_in_Range",  # Where price closed in day's range (0-1)
-        "Intraday_Range_Pct",       # Day's volatility as % of price
-        "Open_to_Close_Ratio",      # Intraday direction (>1=up, <1=down)
-        "Close_to_20D_High",        # Distance from recent high
-        "Close_to_20D_Low",         # Distance from recent low
-        "Volume_Normalized",        # Volume vs 20-day average
-        
-        # === PRICE MOMENTUM (% returns) ===
-        "Returns",                  # 1-day return
-        "Momentum_3d",              # 3-day momentum
-        "Momentum_5d",              # 5-day momentum
-        "Momentum_10d",             # 10-day momentum
-        "Momentum_20d",             # 20-day momentum
-        "Momentum_40d",             # 40-day momentum
-        "Price_Accel_5d",           # Momentum acceleration (5-day)
-        "Price_Accel_20d",          # Momentum acceleration (20-day)
-        
-        # === TREND INDICATORS (normalized) ===
-        "SMA_F_S",                  # Fast/Slow SMA ratio
-        "SMA_F_L",                  # Fast/Long SMA ratio
-        "Dist_From_SMA10",          # Distance from 10-day SMA (%)
-        "Dist_From_SMA20",          # Distance from 20-day SMA (%)
-        "Dist_From_SMA50",          # Distance from 50-day SMA (%)
-        "SMA20_Slope",              # 20-day SMA slope (trend direction)
-        "SMA50_Slope",              # 50-day SMA slope (longer trend)
-        "Momentum_Divergence",      # Price vs momentum divergence
-        "Days_Above_SMA20",         # Consecutive days above SMA20
-        
-        # === VOLATILITY (normalized) ===
-        "Volatility",               # Rolling volatility (normalized)
-        "Historical_Volatility",    # Annualized volatility
-        "ATR_Pct",                  # ATR as % of price (not absolute ATR)
-        "Vol_Regime",               # Current vs historical volatility
-        "Vol_Spike",                # Volatility change
-        "Range_Expansion",          # Daily range as % of price
-        "Range_vs_Avg",             # Current range vs average range
-        
-        # === VOLUME INDICATORS (normalized) ===
-        "Volume_Ratio_5d",          # Volume vs 5-day average
-        "Volume_Ratio_20d",         # Volume vs 20-day average
-        "Volume_Trend",             # Volume trend (5d/20d)
-        
-        # === OSCILLATORS (0-100 bounded) ===
-        "RSI_feat",                 # RSI (0-100)
-        "%K",                       # Stochastic %K
-        "%D",                       # Stochastic %D
-        "MFI",                      # Money Flow Index (0-100)
-        "CCI",                      # Commodity Channel Index
-        
-        # === MOMENTUM OSCILLATORS (centered) ===
-        "MACD",                     # MACD line
-        "MACD_signal",              # MACD signal line
-        "CMO",                      # Chande Momentum Oscillator
-        "ROC",                      # Rate of Change (12-day)
-        "ROC_20",                   # Rate of Change (20-day)
-        "ROC_60",                   # Rate of Change (60-day)
-        
-        # === PATTERN/DIRECTION ===
-        "ADX",                      # Average Directional Index (trend strength)
-        "Daily_Direction",          # Up/down day indicator
-        "Streak",                   # Consecutive up/down days
-        
-        # === MARKET CONTEXT ===
-        "Market_Momentum_SPY",      # SPY momentum (market context)
-        "Annualized_BH_Return",     # Historical B&H performance
-        
-        # === INTERMARKET (if available) ===
-        "VIX_Index_Returns",        # VIX changes (volatility regime)
-        "DXY_Index_Returns",        # Dollar strength
-        "Gold_Futures_Returns",     # Gold (risk-off indicator)
-        "Oil_Futures_Returns",      # Oil (energy/inflation)
-        "US10Y_Yield_Returns",      # Interest rate environment
-        "Oil_Price_Returns",        # Alternative oil measure
-        "Gold_Price_Returns",       # Alternative gold measure
-        
-        # === REMOVED FEATURES (too noisy or absolute) ===
-        # ❌ "ATR" - absolute value, use ATR_Pct instead
-        # ❌ "BB_upper", "BB_lower" - absolute bands, use RSI/distance instead
-        # ❌ "OBV" - absolute cumulative, use Volume_Ratio instead
-        # ❌ "CMF" - redundant with MFI
-        # ❌ "KAMA" - absolute price
-        # ❌ "EFI" - absolute value
-        # ❌ "KC_Upper", "KC_Lower" - absolute bands
-        # ❌ "DC_Upper", "DC_Lower" - absolute bands
-        # ❌ "PSAR" - absolute price
-        # ❌ "ADL" - absolute cumulative
-        # ❌ "VWAP" - absolute price
-        # ❌ "Chaikin_Oscillator" - redundant
-        # ❌ "OBV_SMA" - absolute
-        # ❌ "Sentiment_Score" - not implemented
-    ]
-    
-    # Filter to only include technical features that are actually in df.columns
-    present_technical_features = [col for col in expected_technical_features if col in df.columns]
-    
-    # Combine with financial features
-    all_present_features = present_technical_features + financial_features
-    
-    # Also include target columns for the initial DataFrame selection before dropna
-    target_cols = ["Target", "TargetReturn"]
-    cols_for_ready = all_present_features + target_cols
-    
-    # Filter cols_for_ready to ensure all are actually in df.columns (redundant but safe)
-    cols_for_ready_final = [col for col in cols_for_ready if col in df.columns]
-
-    ready = df[cols_for_ready_final].dropna()
-    
-    # The actual features used for training will be all columns in 'ready' except the target columns
-    final_training_features = [col for col in ready.columns if col not in target_cols]
-
-    print(f"   ↳ {ticker}: rows after features available: {len(ready)}")
-    return ready, final_training_features
 
 def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """A wrapper for load_prices that handles rate limiting with retries and other common API errors."""
@@ -919,3 +616,261 @@ def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFr
     
     print(f"  ❌ Failed to load data for {ticker} after {max_retries} retries due to persistent rate limiting.")
     return pd.DataFrame()
+
+
+def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: float = TARGET_PERCENTAGE, class_horizon: int = CLASS_HORIZON) -> Tuple[pd.DataFrame, List[str]]:
+    """Compute ML features from a given DataFrame."""
+    print(f"  [DIAGNOSTIC] {ticker}: fetch_training_data - Initial data rows: {len(data)}")
+    if data.empty or len(data) < FEAT_SMA_LONG + 10:
+        print(f"  [DIAGNOSTIC] {ticker}: Skipping feature prep. Initial data has {len(data)} rows, required > {FEAT_SMA_LONG + 10}.")
+        return pd.DataFrame(), []
+
+    df = data.copy()
+    if "Close" not in df.columns and "Adj Close" in df.columns:
+        df = df.rename(columns={"Adj Close": "Close"})
+
+    df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+    df = df.dropna(subset=["Close"])
+
+    if df.empty:
+        print(f"  [DIAGNOSTIC] {ticker}: DataFrame became empty after dropping NaNs in 'Close'. Skipping feature prep.")
+        return pd.DataFrame(), []
+
+    if df.empty:
+        print(f"  [DIAGNOSTIC] {ticker}: DataFrame became empty after dropping NaNs in 'Close'. Skipping feature prep.")
+        return pd.DataFrame(), []
+
+    # Fill missing values in other columns
+    df = df.ffill().bfill()
+
+    df["Returns"]    = df["Close"].pct_change(fill_method=None)
+    df["SMA_F_S"]    = df["Close"].rolling(FEAT_SMA_SHORT).mean()
+    df["SMA_F_L"]    = df["Close"].rolling(FEAT_SMA_LONG).mean()
+    df["Volatility"] = df["Returns"].rolling(FEAT_VOL_WINDOW).std()
+
+    # --- Additional Features ---
+    # ATR (Average True Range)
+    high = df["High"] if "High" in df.columns else None
+    low  = df["Low"]  if "Low" in df.columns else None
+    prev_close = df["Close"].shift(1)
+    if high is not None and low is not None:
+        hl = (high - low).abs()
+        h_pc = (high - prev_close).abs()
+        l_pc = (low  - prev_close).abs()
+        tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
+        df["ATR"] = tr.rolling(ATR_PERIOD).mean()
+    else:
+        # Fallback for ATR if High/Low are not available (though they should be after load_prices)
+        ret = df["Close"].pct_change(fill_method=None)
+        df["ATR"] = (ret.rolling(ATR_PERIOD).std() * df["Close"]).rolling(2).mean()
+    df["ATR"] = df["ATR"].fillna(0) # Fill any NaNs from initial ATR calculation
+
+    # RSI
+    delta = df["Close"].diff()
+    gain = (delta.where(delta > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+    rs = gain / loss
+    df['RSI_feat'] = 100 - (100 / (1 + rs))
+
+    # MACD
+    ema_12 = df["Close"].ewm(span=12, adjust=False).mean()
+    ema_26 = df["Close"].ewm(span=26, adjust=False).mean()
+    df['MACD'] = ema_12 - ema_26
+    df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+
+    # Bollinger Bands
+    df['BB_mid'] = df["Close"].rolling(window=20).mean()
+    df['BB_std'] = df["Close"].rolling(window=20).std()
+    df['BB_upper'] = df['BB_mid'] + (df['BB_std'] * 2)
+    df['BB_lower'] = df['BB_mid'] - (df['BB_std'] * 2)
+
+    # Stochastic Oscillator
+    low_14, high_14 = df['Low'].rolling(window=14).min(), df['High'].rolling(window=14).max()
+    denominator_k = (high_14 - low_14)
+    df['%K'] = np.where(denominator_k != 0, (df['Close'] - low_14) / denominator_k * 100, 0)
+    df['%D'] = df['%K'].rolling(window=3).mean()
+    df['%K'] = df['%K'].fillna(0)
+    df['%D'] = df['%D'].fillna(0)
+
+    # Average Directional Index (ADX)
+    df['up_move'] = df['High'] - df['High'].shift(1)
+    df['down_move'] = df['Low'].shift(1) - df['Low']
+    df['+DM'] = np.where((df['up_move'] > df['down_move']) & (df['up_move'] > 0), df['up_move'], 0)
+    df['-DM'] = np.where((df['down_move'] > df['up_move']) & (df['down_move'] > 0), df['down_move'], 0)
+    df['+DM'] = df['+DM'].fillna(0)
+
+    # Calculate True Range (TR)
+    high_low_diff = df['High'] - df['Low']
+    high_prev_close_diff_abs = (df['High'] - df['Close'].shift(1)).abs()
+    low_prev_close_diff_abs = (df['Low'] - df['Close'].shift(1)).abs()
+    df['TR'] = pd.concat([high_low_diff, high_prev_close_diff_abs, low_prev_close_diff_abs], axis=1).max(axis=1)
+    df['TR'] = df['TR'].fillna(0)
+
+    # Calculate Smoothed DM and TR
+    alpha = 1/14
+    df['+DM14'] = df['+DM'].ewm(alpha=alpha, adjust=False).mean()
+    df['-DM14'] = df['-DM'].ewm(alpha=alpha, adjust=False).mean()
+    df['TR14'] = df['TR'].ewm(alpha=alpha, adjust=False).mean()
+    df['+DM14'] = df['+DM14'].fillna(0)
+    df['-DM14'] = df['-DM14'].fillna(0)
+    df['TR14'] = df['TR14'].fillna(0)
+
+    # Calculate Directional Index (DX)
+    denominator_dx = (df['+DM14'] + df['-DM14'])
+    df['DX'] = np.where(denominator_dx != 0, (abs(df['+DM14'] - df['-DM14']) / denominator_dx) * 100, 0)
+    df['ADX'] = df['DX'].ewm(alpha=alpha, adjust=False).mean()
+    df['ADX'] = df['ADX'].fillna(0)
+
+    # On-Balance Volume (OBV)
+    df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
+
+    # Chaikin Money Flow (CMF)
+    mfv = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low']) * df['Volume']
+    df['CMF'] = mfv.rolling(window=20).sum() / df['Volume'].rolling(window=20).sum()
+    df['CMF'] = df['CMF'].fillna(0)
+
+    # Rate of Change (ROC)
+    df['ROC'] = df['Close'].pct_change(periods=12) * 100
+
+    # Keltner Channels
+    df['KC_TR'] = pd.concat([df['High'] - df['Low'], (df['High'] - df['Close'].shift(1)).abs(), (df['Low'] - df['Close'].shift(1)).abs()], axis=1).max(axis=1)
+    df['KC_ATR'] = df['KC_TR'].rolling(window=10).mean()
+    df['KC_Middle'] = df["Close"].rolling(window=20).mean()
+    df['KC_Upper'] = df['KC_Middle'] + (df['KC_ATR'] * 2)
+    df['KC_Lower'] = df['KC_Middle'] - (df['KC_ATR'] * 2)
+
+    # Donchian Channels
+    df['DC_Upper'] = df['High'].rolling(window=20).max()
+    df['DC_Lower'] = df['Low'].rolling(window=20).min()
+    df['DC_Middle'] = (df['DC_Upper'] + df['DC_Lower']) / 2
+
+    # Parabolic SAR (PSAR)
+    psar = df['Close'].copy()
+    af = 0.02
+    max_af = 0.2
+
+    uptrend = True if df['Close'].iloc[0] > df['Open'].iloc[0] else False
+    ep = df['High'].iloc[0] if uptrend else df['Low'].iloc[0]
+    sar = df['Low'].iloc[0] if uptrend else df['High'].iloc[0]
+
+    for i in range(1, len(df)):
+        if uptrend:
+            sar = sar + af * (ep - sar)
+            if df['Low'].iloc[i] < sar:
+                uptrend = False
+                sar = ep
+                ep = df['Low'].iloc[i]
+                af = 0.02
+            else:
+                if df['High'].iloc[i] > ep:
+                    ep = df['High'].iloc[i]
+                    af = min(max_af, af + 0.02)
+        else:
+            sar = sar + af * (ep - sar)
+            if df['High'].iloc[i] > sar:
+                uptrend = True
+                sar = ep
+                ep = df['High'].iloc[i]
+                af = 0.02
+            else:
+                if df['Low'].iloc[i] < ep:
+                    ep = df['Low'].iloc[i]
+                    af = min(max_af, af + 0.02)
+        psar.iloc[i] = sar
+    df['PSAR'] = psar
+
+    # Accumulation/Distribution Line (ADL)
+    mf_multiplier = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
+    mf_volume = mf_multiplier * df['Volume']
+    df['ADL'] = mf_volume.cumsum()
+    df['ADL'] = df['ADL'].fillna(0)
+
+    # Commodity Channel Index (CCI)
+    TP = (df['High'] + df['Low'] + df['Close']) / 3
+    df['CCI'] = (TP - TP.rolling(window=20).mean()) / (0.015 * TP.rolling(window=20).std())
+    df['CCI'] = df['CCI'].fillna(0)
+
+    # Volume Weighted Average Price (VWAP)
+    df['VWAP'] = (df['Close'] * df['Volume']).rolling(window=FEAT_VOL_WINDOW).sum() / df['Volume'].rolling(window=FEAT_VOL_WINDOW).sum()
+    df['VWAP'] = df['VWAP'].fillna(df['Close'])
+
+    # ATR Percentage
+    df['ATR_Pct'] = (df['ATR'] / df['Close']) * 100
+    df['ATR_Pct'] = df['ATR_Pct'].fillna(0)
+
+    # Chaikin Oscillator
+    adl_fast = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low']) * df['Volume']
+    adl_slow = adl_fast.ewm(span=10, adjust=False).mean()
+    adl_fast = adl_fast.ewm(span=3, adjust=False).mean()
+    df['Chaikin_Oscillator'] = adl_fast - adl_slow
+    df['Chaikin_Oscillator'] = df['Chaikin_Oscillator'].fillna(0)
+
+    # Money Flow Index (MFI)
+    typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+    money_flow = typical_price * df['Volume']
+    positive_mf = money_flow.where(typical_price > typical_price.shift(1), 0)
+    negative_mf = money_flow.where(typical_price < typical_price.shift(1), 0)
+    mfi_ratio = positive_mf.rolling(window=14).sum() / negative_mf.rolling(window=14).sum()
+    df['MFI'] = 100 - (100 / (1 + mfi_ratio))
+    df['MFI'] = df['MFI'].fillna(0)
+
+    # OBV Moving Average
+    df['OBV_SMA'] = df['OBV'].rolling(window=10).mean()
+    df['OBV_SMA'] = df['OBV_SMA'].fillna(0)
+
+    # Historical Volatility (e.g., 20-day rolling standard deviation of log returns)
+    df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
+    df['Historical_Volatility'] = df['Log_Returns'].rolling(window=20).std() * np.sqrt(252)
+    df['Historical_Volatility'] = df['Historical_Volatility'].fillna(0)
+
+    # --- Additional Financial Features (from _fetch_financial_data) ---
+    financial_features = [col for col in df.columns if col.startswith('Fin_')]
+
+    # Ensure these are numeric and fill NaNs if any remain
+    for col in financial_features:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    df["Target"]     = df["Close"].shift(-1)
+
+    # Classification label for BUY model: X-day forward > +target_percentage
+    fwd = df["Close"].shift(-class_horizon)
+    df["TargetClassBuy"] = ((fwd / df["Close"] - 1.0) > target_percentage).astype(float)
+
+    # Classification label for SELL model: X-day forward < -target_percentage
+    df["TargetClassSell"] = ((fwd / df["Close"] - 1.0) < -target_percentage).astype(float)
+
+    # Dynamically build the list of features that are actually present in the DataFrame
+    # This is the most critical part to ensure consistency
+
+    # Define a base set of expected technical features
+    expected_technical_features = [
+        "Close", "Volume", "High", "Low", "Open", "Returns", "SMA_F_S", "SMA_F_L", "Volatility",
+        "ATR", "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
+        "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
+        "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
+        "Market_Momentum_SPY",
+        "Sentiment_Score",
+        "VIX_Index_Returns", "DXY_Index_Returns", "Gold_Futures_Returns", "Oil_Futures_Returns", "US10Y_Yield_Returns",
+        "Oil_Price_Returns", "Gold_Price_Returns"
+    ]
+
+    # Filter to only include technical features that are actually in df.columns
+    present_technical_features = [col for col in expected_technical_features if col in df.columns]
+
+    # Combine with financial features
+    all_present_features = present_technical_features + financial_features
+
+    # Also include target columns for the initial DataFrame selection before dropna
+    target_cols = ["Target", "TargetClassBuy", "TargetClassSell"]
+    cols_for_ready = all_present_features + target_cols
+
+    # Filter cols_for_ready to ensure all are actually in df.columns (redundant but safe)
+    cols_for_ready_final = [col for col in cols_for_ready if col in df.columns]
+
+    ready = df[cols_for_ready_final].dropna()
+
+    # The actual features used for training will be all columns in 'ready' except the target columns
+    final_training_features = [col for col in ready.columns if col not in target_cols]
+
+    print(f"   ↳ {ticker}: rows after features available: {len(ready)}")
+    return ready, final_training_features

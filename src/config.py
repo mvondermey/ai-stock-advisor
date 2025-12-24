@@ -93,6 +93,7 @@ ENABLE_STATIC_BH        = True   # Static Buy & Hold (top 3 at start, hold forev
 ENABLE_DYNAMIC_BH_1Y    = True   # Dynamic BH rebalancing based on 1-year performance
 ENABLE_DYNAMIC_BH_3M    = True   # Dynamic BH rebalancing based on 3-month performance
 ENABLE_DYNAMIC_BH_1M    = True   # Dynamic BH rebalancing based on 1-month performance
+ENABLE_RISK_ADJ_MOM     = True   # Risk-Adjusted Momentum (6-month returns adjusted for volatility)
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10

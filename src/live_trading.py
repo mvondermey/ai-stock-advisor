@@ -15,7 +15,6 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 
 # Add project root to path
 project_root = Path(__file__).resolve().parent.parent
@@ -271,8 +270,28 @@ def run_live_trading():
     
     all_data_dict = {}
     failed_tickers = []
-    
-    for ticker in tqdm(valid_tickers, desc="Downloading data"):
+
+    for idx, ticker in enumerate(valid_tickers, 1):
+        # Check if cache exists and is recent
+        cache_file = Path("data_cache") / f"{ticker}.csv"
+        cache_status = "cached"
+        if cache_file.exists():
+            try:
+                cache_mtime = datetime.fromtimestamp(cache_file.stat().st_mtime, timezone.utc)
+                today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+                if (today - cache_mtime).days > 1:
+                    cache_status = "updating"
+                # else cache_status remains "cached"
+            except:
+                cache_status = "fetching"
+        else:
+            cache_status = "fetching"
+
+        if cache_status == "cached":
+            print(f"{idx}/{len(valid_tickers)} stocks - Loading {ticker} from cache...")
+        else:
+            print(f"{idx}/{len(valid_tickers)} stocks - Downloading {ticker} data...")
+
         try:
             data = load_prices_robust(ticker, start_date, end_date)
             if not data.empty and len(data) > 60:  # Need enough history for features

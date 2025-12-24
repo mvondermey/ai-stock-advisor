@@ -959,7 +959,7 @@ def _run_portfolio_backtest_walk_forward(
     period_name: str,
     top_performers_data: List[Tuple],
     horizon_days: int = 20
-) -> Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]], float, float, List[float], float, List[float]]:
+) -> Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]], float, float, List[float], float, List[float], float, List[float]]:
     """
     Walk-forward backtest: Daily selection from top 40 stocks with 10-day retraining.
 
@@ -1050,6 +1050,13 @@ def _run_portfolio_backtest_walk_forward(
     dynamic_bh_1m_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
     dynamic_bh_1m_cash = initial_capital_needed  # Start with same capital as AI
     current_dynamic_bh_1m_stocks = []  # Current top 3 stocks held by 1-month dynamic BH
+
+    # RISK-ADJUSTED MOMENTUM: Initialize portfolio tracking
+    risk_adj_mom_portfolio_value = 0.0
+    risk_adj_mom_portfolio_history = [risk_adj_mom_portfolio_value]
+    risk_adj_mom_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    risk_adj_mom_cash = initial_capital_needed  # Start with same capital as AI
+    current_risk_adj_mom_stocks = []  # Current top 3 stocks held by risk-adjusted momentum
 
     all_processed_tickers = []
     all_performance_metrics = []
@@ -1284,6 +1291,60 @@ def _run_portfolio_backtest_walk_forward(
                         )
 
                         current_dynamic_bh_1m_stocks = new_dynamic_bh_1m_stocks
+
+                # RISK-ADJUSTED MOMENTUM: Rebalance to current top 3 based on 6-month risk-adjusted performance
+                if ENABLE_RISK_ADJ_MOM:
+                    current_top_performers_risk_adj = []
+
+                    for ticker in initial_top_tickers:
+                        try:
+                            ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                            if not ticker_data.empty:
+                                ticker_data = ticker_data.set_index('date')
+                                # Use 6-month (180-day) performance for selection
+                                perf_start_date_risk_adj = max(train_start_date, current_date - timedelta(days=180))
+                                perf_data_risk_adj = ticker_data.loc[perf_start_date_risk_adj:current_date]
+
+                                if len(perf_data_risk_adj) >= 60:  # Need at least 60 days
+                                    # Drop NaN values for valid calculation
+                                    valid_close_risk_adj = perf_data_risk_adj['Close'].dropna()
+                                    if len(valid_close_risk_adj) >= 10:
+                                        # Calculate basic return
+                                        start_price = valid_close_risk_adj.iloc[0]
+                                        end_price = valid_close_risk_adj.iloc[-1]
+
+                                        if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
+                                            # Basic return percentage
+                                            basic_return = ((end_price - start_price) / start_price) * 100
+
+                                            # Calculate volatility (standard deviation of daily returns)
+                                            daily_returns = valid_close_risk_adj.pct_change().dropna()
+                                            if len(daily_returns) > 5:
+                                                volatility = daily_returns.std() * 100  # Convert to percentage
+
+                                                # Risk-adjusted momentum: return divided by volatility (higher is better)
+                                                # Add small epsilon to avoid division by zero
+                                                risk_adj_score = basic_return / (volatility + 0.01)
+
+                                                current_top_performers_risk_adj.append((ticker, risk_adj_score, basic_return, volatility))
+
+                        except Exception as e:
+                            continue
+
+                    # Sort by risk-adjusted score and get top 3
+                    if current_top_performers_risk_adj:
+                        current_top_performers_risk_adj.sort(key=lambda x: x[1], reverse=True)
+                        new_risk_adj_mom_stocks = [ticker for ticker, score, ret, vol in current_top_performers_risk_adj[:3]]
+
+                        print(f"   🏆 Top 3 risk-adjusted performers (6-month): {', '.join(new_risk_adj_mom_stocks)}")
+
+                        # Rebalance risk-adjusted momentum portfolio (capture returned cash)
+                        risk_adj_mom_cash = _rebalance_risk_adj_mom_portfolio(
+                            new_risk_adj_mom_stocks, current_date, all_tickers_data,
+                            risk_adj_mom_positions, risk_adj_mom_cash, capital_per_stock
+                        )
+
+                        current_risk_adj_mom_stocks = new_risk_adj_mom_stocks
 
                 else:
                     print(f"   ⚠️ No valid performance data for dynamic BH rebalancing")
@@ -1564,6 +1625,35 @@ def _run_portfolio_backtest_walk_forward(
 
         dynamic_bh_1m_portfolio_value = dynamic_bh_1m_invested_value + dynamic_bh_1m_cash
         dynamic_bh_1m_portfolio_history.append(dynamic_bh_1m_portfolio_value)
+
+        # Update RISK-ADJUSTED MOMENTUM portfolio value daily (skip if disabled)
+        risk_adj_mom_invested_value = 0.0
+        if ENABLE_RISK_ADJ_MOM:
+          for ticker in current_risk_adj_mom_stocks:
+            if ticker in risk_adj_mom_positions:
+                try:
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            # Drop NaN values to avoid NaN propagation
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    position_value = risk_adj_mom_positions[ticker]['shares'] * current_price
+                                    risk_adj_mom_positions[ticker]['value'] = position_value
+                                    risk_adj_mom_invested_value += position_value
+                                else:
+                                    risk_adj_mom_invested_value += risk_adj_mom_positions[ticker].get('value', 0.0)
+                            else:
+                                risk_adj_mom_invested_value += risk_adj_mom_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating risk-adjusted momentum position for {ticker}: {e}")
+
+        risk_adj_mom_portfolio_value = risk_adj_mom_invested_value + risk_adj_mom_cash
+        risk_adj_mom_portfolio_history.append(risk_adj_mom_portfolio_value)
 
         # Update portfolio value (invested + cash) at end of each day
         invested_value = 0.0
@@ -1846,7 +1936,7 @@ def _run_portfolio_backtest_walk_forward(
             total_portfolio_value = initial_capital_needed
             print(f"⚠️ AI Portfolio: No positions, using initial capital (${total_portfolio_value:,.0f})")
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history
 
 
 def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
@@ -2122,6 +2212,97 @@ def _rebalance_dynamic_bh_1m_portfolio(new_stocks, current_date, all_tickers_dat
         print(f"   ⚠️ Dynamic BH 1M rebalancing failed: {e}")
     
     return dynamic_bh_1m_cash  # Return updated cash (float passed by value)
+
+
+def _rebalance_risk_adj_mom_portfolio(new_stocks, current_date, all_tickers_data,
+                                       risk_adj_mom_positions, risk_adj_mom_cash, capital_per_stock):
+    """
+    Rebalance risk-adjusted momentum portfolio to hold the new top 3 stocks.
+    Happens DAILY - sells stocks no longer in top 3 and buys new ones.
+    Uses 6-month risk-adjusted momentum for stock selection.
+    """
+    try:
+        # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
+        target_allocation = capital_per_stock  # $15,000 per stock
+
+        # Sell stocks no longer in top 3
+        stocks_to_sell = []
+        for ticker in list(risk_adj_mom_positions.keys()):
+            if ticker not in new_stocks:
+                stocks_to_sell.append(ticker)
+
+        for ticker in stocks_to_sell:
+            if ticker in risk_adj_mom_positions:
+                try:
+                    # Get current price
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            # Drop NaN values to avoid NaN propagation
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    shares_to_sell = risk_adj_mom_positions[ticker]['shares']
+                                    sale_value = shares_to_sell * current_price
+
+                                    # Add to cash
+                                    risk_adj_mom_cash += sale_value
+                                    print(f"   💰 Risk-Adj Mom sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f}")
+
+                                    # Remove position
+                                    del risk_adj_mom_positions[ticker]
+
+                except Exception as e:
+                    print(f"   ⚠️ Error selling {ticker} from risk-adjusted momentum: {e}")
+
+        # Buy new stocks (or add to existing positions)
+        stocks_to_buy = [ticker for ticker in new_stocks if ticker not in risk_adj_mom_positions]
+
+        if stocks_to_buy:
+            # Split available cash among stocks to buy
+            cash_per_stock = risk_adj_mom_cash / len(stocks_to_buy) if stocks_to_buy else 0
+
+            for ticker in stocks_to_buy:
+                try:
+                    # Get current price
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            # Drop NaN values to avoid NaN propagation
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+
+                                if not pd.isna(current_price) and current_price > 0:
+                                    shares_to_buy = int(cash_per_stock / current_price)
+                                    if shares_to_buy > 0:
+                                        cost = shares_to_buy * current_price
+
+                                        # Update position
+                                        risk_adj_mom_positions[ticker] = {
+                                            'shares': shares_to_buy,
+                                            'entry_price': current_price,
+                                            'value': cost
+                                        }
+
+                                        # Deduct from cash
+                                        risk_adj_mom_cash -= cost
+                                        print(f"   🛒 Risk-Adj Mom bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${cost:,.0f}")
+
+                except Exception as e:
+                    print(f"   ⚠️ Error buying {ticker} for risk-adjusted momentum: {e}")
+
+        print(f"   📊 Risk-Adj Mom portfolio: ${sum(pos['value'] for pos in risk_adj_mom_positions.values()):,.0f} invested + ${risk_adj_mom_cash:,.0f} cash")
+
+    except Exception as e:
+        print(f"   ⚠️ Risk-Adjusted Momentum rebalancing failed: {e}")
+
+    return risk_adj_mom_cash  # Return updated cash (float passed by value)
 
 
 def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all_tickers_data,
