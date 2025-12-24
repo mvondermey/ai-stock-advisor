@@ -28,6 +28,15 @@ from config import (
 )
 from alpha_training import AlphaThresholdConfig, select_threshold_by_alpha
 from scipy.stats import uniform, beta
+
+# Global transaction cost tracking variables
+ai_transaction_costs = 0.0
+static_bh_transaction_costs = 0.0
+dynamic_bh_1y_transaction_costs = 0.0
+dynamic_bh_3m_transaction_costs = 0.0
+dynamic_bh_1m_transaction_costs = 0.0
+risk_adj_mom_transaction_costs = 0.0
+mean_reversion_transaction_costs = 0.0
 from data_validation import validate_prediction_data, validate_features_after_engineering, InsufficientDataError
 import os
 import json
@@ -1066,14 +1075,16 @@ def _run_portfolio_backtest_walk_forward(
     current_mean_reversion_stocks = []  # Current bottom 3 stocks held by mean reversion
     mean_reversion_transaction_costs = 0.0  # Track total transaction costs
 
-    # Transaction cost tracking for all strategies
+    # Reset global transaction cost tracking variables for this backtest
+    global ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs
+    global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs
     ai_transaction_costs = 0.0
     static_bh_transaction_costs = 0.0  # Static BH has no transaction costs (buy once, hold)
     dynamic_bh_1y_transaction_costs = 0.0
     dynamic_bh_3m_transaction_costs = 0.0
     dynamic_bh_1m_transaction_costs = 0.0
     risk_adj_mom_transaction_costs = 0.0
-    # mean_reversion_transaction_costs already initialized above
+    mean_reversion_transaction_costs = 0.0
 
     all_processed_tickers = []
     all_performance_metrics = []
@@ -2047,9 +2058,10 @@ def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
     """
     Rebalance dynamic BH portfolio to hold the new top 3 stocks.
     Happens DAILY - sells stocks no longer in top 3 and buys new ones.
-    
+
     Returns: Updated cash balance (since float is passed by value, not reference)
     """
+    global dynamic_bh_1y_transaction_costs
     try:
         # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
         target_allocation = capital_per_stock  # $15,000 per stock
@@ -2152,6 +2164,7 @@ def _rebalance_dynamic_bh_3m_portfolio(new_stocks, current_date, all_tickers_dat
     Happens DAILY - sells stocks no longer in top 3 and buys new ones.
     Uses 3-month performance for stock selection.
     """
+    global dynamic_bh_3m_transaction_costs
     try:
         # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
         target_allocation = capital_per_stock  # $15,000 per stock
@@ -2253,6 +2266,7 @@ def _rebalance_dynamic_bh_1m_portfolio(new_stocks, current_date, all_tickers_dat
     Happens DAILY - sells stocks no longer in top 3 and buys new ones.
     Uses 1-month performance for stock selection.
     """
+    global dynamic_bh_1m_transaction_costs
     try:
         # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
         target_allocation = capital_per_stock  # $15,000 per stock
@@ -2354,6 +2368,7 @@ def _rebalance_risk_adj_mom_portfolio(new_stocks, current_date, all_tickers_data
     Happens DAILY - sells stocks no longer in top 3 and buys new ones.
     Uses 6-month risk-adjusted momentum for stock selection.
     """
+    global risk_adj_mom_transaction_costs
     try:
         # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
         target_allocation = capital_per_stock  # $15,000 per stock
@@ -2457,6 +2472,7 @@ def _rebalance_mean_reversion_portfolio(new_stocks, current_date, all_tickers_da
 
     Returns: Updated cash balance (since float is passed by value, not reference)
     """
+    global mean_reversion_transaction_costs
     try:
         # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
         target_allocation = capital_per_stock  # $15,000 per stock

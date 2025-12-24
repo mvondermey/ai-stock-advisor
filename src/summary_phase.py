@@ -58,6 +58,8 @@ def print_final_summary(
     dynamic_bh_3m_transaction_costs: float = None,
     dynamic_bh_1m_transaction_costs: float = None,
     risk_adj_mom_transaction_costs: float = None,
+    final_mean_reversion_value_1y: float = None,
+    mean_reversion_1y_return: float = None,
     mean_reversion_transaction_costs: float = None
 ) -> None:
     """Prints the final summary of the backtest results."""
@@ -116,7 +118,7 @@ def print_final_summary(
     print(f"  Initial Capital: ${initial_balance_used:,.2f}")
     print(f"  Number of Tickers Analyzed: {num_tickers_analyzed}")
     print("-" * 150)
-    print(f"{'Period':<12} | {'AI Strategy':<18} | {'Static BH':<18} | {'Dyn BH 1Y':<18} | {'Dyn BH 3M':<18} | {'Dyn BH 1M':<18} | {'Risk-Adj Mom':<18}")
+    print(f"{'Period':<12} | {'AI Strategy':<18} | {'Static BH':<18} | {'Dyn BH 1Y':<18} | {'Dyn BH 3M':<18} | {'Dyn BH 1M':<18} | {'Risk-Adj Mom':<18} | {'Mean Reversion':<18}")
     print("-" * 150)
 
     # Format each result
@@ -139,7 +141,11 @@ def print_final_summary(
     if final_risk_adj_mom_value_1y is not None and risk_adj_mom_1y_return is not None:
         risk_adj_mom_result = f"${final_risk_adj_mom_value_1y:,.0f} ({risk_adj_mom_1y_return:+.1f}%)"
 
-    print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {dynamic_bh_1m_result:<17} | {risk_adj_mom_result:<17}")
+    mean_reversion_result = "N/A"
+    if final_mean_reversion_value_1y is not None and mean_reversion_1y_return is not None:
+        mean_reversion_result = f"${final_mean_reversion_value_1y:,.0f} ({mean_reversion_1y_return:+.1f}%)"
+
+    print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {dynamic_bh_1m_result:<17} | {risk_adj_mom_result:<17} | {mean_reversion_result:<17}")
 
     # Transaction costs row
     ai_costs = f"${ai_transaction_costs:,.0f}" if ai_transaction_costs is not None else "N/A"
@@ -150,7 +156,7 @@ def print_final_summary(
     risk_adj_mom_costs = f"${risk_adj_mom_transaction_costs:,.0f}" if risk_adj_mom_transaction_costs is not None else "N/A"
     mean_reversion_costs = f"${mean_reversion_transaction_costs:,.0f}" if mean_reversion_transaction_costs is not None else "N/A"
 
-    print(f"{'Txn Costs':<12} | {ai_costs:<17} | {static_bh_costs:<17} | {dynamic_bh_1y_costs:<17} | {dynamic_bh_3m_costs:<17} | {dynamic_bh_1m_costs:<17} | {risk_adj_mom_costs:<17}")
+    print(f"{'Txn Costs':<12} | {ai_costs:<17} | {static_bh_costs:<17} | {dynamic_bh_1y_costs:<17} | {dynamic_bh_3m_costs:<17} | {dynamic_bh_1m_costs:<17} | {risk_adj_mom_costs:<17} | {mean_reversion_costs:<17}")
     print("="*150)
 
     print(f"\n📈 Individual Ticker Performance (AI Strategy - Sorted by {period_name} Performance):")
