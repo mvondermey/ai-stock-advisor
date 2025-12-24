@@ -49,7 +49,9 @@ def print_final_summary(
     final_dynamic_bh_3m_value_1y: float = None,
     dynamic_bh_3m_1y_return: float = None,
     final_dynamic_bh_1m_value_1y: float = None,
-    dynamic_bh_1m_1y_return: float = None
+    dynamic_bh_1m_1y_return: float = None,
+    final_risk_adj_mom_value_1y: float = None,
+    risk_adj_mom_1y_return: float = None
 ) -> None:
     """Prints the final summary of the backtest results."""
     
@@ -127,14 +129,8 @@ def print_final_summary(
         dynamic_bh_1m_result = f"${final_dynamic_bh_1m_value_1y:,.0f} ({dynamic_bh_1m_1y_return:+.1f}%)"
 
     risk_adj_mom_result = "N/A"
-    if 'final_risk_adj_mom_value_1y' in locals() or 'final_risk_adj_mom_value_1y' in globals():
-        try:
-            risk_adj_mom_value = final_risk_adj_mom_value_1y if 'final_risk_adj_mom_value_1y' in locals() else globals().get('final_risk_adj_mom_value_1y')
-            risk_adj_mom_return = risk_adj_mom_1y_return if 'risk_adj_mom_1y_return' in locals() else globals().get('risk_adj_mom_1y_return')
-            if risk_adj_mom_value is not None and risk_adj_mom_return is not None:
-                risk_adj_mom_result = f"${risk_adj_mom_value:,.0f} ({risk_adj_mom_return:+.1f}%)"
-        except:
-            pass
+    if final_risk_adj_mom_value_1y is not None and risk_adj_mom_1y_return is not None:
+        risk_adj_mom_result = f"${final_risk_adj_mom_value_1y:,.0f} ({risk_adj_mom_1y_return:+.1f}%)"
 
     print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {dynamic_bh_1m_result:<17} | {risk_adj_mom_result:<17}")
     print("="*150)

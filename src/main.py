@@ -128,7 +128,7 @@ from data_utils import load_prices, fetch_training_data, load_prices_robust, _en
 from data_fetcher import (
     _normalize_symbol, _fetch_from_stooq, _fetch_from_alpaca, _fetch_from_twelvedata,
     _download_batch_robust, _fetch_financial_data, _fetch_financial_data_from_alpaca,
-    _fetch_intermarket_data
+    _fetch_intermarket_data, _to_utc
 )
 from ticker_selection import get_all_tickers, find_top_performers
 from summary_phase import (
@@ -431,15 +431,35 @@ def main(
     train_start_1y = end_date - timedelta(days=BACKTEST_DAYS + TRAIN_LOOKBACK_DAYS + 1)
     earliest_date_needed = train_start_1y
 
-    print(f"🚀 Step 1: Batch downloading data for {len(all_available_tickers)} tickers from {earliest_date_needed.date()} to {end_date.date()}...")
-    
+    # Expand the download range to cache more historical data (2 years back)
+    # This ensures future runs can use cached data for overlapping periods
+    cache_start_date = end_date - timedelta(days=730)  # 2 years back
+    actual_start_date = earliest_date_needed
+
+    print(f"🚀 Step 1: Batch downloading data for {len(all_available_tickers)} tickers from {cache_start_date.date()} to {end_date.date()}...")
+    print(f"  (This caches 2+ years of data for future use, but we'll use data from {actual_start_date.date()} for analysis)")
+
     all_tickers_data_list = []
     for i in range(0, len(all_available_tickers), BATCH_DOWNLOAD_SIZE):
         batch = all_available_tickers[i:i + BATCH_DOWNLOAD_SIZE]
         print(f"  - Downloading batch {i//BATCH_DOWNLOAD_SIZE + 1}/{(len(all_available_tickers) + BATCH_DOWNLOAD_SIZE - 1)//BATCH_DOWNLOAD_SIZE} ({len(batch)} tickers)...")
-        batch_data = _download_batch_robust(batch, start=earliest_date_needed, end=end_date)
+        batch_data = _download_batch_robust(batch, start=cache_start_date, end=end_date)
         if not batch_data.empty:
-            all_tickers_data_list.append(batch_data)
+            # Filter to only the date range we actually need for analysis
+            # Keep the expanded range in cache for future use
+
+            # Ensure batch_data index is timezone-aware for proper comparison
+            if batch_data.index.tzinfo is None:
+                batch_data.index = batch_data.index.tz_localize('UTC')
+            elif batch_data.index.tzinfo != timezone.utc:
+                batch_data.index = batch_data.index.tz_convert('UTC')
+
+            filtered_batch_data = batch_data.loc[
+                (batch_data.index >= _to_utc(actual_start_date)) &
+                (batch_data.index <= _to_utc(end_date))
+            ]
+            if not filtered_batch_data.empty:
+                all_tickers_data_list.append(filtered_batch_data)
         if i + BATCH_DOWNLOAD_SIZE < len(all_available_tickers):
             print(f"  - Pausing for {PAUSE_BETWEEN_BATCHES} seconds before next batch...")
             time.sleep(PAUSE_BETWEEN_BATCHES)
@@ -595,6 +615,10 @@ def main(
         print(f"⚠️  WARNING: {insufficient_count}/{len(data_summaries)} tickers have insufficient data!")
         print(f"   💡 Consider using a longer data period or filtering these tickers")
     
+    # --- Calculate backtest dates first (needed for ticker selection) ---
+    bt_end = end_date  # Use the provided end_date
+    bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)  # When stocks will be bought
+
     # --- Identify top performers if not provided ---
     if top_performers_data is None:
         title = "🚀 AI-Powered Momentum & Trend Strategy"
@@ -602,15 +626,18 @@ def main(
         print(title + "\n" + "="*50 + "\n")
 
         print("🔍 Step 2: Identifying stocks outperforming market benchmarks...")
-        
+        print(f"  📅 Using performance data up to {bt_start_1y.date()} (purchase date) to avoid look-ahead bias")
+
         # Get top performers from market selection using the pre-fetched data
+        # Use bt_start_1y as performance_end_date to avoid look-ahead bias
         market_selected_performers = find_top_performers(
             all_available_tickers=all_available_tickers,
             all_tickers_data=all_tickers_data,
             return_tickers=True,
             n_top=N_TOP_TICKERS,
             fcf_min_threshold=fcf_threshold,
-            ebitda_min_threshold=ebitda_threshold
+            ebitda_min_threshold=ebitda_threshold,
+            performance_end_date=bt_start_1y
         )
         
 
@@ -638,7 +665,6 @@ def main(
     failed_training_tickers_1y = {} # New: Store failed tickers and their reasons
 
     if ENABLE_1YEAR_TRAINING:
-        bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)
         train_end_1y = bt_start_1y - timedelta(days=1)
         train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
 

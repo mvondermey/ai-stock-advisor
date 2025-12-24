@@ -100,6 +100,8 @@ except Exception as e:
 print(f"\n🎯 Step 3: Filtering to top {N_TOP_TICKERS} by 1-year momentum...")
 
 try:
+    # For training only (not backtesting), we can use all available data
+    # since we're not simulating real-time trading decisions
     top_performers_data = find_top_performers(
         all_available_tickers=all_available_tickers,
         all_tickers_data=all_tickers_data,

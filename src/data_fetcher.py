@@ -417,16 +417,9 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                     cache_start = cached_df.index.min()
                     cache_end = cached_df.index.max()
 
-                    # Check if cache contains the required date range
-                    # Cache must cover 100% of requested period
-                    requested_days = (end_utc - start_utc).days
-                    overlap_start = max(start_utc, cache_start)
-                    overlap_end = min(end_utc, cache_end)
-                    overlap_days = max(0, (overlap_end - overlap_start).days)
-
-                    coverage_ratio = overlap_days / requested_days if requested_days > 0 else 0
-
-                    if coverage_ratio >= 1.0:  # Cache must cover 100% of requested period
+                    # Check if cache contains the complete requested date range
+                    # Cache must contain 100% of the requested data - no gaps allowed
+                    if cache_start <= start_utc and cache_end >= end_utc:  # Cache completely covers the requested range
                         # Filter to requested date range
                         filtered_df = cached_df.loc[(cached_df.index >= start_utc) & (cached_df.index <= end_utc)].copy()
 
@@ -441,7 +434,7 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
 
                             cached_data_frames.append(filtered_df)
                             cache_valid = True
-                            print(f"  ✅ Cache hit for {ticker} ({len(filtered_df)} rows, {coverage_ratio:.1%} coverage)")
+                            print(f"  ✅ Cache hit for {ticker} ({len(filtered_df)} rows, 100% coverage)")
 
             except Exception as e:
                 print(f"  ⚠️ Could not read cache for {ticker}: {e}")

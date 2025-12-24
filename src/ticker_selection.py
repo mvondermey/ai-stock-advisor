@@ -352,7 +352,8 @@ def find_top_performers(
     return_tickers: bool = False,
     n_top: int = N_TOP_TICKERS,
     fcf_min_threshold: float = 0.0,
-    ebitda_min_threshold: float = 0.0
+    ebitda_min_threshold: float = 0.0,
+    performance_end_date: datetime = None
 ):
     """
     Screens pre-fetched data for the top N performers and returns a list of (ticker, performance) tuples.
@@ -361,14 +362,18 @@ def find_top_performers(
         print("❌ No ticker data provided to find_top_performers. Exiting.")
         return []
 
-    # ✅ FIX: Handle both long-format (with 'date' column) and wide-format (DatetimeIndex)
-    if 'date' in all_tickers_data.columns:
-        # Long format: dates are in 'date' column
-        end_date = pd.to_datetime(all_tickers_data['date']).max()
+    # Use provided performance end date, or fall back to data's max date
+    if performance_end_date is not None:
+        end_date = performance_end_date
     else:
-        # Wide format: dates are in index
-        end_date = all_tickers_data.index.max()
-    
+        # ✅ FIX: Handle both long-format (with 'date' column) and wide-format (DatetimeIndex)
+        if 'date' in all_tickers_data.columns:
+            # Long format: dates are in 'date' column
+            end_date = pd.to_datetime(all_tickers_data['date']).max()
+        else:
+            # Wide format: dates are in index
+            end_date = all_tickers_data.index.max()
+
     start_date = end_date - timedelta(days=365)
     ytd_start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
 
