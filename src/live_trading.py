@@ -52,6 +52,17 @@ MODEL_MAX_AGE_DAYS = 90  # Only use models trained in last 90 days
 USE_PAPER_TRADING = True  # True = paper trading (fake money), False = REAL MONEY
 TOP_N_STOCKS = 3  # Number of stocks to hold (matches backtest)
 
+# --- Strategy Selection ---
+# Choose which strategy to use for live trading:
+# 'ai' = AI predictions (requires trained models)
+# 'static_bh' = Static Buy & Hold (top performers from backtest)
+# 'dynamic_bh_1y' = Dynamic BH rebalancing annually
+# 'dynamic_bh_3m' = Dynamic BH rebalancing quarterly
+# 'dynamic_bh_1m' = Dynamic BH rebalancing monthly
+# 'risk_adj_mom' = Risk-Adjusted Momentum
+# 'mean_reversion' = Mean Reversion
+LIVE_TRADING_STRATEGY = 'ai'  # Change this to select your strategy
+
 
 def get_alpaca_client() -> Optional[TradingClient]:
     """Initialize Alpaca trading client."""
@@ -186,15 +197,181 @@ def rebalance_portfolio(
             print(f"\n  ❌ Error processing {ticker}: {e}")
 
 
+def get_strategy_tickers(strategy: str, all_tickers: List[str]) -> List[str]:
+    """Get the tickers to hold based on the selected strategy."""
+
+    if strategy == 'ai':
+        # AI Strategy: Use model predictions (existing logic)
+        return get_ai_strategy_tickers(all_tickers)
+
+    elif strategy.startswith('dynamic_bh_'):
+        # Dynamic BH Strategy: Select based on performance period
+        period = strategy.replace('dynamic_bh_', '')  # '1y', '3m', or '1m'
+        return get_dynamic_bh_tickers(all_tickers, period)
+
+    elif strategy == 'risk_adj_mom':
+        # Risk-Adjusted Momentum Strategy
+        return get_risk_adj_mom_tickers(all_tickers)
+
+    elif strategy == 'mean_reversion':
+        # Mean Reversion Strategy
+        return get_mean_reversion_tickers(all_tickers)
+
+    elif strategy == 'static_bh':
+        # Static BH: Use the same top performers from backtest
+        print("📊 Static BH: Using top performers from most recent backtest")
+        # This would need to load from saved backtest results
+        # For now, fall back to AI strategy
+        print("⚠️  Static BH not fully implemented yet, using AI strategy")
+        return get_ai_strategy_tickers(all_tickers)
+
+    else:
+        print(f"❌ Unknown strategy: {strategy}")
+        return []
+
+
+def get_ai_strategy_tickers(all_tickers: List[str]) -> List[str]:
+    """AI Strategy: Rank by predicted return (existing logic)."""
+    models_dir = Path("logs/models")
+    if not models_dir.exists():
+        print(f"❌ Models directory not found: {models_dir}")
+        print("   Run 'python src/main.py' first to train models")
+        return []
+
+    print("🤖 Loading trained models...")
+    current_time = datetime.now(timezone.utc)
+    max_age = timedelta(days=MODEL_MAX_AGE_DAYS)
+
+    valid_tickers = []
+    for ticker in all_tickers:
+        model_path = models_dir / f"{ticker}_model.joblib"
+        if model_path.exists():
+            model_age = current_time - datetime.fromtimestamp(model_path.stat().st_mtime, timezone.utc)
+            if model_age <= max_age:
+                valid_tickers.append(ticker)
+
+    if len(valid_tickers) < TOP_N_STOCKS:
+        print(f"⚠️  Only {len(valid_tickers)} tickers have recent models (need {TOP_N_STOCKS})")
+        return []
+
+    print(f"✅ Found {len(valid_tickers)} tickers with recent models")
+
+    # Load models and make predictions
+    print("🔮 Making predictions...")
+    ranked_predictions = rank_tickers_by_predicted_return(valid_tickers)
+    if not ranked_predictions:
+        print("❌ No valid predictions generated")
+        return []
+
+    target_tickers = [ticker for ticker, _ in ranked_predictions[:TOP_N_STOCKS]]
+    return target_tickers
+
+
+def get_dynamic_bh_tickers(all_tickers: List[str], period: str) -> List[str]:
+    """Dynamic BH Strategy: Select top performers based on specified period."""
+    print(f"📊 Dynamic BH ({period}): Selecting top {TOP_N_STOCKS} performers...")
+
+    # This would implement the same logic as the backtest
+    # For now, use a simplified version
+    performances = []
+    for ticker in all_tickers[:50]:  # Limit to avoid too many API calls
+        try:
+            # Get data for the appropriate period
+            if period == '1y':
+                start_date = datetime.now() - timedelta(days=365)
+            elif period == '3m':
+                start_date = datetime.now() - timedelta(days=90)
+            elif period == '1m':
+                start_date = datetime.now() - timedelta(days=30)
+            else:
+                start_date = datetime.now() - timedelta(days=365)
+
+            df = load_prices_robust(ticker, start_date, datetime.now())
+            if df is not None and len(df) >= 10:
+                start_price = df['Close'].iloc[0]
+                end_price = df['Close'].iloc[-1]
+                if start_price > 0:
+                    performance = ((end_price - start_price) / start_price) * 100
+                    performances.append((ticker, performance))
+
+        except Exception as e:
+            continue
+
+    # Sort by performance and get top N
+    performances.sort(key=lambda x: x[1], reverse=True)
+    target_tickers = [ticker for ticker, _ in performances[:TOP_N_STOCKS]]
+
+    if target_tickers:
+        print(f"🏆 Top {TOP_N_STOCKS} performers ({period}): {target_tickers}")
+        for i, (ticker, perf) in enumerate(performances[:TOP_N_STOCKS], 1):
+            print(".1f")
+
+    return target_tickers
+
+
+def get_risk_adj_mom_tickers(all_tickers: List[str]) -> List[str]:
+    """Risk-Adjusted Momentum Strategy: Select based on risk-adjusted returns."""
+    print(f"📊 Risk-Adjusted Momentum: Selecting top {TOP_N_STOCKS}...")
+
+    # Simplified implementation - would need the full risk-adjusted logic
+    # For now, use dynamic BH 6-month as approximation
+    return get_dynamic_bh_tickers(all_tickers, '6m')
+
+
+def get_mean_reversion_tickers(all_tickers: List[str]) -> List[str]:
+    """Mean Reversion Strategy: Select worst recent performers."""
+    print(f"📊 Mean Reversion: Selecting bottom {TOP_N_STOCKS} recent performers...")
+
+    # Get 1-month performance and select WORST performers (opposite of momentum)
+    performances = []
+    for ticker in all_tickers[:50]:
+        try:
+            start_date = datetime.now() - timedelta(days=30)
+            df = load_prices_robust(ticker, start_date, datetime.now())
+            if df is not None and len(df) >= 10:
+                start_price = df['Close'].iloc[0]
+                end_price = df['Close'].iloc[-1]
+                if start_price > 0:
+                    performance = ((end_price - start_price) / start_price) * 100
+                    performances.append((ticker, performance))
+
+        except Exception as e:
+            continue
+
+    # Sort by performance (ascending = worst performers) and get bottom N
+    performances.sort(key=lambda x: x[1])  # Ascending order
+    target_tickers = [ticker for ticker, _ in performances[:TOP_N_STOCKS]]
+
+    if target_tickers:
+        print(f"🔄 Bottom {TOP_N_STOCKS} performers (1-month): {target_tickers}")
+        for i, (ticker, perf) in enumerate(performances[:TOP_N_STOCKS], 1):
+            print(".1f")
+
+    return target_tickers
+
+
 def run_live_trading():
     """Main live trading function."""
     print("=" * 80)
     print("🤖 AI STOCK ADVISOR - LIVE TRADING")
     print("=" * 80)
     print(f"📅 {datetime.now().strftime('%A, %B %d, %Y at %I:%M %p')}")
-    print(f"🎯 Strategy: Rank by predicted return → Hold top {TOP_N_STOCKS}")
+
+    # Display selected strategy
+    strategy_names = {
+        'ai': 'AI Predictions',
+        'static_bh': 'Static Buy & Hold',
+        'dynamic_bh_1y': 'Dynamic BH (1-Year)',
+        'dynamic_bh_3m': 'Dynamic BH (3-Month)',
+        'dynamic_bh_1m': 'Dynamic BH (1-Month)',
+        'risk_adj_mom': 'Risk-Adjusted Momentum',
+        'mean_reversion': 'Mean Reversion'
+    }
+
+    strategy_name = strategy_names.get(LIVE_TRADING_STRATEGY, LIVE_TRADING_STRATEGY)
+    print(f"🎯 Strategy: {strategy_name} → Hold top {TOP_N_STOCKS}")
     print(f"💰 Investment per stock: ${INVESTMENT_PER_STOCK_LIVE:,.2f}")
-    
+
     mode = "🧪 DRY-RUN" if not LIVE_TRADING_ENABLED else ("📄 PAPER" if USE_PAPER_TRADING else "⚠️  LIVE")
     print(f"🔧 Mode: {mode}")
     print("=" * 80)

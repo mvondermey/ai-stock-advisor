@@ -88,14 +88,15 @@ ENABLE_1YEAR_TRAINING   = True
 
 # --- Portfolio Strategy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
-ENABLE_AI_PORTFOLIO     = False   # AI-based stock selection and trading
+ENABLE_AI_PORTFOLIO     = True    # AI-based stock selection and trading
 ENABLE_STATIC_BH        = True   # Static Buy & Hold (top 3 at start, hold forever)
 ENABLE_DYNAMIC_BH_1Y    = True   # Dynamic BH rebalancing based on 1-year performance
 ENABLE_DYNAMIC_BH_3M    = True   # Dynamic BH rebalancing based on 3-month performance
 ENABLE_DYNAMIC_BH_1M    = True   # Dynamic BH rebalancing based on 1-month performance
 ENABLE_RISK_ADJ_MOM     = True   # Risk-Adjusted Momentum (6-month returns adjusted for volatility)
-ENABLE_MEAN_REVERSION   = True  # Mean Reversion: Buy oversold stocks, sell overbought
+ENABLE_MEAN_REVERSION   = False  # Mean Reversion: Buy oversold stocks, sell overbought (DISABLED - poor performance)
 ENABLE_SEASONAL         = False  # Seasonal: "Sell in May and Go Away" strategy
+ENABLE_QUALITY_MOM      = False  # Quality + Momentum: Combine quality factors with momentum
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -183,7 +184,7 @@ LIVE_TRADING_MODEL_PERIOD = "Best"
 # Period-specific horizons (trading days) - matched to period scale
 PERIOD_HORIZONS = {
     # Prediction horizon in trading days
-    "1-Year": 20     # Predict 20 trading days ahead (~1 month)
+    "1-Year": 63     # Predict 63 trading days ahead (~3 months)
 }
 
 USE_SINGLE_REGRESSION_MODEL = True  # Use single regression model instead of buy/sell pair

@@ -24,19 +24,19 @@ from config import (
 from config import (
     ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, TARGET_PERCENTAGE, PERIOD_HORIZONS,
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, USE_LSTM, USE_GRU, # Moved from ml_models
-    ENABLE_AI_PORTFOLIO, ENABLE_STATIC_BH, ENABLE_DYNAMIC_BH_1Y, ENABLE_DYNAMIC_BH_3M, ENABLE_DYNAMIC_BH_1M, ENABLE_RISK_ADJ_MOM, ENABLE_MEAN_REVERSION
+    ENABLE_AI_PORTFOLIO, ENABLE_STATIC_BH, ENABLE_DYNAMIC_BH_1Y, ENABLE_DYNAMIC_BH_3M, ENABLE_DYNAMIC_BH_1M, ENABLE_RISK_ADJ_MOM, ENABLE_MEAN_REVERSION, ENABLE_QUALITY_MOM
 )
 from alpha_training import AlphaThresholdConfig, select_threshold_by_alpha
 from scipy.stats import uniform, beta
 
-# Global transaction cost tracking variables
-ai_transaction_costs = 0.0
-static_bh_transaction_costs = 0.0
-dynamic_bh_1y_transaction_costs = 0.0
-dynamic_bh_3m_transaction_costs = 0.0
-dynamic_bh_1m_transaction_costs = 0.0
-risk_adj_mom_transaction_costs = 0.0
-mean_reversion_transaction_costs = 0.0
+# Global transaction cost tracking variables (initialized in main function)
+ai_transaction_costs = None
+static_bh_transaction_costs = None
+dynamic_bh_1y_transaction_costs = None
+dynamic_bh_3m_transaction_costs = None
+dynamic_bh_1m_transaction_costs = None
+risk_adj_mom_transaction_costs = None
+mean_reversion_transaction_costs = None
 from data_validation import validate_prediction_data, validate_features_after_engineering, InsufficientDataError
 import os
 import json
@@ -1073,7 +1073,13 @@ def _run_portfolio_backtest_walk_forward(
     mean_reversion_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
     mean_reversion_cash = initial_capital_needed  # Start with same capital as AI
     current_mean_reversion_stocks = []  # Current bottom 3 stocks held by mean reversion
-    mean_reversion_transaction_costs = 0.0  # Track total transaction costs
+
+    # QUALITY + MOMENTUM: Initialize portfolio tracking
+    quality_momentum_portfolio_value = 0.0
+    quality_momentum_portfolio_history = [quality_momentum_portfolio_value]
+    quality_momentum_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    quality_momentum_cash = initial_capital_needed  # Start with same capital as AI
+    current_quality_momentum_stocks = []  # Current top 3 stocks held by quality + momentum
 
     # Reset global transaction cost tracking variables for this backtest
     global ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs
@@ -1418,6 +1424,66 @@ def _run_portfolio_backtest_walk_forward(
                     except Exception as e:
                         print(f"   ⚠️ Mean reversion selection failed: {e}")
 
+                # QUALITY + MOMENTUM: Rebalance to top performers by combined quality+momentum score DAILY
+                if ENABLE_QUALITY_MOM:
+                    try:
+                        # Calculate combined quality + momentum scores
+                        quality_momentum_scores = []
+
+                        for ticker in initial_top_tickers:
+                            try:
+                                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                                if not ticker_data.empty:
+                                    ticker_data = ticker_data.set_index('date')
+                                    # Use 3-month period for both quality and momentum assessment
+                                    data_slice = ticker_data.loc[:current_date]
+                                    if len(data_slice) >= 63:  # At least 3 months of data
+                                        recent_data = data_slice.tail(63)  # Last ~3 months
+
+                                        if len(recent_data) >= 10:
+                                            # MOMENTUM SCORE: 3-month return
+                                            start_price = recent_data['Close'].iloc[0]
+                                            end_price = recent_data['Close'].iloc[-1]
+                                            momentum_score = ((end_price - start_price) / start_price) * 100 if start_price > 0 else -100
+
+                                            # QUALITY SCORE: Consistency (low volatility) + trend strength
+                                            returns = recent_data['Close'].pct_change().dropna()
+                                            if len(returns) > 5:
+                                                # Volatility (lower = higher quality)
+                                                volatility = returns.std() * np.sqrt(252)  # Annualized
+                                                quality_volatility = max(0, 50 - volatility * 100)  # Higher score for lower volatility
+
+                                                # Trend consistency (higher = higher quality)
+                                                trend_strength = abs(momentum_score) * (1 - volatility)  # Strong trend with low volatility
+
+                                                # Combined score: 70% momentum, 30% quality
+                                                combined_score = (momentum_score * 0.7) + (quality_volatility * 0.3)
+
+                                                quality_momentum_scores.append((ticker, combined_score, momentum_score, quality_volatility))
+
+                            except Exception as e:
+                                continue
+
+                        if quality_momentum_scores:
+                            # Sort by combined score (descending)
+                            quality_momentum_scores.sort(key=lambda x: x[1], reverse=True)
+                            new_quality_momentum_stocks = [ticker for ticker, score, mom, qual in quality_momentum_scores[:3]]
+
+                            if new_quality_momentum_stocks != current_quality_momentum_stocks:
+                                print(f"   🏆 Quality+Momentum rebalancing: {current_quality_momentum_stocks} → {new_quality_momentum_stocks}")
+                                print(f"     Top scores: {[(t, f'{s:.1f}') for t, s, _, _ in quality_momentum_scores[:3]]}")
+
+                                # Rebalance quality + momentum portfolio
+                                quality_momentum_cash = _rebalance_quality_momentum_portfolio(
+                                    new_quality_momentum_stocks, current_date, all_tickers_data,
+                                    quality_momentum_positions, quality_momentum_cash, capital_per_stock
+                                )
+
+                            current_quality_momentum_stocks = new_quality_momentum_stocks
+
+                    except Exception as e:
+                        print(f"   ⚠️ Quality + momentum selection failed: {e}")
+
                 else:
                     print(f"   ⚠️ No valid performance data for dynamic BH rebalancing")
 
@@ -1443,11 +1509,12 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   🔍 Checking {ticker}: in models={ticker in current_models}, model not None={current_models.get(ticker) is not None if ticker in current_models else False}")
                     if ticker in current_models and current_models[ticker] is not None:
                         try:
-                            # Get data up to current date for prediction
+                            # Get data up to previous day for prediction (avoid look-ahead bias)
                             ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
                             if not ticker_data.empty:
                                 ticker_data = ticker_data.set_index('date')
-                                data_slice = ticker_data.loc[:current_date]
+                                prediction_date = current_date - timedelta(days=1)
+                                data_slice = ticker_data.loc[:prediction_date]
 
                                 if len(data_slice) >= PREDICTION_LOOKBACK_DAYS:  # Need minimum lookback days for features
                                     print(f"   📊 {ticker}: Calling prediction with {len(data_slice.tail(PREDICTION_LOOKBACK_DAYS))} rows, model={type(current_models[ticker]).__name__ if current_models[ticker] else None}, scaler={type(current_scalers.get(ticker)).__name__ if current_scalers.get(ticker) else None}")
@@ -1765,6 +1832,31 @@ def _run_portfolio_backtest_walk_forward(
         mean_reversion_portfolio_value = mean_reversion_invested_value + mean_reversion_cash
         mean_reversion_portfolio_history.append(mean_reversion_portfolio_value)
 
+        # Update QUALITY + MOMENTUM portfolio value daily (skip if disabled)
+        quality_momentum_invested_value = 0.0
+        if ENABLE_QUALITY_MOM:
+            for ticker in current_quality_momentum_stocks:
+                if ticker in quality_momentum_positions:
+                    try:
+                        current_price = all_tickers_data[
+                            (all_tickers_data['ticker'] == ticker) &
+                            (all_tickers_data['date'] == current_date)
+                        ]['Close'].iloc[0] if not all_tickers_data[
+                            (all_tickers_data['ticker'] == ticker) &
+                            (all_tickers_data['date'] == current_date)
+                        ].empty else None
+
+                        if current_price is not None and current_price > 0:
+                            shares = quality_momentum_positions[ticker]['shares']
+                            value = shares * current_price
+                            quality_momentum_positions[ticker]['value'] = value
+                            quality_momentum_invested_value += value
+                    except Exception as e:
+                        print(f"   ⚠️ Error updating quality + momentum position for {ticker}: {e}")
+
+        quality_momentum_portfolio_value = quality_momentum_invested_value + quality_momentum_cash
+        quality_momentum_portfolio_history.append(quality_momentum_portfolio_value)
+
         # Update portfolio value (invested + cash) at end of each day
         invested_value = 0.0
         for ticker in current_portfolio_stocks:
@@ -2050,7 +2142,7 @@ def _run_portfolio_backtest_walk_forward(
             total_portfolio_value = initial_capital_needed
             print(f"⚠️ AI Portfolio: No positions, using initial capital (${total_portfolio_value:,.0f})")
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs
 
 
 def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
@@ -2543,6 +2635,85 @@ def _rebalance_mean_reversion_portfolio(new_stocks, current_date, all_tickers_da
         print(f"   ⚠️ Mean reversion rebalancing failed: {e}")
 
     return mean_reversion_cash  # Return updated cash (float passed by value)
+
+
+def _rebalance_quality_momentum_portfolio(new_stocks, current_date, all_tickers_data,
+                                       quality_momentum_positions, quality_momentum_cash, capital_per_stock):
+    """
+    Rebalance quality + momentum portfolio to hold the new top 3 stocks.
+    Uses combined quality+momentum scoring for stock selection.
+
+    Returns: Updated cash balance (since float is passed by value, not reference)
+    """
+    global quality_momentum_transaction_costs
+    try:
+        # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
+        target_allocation = capital_per_stock  # $15,000 per stock
+
+        # Sell stocks no longer in top 3
+        stocks_to_sell = set(quality_momentum_positions.keys()) - set(new_stocks)
+        for ticker in stocks_to_sell:
+            if ticker in quality_momentum_positions:
+                try:
+                    current_price = all_tickers_data[
+                        (all_tickers_data['ticker'] == ticker) &
+                        (all_tickers_data['date'] == current_date)
+                    ]['Close'].iloc[0]
+
+                    if current_price > 0:
+                        shares = quality_momentum_positions[ticker]['shares']
+                        proceeds = shares * current_price
+
+                        # Apply transaction cost
+                        sell_cost = proceeds * TRANSACTION_COST
+                        net_proceeds = proceeds - sell_cost
+                        quality_momentum_transaction_costs += sell_cost
+                        quality_momentum_cash += net_proceeds
+
+                        print(f"   💰 Quality+Momentum sold {ticker}: {shares:.0f} shares @ ${current_price:.2f} = ${proceeds:,.0f} (-${sell_cost:.2f} cost) = ${net_proceeds:,.0f}")
+
+                        # Remove from positions
+                        del quality_momentum_positions[ticker]
+                except Exception as e:
+                    print(f"   ⚠️ Error selling {ticker} from quality + momentum: {e}")
+
+        # Buy new stocks
+        for ticker in new_stocks:
+            if ticker not in quality_momentum_positions:
+                try:
+                    current_price = all_tickers_data[
+                        (all_tickers_data['ticker'] == ticker) &
+                        (all_tickers_data['date'] == current_date)
+                    ]['Close'].iloc[0]
+
+                    if current_price > 0 and quality_momentum_cash >= target_allocation:
+                        buy_value = target_allocation
+
+                        # Apply transaction cost
+                        buy_cost = buy_value * TRANSACTION_COST
+                        total_buy_cost = buy_value + buy_cost
+                        quality_momentum_transaction_costs += buy_cost
+
+                        if total_buy_cost <= quality_momentum_cash:
+                            shares_to_buy = buy_value / current_price
+                            quality_momentum_positions[ticker] = {
+                                'shares': shares_to_buy,
+                                'entry_price': current_price,
+                                'value': buy_value
+                            }
+                            quality_momentum_cash -= total_buy_cost
+
+                            print(f"   🛒 Quality+Momentum bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${buy_value:,.0f} (+${buy_cost:.2f} cost) = ${total_buy_cost:,.0f}")
+
+                except Exception as e:
+                    print(f"   ⚠️ Error buying {ticker} for quality + momentum: {e}")
+
+        print(f"   📊 Quality+Momentum portfolio: ${sum(pos['value'] for pos in quality_momentum_positions.values()):,.0f} invested + ${quality_momentum_cash:,.0f} cash")
+
+    except Exception as e:
+        print(f"   ⚠️ Quality + momentum rebalancing failed: {e}")
+
+    return quality_momentum_cash  # Return updated cash (float passed by value)
 
 
 def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all_tickers_data,

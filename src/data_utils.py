@@ -832,12 +832,11 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
 
     df["Target"]     = df["Close"].shift(-1)
 
-    # Classification label for BUY model: X-day forward > +target_percentage
+    # Create forward-looking data for regression target
     fwd = df["Close"].shift(-class_horizon)
-    df["TargetClassBuy"] = ((fwd / df["Close"] - 1.0) > target_percentage).astype(float)
 
-    # Classification label for SELL model: X-day forward < -target_percentage
-    df["TargetClassSell"] = ((fwd / df["Close"] - 1.0) < -target_percentage).astype(float)
+    # Regression target: X-day forward return percentage
+    df["TargetReturn"] = (fwd / df["Close"] - 1.0) * 100
 
     # Dynamically build the list of features that are actually present in the DataFrame
     # This is the most critical part to ensure consistency
@@ -861,7 +860,7 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     all_present_features = present_technical_features + financial_features
 
     # Also include target columns for the initial DataFrame selection before dropna
-    target_cols = ["Target", "TargetClassBuy", "TargetClassSell"]
+    target_cols = ["Target", "TargetReturn"]
     cols_for_ready = all_present_features + target_cols
 
     # Filter cols_for_ready to ensure all are actually in df.columns (redundant but safe)
