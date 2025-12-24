@@ -30,6 +30,7 @@ from config import (
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
     ENABLE_1YEAR_TRAINING,
     ENABLE_1YEAR_BACKTEST,
+    ENABLE_AI_STRATEGY,
     ENABLE_MEAN_REVERSION,
     ENABLE_QUALITY_MOM,
     FEAT_SMA_SHORT, FEAT_SMA_LONG, FEAT_VOL_WINDOW, ATR_PERIOD,
@@ -661,42 +662,34 @@ def main(
             for ticker in sorted(list(skipped_tickers)):
                 f.write(f"{ticker}\n")
 
+    # --- Define training date variables (needed for backtest even when training disabled) ---
+    train_end_1y = bt_start_1y - timedelta(days=1)
+    train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
+
+    # ✅ FIX: Calculate actual period name based on backtest length
+    if BACKTEST_DAYS >= 250:  # ~1 year
+        actual_period_name = "1-Year"
+    elif BACKTEST_DAYS >= 125:  # ~6 months
+        actual_period_name = "6-Month"
+    elif BACKTEST_DAYS >= 90:  # ~4-5 months
+        actual_period_name = "3-Month"
+    elif BACKTEST_DAYS >= 60:  # ~3 months
+        actual_period_name = "2-Month"
+    elif BACKTEST_DAYS >= 30:  # ~1-2 months
+        actual_period_name = "1-Month"
+    else:
+        actual_period_name = f"{BACKTEST_DAYS}-Day"
+
     # --- Training Models (for 1-Year Backtest) ---
-    models, scalers = {}, {}
+    models, scalers, y_scalers = {}, {}, {}
     gru_hyperparams_dict = {} # Single hyperparams dict for single model
     failed_training_tickers_1y = {} # New: Store failed tickers and their reasons
 
     if ENABLE_1YEAR_TRAINING:
-        train_end_1y = bt_start_1y - timedelta(days=1)
-        train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
-
-        # ✅ FIX: Calculate actual period name based on backtest length
-        if BACKTEST_DAYS >= 250:  # ~1 year
-            actual_period_name = "1-Year"
-        elif BACKTEST_DAYS >= 125:  # ~6 months
-            actual_period_name = "6-Month"
-        elif BACKTEST_DAYS >= 90:  # ~4-5 months
-            actual_period_name = "3-Month"
-        elif BACKTEST_DAYS >= 60:  # ~3 months
-            actual_period_name = "2-Month"
-        elif BACKTEST_DAYS >= 30:  # ~1-2 months
-            actual_period_name = "1-Month"
-        else:
-            actual_period_name = f"{BACKTEST_DAYS}-Day"
-
         print(f"📅 Backtest configured for {BACKTEST_DAYS} days (~{actual_period_name})")
 
-        # Skip training if AI portfolio is disabled
-        models = {}
-        scalers = {}
-        y_scalers = {}
-        
-        if not ENABLE_AI_PORTFOLIO:
-            print(f"\n⏭️ Skipping AI model training (ENABLE_AI_PORTFOLIO = False)")
-            print(f"   Only Buy & Hold portfolios will be calculated.\n")
-            training_results = []
-        else:
-            # Use the new train_models_for_period function
+        # Train individual stock models if enabled
+        if ENABLE_1YEAR_TRAINING:
             training_results = train_models_for_period(
                 period_name=actual_period_name,
                 tickers=top_tickers,
@@ -707,7 +700,7 @@ def main(
                 feature_set=feature_set,
                 run_parallel=run_parallel
             )
-            
+
             # ✅ FIX: Convert list of results to dictionaries
             for result in training_results:
                 if result and result.get('status') in ['trained', 'loaded']:
@@ -716,6 +709,47 @@ def main(
                     scalers[ticker] = result['scaler']
                     if result.get('y_scaler'):
                         y_scalers[ticker] = result['y_scaler']
+        else:
+            training_results = []
+            print(f"\n⏭️ Skipping individual stock model training (ENABLE_1YEAR_TRAINING = False)")
+
+    # --- Train AI Portfolio Rebalancing Model ---
+    print(f"DEBUG: About to check ENABLE_AI_PORTFOLIO = {ENABLE_AI_PORTFOLIO}")
+    if ENABLE_AI_PORTFOLIO:
+        print(f"DEBUG: ENABLE_AI_PORTFOLIO is True, starting training...")
+        print(f"\n🧠 Training AI Portfolio Rebalancing Model...")
+        try:
+            print(f"DEBUG: Importing ai_portfolio module...")
+            from ai_portfolio import train_ai_portfolio_model
+            print(f"DEBUG: Import successful, calling train_ai_portfolio_model...")
+
+            # Use training dates based on backtest period, not 1-year training period
+            # For shorter backtests, use available historical data
+            ai_portfolio_train_end = bt_start_1y - timedelta(days=1)
+            ai_portfolio_train_start = ai_portfolio_train_end - timedelta(days=min(365, (bt_start_1y - all_tickers_data['date'].min()).days))
+
+            print(f"DEBUG: AI portfolio training dates: {ai_portfolio_train_start.date()} to {ai_portfolio_train_end.date()}")
+
+            ai_portfolio_trained = train_ai_portfolio_model(
+                all_tickers_data=all_tickers_data,
+                top_tickers=top_tickers_1y_filtered,
+                train_start_date=ai_portfolio_train_start,
+                train_end_date=ai_portfolio_train_end
+            )
+
+            print(f"DEBUG: train_ai_portfolio_model returned: {ai_portfolio_trained}")
+
+            if ai_portfolio_trained:
+                print("✅ AI Portfolio Rebalancing Model trained successfully")
+            else:
+                print("⚠️ AI Portfolio Rebalancing Model training failed")
+
+        except Exception as e:
+            print(f"❌ Exception during AI portfolio training: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print(f"DEBUG: ENABLE_AI_PORTFOLIO is False, skipping training")
 
     # 🧠 Initialize dictionaries for model training data before threshold optimization
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
@@ -723,7 +757,11 @@ def main(
 
     
     # Filter out failed tickers from top_tickers for subsequent steps
-    top_tickers_1y_filtered = [t for t in top_tickers if t not in failed_training_tickers_1y]
+    # When training is disabled, use all top_tickers
+    if ENABLE_1YEAR_TRAINING:
+        top_tickers_1y_filtered = [t for t in top_tickers if t not in failed_training_tickers_1y]
+    else:
+        top_tickers_1y_filtered = top_tickers
     print(f"  ℹ️ {len(failed_training_tickers_1y)} tickers failed 1-Year model training and will be skipped: {', '.join(failed_training_tickers_1y.keys())}")
     
     # Update top_performers_data to reflect only successfully trained tickers
@@ -782,14 +820,18 @@ def main(
         # DEBUG: Check what's in models dictionaries
         print(f"\n[DEBUG MAIN] 1-Year models keys: {list(models.keys())}")
         print(f"[DEBUG MAIN] 1-Year models values types: {[type(v).__name__ if v else 'None' for v in models.values()]}")
-        
-        # --- Run Backtest (AI Strategy) ---
-        print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (AI Strategy)...")
+
+        if ENABLE_AI_STRATEGY:
+            # --- Run Backtest (AI Strategy) ---
+            print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (AI Strategy)...")
+        else:
+            # --- Skip AI Strategy, run comparison strategies only ---
+            print(f"\n🔍 Step 8: Skipping AI Strategy (ENABLE_AI_STRATEGY = False), running comparison strategies only...")
         n_top_rebal = 3
         initial_capital_1y = capital_per_stock_1y * n_top_rebal
         
         # Use walk-forward backtest with periodic retraining and rebalancing
-        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y = _run_portfolio_backtest_walk_forward(
+        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y = _run_portfolio_backtest_walk_forward(
             all_tickers_data=all_tickers_data,
             train_start_date=train_start_1y_calc,
             backtest_start_date=bt_start_1y,
@@ -802,7 +844,8 @@ def main(
             target_percentage=TARGET_PERCENTAGE,
             period_name=actual_period_name,
             top_performers_data=top_performers_data,
-            horizon_days=PERIOD_HORIZONS.get("1-Year", 60)
+            horizon_days=PERIOD_HORIZONS.get("1-Year", 60),
+            enable_ai_strategy=ENABLE_AI_STRATEGY
         )
         
         ai_1y_return = ((final_strategy_value_1y - initial_capital_1y) / initial_capital_1y) * 100
@@ -1011,6 +1054,8 @@ def main(
         dynamic_bh_1y_return=((dynamic_bh_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_dynamic_bh_3m_value_1y=dynamic_bh_3m_portfolio_value_1y,
         dynamic_bh_3m_1y_return=((dynamic_bh_3m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_ai_portfolio_value_1y=ai_portfolio_value_1y,
+        ai_portfolio_1y_return=((ai_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_dynamic_bh_1m_value_1y=dynamic_bh_1m_portfolio_value_1y,
         dynamic_bh_1m_1y_return=((dynamic_bh_1m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_risk_adj_mom_value_1y=risk_adj_mom_portfolio_value_1y,
@@ -1023,6 +1068,7 @@ def main(
         static_bh_transaction_costs=static_bh_transaction_costs_1y,
         dynamic_bh_1y_transaction_costs=dynamic_bh_1y_transaction_costs_1y,
         dynamic_bh_3m_transaction_costs=dynamic_bh_3m_transaction_costs_1y,
+        ai_portfolio_transaction_costs=ai_portfolio_transaction_costs_1y,
         dynamic_bh_1m_transaction_costs=dynamic_bh_1m_transaction_costs_1y,
         risk_adj_mom_transaction_costs=risk_adj_mom_transaction_costs_1y,
         mean_reversion_transaction_costs=mean_reversion_transaction_costs_1y,

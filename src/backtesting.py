@@ -35,8 +35,10 @@ static_bh_transaction_costs = None
 dynamic_bh_1y_transaction_costs = None
 dynamic_bh_3m_transaction_costs = None
 dynamic_bh_1m_transaction_costs = None
+ai_portfolio_transaction_costs = None
 risk_adj_mom_transaction_costs = None
 mean_reversion_transaction_costs = None
+quality_momentum_transaction_costs = None
 from data_validation import validate_prediction_data, validate_features_after_engineering, InsufficientDataError
 import os
 import json
@@ -967,7 +969,8 @@ def _run_portfolio_backtest_walk_forward(
     target_percentage: float,
     period_name: str,
     top_performers_data: List[Tuple],
-    horizon_days: int = 20
+    horizon_days: int = 20,
+    enable_ai_strategy: bool = True
 ) -> Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]], float, float, List[float], float, List[float], float, List[float]]:
     """
     Walk-forward backtest: Daily selection from top 40 stocks with 10-day retraining.
@@ -979,11 +982,16 @@ def _run_portfolio_backtest_walk_forward(
     - Portfolio: Rebalance only when selection changes (cost-effective)
     """
 
-    print(f"🔄 Walk-forward backtest for {period_name}")
-    print(f"   📊 Universe: Top {len(initial_top_tickers)} stocks by momentum")
-    print(f"   🧠 Model retraining: Every {RETRAIN_FREQUENCY_DAYS} days for all {len(initial_top_tickers)} stocks")
-    print(f"   🎯 Daily selection: Pick best 3 from {len(initial_top_tickers)} stocks EVERY DAY using current models")
-    print(f"   💰 Rebalance only when portfolio changes (transaction costs minimized)")
+    if enable_ai_strategy:
+        print(f"🔄 Walk-forward backtest for {period_name} (AI Strategy)")
+        print(f"   📊 Universe: Top {len(initial_top_tickers)} stocks by momentum")
+        print(f"   🧠 Model retraining: Every {RETRAIN_FREQUENCY_DAYS} days for all {len(initial_top_tickers)} stocks")
+        print(f"   🎯 Daily selection: Pick best 3 from {len(initial_top_tickers)} stocks EVERY DAY using current models")
+        print(f"   💰 Rebalance only when portfolio changes (transaction costs minimized)")
+    else:
+        print(f"🔄 Comparison strategies backtest for {period_name} (AI Strategy disabled)")
+        print(f"   📊 Running comparison strategies only (BH_3m, AI Portfolio, etc.)")
+        print(f"   ⚠️  AI walk-forward strategy is disabled")
     
     # ✅ FIX 7: Add data structure validation
     print(f"\n🔍 Validating input data structure...")
@@ -1053,6 +1061,13 @@ def _run_portfolio_backtest_walk_forward(
     dynamic_bh_3m_cash = initial_capital_needed  # Start with same capital as AI
     current_dynamic_bh_3m_stocks = []  # Current top 3 stocks held by 3-month dynamic BH
 
+    # Track AI PORTFOLIO (intelligent rebalancing)
+    ai_portfolio_value = 0.0
+    ai_portfolio_history = [ai_portfolio_value]
+    ai_portfolio_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    ai_portfolio_cash = initial_capital_needed  # Start with same capital as AI
+    current_ai_portfolio_stocks = []  # Current stocks held by AI portfolio
+
     # Track DYNAMIC BH 1-MONTH PORTFOLIO (rebalances to top 3 based on 1-month performance)
     dynamic_bh_1m_portfolio_value = 0.0
     dynamic_bh_1m_portfolio_history = [dynamic_bh_1m_portfolio_value]
@@ -1083,14 +1098,16 @@ def _run_portfolio_backtest_walk_forward(
 
     # Reset global transaction cost tracking variables for this backtest
     global ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs
-    global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs
+    global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, ai_portfolio_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs
     ai_transaction_costs = 0.0
     static_bh_transaction_costs = 0.0  # Static BH has no transaction costs (buy once, hold)
     dynamic_bh_1y_transaction_costs = 0.0
     dynamic_bh_3m_transaction_costs = 0.0
     dynamic_bh_1m_transaction_costs = 0.0
+    ai_portfolio_transaction_costs = 0.0
     risk_adj_mom_transaction_costs = 0.0
     mean_reversion_transaction_costs = 0.0
+    quality_momentum_transaction_costs = 0.0
 
     all_processed_tickers = []
     all_performance_metrics = []
@@ -1124,8 +1141,8 @@ def _run_portfolio_backtest_walk_forward(
         should_retrain = (day_count % RETRAIN_FREQUENCY_DAYS == 1)  # Retrain on day 1, 11, 21, etc.
 
         # ✅ FIX: Train models on Day 1 if initial_models is empty, OR on regular retrain schedule
-        # Skip training entirely if AI portfolio is disabled
-        needs_training = ENABLE_AI_PORTFOLIO and ((day_count == 1 and not current_models) or (should_retrain and day_count > 1))
+        # Only train individual stock prediction models when main AI strategy is enabled
+        needs_training = enable_ai_strategy and ((day_count == 1 and not current_models) or (should_retrain and day_count > 1))
         
         if needs_training:
             retrain_count += 1
@@ -1269,11 +1286,10 @@ def _run_portfolio_backtest_walk_forward(
                         except Exception as e:
                             continue
 
-                    # Sort by 3-month performance and get top 3
+                    # Select stocks for BH_3m using traditional top 3 selection
                     if current_top_performers_3m:
                         current_top_performers_3m.sort(key=lambda x: x[1], reverse=True)
                         new_dynamic_bh_3m_stocks = [ticker for ticker, perf in current_top_performers_3m[:3]]
-
                         print(f"   🏆 Top 3 performers (3-month): {', '.join(new_dynamic_bh_3m_stocks)}")
 
                         # Rebalance 3-month dynamic BH portfolio (capture returned cash)
@@ -1283,6 +1299,31 @@ def _run_portfolio_backtest_walk_forward(
                         )
 
                         current_dynamic_bh_3m_stocks = new_dynamic_bh_3m_stocks
+
+                    # AI PORTFOLIO: Intelligent rebalancing using AI-driven decisions
+                    if ENABLE_AI_PORTFOLIO:
+                        # Use AI-driven portfolio selection for AI portfolio strategy
+                        from ai_portfolio import get_ai_portfolio_rebalancing_stocks
+                        try:
+                            new_ai_portfolio_stocks = get_ai_portfolio_rebalancing_stocks(
+                                all_tickers_data=all_tickers_data,
+                                top_tickers=[t for t, _ in current_top_performers_3m],
+                                current_date=current_date,
+                                current_portfolio=current_ai_portfolio_stocks,
+                                max_stocks=3
+                            )
+                            print(f"   🤖 AI Portfolio: {', '.join(new_ai_portfolio_stocks)}")
+
+                            # Rebalance AI portfolio
+                            ai_portfolio_cash = _rebalance_ai_portfolio(
+                                new_ai_portfolio_stocks, current_date, all_tickers_data,
+                                ai_portfolio_positions, ai_portfolio_cash, capital_per_stock
+                            )
+
+                            current_ai_portfolio_stocks = new_ai_portfolio_stocks
+
+                        except Exception as e:
+                            print(f"   ⚠️ AI portfolio rebalancing failed: {e}")
 
                 # DYNAMIC BH 1-MONTH: Rebalance to current top 3 based on 1-month performance
                 if ENABLE_DYNAMIC_BH_1M:
@@ -1497,8 +1538,8 @@ def _run_portfolio_backtest_walk_forward(
             day_predictions = {'date': current_date, 'day': day_count, 'predictions': []}
 
             # Skip AI predictions if disabled - just keep empty portfolio
-            if not ENABLE_AI_PORTFOLIO:
-                print(f"   🤖 AI predictions disabled (ENABLE_AI_PORTFOLIO={ENABLE_AI_PORTFOLIO})")
+            if not enable_ai_strategy:
+                print(f"   🤖 AI predictions disabled (ENABLE_AI_STRATEGY={enable_ai_strategy})")
                 valid_predictions = 0
                 # Explicitly reset consecutive counter when AI is disabled
                 consecutive_no_predictions = 0
@@ -1547,10 +1588,10 @@ def _run_portfolio_backtest_walk_forward(
             # ✅ FIX: Check if no predictions are being made (only when AI is enabled)
             # DEBUG: Print current state
             if day_count <= 3 or day_count % 10 == 0:  # Debug first few days and every 10th day
-                print(f"   🔍 DEBUG: ENABLE_AI_PORTFOLIO={ENABLE_AI_PORTFOLIO}, valid_predictions={valid_predictions}, consecutive_no_predictions={consecutive_no_predictions}")
+                print(f"   🔍 DEBUG: enable_ai_strategy={enable_ai_strategy}, valid_predictions={valid_predictions}, consecutive_no_predictions={consecutive_no_predictions}")
 
             # Explicit check: only count as failure if AI is enabled AND no predictions
-            should_count_as_failure = ENABLE_AI_PORTFOLIO and (valid_predictions == 0)
+            should_count_as_failure = enable_ai_strategy and (valid_predictions == 0)
 
             if should_count_as_failure:
                 consecutive_no_predictions += 1
@@ -1565,7 +1606,7 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"      - Verify data availability with diagnostics")
                     print(f"      - Increase data period")
                     raise InsufficientDataError("No predictions for multiple days - aborting backtest")
-            elif ENABLE_AI_PORTFOLIO:
+            elif enable_ai_strategy:
                 consecutive_no_predictions = 0  # Reset on success (only when AI is enabled)
             
             # ✅ NEW: Store predictions with metadata
@@ -1748,6 +1789,39 @@ def _run_portfolio_backtest_walk_forward(
 
         dynamic_bh_3m_portfolio_value = dynamic_bh_3m_invested_value + dynamic_bh_3m_cash
         dynamic_bh_3m_portfolio_history.append(dynamic_bh_3m_portfolio_value)
+
+        # Update AI portfolio value (skip if disabled)
+        ai_portfolio_invested_value = 0.0
+        if ENABLE_AI_PORTFOLIO:
+            for ticker in current_ai_portfolio_stocks:
+                if ticker in ai_portfolio_positions:
+                    try:
+                        ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                        if not ticker_data.empty:
+                            ticker_data = ticker_data.set_index('date')
+                            current_price_data = ticker_data.loc[:current_date]
+                            if not current_price_data.empty:
+                                # Drop NaN values to avoid NaN propagation
+                                valid_prices = current_price_data['Close'].dropna()
+                                if len(valid_prices) > 0:
+                                    current_price = valid_prices.iloc[-1]
+                                    if not pd.isna(current_price) and current_price > 0:
+                                        position_value = ai_portfolio_positions[ticker]['shares'] * current_price
+                                        ai_portfolio_positions[ticker]['value'] = position_value
+                                        ai_portfolio_invested_value += position_value
+                                    else:
+                                        ai_portfolio_invested_value += ai_portfolio_positions[ticker].get('value', 0.0)
+                                else:
+                                    ai_portfolio_invested_value += ai_portfolio_positions[ticker].get('value', 0.0)
+                            else:
+                                ai_portfolio_invested_value += ai_portfolio_positions[ticker].get('value', 0.0)
+                        else:
+                            ai_portfolio_invested_value += ai_portfolio_positions[ticker].get('value', 0.0)
+                    except Exception as e:
+                        print(f"   ⚠️ Error updating AI portfolio position for {ticker}: {e}")
+
+            ai_portfolio_value = ai_portfolio_invested_value + ai_portfolio_cash
+            ai_portfolio_history.append(ai_portfolio_value)
 
         # Update dynamic BH 1-month portfolio value (skip if disabled)
         dynamic_bh_1m_invested_value = 0.0
@@ -2060,71 +2134,86 @@ def _run_portfolio_backtest_walk_forward(
     
     # Calculate BH portfolio value for TOP 3 PERFORMERS ONLY
     # BH buys the top 3 performers at backtest start and holds until end
-    bh_portfolio_value = 0.0
+    # Only calculate if Static BH strategy is enabled
+    if ENABLE_STATIC_BH:
+        bh_portfolio_value = 0.0
 
-    if top_performers_data:
-        # Sort by 1-year performance and get top 3
-        sorted_performers = sorted(top_performers_data, key=lambda x: x[1], reverse=True)
-        # Handle both 2-tuple (ticker, perf_1y) and 3-tuple (ticker, perf_1y, perf_ytd) formats
-        top_3_tickers = []
-        for item in sorted_performers[:3]:
-            if len(item) >= 2:
-                top_3_tickers.append(item[0])  # ticker is always first element
+        if top_performers_data:
+            # Sort by 1-year performance and get top 3
+            sorted_performers = sorted(top_performers_data, key=lambda x: x[1], reverse=True)
+            # Handle both 2-tuple (ticker, perf_1y) and 3-tuple (ticker, perf_1y, perf_ytd) formats
+            top_3_tickers = []
+            for item in sorted_performers[:3]:
+                if len(item) >= 2:
+                    top_3_tickers.append(item[0])  # ticker is always first element
 
-        print(f"🏆 BH Portfolio: Investing in top 3 performers based on 1-year performance up to {backtest_start_date.date()}:")
-        for i, item in enumerate(sorted_performers[:3]):
-            ticker = item[0]
-            perf_1y = item[1]
-            print(f"  {i+1}. {ticker}: {perf_1y:+.1f}% 1-year return")
+            print(f"🏆 BH Portfolio: Investing in top 3 performers based on 1-year performance up to {backtest_start_date.date()}:")
+            for i, item in enumerate(sorted_performers[:3]):
+                ticker = item[0]
+                perf_1y = item[1]
+                print(f"  {i+1}. {ticker}: {perf_1y:+.1f}% 1-year return")
 
-        # Calculate BH performance for each top performer over the backtest period
-        for ticker in top_3_tickers:
-            try:
-                # Get ticker data for the backtest period
-                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-                if ticker_data.empty:
-                    print(f"  ⚠️ No data for BH stock {ticker}")
+            # Calculate BH performance for each top performer over the backtest period
+            for ticker in top_3_tickers:
+                try:
+                    # Get ticker data for the backtest period
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                    if ticker_data.empty:
+                        print(f"  ⚠️ No data for BH stock {ticker}")
+                        continue
+
+                    ticker_data = ticker_data.set_index('date')
+                    backtest_data = ticker_data.loc[backtest_start_date:backtest_end_date]
+
+                    if backtest_data.empty or len(backtest_data) < 2:
+                        print(f"  ⚠️ Insufficient BH data for {ticker}")
+                        continue
+
+                    # Buy at the beginning of backtest period - drop NaN values first
+                    valid_close = backtest_data['Close'].dropna()
+                    if len(valid_close) < 2:
+                        print(f"  ⚠️ Insufficient valid price data for BH stock {ticker}")
+                        continue
+
+                    start_price = valid_close.iloc[0]
+                    end_price = valid_close.iloc[-1]
+
+                    # Validate prices are not NaN
+                    if pd.isna(start_price) or pd.isna(end_price):
+                        print(f"  ⚠️ Invalid prices for BH stock {ticker}: start={start_price}, end={end_price}")
+                        continue
+
+                    if start_price > 0 and end_price > 0:
+                        shares = int(capital_per_stock / start_price)
+                        final_value = shares * end_price
+                        bh_portfolio_value += final_value
+
+                        return_pct = ((end_price - start_price) / start_price) * 100
+                        print(f"  📊 BH {ticker}: ${final_value:,.0f} ({return_pct:+.1f}%) - {shares} shares @ ${start_price:.2f} → ${end_price:.2f} ({backtest_start_date.date()} to {backtest_end_date.date()})")
+
+                except Exception as e:
+                    print(f"  ⚠️ Error calculating BH for {ticker}: {e}")
                     continue
 
-                ticker_data = ticker_data.set_index('date')
-                backtest_data = ticker_data.loc[backtest_start_date:backtest_end_date]
+            print(f"✅ BH Portfolio Value: ${bh_portfolio_value:,.0f} across {len(top_3_tickers)} top performers")
 
-                if backtest_data.empty or len(backtest_data) < 2:
-                    print(f"  ⚠️ Insufficient BH data for {ticker}")
-                    continue
-
-                # Buy at the beginning of backtest period - drop NaN values first
-                valid_close = backtest_data['Close'].dropna()
-                if len(valid_close) < 2:
-                    print(f"  ⚠️ Insufficient valid price data for BH stock {ticker}")
-                    continue
-
-                start_price = valid_close.iloc[0]
-                end_price = valid_close.iloc[-1]
-
-                # Validate prices are not NaN
-                if pd.isna(start_price) or pd.isna(end_price):
-                    print(f"  ⚠️ Invalid prices for BH stock {ticker}: start={start_price}, end={end_price}")
-                    continue
-
-                if start_price > 0 and end_price > 0:
-                    shares = int(capital_per_stock / start_price)
-                    final_value = shares * end_price
-                    bh_portfolio_value += final_value
-
-                    return_pct = ((end_price - start_price) / start_price) * 100
-                    print(f"  📊 BH {ticker}: ${final_value:,.0f} ({return_pct:+.1f}%) - {shares} shares @ ${start_price:.2f} → ${end_price:.2f} ({backtest_start_date.date()} to {backtest_end_date.date()})")
-
-            except Exception as e:
-                print(f"  ⚠️ Error calculating BH for {ticker}: {e}")
-                continue
-
-        print(f"✅ BH Portfolio Value: ${bh_portfolio_value:,.0f} across {len(top_3_tickers)} top performers")
+        else:
+            # Fallback: use initial capital for 3 stocks
+            bh_portfolio_value = capital_per_stock * 3
+            print(f"⚠️ BH Portfolio: Using fallback (${bh_portfolio_value:,.0f}) - no performance data")
 
     else:
-        # Fallback: use initial capital for 3 stocks
-        bh_portfolio_value = capital_per_stock * 3
-        print(f"⚠️ BH Portfolio: Using fallback (${bh_portfolio_value:,.0f}) - no performance data")
+        # Static BH strategy is disabled
+        bh_portfolio_value = initial_capital_needed
+        print(f"⏭️ Static BH strategy disabled (ENABLE_STATIC_BH = False)")
+
+    # Handle AI strategy disabled
+    if not enable_ai_strategy:
+        # Set AI strategy results to defaults when disabled
+        total_portfolio_value = initial_capital_needed
+        portfolio_values_history = [initial_capital_needed] * len(portfolio_values_history) if portfolio_values_history else [initial_capital_needed]
+        ai_transaction_costs = 0.0
+        print(f"ℹ️ AI Strategy disabled - using initial capital (${total_portfolio_value:,.0f}) for AI strategy results")
 
     # Final validation: ensure total_portfolio_value is not NaN
     if pd.isna(total_portfolio_value) or total_portfolio_value == 0:
@@ -2142,7 +2231,7 @@ def _run_portfolio_backtest_walk_forward(
             total_portfolio_value = initial_capital_needed
             print(f"⚠️ AI Portfolio: No positions, using initial capital (${total_portfolio_value:,.0f})")
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, ai_portfolio_value, ai_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, ai_portfolio_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs
 
 
 def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
@@ -2349,6 +2438,108 @@ def _rebalance_dynamic_bh_3m_portfolio(new_stocks, current_date, all_tickers_dat
         print(f"   ⚠️ Dynamic BH 3M rebalancing failed: {e}")
     
     return dynamic_bh_3m_cash  # Return updated cash (float passed by value)
+
+
+def _rebalance_ai_portfolio(new_stocks, current_date, all_tickers_data,
+                           ai_portfolio_positions, ai_portfolio_cash, capital_per_stock):
+    """
+    Rebalance AI portfolio to hold the new stocks selected by AI.
+    Happens DAILY - sells stocks no longer in portfolio and buys new ones.
+    Uses AI-driven stock selection.
+    """
+    global ai_portfolio_transaction_costs
+    try:
+        # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
+        target_allocation = capital_per_stock  # $15,000 per stock
+
+        # Sell stocks no longer in portfolio
+        stocks_to_sell = []
+        for ticker in list(ai_portfolio_positions.keys()):
+            if ticker not in new_stocks:
+                stocks_to_sell.append(ticker)
+
+        for ticker in stocks_to_sell:
+            if ticker in ai_portfolio_positions:
+                try:
+                    # Get current price
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            # Drop NaN values to avoid NaN propagation
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    shares_to_sell = ai_portfolio_positions[ticker]['shares']
+                                    sale_value = shares_to_sell * current_price
+
+                                    # Apply transaction cost
+                                    sell_cost = sale_value * TRANSACTION_COST
+                                    net_sale_value = sale_value - sell_cost
+                                    ai_portfolio_transaction_costs += sell_cost
+
+                                    # Add to cash
+                                    ai_portfolio_cash += net_sale_value
+                                    print(f"   💰 AI Portfolio sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f} (-${sell_cost:.2f} cost) = ${net_sale_value:,.0f}")
+
+                                    # Remove position
+                                    del ai_portfolio_positions[ticker]
+
+                except Exception as e:
+                    print(f"   ⚠️ Error selling {ticker} from AI portfolio: {e}")
+
+        # Buy new stocks (or add to existing positions)
+        stocks_to_buy = [ticker for ticker in new_stocks if ticker not in ai_portfolio_positions]
+
+        if stocks_to_buy:
+            # Split available cash among stocks to buy
+            cash_per_stock = ai_portfolio_cash / len(stocks_to_buy) if stocks_to_buy else 0
+
+            for ticker in stocks_to_buy:
+                try:
+                    # Get current price
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            # Drop NaN values to avoid NaN propagation
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+
+                                if not pd.isna(current_price) and current_price > 0:
+                                    shares_to_buy = int(cash_per_stock / current_price)
+                                    if shares_to_buy > 0:
+                                        buy_value = shares_to_buy * current_price
+
+                                        # Apply transaction cost
+                                        buy_cost = buy_value * TRANSACTION_COST
+                                        total_buy_cost = buy_value + buy_cost
+                                        ai_portfolio_transaction_costs += buy_cost
+
+                                        # Update position
+                                        ai_portfolio_positions[ticker] = {
+                                            'shares': shares_to_buy,
+                                            'entry_price': current_price,
+                                            'value': buy_value
+                                        }
+
+                                        # Deduct from cash
+                                        ai_portfolio_cash -= total_buy_cost
+                                        print(f"   🛒 AI Portfolio bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${buy_value:,.0f} (+${buy_cost:.2f} cost) = ${total_buy_cost:,.0f}")
+
+                except Exception as e:
+                    print(f"   ⚠️ Error buying {ticker} for AI portfolio: {e}")
+
+        print(f"   📊 AI Portfolio: ${sum(pos['value'] for pos in ai_portfolio_positions.values()):,.0f} invested + ${ai_portfolio_cash:,.0f} cash")
+
+    except Exception as e:
+        print(f"   ⚠️ AI portfolio rebalancing failed: {e}")
+
+    return ai_portfolio_cash  # Return updated cash (float passed by value)
 
 
 def _rebalance_dynamic_bh_1m_portfolio(new_stocks, current_date, all_tickers_data,
