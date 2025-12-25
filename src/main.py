@@ -47,7 +47,7 @@ from config import (
     LSTM_LEARNING_RATE, LSTM_BATCH_SIZE, LSTM_EPOCHS,
     ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION,
     PERIOD_HORIZONS, POSITION_SCALING_BY_CONFIDENCE,
-    ENABLE_AI_PORTFOLIO
+    ENABLE_AI_PORTFOLIO, AI_REBALANCE_FREQUENCY_DAYS
 )
 
 from alpha_training import select_threshold_by_alpha, AlphaThresholdConfig
@@ -732,9 +732,10 @@ def main(
 
             ai_portfolio_trained = train_ai_portfolio_model(
                 all_tickers_data=all_tickers_data,
-                top_tickers=top_tickers_1y_filtered,
+                top_tickers=top_tickers,  # Use all top tickers, not filtered ones
                 train_start_date=ai_portfolio_train_start,
-                train_end_date=ai_portfolio_train_end
+                train_end_date=ai_portfolio_train_end,
+                rebalance_frequency_days=AI_REBALANCE_FREQUENCY_DAYS
             )
 
             print(f"DEBUG: train_ai_portfolio_model returned: {ai_portfolio_trained}")

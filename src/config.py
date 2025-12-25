@@ -84,11 +84,11 @@ RETRAIN_FREQUENCY_DAYS = 5  # Bi-weekly retraining - consider 20 for S&P 500
 ENABLE_1YEAR_BACKTEST   = True   # ✅ Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = False  # Disabled since ENABLE_AI_STRATEGY is False - individual stock models not needed
+ENABLE_1YEAR_TRAINING   = False  # Disabled - individual stock models not needed (AI Portfolio has its own training)
 
 # --- Portfolio Strategy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
-ENABLE_AI_STRATEGY      = False   # Main AI Strategy (walk-forward backtest with trained models) - DISABLED for clean comparison
+ENABLE_AI_STRATEGY      = False   # Main AI Strategy (walk-forward backtest with trained models) - DISABLED
 ENABLE_AI_PORTFOLIO     = True    # AI-based stock selection and trading - ENABLED
 ENABLE_STATIC_BH        = False   # Static Buy & Hold (top 3 at start, hold forever) - DISABLED
 ENABLE_DYNAMIC_BH_1Y    = False   # Dynamic BH rebalancing based on 1-year performance - DISABLED
