@@ -766,7 +766,8 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
             try:
                 price_df.to_csv(cache_file)
-                if 'Fin_' in price_df.columns.any() if hasattr(price_df.columns, 'any') else any('Fin_' in str(col) for col in price_df.columns):
+                # Check if any column starts with 'Fin_'
+                if any(str(col).startswith('Fin_') for col in price_df.columns):
                     financial_only = price_df[[col for col in price_df.columns if str(col).startswith('Fin_')]].copy()
                     if not financial_only.empty:
                         financial_only.to_csv(financial_cache_file)
