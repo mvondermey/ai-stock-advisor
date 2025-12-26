@@ -1,0 +1,1207 @@
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+🔧 Set multiprocessing start method to 'spawn' for CUDA compatibility
+✅ Multiprocessing start method set to 'spawn' for CUDA compatibility.
+[INTERNET] Connection verified, using local time with internet sync: 2025-12-26 09:07:06 UTC
+✅ CUDA is available and working. GPU acceleration enabled with deterministic algorithms.
+ℹ️ LightGBM: using CPU (OpenCL not compatible with NVIDIA/PoCL in WSL2).
+✅ XGBoostRegressor found. Configured for GPU (gpu_hist tree_method).
+✅ CUDA + DL enabled: multiprocessing ON with 'spawn' start method for stability.
+Using initial balance: $100,000.00
+✅ Fetched 101 tickers from NASDAQ 100.
+Total unique tickers found: 101
+🚀 Step 1: Batch downloading data for 101 tickers from 2023-12-27 to 2025-12-26...
+  (This caches 2+ years of data for future use, but we'll use data from 2024-09-26 for analysis)
+  - Downloading batch 1/1 (101 tickers)...
+  📂 Checking cache for 101 tickers...
+  📥 Cache miss for AAPL - will download
+  📥 Cache miss for ABNB - will download
+  📥 Cache miss for ADBE - will download
+  📥 Cache miss for ADI - will download
+  📥 Cache miss for ADP - will download
+  📥 Cache miss for ADSK - will download
+  📥 Cache miss for AEP - will download
+  📥 Cache miss for ALNY - will download
+  📥 Cache miss for AMAT - will download
+  📥 Cache miss for AMD - will download
+  📥 Cache miss for AMGN - will download
+  📥 Cache miss for AMZN - will download
+  📥 Cache miss for APP - will download
+  📥 Cache miss for ARM - will download
+  📥 Cache miss for ASML - will download
+  📥 Cache miss for AVGO - will download
+  📥 Cache miss for AXON - will download
+  📥 Cache miss for AZN - will download
+  📥 Cache miss for BKNG - will download
+  📥 Cache miss for BKR - will download
+  📥 Cache miss for CCEP - will download
+  ⚠️ Could not read cache for CDNS: 'Index' object has no attribute 'tzinfo'
+  📥 Cache miss for CDNS - will download
+  📥 Cache miss for CEG - will download
+  📥 Cache miss for CHTR - will download
+  📥 Cache miss for CMCSA - will download
+  📥 Cache miss for COST - will download
+  📥 Cache miss for CPRT - will download
+  📥 Cache miss for CRWD - will download
+  📥 Cache miss for CSCO - will download
+  📥 Cache miss for CSGP - will download
+  📥 Cache miss for CSX - will download
+  📥 Cache miss for CTAS - will download
+  📥 Cache miss for CTSH - will download
+  📥 Cache miss for DASH - will download
+  📥 Cache miss for DDOG - will download
+  📥 Cache miss for DXCM - will download
+  📥 Cache miss for EA - will download
+  📥 Cache miss for EXC - will download
+  📥 Cache miss for FANG - will download
+  📥 Cache miss for FAST - will download
+  📥 Cache miss for FER - will download
+  📥 Cache miss for FTNT - will download
+  📥 Cache miss for GEHC - will download
+  📥 Cache miss for GILD - will download
+  📥 Cache miss for GOOG - will download
+  📥 Cache miss for GOOGL - will download
+  📥 Cache miss for HON - will download
+  📥 Cache miss for IDXX - will download
+  📥 Cache miss for INSM - will download
+  📥 Cache miss for INTC - will download
+  📥 Cache miss for INTU - will download
+  📥 Cache miss for ISRG - will download
+  📥 Cache miss for KDP - will download
+  📥 Cache miss for KHC - will download
+  📥 Cache miss for KLAC - will download
+  📥 Cache miss for LIN - will download
+  📥 Cache miss for LRCX - will download
+  📥 Cache miss for MAR - will download
+  📥 Cache miss for MCHP - will download
+  📥 Cache miss for MDLZ - will download
+  📥 Cache miss for MELI - will download
+  📥 Cache miss for META - will download
+  📥 Cache miss for MNST - will download
+  📥 Cache miss for MPWR - will download
+  📥 Cache miss for MRVL - will download
+  📥 Cache miss for MSFT - will download
+  📥 Cache miss for MSTR - will download
+  📥 Cache miss for MU - will download
+  📥 Cache miss for NFLX - will download
+  📥 Cache miss for NVDA - will download
+  📥 Cache miss for NXPI - will download
+  📥 Cache miss for ODFL - will download
+  📥 Cache miss for ORLY - will download
+  📥 Cache miss for PANW - will download
+  📥 Cache miss for PAYX - will download
+  📥 Cache miss for PCAR - will download
+  📥 Cache miss for PDD - will download
+  📥 Cache miss for PEP - will download
+  📥 Cache miss for PLTR - will download
+  📥 Cache miss for PYPL - will download
+  📥 Cache miss for QCOM - will download
+  📥 Cache miss for REGN - will download
+  📥 Cache miss for ROP - will download
+  📥 Cache miss for ROST - will download
+  📥 Cache miss for SBUX - will download
+  📥 Cache miss for SHOP - will download
+  📥 Cache miss for SNPS - will download
+  📥 Cache miss for STX - will download
+  📥 Cache miss for TEAM - will download
+  📥 Cache miss for TMUS - will download
+  📥 Cache miss for TRI - will download
+  📥 Cache miss for TSLA - will download
+  📥 Cache miss for TTWO - will download
+  📥 Cache miss for TXN - will download
+  📥 Cache miss for VRSK - will download
+  📥 Cache miss for VRTX - will download
+  📥 Cache miss for WBD - will download
+  📥 Cache miss for WDAY - will download
+  📥 Cache miss for WDC - will download
+  📥 Cache miss for XEL - will download
+  📥 Cache miss for ZS - will download
+  🔄 Downloading 101 tickers from 101 total...
+  ✅ Successfully downloaded 101 tickers
+  📊 Combined data: 0 cached + 1 fresh = 505 total columns
+🔄 Converting data from wide format to long format...
+   ✅ Converted to long format: 31512 rows, 101 tickers
+✅ Comprehensive data download complete.
+ℹ️ Capping backtest end date from 2025-12-26 to last available data 2025-12-24
+📅 Using backtest end date: 2025-12-24 (last available: 2025-12-24)
+🔍 Fetching SPY data for Market Momentum feature...
+  Updating SPY (+1 days)...
+✅ SPY Market Momentum data fetched and merged.
+🔍 Fetching intermarket data...
+⚠️ Could not fetch intermarket data. Intermarket features will be 0.
+
+🔍 Validating data structure...
+✅ Data validation passed:
+   - Shape: (31512, 15)
+   - Tickers: 101
+   - Date range: 2024-09-27 00:00:00+00:00 to 2025-12-24 00:00:00+00:00
+   - Columns: ['date', 'ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+
+🔍 Analyzing data quality for each ticker...
+
+====================================================================================================
+📊 DATA VALIDATION DIAGNOSTICS
+====================================================================================================
+Ticker     Rows     Days     Status          Message                                 
+----------------------------------------------------------------------------------------------------
+AAPL       312      453      OK                                                      
+ABNB       312      453      OK                                                      
+ADBE       312      453      OK                                                      
+ADI        312      453      OK                                                      
+ADP        312      453      OK                                                      
+ADSK       312      453      OK                                                      
+AEP        312      453      OK                                                      
+ALNY       312      453      OK                                                      
+AMAT       312      453      OK                                                      
+AMD        312      453      OK                                                      
+AMGN       312      453      OK                                                      
+AMZN       312      453      OK                                                      
+APP        312      453      OK                                                      
+ARM        312      453      OK                                                      
+ASML       312      453      OK                                                      
+AVGO       312      453      OK                                                      
+AXON       312      453      OK                                                      
+AZN        312      453      OK                                                      
+BKNG       312      453      OK                                                      
+BKR        312      453      OK                                                      
+CCEP       312      453      OK                                                      
+CDNS       312      453      OK                                                      
+CEG        312      453      OK                                                      
+CHTR       312      453      OK                                                      
+CMCSA      312      453      OK                                                      
+COST       312      453      OK                                                      
+CPRT       312      453      OK                                                      
+CRWD       312      453      OK                                                      
+CSCO       312      453      OK                                                      
+CSGP       312      453      OK                                                      
+CSX        312      453      OK                                                      
+CTAS       312      453      OK                                                      
+CTSH       312      453      OK                                                      
+DASH       312      453      OK                                                      
+DDOG       312      453      OK                                                      
+DXCM       312      453      OK                                                      
+EA         312      453      OK                                                      
+EXC        312      453      OK                                                      
+FANG       312      453      OK                                                      
+FAST       312      453      OK                                                      
+FER        312      453      OK                                                      
+FTNT       312      453      OK                                                      
+GEHC       312      453      OK                                                      
+GILD       312      453      OK                                                      
+GOOG       312      453      OK                                                      
+GOOGL      312      453      OK                                                      
+HON        312      453      OK                                                      
+IDXX       312      453      OK                                                      
+INSM       312      453      OK                                                      
+INTC       312      453      OK                                                      
+INTU       312      453      OK                                                      
+ISRG       312      453      OK                                                      
+KDP        312      453      OK                                                      
+KHC        312      453      OK                                                      
+KLAC       312      453      OK                                                      
+LIN        312      453      OK                                                      
+LRCX       312      453      OK                                                      
+MAR        312      453      OK                                                      
+MCHP       312      453      OK                                                      
+MDLZ       312      453      OK                                                      
+MELI       312      453      OK                                                      
+META       312      453      OK                                                      
+MNST       312      453      OK                                                      
+MPWR       312      453      OK                                                      
+MRVL       312      453      OK                                                      
+MSFT       312      453      OK                                                      
+MSTR       312      453      OK                                                      
+MU         312      453      OK                                                      
+NFLX       312      453      OK                                                      
+NVDA       312      453      OK                                                      
+NXPI       312      453      OK                                                      
+ODFL       312      453      OK                                                      
+ORLY       312      453      OK                                                      
+PANW       312      453      OK                                                      
+PAYX       312      453      OK                                                      
+PCAR       312      453      OK                                                      
+PDD        312      453      OK                                                      
+PEP        312      453      OK                                                      
+PLTR       312      453      OK                                                      
+PYPL       312      453      OK                                                      
+QCOM       312      453      OK                                                      
+REGN       312      453      OK                                                      
+ROP        312      453      OK                                                      
+ROST       312      453      OK                                                      
+SBUX       312      453      OK                                                      
+SHOP       312      453      OK                                                      
+SNPS       312      453      OK                                                      
+STX        312      453      OK                                                      
+TEAM       312      453      OK                                                      
+TMUS       312      453      OK                                                      
+TRI        312      453      OK                                                      
+TSLA       312      453      OK                                                      
+TTWO       312      453      OK                                                      
+TXN        312      453      OK                                                      
+VRSK       312      453      OK                                                      
+VRTX       312      453      OK                                                      
+WBD        312      453      OK                                                      
+WDAY       312      453      OK                                                      
+WDC        312      453      OK                                                      
+XEL        312      453      OK                                                      
+ZS         312      453      OK                                                      
+====================================================================================================
+
+📈 Summary: 101/101 OK, 0 warnings, 0 insufficient
+====================================================================================================
+
+🚀 AI-Powered Momentum & Trend Strategy
+==================================================
+
+🔍 Step 2: Identifying stocks outperforming market benchmarks...
+  📅 Using performance data up to 2025-09-25 (purchase date) to avoid look-ahead bias
+- Calculating 1-Year Performance Benchmarks...
+  🔄 Fetching data for QQQ using multi-provider fallback...
+  ℹ️ Alpaca (free tier) does not provide recent data for QQQ. Attempting fallback provider.
+  ℹ️ Alpaca fetch failed for QQQ. Trying TwelveData...
+  ✅ Successfully fetched data for QQQ from TwelveData.
+  ✅ QQQ 1-Year Performance: 22.17%
+  🔄 Fetching data for SPY using multi-provider fallback...
+  ℹ️ Alpaca (free tier) does not provide recent data for SPY. Attempting fallback provider.
+  ℹ️ Alpaca fetch failed for SPY. Trying TwelveData...
+  ✅ Successfully fetched data for SPY from TwelveData.
+  ✅ SPY 1-Year Performance: 15.44%
+  📈 Using final 1-Year performance benchmark of 22.17%
+🔍 Calculating 1-Year performance from pre-fetched data...
+...performance calculation complete.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+
+✅ Selected top 5 tickers based on 1-Year performance.
+🔍 Applying performance benchmarks for selected tickers in parallel...
+
+✅ Found 5 stocks that passed the performance benchmarks.
+  🔍 Screening 5 strong performers for fundamental metrics in parallel...
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+  ✅ Found 5 stocks passing the fundamental screens.
+
+✅ Identified 5 stocks for backtesting: APP, PLTR, WBD, STX, WDC
+
+📅 Backtest configured for 90 days (~3-Month)
+
+🔍 Step 3: Training AI models for 3-Month backtest...
+    📊 APP 3- Training: Horizon=60d, Target=65.90% (B&H: 400.91%, Scale=0.164)
+✅ APP: Training data validated - 248 rows over 365 days
+    📊 PLTR 3- Training: Horizon=60d, Target=63.49% (B&H: 386.21%, Scale=0.164)
+✅ PLTR: Training data validated - 248 rows over 365 days
+    📊 WBD 3- Training: Horizon=60d, Target=22.36% (B&H: 136.04%, Scale=0.164)
+✅ WBD: Training data validated - 248 rows over 365 days
+    📊 STX 3- Training: Horizon=60d, Target=17.50% (B&H: 106.44%, Scale=0.164)
+✅ STX: Training data validated - 248 rows over 365 days
+    📊 WDC 3- Training: Horizon=60d, Target=17.25% (B&H: 104.94%, Scale=0.164)
+✅ WDC: Training data validated - 248 rows over 365 days
+🤖 Training 3-Month models in parallel for 5 tickers using 11 processes...
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+  ⚙️ Training models for PLTR (FORCE_TRAINING is True, CONTINUE_TRAINING_FROM_EXISTING is False)...
+  [DEBUG] SpawnPoolWorker-51 - PLTR: Initiating feature extraction for training.
+  [DIAGNOSTIC] PLTR: fetch_training_data - Initial data rows: 248
+   ↳ PLTR: rows after features available: 169
+✅ CUDA is available and working. GPU acceleration enabled with deterministic algorithms.
+ℹ️ LightGBM: using CPU (OpenCL not compatible with NVIDIA/PoCL in WSL2).
+✅ XGBoostRegressor found. Configured for GPU (gpu_hist tree_method).
+  [DIAGNOSTIC] PLTR: train_and_evaluate_models - Rows after dropping NaNs: 169
+    - Using MSE loss for regression (predicting returns)
+      📊 LSTM Regression Metrics:
+         MSE: 0.244959
+         RMSE: 0.494934
+         R² Score: -1.0297 (Poor - 103.0% variance explained)
+      📊 TCN Regression Metrics:
+         MSE: 0.175141
+         RMSE: 0.418498
+         R² Score: -0.4512
+    - Starting GRU hyperparameter optimization for PLTR (TargetReturn) (HP_OPT=True, ENABLE_HP_OPT=True, Horizon=60)...
+            GRU MSE: 0.241585, R²: -1.0017 | hidden_size=32 (HS=32, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.255689, R²: -1.1186 | hidden_size=64 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.222341, R²: -0.8423 | num_layers=1 (HS=32, NL=1, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.236879, R²: -0.9628 | num_layers=2 (HS=32, NL=2, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.256995, R²: -1.1294 | dropout_rate=0.1 (HS=32, NL=1, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.218055, R²: -0.8068 | dropout_rate=0.2 (HS=32, NL=1, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.206297, R²: -0.7094 | dropout_rate=0.3 (HS=32, NL=1, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.237229, R²: -0.9657 | learning_rate=0.0005 (HS=32, NL=1, DO=0.00, LR=0.00050, BS=64, E=50)
+            GRU MSE: 0.219641, R²: -0.8199 | learning_rate=0.001 (HS=32, NL=1, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.230885, R²: -0.9131 | learning_rate=0.0015 (HS=32, NL=1, DO=0.00, LR=0.00150, BS=64, E=50)
+            GRU MSE: 0.236721, R²: -0.9614 | batch_size=32 (HS=32, NL=1, DO=0.00, LR=0.00100, BS=32, E=50)
+            GRU MSE: 0.213748, R²: -0.7711 | batch_size=64 (HS=32, NL=1, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.238200, R²: -0.9737 | batch_size=96 (HS=32, NL=1, DO=0.00, LR=0.00100, BS=96, E=50)
+            GRU MSE: 0.162402, R²: -0.3456 | epochs=30 (HS=32, NL=1, DO=0.00, LR=0.00100, BS=64, E=30)
+            GRU MSE: 0.260271, R²: -1.1566 | epochs=50 (HS=32, NL=1, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.231687, R²: -0.9197 | epochs=70 (HS=32, NL=1, DO=0.00, LR=0.00100, BS=64, E=70)
+      Best GRU found for PLTR (TargetReturn) with MSE: 0.162402, Hyperparams: {'hidden_size': 32, 'num_layers': 1, 'dropout_rate': 0.0, 'learning_rate': 0.001, 'batch_size': 64, 'epochs': 30}
+DEBUG: SAVE_PLOTS=False, SHAP_AVAILABLE=True
+  🔬 Comparing regressor performance (MSE via cross-validation with GridSearchCV):
+    - ElasticNet: MSE=115.3678 (Best Params: {'alpha': 0.01, 'l1_ratio': 0.5})
+    - Ridge: MSE=117.0627 (Best Params: {'alpha': 1.0})
+    - Random Forest: MSE=58.4043 (Best Params: {'max_depth': 15, 'n_estimators': 100})
+    - SVR: MSE=67.5970 (Best Params: {'C': 100.0, 'epsilon': 1.0, 'kernel': 'rbf'})
+    - LightGBM Regressor (CPU): MSE=67.1920 (Best Params: {'learning_rate': 0.1, 'max_depth': -1, 'n_estimators': 200})
+    - XGBoost: MSE=82.2896 (Best Params: {'learning_rate': 0.1, 'max_depth': 5, 'n_estimators': 200})
+    - LSTM: MSE=0.2450
+    - TCN: MSE=0.1751
+    - GRU: MSE=0.1624
+  🏆 WINNER for PLTR (TargetReturn): GRU with MSE=0.1624
+  ✅ Single regression model, scaler, y_scaler, and GRU hyperparams saved for PLTR.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+  ⚙️ Training models for WBD (FORCE_TRAINING is True, CONTINUE_TRAINING_FROM_EXISTING is False)...
+  [DEBUG] SpawnPoolWorker-54 - WBD: Initiating feature extraction for training.
+  [DIAGNOSTIC] WBD: fetch_training_data - Initial data rows: 248
+   ↳ WBD: rows after features available: 169
+✅ CUDA is available and working. GPU acceleration enabled with deterministic algorithms.
+ℹ️ LightGBM: using CPU (OpenCL not compatible with NVIDIA/PoCL in WSL2).
+✅ XGBoostRegressor found. Configured for GPU (gpu_hist tree_method).
+  [DIAGNOSTIC] WBD: train_and_evaluate_models - Rows after dropping NaNs: 169
+    - Using MSE loss for regression (predicting returns)
+      📊 LSTM Regression Metrics:
+         MSE: 0.684593
+         RMSE: 0.827401
+         R² Score: -1.1707 (Poor - 117.1% variance explained)
+      📊 TCN Regression Metrics:
+         MSE: 0.533314
+         RMSE: 0.730284
+         R² Score: -0.6910
+    - Starting GRU hyperparameter optimization for WBD (TargetReturn) (HP_OPT=True, ENABLE_HP_OPT=True, Horizon=60)...
+            GRU MSE: 0.642265, R²: -1.0365 | hidden_size=32 (HS=32, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.598943, R²: -0.8991 | hidden_size=64 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.593079, R²: -0.8805 | num_layers=1 (HS=64, NL=1, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.577863, R²: -0.8323 | num_layers=2 (HS=64, NL=2, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.611435, R²: -0.9387 | dropout_rate=0.1 (HS=64, NL=2, DO=0.10, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.715202, R²: -1.2677 | dropout_rate=0.2 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.652215, R²: -1.0680 | dropout_rate=0.3 (HS=64, NL=2, DO=0.30, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.609094, R²: -0.9313 | learning_rate=0.0005 (HS=64, NL=2, DO=0.00, LR=0.00050, BS=64, E=50)
+            GRU MSE: 0.699066, R²: -1.2166 | learning_rate=0.001 (HS=64, NL=2, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.689161, R²: -1.1852 | learning_rate=0.0015 (HS=64, NL=2, DO=0.00, LR=0.00150, BS=64, E=50)
+            GRU MSE: 0.586188, R²: -0.8587 | batch_size=32 (HS=64, NL=2, DO=0.00, LR=0.00100, BS=32, E=50)
+            GRU MSE: 0.520033, R²: -0.6489 | batch_size=64 (HS=64, NL=2, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.580080, R²: -0.8393 | batch_size=96 (HS=64, NL=2, DO=0.00, LR=0.00100, BS=96, E=50)
+            GRU MSE: 0.526045, R²: -0.6680 | epochs=30 (HS=64, NL=2, DO=0.00, LR=0.00100, BS=64, E=30)
+            GRU MSE: 0.714296, R²: -1.2648 | epochs=50 (HS=64, NL=2, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.699035, R²: -1.2165 | epochs=70 (HS=64, NL=2, DO=0.00, LR=0.00100, BS=64, E=70)
+      Best GRU found for WBD (TargetReturn) with MSE: 0.520033, Hyperparams: {'hidden_size': 64, 'num_layers': 2, 'dropout_rate': 0.0, 'learning_rate': 0.001, 'batch_size': 64, 'epochs': 50}
+DEBUG: SAVE_PLOTS=False, SHAP_AVAILABLE=True
+  🔬 Comparing regressor performance (MSE via cross-validation with GridSearchCV):
+    - ElasticNet: MSE=92.5331 (Best Params: {'alpha': 0.01, 'l1_ratio': 0.3})
+    - Ridge: MSE=92.7257 (Best Params: {'alpha': 1.0})
+    - Random Forest: MSE=62.8672 (Best Params: {'max_depth': 15, 'n_estimators': 100})
+    - SVR: MSE=57.9881 (Best Params: {'C': 100.0, 'epsilon': 1.0, 'kernel': 'rbf'})
+    - LightGBM Regressor (CPU): MSE=42.2550 (Best Params: {'learning_rate': 0.1, 'max_depth': -1, 'n_estimators': 200})
+    - XGBoost: MSE=66.7274 (Best Params: {'learning_rate': 0.1, 'max_depth': 7, 'n_estimators': 200})
+    - LSTM: MSE=0.6846
+    - TCN: MSE=0.5333
+    - GRU: MSE=0.5200
+  🏆 WINNER for WBD (TargetReturn): GRU with MSE=0.5200
+  ✅ Single regression model, scaler, y_scaler, and GRU hyperparams saved for WBD.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+  ⚙️ Training models for STX (FORCE_TRAINING is True, CONTINUE_TRAINING_FROM_EXISTING is False)...
+  [DEBUG] SpawnPoolWorker-56 - STX: Initiating feature extraction for training.
+  [DIAGNOSTIC] STX: fetch_training_data - Initial data rows: 248
+   ↳ STX: rows after features available: 169
+✅ CUDA is available and working. GPU acceleration enabled with deterministic algorithms.
+ℹ️ LightGBM: using CPU (OpenCL not compatible with NVIDIA/PoCL in WSL2).
+✅ XGBoostRegressor found. Configured for GPU (gpu_hist tree_method).
+  [DIAGNOSTIC] STX: train_and_evaluate_models - Rows after dropping NaNs: 169
+    - Using MSE loss for regression (predicting returns)
+      📊 LSTM Regression Metrics:
+         MSE: 0.407220
+         RMSE: 0.638138
+         R² Score: -1.1246 (Poor - 112.5% variance explained)
+      📊 TCN Regression Metrics:
+         MSE: 0.307684
+         RMSE: 0.554693
+         R² Score: -0.6053
+    - Starting GRU hyperparameter optimization for STX (TargetReturn) (HP_OPT=True, ENABLE_HP_OPT=True, Horizon=60)...
+            GRU MSE: 0.387165, R²: -1.0200 | hidden_size=32 (HS=32, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.369155, R²: -0.9260 | hidden_size=64 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.377278, R²: -0.9684 | num_layers=1 (HS=64, NL=1, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.371949, R²: -0.9406 | num_layers=2 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.393432, R²: -1.0527 | dropout_rate=0.1 (HS=64, NL=2, DO=0.10, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.397185, R²: -1.0723 | dropout_rate=0.2 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.391816, R²: -1.0443 | dropout_rate=0.3 (HS=64, NL=2, DO=0.30, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.423349, R²: -1.2088 | learning_rate=0.0005 (HS=64, NL=2, DO=0.20, LR=0.00050, BS=64, E=50)
+            GRU MSE: 0.373221, R²: -0.9473 | learning_rate=0.001 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.380204, R²: -0.9837 | learning_rate=0.0015 (HS=64, NL=2, DO=0.20, LR=0.00150, BS=64, E=50)
+            GRU MSE: 0.373933, R²: -0.9510 | batch_size=32 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=32, E=50)
+            GRU MSE: 0.366421, R²: -0.9118 | batch_size=64 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.432598, R²: -1.2571 | batch_size=96 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=96, E=50)
+            GRU MSE: 0.306181, R²: -0.5975 | epochs=30 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=30)
+            GRU MSE: 0.429227, R²: -1.2395 | epochs=50 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.389955, R²: -1.0346 | epochs=70 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=70)
+      Best GRU found for STX (TargetReturn) with MSE: 0.306181, Hyperparams: {'hidden_size': 64, 'num_layers': 2, 'dropout_rate': 0.2, 'learning_rate': 0.001, 'batch_size': 64, 'epochs': 30}
+DEBUG: SAVE_PLOTS=False, SHAP_AVAILABLE=True
+  🔬 Comparing regressor performance (MSE via cross-validation with GridSearchCV):
+    - ElasticNet: MSE=78.6947 (Best Params: {'alpha': 0.0005, 'l1_ratio': 0.7})
+    - Ridge: MSE=86.8791 (Best Params: {'alpha': 0.1})
+    - Random Forest: MSE=23.4562 (Best Params: {'max_depth': 15, 'n_estimators': 100})
+    - SVR: MSE=46.4856 (Best Params: {'C': 100.0, 'epsilon': 0.01, 'kernel': 'rbf'})
+    - LightGBM Regressor (CPU): MSE=47.5067 (Best Params: {'learning_rate': 0.1, 'max_depth': -1, 'n_estimators': 200})
+    - XGBoost: MSE=21.1732 (Best Params: {'learning_rate': 0.1, 'max_depth': 5, 'n_estimators': 100})
+    - LSTM: MSE=0.4072
+    - TCN: MSE=0.3077
+    - GRU: MSE=0.3062
+  🏆 WINNER for STX (TargetReturn): GRU with MSE=0.3062
+  ✅ Single regression model, scaler, y_scaler, and GRU hyperparams saved for STX.
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.1
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+  ⚙️ Training models for WDC (FORCE_TRAINING is True, CONTINUE_TRAINING_FROM_EXISTING is False)...
+  [DEBUG] SpawnPoolWorker-50 - WDC: Initiating feature extraction for training.
+  [DIAGNOSTIC] WDC: fetch_training_data - Initial data rows: 248
+   ↳ WDC: rows after features available: 169
+✅ CUDA is available and working. GPU acceleration enabled with deterministic algorithms.
+ℹ️ LightGBM: using CPU (OpenCL not compatible with NVIDIA/PoCL in WSL2).
+✅ XGBoostRegressor found. Configured for GPU (gpu_hist tree_method).
+  [DIAGNOSTIC] WDC: train_and_evaluate_models - Rows after dropping NaNs: 169
+    - Using MSE loss for regression (predicting returns)
+      📊 LSTM Regression Metrics:
+         MSE: 0.435319
+         RMSE: 0.659787
+         R² Score: -1.0652 (Poor - 106.5% variance explained)
+      📊 TCN Regression Metrics:
+         MSE: 0.361529
+         RMSE: 0.601272
+         R² Score: -0.7151
+    - Starting GRU hyperparameter optimization for WDC (TargetReturn) (HP_OPT=True, ENABLE_HP_OPT=True, Horizon=60)...
+            GRU MSE: 0.426819, R²: -1.0249 | hidden_size=32 (HS=32, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.387207, R²: -0.8370 | hidden_size=64 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.406553, R²: -0.9287 | num_layers=1 (HS=64, NL=1, DO=0.00, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.426745, R²: -1.0245 | num_layers=2 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.389146, R²: -0.8462 | dropout_rate=0.1 (HS=64, NL=2, DO=0.10, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.466053, R²: -1.2110 | dropout_rate=0.2 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.449188, R²: -1.1310 | dropout_rate=0.3 (HS=64, NL=2, DO=0.30, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.433943, R²: -1.0587 | learning_rate=0.0005 (HS=64, NL=2, DO=0.20, LR=0.00050, BS=64, E=50)
+            GRU MSE: 0.420619, R²: -0.9955 | learning_rate=0.001 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.442606, R²: -1.0998 | learning_rate=0.0015 (HS=64, NL=2, DO=0.20, LR=0.00150, BS=64, E=50)
+            GRU MSE: 0.419427, R²: -0.9898 | batch_size=32 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=32, E=50)
+            GRU MSE: 0.381698, R²: -0.8108 | batch_size=64 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.493512, R²: -1.3413 | batch_size=96 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=96, E=50)
+            GRU MSE: 0.360085, R²: -0.7083 | epochs=30 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=30)
+            GRU MSE: 0.517258, R²: -1.4539 | epochs=50 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=50)
+            GRU MSE: 0.460214, R²: -1.1833 | epochs=70 (HS=64, NL=2, DO=0.20, LR=0.00100, BS=64, E=70)
+      Best GRU found for WDC (TargetReturn) with MSE: 0.360085, Hyperparams: {'hidden_size': 64, 'num_layers': 2, 'dropout_rate': 0.2, 'learning_rate': 0.001, 'batch_size': 64, 'epochs': 30}
+DEBUG: SAVE_PLOTS=False, SHAP_AVAILABLE=True
+  🔬 Comparing regressor performance (MSE via cross-validation with GridSearchCV):
+    - ElasticNet: MSE=128.8025 (Best Params: {'alpha': 0.005, 'l1_ratio': 0.7})
+    - Ridge: MSE=128.1796 (Best Params: {'alpha': 0.1})
+    - Random Forest: MSE=68.3830 (Best Params: {'max_depth': 10, 'n_estimators': 200})
+    - SVR: MSE=33.1797 (Best Params: {'C': 100.0, 'epsilon': 0.01, 'kernel': 'rbf'})
+    - LightGBM Regressor (CPU): MSE=68.9334 (Best Params: {'learning_rate': 0.1, 'max_depth': -1, 'n_estimators': 200})
+    - XGBoost: MSE=64.0278 (Best Params: {'learning_rate': 0.05, 'max_depth': 5, 'n_estimators': 200})
+    - LSTM: MSE=0.4353
+    - TCN: MSE=0.3615
+    - GRU: MSE=0.3601
+  🏆 WINNER for WDC (TargetReturn): GRU with MSE=0.3601
+  ✅ Single regression model, scaler, y_scaler, and GRU hyperparams saved for WDC.
+✅ 3-Month training complete: 5 models trained/loaded.
+DEBUG: About to check ENABLE_AI_PORTFOLIO = True
+DEBUG: ENABLE_AI_PORTFOLIO is True, starting training...
+
+🧠 Training AI Portfolio Rebalancing Model...
+DEBUG: Importing ai_portfolio module...
+❌ Exception during AI portfolio training: cannot import name 'train_ai_portfolio_model' from 'ai_portfolio' (/mnt/c/Users/mvond/ai-stock-advisor/src/ai_portfolio.py)
+  ℹ️ 0 tickers failed 1-Year model training and will be skipped: 
+
+✅ Using default parameters for all tickers (threshold optimization removed).
+
+🔍 Step 8: Running 1-Year Backtest...
+
+[DEBUG MAIN] 1-Year models keys: ['APP', 'PLTR', 'WBD', 'STX', 'WDC']
+[DEBUG MAIN] 1-Year models values types: ['GRURegressor', 'GRURegressor', 'GRURegressor', 'GRURegressor', 'GRURegressor']
+
+🔍 Step 8: Running 3-Month Backtest (AI Strategy)...
+🔄 Walk-forward backtest for 3-Month (AI Strategy)
+   📊 Universe: Top 5 stocks by momentum
+   🧠 Model retraining: Every 5 days for all 5 stocks
+   🎯 Daily selection: Pick best 3 from 5 stocks EVERY DAY using current models
+   💰 Rebalance only when portfolio changes (transaction costs minimized)
+
+🔍 Validating input data structure...
+   - all_tickers_data type: <class 'pandas.core.frame.DataFrame'>
+   - all_tickers_data shape: (31512, 15)
+   - all_tickers_data columns: ['date', 'ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   ✅ 'ticker' column found
+   - Unique tickers in data: 101
+   - Sample tickers: ['AAPL', 'ABNB', 'ADBE', 'ADI', 'ADP']
+   ✅ 'date' column found
+   🔍 Initial models: 5 tickers, sample: ['APP', 'PLTR', 'WBD']
+   🔍 Initial scalers: 5 tickers, sample: ['APP', 'PLTR', 'WBD']
+   🔍 Initial y_scalers: 5 tickers, sample: ['APP', 'PLTR', 'WBD']
+   📅 Total trading days to process: 65
+
+🔄 Day 1 (2025-09-25): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): APP, PLTR, WBD
+   🛒 Dynamic BH bought APP: 52 shares @ $639.91 = $33,275 (+$332.75 cost) = $33,608
+   🛒 Dynamic BH bought PLTR: 186 shares @ $179.12 = $33,316 (+$333.16 cost) = $33,649
+   🛒 Dynamic BH bought WBD: 1685 shares @ $19.78 = $33,329 (+$333.29 cost) = $33,663
+   📊 Dynamic BH portfolio: $99,921 invested + $-920 cash
+   🏆 Top 3 performers (3-month): APP, WBD, WDC
+   🛒 Dynamic BH 3M bought APP: 52 shares @ $639.91 = $33,275 (+$332.75 cost) = $33,608
+   🛒 Dynamic BH 3M bought WBD: 1685 shares @ $19.78 = $33,329 (+$333.29 cost) = $33,663
+   🛒 Dynamic BH 3M bought WDC: 311 shares @ $107.12 = $33,316 (+$333.16 cost) = $33,649
+   📊 Dynamic BH 3M portfolio: $99,920 invested + $-919 cash
+   ⚠️ Dynamic BH rebalancing failed: cannot import name 'get_ai_portfolio_rebalancing_stocks' from 'ai_portfolio' (/mnt/c/Users/mvond/ai-stock-advisor/src/ai_portfolio.py)
+   🔍 Checking APP: in models=True, model not None=True
+   📊 APP: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ APP: Prediction data validated - 120 rows spanning 174 days
+   🔍 APP: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 APP: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 APP: After technical indicators: 120 rows, 103 features
+   🔧 APP: After dropna: 58 rows
+✅ APP: 58 rows available after prediction feature engineering
+   📊 APP: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 APP: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 APP: After alignment: (1, 35)
+   🔧 APP: Features scaled successfully, shape: (1, 35)
+   🔧 APP: Sequence scaled, shape: (60, 35)
+   🤖 APP: PyTorch model prediction successful: -0.9296
+   🔄 APP: Y-scaler applied: -31.1818
+   ⚠️ APP: Clipped final prediction from -3118.18% to -100.00%
+   ✅ APP: Final prediction = -100.00%
+   📊 APP: Prediction result = -1.0
+   🔍 Checking PLTR: in models=True, model not None=True
+   📊 PLTR: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ PLTR: Prediction data validated - 120 rows spanning 174 days
+   🔍 PLTR: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 PLTR: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 PLTR: After technical indicators: 120 rows, 103 features
+   🔧 PLTR: After dropna: 58 rows
+✅ PLTR: 58 rows available after prediction feature engineering
+   📊 PLTR: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 PLTR: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 PLTR: After alignment: (1, 35)
+   🔧 PLTR: Features scaled successfully, shape: (1, 35)
+   🔧 PLTR: Sequence scaled, shape: (60, 35)
+   🤖 PLTR: PyTorch model prediction successful: -0.5622
+   🔄 PLTR: Y-scaler applied: 18.5078
+   ⚠️ PLTR: Clipped final prediction from 1850.78% to 200.00%
+   ✅ PLTR: Final prediction = 200.00%
+   📊 PLTR: Prediction result = 2.0
+   🔍 Checking WBD: in models=True, model not None=True
+   📊 WBD: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ WBD: Prediction data validated - 120 rows spanning 174 days
+   🔍 WBD: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 WBD: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 WBD: After technical indicators: 120 rows, 103 features
+   🔧 WBD: After dropna: 58 rows
+✅ WBD: 58 rows available after prediction feature engineering
+   📊 WBD: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 WBD: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 WBD: After alignment: (1, 35)
+   🔧 WBD: Features scaled successfully, shape: (1, 35)
+   🔧 WBD: Sequence scaled, shape: (60, 35)
+   🤖 WBD: PyTorch model prediction successful: 0.1356
+   🔄 WBD: Y-scaler applied: 37.7240
+   ⚠️ WBD: Clipped final prediction from 3772.40% to 200.00%
+   ✅ WBD: Final prediction = 200.00%
+   📊 WBD: Prediction result = 2.0
+   🔍 Checking STX: in models=True, model not None=True
+   📊 STX: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ STX: Prediction data validated - 120 rows spanning 174 days
+   🔍 STX: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 STX: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 STX: After technical indicators: 120 rows, 103 features
+   🔧 STX: After dropna: 58 rows
+✅ STX: 58 rows available after prediction feature engineering
+   📊 STX: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 STX: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 STX: After alignment: (1, 35)
+   🔧 STX: Features scaled successfully, shape: (1, 35)
+   🔧 STX: Sequence scaled, shape: (60, 35)
+   🤖 STX: PyTorch model prediction successful: -0.8368
+   🔄 STX: Y-scaler applied: -18.1837
+   ⚠️ STX: Clipped final prediction from -1818.37% to -100.00%
+   ✅ STX: Final prediction = -100.00%
+   📊 STX: Prediction result = -1.0
+   🔍 Checking WDC: in models=True, model not None=True
+   📊 WDC: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ WDC: Prediction data validated - 120 rows spanning 174 days
+   🔍 WDC: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 WDC: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 WDC: After technical indicators: 120 rows, 103 features
+   🔧 WDC: After dropna: 58 rows
+✅ WDC: 58 rows available after prediction feature engineering
+   📊 WDC: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 WDC: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 WDC: After alignment: (1, 35)
+   🔧 WDC: Features scaled successfully, shape: (1, 35)
+   🔧 WDC: Sequence scaled, shape: (60, 35)
+   🤖 WDC: PyTorch model prediction successful: 0.2093
+   🔄 WDC: Y-scaler applied: 55.1049
+   ⚠️ WDC: Clipped final prediction from 5510.49% to 200.00%
+   ✅ WDC: Final prediction = 200.00%
+   📊 WDC: Prediction result = 2.0
+   🔮 Day 1: 5 valid predictions from 5 tickers
+   🔍 DEBUG: enable_ai_strategy=True, valid_predictions=5, consecutive_no_predictions=0
+📊 Day 1 (2025-09-25): New portfolio: ['PLTR', 'WBD', 'WDC']
+      📊 Prediction-weighted allocation:
+         WDC: 33.3% (predicted: 200.00%)
+         WBD: 33.3% (predicted: 200.00%)
+         PLTR: 33.3% (predicted: 200.00%)
+   ⚠️ Rebalancing failed: local variable 'ai_transaction_costs' referenced before assignment. Keeping current portfolio.
+
+🔄 Day 2 (2025-09-26): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): APP, PLTR, WBD
+   🏆 Top 3 performers (3-month): APP, WBD, WDC
+   📊 Dynamic BH 3M portfolio: $99,920 invested + $-919 cash
+   ⚠️ Dynamic BH rebalancing failed: cannot import name 'get_ai_portfolio_rebalancing_stocks' from 'ai_portfolio' (/mnt/c/Users/mvond/ai-stock-advisor/src/ai_portfolio.py)
+   🔍 Checking APP: in models=True, model not None=True
+   📊 APP: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ APP: Prediction data validated - 120 rows spanning 174 days
+   🔍 APP: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 APP: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 APP: After technical indicators: 120 rows, 103 features
+   🔧 APP: After dropna: 58 rows
+✅ APP: 58 rows available after prediction feature engineering
+   📊 APP: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 APP: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 APP: After alignment: (1, 35)
+   🔧 APP: Features scaled successfully, shape: (1, 35)
+   🔧 APP: Sequence scaled, shape: (60, 35)
+   🤖 APP: PyTorch model prediction successful: -0.8402
+   🔄 APP: Y-scaler applied: -23.7089
+   ⚠️ APP: Clipped final prediction from -2370.89% to -100.00%
+   ✅ APP: Final prediction = -100.00%
+   📊 APP: Prediction result = -1.0
+   🔍 Checking PLTR: in models=True, model not None=True
+   📊 PLTR: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ PLTR: Prediction data validated - 120 rows spanning 174 days
+   🔍 PLTR: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 PLTR: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 PLTR: After technical indicators: 120 rows, 103 features
+   🔧 PLTR: After dropna: 58 rows
+✅ PLTR: 58 rows available after prediction feature engineering
+   📊 PLTR: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 PLTR: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 PLTR: After alignment: (1, 35)
+   🔧 PLTR: Features scaled successfully, shape: (1, 35)
+   🔧 PLTR: Sequence scaled, shape: (60, 35)
+   🤖 PLTR: PyTorch model prediction successful: -0.5598
+   🔄 PLTR: Y-scaler applied: 18.6410
+   ⚠️ PLTR: Clipped final prediction from 1864.10% to 200.00%
+   ✅ PLTR: Final prediction = 200.00%
+   📊 PLTR: Prediction result = 2.0
+   🔍 Checking WBD: in models=True, model not None=True
+   📊 WBD: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ WBD: Prediction data validated - 120 rows spanning 174 days
+   🔍 WBD: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 WBD: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 WBD: After technical indicators: 120 rows, 103 features
+   🔧 WBD: After dropna: 58 rows
+✅ WBD: 58 rows available after prediction feature engineering
+   📊 WBD: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 WBD: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 WBD: After alignment: (1, 35)
+   🔧 WBD: Features scaled successfully, shape: (1, 35)
+   🔧 WBD: Sequence scaled, shape: (60, 35)
+   🤖 WBD: PyTorch model prediction successful: 0.1043
+   🔄 WBD: Y-scaler applied: 36.0439
+   ⚠️ WBD: Clipped final prediction from 3604.39% to 200.00%
+   ✅ WBD: Final prediction = 200.00%
+   📊 WBD: Prediction result = 2.0
+   🔍 Checking STX: in models=True, model not None=True
+   📊 STX: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ STX: Prediction data validated - 120 rows spanning 174 days
+   🔍 STX: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 STX: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 STX: After technical indicators: 120 rows, 103 features
+   🔧 STX: After dropna: 58 rows
+✅ STX: 58 rows available after prediction feature engineering
+   📊 STX: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 STX: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 STX: After alignment: (1, 35)
+   🔧 STX: Features scaled successfully, shape: (1, 35)
+   🔧 STX: Sequence scaled, shape: (60, 35)
+   🤖 STX: PyTorch model prediction successful: -0.8643
+   🔄 STX: Y-scaler applied: -20.3904
+   ⚠️ STX: Clipped final prediction from -2039.04% to -100.00%
+   ✅ STX: Final prediction = -100.00%
+   📊 STX: Prediction result = -1.0
+   🔍 Checking WDC: in models=True, model not None=True
+   📊 WDC: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ WDC: Prediction data validated - 120 rows spanning 174 days
+   🔍 WDC: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 WDC: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 WDC: After technical indicators: 120 rows, 103 features
+   🔧 WDC: After dropna: 58 rows
+✅ WDC: 58 rows available after prediction feature engineering
+   📊 WDC: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 WDC: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 WDC: After alignment: (1, 35)
+   🔧 WDC: Features scaled successfully, shape: (1, 35)
+   🔧 WDC: Sequence scaled, shape: (60, 35)
+   🤖 WDC: PyTorch model prediction successful: 0.1761
+   🔄 WDC: Y-scaler applied: 52.5558
+   ⚠️ WDC: Clipped final prediction from 5255.58% to 200.00%
+   ✅ WDC: Final prediction = 200.00%
+   📊 WDC: Prediction result = 2.0
+   🔍 DEBUG: enable_ai_strategy=True, valid_predictions=5, consecutive_no_predictions=0
+
+   📊 Day 2 - AI Predictions vs Buy & Hold (Next 63 days):
+   Ticker   AI Predicted   Buy & Hold   Error      Direction 
+   -----------------------------------------------------------------
+   APP          -100.00%     -10.51%    89.49%      ✓     
+   PLTR          200.00%      -5.14%   205.14%      ✗     
+   WBD           200.00%      23.01%   176.99%      ✓     
+   STX          -100.00%      27.61%   127.61%      ✗     
+   WDC           200.00%      52.82%   147.18%      ✓     
+
+🔄 Day 3 (2025-09-29): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): APP, PLTR, WBD
+   🏆 Top 3 performers (3-month): APP, WDC, WBD
+   📊 Dynamic BH 3M portfolio: $100,920 invested + $-919 cash
+   ⚠️ Dynamic BH rebalancing failed: cannot import name 'get_ai_portfolio_rebalancing_stocks' from 'ai_portfolio' (/mnt/c/Users/mvond/ai-stock-advisor/src/ai_portfolio.py)
+   🔍 Checking APP: in models=True, model not None=True
+   📊 APP: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ APP: Prediction data validated - 120 rows spanning 172 days
+   🔍 APP: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 APP: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 APP: After technical indicators: 120 rows, 103 features
+   🔧 APP: After dropna: 58 rows
+✅ APP: 58 rows available after prediction feature engineering
+   📊 APP: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 APP: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 APP: After alignment: (1, 35)
+   🔧 APP: Features scaled successfully, shape: (1, 35)
+   🔧 APP: Sequence scaled, shape: (60, 35)
+   🤖 APP: PyTorch model prediction successful: -0.8427
+   🔄 APP: Y-scaler applied: -23.9170
+   ⚠️ APP: Clipped final prediction from -2391.70% to -100.00%
+   ✅ APP: Final prediction = -100.00%
+   📊 APP: Prediction result = -1.0
+   🔍 Checking PLTR: in models=True, model not None=True
+   📊 PLTR: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ PLTR: Prediction data validated - 120 rows spanning 172 days
+   🔍 PLTR: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 PLTR: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 PLTR: After technical indicators: 120 rows, 103 features
+   🔧 PLTR: After dropna: 58 rows
+✅ PLTR: 58 rows available after prediction feature engineering
+   📊 PLTR: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 PLTR: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 PLTR: After alignment: (1, 35)
+   🔧 PLTR: Features scaled successfully, shape: (1, 35)
+   🔧 PLTR: Sequence scaled, shape: (60, 35)
+   🤖 PLTR: PyTorch model prediction successful: -0.5936
+   🔄 PLTR: Y-scaler applied: 16.8001
+   ⚠️ PLTR: Clipped final prediction from 1680.01% to 200.00%
+   ✅ PLTR: Final prediction = 200.00%
+   📊 PLTR: Prediction result = 2.0
+   🔍 Checking WBD: in models=True, model not None=True
+   📊 WBD: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ WBD: Prediction data validated - 120 rows spanning 172 days
+   🔍 WBD: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 WBD: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 WBD: After technical indicators: 120 rows, 103 features
+   🔧 WBD: After dropna: 58 rows
+✅ WBD: 58 rows available after prediction feature engineering
+   📊 WBD: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 WBD: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 WBD: After alignment: (1, 35)
+   🔧 WBD: Features scaled successfully, shape: (1, 35)
+   🔧 WBD: Sequence scaled, shape: (60, 35)
+   🤖 WBD: PyTorch model prediction successful: -0.0845
+   🔄 WBD: Y-scaler applied: 25.9083
+   ⚠️ WBD: Clipped final prediction from 2590.83% to 200.00%
+   ✅ WBD: Final prediction = 200.00%
+   📊 WBD: Prediction result = 2.0
+   🔍 Checking STX: in models=True, model not None=True
+   📊 STX: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ STX: Prediction data validated - 120 rows spanning 172 days
+   🔍 STX: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 STX: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 STX: After technical indicators: 120 rows, 103 features
+   🔧 STX: After dropna: 58 rows
+✅ STX: 58 rows available after prediction feature engineering
+   📊 STX: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 STX: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 STX: After alignment: (1, 35)
+   🔧 STX: Features scaled successfully, shape: (1, 35)
+   🔧 STX: Sequence scaled, shape: (60, 35)
+   🤖 STX: PyTorch model prediction successful: -0.8425
+   🔄 STX: Y-scaler applied: -18.6383
+   ⚠️ STX: Clipped final prediction from -1863.83% to -100.00%
+   ✅ STX: Final prediction = -100.00%
+   📊 STX: Prediction result = -1.0
+   🔍 Checking WDC: in models=True, model not None=True
+   📊 WDC: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ WDC: Prediction data validated - 120 rows spanning 172 days
+   🔍 WDC: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 WDC: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 WDC: After technical indicators: 120 rows, 103 features
+   🔧 WDC: After dropna: 58 rows
+✅ WDC: 58 rows available after prediction feature engineering
+   📊 WDC: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 WDC: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 WDC: After alignment: (1, 35)
+   🔧 WDC: Features scaled successfully, shape: (1, 35)
+   🔧 WDC: Sequence scaled, shape: (60, 35)
+   🤖 WDC: PyTorch model prediction successful: 0.1617
+   🔄 WDC: Y-scaler applied: 51.4475
+   ⚠️ WDC: Clipped final prediction from 5144.75% to 200.00%
+   ✅ WDC: Final prediction = 200.00%
+   📊 WDC: Prediction result = 2.0
+   🔍 DEBUG: enable_ai_strategy=True, valid_predictions=5, consecutive_no_predictions=0
+
+   📊 Day 3 - AI Predictions vs Buy & Hold (Next 63 days):
+   Ticker   AI Predicted   Buy & Hold   Error      Direction 
+   -----------------------------------------------------------------
+   APP          -100.00%     -12.46%    87.54%      ✓     
+   PLTR          200.00%      -6.36%   206.36%      ✗     
+   WBD           200.00%      26.56%   173.44%      ✓     
+   STX          -100.00%      18.25%   118.25%      ✗     
+   WDC           200.00%      40.09%   159.91%      ✓     
+
+🔄 Day 4 (2025-09-30): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): APP, PLTR, WBD
+   🏆 Top 3 performers (3-month): APP, WDC, WBD
+   📊 Dynamic BH 3M portfolio: $105,099 invested + $-919 cash
+   ⚠️ Dynamic BH rebalancing failed: cannot import name 'get_ai_portfolio_rebalancing_stocks' from 'ai_portfolio' (/mnt/c/Users/mvond/ai-stock-advisor/src/ai_portfolio.py)
+   🔍 Checking APP: in models=True, model not None=True
+   📊 APP: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ APP: Prediction data validated - 120 rows spanning 174 days
+   🔍 APP: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 APP: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 APP: After technical indicators: 120 rows, 103 features
+   🔧 APP: After dropna: 58 rows
+✅ APP: 58 rows available after prediction feature engineering
+   📊 APP: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 APP: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 APP: After alignment: (1, 35)
+   🔧 APP: Features scaled successfully, shape: (1, 35)
+   🔧 APP: Sequence scaled, shape: (60, 35)
+   🤖 APP: PyTorch model prediction successful: -0.8755
+   🔄 APP: Y-scaler applied: -26.6550
+   ⚠️ APP: Clipped final prediction from -2665.50% to -100.00%
+   ✅ APP: Final prediction = -100.00%
+   📊 APP: Prediction result = -1.0
+   🔍 Checking PLTR: in models=True, model not None=True
+   📊 PLTR: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ PLTR: Prediction data validated - 120 rows spanning 174 days
+   🔍 PLTR: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 PLTR: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 PLTR: After technical indicators: 120 rows, 103 features
+   🔧 PLTR: After dropna: 58 rows
+✅ PLTR: 58 rows available after prediction feature engineering
+   📊 PLTR: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 PLTR: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 PLTR: After alignment: (1, 35)
+   🔧 PLTR: Features scaled successfully, shape: (1, 35)
+   🔧 PLTR: Sequence scaled, shape: (60, 35)
+   🤖 PLTR: PyTorch model prediction successful: -0.5910
+   🔄 PLTR: Y-scaler applied: 16.9423
+   ⚠️ PLTR: Clipped final prediction from 1694.23% to 200.00%
+   ✅ PLTR: Final prediction = 200.00%
+   📊 PLTR: Prediction result = 2.0
+   🔍 Checking WBD: in models=True, model not None=True
+   📊 WBD: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ WBD: Prediction data validated - 120 rows spanning 174 days
+   🔍 WBD: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 WBD: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 WBD: After technical indicators: 120 rows, 103 features
+   🔧 WBD: After dropna: 58 rows
+✅ WBD: 58 rows available after prediction feature engineering
+   📊 WBD: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 WBD: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 WBD: After alignment: (1, 35)
+   🔧 WBD: Features scaled successfully, shape: (1, 35)
+   🔧 WBD: Sequence scaled, shape: (60, 35)
+   🤖 WBD: PyTorch model prediction successful: -0.1313
+   🔄 WBD: Y-scaler applied: 23.3966
+   ⚠️ WBD: Clipped final prediction from 2339.66% to 200.00%
+   ✅ WBD: Final prediction = 200.00%
+   📊 WBD: Prediction result = 2.0
+   🔍 Checking STX: in models=True, model not None=True
+   📊 STX: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ STX: Prediction data validated - 120 rows spanning 174 days
+   🔍 STX: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 STX: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 STX: After technical indicators: 120 rows, 103 features
+   🔧 STX: After dropna: 58 rows
+✅ STX: 58 rows available after prediction feature engineering
+   📊 STX: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 STX: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 STX: After alignment: (1, 35)
+   🔧 STX: Features scaled successfully, shape: (1, 35)
+   🔧 STX: Sequence scaled, shape: (60, 35)
+   🤖 STX: PyTorch model prediction successful: -0.8125
+   🔄 STX: Y-scaler applied: -16.2363
+   ⚠️ STX: Clipped final prediction from -1623.63% to -100.00%
+   ✅ STX: Final prediction = -100.00%
+   📊 STX: Prediction result = -1.0
+   🔍 Checking WDC: in models=True, model not None=True
+   📊 WDC: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ WDC: Prediction data validated - 120 rows spanning 174 days
+   🔍 WDC: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 WDC: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 WDC: After technical indicators: 120 rows, 103 features
+   🔧 WDC: After dropna: 58 rows
+✅ WDC: 58 rows available after prediction feature engineering
+   📊 WDC: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 WDC: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 WDC: After alignment: (1, 35)
+   🔧 WDC: Features scaled successfully, shape: (1, 35)
+   🔧 WDC: Sequence scaled, shape: (60, 35)
+   🤖 WDC: PyTorch model prediction successful: 0.1604
+   🔄 WDC: Y-scaler applied: 51.3481
+   ⚠️ WDC: Clipped final prediction from 5134.81% to 200.00%
+   ✅ WDC: Final prediction = 200.00%
+   📊 WDC: Prediction result = 2.0
+
+   📊 Day 4 - AI Predictions vs Buy & Hold (Next 63 days):
+   Ticker   AI Predicted   Buy & Hold   Error      Direction 
+   -----------------------------------------------------------------
+   APP          -100.00%      -9.12%    90.88%      ✓     
+   PLTR          200.00%      -6.43%   206.43%      ✗     
+   WBD           200.00%      25.60%   174.40%      ✓     
+   STX          -100.00%      13.05%   113.05%      ✗     
+   WDC           200.00%      33.26%   166.74%      ✓     
+
+🔄 Day 5 (2025-10-01): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): APP, PLTR, WDC
+   💰 Dynamic BH sold WBD: 1685 shares @ $19.35 = $32,605 (-$326.05 cost) = $32,279
+   🛒 Dynamic BH bought WDC: 240 shares @ $130.49 = $31,316 (+$313.16 cost) = $31,630
+   📊 Dynamic BH portfolio: $102,611 invested + $-271 cash
+   🏆 Top 3 performers (3-month): APP, WDC, WBD
+   📊 Dynamic BH 3M portfolio: $107,581 invested + $-919 cash
+   ⚠️ Dynamic BH rebalancing failed: cannot import name 'get_ai_portfolio_rebalancing_stocks' from 'ai_portfolio' (/mnt/c/Users/mvond/ai-stock-advisor/src/ai_portfolio.py)
+   🔍 Checking APP: in models=True, model not None=True
+   📊 APP: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ APP: Prediction data validated - 120 rows spanning 174 days
+   🔍 APP: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 APP: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 APP: After technical indicators: 120 rows, 103 features
+   🔧 APP: After dropna: 58 rows
+✅ APP: 58 rows available after prediction feature engineering
+   📊 APP: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 APP: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 APP: After alignment: (1, 35)
+   🔧 APP: Features scaled successfully, shape: (1, 35)
+   🔧 APP: Sequence scaled, shape: (60, 35)
+   🤖 APP: PyTorch model prediction successful: -0.8758
+   🔄 APP: Y-scaler applied: -26.6852
+   ⚠️ APP: Clipped final prediction from -2668.52% to -100.00%
+   ✅ APP: Final prediction = -100.00%
+   📊 APP: Prediction result = -1.0
+   🔍 Checking PLTR: in models=True, model not None=True
+   📊 PLTR: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ PLTR: Prediction data validated - 120 rows spanning 174 days
+   🔍 PLTR: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 PLTR: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 PLTR: After technical indicators: 120 rows, 103 features
+   🔧 PLTR: After dropna: 58 rows
+✅ PLTR: 58 rows available after prediction feature engineering
+   📊 PLTR: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 PLTR: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 PLTR: After alignment: (1, 35)
+   🔧 PLTR: Features scaled successfully, shape: (1, 35)
+   🔧 PLTR: Sequence scaled, shape: (60, 35)
+   🤖 PLTR: PyTorch model prediction successful: -0.6317
+   🔄 PLTR: Y-scaler applied: 14.7323
+   ⚠️ PLTR: Clipped final prediction from 1473.23% to 200.00%
+   ✅ PLTR: Final prediction = 200.00%
+   📊 PLTR: Prediction result = 2.0
+   🔍 Checking WBD: in models=True, model not None=True
+   📊 WBD: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ WBD: Prediction data validated - 120 rows spanning 174 days
+   🔍 WBD: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 WBD: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 WBD: After technical indicators: 120 rows, 103 features
+   🔧 WBD: After dropna: 58 rows
+✅ WBD: 58 rows available after prediction feature engineering
+   📊 WBD: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 WBD: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 WBD: After alignment: (1, 35)
+   🔧 WBD: Features scaled successfully, shape: (1, 35)
+   🔧 WBD: Sequence scaled, shape: (60, 35)
+   🤖 WBD: PyTorch model prediction successful: -0.3391
+   🔄 WBD: Y-scaler applied: 12.2497
+   ⚠️ WBD: Clipped final prediction from 1224.97% to 200.00%
+   ✅ WBD: Final prediction = 200.00%
+   📊 WBD: Prediction result = 2.0
+   🔍 Checking STX: in models=True, model not None=True
+   📊 STX: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ STX: Prediction data validated - 120 rows spanning 174 days
+   🔍 STX: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 STX: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 STX: After technical indicators: 120 rows, 103 features
+   🔧 STX: After dropna: 58 rows
+✅ STX: 58 rows available after prediction feature engineering
+   📊 STX: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 STX: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 STX: After alignment: (1, 35)
+   🔧 STX: Features scaled successfully, shape: (1, 35)
+   🔧 STX: Sequence scaled, shape: (60, 35)
+   🤖 STX: PyTorch model prediction successful: -0.8411
+   🔄 STX: Y-scaler applied: -18.5251
+   ⚠️ STX: Clipped final prediction from -1852.51% to -100.00%
+   ✅ STX: Final prediction = -100.00%
+   📊 STX: Prediction result = -1.0
+   🔍 Checking WDC: in models=True, model not None=True
+   📊 WDC: Calling prediction with 120 rows, model=GRURegressor, scaler=MinMaxScaler
+✅ WDC: Prediction data validated - 120 rows spanning 174 days
+   🔍 WDC: Starting prediction with 120 rows, model type: GRURegressor
+   🔧 WDC: Initial features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns']
+   🔧 WDC: After technical indicators: 120 rows, 103 features
+   🔧 WDC: After dropna: 58 rows
+✅ WDC: 58 rows available after prediction feature engineering
+   📊 WDC: Latest data shape: (1, 104), features: ['ticker', 'Close', 'High', 'Low', 'Open', 'Volume', 'Market_Momentum_SPY', 'Intermarket_VIX_Index_Returns', 'Intermarket_DXY_Index_Returns', 'Intermarket_Gold_Futures_Returns', 'Intermarket_Oil_Futures_Returns', 'Intermarket_US10Y_Yield_Returns', 'Intermarket_Oil_Price_Returns', 'Intermarket_Gold_Price_Returns', 'ATR', 'ATR_MED', 'Returns', 'SMA_F_S', 'SMA_F_L', 'Volatility', 'RSI_feat', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', '%K', '%D', 'up_move', 'down_move', '+DM', '-DM', 'TR', '+DM14', '-DM14', 'TR14', 'DX', 'ADX', 'OBV', 'CMF', 'ROC', 'ROC_20', 'ROC_60', 'cmo_diff', 'cmo_up', 'cmo_down', 'cmo_sum_up', 'cmo_sum_down', 'CMO', 'kama_change', 'kama_volatility', 'kama_er', 'kama_sc', 'KAMA', 'EFI', 'KC_TR', 'KC_ATR', 'KC_Middle', 'KC_Upper', 'KC_Lower', 'DC_Upper', 'DC_Lower', 'DC_Middle', 'PSAR', 'ADL', 'CCI', 'VWAP', 'ATR_Pct', 'Chaikin_Oscillator', 'MFI', 'OBV_SMA', 'Log_Returns', 'Historical_Volatility', 'Close_to_SMA20', 'Close_to_SMA50', 'Close_Position_in_Range', 'Intraday_Range_Pct', 'Open_to_Close_Ratio', 'Close_to_20D_High', 'Close_to_20D_Low', 'Volume_Normalized', 'Momentum_3d', 'Momentum_5d', 'Momentum_10d', 'Momentum_20d', 'Momentum_40d', 'Dist_From_SMA10', 'Dist_From_SMA20', 'Dist_From_SMA50', 'SMA20_Slope', 'SMA50_Slope', 'Price_Accel_5d', 'Price_Accel_20d', 'Vol_Regime', 'Vol_Spike', 'Volume_Ratio_5d', 'Volume_Ratio_20d', 'Volume_Trend', 'Range_Expansion', 'Range_vs_Avg', 'Daily_Direction', 'Streak', 'Momentum_Divergence', 'Days_Above_SMA20', 'Annualized_BH_Return']
+   🔧 WDC: Scaler expects 35 features: ['Close', 'Volume', 'High', 'Low', 'Open']...
+   🔧 WDC: After alignment: (1, 35)
+   🔧 WDC: Features scaled successfully, shape: (1, 35)
+   🔧 WDC: Sequence scaled, shape: (60, 35)
+   🤖 WDC: PyTorch model prediction successful: 0.1220
+   🔄 WDC: Y-scaler applied: 48.3993
+   ⚠️ WDC: Clipped final prediction from 4839.93% to 200.00%
+   ✅ WDC: Final prediction = 200.00%
+   📊 WDC: Prediction result = 2.0
+
+   📊 Day 5 - AI Predictions vs Buy & Hold (Next 63 days):
+   Ticker   AI Predicted   Buy & Hold   Error      Direction 
+   -----------------------------------------------------------------
+   APP          -100.00%      -5.95%    94.05%      ✓     
+   PLTR          200.00%      -4.80%   204.80%      ✗     
+   WBD           200.00%      26.98%   173.02%      ✓     
+   STX          -100.00%       0.71%   100.71%      ✗     
+   WDC           200.00%      19.14%   180.86%      ✓     
+
+🧠 Day 6 (2025-10-02): Retraining models...
+
+🔍 Step 3: Training AI models for 3-Month_retrain_1 backtest...
+    📊 APP 3- Training: Horizon=60d, Target=64.66% (B&H: 400.91%, Scale=0.161)
+✅ APP: Training data validated - 253 rows over 372 days
+    📊 PLTR 3- Training: Horizon=60d, Target=62.29% (B&H: 386.21%, Scale=0.161)
+✅ PLTR: Training data validated - 253 rows over 372 days
+    📊 WBD 3- Training: Horizon=60d, Target=21.94% (B&H: 136.04%, Scale=0.161)
+✅ WBD: Training data validated - 253 rows over 372 days
+    📊 STX 3- Training: Horizon=60d, Target=17.17% (B&H: 106.44%, Scale=0.161)
+✅ STX: Training data validated - 253 rows over 372 days
+    📊 WDC 3- Training: Horizon=60d, Target=16.93% (B&H: 104.94%, Scale=0.161)
+✅ WDC: Training data validated - 253 rows over 372 days
+🤖 Training 3-Month_retrain_1 models in parallel for 5 tickers using 11 processes...
