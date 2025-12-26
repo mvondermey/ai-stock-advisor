@@ -1178,13 +1178,22 @@ def train_and_evaluate_models(
 
             if USE_GRU:
                 if perform_gru_hp_optimization and ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION:
-                    print(f"    - Starting GRU hyperparameter optimization for {ticker} ({target_col}) (HP_OPT={perform_gru_hp_optimization}, ENABLE_HP_OPT={ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION}, Horizon={default_class_horizon})...")
+                    print(f"    - 🚀 Starting GRU hyperparameter optimization for {ticker} ({target_col})")
+                    print(f"      📊 Horizon={default_class_horizon}, Target={target_col}")
+                    print(f"      ⚙️  This will test ~18 hyperparameter combinations sequentially")
+                    print(f"      ⏱️  Each combination trains a full neural network ({LSTM_EPOCHS} epochs)")
+                    print(f"      💡 Estimated time: ~15-30 minutes per stock depending on hardware")
+                    print(f"      🔄 Progress will be shown for each hyperparameter being optimized...")
+
                     # For regression we minimize MSE; we still store negative MSE in "auc" field for compatibility
                     best_gru_mse = np.inf
                     best_gru_auc = -np.inf  # kept for compatibility with downstream structure
                     best_gru_model = None
                     best_gru_scaler = None
                     best_gru_hyperparams = {}
+
+                    import time
+                    optimization_start_time = time.time()
 
                     def create_focused_range(base_val, step, min_val=None, max_val=None, is_float=False, options_list=None):
                         if options_list:
@@ -1234,7 +1243,9 @@ def train_and_evaluate_models(
                         ("epochs", GRU_EPOCHS_OPTIONS, 10, None, False, 20)
                     ]
 
+                    # Calculate total combinations for progress tracking
                     total_combinations = 0
+                    param_counts = {}
                     for param_name, options_list, min_val, max_val, is_float, step_size_for_range in hyperparameter_dimensions:
                         current_best_val = best_gru_hyperparams[param_name]
                         if param_name == "learning_rate":
@@ -1245,12 +1256,32 @@ def train_and_evaluate_models(
                             current_options = create_focused_range(current_best_val, step_size_for_range, min_val=min_val, is_float=False)
                         else:
                             current_options = create_focused_range(current_best_val, step_size_for_range, min_val=min_val, max_val=max_val, is_float=is_float, options_list=options_list)
+                        param_counts[param_name] = len(current_options)
                         total_combinations += len(current_options)
 
+                    print(f"      📊 Will test {total_combinations} hyperparameter combinations across 6 parameters:")
+                    for param_name, count in param_counts.items():
+                        param_readable = param_names_readable.get(param_name, param_name)
+                        print(f"         • {param_readable}: {count} values")
+                    print(f"      🚀 Starting optimization now...\n")
+
                     current_iteration = 0
+                    param_index = 0
+
+                    # Define readable parameter names for progress output
+                    param_names_readable = {
+                        "hidden_size": "Hidden Size",
+                        "num_layers": "Number of Layers",
+                        "dropout_rate": "Dropout Rate",
+                        "learning_rate": "Learning Rate",
+                        "batch_size": "Batch Size",
+                        "epochs": "Training Epochs"
+                    }
+
                     for param_name, options_list, min_val, max_val, is_float, step_size_for_range in hyperparameter_dimensions:
+                        param_index += 1
                         current_best_val = best_gru_hyperparams[param_name]
-                        
+
                         if param_name == "learning_rate":
                             current_options = create_focused_range(current_best_val, current_best_val * 0.5, min_val=min_val, is_float=True)
                         elif param_name == "batch_size":
@@ -1260,10 +1291,21 @@ def train_and_evaluate_models(
                         else:
                             current_options = create_focused_range(current_best_val, step_size_for_range, min_val=min_val, max_val=max_val, is_float=is_float, options_list=options_list)
 
+                        param_readable_name = param_names_readable.get(param_name, param_name)
+                        elapsed_time = time.time() - optimization_start_time
+                        print(f"      🔧 Optimizing {param_readable_name} ({param_index}/6) - Testing {len(current_options)} values: {current_options}")
+                        print(f"      ⏱️  Elapsed: {elapsed_time:.1f}s, Current best MSE: {best_gru_mse:.6f}")
+
+                        value_index = 0
                         for value in current_options:
+                            value_index += 1
                             current_iteration += 1
+                            combination_start_time = time.time()
+
                             temp_hyperparams = best_gru_hyperparams.copy()
                             temp_hyperparams[param_name] = value
+
+                            print(f"        📈 Testing {param_readable_name}={value} ({value_index}/{len(current_options)} for this param, {current_iteration}/{total_combinations} total)")
                             
                             current_dropout_rate = temp_hyperparams["dropout_rate"] if temp_hyperparams["num_layers"] > 1 else 0.0
                             temp_hyperparams["dropout_rate"] = current_dropout_rate
@@ -1277,7 +1319,12 @@ def train_and_evaluate_models(
                             
                             current_dataloader = DataLoader(dataset, batch_size=temp_hyperparams["batch_size"], shuffle=True)
 
+                            # Show training progress every 10 epochs or at key milestones
+                            epochs_to_show = [0, temp_hyperparams["epochs"]//4, temp_hyperparams["epochs"]//2, 3*temp_hyperparams["epochs"]//4, temp_hyperparams["epochs"]-1]
+
                             for epoch in range(temp_hyperparams["epochs"]):
+                                if epoch in epochs_to_show or (temp_hyperparams["epochs"] < 10 and epoch % 5 == 0):
+                                    print(f"           🏃 Training epoch {epoch+1}/{temp_hyperparams['epochs']}...")
                                 try:
                                     for batch_X, batch_y in current_dataloader:
                                         try:
@@ -1356,7 +1403,14 @@ def train_and_evaluate_models(
                                     mse_gru = mean_squared_error(y_true, y_pred)
                                     r2_gru = r2_score(y_true, y_pred)
                                     auc_gru = -mse_gru  # keep legacy key; negative MSE for compatibility
-                                    print(f"            GRU MSE: {mse_gru:.6f}, R²: {r2_gru:.4f} | {param_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
+
+                                    combination_time = time.time() - combination_start_time
+                                    is_improvement = mse_gru < best_gru_mse
+                                    improvement_indicator = "🎯 BEST!" if is_improvement else "➖"
+
+                                    print(f"        ✅ {improvement_indicator} MSE: {mse_gru:.6f}, R²: {r2_gru:.4f} | Time: {combination_time:.1f}s")
+                                    print(f"           Config: {param_readable_name}={value} (HS={temp_hyperparams['hidden_size']}, NL={temp_hyperparams['num_layers']}, DO={temp_hyperparams['dropout_rate']:.2f}, LR={temp_hyperparams['learning_rate']:.5f}, BS={temp_hyperparams['batch_size']}, E={temp_hyperparams['epochs']})")
+
                                     better = mse_gru < best_gru_mse
 
                                     if better:
@@ -1371,14 +1425,25 @@ def train_and_evaluate_models(
                     if best_gru_model:
                         models_and_params_local["GRU"] = {"model": best_gru_model, "scaler": best_gru_scaler, "y_scaler": y_scaler, "auc": best_gru_auc, "hyperparams": best_gru_hyperparams}
                         model_name = "LSTM" if TRY_LSTM_INSTEAD_OF_GRU else "GRU"
-                        # Always use regression (default behavior)
-                        print(f"      Best {model_name} found for {ticker} ({target_col}) with MSE: {best_gru_mse:.6f}, Hyperparams: {best_gru_hyperparams}")
+
+                        # Final optimization summary
+                        total_optimization_time = time.time() - optimization_start_time
+                        print(f"      🎉 GRU hyperparameter optimization completed for {ticker}!")
+                        print(f"         ⏱️  Total time: {total_optimization_time:.1f} seconds ({total_optimization_time/60:.1f} minutes)")
+                        print(f"         📊 Tested {current_iteration} hyperparameter combinations")
+                        print(f"         🏆 Best {model_name} MSE: {best_gru_mse:.6f} (R²: {r2_score(y_sequences.cpu().numpy(), best_gru_model(torch.tensor(X_sequences, dtype=torch.float32).to(best_gru_model.device if hasattr(best_gru_model, 'device') else device)).cpu().detach().numpy().flatten()):.4f})")
+                        print(f"         ⚙️  Optimal hyperparameters: {best_gru_hyperparams}")
                         print(f"DEBUG: SAVE_PLOTS={SAVE_PLOTS}, SHAP_AVAILABLE={SHAP_AVAILABLE}")
+
                         if SAVE_PLOTS and SHAP_AVAILABLE:
                             analyze_shap_for_gru(best_gru_model, best_gru_scaler, X_df, final_feature_names, ticker, target_col)
                     else:
                         models_and_params_local["GRU"] = {"model": None, "scaler": None, "y_scaler": None, "auc": 0.0}
+                        print(f"      ❌ GRU hyperparameter optimization failed for {ticker} - no valid model found")
                 else: # ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION is False, use fixed or loaded hyperparameters
+                    model_name = "LSTM" if TRY_LSTM_INSTEAD_OF_GRU else "GRU"
+                    print(f"    - 🔧 Using fixed hyperparameters for {model_name} (optimization disabled)")
+                    print(f"      ⚙️  ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION={ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION}")
                     if loaded_gru_hyperparams:
                         # Use loaded hyperparameters
                         model_name = "LSTM" if TRY_LSTM_INSTEAD_OF_GRU else "GRU"
