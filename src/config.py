@@ -165,7 +165,7 @@ GRU_BATCH_SIZE_OPTIONS  = [64, 128]        # Practical batch sizes for GPU
 GRU_EPOCHS_OPTIONS      = [50, 70, 90]     # Allow a bit more training
 GRU_CLASS_HORIZON_OPTIONS = [10, 20, 40, 60]  # Match period horizons for optimization
 GRU_TARGET_PERCENTAGE_OPTIONS = [0.005, 0.006, 0.007]  # Narrow range for short-term moves
-ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = True  # Enable hyperparameter search for new features
+ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = False  # Enable hyperparameter search for new features
 
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
