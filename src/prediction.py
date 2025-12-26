@@ -102,8 +102,12 @@ def predict_return_for_ticker(
                     # Predict
                     model.eval()
                     with torch.no_grad():
-                        output = model(X_tensor)
-                        prediction = float(output.cpu().numpy()[0][0])
+                        output_tensor = model(X_tensor)
+                        # Handle different output shapes - check tensor dim before converting to numpy
+                        if output_tensor.dim() > 1:
+                            prediction = float(output_tensor.cpu().numpy()[0][0])
+                        else:
+                            prediction = float(output_tensor.cpu().numpy()[0])
                     
                     # Inverse transform if using regression with y_scaler
                     if y_scaler is not None:

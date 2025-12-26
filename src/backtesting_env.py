@@ -367,8 +367,12 @@ class RuleTradingEnv:
 
                 model.eval()
                 with torch.no_grad():
-                    output = model(X_tensor)
-                    scaled_prediction = float(output.cpu().numpy()[0][0])
+                    output_tensor = model(X_tensor)
+                    # Handle different output shapes - check tensor dim before converting to numpy
+                    if output_tensor.dim() > 1:
+                        scaled_prediction = float(output_tensor.cpu().numpy()[0][0])
+                    else:
+                        scaled_prediction = float(output_tensor.cpu().numpy()[0])
                     
                     # ✅ Inverse transform if y_scaler is available (for regression)
                     if self.y_scaler is not None:
