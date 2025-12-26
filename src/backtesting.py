@@ -3077,6 +3077,10 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
 
 def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y_scaler, horizon_days: int) -> float:
     """Quick prediction of return for stock reselection during walk-forward backtest."""
+    # Import PyTorch models if available
+    if PYTORCH_AVAILABLE:
+        from ml_models import TCNRegressor, GRURegressor, LSTMClassifier, GRUClassifier
+    
     try:
         if model is None:
             print(f"   ⚠️ {ticker}: model is None")
@@ -3161,12 +3165,57 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
 
         # Predict return
         try:
-            if hasattr(model, 'predict'):
+            # Check if model is a PyTorch sequence model (TCN, GRU, LSTM)
+            if PYTORCH_AVAILABLE and isinstance(model, (TCNRegressor, GRURegressor, LSTMClassifier, GRUClassifier)):
+                import torch
+                
+                # For sequence models, we need a sequence of data, not just the latest point
+                # Use the last SEQUENCE_LENGTH rows from df_with_features
+                sequence_length = SEQUENCE_LENGTH  # Default is 60
+                
+                if len(df_with_features) < sequence_length:
+                    # If not enough data, pad with zeros
+                    sequence_data = df_with_features[scaler_features].copy()
+                    padding_needed = sequence_length - len(sequence_data)
+                    padding_df = pd.DataFrame(
+                        np.zeros((padding_needed, len(scaler_features))),
+                        columns=scaler_features
+                    )
+                    sequence_data = pd.concat([padding_df, sequence_data], ignore_index=True)
+                else:
+                    # Get the last sequence_length rows
+                    sequence_data = df_with_features[scaler_features].tail(sequence_length)
+                
+                # Scale the entire sequence
+                sequence_scaled = scaler.transform(sequence_data.values)
+                print(f"   🔧 {ticker}: Sequence scaled, shape: {sequence_scaled.shape}")
+                
+                # Convert to PyTorch tensor with shape (batch_size=1, sequence_length, num_features)
+                X_tensor = torch.tensor(sequence_scaled, dtype=torch.float32).unsqueeze(0)
+                
+                # Move to appropriate device
+                device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+                X_tensor = X_tensor.to(device)
+                model.to(device)
+                
+                # Make prediction
+                model.eval()
+                with torch.no_grad():
+                    output = model(X_tensor)
+                    # Handle different output shapes
+                    if output.dim() > 1:
+                        prediction = float(output.cpu().numpy()[0][0])
+                    else:
+                        prediction = float(output.cpu().numpy()[0])
+                    print(f"   🤖 {ticker}: PyTorch model prediction successful: {prediction:.4f}")
+            
+            elif hasattr(model, 'predict'):
+                # Scikit-learn style models
                 prediction = model.predict(features_scaled)[0]
                 print(f"   🤖 {ticker}: Model.predict() successful: {float(prediction):.4f}")
             else:
-                # Handle different model types
-                prediction = model(latest_data.values.reshape(1, -1, -1) if hasattr(model, '__call__') else features_scaled)[0]
+                # Fallback for other model types
+                prediction = model(features_scaled)[0]
                 print(f"   🤖 {ticker}: Model call successful: {float(prediction):.4f}")
 
             # ✅ FIX: Clip prediction BEFORE inverse transform to prevent extrapolation

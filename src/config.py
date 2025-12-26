@@ -84,19 +84,19 @@ RETRAIN_FREQUENCY_DAYS = 5  # Bi-weekly retraining - consider 20 for S&P 500
 ENABLE_1YEAR_BACKTEST   = True   # ✅ Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = False  # Disabled - individual stock models not needed (AI Portfolio has its own training)
+ENABLE_1YEAR_TRAINING   = True  # Disabled - individual stock models not needed (AI Portfolio has its own training)
 
 # --- Portfolio Strategy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
-ENABLE_AI_STRATEGY      = False   # Main AI Strategy (walk-forward backtest with trained models) - DISABLED
+ENABLE_AI_STRATEGY      = True   # Main AI Strategy (walk-forward backtest with trained models) - DISABLED
 ENABLE_AI_PORTFOLIO     = True    # AI-based stock selection and trading - ENABLED
-ENABLE_STATIC_BH        = False   # Static Buy & Hold (top 3 at start, hold forever) - DISABLED
-ENABLE_DYNAMIC_BH_1Y    = False   # Dynamic BH rebalancing based on 1-year performance - DISABLED
+ENABLE_STATIC_BH        = True   # Static Buy & Hold (top 3 at start, hold forever) - DISABLED
+ENABLE_DYNAMIC_BH_1Y    = True   # Dynamic BH rebalancing based on 1-year performance - DISABLED
 ENABLE_DYNAMIC_BH_3M    = True    # Dynamic BH rebalancing based on 3-month performance - ENABLED for comparison
-ENABLE_DYNAMIC_BH_1M    = False   # Dynamic BH rebalancing based on 1-month performance - DISABLED
+ENABLE_DYNAMIC_BH_1M    = True    # Dynamic BH rebalancing based on 1-month performance - DISABLED
 ENABLE_RISK_ADJ_MOM     = True   # Risk-Adjusted Momentum (6-month returns adjusted for volatility) - DISABLED
-ENABLE_MEAN_REVERSION   = False   # Mean Reversion: Buy oversold stocks, sell overbought (DISABLED - poor performance)
-ENABLE_SEASONAL         = False   # Seasonal: "Sell in May and Go Away" strategy
+ENABLE_MEAN_REVERSION   = True   # Mean Reversion: Buy oversold stocks, sell overbought (DISABLED - poor performance)
+ENABLE_SEASONAL         = True  # Seasonal: "Sell in May and Go Away" strategy
 ENABLE_QUALITY_MOM      = True   # Quality + Momentum: Combine quality factors with momentum
 
 # --- Strategy (separate from feature windows)
@@ -106,7 +106,7 @@ ATR_PERIOD              = 14
 ATR_MULT_TRAIL          = 2.0
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
 INVESTMENT_PER_STOCK    = 33333.33    # Fixed amount to invest per stock ($100,000 total for 3 stocks)
-TRANSACTION_COST        = 0.02       # 2%
+TRANSACTION_COST        = 0.01       # 2%
 
 # --- Feature windows (for ML only)
 FEAT_SMA_SHORT          = 5
