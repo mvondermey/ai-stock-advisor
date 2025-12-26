@@ -889,12 +889,12 @@ def train_and_evaluate_models(
     if USE_ELASTIC_NET:
         models_and_params_local["ElasticNet"] = {
             "model": ElasticNet(random_state=SEED, max_iter=2000),
-            "params": {'alpha': [0.0005, 0.001, 0.005, 0.01], 'l1_ratio': [0.1, 0.3, 0.5, 0.7]}
+            "params": {'alpha': [0.001, 0.01], 'l1_ratio': [0.3, 0.7]}  # Reduced from 16 to 4 combinations
         }
     if USE_RIDGE:
         models_and_params_local["Ridge"] = {
             "model": Ridge(random_state=SEED, max_iter=2000, solver="lsqr"),
-            "params": {'alpha': [0.1, 1.0, 5.0, 10.0]}
+            "params": {'alpha': [0.1, 1.0]}  # Reduced from 4 to 2 combinations
         }
     if USE_RANDOM_FOREST:
         models_and_params_local["Random Forest"] = {
@@ -905,7 +905,7 @@ def train_and_evaluate_models(
         from sklearn.svm import SVR
         models_and_params_local["SVR"] = {
             "model": SVR(),
-            "params": {'C': [0.1, 1.0, 10.0, 100.0], 'kernel': ['rbf', 'linear'], 'epsilon': [0.01, 0.1, 1.0]}
+            "params": {'C': [1.0, 100.0], 'kernel': ['rbf'], 'epsilon': [0.01, 0.1]}  # Reduced from 24 to 4 combinations
         }
     if USE_MLP_CLASSIFIER:
         from sklearn.neural_network import MLPRegressor
@@ -1600,6 +1600,18 @@ def train_and_evaluate_models(
 
     # Always use regression (default behavior)
     print("  🔬 Comparing regressor performance (MSE via cross-validation with GridSearchCV):")
+
+    # Calculate total models to process for progress tracking
+    traditional_ml_models = [name for name, mp in models_and_params_local.items() if name not in ["LSTM", "GRU", "TCN"]]
+    total_ml_models = len(traditional_ml_models)
+    current_ml_model_index = 0
+
+    print(f"     📊 Optimizing {total_ml_models} traditional ML models with GridSearchCV...")
+    print(f"     ⚡ Using {n_splits}-fold cross-validation, parallel processing enabled")
+
+    import time
+    gridsearch_start_time = time.time()
+
     for name, mp in models_and_params_local.items():  # Iterate over local models_and_params
         if name in ["LSTM", "GRU", "TCN"]:
             # For DL models, we stored negative MSE in "auc" for compatibility.
@@ -1614,34 +1626,55 @@ def train_and_evaluate_models(
                 if name == "GRU":  # If GRU is the best, store its hyperparams
                     best_hyperparams_overall = mp.get("hyperparams")
         else:
+            current_ml_model_index += 1
             model = mp["model"]
             params = mp["params"]
-            
+
+            # Calculate total parameter combinations for this model
+            total_combinations = 1
+            for param_values in params.values():
+                total_combinations *= len(param_values)
+
+            model_start_time = time.time()
+            print(f"    🔍 Optimizing {name} ({current_ml_model_index}/{total_ml_models}) - Testing {total_combinations} parameter combinations × {n_splits}-fold CV = {total_combinations * n_splits} total model trainings...")
+
             def _run_grid(estimator):
-                gs = GridSearchCV(estimator, params, cv=cv, scoring='neg_mean_squared_error', n_jobs=-1, verbose=0)
+                # Use fewer CPU cores to prevent system overload (max 4 cores for GridSearchCV)
+                n_jobs_grid = min(4, NUM_PROCESSES // 2) if NUM_PROCESSES > 1 else 1
+                gs = GridSearchCV(estimator, params, cv=cv, scoring='neg_mean_squared_error', n_jobs=n_jobs_grid, verbose=0)
                 gs.fit(X, y)
                 return gs
-            
+
             try:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
                     warnings.filterwarnings("ignore", category=UserWarning)
                     warnings.filterwarnings("ignore", category=FutureWarning, module='xgboost')
-                    
+
                     grid_search = _run_grid(model)
+                    model_time = time.time() - model_start_time
                     best_score = -grid_search.best_score_
                     results[name] = best_score
-                    print(f"    - {name}: MSE={best_score:.4f} (Best Params: {grid_search.best_params_})")
+
+                    is_best = best_score < best_mse_overall
+                    best_indicator = "🎯 BEST!" if is_best else "➖"
+
+                    print(f"    ✅ {best_indicator} {name}: MSE={best_score:.4f} (Best Params: {grid_search.best_params_}) | Time: {model_time:.1f}s")
+
                     if best_score < best_mse_overall:
                         best_mse_overall = best_score
                         best_model_overall = grid_search.best_estimator_
                         best_hyperparams_overall = None
 
             except Exception as e:
+                model_time = time.time() - model_start_time
+                print(f"    ❌ {name}: GridSearchCV failed after {model_time:.1f}s - {str(e)[:100]}...")
+                results[name] = float('inf')  # Set to infinity so it won't be selected as best
+
                 # LightGBM GPU fallback to CPU if build/device fails at fit time
                 if "LightGBM" in name and hasattr(model, "get_params"):
                     try:
-                        print(f"    - {name}: GPU fit failed ({e}), retrying on CPU.")
+                        print(f"       Retrying {name} on CPU...")
                         model_cpu = model.__class__(**{**model.get_params(), "device": "cpu"})
                         grid_search = _run_grid(model_cpu)
                         best_score = -grid_search.best_score_
@@ -1656,6 +1689,16 @@ def train_and_evaluate_models(
                         print(f"    - {name}: CPU fallback also failed ({e2}).")
                 print(f"    - {name}: Failed evaluation. Error: {e}")
                 results[name] = 0.0
+
+    # Final GridSearchCV summary
+    total_gridsearch_time = time.time() - gridsearch_start_time
+    successful_models = sum(1 for score in results.values() if score != float('inf') and score != 0.0)
+    print(f"  ✅ GridSearchCV optimization complete! Processed {successful_models}/{total_ml_models} models successfully")
+    print(f"     ⏱️  Total time: {total_gridsearch_time:.1f} seconds ({total_gridsearch_time/60:.1f} minutes)")
+    print(f"     📊 Results summary:")
+    for model_name, mse in sorted(results.items(), key=lambda x: x[1]):
+        if mse != float('inf') and mse != 0.0:
+            print(f"        • {model_name}: MSE={mse:.4f}")
 
     if not any(results.values()):
         print("  ⚠️ All models failed evaluation. No model will be used.")
