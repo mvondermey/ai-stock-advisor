@@ -18,9 +18,12 @@ Trading AI — Improved Rule-Based System with Optional ML Gate
 import sys
 from pathlib import Path
 
-# --- Add project root to sys.path ---
+# --- Add project root and src directory to sys.path ---
 project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(project_root))
+src_dir = Path(__file__).resolve().parent
+# Insert src directory first so local modules take precedence over system packages
+sys.path.insert(0, str(src_dir))
+sys.path.insert(1, str(project_root))
 
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
