@@ -3201,12 +3201,12 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
                 # Make prediction
                 model.eval()
                 with torch.no_grad():
-                    output = model(X_tensor)
-                    # Handle different output shapes
-                    if output.dim() > 1:
-                        prediction = float(output.cpu().numpy()[0][0])
+                    output_tensor = model(X_tensor)
+                    # Handle different output shapes - check tensor dim before converting to numpy
+                    if output_tensor.dim() > 1:
+                        prediction = float(output_tensor.cpu().numpy()[0][0])
                     else:
-                        prediction = float(output.cpu().numpy()[0])
+                        prediction = float(output_tensor.cpu().numpy()[0])
                     print(f"   🤖 {ticker}: PyTorch model prediction successful: {prediction:.4f}")
             
             elif hasattr(model, 'predict'):
