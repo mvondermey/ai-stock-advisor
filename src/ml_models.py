@@ -1639,9 +1639,7 @@ def train_and_evaluate_models(
             print(f"    🔍 Optimizing {name} ({current_ml_model_index}/{total_ml_models}) - Testing {total_combinations} parameter combinations × {n_splits}-fold CV = {total_combinations * n_splits} total model trainings...")
 
             def _run_grid(estimator):
-                # Use fewer CPU cores to prevent system overload (max 4 cores for GridSearchCV)
-                n_jobs_grid = min(4, NUM_PROCESSES // 2) if NUM_PROCESSES > 1 else 1
-                gs = GridSearchCV(estimator, params, cv=cv, scoring='neg_mean_squared_error', n_jobs=n_jobs_grid, verbose=0)
+                gs = GridSearchCV(estimator, params, cv=cv, scoring='neg_mean_squared_error', n_jobs=-1, verbose=0)
                 gs.fit(X, y)
                 return gs
 
