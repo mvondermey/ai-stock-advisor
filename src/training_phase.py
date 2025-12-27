@@ -10,32 +10,64 @@ import joblib
 import pandas as pd
 from datetime import datetime
 import multiprocessing
-from multiprocessing import Pool, current_process
+from multiprocessing import current_process
 from tqdm import tqdm
 
 from config import (
     PYTORCH_AVAILABLE, FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING,
-    PERIOD_HORIZONS, NUM_PROCESSES
+    PERIOD_HORIZONS, NUM_PROCESSES, CUDA_AVAILABLE, GPU_MAX_CONCURRENT_TRAINING_WORKERS
 )
 from data_utils import fetch_training_data, _ensure_dir
-from ml_models import initialize_ml_libraries, train_and_evaluate_models
+from ml_models import initialize_ml_libraries, train_and_evaluate_models, LSTMRegressor, GRURegressor
 from data_validation import validate_training_data, validate_features_after_engineering, InsufficientDataError
 
-# Set multiprocessing start method to 'spawn' for CUDA safety
-# This must be done before any Pool is created
+# Use torch.multiprocessing for proper CUDA context handling
+# Falls back to regular multiprocessing if torch not available
 try:
     if PYTORCH_AVAILABLE:
         import torch
-        if torch.cuda.is_available():
-            # Only set if not already set
-            if multiprocessing.get_start_method(allow_none=True) is None:
-                multiprocessing.set_start_method('spawn', force=False)
-                print("🔧 Set multiprocessing start method to 'spawn' for CUDA compatibility")
-            elif multiprocessing.get_start_method() != 'spawn':
-                print(f"⚠️  Multiprocessing start method is '{multiprocessing.get_start_method()}', but 'spawn' is recommended for CUDA")
-except RuntimeError:
-    # Already set, ignore
-    pass
+        import torch.multiprocessing as mp
+        # Set start method to 'spawn' for CUDA safety
+        try:
+            mp.set_start_method('spawn', force=True)
+            print("🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility")
+        except RuntimeError:
+            pass  # Already set
+        Pool = mp.Pool
+    else:
+        from multiprocessing import Pool
+except (ImportError, RuntimeError):
+    from multiprocessing import Pool
+
+# Global semaphore for limiting concurrent GPU training across worker processes
+_GPU_TRAIN_SEMAPHORE = None
+
+
+def _init_pool_worker(gpu_semaphore):
+    """Initializer for Pool workers to receive shared semaphore."""
+    global _GPU_TRAIN_SEMAPHORE
+    _GPU_TRAIN_SEMAPHORE = gpu_semaphore
+
+
+def _acquire_gpu_slot(ticker: str):
+    """Acquire a GPU training slot if CUDA is enabled and semaphore is available."""
+    global _GPU_TRAIN_SEMAPHORE
+    if not CUDA_AVAILABLE or _GPU_TRAIN_SEMAPHORE is None:
+        return
+    print(f"🐛 DEBUG: {ticker} - Waiting for GPU slot ({GPU_MAX_CONCURRENT_TRAINING_WORKERS} max)...", flush=True)
+    _GPU_TRAIN_SEMAPHORE.acquire()
+    print(f"🐛 DEBUG: {ticker} - Acquired GPU slot ✅", flush=True)
+
+
+def _release_gpu_slot(ticker: str):
+    global _GPU_TRAIN_SEMAPHORE
+    if not CUDA_AVAILABLE or _GPU_TRAIN_SEMAPHORE is None:
+        return
+    try:
+        _GPU_TRAIN_SEMAPHORE.release()
+        print(f"🐛 DEBUG: {ticker} - Released GPU slot", flush=True)
+    except Exception:
+        pass
 
 # Conditionally import LSTM/GRU classes if PyTorch is available
 try:
@@ -50,15 +82,26 @@ def train_worker(params: Tuple) -> Dict:
     """Worker function for parallel model training."""
     ticker, df_train_period, target_percentage, class_horizon, feature_set = params
     
-    # ✅ FIX: Reset CUDA state at start of each worker process to avoid context issues
+    import sys
+    import os
+    
+    # ✅ Use GPU with proper CUDA context isolation per worker
+    print(f"🐛 DEBUG: train_worker started for {ticker}", flush=True)
+    sys.stdout.flush()
+    
+    # Initialize CUDA for this worker process with memory limit
     try:
         import torch
         if torch.cuda.is_available():
+            torch.cuda.set_device(0)
+            # Limit GPU memory per process to avoid OOM with multiple workers
+            # Each of 10 processes gets ~10% of GPU memory
+            torch.cuda.set_per_process_memory_fraction(0.1, device=0)
             torch.cuda.empty_cache()
-            # Reset CUDA context for this process
-            torch.cuda.init()
-    except Exception:
-        pass  # Ignore if CUDA not available
+            print(f"🐛 DEBUG: {ticker} - GPU initialized (10% memory fraction)", flush=True)
+    except Exception as e:
+        print(f"⚠️ {ticker} - GPU init warning: {e}", flush=True)
+    sys.stdout.flush()
     
     models_dir = Path("logs/models")
     _ensure_dir(models_dir)
@@ -77,7 +120,44 @@ def train_worker(params: Tuple) -> Dict:
 
     if CONTINUE_TRAINING_FROM_EXISTING and model_path.exists() and scaler_path.exists():
         try:
-            model = joblib.load(model_path)
+            # Handle PyTorch models specially
+            if PYTORCH_AVAILABLE and model_path.with_suffix('.info').exists():
+                model_info = joblib.load(model_path.with_suffix('.info'))
+                if model_info.get('model_class'):
+                    # Reconstruct PyTorch model
+                    import torch
+                    from ml_models import TCNRegressor, GRURegressor, LSTMRegressor
+
+                    model_class_name = model_info['model_class']
+                    if model_class_name == 'TCNRegressor':
+                        model = TCNRegressor(
+                            input_size=model_info.get('input_size', 35),
+                            num_filters=32, kernel_size=3, num_levels=2, dropout=0.1
+                        )
+                    elif model_class_name == 'GRURegressor':
+                        model = GRURegressor(
+                            input_size=model_info.get('input_size', 35),
+                            hidden_size=model_info.get('hidden_size', 64),
+                            num_layers=model_info.get('num_layers', 2),
+                            output_size=1, dropout_rate=0.5
+                        )
+                    elif model_class_name == 'LSTMRegressor':
+                        model = LSTMRegressor(
+                            input_size=model_info.get('input_size', 35),
+                            hidden_size=model_info.get('hidden_size', 64),
+                            num_layers=model_info.get('num_layers', 2),
+                            output_size=1, dropout_rate=0.5
+                        )
+
+                    if model:
+                        state_dict = torch.load(model_path, map_location='cpu')
+                        model.load_state_dict(state_dict)
+                        print(f"  ✅ Loaded PyTorch model {model_class_name} from state_dict for {ticker}")
+                else:
+                    model = joblib.load(model_path)
+            else:
+                model = joblib.load(model_path)
+
             scaler = joblib.load(scaler_path)
             if y_scaler_path.exists():
                 y_scaler_loaded = joblib.load(y_scaler_path)
@@ -104,9 +184,13 @@ def train_worker(params: Tuple) -> Dict:
             print(f"  ✅ Loaded existing models and GRU hyperparams for {ticker} (FORCE_TRAINING is False).")
             # Before returning, ensure PyTorch models are on CPU if they are deep learning models
             if PYTORCH_AVAILABLE:
-                if LSTMRegressor is not None and GRURegressor is not None:
-                    if isinstance(model, (LSTMRegressor, GRURegressor)):
+                try:
+                    from ml_models import LSTMRegressor, GRURegressor, TCNRegressor
+                    if isinstance(model, (LSTMRegressor, GRURegressor, TCNRegressor)):
                         model = model.cpu()
+                except (ImportError, NameError):
+                    # If imports fail in worker process, skip CPU conversion
+                    pass
             return {
                 'ticker': ticker,
                 'model': model,
@@ -139,15 +223,24 @@ def train_worker(params: Tuple) -> Dict:
     # Always use regression targets (removed USE_REGRESSION_MODEL flag)
     target_column = "TargetReturn"
 
-    train_result = train_and_evaluate_models(
-        df_train, target_column, actual_feature_set, ticker=ticker,
-        initial_model=model if loaded_for_retraining else None,  # Reuse existing model if available
-        loaded_gru_hyperparams=loaded_gru_hyperparams,  # Reuse hyperparams
-        models_and_params_global=global_models_and_params,
-        perform_gru_hp_optimization=True,  # enable HP search
-        default_target_percentage=target_percentage, # Pass current target_percentage
-        default_class_horizon=class_horizon # Pass current class_horizon
-    )
+    # Limit concurrent GPU-heavy training to avoid WSL CUDA deadlocks
+    _acquire_gpu_slot(ticker)
+    try:
+        print(f"🐛 DEBUG: {ticker} - Starting train_and_evaluate_models...", flush=True)
+        sys.stdout.flush()
+        train_result = train_and_evaluate_models(
+            df_train, target_column, actual_feature_set, ticker=ticker,
+            initial_model=model if loaded_for_retraining else None,  # Reuse existing model if available
+            loaded_gru_hyperparams=loaded_gru_hyperparams,  # Reuse hyperparams
+            models_and_params_global=global_models_and_params,
+            perform_gru_hp_optimization=True,  # enable HP search
+            default_target_percentage=target_percentage, # Pass current target_percentage
+            default_class_horizon=class_horizon # Pass current class_horizon
+        )
+    finally:
+        _release_gpu_slot(ticker)
+    print(f"🐛 DEBUG: {ticker} - train_and_evaluate_models completed", flush=True)
+    sys.stdout.flush()
 
     # Handle different return value formats for single regression model
     if train_result is None or len(train_result) == 3:
@@ -174,7 +267,39 @@ def train_worker(params: Tuple) -> Dict:
     if model and final_scaler:
         try:
             # Save single regression model
-            joblib.dump(model, model_path)
+            # Handle PyTorch models specially - save state_dict instead of full model
+            if PYTORCH_AVAILABLE and hasattr(model, 'state_dict'):
+                import torch
+                torch.save(model.state_dict(), model_path)
+                # Also save model class info for reconstruction
+                # Save model architecture parameters based on model type
+                model_class_name = model.__class__.__name__
+                model_info = {
+                    'state_dict_path': str(model_path),
+                    'model_class': model_class_name,
+                }
+
+                if model_class_name == 'TCNRegressor':
+                    # For TCN, we need to know the input_size
+                    # We can infer it from the first conv layer's input channels
+                    if hasattr(model, 'net') and len(model.net) > 0:
+                        first_conv = model.net[0]  # First Conv1d layer
+                        if hasattr(first_conv, 'in_channels'):
+                            model_info['input_size'] = first_conv.in_channels
+                    else:
+                        model_info['input_size'] = 35  # Default fallback
+                elif model_class_name in ['GRURegressor', 'LSTMRegressor', 'LSTMClassifier', 'GRUClassifier']:
+                    # For RNN models, get parameters from the rnn layer
+                    rnn_layer = getattr(model, 'gru', None) or getattr(model, 'lstm', None)
+                    if rnn_layer:
+                        model_info['input_size'] = rnn_layer.input_size
+                        model_info['hidden_size'] = rnn_layer.hidden_size
+                        model_info['num_layers'] = rnn_layer.num_layers
+                joblib.dump(model_info, model_path.with_suffix('.info'))
+            else:
+                # Regular scikit-learn models
+                joblib.dump(model, model_path)
+
             joblib.dump(final_scaler, scaler_path)
 
             # ✅ Save y_scaler if it exists
@@ -192,9 +317,24 @@ def train_worker(params: Tuple) -> Dict:
 
         # Before returning, ensure PyTorch models are on CPU if they are deep learning models
         if PYTORCH_AVAILABLE:
-            if LSTMRegressor is not None and GRURegressor is not None:
-                if isinstance(model, (LSTMRegressor, GRURegressor)):
+            try:
+                from ml_models import LSTMRegressor, GRURegressor, TCNRegressor
+                if isinstance(model, (LSTMRegressor, GRURegressor, TCNRegressor)):
                     model = model.cpu()
+            except (ImportError, NameError):
+                # If imports fail in worker process, skip CPU conversion
+                pass
+
+        # ✅ Force GPU cleanup before returning
+        if CUDA_AVAILABLE:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    print(f"🐛 DEBUG: {current_process().name} - {ticker}: GPU cache cleared", flush=True)
+            except Exception as e:
+                print(f"⚠️ Warning: Failed to clear GPU cache for {ticker}: {e}", flush=True)
 
         return {
             'ticker': ticker,
@@ -333,17 +473,48 @@ def train_models_for_period(
     
     # Run training in parallel or sequentially
     if run_parallel and len(training_params) > 0:
-        print(f"🤖 Training {period_name} models in parallel for {len(tickers)} tickers using {NUM_PROCESSES} processes...")
-        with Pool(processes=NUM_PROCESSES) as pool:
-            training_results = list(tqdm(
-                pool.imap(train_worker, training_params),
-                total=len(training_params),
-                desc=f"Training {period_name} Models"
-            ))
+        print(f"🤖 Training {period_name} models in parallel for {len(tickers)} tickers using {NUM_PROCESSES} processes...", flush=True)
+        print(f"🐛 DEBUG: Using torch.multiprocessing.Pool with spawn for GPU support", flush=True)
+
+        # Shared semaphore to limit concurrent GPU training across workers
+        try:
+            gpu_semaphore = mp.Semaphore(GPU_MAX_CONCURRENT_TRAINING_WORKERS) if (PYTORCH_AVAILABLE and CUDA_AVAILABLE) else None
+        except Exception:
+            gpu_semaphore = None
+
+        pool = Pool(processes=NUM_PROCESSES, initializer=_init_pool_worker, initargs=(gpu_semaphore,))
+        try:
+            # Use map_async with timeout for better control
+            print(f"🐛 DEBUG: Submitting {len(training_params)} training tasks...", flush=True)
+            async_result = pool.map_async(train_worker, training_params, chunksize=1)
+            
+            # Wait with timeout (5 minutes per ticker should be plenty)
+            timeout_seconds = len(training_params) * 300
+            training_results = async_result.get(timeout=timeout_seconds)
+            print(f"🐛 DEBUG: All {len(training_results)} tasks completed successfully!", flush=True)
+        except TimeoutError:
+            print(f"⚠️ WARNING: Training timed out after {timeout_seconds}s, terminating pool...", flush=True)
+            pool.terminate()
+            raise
+        finally:
+            print(f"🐛 DEBUG: Closing pool...", flush=True)
+            pool.close()
+            print(f"🐛 DEBUG: Joining pool workers (timeout 30s)...", flush=True)
+            # Use a thread to join with timeout
+            import threading
+            join_thread = threading.Thread(target=pool.join)
+            join_thread.start()
+            join_thread.join(timeout=30)
+            if join_thread.is_alive():
+                print(f"⚠️ WARNING: Pool join timed out, terminating...", flush=True)
+                pool.terminate()
+            else:
+                print(f"🐛 DEBUG: Pool cleanup complete!", flush=True)
     else:
         print(f"🤖 Training {period_name} models sequentially for {len(tickers)} tickers...")
         training_results = [train_worker(p) for p in tqdm(training_params, desc=f"Training {period_name} Models")]
     
+    print(f"🐛 DEBUG: Starting result collection for {len(training_results)} training results...", flush=True)
     # Collect results
     y_scalers = {}  # ✅ Initialize y_scalers dictionary
     model_winners = {}  # ✅ Track model selection statistics

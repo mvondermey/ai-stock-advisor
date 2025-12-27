@@ -66,7 +66,8 @@ def print_final_summary(
     final_quality_momentum_value_1y: float = None,
     quality_momentum_1y_return: float = None,
     mean_reversion_transaction_costs: float = None,
-    quality_momentum_transaction_costs: float = None
+    quality_momentum_transaction_costs: float = None,
+    backtest_days: int = None  # ✅ NEW: Number of days in backtest for annualization
 ) -> None:
     """Prints the final summary of the backtest results."""
     
@@ -183,6 +184,33 @@ def print_final_summary(
     quality_momentum_costs = f"${quality_momentum_transaction_costs:,.0f}" if quality_momentum_transaction_costs is not None else "N/A"
 
     print(f"{'Txn Costs':<12} | {ai_costs:<17} | {static_bh_costs:<17} | {dynamic_bh_1y_costs:<17} | {dynamic_bh_3m_costs:<17} | {ai_portfolio_costs:<17} | {dynamic_bh_1m_costs:<17} | {risk_adj_mom_costs:<17} | {mean_reversion_costs:<17} | {quality_momentum_costs:<17}")
+    
+    # ✅ NEW: Add annualized return row for comparison
+    if backtest_days is not None and backtest_days > 0:
+        def annualize_return(return_pct: float, days: int) -> float:
+            """Convert a return percentage to annualized return (365 days)."""
+            if days == 0:
+                return 0.0
+            decimal_return = return_pct / 100.0
+            annualized = ((1 + decimal_return) ** (365.0 / days) - 1) * 100
+            return annualized
+        
+        # Calculate annualized returns for each strategy
+        ai_ann = f"{annualize_return(ai_1y_return, backtest_days):+.1f}%" if ai_1y_return != 0 else "0.0%"
+        
+        static_bh_return_pct = ((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0
+        static_bh_ann = f"{annualize_return(static_bh_return_pct, backtest_days):+.1f}%" if ENABLE_STATIC_BH else "N/A"
+        
+        dyn_bh_1y_ann = f"{annualize_return(dynamic_bh_1y_return, backtest_days):+.1f}%" if dynamic_bh_1y_return is not None else "N/A"
+        dyn_bh_3m_ann = f"{annualize_return(dynamic_bh_3m_1y_return, backtest_days):+.1f}%" if dynamic_bh_3m_1y_return is not None else "N/A"
+        ai_portfolio_ann = f"{annualize_return(ai_portfolio_1y_return, backtest_days):+.1f}%" if ai_portfolio_1y_return is not None else "N/A"
+        dyn_bh_1m_ann = f"{annualize_return(dynamic_bh_1m_1y_return, backtest_days):+.1f}%" if dynamic_bh_1m_1y_return is not None else "N/A"
+        risk_adj_mom_ann = f"{annualize_return(risk_adj_mom_1y_return, backtest_days):+.1f}%" if risk_adj_mom_1y_return is not None else "N/A"
+        mean_reversion_ann = f"{annualize_return(mean_reversion_1y_return, backtest_days):+.1f}%" if mean_reversion_1y_return is not None else "N/A"
+        quality_momentum_ann = f"{annualize_return(quality_momentum_1y_return, backtest_days):+.1f}%" if quality_momentum_1y_return is not None else "N/A"
+        
+        print(f"{'Annualized':<12} | {ai_ann:<17} | {static_bh_ann:<17} | {dyn_bh_1y_ann:<17} | {dyn_bh_3m_ann:<17} | {ai_portfolio_ann:<17} | {dyn_bh_1m_ann:<17} | {risk_adj_mom_ann:<17} | {mean_reversion_ann:<17} | {quality_momentum_ann:<17}")
+    
     print("="*150)
 
     print(f"\n📈 Individual Ticker Performance (AI Strategy - Sorted by {period_name} Performance):")

@@ -523,7 +523,19 @@ def main(
         print(f"ℹ️ Capping backtest end date from {bt_end.date()} to last available data {last_available.date()}")
         end_date = last_available
         bt_end = last_available
-    print(f"📅 Using backtest end date: {bt_end.date()} (last available: {last_available.date()})")
+    
+    # ✅ FIX: Subtract prediction horizon from backtest end to ensure future data availability
+    # If prediction horizon is 63 days and last data is Dec 26, backtest should end ~Oct 24
+    # This ensures we have enough future data to validate all predictions made during backtest
+    prediction_horizon = PERIOD_HORIZONS.get("1-Year", 63)
+    bt_end_with_horizon = bt_end - timedelta(days=prediction_horizon)
+    
+    print(f"📅 Data available until: {bt_end.date()}")
+    print(f"📅 Prediction horizon: {prediction_horizon} days")
+    print(f"📅 Backtest will end: {bt_end_with_horizon.date()} (ensuring {prediction_horizon} days of future data for validation)")
+    
+    bt_end = bt_end_with_horizon
+    end_date = bt_end_with_horizon
 
     # --- Fetch SPY data for Market Momentum feature ---
     print("🔍 Fetching SPY data for Market Momentum feature...")
@@ -715,6 +727,16 @@ def main(
         else:
             training_results = []
             print(f"\n⏭️ Skipping individual stock model training (ENABLE_1YEAR_TRAINING = False)")
+    
+    # ✅ FIX: Filter tickers BEFORE AI Portfolio training
+    # When training is disabled, use all top_tickers
+    if ENABLE_1YEAR_TRAINING:
+        top_tickers_1y_filtered = [t for t in top_tickers if t not in failed_training_tickers_1y]
+    else:
+        top_tickers_1y_filtered = top_tickers
+    
+    print(f"  ℹ️ {len(failed_training_tickers_1y)} tickers failed 1-Year model training and will be skipped: {', '.join(failed_training_tickers_1y.keys())}")
+    print(f"  ✅ {len(top_tickers_1y_filtered)} tickers available for AI Portfolio training: {', '.join(top_tickers_1y_filtered)}")
 
     # --- Train AI Portfolio Rebalancing Model ---
     print(f"DEBUG: About to check ENABLE_AI_PORTFOLIO = {ENABLE_AI_PORTFOLIO}")
@@ -726,12 +748,18 @@ def main(
             from ai_portfolio import train_ai_portfolio_model
             print(f"DEBUG: Import successful, calling train_ai_portfolio_model...")
 
-            # Use training dates based on backtest period, not 1-year training period
-            # For shorter backtests, use available historical data
+            # ✅ CRITICAL: Ensure complete data separation between training and backtest
+            # Training must use ONLY historical data BEFORE backtest starts
+            # This prevents look-ahead bias and ensures realistic results
+            
+            # Training ends 1 day BEFORE backtest starts
             ai_portfolio_train_end = bt_start_1y - timedelta(days=1)
+            # Training period: up to 1 year of historical data before backtest
             ai_portfolio_train_start = ai_portfolio_train_end - timedelta(days=min(365, (bt_start_1y - all_tickers_data['date'].min()).days))
 
             print(f"DEBUG: AI portfolio training dates: {ai_portfolio_train_start.date()} to {ai_portfolio_train_end.date()}")
+            print(f"   🔒 Data Separation: Training ends {(bt_start_1y - ai_portfolio_train_end).days} day(s) before backtest starts")
+            print(f"   ✅ No overlap between training and backtest data (preventing look-ahead bias)")
 
             ai_portfolio_trained = train_ai_portfolio_model(
                 all_tickers_data=all_tickers_data,
@@ -744,6 +772,9 @@ def main(
 
             if ai_portfolio_trained:
                 print("✅ AI Portfolio Rebalancing Model trained successfully")
+                # Set the model globally for use during backtesting
+                from ai_portfolio import set_ai_portfolio_model
+                set_ai_portfolio_model(ai_portfolio_trained)
             else:
                 print("⚠️ AI Portfolio Rebalancing Model training failed")
 
@@ -757,15 +788,6 @@ def main(
     # 🧠 Initialize dictionaries for model training data before threshold optimization
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
     prices_dict, signals_dict = {}, {}
-
-    
-    # Filter out failed tickers from top_tickers for subsequent steps
-    # When training is disabled, use all top_tickers
-    if ENABLE_1YEAR_TRAINING:
-        top_tickers_1y_filtered = [t for t in top_tickers if t not in failed_training_tickers_1y]
-    else:
-        top_tickers_1y_filtered = top_tickers
-    print(f"  ℹ️ {len(failed_training_tickers_1y)} tickers failed 1-Year model training and will be skipped: {', '.join(failed_training_tickers_1y.keys())}")
     
     # Update top_performers_data to reflect only successfully trained tickers
     top_performers_data_1y_filtered = [item for item in top_performers_data if item[0] in top_tickers_1y_filtered]
@@ -1046,6 +1068,9 @@ def main(
     actual_initial_capital_1y = initial_capital_1y
     actual_tickers_analyzed = len(processed_tickers_1y)
     
+    # ✅ Calculate actual backtest days for annualization
+    actual_backtest_days = (bt_end - bt_start_1y).days
+    
     print_final_summary(
         sorted_final_results, models, models, scalers, optimized_params_per_ticker,
         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
@@ -1077,6 +1102,7 @@ def main(
         mean_reversion_transaction_costs=mean_reversion_transaction_costs_1y,
         quality_momentum_transaction_costs=quality_momentum_transaction_costs_1y,
         period_name=actual_period_name,  # Dynamic period name
+        backtest_days=actual_backtest_days,  # ✅ NEW: Pass backtest days for annualization
         strategy_results_ytd=None,
         strategy_results_3month=None,
         strategy_results_1month=None,
@@ -1118,11 +1144,15 @@ def main(
 
     for ticker in best_models_dict.keys():
         try:
-            joblib.dump(best_models_dict[ticker], models_dir / f"{ticker}_model.joblib")
-            joblib.dump(best_scalers_dict[ticker], models_dir / f"{ticker}_scaler.joblib")
-            print(f"  ✅ Saved model for {ticker} from {best_period_name} period.")
+            model = best_models_dict[ticker]
+            scaler = best_scalers_dict[ticker]
+            
+            # Skip saving - models are already saved by training_phase.py with proper serialization
+            # Re-saving here with joblib would corrupt PyTorch models
+            print(f"  ✅ Using model for {ticker} from {best_period_name} period (already saved by training phase).")
+            
         except Exception as e:
-            print(f"  ⚠️ Error saving model for {ticker} from {best_period_name} period: {e}")
+            print(f"  ⚠️ Error processing model for {ticker} from {best_period_name} period: {e}")
 
 # ============================
 # Main

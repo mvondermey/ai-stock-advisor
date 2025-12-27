@@ -29,7 +29,7 @@ def predict_return_for_ticker(
     Args:
         ticker: Stock ticker symbol
         data: Historical OHLCV data for the ticker
-        model_buy: Trained regression model (predicts return)
+        model: Trained regression model (predicts return)
         scaler: Feature scaler
         y_scaler: Target scaler (for regression models)
         feature_set: List of feature names the model expects
@@ -39,7 +39,7 @@ def predict_return_for_ticker(
         Predicted return (e.g., 0.05 for 5% return), or -inf if prediction fails
     """
     try:
-        if model_buy is None or scaler is None:
+        if model is None or scaler is None:
             return -np.inf
         
         # Check if we have required OHLCV data
@@ -70,12 +70,12 @@ def predict_return_for_ticker(
         
         latest_data = latest_data[feature_set]
         
-        # Handle PyTorch models (LSTM/GRU) separately
+        # Handle PyTorch models (LSTM/GRU/TCN) separately
         if PYTORCH_AVAILABLE:
             try:
-                from ml_models import LSTMClassifier, GRUClassifier, GRURegressor
-                
-                if isinstance(model_buy, (LSTMClassifier, GRUClassifier, GRURegressor)):
+                from ml_models import LSTMClassifier, GRUClassifier, GRURegressor, TCNRegressor
+
+                if isinstance(model, (LSTMClassifier, GRUClassifier, GRURegressor, TCNRegressor)):
                     # Need sequence data for PyTorch models
                     if len(processed_data) < SEQUENCE_LENGTH:
                         return -np.inf
@@ -113,7 +113,9 @@ def predict_return_for_ticker(
                     if y_scaler is not None:
                         # Clip to [-1, 1] before inverse transform to prevent extrapolation
                         prediction_clipped = np.clip(float(prediction), -1.0, 1.0)
-                        prediction = y_scaler.inverse_transform([[prediction_clipped]])[0][0]
+                        prediction_pct = y_scaler.inverse_transform([[prediction_clipped]])[0][0]
+                        # ✅ Convert from percentage to decimal (y_scaler returns percentage like 50.0 for 50%)
+                        prediction = prediction_pct / 100.0
                     
                     # Clip to reasonable return range (-100% to +200%)
                     prediction = np.clip(float(prediction), -1.0, 2.0)
@@ -131,7 +133,9 @@ def predict_return_for_ticker(
         if y_scaler is not None:
             # Clip to [-1, 1] before inverse transform to prevent extrapolation
             prediction_clipped = np.clip(float(prediction), -1.0, 1.0)
-            prediction = y_scaler.inverse_transform([[prediction_clipped]])[0][0]
+            prediction_pct = y_scaler.inverse_transform([[prediction_clipped]])[0][0]
+            # ✅ Convert from percentage to decimal (y_scaler returns percentage like 50.0 for 50%)
+            prediction = prediction_pct / 100.0
         
         # Clip to reasonable return range (-100% to +200%)
         prediction = np.clip(float(prediction), -1.0, 2.0)
@@ -229,7 +233,68 @@ def load_models_for_tickers(
             y_scaler_path = models_dir / f"{ticker}_y_scaler.joblib"
             
             if model_buy_path.exists():
-                models_buy[ticker] = joblib.load(model_buy_path)
+                # Handle PyTorch models specially
+                if PYTORCH_AVAILABLE and model_buy_path.with_suffix('.info').exists():
+                    try:
+                        model_info = joblib.load(model_buy_path.with_suffix('.info'))
+                        if model_info.get('model_class'):
+                            # Reconstruct PyTorch model
+                            import torch
+                            from ml_models import TCNRegressor, GRURegressor, LSTMRegressor, LSTMClassifier, GRUClassifier
+
+                            model_class_name = model_info['model_class']
+                            if model_class_name == 'TCNRegressor':
+                                model = TCNRegressor(
+                                    input_size=model_info.get('input_size', 35),
+                                    num_filters=32, kernel_size=3, num_levels=2, dropout=0.1
+                                )
+                            elif model_class_name == 'GRURegressor':
+                                model = GRURegressor(
+                                    input_size=model_info.get('input_size', 35),
+                                    hidden_size=model_info.get('hidden_size', 64),
+                                    num_layers=model_info.get('num_layers', 2),
+                                    output_size=1, dropout_rate=0.5
+                                )
+                            elif model_class_name == 'LSTMRegressor':
+                                model = LSTMRegressor(
+                                    input_size=model_info.get('input_size', 35),
+                                    hidden_size=model_info.get('hidden_size', 64),
+                                    num_layers=model_info.get('num_layers', 2),
+                                    output_size=1, dropout_rate=0.5
+                                )
+                            elif model_class_name == 'LSTMClassifier':
+                                model = LSTMClassifier(
+                                    input_size=model_info.get('input_size', 35),
+                                    hidden_size=model_info.get('hidden_size', 64),
+                                    num_layers=model_info.get('num_layers', 2),
+                                    output_size=2, dropout_rate=0.5
+                                )
+                            elif model_class_name == 'GRUClassifier':
+                                model = GRUClassifier(
+                                    input_size=model_info.get('input_size', 35),
+                                    hidden_size=model_info.get('hidden_size', 64),
+                                    num_layers=model_info.get('num_layers', 2),
+                                    output_size=2, dropout_rate=0.5
+                                )
+                            else:
+                                print(f"  ⚠️ Unknown PyTorch model class: {model_class_name}")
+                                model = None
+
+                            if model:
+                                state_dict = torch.load(model_buy_path, map_location='cpu')
+                                model.load_state_dict(state_dict)
+                                model.eval()  # Set to evaluation mode
+                                models_buy[ticker] = model
+                                print(f"  ✅ Loaded PyTorch model {model_class_name} for {ticker} from {model_buy_path}")
+                            else:
+                                models_buy[ticker] = joblib.load(model_buy_path)
+                        else:
+                            models_buy[ticker] = joblib.load(model_buy_path)
+                    except Exception as e:
+                        print(f"  ⚠️ Error loading PyTorch model for {ticker}: {e}. Falling back to joblib.")
+                        models_buy[ticker] = joblib.load(model_buy_path)
+                else:
+                    models_buy[ticker] = joblib.load(model_buy_path)
             
             if scaler_path.exists():
                 scalers[ticker] = joblib.load(scaler_path)

@@ -484,7 +484,14 @@ if PYTORCH_AVAILABLE:
                 layers.append(nn.Dropout(dropout))
                 in_ch = num_filters
             self.net = nn.Sequential(*layers)
-            self.head = nn.Linear(num_filters, 1)
+            # ✅ Add Tanh activation to bound output to [-1, 1] range like GRU/LSTM
+            self.head = nn.Sequential(
+                nn.Linear(num_filters, num_filters),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(num_filters, 1),
+                nn.Tanh()  # ✅ Bound output to [-1, 1] range
+            )
         
         def forward(self, x):
             if x.dim() == 4:
@@ -493,14 +500,6 @@ if PYTORCH_AVAILABLE:
             x = self.net(x)
             x = x.mean(dim=2)      # global average pool over time
             return self.head(x).squeeze(-1)
-
-            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-            c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-            out, _ = self.lstm(x, (h0, c0))
-            out = out[:, -1, :]
-            out = self.bn(out)
-            out = self.fc(out)
-            return out
 
 def initialize_ml_libraries():
     """Initializes ML libraries and prints their status only once."""
@@ -588,7 +587,7 @@ def initialize_ml_libraries():
         XGBClassifier = xgb.XGBClassifier
         XGBRegressor = xgb.XGBRegressor
         xgb_model_params = {
-            "model": XGBRegressor(random_state=SEED),
+            "model": XGBRegressor(random_state=SEED, nthread=1),  # nthread=1 to avoid nested parallelism
             "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
         }
         if CUDA_AVAILABLE:
@@ -898,7 +897,7 @@ def train_and_evaluate_models(
         }
     if USE_RANDOM_FOREST:
         models_and_params_local["Random Forest"] = {
-            "model": RandomForestRegressor(random_state=SEED),
+            "model": RandomForestRegressor(random_state=SEED, n_jobs=1),  # n_jobs=1 to avoid nested parallelism
             "params": {'n_estimators': [100, 200], 'max_depth': [10, 15]}  # Reduced grid
         }
     if USE_SVM:
@@ -924,7 +923,7 @@ def train_and_evaluate_models(
         # Always use regression (default behavior)
         if LGBMRegressor:
             lgbm_model_params = {
-                "model": LGBMRegressor(random_state=SEED, verbosity=-1, device='cpu'),
+                "model": LGBMRegressor(random_state=SEED, verbosity=-1, device='cpu', n_jobs=1),  # n_jobs=1 to avoid nested parallelism
                 "params": {'n_estimators': [100, 200], 'learning_rate': [0.01, 0.05, 0.1], 'max_depth': [-1, 5, 7]}
             }
             models_and_params_local["LightGBM Regressor (CPU)"] = lgbm_model_params
@@ -942,6 +941,7 @@ def train_and_evaluate_models(
         common_kwargs = {
             "random_state": SEED,
             "tree_method": "hist",  # recommended with device param
+            "nthread": 1,  # Prevent nested parallelism
         }
         if device_param:
             common_kwargs["device"] = device_param
@@ -1079,13 +1079,13 @@ def train_and_evaluate_models(
                     mse_lstm = mean_squared_error(y_true, y_pred)
                     r2_lstm = r2_score(y_true, y_pred)
                     rmse_lstm = mse_lstm ** 0.5
-                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": -mse_lstm}  # Negative MSE (higher is better)
+                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": -mse_lstm}  # Negative MSE (higher is better)
                     print(f"      📊 LSTM Regression Metrics:")
                     print(f"         MSE: {mse_lstm:.6f}")
                     print(f"         RMSE: {rmse_lstm:.6f}")
                     print(f"         R² Score: {r2_lstm:.4f} ({'Good' if r2_lstm > 0.5 else 'Poor'} - {abs(r2_lstm)*100:.1f}% variance explained)")
                 except ValueError:
-                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "auc": 0.0}
+                    models_and_params_local["LSTM"] = {"model": lstm_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": 0.0}
 
             # --- TCN Regressor (lightweight) ---
             if USE_TCN:
@@ -1168,13 +1168,13 @@ def train_and_evaluate_models(
                         mse_tcn = mean_squared_error(y_true, y_pred_tcn)
                         r2_tcn = r2_score(y_true, y_pred_tcn)
                         rmse_tcn = mse_tcn ** 0.5
-                        models_and_params_local["TCN"] = {"model": tcn_model, "scaler": dl_scaler, "auc": -mse_tcn, "params": None}
+                        models_and_params_local["TCN"] = {"model": tcn_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": -mse_tcn, "params": None}
                         print(f"      📊 TCN Regression Metrics:")
                         print(f"         MSE: {mse_tcn:.6f}")
                         print(f"         RMSE: {rmse_tcn:.6f}")
                         print(f"         R² Score: {r2_tcn:.4f}")
                     except ValueError:
-                        models_and_params_local["TCN"] = {"model": tcn_model, "scaler": dl_scaler, "auc": 0.0, "params": None}
+                        models_and_params_local["TCN"] = {"model": tcn_model, "scaler": dl_scaler, "y_scaler": y_scaler, "auc": 0.0, "params": None}
 
             if USE_GRU:
                 if perform_gru_hp_optimization and ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION:
@@ -1639,7 +1639,9 @@ def train_and_evaluate_models(
             print(f"    🔍 Optimizing {name} ({current_ml_model_index}/{total_ml_models}) - Testing {total_combinations} parameter combinations × {n_splits}-fold CV = {total_combinations * n_splits} total model trainings...")
 
             def _run_grid(estimator):
-                gs = GridSearchCV(estimator, params, cv=cv, scoring='neg_mean_squared_error', n_jobs=-1, verbose=0)
+                # Use n_jobs=1 to avoid nested parallelism deadlock when training multiple tickers in parallel
+                # The parallelism happens at the ticker level (15 processes), not within GridSearchCV
+                gs = GridSearchCV(estimator, params, cv=cv, scoring='neg_mean_squared_error', n_jobs=1, verbose=0)
                 gs.fit(X, y)
                 return gs
 
@@ -1721,7 +1723,7 @@ def train_and_evaluate_models(
         print(f"    - Alpha metrics (quick) skipped: {_e}")
 
     # If the best model is a DL model, ensure its specific scaler is returned
-    if best_model_name in ["LSTM", "GRU"]:
+    if best_model_name in ["LSTM", "GRU", "TCN"]:
         y_scaler = models_and_params_local[best_model_name].get("y_scaler", None)
         return models_and_params_local[best_model_name]["model"], models_and_params_local[best_model_name]["scaler"], y_scaler, best_hyperparams_overall, best_model_name
     else:

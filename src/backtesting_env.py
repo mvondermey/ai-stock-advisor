@@ -14,7 +14,7 @@ try:
     import torch
     import torch.nn as nn
     PYTORCH_AVAILABLE = True
-    from ml_models import LSTMClassifier, GRUClassifier, GRURegressor, CUDA_AVAILABLE # Import all model classes
+    from ml_models import LSTMClassifier, GRUClassifier, GRURegressor, LSTMRegressor, TCNRegressor, CUDA_AVAILABLE # Import all model classes
 except ImportError:
     PYTORCH_AVAILABLE = False
     CUDA_AVAILABLE = False
@@ -324,7 +324,7 @@ class RuleTradingEnv:
             return 0.0
 
         try:
-            if PYTORCH_AVAILABLE and isinstance(model, (LSTMClassifier, GRUClassifier, GRURegressor)):
+            if PYTORCH_AVAILABLE and isinstance(model, (LSTMClassifier, GRUClassifier, GRURegressor, LSTMRegressor, TCNRegressor)):
                 start_idx = max(0, i - SEQUENCE_LENGTH + 1)
                 end_idx = i + 1
                 

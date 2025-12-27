@@ -19,7 +19,7 @@ from config import (
     N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
     DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
     FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD, NUM_PROCESSES, SEQUENCE_LENGTH,
-    RETRAIN_FREQUENCY_DAYS, PREDICTION_LOOKBACK_DAYS
+    RETRAIN_FREQUENCY_DAYS, PREDICTION_LOOKBACK_DAYS, AI_STRATEGY_MIN_IMPROVEMENT_THRESHOLD_ANNUAL
 )
 from config import (
     ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, TARGET_PERCENTAGE, PERIOD_HORIZONS,
@@ -64,8 +64,8 @@ def _prepare_model_for_multiprocessing(model):
         try:
             import torch
             import numpy as np
-            from ml_models import LSTMClassifier, GRUClassifier, GRURegressor
-            if isinstance(model, (LSTMClassifier, GRUClassifier, GRURegressor)):
+            from ml_models import LSTMClassifier, GRUClassifier, GRURegressor, LSTMRegressor, TCNRegressor
+            if isinstance(model, (LSTMClassifier, GRUClassifier, GRURegressor, LSTMRegressor, TCNRegressor)):
                 # Force model to CPU first to ensure all tensors are on CPU
                 model_cpu = model.cpu()
                 
@@ -80,6 +80,50 @@ def _prepare_model_for_multiprocessing(model):
                         numpy_state_dict[key] = value
                 
                 # Extract architecture info from model and state dict
+                model_type_name = type(model_cpu).__name__
+                
+                # Handle TCNRegressor differently from RNN models
+                if model_type_name == 'TCNRegressor':
+                    # TCN uses Conv1d layers, get input_size from first conv layer
+                    input_size = None
+                    num_filters = 32
+                    kernel_size = 3
+                    num_levels = 2
+                    dropout = 0.1
+                    
+                    # Get input_size from first conv layer weight
+                    for key in numpy_state_dict.keys():
+                        if 'net.0.weight' in key:  # First Conv1d layer
+                            input_size = numpy_state_dict[key].shape[1]  # in_channels
+                            num_filters = numpy_state_dict[key].shape[0]  # out_channels
+                            break
+                    
+                    if input_size is None:
+                        # Fallback: try to get from model's first conv layer
+                        if hasattr(model_cpu, 'net') and len(model_cpu.net) > 0:
+                            first_conv = model_cpu.net[0]
+                            if hasattr(first_conv, 'in_channels'):
+                                input_size = first_conv.in_channels
+                    
+                    if input_size is None:
+                        sys.stderr.write("  ⚠️ ERROR in _prepare_model_for_multiprocessing: missing TCN input_size\n")
+                        sys.stderr.flush()
+                        return None
+                    
+                    model_info = {
+                        'type': model_type_name,
+                        'state_dict': numpy_state_dict,
+                        'input_size': input_size,
+                        'num_filters': num_filters,
+                        'kernel_size': kernel_size,
+                        'num_levels': num_levels,
+                        'dropout': dropout,
+                    }
+                    sys.stderr.write(f"  [PREP] {model_info['type']}: in={input_size}, filters={num_filters}, levels={num_levels}\n")
+                    sys.stderr.flush()
+                    return model_info
+                
+                # For RNN models (GRU, LSTM)
                 hidden_size = model_cpu.hidden_size if hasattr(model_cpu, 'hidden_size') else None
                 num_layers = model_cpu.num_layers if hasattr(model_cpu, 'num_layers') else None
                 
@@ -161,7 +205,7 @@ def _reconstruct_model_from_info(model_info, device='cuda'):
         try:
             import torch
             import numpy as np
-            from ml_models import LSTMClassifier, GRUClassifier, GRURegressor
+            from ml_models import LSTMClassifier, GRUClassifier, GRURegressor, LSTMRegressor, TCNRegressor
 
             # Resolve device
             if device == 'cuda' and not torch.cuda.is_available():
@@ -180,7 +224,15 @@ def _reconstruct_model_from_info(model_info, device='cuda'):
                     state_dict[key] = value
 
             # Reconstruct model based on type (on CPU)
-            if model_type == 'GRUClassifier':
+            if model_type == 'TCNRegressor':
+                model = TCNRegressor(
+                    model_info['input_size'],
+                    num_filters=model_info.get('num_filters', 32),
+                    kernel_size=model_info.get('kernel_size', 3),
+                    num_levels=model_info.get('num_levels', 2),
+                    dropout=model_info.get('dropout', 0.1)
+                )
+            elif model_type == 'GRUClassifier':
                 model = GRUClassifier(
                     model_info['input_size'],
                     model_info['hidden_size'],
@@ -785,11 +837,11 @@ def _run_portfolio_backtest(
             # Get latest data point
             latest_data = df_with_features.iloc[-1:]
 
-            # Scale features
+            # Scale features (pass DataFrame to preserve feature names and avoid sklearn warning)
             if scaler:
-                features_scaled = scaler.transform(latest_data.values.reshape(1, -1))
+                features_scaled = scaler.transform(latest_data)
             else:
-                features_scaled = latest_data.values.reshape(1, -1)
+                features_scaled = latest_data.values
 
             # Predict return
             if hasattr(model, 'predict'):
@@ -801,7 +853,9 @@ def _run_portfolio_backtest(
             # Unscale if y_scaler exists with clipping to prevent extrapolation
             if y_scaler and hasattr(y_scaler, 'inverse_transform'):
                 prediction_clipped = np.clip(float(prediction), -1.0, 1.0)
-                prediction = y_scaler.inverse_transform(np.array([[prediction_clipped]]))[0][0]
+                prediction_pct = y_scaler.inverse_transform(np.array([[prediction_clipped]]))[0][0]
+                # ✅ Convert from percentage to decimal (y_scaler returns percentage like 50.0 for 50%)
+                prediction = prediction_pct / 100.0
 
             # Clip to reasonable return range (-100% to +200%)
             prediction = np.clip(float(prediction), -1.0, 2.0)
@@ -1628,6 +1682,105 @@ def _run_portfolio_backtest_walk_forward(
 
                 # Check if portfolio changed (only then incur transaction costs)
                 if set(selected_stocks) != set(current_portfolio_stocks):
+                    # ✅ Rebalance gate: only rebalance if net expected improvement clears threshold
+                    # Uses annualized threshold converted to the model horizon_days, and subtracts estimated transaction costs.
+                    if current_portfolio_stocks:
+                        try:
+                            # Map all predictions for quick lookup (predictions are in decimal return units)
+                            pred_map = {t: p for t, p in predictions}
+
+                            def _avg_pred(tickers_list: List[str]) -> float:
+                                vals = [pred_map.get(t, 0.0) for t in tickers_list]
+                                return float(np.mean(vals)) if vals else 0.0
+
+                            current_expected = _avg_pred(list(current_portfolio_stocks))
+                            new_expected = _avg_pred(list(selected_stocks))
+                            expected_improvement = new_expected - current_expected
+
+                            # Convert annual threshold to horizon-specific threshold
+                            min_improvement_threshold = (1 + AI_STRATEGY_MIN_IMPROVEMENT_THRESHOLD_ANNUAL) ** (horizon_days / 365.0) - 1
+
+                            # Estimate transaction cost impact as fraction of portfolio value
+                            # (sell removed holdings + buy new holdings), using current prices.
+                            portfolio_value = float(cash_balance)
+                            for t, pos in positions.items():
+                                try:
+                                    if pos and pos.get('shares', 0) > 0:
+                                        # Use current_date price if available
+                                        td = all_tickers_data[(all_tickers_data['ticker'] == t)]
+                                        if not td.empty:
+                                            td = td.set_index('date')
+                                            price_data = td.loc[:current_date]
+                                            if not price_data.empty:
+                                                px = price_data['Close'].dropna().iloc[-1]
+                                                if pd.notna(px) and px > 0:
+                                                    portfolio_value += float(pos.get('shares', 0)) * float(px)
+                                except Exception:
+                                    continue
+
+                            # Nothing to rebalance against
+                            if portfolio_value <= 0:
+                                pass
+                            else:
+                                # Build price map for involved tickers
+                                tickers_to_price = set(current_portfolio_stocks) | set(selected_stocks)
+                                price_map = {}
+                                for t in tickers_to_price:
+                                    try:
+                                        td = all_tickers_data[(all_tickers_data['ticker'] == t)].set_index('date')
+                                        pxs = td.loc[:current_date]['Close'].dropna()
+                                        if len(pxs) > 0:
+                                            price_map[t] = float(pxs.iloc[-1])
+                                    except Exception:
+                                        continue
+
+                                stocks_to_sell = set(current_portfolio_stocks) - set(selected_stocks)
+                                stocks_to_buy = set(selected_stocks) - set(current_portfolio_stocks)
+
+                                sell_cost = 0.0
+                                sell_proceeds_net = 0.0
+                                for t in stocks_to_sell:
+                                    if t in positions and positions[t].get('shares', 0) > 0 and t in price_map:
+                                        sell_val = float(positions[t]['shares']) * float(price_map[t])
+                                        c = sell_val * TRANSACTION_COST
+                                        sell_cost += c
+                                        sell_proceeds_net += max(0.0, sell_val - c)
+
+                                cash_after_sells = float(cash_balance) + sell_proceeds_net
+
+                                buy_cost = 0.0
+                                if stocks_to_buy:
+                                    # Allocate available cash across buys using prediction weights (same logic as execution)
+                                    buy_preds = {t: float(pred_map.get(t, 0.0)) for t in stocks_to_buy}
+                                    min_pred = min(buy_preds.values()) if buy_preds else 0.0
+                                    if min_pred < 0:
+                                        buy_preds = {t: (p - min_pred + 0.01) for t, p in buy_preds.items()}
+                                    total_pred = sum(buy_preds.values())
+                                    if total_pred > 0:
+                                        weights = {t: p / total_pred for t, p in buy_preds.items()}
+                                    else:
+                                        weights = {t: 1.0 / len(stocks_to_buy) for t in stocks_to_buy}
+
+                                    for t in stocks_to_buy:
+                                        w = float(weights.get(t, 0.0))
+                                        buy_val = cash_after_sells * w
+                                        buy_cost += buy_val * TRANSACTION_COST
+
+                                estimated_cost_frac = (sell_cost + buy_cost) / portfolio_value
+                                net_expected_improvement = expected_improvement - estimated_cost_frac
+
+                                if net_expected_improvement < min_improvement_threshold:
+                                    if day_count % 5 == 0 or day_count <= 3:
+                                        print(f"   💤 AI Strategy: Skipping rebalance (net improvement too small)")
+                                        print(f"      Expected improvement: {expected_improvement:+.2%} over {horizon_days}d")
+                                        print(f"      Est. txn cost impact: {estimated_cost_frac:+.2%}")
+                                        print(f"      Net improvement: {net_expected_improvement:+.2%} < threshold {min_improvement_threshold:+.2%} (annual {AI_STRATEGY_MIN_IMPROVEMENT_THRESHOLD_ANNUAL:+.1%})")
+                                    # Do not rebalance; keep current portfolio
+                                    selected_stocks = current_portfolio_stocks
+                                    continue
+                        except Exception as e:
+                            print(f"   ⚠️ AI Strategy rebalance gate failed: {e}. Proceeding with rebalance.")
+
                     rebalance_count += 1
                     print(f"📊 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): New portfolio: {selected_stocks}")
                     old_portfolio = current_portfolio_stocks.copy()
@@ -1646,6 +1799,9 @@ def _run_portfolio_backtest_walk_forward(
 
                         # Update cash balance after trades
                         cash_balance = executed_trades['cash_balance']
+                        # ✅ Track total transaction costs for AI Strategy (used in final summary)
+                        # Note: _execute_portfolio_rebalance returns per-rebalance costs; accumulate here.
+                        ai_transaction_costs += float(executed_trades.get('transaction_costs', 0.0) or 0.0)
 
                         if old_portfolio:
                             print(f"   🔄 Rebalanced from {old_portfolio} to {selected_stocks}")
@@ -2014,23 +2170,45 @@ def _run_portfolio_backtest_walk_forward(
                         if not current_data.empty:
                             current_price = current_data['Close'].iloc[-1]
                             
+                            # Validate current price
+                            if pd.isna(current_price) or current_price <= 0:
+                                # Skip if current price is invalid
+                                continue
+                            
                             # Future price (if available in our data)
                             future_data = ticker_data.loc[:future_date]
                             if not future_data.empty and len(future_data) > len(current_data):
                                 future_price = future_data['Close'].iloc[-1]
-                                actual_return = (future_price / current_price - 1)
                                 
-                                # Calculate Buy & Hold return for comparison
-                                bh_return = actual_return  # Same as actual
+                                # Check if future price is valid
+                                if pd.isna(future_price) or future_price <= 0:
+                                    # Future price exists but is invalid - mark as NaN
+                                    actual_return = np.nan
+                                    bh_return = np.nan
+                                    future_price = np.nan
+                                else:
+                                    actual_return = (future_price / current_price - 1)
+                                    bh_return = actual_return  # Same as actual
                                 
                                 prediction_results.append({
                                     'ticker': ticker,
                                     'predicted_return': predicted_return,
                                     'actual_return': actual_return,
                                     'bh_return': bh_return,
-                                    'prediction_error': abs(predicted_return - actual_return),
+                                    'prediction_error': abs(predicted_return - actual_return) if not pd.isna(actual_return) else np.nan,
                                     'current_price': current_price,
                                     'future_price': future_price
+                                })
+                            else:
+                                # Future data not available yet - still show the prediction but mark actual as NaN
+                                prediction_results.append({
+                                    'ticker': ticker,
+                                    'predicted_return': predicted_return,
+                                    'actual_return': np.nan,
+                                    'bh_return': np.nan,
+                                    'prediction_error': np.nan,
+                                    'current_price': current_price,
+                                    'future_price': np.nan
                                 })
                 except Exception:
                     continue
@@ -2046,12 +2224,21 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   {'Ticker':<8} {'AI Predicted':<14} {'Buy & Hold':<12} {'Error':<10} {'Direction':<10}")
                     print(f"   {'-'*65}")
                     for res in prediction_results[:5]:  # Show top 5
-                        # Check if direction is correct
-                        pred_up = res['predicted_return'] > 0
-                        actual_up = res['bh_return'] > 0
-                        direction = "✓" if pred_up == actual_up else "✗"
-                        print(f"   {res['ticker']:<8} {res['predicted_return']:>12.2%}  {res['bh_return']:>10.2%}  "
-                              f"{res['prediction_error']:>8.2%}  {direction:^10}")
+                        # Handle NaN values gracefully in display
+                        if pd.isna(res['bh_return']):
+                            bh_str = "N/A".rjust(10)
+                            error_str = "N/A".rjust(8)
+                            direction = "?"
+                        else:
+                            # Check if direction is correct
+                            pred_up = res['predicted_return'] > 0
+                            actual_up = res['bh_return'] > 0
+                            direction = "✓" if pred_up == actual_up else "✗"
+                            bh_str = f"{res['bh_return']:>10.2%}"
+                            error_str = f"{res['prediction_error']:>8.2%}"
+                        
+                        print(f"   {res['ticker']:<8} {res['predicted_return']:>12.2%}  {bh_str}  "
+                              f"{error_str}  {direction:^10}")
         
         # Periodic progress update
         if day_count % 50 == 0:
@@ -2074,34 +2261,52 @@ def _run_portfolio_backtest_walk_forward(
                 all_predictions.extend(day_log['results'])
         
         if all_predictions:
-            # Calculate statistics
-            avg_predicted = np.mean([p['predicted_return'] for p in all_predictions])
-            avg_bh = np.mean([p['bh_return'] for p in all_predictions])
-            avg_error = np.mean([p['prediction_error'] for p in all_predictions])
+            # Filter out predictions where actual/bh_return is NaN (data not yet available)
+            predictions_with_actuals = [p for p in all_predictions if not pd.isna(p['bh_return'])]
             
-            # Direction accuracy (did we predict up/down correctly?)
-            correct_direction = sum(1 for p in all_predictions 
-                                   if (p['predicted_return'] > 0 and p['bh_return'] > 0) or 
-                                      (p['predicted_return'] < 0 and p['bh_return'] < 0))
-            direction_accuracy = (correct_direction / len(all_predictions)) * 100
+            # Calculate statistics only for predictions with actual data
+            if predictions_with_actuals:
+                avg_predicted = np.mean([p['predicted_return'] for p in predictions_with_actuals])
+                avg_bh = np.mean([p['bh_return'] for p in predictions_with_actuals])
+                avg_error = np.mean([p['prediction_error'] for p in predictions_with_actuals])
+                
+                # Direction accuracy (did we predict up/down correctly?)
+                correct_direction = sum(1 for p in predictions_with_actuals
+                                       if (p['predicted_return'] > 0 and p['bh_return'] > 0) or 
+                                          (p['predicted_return'] < 0 and p['bh_return'] < 0))
+                direction_accuracy = (correct_direction / len(predictions_with_actuals)) * 100
+            else:
+                # No actuals available yet
+                avg_predicted = np.mean([p['predicted_return'] for p in all_predictions])
+                avg_bh = np.nan
+                avg_error = np.nan
+                correct_direction = 0
+                direction_accuracy = 0.0
             
             print(f"Total Predictions Made: {len(all_predictions)}")
+            print(f"Predictions with Actual Data Available: {len(predictions_with_actuals)}")
             print(f"Average AI Predicted Return: {avg_predicted:.2%}")
-            print(f"Average Buy & Hold Return: {avg_bh:.2%}")
-            print(f"Average Prediction Error: {avg_error:.2%}")
-            print(f"Direction Accuracy: {direction_accuracy:.1f}% ({correct_direction}/{len(all_predictions)})")
+            if not pd.isna(avg_bh):
+                print(f"Average Buy & Hold Return: {avg_bh:.2%}")
+                print(f"Average Prediction Error: {avg_error:.2%}")
+                print(f"Direction Accuracy: {direction_accuracy:.1f}% ({correct_direction}/{len(predictions_with_actuals)})")
+            else:
+                print(f"Average Buy & Hold Return: N/A (no actual data available yet)")
+                print(f"Average Prediction Error: N/A")
+                print(f"Direction Accuracy: N/A")
             
-            # Show best and worst predictions
-            sorted_by_error = sorted(all_predictions, key=lambda x: x['prediction_error'])
-            print(f"\n🎯 Best Predictions (lowest error):")
-            for p in sorted_by_error[:3]:
-                print(f"   {p['ticker']}: AI Predicted {p['predicted_return']:.2%}, "
-                      f"B&H {p['bh_return']:.2%}, Error {p['prediction_error']:.2%}")
-            
-            print(f"\n❌ Worst Predictions (highest error):")
-            for p in sorted_by_error[-3:]:
-                print(f"   {p['ticker']}: AI Predicted {p['predicted_return']:.2%}, "
-                      f"B&H {p['bh_return']:.2%}, Error {p['prediction_error']:.2%}")
+            # Show best and worst predictions (only for predictions with actuals)
+            if predictions_with_actuals:
+                sorted_by_error = sorted(predictions_with_actuals, key=lambda x: x['prediction_error'])
+                print(f"\n🎯 Best Predictions (lowest error):")
+                for p in sorted_by_error[:3]:
+                    print(f"   {p['ticker']}: AI Predicted {p['predicted_return']:.2%}, "
+                          f"B&H {p['bh_return']:.2%}, Error {p['prediction_error']:.2%}")
+                
+                print(f"\n❌ Worst Predictions (highest error):")
+                for p in sorted_by_error[-3:]:
+                    print(f"   {p['ticker']}: AI Predicted {p['predicted_return']:.2%}, "
+                          f"B&H {p['bh_return']:.2%}, Error {p['prediction_error']:.2%}")
             
             print(f"=" * 80)
         else:
@@ -2922,6 +3127,7 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
     if stock_performance_tracking is None:
         stock_performance_tracking = {}
     transaction_costs = 0.0
+    ai_transaction_costs = 0.0  # Initialize AI-specific transaction costs
     sold_stocks = []
     bought_stocks = []
 
@@ -2964,11 +3170,13 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
                 
                 # ✅ NEW: Finalize contribution tracking for sold stock
                 if ticker in stock_performance_tracking:
-                    entry_value = stock_performance_tracking[ticker].get('entry_value', 0)
-                    if entry_value > 0:
-                        final_contribution = net_sell_value - entry_value - stock_performance_tracking[ticker].get('total_invested', 0)
-                        stock_performance_tracking[ticker]['contribution'] += final_contribution
-                        stock_performance_tracking[ticker]['exit_value'] = net_sell_value
+                    # total_invested already includes entry_value (+ transaction costs).
+                    # P&L for a completed round-trip should therefore be:
+                    #   net_sell_value - total_invested
+                    total_invested = stock_performance_tracking[ticker].get('total_invested', 0.0) or 0.0
+                    final_contribution = net_sell_value - total_invested
+                    stock_performance_tracking[ticker]['contribution'] += final_contribution
+                    stock_performance_tracking[ticker]['exit_value'] = net_sell_value
 
                 # Update cash and positions
                 cash_balance += net_sell_value
@@ -3069,6 +3277,7 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
     return {
         'cash_balance': cash_balance,
         'transaction_costs': transaction_costs,
+        'ai_transaction_costs': ai_transaction_costs,  # Return AI-specific transaction costs
         'sold_stocks': sold_stocks,
         'bought_stocks': bought_stocks,
         'positions': positions
@@ -3079,7 +3288,7 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
     """Quick prediction of return for stock reselection during walk-forward backtest."""
     # Import PyTorch models if available
     if PYTORCH_AVAILABLE:
-        from ml_models import TCNRegressor, GRURegressor, LSTMClassifier, GRUClassifier
+        from ml_models import TCNRegressor, GRURegressor, LSTMRegressor, LSTMClassifier, GRUClassifier
     
     try:
         if model is None:
@@ -3157,7 +3366,8 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
 
         # Scale features
         try:
-            features_scaled = scaler.transform(latest_data.values.reshape(1, -1))
+            # Pass DataFrame directly to preserve feature names and avoid sklearn warning
+            features_scaled = scaler.transform(latest_data)
             print(f"   🔧 {ticker}: Features scaled successfully, shape: {features_scaled.shape}")
         except Exception as e:
             print(f"   ❌ {ticker}: Scaling failed: {e}")
@@ -3166,7 +3376,7 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
         # Predict return
         try:
             # Check if model is a PyTorch sequence model (TCN, GRU, LSTM)
-            if PYTORCH_AVAILABLE and isinstance(model, (TCNRegressor, GRURegressor, LSTMClassifier, GRUClassifier)):
+            if PYTORCH_AVAILABLE and isinstance(model, (TCNRegressor, GRURegressor, LSTMRegressor, LSTMClassifier, GRUClassifier)):
                 import torch
                 
                 # For sequence models, we need a sequence of data, not just the latest point
@@ -3186,8 +3396,8 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
                     # Get the last sequence_length rows
                     sequence_data = df_with_features[scaler_features].tail(sequence_length)
                 
-                # Scale the entire sequence
-                sequence_scaled = scaler.transform(sequence_data.values)
+                # Scale the entire sequence (pass DataFrame to preserve feature names)
+                sequence_scaled = scaler.transform(sequence_data)
                 print(f"   🔧 {ticker}: Sequence scaled, shape: {sequence_scaled.shape}")
                 
                 # Convert to PyTorch tensor with shape (batch_size=1, sequence_length, num_features)
@@ -3225,8 +3435,10 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
                 prediction_clipped = np.clip(float(prediction), -1.0, 1.0)
                 if abs(prediction_clipped - float(prediction)) > 0.01:
                     print(f"   ⚠️ {ticker}: Clipped prediction from {float(prediction):.4f} to {prediction_clipped:.4f}")
-                prediction = y_scaler.inverse_transform(np.array([[prediction_clipped]]))[0][0]
-                print(f"   🔄 {ticker}: Y-scaler applied: {float(prediction):.4f}")
+                prediction_pct = y_scaler.inverse_transform(np.array([[prediction_clipped]]))[0][0]
+                # ✅ Convert from percentage to decimal (y_scaler returns percentage like 50.0 for 50%)
+                prediction = prediction_pct / 100.0
+                print(f"   🔄 {ticker}: Y-scaler applied: {prediction_pct:.4f}% → {float(prediction):.4f} decimal")
 
             # ✅ FIX: Final validation - clip to reasonable return range (-100% to +200%)
             # No stock can lose more than 100%, and >200% returns are rare outliers

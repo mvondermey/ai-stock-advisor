@@ -57,14 +57,21 @@ ALPACA_STOCKS_LIMIT = 100  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = ["NASDAQ"]  # NASDAQ only
-N_TOP_TICKERS           = 5       # Testing with 1 stock to verify predictions work
+N_TOP_TICKERS           = 20       # Testing with 1 stock to verify predictions work
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
 
 # --- Parallel Processing
 from multiprocessing import cpu_count
-NUM_PROCESSES           = max(1, cpu_count() - 5)  # Use all but 2 CPU cores for parallel processing
+# ⚠️ Limit to 10 processes when using GPU to avoid GPU memory exhaustion
+# PyTorch models (LSTM/GRU/TCN) load on GPU, and too many parallel processes cause OOM kills
+NUM_PROCESSES           = 10  # Limited for GPU training - each process needs GPU memory
+
+# --- GPU Concurrency Control ---
+# When using multiprocessing with a single GPU, too many concurrent GPU trainers can deadlock under WSL.
+# This limits how many worker processes are allowed to execute GPU-heavy training concurrently.
+GPU_MAX_CONCURRENT_TRAINING_WORKERS = 3
 
 # --- Backtest & training windows
 BACKTEST_DAYS           = 90         # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr)
@@ -84,20 +91,20 @@ RETRAIN_FREQUENCY_DAYS = 5  # Bi-weekly retraining - consider 20 for S&P 500
 ENABLE_1YEAR_BACKTEST   = True   # ✅ Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = True  # Disabled - individual stock models not needed (AI Portfolio has its own training)
+ENABLE_1YEAR_TRAINING   = False  # ❌ DISABLED - Not needed (AI Portfolio has its own training)
 
 # --- Portfolio Strategy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
-ENABLE_AI_STRATEGY      = True   # Main AI Strategy (walk-forward backtest with trained models) - DISABLED
-ENABLE_AI_PORTFOLIO     = True    # AI-based stock selection and trading - ENABLED
-ENABLE_STATIC_BH        = True   # Static Buy & Hold (top 3 at start, hold forever) - DISABLED
-ENABLE_DYNAMIC_BH_1Y    = True   # Dynamic BH rebalancing based on 1-year performance - DISABLED
-ENABLE_DYNAMIC_BH_3M    = True    # Dynamic BH rebalancing based on 3-month performance - ENABLED for comparison
-ENABLE_DYNAMIC_BH_1M    = True    # Dynamic BH rebalancing based on 1-month performance - DISABLED
-ENABLE_RISK_ADJ_MOM     = True   # Risk-Adjusted Momentum (6-month returns adjusted for volatility) - DISABLED
-ENABLE_MEAN_REVERSION   = True   # Mean Reversion: Buy oversold stocks, sell overbought (DISABLED - poor performance)
-ENABLE_SEASONAL         = True  # Seasonal: "Sell in May and Go Away" strategy
-ENABLE_QUALITY_MOM      = True   # Quality + Momentum: Combine quality factors with momentum
+ENABLE_AI_STRATEGY      = True  # ✅ ENABLED - Main AI Strategy
+ENABLE_AI_PORTFOLIO     = False   # ✅ ENABLED - AI Portfolio meta-learning strategy
+ENABLE_STATIC_BH        = True   # ✅ ENABLED - Static Buy & Hold benchmark
+ENABLE_DYNAMIC_BH_1Y    = True   # ✅ ENABLED - Dynamic BH rebalancing based on 1-year performance
+ENABLE_DYNAMIC_BH_3M    = True   # ✅ ENABLED - Dynamic BH rebalancing based on 3-month performance
+ENABLE_DYNAMIC_BH_1M    = True   # ✅ ENABLED - Dynamic BH rebalancing based on 1-month performance
+ENABLE_RISK_ADJ_MOM     = True   # ✅ ENABLED - Risk-Adjusted Momentum strategy
+ENABLE_MEAN_REVERSION   = True   # ✅ ENABLED - Mean Reversion strategy
+ENABLE_SEASONAL         = True   # ✅ ENABLED - Seasonal strategy
+ENABLE_QUALITY_MOM      = True   # ✅ ENABLED - Quality + Momentum strategy
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -123,7 +130,28 @@ PREDICTION_LOOKBACK_DAYS = 120
 # --- AI Portfolio Rebalancing Strategy knobs ---
 # Check portfolio daily but only rebalance when stocks actually change (cost-effective).
 # Set to 1 for daily checking, higher values for less frequent monitoring.
-AI_REBALANCE_FREQUENCY_DAYS = 1
+AI_REBALANCE_FREQUENCY_DAYS = 1  # Daily rebalancing
+
+# AI Portfolio Rebalancing Threshold
+AI_PORTFOLIO_MIN_IMPROVEMENT_THRESHOLD_ANNUAL = 0.05  # 5% annualized improvement required
+# ✅ Only rebalance if new portfolio is expected to outperform current by 5% annually
+# This prevents excessive trading on marginal improvements
+
+# --- AI Strategy (3-stock daily selection) Rebalancing Threshold ---
+# Only rebalance the 3-stock AI Strategy portfolio if (expected improvement - estimated transaction costs)
+# clears this annualized threshold (converted to the model horizon in days).
+AI_STRATEGY_MIN_IMPROVEMENT_THRESHOLD_ANNUAL = 0.05  # 5% annualized improvement required
+# Formula: Converts to probability score difference based on evaluation window
+
+# AI Portfolio Training Parameters
+AI_PORTFOLIO_EVALUATION_WINDOW = 30  # Days to evaluate portfolio performance during training
+AI_PORTFOLIO_STEP_SIZE = 15  # Days between training samples (sliding window)
+AI_PORTFOLIO_PERFORMANCE_THRESHOLD_ANNUAL = 0.50  # ANNUALIZED return threshold (0.50 = 50% per year AFTER costs)
+# ✅ The code automatically converts this to the evaluation window:
+#    Formula: period_threshold = (1 + annual)^(days/365) - 1
+#    Example: 50% annual → (1.50)^(30/365) - 1 = 3.39% for 30-day window
+#    Higher values = more selective (fewer "good" portfolios), lower = more examples
+
 # ✅ REGRESSION MODE: Probability thresholds removed - using simplified trading logic
 TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification (balanced for 3-day moves)
 # USE_MODEL_GATE removed - using simplified buy-and-hold logic
@@ -171,7 +199,7 @@ ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = False  # Enable hyperparameter search f
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False     # Disable SHAP (causes errors with XGBoost Regressor)
 FORCE_TRAINING          = True
-CONTINUE_TRAINING_FROM_EXISTING = False
+CONTINUE_TRAINING_FROM_EXISTING = False  # Force fresh training to avoid loading corrupted PyTorch models
 # Threshold optimization removed - system uses simplified buy-and-hold
 
 # --- Live Trading Model Selection ---
