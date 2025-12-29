@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from unittest.runner import TextTestRunner
 
 # ============================
 # Configuration / Hyperparams
@@ -16,6 +17,9 @@ TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
 VALID_TICKERS_CACHE_PATH = Path("logs/valid_tickers.json")
 CACHE_DAYS              = 7
 
+# Master switch: enable price caching to reduce downloads (uses `data_cache/` CSVs)
+ENABLE_PRICE_CACHE       = True
+
 # Alpaca API credentials
 ALPACA_API_KEY          = "PK3FDQLRMEVFOAOU7VHD3Z6THE"
 ALPACA_SECRET_KEY       = "8By7ituNTmspLsWc191hQfviD3xaNNdd2opB8tJAfmK6"
@@ -26,10 +30,20 @@ TWELVEDATA_API_KEY      = "aed912386d7c47939ebc28a86a96a021"
 # --- ML Library Availability Flags (initialized to False, updated in main.py) ---
 ALPACA_AVAILABLE = False
 TWELVEDATA_SDK_AVAILABLE = True  # Runtime detection will confirm availability
+# --- GPU vs CPU Control (must be set BEFORE imports) ---
+# Force PyTorch models (LSTM/TCN/GRU) to run on CPU even if GPU is available
+# For 5000 tickers: CPU is often FASTER due to higher parallelism (15 workers vs 3 GPU workers)
+FORCE_CPU = True  # True = CPU only for PyTorch, False = use GPU if available
+
+# XGBoost GPU control (independent of FORCE_CPU)
+# XGBoost gpu_hist is stable and fast - keep enabled unless you have GPU memory issues
+XGBOOST_USE_GPU = True  # True = use gpu_hist, False = use hist (CPU)
+
 try:
     import torch
     PYTORCH_AVAILABLE = True
-    CUDA_AVAILABLE = torch.cuda.is_available()
+    # Respect FORCE_CPU setting - if True, treat as if CUDA is not available
+    CUDA_AVAILABLE = False if FORCE_CPU else torch.cuda.is_available()
 except ImportError:
     PYTORCH_AVAILABLE = False
     CUDA_AVAILABLE = False
@@ -38,9 +52,9 @@ USE_GRU = False
 
 # --- Universe / selection
 MARKET_SELECTION = {
-    "ALPACA_STOCKS": False,
+    "ALPACA_STOCKS": True,
     "NASDAQ_ALL": False,
-    "NASDAQ_100": True,       # ~100 stocks
+    "NASDAQ_100": False,       # ~100 stocks
     "SP500": False,            # ~500 stocks  
     "DOW_JONES": False,        # ~30 stocks
     "POPULAR_ETFS": False,
@@ -53,11 +67,11 @@ MARKET_SELECTION = {
 
 # If ALPACA_STOCKS is enabled, Alpaca can return thousands of symbols.
 # Set very high to effectively include (almost) all Alpaca-tradable US equities.
-ALPACA_STOCKS_LIMIT = 100  # High limit = train models for ALL tradable stocks
+ALPACA_STOCKS_LIMIT = 20000  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
-ALPACA_STOCKS_EXCHANGES = ["NASDAQ"]  # NASDAQ only
-N_TOP_TICKERS           = 20       # Testing with 1 stock to verify predictions work
+ALPACA_STOCKS_EXCHANGES = []  # NASDAQ only
+N_TOP_TICKERS           = 20000       # Testing with 1 stock to verify predictions work
 BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -66,12 +80,57 @@ PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls f
 from multiprocessing import cpu_count
 # ⚠️ Limit to 10 processes when using GPU to avoid GPU memory exhaustion
 # PyTorch models (LSTM/GRU/TCN) load on GPU, and too many parallel processes cause OOM kills
-NUM_PROCESSES           = 10  # Limited for GPU training - each process needs GPU memory
+# Use all but 5 CPU cores (keep some headroom for OS, data fetch, and GPU driver overhead)
+NUM_PROCESSES           = max(1, cpu_count() - 5)
 
-# --- GPU Concurrency Control ---
-# When using multiprocessing with a single GPU, too many concurrent GPU trainers can deadlock under WSL.
-# This limits how many worker processes are allowed to execute GPU-heavy training concurrently.
-GPU_MAX_CONCURRENT_TRAINING_WORKERS = 3
+# --- GPU Concurrency Control for PyTorch ---
+# When using multiprocessing with PyTorch on GPU, too many concurrent trainers can cause OOM.
+# This limits how many worker processes can run PyTorch models on GPU simultaneously.
+# ⚠️ Only applies when FORCE_CPU = False (PyTorch uses GPU)
+# ⚠️ Does NOT apply to XGBoost gpu_hist (XGBoost manages its own GPU memory)
+GPU_MAX_CONCURRENT_TRAINING_WORKERS = 2  # Max 3 PyTorch models on GPU at once
+
+# Limit GPU memory per training worker process (PyTorch).
+# - Set to None to auto-calculate: 0.95 / GPU_MAX_CONCURRENT_TRAINING_WORKERS (recommended)
+# - Set to a float in (0, 1] to hard-cap each worker (overrides auto-calculation)
+GPU_PER_PROCESS_MEMORY_FRACTION = 1  # Auto: 0.95/4 = 23.75% per worker with 4 concurrent
+
+# --- GPU memory cache behavior (PyTorch) ---
+# `torch.cuda.empty_cache()` can reduce fragmentation but often causes brief utilization dips.
+# For max throughput, prefer leaving cache intact unless you hit OOM/fragmentation issues.
+GPU_CLEAR_CACHE_ON_WORKER_INIT = False
+GPU_CLEAR_CACHE_AFTER_EACH_TICKER = False  # Re-enable to free VRAM between tickers
+
+# Multiprocessing stability: recycle worker processes periodically to avoid RAM creep / leaked semaphores
+# when training many tickers under WSL + spawn.
+# - Set to 1 for max stability (one ticker per worker process).
+# - Set to None to disable recycling (faster, but may accumulate memory/semaphores).
+TRAINING_POOL_MAXTASKSPERCHILD = None  # Disable recycling
+
+# Per-ticker training timeout (seconds). If a ticker takes longer, it will be skipped.
+# - Set to 600 (10 min) for normal use (handles slow XGBoost GridSearchCV)
+# - Set to 1800 (30 min) for very large datasets or complex models
+# - Set to None to disable timeout (not recommended - can hang forever)
+PER_TICKER_TIMEOUT = 600  # 10 minutes max per ticker
+
+# Training worker process count (separate from global NUM_PROCESSES).
+# For 5000 tickers, use parallel training. Models are saved to disk and loaded back (no pickling overhead).
+#
+# Worker count strategy:
+# - All CPU (FORCE_CPU=True, XGBOOST_USE_GPU=False): 15 workers
+# - PyTorch CPU + XGBoost GPU (FORCE_CPU=True, XGBOOST_USE_GPU=True): 10 workers
+# - PyTorch GPU + XGBoost CPU (FORCE_CPU=False, XGBOOST_USE_GPU=False): 3 workers ← YOUR CURRENT SETUP
+# - PyTorch GPU + XGBoost GPU (FORCE_CPU=False, XGBOOST_USE_GPU=True): 3 workers (NOT RECOMMENDED - causes OOM)
+#
+if FORCE_CPU and not XGBOOST_USE_GPU:
+    TRAINING_NUM_PROCESSES = NUM_PROCESSES  # Full CPU, no GPU bottleneck
+elif FORCE_CPU and XGBOOST_USE_GPU:
+    TRAINING_NUM_PROCESSES = NUM_PROCESSES  # PyTorch on CPU, XGBoost on GPU (current setup)
+else:
+    TRAINING_NUM_PROCESSES = GPU_MAX_CONCURRENT_TRAINING_WORKERS  # PyTorch on GPU (limited by VRAM)
+
+# AI Portfolio: avoid nested joblib multiprocessing when the main program is already parallel.
+AI_PORTFOLIO_N_JOBS = 1
 
 # --- Backtest & training windows
 BACKTEST_DAYS           = 90         # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr)
@@ -91,20 +150,22 @@ RETRAIN_FREQUENCY_DAYS = 5  # Bi-weekly retraining - consider 20 for S&P 500
 ENABLE_1YEAR_BACKTEST   = True   # ✅ Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = False  # ❌ DISABLED - Not needed (AI Portfolio has its own training)
+ENABLE_1YEAR_TRAINING   = True  # ❌ DISABLED - Not needed (AI Portfolio has its own training)
 
 # --- Portfolio Strategy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
-ENABLE_AI_STRATEGY      = True  # ✅ ENABLED - Main AI Strategy
-ENABLE_AI_PORTFOLIO     = False   # ✅ ENABLED - AI Portfolio meta-learning strategy
+# All strategies enabled EXCEPT AI Strategy
+ENABLE_AI_STRATEGY      = False  # ❌ DISABLED - Not using AI Strategy
+ENABLE_AI_PORTFOLIO     = True   # ✅ ENABLED - AI Portfolio meta-learning
 ENABLE_STATIC_BH        = True   # ✅ ENABLED - Static Buy & Hold benchmark
-ENABLE_DYNAMIC_BH_1Y    = True   # ✅ ENABLED - Dynamic BH rebalancing based on 1-year performance
-ENABLE_DYNAMIC_BH_3M    = True   # ✅ ENABLED - Dynamic BH rebalancing based on 3-month performance
-ENABLE_DYNAMIC_BH_1M    = True   # ✅ ENABLED - Dynamic BH rebalancing based on 1-month performance
-ENABLE_RISK_ADJ_MOM     = True   # ✅ ENABLED - Risk-Adjusted Momentum strategy
-ENABLE_MEAN_REVERSION   = True   # ✅ ENABLED - Mean Reversion strategy
+ENABLE_DYNAMIC_BH_1Y    = True   # ✅ ENABLED - Dynamic BH 1-year
+ENABLE_DYNAMIC_BH_3M    = True   # ✅ ENABLED - Dynamic BH 3-month
+ENABLE_DYNAMIC_BH_1M    = True   # ✅ ENABLED - Dynamic BH 1-month
+ENABLE_RISK_ADJ_MOM     = True   # ✅ ENABLED - Risk-Adjusted Momentum
+ENABLE_MEAN_REVERSION   = True   # ✅ ENABLED - Mean Reversion
 ENABLE_SEASONAL         = True   # ✅ ENABLED - Seasonal strategy
-ENABLE_QUALITY_MOM      = True   # ✅ ENABLED - Quality + Momentum strategy
+ENABLE_QUALITY_MOM      = True   # ✅ ENABLED - Quality + Momentum
+ENABLE_MOMENTUM_AI_HYBRID = True  # ✅ ENABLED - NEW: Momentum + AI Hybrid
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -144,13 +205,23 @@ AI_STRATEGY_MIN_IMPROVEMENT_THRESHOLD_ANNUAL = 0.05  # 5% annualized improvement
 # Formula: Converts to probability score difference based on evaluation window
 
 # AI Portfolio Training Parameters
-AI_PORTFOLIO_EVALUATION_WINDOW = 30  # Days to evaluate portfolio performance during training
-AI_PORTFOLIO_STEP_SIZE = 15  # Days between training samples (sliding window)
+AI_PORTFOLIO_EVALUATION_WINDOW = 60  # Days to evaluate portfolio performance during training (more stable)
+AI_PORTFOLIO_STEP_SIZE = 7  # Days between training samples (weekly = more training data)
 AI_PORTFOLIO_PERFORMANCE_THRESHOLD_ANNUAL = 0.50  # ANNUALIZED return threshold (0.50 = 50% per year AFTER costs)
 # ✅ The code automatically converts this to the evaluation window:
 #    Formula: period_threshold = (1 + annual)^(days/365) - 1
 #    Example: 50% annual → (1.50)^(30/365) - 1 = 3.39% for 30-day window
 #    Higher values = more selective (fewer "good" portfolios), lower = more examples
+
+# --- Momentum + AI Hybrid Strategy Parameters ---
+MOMENTUM_AI_HYBRID_TOP_N = 10  # Select top N stocks by momentum
+MOMENTUM_AI_HYBRID_PORTFOLIO_SIZE = 5  # Hold 5 stocks at a time (diversification)
+MOMENTUM_AI_HYBRID_BUY_THRESHOLD = 0.02  # Buy if AI predicts >2% return
+MOMENTUM_AI_HYBRID_SELL_THRESHOLD = -0.01  # Sell if AI predicts <-1% return
+MOMENTUM_AI_HYBRID_REBALANCE_DAYS = 7  # Check weekly (not daily = less transaction costs)
+MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK = 90  # 3-month momentum for stock ranking
+MOMENTUM_AI_HYBRID_STOP_LOSS = 0.10  # 10% stop loss from entry
+MOMENTUM_AI_HYBRID_TRAILING_STOP = 0.08  # 8% trailing stop once in profit
 
 # ✅ REGRESSION MODE: Probability thresholds removed - using simplified trading logic
 TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification (balanced for 3-day moves)
@@ -161,17 +232,17 @@ MARKET_FILTER_SMA       = 200
 USE_PERFORMANCE_BENCHMARK = True  # Disable strict benchmark filtering for small universes
 
 # --- ML Model Selection Flags ---
-USE_LOGISTIC_REGRESSION = False
-USE_SVM                 = True       # SVR for regression, SVM for classification
-USE_MLP_CLASSIFIER      = False      # MLPRegressor for regression, MLPClassifier for classification (disabled - using regression)
-USE_LIGHTGBM            = False      # enable LightGBM
-USE_XGBOOST             = True       # enable XGBoost
-USE_LSTM                = True
-USE_GRU                 = False      # GRU disabled
-USE_RANDOM_FOREST       = True       # enable Random Forest
-USE_TCN                 = True       # Temporal Convolutional Network (sequence)
-USE_ELASTIC_NET         = True       # Baseline linear regressor (tabular)
-USE_RIDGE               = True       # Baseline linear regressor (tabular)
+USE_LOGISTIC_REGRESSION = False      # Not needed - too simple
+USE_SVM                 = False      # SVR slower than XGBoost, usually worse
+USE_MLP_CLASSIFIER      = False      # Less effective than LSTM/TCN for time series
+USE_LIGHTGBM            = True       # ✅ ENABLED - Best for AI Portfolio meta-learning
+USE_XGBOOST             = True       # ✅ KEEP - Best traditional ML
+USE_LSTM                = True       # ✅ KEEP - Best deep learning for sequences
+USE_GRU                 = False      # Redundant - LSTM is enough
+USE_RANDOM_FOREST       = True       # ✅ KEEP - Good ensemble baseline
+USE_TCN                 = True       # ✅ KEEP - Fast temporal model
+USE_ELASTIC_NET         = False      # Too simple - linear models don't capture patterns
+USE_RIDGE               = False      # Too simple - linear models don't capture patterns
 
 # Simple Rule-Based Strategy removed - using AI strategy only
 

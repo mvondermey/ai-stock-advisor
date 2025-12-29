@@ -393,17 +393,16 @@ def run_live_trading():
         failed_tickers = []
 
         for idx, ticker in enumerate(valid_tickers, 1):
-            # Check if cache exists and is recent
+            # Check if cache exists and always update it for live trading
             cache_file = Path("data_cache") / f"{ticker}.csv"
             cache_status = "cached"
             if not cache_file.exists():
                 cache_status = "downloading"
                 print(f"   [{idx}/{len(valid_tickers)}] {ticker}: {cache_status}...")
             else:
-                cache_age = current_time - datetime.fromtimestamp(cache_file.stat().st_mtime, timezone.utc)
-                if cache_age > timedelta(days=1):  # Cache older than 1 day
-                    cache_status = "updating"
-                    print(f"   [{idx}/{len(valid_tickers)}] {ticker}: {cache_status}...")
+                # Always update cache to get latest data for live trading
+                cache_status = "updating"
+                print(f"   [{idx}/{len(valid_tickers)}] {ticker}: {cache_status}...")
 
             if cache_status in ["downloading", "updating"]:
                 try:

@@ -203,34 +203,67 @@ def get_data_summary(df: pd.DataFrame, ticker: str) -> dict:
     return summary
 
 
-def print_data_diagnostics(summaries: list):
+def print_data_diagnostics(summaries: list, max_display: int = 100):
     """
     Print a formatted table of data diagnostics for multiple tickers.
     
     Args:
         summaries: List of data summary dictionaries
+        max_display: Maximum number of tickers to display (default: 100)
     """
     print("\n" + "=" * 100)
     print("📊 DATA VALIDATION DIAGNOSTICS")
     print("=" * 100)
-    print(f"{'Ticker':<10} {'Rows':<8} {'Days':<8} {'Status':<15} {'Message':<40}")
-    print("-" * 100)
     
-    for s in summaries:
-        days = s.get('days_span', 'N/A')
-        message = s.get('message', '')
-        print(f"{s['ticker']:<10} {s['rows']:<8} {str(days):<8} {s['status']:<15} {message:<40}")
-    
-    print("=" * 100)
-    
-    # Summary statistics
+    # Summary statistics first
     total = len(summaries)
     ok_count = sum(1 for s in summaries if s['status'] == 'OK')
     insufficient = sum(1 for s in summaries if s['status'] == 'INSUFFICIENT')
     warning = sum(1 for s in summaries if s['status'] == 'WARNING')
+    empty = sum(1 for s in summaries if s['status'] == 'EMPTY')
+    error = sum(1 for s in summaries if s['status'] == 'ERROR')
     
-    print(f"\n📈 Summary: {ok_count}/{total} OK, {warning} warnings, {insufficient} insufficient")
+    print(f"Total: {total} tickers | ✅ {ok_count} OK | ⚠️ {warning} warnings | ❌ {insufficient} insufficient | 🚫 {empty} empty")
+    
+    # Separate problematic tickers
+    problematic = [s for s in summaries if s['status'] not in ['OK']]
+    good = [s for s in summaries if s['status'] == 'OK']
+    
+    # Show problematic tickers first (always show these)
+    if problematic:
+        print("\n⚠️  PROBLEMATIC TICKERS:")
+        print("-" * 100)
+        print(f"{'Ticker':<10} {'Rows':<8} {'Days':<8} {'Status':<15} {'Message':<40}")
+        print("-" * 100)
+        
+        for s in problematic[:50]:  # Show first 50 problematic
+            days = s.get('days_span', 'N/A')
+            message = s.get('message', '')
+            print(f"{s['ticker']:<10} {s['rows']:<8} {str(days):<8} {s['status']:<15} {message:<40}")
+        
+        if len(problematic) > 50:
+            print(f"... and {len(problematic) - 50} more problematic tickers")
+    
+    # Show sample of good tickers (limited)
+    if good and len(good) <= 20:
+        print("\n✅ GOOD TICKERS:")
+        print("-" * 100)
+        print(f"{'Ticker':<10} {'Rows':<8} {'Days':<8} {'Status':<15} {'Message':<40}")
+        print("-" * 100)
+        
+        for s in good:
+            days = s.get('days_span', 'N/A')
+            message = s.get('message', '')
+            print(f"{s['ticker']:<10} {s['rows']:<8} {str(days):<8} {s['status']:<15} {message:<40}")
+    elif good:
+        print(f"\n✅ {len(good)} tickers have good data quality (not shown for brevity)")
+    
     print("=" * 100 + "\n")
+    
+    # Final summary with warnings
+    if insufficient > total * 0.3:
+        print(f"⚠️  WARNING: {insufficient}/{total} tickers have insufficient data!")
+        print(f"💡 Consider using a longer data period or filtering these tickers\n")
 
 
 

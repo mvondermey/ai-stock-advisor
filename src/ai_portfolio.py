@@ -203,15 +203,25 @@ def train_ai_portfolio_model(
         
         # Check GPU availability
         try:
-            from config import CUDA_AVAILABLE
-            gpu_available = CUDA_AVAILABLE
+            from config import XGBOOST_USE_GPU
+            import torch
+            # Check if GPU is actually available (not just CUDA_AVAILABLE which respects FORCE_CPU)
+            gpu_actually_available = torch.cuda.is_available() and XGBOOST_USE_GPU
+            gpu_available = gpu_actually_available
         except ImportError:
             gpu_available = False
         
         if gpu_available:
             print(f"   🚀 GPU detected - XGBoost and LightGBM will use GPU acceleration")
         else:
-            print(f"   💻 Using CPU with parallel processing (n_jobs=-1)")
+            print(f"   💻 Using CPU (joblib parallelism limited to avoid nested multiprocessing)")
+
+        # When the main program is already parallel (ticker-level Pool), avoid n_jobs=-1 here.
+        try:
+            from config import AI_PORTFOLIO_N_JOBS
+            n_jobs = int(AI_PORTFOLIO_N_JOBS)
+        except Exception:
+            n_jobs = 1
         
         models_to_try = {}
         
@@ -222,7 +232,7 @@ def train_ai_portfolio_model(
             min_samples_split=4,
             min_samples_leaf=2,
             random_state=42,
-            n_jobs=-1  # ✅ Uses all CPU cores
+            n_jobs=n_jobs
         )
         
         # 2. Extra Trees (CPU parallel, more randomization)
@@ -232,7 +242,7 @@ def train_ai_portfolio_model(
             min_samples_split=4,
             min_samples_leaf=2,
             random_state=42,
-            n_jobs=-1  # ✅ Uses all CPU cores
+            n_jobs=n_jobs
         )
         
         # 3. Gradient Boosting (CPU only - no parallel in sklearn)
@@ -261,7 +271,7 @@ def train_ai_portfolio_model(
             else:
                 # CPU parallel
                 xgb_params['tree_method'] = 'hist'
-                xgb_params['n_jobs'] = -1
+                xgb_params['n_jobs'] = n_jobs
             
             models_to_try['XGBoost'] = xgb.XGBClassifier(**xgb_params)
         
@@ -283,7 +293,7 @@ def train_ai_portfolio_model(
             else:
                 # CPU parallel
                 lgb_params['device'] = 'cpu'
-                lgb_params['n_jobs'] = -1
+                lgb_params['n_jobs'] = n_jobs
             
             models_to_try['LightGBM'] = lgb.LGBMClassifier(**lgb_params)
         
@@ -291,7 +301,7 @@ def train_ai_portfolio_model(
         models_to_try['Logistic Regression'] = LogisticRegression(
             max_iter=1000,
             random_state=42,
-            n_jobs=-1  # ✅ Uses all CPU cores
+            n_jobs=n_jobs
         )
         
         # Cross-validate each model and select the best
@@ -304,7 +314,7 @@ def train_ai_portfolio_model(
         for model_name, model in models_to_try.items():
             try:
                 # Use cross-validation to evaluate model
-                cv_scores = cross_val_score(model, X_scaled, y, cv=min(3, len(X)), scoring='accuracy', n_jobs=-1)
+                cv_scores = cross_val_score(model, X_scaled, y, cv=min(3, len(X)), scoring='accuracy', n_jobs=n_jobs)
                 mean_score = cv_scores.mean()
                 
                 print(f"         {model_name:<20}: {mean_score:.4f} ± {cv_scores.std():.4f}")

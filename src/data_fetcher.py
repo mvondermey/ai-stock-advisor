@@ -79,6 +79,7 @@ except ImportError:
 from config import (
 
     DATA_PROVIDER, USE_YAHOO_FALLBACK, DATA_INTERVAL, DATA_CACHE_DIR, CACHE_DAYS,
+    ENABLE_PRICE_CACHE,
 
     ALPACA_API_KEY, ALPACA_SECRET_KEY, TWELVEDATA_API_KEY,
 
@@ -87,6 +88,52 @@ from config import (
 )
 
 from utils import _ensure_dir, _to_utc
+
+def _is_market_day_complete(date: datetime) -> bool:
+    """
+    Check if we should expect data for a given date.
+    Markets close at 4pm ET (9pm UTC), data available ~6pm ET (11pm UTC).
+    """
+    now_utc = datetime.now(timezone.utc)
+    target_date = date.date() if isinstance(date, datetime) else date
+    
+    # If date is in the future, we can't have data yet
+    if target_date > now_utc.date():
+        return False
+    
+    # If date is today, check if market close + data processing time has passed
+    if target_date == now_utc.date():
+        # Market data typically available after 11pm UTC (6pm ET + 1hr processing)
+        market_data_ready_hour = 23  # 11pm UTC
+        if now_utc.hour < market_data_ready_hour:
+            return False
+    
+    # If it's a weekend, no new data
+    weekday = now_utc.weekday()
+    if target_date == now_utc.date() and weekday >= 5:  # Saturday=5, Sunday=6
+        return False
+    
+    # For past dates (including yesterday), data should be available
+    return True
+
+
+def _effective_end_utc_for_daily(end: datetime) -> pd.Timestamp:
+    """
+    For daily bars, avoid requesting "today" (which is often incomplete intraday and causes cache misses).
+    Returns a UTC-normalized Timestamp for the last *completed* business day.
+    """
+    end_utc = _to_utc(end).normalize()
+    now_day = _to_utc(datetime.now(timezone.utc)).normalize()
+
+    # If caller asks for today or beyond, clamp to last business day.
+    if end_utc >= now_day:
+        end_utc = (now_day - pd.tseries.offsets.BDay(1)).normalize()
+
+    # If end lands on a weekend, roll back to previous business day.
+    if end_utc.weekday() >= 5:
+        end_utc = (end_utc - pd.tseries.offsets.BDay(1)).normalize()
+
+    return end_utc
 
 
 
@@ -389,11 +436,25 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
 
     # Check cache for each ticker first
     cached_data_frames = []
-    tickers_to_download = []
+    cache_summary = []  # Track cache hit info for summary table
+    tickers_to_download_full = []  # Tickers needing full download
+    tickers_to_download_incremental = {}  # Tickers needing only recent data: {ticker: last_cache_date}
 
-    print(f"  📂 Checking cache for {len(tickers)} tickers...")
+    # Check if we should expect new data today
+    now_utc = datetime.now(timezone.utc)
+    if not _is_market_day_complete(end):
+        print(f"  ℹ️  Market data not available yet (markets closed or processing). Using cached data.")
+
+    if not ENABLE_PRICE_CACHE:
+        print(f"  📂 Cache disabled - downloading {len(tickers)} tickers...", flush=True)
+        tickers_to_download_full = list(tickers)
+        cached_data_frames = []
+    else:
+        print(f"  📂 Checking cache for {len(tickers)} tickers...")
 
     for ticker in tickers:
+        if not ENABLE_PRICE_CACHE:
+            continue
         cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
         cache_valid = False
 
@@ -411,15 +472,29 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                 # Check if cached data covers the required date range
                 start_utc = _to_utc(start)
                 end_utc = _to_utc(end)
+                if str(DATA_INTERVAL).lower() in ["1d", "1day", "day"]:
+                    end_utc = _effective_end_utc_for_daily(end)
 
                 # Get available date range in cache
                 if not cached_df.empty:
                     cache_start = cached_df.index.min()
                     cache_end = cached_df.index.max()
 
-                    # Check if cache contains the complete requested date range
-                    # Cache must contain 100% of the requested data - no gaps allowed
-                    if cache_start <= start_utc and cache_end >= end_utc:  # Cache completely covers the requested range
+                    # ✅ Adjust expected end date based on market hours/weekends
+                    # Don't expect today's data if market hasn't closed yet or if it's a weekend
+                    expected_end_utc = end_utc
+                    if not _is_market_day_complete(end_utc):
+                        # If today's data isn't available yet, only expect data up to yesterday
+                        expected_end_utc = end_utc - pd.Timedelta(days=1)
+                        # Keep going back until we find a trading day
+                        while not _is_market_day_complete(expected_end_utc) and expected_end_utc > cache_end:
+                            expected_end_utc = expected_end_utc - pd.Timedelta(days=1)
+
+                    # ✅ Calculate gap to determine if we need to download recent data
+                    gap_days = max(0, (expected_end_utc - cache_end).days) if cache_end < expected_end_utc else 0
+                    
+                    # Full cache coverage (check against expected_end_utc, not end_utc)
+                    if cache_start <= start_utc and cache_end >= expected_end_utc:
                         # Filter to requested date range
                         filtered_df = cached_df.loc[(cached_df.index >= start_utc) & (cached_df.index <= end_utc)].copy()
 
@@ -429,71 +504,373 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                                 filtered_df.columns = filtered_df.columns.get_level_values(0)
                             filtered_df.columns = [str(col).capitalize() for col in filtered_df.columns]
 
-                            # Add ticker prefix to match yfinance output format
-                            filtered_df = filtered_df.add_prefix(f"{ticker} ")
+                            # Convert to yfinance-like MultiIndex columns: (Field, Ticker)
+                            filtered_df.columns = pd.MultiIndex.from_product([filtered_df.columns, [ticker]])
 
                             cached_data_frames.append(filtered_df)
                             cache_valid = True
+                            
+                            # Track cache hit info
+                            cache_summary.append({
+                                'ticker': ticker,
+                                'status': 'Cache Hit',
+                                'rows': len(filtered_df),
+                                'start_date': filtered_df.index.min().strftime('%Y-%m-%d') if not filtered_df.empty else 'N/A',
+                                'end_date': filtered_df.index.max().strftime('%Y-%m-%d') if not filtered_df.empty else 'N/A'
+                            })
+                            
                             print(f"  ✅ Cache hit for {ticker} ({len(filtered_df)} rows, 100% coverage)")
+                    
+                    # ✅ Partial cache - download only missing recent data (incremental update)
+                    elif cache_start <= start_utc and gap_days > 0:
+                        # Use cached data + will download only the missing gap
+                        filtered_df = cached_df.loc[cached_df.index >= start_utc].copy()
+                        
+                        if not filtered_df.empty:
+                            # Reformat column names
+                            if isinstance(filtered_df.columns, pd.MultiIndex):
+                                filtered_df.columns = filtered_df.columns.get_level_values(0)
+                            filtered_df.columns = [str(col).capitalize() for col in filtered_df.columns]
+                            filtered_df.columns = pd.MultiIndex.from_product([filtered_df.columns, [ticker]])
+                            
+                            cached_data_frames.append(filtered_df)
+                            # Track for incremental download (only missing days)
+                            tickers_to_download_incremental[ticker] = cache_end
+                            print(f"  🔄 Partial cache for {ticker} ({len(filtered_df)} rows, will download last {gap_days} days)")
+                        else:
+                            # Cache exists but empty after filtering - need full download
+                            tickers_to_download_full.append(ticker)
+                            print(f"  📥 Cache miss for {ticker} - will download (empty after filter)")
+                    else:
+                        # Cache doesn't cover the start date - need full download
+                        tickers_to_download_full.append(ticker)
+                        print(f"  📥 Cache miss for {ticker} - will download (insufficient coverage)")
 
             except Exception as e:
                 print(f"  ⚠️ Could not read cache for {ticker}: {e}")
-
-        if not cache_valid:
-            tickers_to_download.append(ticker)
-            print(f"  📥 Cache miss for {ticker} - will download")
+                tickers_to_download_full.append(ticker)
+                print(f"  📥 Cache miss for {ticker} - will download (read error)")
+        else:
+            # No cache file exists
+            tickers_to_download_full.append(ticker)
+            if not cache_file.exists():
+                print(f"  📥 Cache miss for {ticker} - will download (no cache)")
 
     # If we have cached data for all tickers, combine and return
-    if not tickers_to_download:
+    if not tickers_to_download_full and not tickers_to_download_incremental:
         print(f"  🎉 All {len(tickers)} tickers loaded from cache!")
         if cached_data_frames:
-            combined_df = pd.concat(cached_data_frames, axis=1, join='outer')
+            # ✅ FIX: Normalize timezone info before concat
+            normalized_frames = []
+            for df in cached_data_frames:
+                if not df.empty and isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
+                    df = df.copy()
+                    df.index = df.index.tz_localize(None)
+                normalized_frames.append(df)
+            combined_df = pd.concat(normalized_frames, axis=1, join='outer')
             return combined_df
         else:
             return pd.DataFrame()
 
     # Download missing tickers
-    print(f"  🔄 Downloading {len(tickers_to_download)} tickers from {len(tickers)} total...")
+    total_to_download = len(tickers_to_download_full) + len(tickers_to_download_incremental)
+    print(f"  🔄 Downloading data for {total_to_download} tickers ({len(tickers_to_download_full)} full, {len(tickers_to_download_incremental)} incremental)...")
 
     max_retries = 7
     base_wait_time = 30
 
-    fresh_data = pd.DataFrame()
+    fresh_data_frames = []
+    
+    # ✅ STEP 1: Download full range for tickers needing complete data
+    if tickers_to_download_full:
+        print(f"  📥 Downloading FULL range for {len(tickers_to_download_full)} tickers...")
+        for attempt in range(max_retries):
+            try:
+                # For daily bars, treat end as inclusive day; yfinance end is exclusive, so add 1 day.
+                download_end = end
+                if str(DATA_INTERVAL).lower() in ["1d", "1day", "day"]:
+                    end_utc_eff = _effective_end_utc_for_daily(end)
+                    download_end = (end_utc_eff + pd.Timedelta(days=1)).to_pydatetime()
 
-    for attempt in range(max_retries):
-        try:
-            fresh_data = yf.download(tickers_to_download, start=start, end=end, interval=DATA_INTERVAL, auto_adjust=True, progress=True, threads=False, keepna=False)
+                fresh_data_full = yf.download(
+                    tickers_to_download_full,
+                    start=start,
+                    end=download_end,
+                    interval=DATA_INTERVAL,
+                    auto_adjust=True,
+                    progress=True,
+                    threads=False,
+                    keepna=False
+                )
 
-            if fresh_data.empty or fresh_data.isnull().all().all():
-                raise ValueError("Batch download failed: DataFrame is empty or all-NaN.")
+                if not fresh_data_full.empty and not fresh_data_full.isnull().all().all():
+                    print(f"  ✅ Successfully downloaded full range for {len(tickers_to_download_full)} tickers")
+                    fresh_data_frames.append(fresh_data_full)
+                    break
+                else:
+                    raise ValueError("Batch download failed: DataFrame is empty or all-NaN.")
 
-            print(f"  ✅ Successfully downloaded {len(tickers_to_download)} tickers")
-            break
+            except Exception as e:
+                error_str = str(e).lower()
+                if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str or "batch download failed" in error_str:
+                    wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, 2)
+                    print(f"  ⚠️ Full batch download failed (attempt {attempt + 1}/{max_retries}): {error_str}. Retrying in {wait_time:.2f} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"  ⚠️ Unexpected error during full batch download: {e}.")
+                    break
+    
+    # ✅ STEP 2: Download only missing date ranges for tickers with partial cache (INCREMENTAL)
+    if tickers_to_download_incremental:
+        print(f"  🔄 Downloading INCREMENTAL updates for {len(tickers_to_download_incremental)} tickers...")
+        
+        # Group tickers by their last cache date to batch similar ranges together
+        date_groups = {}
+        for ticker, last_date in tickers_to_download_incremental.items():
+            # Round to day to group tickers with similar last dates
+            date_key = last_date.date()
+            if date_key not in date_groups:
+                date_groups[date_key] = []
+            date_groups[date_key].append(ticker)
+        
+        # Download each group with its specific start date
+        for cache_date, ticker_group in date_groups.items():
+            incremental_start = pd.Timestamp(cache_date) + pd.Timedelta(days=1)
+            download_end = end
+            if str(DATA_INTERVAL).lower() in ["1d", "1day", "day"]:
+                end_utc_eff = _effective_end_utc_for_daily(end)
+                download_end = (end_utc_eff + pd.Timedelta(days=1)).to_pydatetime()
+            
+            # Only download if there's actually data to fetch
+            if incremental_start >= download_end:
+                print(f"  ℹ️  No new data expected for {len(ticker_group)} tickers (cache is current)")
+                continue
+            
+            # Check if we should expect new data yet (market hours/weekends)
+            if not _is_market_day_complete(download_end):
+                print(f"  ℹ️  Skipping {len(ticker_group)} tickers - market data not available yet (market closed or weekend)")
+                continue
+            
+            for attempt in range(max_retries):
+                try:
+                    fresh_data_incremental = yf.download(
+                        ticker_group,
+                        start=incremental_start,
+                        end=download_end,
+                        interval=DATA_INTERVAL,
+                        auto_adjust=True,
+                        progress=False,  # Less verbose for incremental
+                        threads=False,
+                        keepna=False
+                    )
 
-        except Exception as e:
-            error_str = str(e).lower()
+                    if not fresh_data_incremental.empty and not fresh_data_incremental.isnull().all().all():
+                        days_downloaded = (pd.Timestamp(download_end) - incremental_start).days
+                        print(f"  ✅ Downloaded {days_downloaded} days for {len(ticker_group)} tickers (from {cache_date})")
+                        fresh_data_frames.append(fresh_data_incremental)
+                        break
+                    else:
+                        # Empty result might be OK (no new data yet)
+                        print(f"  ℹ️  No new data available for {len(ticker_group)} tickers since {cache_date}")
+                        break
 
-            if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str or "batch download failed" in error_str:
-                wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, 2)
-                print(f"  ⚠️ Batch download failed for {len(tickers_to_download)} tickers (attempt {attempt + 1}/{max_retries}): {error_str}. Retrying in {wait_time:.2f} seconds...")
-                time.sleep(wait_time)
-            else:
-                print(f"  ⚠️ An unexpected error occurred during batch download for {len(tickers_to_download)} tickers: {e}. Skipping batch.")
-                return pd.DataFrame()
-
-    if fresh_data.empty:
-        print(f"  ❌ Failed to download data for {len(tickers_to_download)} tickers after {max_retries} retries.")
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str:
+                        wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, 2)
+                        print(f"  ⚠️ Incremental download failed (attempt {attempt + 1}/{max_retries}): {error_str}. Retrying in {wait_time:.2f} seconds...")
+                        time.sleep(wait_time)
+                    else:
+                        print(f"  ⚠️ Unexpected error during incremental download: {e}.")
+                        break
+    
+    # Combine all downloaded data
+    if not fresh_data_frames:
+        print(f"  ⚠️ No new data downloaded.")
         # Return only cached data if download failed
         if cached_data_frames:
-            combined_df = pd.concat(cached_data_frames, axis=1, join='outer')
+            normalized_frames = []
+            for df in cached_data_frames:
+                if not df.empty and isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
+                    df = df.copy()
+                    df.index = df.index.tz_localize(None)
+                normalized_frames.append(df)
+            combined_df = pd.concat(normalized_frames, axis=1, join='outer')
             return combined_df
         return pd.DataFrame()
+    
+    fresh_data = pd.concat(fresh_data_frames, axis=1) if len(fresh_data_frames) > 1 else fresh_data_frames[0]
+
+    # Ensure yfinance batch output uses MultiIndex columns (Field, Ticker)
+    if not isinstance(fresh_data.columns, pd.MultiIndex):
+        if len(tickers_to_download) == 1:
+            t = tickers_to_download[0]
+            fresh_data.columns = pd.MultiIndex.from_product([fresh_data.columns, [t]])
+
+    # ✅ Cache freshly downloaded data per ticker so future runs hit cache
+    download_summary = []  # Track download info for summary table
+    
+    if ENABLE_PRICE_CACHE:
+        _ensure_dir(DATA_CACHE_DIR)
+        try:
+            # Normalize index to tz-naive date index for CSV stability (we localize to UTC on read)
+            if getattr(fresh_data.index, "tzinfo", None) is not None:
+                fresh_data.index = fresh_data.index.tz_convert(None)
+            fresh_data.index.name = "Date"
+
+            # Combine both full and incremental download lists
+            all_downloaded_tickers = tickers_to_download_full + list(tickers_to_download_incremental.keys())
+
+            for ticker in all_downloaded_tickers:
+                try:
+                    # Extract single-ticker DF with single-level columns (Field)
+                    if isinstance(fresh_data.columns, pd.MultiIndex):
+                        if ticker not in fresh_data.columns.get_level_values(1):
+                            continue
+                        ticker_df = fresh_data.xs(ticker, axis=1, level=1, drop_level=True).copy()
+                    else:
+                        ticker_df = fresh_data.copy()
+
+                    if ticker_df.empty:
+                        continue
+
+                    # Basic normalization for consistent cache reads
+                    ticker_df.columns = [str(c).capitalize() for c in ticker_df.columns]
+                    ticker_df.index.name = "Date"
+
+                    cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
+                    
+                    # ✅ INCREMENTAL UPDATE: Append to existing cache instead of overwriting
+                    if cache_file.exists():
+                        try:
+                            existing_cache = pd.read_csv(cache_file, index_col=0, parse_dates=True)
+                            # Combine old + new data, remove duplicates (keep new data)
+                            combined = pd.concat([existing_cache, ticker_df])
+                            combined = combined[~combined.index.duplicated(keep='last')]  # Keep latest data for duplicate dates
+                            combined = combined.sort_index()
+                            combined.to_csv(cache_file)
+                            
+                            # Track download info for summary
+                            download_type = "Incremental" if ticker in tickers_to_download_incremental else "Full"
+                            download_summary.append({
+                                'ticker': ticker,
+                                'type': download_type,
+                                'new_rows': len(ticker_df),
+                                'start_date': ticker_df.index.min().strftime('%Y-%m-%d') if not ticker_df.empty else 'N/A',
+                                'end_date': ticker_df.index.max().strftime('%Y-%m-%d') if not ticker_df.empty else 'N/A',
+                                'total_cached': len(combined)
+                            })
+                            
+                            # Show appropriate message
+                            if ticker in tickers_to_download_incremental:
+                                new_rows = len(ticker_df)
+                                print(f"      🔄 Incremental update for {ticker}: added {new_rows} new rows")
+                            else:
+                                print(f"      ✅ Updated cache for {ticker} (full download)")
+                        except Exception as e:
+                            # If append fails, just overwrite
+                            ticker_df.to_csv(cache_file)
+                            print(f"      ⚠️ Cache append failed for {ticker}, overwrote: {e}")
+                    else:
+                        # New cache file
+                        ticker_df.to_csv(cache_file)
+                        
+                        # Track download info for summary
+                        download_summary.append({
+                            'ticker': ticker,
+                            'type': 'New',
+                            'new_rows': len(ticker_df),
+                            'start_date': ticker_df.index.min().strftime('%Y-%m-%d') if not ticker_df.empty else 'N/A',
+                            'end_date': ticker_df.index.max().strftime('%Y-%m-%d') if not ticker_df.empty else 'N/A',
+                            'total_cached': len(ticker_df)
+                        })
+                        
+                        print(f"      ✅ Created new cache for {ticker}")
+                except Exception as e:
+                    print(f"  ⚠️ Could not cache batch data for {ticker}: {e}")
+        except Exception as e:
+            print(f"  ⚠️ Could not finalize batch caching: {e}")
+
+    # ✅ Print comprehensive data summary table
+    total_tickers = len(cache_summary) + len(download_summary)
+    if total_tickers > 0:
+        print(f"\n  📊 Data Summary for {total_tickers} Tickers")
+        print("  " + "=" * 95)
+        print(f"  {'Ticker':<8} {'Status':<15} {'Rows':<8} {'Start Date':<12} {'End Date':<12} {'Info':<20}")
+        print("  " + "-" * 95)
+        
+        # Combine and sort all tickers
+        all_summary = []
+        
+        # Add cache hits
+        for info in cache_summary:
+            all_summary.append({
+                'ticker': info['ticker'],
+                'status': info['status'],
+                'rows': info['rows'],
+                'start_date': info['start_date'],
+                'end_date': info['end_date'],
+                'info': 'From cache'
+            })
+        
+        # Add downloads
+        for info in download_summary:
+            all_summary.append({
+                'ticker': info['ticker'],
+                'status': f"{info['type']} DL",
+                'rows': info['total_cached'],
+                'start_date': info['start_date'],
+                'end_date': info['end_date'],
+                'info': f"+{info['new_rows']} new rows"
+            })
+        
+        # Sort by ticker name
+        all_summary.sort(key=lambda x: x['ticker'])
+        
+        # Print up to 25 tickers
+        display_limit = 25
+        for i, info in enumerate(all_summary):
+            if i < display_limit:
+                print(f"  {info['ticker']:<8} {info['status']:<15} {info['rows']:<8} {info['start_date']:<12} {info['end_date']:<12} {info['info']:<20}")
+        
+        if len(all_summary) > display_limit:
+            remaining = len(all_summary) - display_limit
+            print(f"  ... and {remaining} more tickers")
+        
+        print("  " + "=" * 95)
+        
+        # Summary statistics
+        cache_hits = len(cache_summary)
+        downloads = len(download_summary)
+        
+        if download_summary:
+            total_new_rows = sum(info['new_rows'] for info in download_summary)
+            incremental_count = sum(1 for info in download_summary if info['type'] == 'Incremental')
+            full_count = sum(1 for info in download_summary if info['type'] == 'Full')
+            new_count = sum(1 for info in download_summary if info['type'] == 'New')
+            
+            print(f"  ✅ {cache_hits} cache hits, {downloads} downloads ({total_new_rows} new rows)")
+            print(f"  📋 Download types: {new_count} new, {full_count} full, {incremental_count} incremental")
+        else:
+            print(f"  ✅ All {cache_hits} tickers loaded from cache (no downloads needed)")
+        
+        print()
 
     # Combine cached and fresh data
     all_data_frames = cached_data_frames + [fresh_data] if not fresh_data.empty else cached_data_frames
 
     if all_data_frames:
-        combined_df = pd.concat(all_data_frames, axis=1, join='outer')
+        # ✅ FIX: Normalize timezone info before concat (remove timezone awareness)
+        normalized_frames = []
+        for df in all_data_frames:
+            if not df.empty and isinstance(df.index, pd.DatetimeIndex):
+                if df.index.tz is not None:
+                    # Remove timezone info
+                    df = df.copy()
+                    df.index = df.index.tz_localize(None)
+            normalized_frames.append(df)
+        
+        combined_df = pd.concat(normalized_frames, axis=1, join='outer')
         print(f"  📊 Combined data: {len(cached_data_frames)} cached + {1 if not fresh_data.empty else 0} fresh = {len(combined_df.columns)} total columns")
         return combined_df
 
@@ -633,7 +1010,8 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
     """Download and clean data from the selected provider, with an improved local caching mechanism."""
 
-    _ensure_dir(DATA_CACHE_DIR)
+    if ENABLE_PRICE_CACHE:
+        _ensure_dir(DATA_CACHE_DIR)
 
     cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
 
@@ -645,7 +1023,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
     # For benchmark tickers (QQQ, SPY), always refetch to ensure fresh data
     cache_valid = False
-    if cache_file.exists() and ticker not in ['QQQ', 'SPY']:
+    if ENABLE_PRICE_CACHE and cache_file.exists() and ticker not in ['QQQ', 'SPY']:
 
         file_mod_time = datetime.fromtimestamp(cache_file.stat().st_mtime, timezone.utc)
 
@@ -663,7 +1041,12 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 else:
                     cached_df.index = cached_df.index.tz_convert('UTC')
 
-                price_df = cached_df.loc[(cached_df.index >= _to_utc(start)) & (cached_df.index <= _to_utc(end))].copy()
+                start_utc = _to_utc(start)
+                end_utc = _to_utc(end)
+                if str(DATA_INTERVAL).lower() in ["1d", "1day", "day"]:
+                    end_utc = _effective_end_utc_for_daily(end)
+
+                price_df = cached_df.loc[(cached_df.index >= start_utc) & (cached_df.index <= end_utc)].copy()
 
             except Exception as e:
 
@@ -764,15 +1147,16 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 except Exception as e:
                     print(f"⚠️ Could not read financial cache file for {ticker}: {e}")
 
-            try:
-                price_df.to_csv(cache_file)
-                # Check if any column starts with 'Fin_'
-                if any(str(col).startswith('Fin_') for col in price_df.columns):
-                    financial_only = price_df[[col for col in price_df.columns if str(col).startswith('Fin_')]].copy()
-                    if not financial_only.empty:
-                        financial_only.to_csv(financial_cache_file)
-            except Exception as e:
-                print(f"⚠️ Could not cache data for {ticker}: {e}")
+            if ENABLE_PRICE_CACHE:
+                try:
+                    price_df.to_csv(cache_file)
+                    # Check if any column starts with 'Fin_'
+                    if any(str(col).startswith('Fin_') for col in price_df.columns):
+                        financial_only = price_df[[col for col in price_df.columns if str(col).startswith('Fin_')]].copy()
+                        if not financial_only.empty:
+                            financial_only.to_csv(financial_cache_file)
+                except Exception as e:
+                    print(f"⚠️ Could not cache data for {ticker}: {e}")
 
 
 
@@ -831,9 +1215,15 @@ def _fetch_intermarket_data(start: datetime, end: datetime) -> pd.DataFrame:
 
         return pd.DataFrame()
 
+    # ✅ FIX: Normalize timezone info before concat
+    normalized_intermarket = []
+    for df in all_intermarket_dfs:
+        if not df.empty and isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
+            df = df.copy()
+            df.index = df.index.tz_localize(None)
+        normalized_intermarket.append(df)
 
-
-    intermarket_df = pd.concat(all_intermarket_dfs, axis=1)
+    intermarket_df = pd.concat(normalized_intermarket, axis=1)
 
     intermarket_df.index = pd.to_datetime(intermarket_df.index, utc=True)
 

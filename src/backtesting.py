@@ -24,7 +24,10 @@ from config import (
 from config import (
     ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, TARGET_PERCENTAGE, PERIOD_HORIZONS,
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, USE_LSTM, USE_GRU, # Moved from ml_models
-    ENABLE_AI_PORTFOLIO, ENABLE_STATIC_BH, ENABLE_DYNAMIC_BH_1Y, ENABLE_DYNAMIC_BH_3M, ENABLE_DYNAMIC_BH_1M, ENABLE_RISK_ADJ_MOM, ENABLE_MEAN_REVERSION, ENABLE_QUALITY_MOM
+    ENABLE_AI_PORTFOLIO, ENABLE_STATIC_BH, ENABLE_DYNAMIC_BH_1Y, ENABLE_DYNAMIC_BH_3M, ENABLE_DYNAMIC_BH_1M, ENABLE_RISK_ADJ_MOM, ENABLE_MEAN_REVERSION, ENABLE_QUALITY_MOM,
+    ENABLE_MOMENTUM_AI_HYBRID, MOMENTUM_AI_HYBRID_TOP_N, MOMENTUM_AI_HYBRID_PORTFOLIO_SIZE, MOMENTUM_AI_HYBRID_BUY_THRESHOLD,
+    MOMENTUM_AI_HYBRID_SELL_THRESHOLD, MOMENTUM_AI_HYBRID_REBALANCE_DAYS, MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK,
+    MOMENTUM_AI_HYBRID_STOP_LOSS, MOMENTUM_AI_HYBRID_TRAILING_STOP
 )
 from alpha_training import AlphaThresholdConfig, select_threshold_by_alpha
 from scipy.stats import uniform, beta
@@ -39,6 +42,7 @@ ai_portfolio_transaction_costs = None
 risk_adj_mom_transaction_costs = None
 mean_reversion_transaction_costs = None
 quality_momentum_transaction_costs = None
+momentum_ai_hybrid_transaction_costs = None
 from data_validation import validate_prediction_data, validate_features_after_engineering, InsufficientDataError
 import os
 import json
@@ -197,7 +201,7 @@ def _prepare_model_for_multiprocessing(model):
     return model  # For non-PyTorch models, return as-is
 
 
-def _reconstruct_model_from_info(model_info, device='cuda'):
+def _reconstruct_model_from_info(model_info, device='cpu'):
     """Reconstruct a PyTorch model from model_info (with numpy arrays) on the specified device."""
     if model_info is None:
         return None
@@ -305,7 +309,8 @@ def optimize_single_ticker_worker(params):
     # Reconstruct PyTorch models on GPU if they were passed as model_info dicts
     if PYTORCH_AVAILABLE:
         import torch
-        device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+        from config import FORCE_CPU
+        device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
         model_buy = _reconstruct_model_from_info(model_buy, device)
         model_sell = _reconstruct_model_from_info(model_sell, device)
     
@@ -643,7 +648,8 @@ def backtest_worker(params: Tuple) -> Optional[Dict]:
     # Reconstruct PyTorch models from prepared dict format
     if PYTORCH_AVAILABLE:
         import torch
-        device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+        from config import FORCE_CPU
+        device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
         model_buy = _reconstruct_model_from_info(model_buy, device)
         model_sell = _reconstruct_model_from_info(model_sell, device)
 
@@ -1150,9 +1156,17 @@ def _run_portfolio_backtest_walk_forward(
     quality_momentum_cash = initial_capital_needed  # Start with same capital as AI
     current_quality_momentum_stocks = []  # Current top 3 stocks held by quality + momentum
 
+    # MOMENTUM + AI HYBRID: Initialize portfolio tracking
+    momentum_ai_hybrid_portfolio_value = 0.0
+    momentum_ai_hybrid_portfolio_history = [momentum_ai_hybrid_portfolio_value]
+    momentum_ai_hybrid_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float, 'entry_date': str, 'peak_price': float}
+    momentum_ai_hybrid_cash = initial_capital_needed  # Start with same capital as AI
+    current_momentum_ai_hybrid_stocks = []  # Current stocks held by momentum + AI hybrid
+    last_momentum_ai_hybrid_rebalance_day = 0  # Track days since last rebalance
+
     # Reset global transaction cost tracking variables for this backtest
     global ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs
-    global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, ai_portfolio_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs
+    global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, ai_portfolio_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs
     ai_transaction_costs = 0.0
     static_bh_transaction_costs = 0.0  # Static BH has no transaction costs (buy once, hold)
     dynamic_bh_1y_transaction_costs = 0.0
@@ -1162,6 +1176,7 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_transaction_costs = 0.0
     mean_reversion_transaction_costs = 0.0
     quality_momentum_transaction_costs = 0.0
+    momentum_ai_hybrid_transaction_costs = 0.0
 
     all_processed_tickers = []
     all_performance_metrics = []
@@ -1584,6 +1599,63 @@ def _run_portfolio_backtest_walk_forward(
 
             except Exception as e:
                 print(f"   ⚠️ Dynamic BH rebalancing failed: {e}")
+
+        # === MOMENTUM + AI HYBRID STRATEGY ===
+        if ENABLE_MOMENTUM_AI_HYBRID:
+            try:
+                # Check if it's time to rebalance (weekly)
+                if last_momentum_ai_hybrid_rebalance_day == 0 or (day_count - last_momentum_ai_hybrid_rebalance_day) >= MOMENTUM_AI_HYBRID_REBALANCE_DAYS:
+                    print(f"\n🔄 Momentum+AI Hybrid: Evaluating portfolio (Day {day_count})...")
+                    
+                    # Calculate momentum for all available tickers
+                    momentum_scores = []
+                    # Use initial_top_tickers (the tickers we trained models for)
+                    available_tickers = initial_top_tickers if initial_top_tickers else []
+                    for ticker in available_tickers:
+                        try:
+                            ticker_history = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                            ticker_history = ticker_history[ticker_history['date'] <= current_date].tail(MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK + 10)
+                            
+                            if len(ticker_history) >= MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK:
+                                lookback_data = ticker_history.tail(MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK)
+                                start_price = lookback_data.iloc[0]['Close']
+                                end_price = lookback_data.iloc[-1]['Close']
+                                
+                                if start_price > 0:
+                                    momentum_return = (end_price - start_price) / start_price
+                                    momentum_scores.append((ticker, momentum_return))
+                        
+                        except Exception:
+                            continue
+                    
+                    if momentum_scores:
+                        # Sort by momentum (descending)
+                        momentum_scores.sort(key=lambda x: x[1], reverse=True)
+                        top_momentum_stocks = [ticker for ticker, score in momentum_scores[:MOMENTUM_AI_HYBRID_TOP_N]]
+                        
+                        print(f"   📈 Top {MOMENTUM_AI_HYBRID_TOP_N} momentum stocks: {[(t, f'{s*100:.1f}%') for t, s in momentum_scores[:MOMENTUM_AI_HYBRID_TOP_N]]}")
+                        
+                        # Rebalance using AI signals
+                        momentum_ai_hybrid_cash = _rebalance_momentum_ai_hybrid_portfolio(
+                            top_momentum_stocks, current_date, all_tickers_data,
+                            momentum_ai_hybrid_positions, momentum_ai_hybrid_cash,
+                            current_models, current_scalers, current_y_scalers, capital_per_stock
+                        )
+                        
+                        last_momentum_ai_hybrid_rebalance_day = day_count
+                
+                # Even on non-rebalance days, check for stop losses
+                elif len(momentum_ai_hybrid_positions) > 0:
+                    momentum_ai_hybrid_cash = _rebalance_momentum_ai_hybrid_portfolio(
+                        [], current_date, all_tickers_data,
+                        momentum_ai_hybrid_positions, momentum_ai_hybrid_cash,
+                        current_models, current_scalers, current_y_scalers, capital_per_stock
+                    )
+            
+            except Exception as e:
+                print(f"   ⚠️ Momentum+AI hybrid failed: {e}")
+                import traceback
+                traceback.print_exc()
 
         # Daily stock selection: Use current models to pick best 3 from 40 stocks
         try:
@@ -2087,6 +2159,18 @@ def _run_portfolio_backtest_walk_forward(
         quality_momentum_portfolio_value = quality_momentum_invested_value + quality_momentum_cash
         quality_momentum_portfolio_history.append(quality_momentum_portfolio_value)
 
+        # === MOMENTUM + AI HYBRID: Update portfolio value ===
+        if ENABLE_MOMENTUM_AI_HYBRID:
+            momentum_ai_hybrid_invested_value = 0.0
+            for ticker in momentum_ai_hybrid_positions:
+                try:
+                    momentum_ai_hybrid_invested_value += momentum_ai_hybrid_positions[ticker]['value']
+                except Exception:
+                    pass
+        
+            momentum_ai_hybrid_portfolio_value = momentum_ai_hybrid_invested_value + momentum_ai_hybrid_cash
+            momentum_ai_hybrid_portfolio_history.append(momentum_ai_hybrid_portfolio_value)
+
         # Update portfolio value (invested + cash) at end of each day
         invested_value = 0.0
         for ticker in current_portfolio_stocks:
@@ -2436,7 +2520,7 @@ def _run_portfolio_backtest_walk_forward(
             total_portfolio_value = initial_capital_needed
             print(f"⚠️ AI Portfolio: No positions, using initial capital (${total_portfolio_value:,.0f})")
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, ai_portfolio_value, ai_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, ai_portfolio_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, ai_portfolio_value, ai_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, ai_portfolio_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs
 
 
 def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
@@ -3112,6 +3196,228 @@ def _rebalance_quality_momentum_portfolio(new_stocks, current_date, all_tickers_
     return quality_momentum_cash  # Return updated cash (float passed by value)
 
 
+def _rebalance_momentum_ai_hybrid_portfolio(momentum_stocks, current_date, all_tickers_data,
+                                          momentum_ai_hybrid_positions, momentum_ai_hybrid_cash,
+                                          models, scalers, y_scalers, capital_per_stock):
+    """
+    Rebalance Momentum + AI Hybrid portfolio using AI predictions for entry/exit timing.
+    - Select from top momentum stocks
+    - Only buy if AI confidence > threshold
+    - Sell if AI confidence < threshold OR stop loss triggered
+    
+    Returns: Updated cash balance
+    """
+    global momentum_ai_hybrid_transaction_costs
+    try:
+        from config import MOMENTUM_AI_HYBRID_BUY_THRESHOLD, MOMENTUM_AI_HYBRID_SELL_THRESHOLD
+        from config import MOMENTUM_AI_HYBRID_STOP_LOSS, MOMENTUM_AI_HYBRID_TRAILING_STOP
+        from config import MOMENTUM_AI_HYBRID_PORTFOLIO_SIZE, BACKTEST_DAYS
+        
+        # Define horizon_days for AI predictions (same as other strategies)
+        horizon_days = 3  # Default prediction horizon (days)
+        
+        target_allocation = capital_per_stock  # Equal weight per position
+        
+        # Step 1: Check current positions for SELL signals (AI confidence drop OR stop loss)
+        positions_to_check = list(momentum_ai_hybrid_positions.keys())
+        for ticker in positions_to_check:
+            should_sell = False
+            sell_reason = ""
+            
+            try:
+                # Get current price
+                current_price = all_tickers_data[
+                    (all_tickers_data['ticker'] == ticker) &
+                    (all_tickers_data['date'] == current_date)
+                ]['Close'].iloc[0]
+                
+                if current_price <= 0:
+                    continue
+                
+                position = momentum_ai_hybrid_positions[ticker]
+                entry_price = position['entry_price']
+                peak_price = position.get('peak_price', entry_price)
+                
+                # Update peak price if current is higher
+                if current_price > peak_price:
+                    momentum_ai_hybrid_positions[ticker]['peak_price'] = current_price
+                    peak_price = current_price
+                
+                # Check stop loss (from entry)
+                pct_from_entry = (current_price - entry_price) / entry_price
+                if pct_from_entry < -MOMENTUM_AI_HYBRID_STOP_LOSS:
+                    should_sell = True
+                    sell_reason = f"Stop loss ({pct_from_entry*100:.1f}%)"
+                
+                # Check trailing stop (from peak, only if in profit)
+                if not should_sell and peak_price > entry_price * 1.05:  # Only trail if >5% profit
+                    pct_from_peak = (current_price - peak_price) / peak_price
+                    if pct_from_peak < -MOMENTUM_AI_HYBRID_TRAILING_STOP:
+                        should_sell = True
+                        sell_reason = f"Trailing stop ({pct_from_peak*100:.1f}% from peak)"
+                
+                # Check AI sell signal
+                if not should_sell and ticker in models and ticker in scalers:
+                    # Get AI prediction (regression model output)
+                    prediction = _get_ai_prediction_for_ticker(
+                        ticker, current_date, all_tickers_data, models, scalers, y_scalers, horizon_days
+                    )
+                    
+                    if prediction is not None and prediction < MOMENTUM_AI_HYBRID_SELL_THRESHOLD:
+                        should_sell = True
+                        sell_reason = f"AI sell signal (pred={prediction:.2f})"
+                
+                # Execute sell
+                if should_sell:
+                    shares = position['shares']
+                    proceeds = shares * current_price
+                    sell_cost = proceeds * TRANSACTION_COST
+                    net_proceeds = proceeds - sell_cost
+                    momentum_ai_hybrid_transaction_costs += sell_cost
+                    momentum_ai_hybrid_cash += net_proceeds
+                    
+                    profit = proceeds - position['value']
+                    print(f"   💰 Mom+AI sold {ticker}: {shares:.0f} shares @ ${current_price:.2f} = ${proceeds:,.0f} ({sell_reason}, P/L: ${profit:,.0f})")
+                    
+                    del momentum_ai_hybrid_positions[ticker]
+                    
+            except Exception as e:
+                print(f"   ⚠️ Error checking/selling {ticker}: {e}")
+        
+        # Step 2: Consider buying from momentum stocks (up to portfolio size limit)
+        current_positions = len(momentum_ai_hybrid_positions)
+        slots_available = MOMENTUM_AI_HYBRID_PORTFOLIO_SIZE - current_positions
+        
+        if slots_available > 0:
+            # Evaluate each momentum stock with AI
+            buy_candidates = []
+            
+            print(f"   🔍 Evaluating {len(momentum_stocks)} momentum stocks for AI buy signals...")
+            print(f"   🔍 Available models: {list(models.keys())[:5]}...")
+            
+            for ticker in momentum_stocks:
+                if ticker in momentum_ai_hybrid_positions:
+                    print(f"      ⏭️  {ticker}: Already holding, skip")
+                    continue  # Already holding
+                
+                if ticker not in models or ticker not in scalers:
+                    print(f"      ❌ {ticker}: No model (in models={ticker in models}, in scalers={ticker in scalers})")
+                    continue  # No AI model available
+                
+                try:
+                    # Get AI prediction
+                    prediction = _get_ai_prediction_for_ticker(
+                        ticker, current_date, all_tickers_data, models, scalers, y_scalers, horizon_days
+                    )
+                    
+                    if prediction is not None and prediction > MOMENTUM_AI_HYBRID_BUY_THRESHOLD:
+                        buy_candidates.append((ticker, prediction))
+                        print(f"         ✅ {ticker} qualifies for buying!")
+                        
+                except Exception as e:
+                    print(f"      ⚠️ {ticker}: Exception evaluating - {str(e)[:100]}")
+            
+            # Sort by AI confidence (highest first)
+            buy_candidates.sort(key=lambda x: x[1], reverse=True)
+            
+            # Buy top N candidates (up to available slots)
+            for ticker, prediction in buy_candidates[:slots_available]:
+                try:
+                    current_price = all_tickers_data[
+                        (all_tickers_data['ticker'] == ticker) &
+                        (all_tickers_data['date'] == current_date)
+                    ]['Close'].iloc[0]
+                    
+                    if current_price > 0 and momentum_ai_hybrid_cash >= target_allocation:
+                        buy_value = target_allocation
+                        buy_cost = buy_value * TRANSACTION_COST
+                        total_buy_cost = buy_value + buy_cost
+                        
+                        if total_buy_cost <= momentum_ai_hybrid_cash:
+                            shares_to_buy = buy_value / current_price
+                            momentum_ai_hybrid_positions[ticker] = {
+                                'shares': shares_to_buy,
+                                'entry_price': current_price,
+                                'value': buy_value,
+                                'entry_date': current_date,
+                                'peak_price': current_price
+                            }
+                            momentum_ai_hybrid_cash -= total_buy_cost
+                            momentum_ai_hybrid_transaction_costs += buy_cost
+                            
+                            print(f"   🛒 Mom+AI bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} (AI={prediction:.2f}) = ${buy_value:,.0f} (+${buy_cost:.2f} cost)")
+                            
+                except Exception as e:
+                    print(f"   ⚠️ Error buying {ticker}: {e}")
+        
+        # Update position values based on current prices
+        for ticker in momentum_ai_hybrid_positions:
+            try:
+                current_price = all_tickers_data[
+                    (all_tickers_data['ticker'] == ticker) &
+                    (all_tickers_data['date'] == current_date)
+                ]['Close'].iloc[0]
+                
+                if current_price > 0:
+                    shares = momentum_ai_hybrid_positions[ticker]['shares']
+                    momentum_ai_hybrid_positions[ticker]['value'] = shares * current_price
+                    
+            except Exception:
+                pass
+        
+        invested = sum(pos['value'] for pos in momentum_ai_hybrid_positions.values())
+        print(f"   📊 Mom+AI portfolio: ${invested:,.0f} invested ({len(momentum_ai_hybrid_positions)} stocks) + ${momentum_ai_hybrid_cash:,.0f} cash")
+        
+    except Exception as e:
+        print(f"   ⚠️ Momentum+AI hybrid rebalancing failed: {e}")
+    
+    return momentum_ai_hybrid_cash
+
+
+def _get_ai_prediction_for_ticker(ticker, current_date, all_tickers_data, models, scalers, y_scalers, horizon_days: int):
+    """
+    Get AI prediction for a specific ticker on a specific date.
+    Uses the SAME feature/prediction pipeline as the existing AI strategy (_quick_predict_return).
+    Returns prediction (float) or None if unable to predict.
+    """
+    try:
+        from config import PREDICTION_LOOKBACK_DAYS
+        from datetime import timedelta
+
+        model = models.get(ticker)
+        scaler = scalers.get(ticker)
+        y_scaler = y_scalers.get(ticker)
+        if model is None or scaler is None:
+            return None
+
+        ticker_data = all_tickers_data[all_tickers_data["ticker"] == ticker]
+        if ticker_data.empty:
+            return None
+
+        ticker_data = ticker_data.set_index("date")
+
+        # Avoid look-ahead bias: predict using data up to previous day
+        prediction_date = current_date - timedelta(days=1)
+        data_slice = ticker_data.loc[:prediction_date]
+        if len(data_slice) < PREDICTION_LOOKBACK_DAYS:
+            return None
+
+        pred = _quick_predict_return(
+            ticker,
+            data_slice.tail(PREDICTION_LOOKBACK_DAYS),
+            model,
+            scaler,
+            y_scaler,
+            horizon_days,
+        )
+        if pred == -np.inf:
+            return None
+        return pred
+    except Exception as e:
+        print(f"   ⚠️ {ticker}: Prediction failed - {str(e)[:100]}")
+        return None
+
+
 def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all_tickers_data,
                                positions, cash_balance, capital_per_stock, target_percentage,
                                predictions=None, stock_performance_tracking=None):
@@ -3180,8 +3486,15 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
 
                 # Update cash and positions
                 cash_balance += net_sell_value
-                positions[ticker]['shares'] = 0
-                positions[ticker]['value'] = 0
+                # ✅ IMPORTANT: Remove position entirely so we don't accumulate stale tickers
+                # Keeping zero-share entries causes portfolio value accounting drift and makes
+                # the strategy effectively hold >3 "positions" forever.
+                try:
+                    del positions[ticker]
+                except Exception:
+                    # Fallback: if dict deletion fails, at least zero it out
+                    positions[ticker]['shares'] = 0
+                    positions[ticker]['value'] = 0
 
                 sold_stocks.append(f"{ticker} ({shares_to_sell:.0f} shares @ ${sell_price:.2f})")
                 print(f"      💰 Sold {ticker}: {shares_to_sell:.0f} shares @ ${sell_price:.2f} = ${sell_value:.2f} (-${cost:.2f} cost)")
@@ -3189,8 +3502,9 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
     # Buy stocks that are newly added to portfolio
     stocks_to_buy = set(new_portfolio) - set(old_portfolio)
     if stocks_to_buy:
-        # Calculate capital available for buying (cash + proceeds from sales)
-        capital_for_new_stocks = cash_balance if cash_balance > 0 else capital_per_stock * len(stocks_to_buy)
+        # ✅ Calculate capital available for buying (must be actual cash on hand)
+        # Never "assume" capital_per_stock here; that can push cash negative and distort results.
+        capital_for_new_stocks = max(0.0, float(cash_balance))
 
         if capital_for_new_stocks > 0:
             # ✅ NEW: Calculate prediction-weighted allocations
@@ -3221,14 +3535,30 @@ def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all
                 # No predictions - use equal weight
                 weights = {t: 1.0 / len(stocks_to_buy) for t in stocks_to_buy}
 
+            # ✅ Normalize weights defensively (avoid any rounding / missing-key drift)
+            w_sum = float(sum(weights.values())) if weights else 0.0
+            if w_sum > 0:
+                weights = {t: float(w) / w_sum for t, w in weights.items()}
+            else:
+                weights = {t: 1.0 / len(stocks_to_buy) for t in stocks_to_buy}
+
             for ticker in stocks_to_buy:
                 if ticker in current_prices:
                     buy_price = current_prices[ticker]
                     if buy_price > 0:
-                        # Calculate shares to buy based on weighted allocation
-                        ticker_allocation = capital_for_new_stocks * weights.get(ticker, 1.0 / len(stocks_to_buy))
-                        shares_to_buy = ticker_allocation / buy_price
-                        buy_value = shares_to_buy * buy_price
+                        # Calculate shares to buy based on weighted allocation, but cap to available cash.
+                        ticker_allocation = capital_for_new_stocks * float(weights.get(ticker, 0.0))
+                        if ticker_allocation <= 0:
+                            continue
+
+                        # Apply transaction cost
+                        # We cap the actual buy_value so total_buy_cost never exceeds cash_balance
+                        max_affordable_buy_value = float(cash_balance) / (1.0 + TRANSACTION_COST) if cash_balance > 0 else 0.0
+                        buy_value = min(float(ticker_allocation), max_affordable_buy_value)
+                        if buy_value <= 0:
+                            continue
+
+                        shares_to_buy = buy_value / buy_price
 
                         # Apply transaction cost
                         cost = buy_value * TRANSACTION_COST
@@ -3404,7 +3734,8 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
                 X_tensor = torch.tensor(sequence_scaled, dtype=torch.float32).unsqueeze(0)
                 
                 # Move to appropriate device
-                device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+                from config import FORCE_CPU
+                device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
                 X_tensor = X_tensor.to(device)
                 model.to(device)
                 

@@ -462,6 +462,33 @@ SEED = 42
 # _ensure_dir moved to utils.py to avoid duplication
 from utils import _ensure_dir
 
+def _is_market_day_complete(date: datetime) -> bool:
+    """
+    Check if we should expect data for a given date.
+    Markets close at 4pm ET (9pm UTC), data available ~6pm ET (11pm UTC).
+    """
+    now_utc = datetime.now(timezone.utc)
+    target_date = date.date() if isinstance(date, datetime) else date
+    
+    # If date is in the future, we can't have data yet
+    if target_date > now_utc.date():
+        return False
+    
+    # If date is today, check if market close + data processing time has passed
+    if target_date == now_utc.date():
+        # Market data typically available after 11pm UTC (6pm ET + 1hr processing)
+        market_data_ready_hour = 23  # 11pm UTC
+        if now_utc.hour < market_data_ready_hour:
+            return False
+    
+    # If it's a weekend, no new data
+    weekday = now_utc.weekday()
+    if target_date == now_utc.date() and weekday >= 5:  # Saturday=5, Sunday=6
+        return False
+    
+    # For past dates (including yesterday), data should be available
+    return True
+
 CLASS_HORIZON           = 5          # days ahead for classification target
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """
@@ -495,10 +522,21 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 last_cached_date = cached_df.index[-1]
                 today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
                 
-                if (today - last_cached_date).days <= 1:
-                    needs_fetch = False
+                # Check if we should expect new data (considering market hours/weekends)
+                if _is_market_day_complete(today):
+                    # Market data should be available - check if cache is current
+                    if last_cached_date < today:
+                        fetch_start = last_cached_date + timedelta(days=1)
+                    else:
+                        needs_fetch = False
                 else:
-                    fetch_start = last_cached_date + timedelta(days=1)
+                    # Market data not available yet - check against yesterday
+                    yesterday = today - timedelta(days=1)
+                    if last_cached_date < yesterday:
+                        fetch_start = last_cached_date + timedelta(days=1)
+                    else:
+                        needs_fetch = False
+                        print(f"  ℹ️  {ticker}: Cache is current (today's market data not available yet)")
                     
         except Exception as e:
             print(f"  Warning: Could not read cache for {ticker}: {e}. Will refetch all.")

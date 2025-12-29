@@ -12,10 +12,16 @@ from datetime import datetime
 import multiprocessing
 from multiprocessing import current_process
 from tqdm import tqdm
+import time
 
 from config import (
     PYTORCH_AVAILABLE, FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING,
-    PERIOD_HORIZONS, NUM_PROCESSES, CUDA_AVAILABLE, GPU_MAX_CONCURRENT_TRAINING_WORKERS
+    PERIOD_HORIZONS, NUM_PROCESSES, CUDA_AVAILABLE, GPU_MAX_CONCURRENT_TRAINING_WORKERS,
+    GPU_PER_PROCESS_MEMORY_FRACTION,
+    GPU_CLEAR_CACHE_ON_WORKER_INIT,
+    GPU_CLEAR_CACHE_AFTER_EACH_TICKER,
+    TRAINING_POOL_MAXTASKSPERCHILD,
+    TRAINING_NUM_PROCESSES
 )
 from data_utils import fetch_training_data, _ensure_dir
 from ml_models import initialize_ml_libraries, train_and_evaluate_models, LSTMRegressor, GRURegressor
@@ -47,11 +53,36 @@ def _init_pool_worker(gpu_semaphore):
     """Initializer for Pool workers to receive shared semaphore."""
     global _GPU_TRAIN_SEMAPHORE
     _GPU_TRAIN_SEMAPHORE = gpu_semaphore
+    # Avoid nested thread explosions inside each spawned worker (common WSL stability issue)
+    try:
+        os.environ.setdefault("OMP_NUM_THREADS", "1")
+        os.environ.setdefault("MKL_NUM_THREADS", "1")
+        os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+        os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+    except Exception:
+        pass
+    try:
+        if PYTORCH_AVAILABLE:
+            import torch
+            torch.set_num_threads(1)
+            try:
+                torch.set_num_interop_threads(1)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def _acquire_gpu_slot(ticker: str):
     """Acquire a GPU training slot if CUDA is enabled and semaphore is available."""
     global _GPU_TRAIN_SEMAPHORE
+    from config import FORCE_CPU
+    # Skip GPU slot management if FORCE_CPU is enabled
+    if FORCE_CPU:
+        return
+    # If single-process training, don't gate GPU usage
+    if NUM_PROCESSES <= 1:
+        return
     if not CUDA_AVAILABLE or _GPU_TRAIN_SEMAPHORE is None:
         return
     print(f"🐛 DEBUG: {ticker} - Waiting for GPU slot ({GPU_MAX_CONCURRENT_TRAINING_WORKERS} max)...", flush=True)
@@ -61,6 +92,12 @@ def _acquire_gpu_slot(ticker: str):
 
 def _release_gpu_slot(ticker: str):
     global _GPU_TRAIN_SEMAPHORE
+    from config import FORCE_CPU
+    # Skip GPU slot management if FORCE_CPU is enabled
+    if FORCE_CPU:
+        return
+    if NUM_PROCESSES <= 1:
+        return
     if not CUDA_AVAILABLE or _GPU_TRAIN_SEMAPHORE is None:
         return
     try:
@@ -92,13 +129,31 @@ def train_worker(params: Tuple) -> Dict:
     # Initialize CUDA for this worker process with memory limit
     try:
         import torch
-        if torch.cuda.is_available():
+        from config import FORCE_CPU
+        # Skip GPU setup if FORCE_CPU is enabled
+        if not FORCE_CPU and torch.cuda.is_available():
             torch.cuda.set_device(0)
-            # Limit GPU memory per process to avoid OOM with multiple workers
-            # Each of 10 processes gets ~10% of GPU memory
-            torch.cuda.set_per_process_memory_fraction(0.1, device=0)
-            torch.cuda.empty_cache()
-            print(f"🐛 DEBUG: {ticker} - GPU initialized (10% memory fraction)", flush=True)
+            # Optional: cap VRAM per process to reduce OOM risk under multiprocessing.
+            # Prefer deriving the cap from the *actual GPU concurrency* (GPU_MAX_CONCURRENT_TRAINING_WORKERS),
+            # since NUM_PROCESSES can be >1 even when only 1 GPU worker runs at a time.
+            try:
+                effective_fraction = None
+
+                # Hard override if explicitly configured
+                if GPU_PER_PROCESS_MEMORY_FRACTION is not None:
+                    effective_fraction = float(GPU_PER_PROCESS_MEMORY_FRACTION)
+                else:
+                    # Auto-cap only when we can have >1 concurrent GPU trainers
+                    if CUDA_AVAILABLE and GPU_MAX_CONCURRENT_TRAINING_WORKERS and GPU_MAX_CONCURRENT_TRAINING_WORKERS > 1:
+                        # Leave a little headroom to reduce fragmentation/OOM thrash
+                        effective_fraction = min(0.95, 0.95 / float(GPU_MAX_CONCURRENT_TRAINING_WORKERS))
+
+                if effective_fraction is not None:
+                    torch.cuda.set_per_process_memory_fraction(effective_fraction, device=0)
+            except Exception:
+                pass
+            if GPU_CLEAR_CACHE_ON_WORKER_INIT:
+                torch.cuda.empty_cache()
     except Exception as e:
         print(f"⚠️ {ticker} - GPU init warning: {e}", flush=True)
     sys.stdout.flush()
@@ -226,7 +281,7 @@ def train_worker(params: Tuple) -> Dict:
     # Limit concurrent GPU-heavy training to avoid WSL CUDA deadlocks
     _acquire_gpu_slot(ticker)
     try:
-        print(f"🐛 DEBUG: {ticker} - Starting train_and_evaluate_models...", flush=True)
+        print(f"🎯 {ticker}: Starting model training (LSTM→TCN→ML models)...", flush=True)
         sys.stdout.flush()
         train_result = train_and_evaluate_models(
             df_train, target_column, actual_feature_set, ticker=ticker,
@@ -312,10 +367,13 @@ def train_worker(params: Tuple) -> Dict:
                     json.dump(gru_hyperparams, f, indent=4)
 
             print(f"  ✅ Single regression model, scaler, y_scaler, and GRU hyperparams saved for {ticker}.")
+            sys.stdout.flush()
         except Exception as e:
             print(f"  ⚠️ Error saving model or GRU hyperparams for {ticker}: {e}")
+            sys.stdout.flush()
 
         # Before returning, ensure PyTorch models are on CPU if they are deep learning models
+        print(f"🐛 DEBUG: {ticker} - Moving model to CPU before return...", flush=True)
         if PYTORCH_AVAILABLE:
             try:
                 from ml_models import LSTMRegressor, GRURegressor, TCNRegressor
@@ -325,27 +383,43 @@ def train_worker(params: Tuple) -> Dict:
                 # If imports fail in worker process, skip CPU conversion
                 pass
 
-        # ✅ Force GPU cleanup before returning
-        if CUDA_AVAILABLE:
+        # ✅ Optional GPU cache clear before returning (can cause brief utilization dips)
+        if CUDA_AVAILABLE and GPU_CLEAR_CACHE_AFTER_EACH_TICKER:
             try:
                 import torch
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
                     print(f"🐛 DEBUG: {current_process().name} - {ticker}: GPU cache cleared", flush=True)
             except Exception as e:
                 print(f"⚠️ Warning: Failed to clear GPU cache for {ticker}: {e}", flush=True)
 
-        return {
+        # ✅ Prepare y_scaler_path before deleting objects
+        y_scaler_path_str = str(y_scaler_path) if final_y_scaler is not None else None
+        
+        # ✅ Explicitly delete large objects before returning (critical for multiprocessing performance)
+        del model
+        del final_scaler
+        if final_y_scaler is not None:
+            del final_y_scaler
+        
+        # ✅ Return only metadata (models already saved to disk) to avoid pickling overhead
+        result = {
             'ticker': ticker,
-            'model': model,  # Single regression model
-            'scaler': final_scaler,
-            'y_scaler': final_y_scaler,  # ✅ Return y_scaler
-            'gru_hyperparams': gru_hyperparams,  # Single set of hyperparams
+            'model': None,  # Don't return model object - load from disk later
+            'scaler': None,  # Don't return scaler - load from disk later
+            'y_scaler': None,  # Don't return y_scaler - load from disk later
+            'gru_hyperparams': gru_hyperparams,  # Small JSON-serializable dict
             'winner': winner,  # Which model type won
             'status': 'trained',
-            'reason': None
+            'reason': None,
+            'model_path': str(model_path),  # Path to load model from
+            'scaler_path': str(scaler_path),  # Path to load scaler from
+            'y_scaler_path': y_scaler_path_str
         }
+        from datetime import datetime
+        print(f"🐛 DEBUG [{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]: {ticker} - Returning result metadata...", flush=True)
+        sys.stdout.flush()
+        return result
     else:
         reason = "Insufficient training data" # Default reason
         if df_train.empty:
@@ -462,7 +536,7 @@ def train_models_for_period(
             
             training_params.append((
                 ticker,
-                ticker_train_data.copy(),
+                ticker_train_data,
                 period_target_pct,
                 period_horizon,
                 feature_set
@@ -472,30 +546,99 @@ def train_models_for_period(
             continue
     
     # Run training in parallel or sequentially
-    if run_parallel and len(training_params) > 0:
-        print(f"🤖 Training {period_name} models in parallel for {len(tickers)} tickers using {NUM_PROCESSES} processes...", flush=True)
+    # If NUM_PROCESSES <= 1, avoid spawning a Pool entirely (keeps "single process" truly single-process,
+    # simplifies CUDA behavior, and avoids confusion about per-process GPU limits).
+    training_processes = int(TRAINING_NUM_PROCESSES) if TRAINING_NUM_PROCESSES is not None else int(NUM_PROCESSES)
+    training_processes = max(1, min(training_processes, len(training_params) if training_params else 1))
+
+    if run_parallel and training_processes > 1 and len(training_params) > 0:
+        print(f"🤖 Training {period_name} models in parallel for {len(tickers)} tickers using {training_processes} processes...", flush=True)
         print(f"🐛 DEBUG: Using torch.multiprocessing.Pool with spawn for GPU support", flush=True)
 
         # Shared semaphore to limit concurrent GPU training across workers
+        # If multiprocessing is disabled (NUM_PROCESSES<=1), don't create a semaphore at all.
         try:
-            gpu_semaphore = mp.Semaphore(GPU_MAX_CONCURRENT_TRAINING_WORKERS) if (PYTORCH_AVAILABLE and CUDA_AVAILABLE) else None
+            gpu_semaphore = (
+                mp.Semaphore(GPU_MAX_CONCURRENT_TRAINING_WORKERS)
+                if (PYTORCH_AVAILABLE and CUDA_AVAILABLE and training_processes > 1)
+                else None
+            )
         except Exception:
             gpu_semaphore = None
 
-        pool = Pool(processes=NUM_PROCESSES, initializer=_init_pool_worker, initargs=(gpu_semaphore,))
+        # NOTE: In WSL + spawn, long-running workers can accumulate RAM and leak semaphores if the process
+        # is killed (OOM). `maxtasksperchild` trades some overhead for stability.
+        pool_kwargs = dict(processes=training_processes, initializer=_init_pool_worker, initargs=(gpu_semaphore,))
+        if TRAINING_POOL_MAXTASKSPERCHILD is not None:
+            try:
+                pool = Pool(maxtasksperchild=int(TRAINING_POOL_MAXTASKSPERCHILD), **pool_kwargs)
+            except TypeError:
+                pool = Pool(**pool_kwargs)
+        else:
+            pool = Pool(**pool_kwargs)
+        # Parent-side confirmation of worker count (child stdout may not appear in the same log under spawn/WSL)
         try:
-            # Use map_async with timeout for better control
+            worker_procs = getattr(pool, "_pool", None) or []
+            worker_pids = [getattr(p, "pid", None) for p in worker_procs]
+            worker_pids = [pid for pid in worker_pids if pid is not None]
+            if worker_pids:
+                print(f"🐛 DEBUG: Pool started with {len(worker_pids)} worker processes. PIDs={worker_pids}", flush=True)
+            else:
+                print(f"🐛 DEBUG: Pool started with processes={getattr(pool, '_processes', NUM_PROCESSES)}", flush=True)
+        except Exception:
+            print(f"🐛 DEBUG: Pool started with {NUM_PROCESSES} processes (PID list unavailable).", flush=True)
+        try:
+            # Direct result collection (much faster than Queue-based approach)
             print(f"🐛 DEBUG: Submitting {len(training_params)} training tasks...", flush=True)
-            async_result = pool.map_async(train_worker, training_params, chunksize=1)
+
+            # Use apply_async with timeout for better control
+            training_results = []
+            completed = 0
+            total = len(training_params)
+            failed_tickers = []
             
-            # Wait with timeout (5 minutes per ticker should be plenty)
-            timeout_seconds = len(training_params) * 300
-            training_results = async_result.get(timeout=timeout_seconds)
-            print(f"🐛 DEBUG: All {len(training_results)} tasks completed successfully!", flush=True)
-        except TimeoutError:
-            print(f"⚠️ WARNING: Training timed out after {timeout_seconds}s, terminating pool...", flush=True)
-            pool.terminate()
-            raise
+            # Submit all tasks and collect results as they complete
+            from datetime import datetime
+            
+            # Timeout handler (per-ticker timeout: configurable)
+            from config import PER_TICKER_TIMEOUT
+            if PER_TICKER_TIMEOUT is None:
+                PER_TICKER_TIMEOUT = float('inf')  # No timeout
+            
+            # Submit all tasks asynchronously
+            async_results = []
+            for params in training_params:
+                async_result = pool.apply_async(train_worker, (params,))
+                async_results.append((params[0], async_result))  # Store ticker name with result
+            
+            print(f"🐛 DEBUG: Submitted {len(async_results)} tasks, waiting for results with {PER_TICKER_TIMEOUT}s timeout per ticker...", flush=True)
+            
+            # Collect results with timeout
+            for ticker, async_result in async_results:
+                try:
+                    # Wait for result with timeout
+                    result = async_result.get(timeout=PER_TICKER_TIMEOUT)
+                    print(f"🐛 DEBUG [{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]: Main received result for {ticker}", flush=True)
+                    completed += 1
+                    training_results.append(result)
+                    if completed % 4 == 0 or completed == total:  # Progress every 4 tickers
+                        print(f"🐛 DEBUG: Training progress: {completed}/{total} done", flush=True)
+                except TimeoutError:
+                    # Ticker took too long (> 10 minutes)
+                    completed += 1
+                    failed_tickers.append(ticker)
+                    print(f"⚠️ WARNING: {ticker} training timed out after {PER_TICKER_TIMEOUT}s! Skipping... ({completed}/{total})", flush=True)
+                    continue
+                except Exception as e:
+                    # Other errors
+                    completed += 1
+                    failed_tickers.append(ticker)
+                    print(f"⚠️ WARNING: {ticker} training failed with error: {e}. Skipping... ({completed}/{total})", flush=True)
+                    continue
+
+            print(f"🐛 DEBUG: All {len(training_results)} tasks completed ({len(training_results)} successful).", flush=True)
+            if failed_tickers:
+                print(f"⚠️ WARNING: {len(failed_tickers)} tickers failed/timed out: {', '.join(failed_tickers[:10])}{'...' if len(failed_tickers) > 10 else ''}", flush=True)
         finally:
             print(f"🐛 DEBUG: Closing pool...", flush=True)
             pool.close()
@@ -515,34 +658,112 @@ def train_models_for_period(
         training_results = [train_worker(p) for p in tqdm(training_params, desc=f"Training {period_name} Models")]
     
     print(f"🐛 DEBUG: Starting result collection for {len(training_results)} training results...", flush=True)
+    import sys
+    sys.stdout.flush()
+    
     # Collect results
     y_scalers = {}  # ✅ Initialize y_scalers dictionary
     model_winners = {}  # ✅ Track model selection statistics
     result_list = []  # ✅ NEW: Collect results as list for backtesting compatibility
     
+    print(f"🐛 DEBUG: Beginning dictionary assignment loop...", flush=True)
+    sys.stdout.flush()
+    
     for res in training_results:
         if res and (res.get('status') == 'trained' or res.get('status') == 'loaded'):
-            # Single model - use same model for both buy and sell logic
-            models_buy[res['ticker']] = res['model']
-            models_sell[res['ticker']] = res['model']  # Same model for both
-            scalers[res['ticker']] = res['scaler']
-            y_scalers[res['ticker']] = res.get('y_scaler', None)  # ✅ Collect y_scaler
+            ticker = res['ticker']
             
-            # ✅ NEW: Add to result list for backtest compatibility
-            result_list.append(res)
+            # Load model from disk instead of using returned object (avoids pickling overhead)
+            if res.get('model_path'):
+                try:
+                    model_path = Path(res['model_path'])
+                    scaler_path = Path(res['scaler_path'])
+                    
+                    # Handle PyTorch models (saved with torch.save for state_dict)
+                    if PYTORCH_AVAILABLE and model_path.with_suffix('.info').exists():
+                        model_info = joblib.load(model_path.with_suffix('.info'))
+                        if model_info.get('model_class'):
+                            import torch
+                            from ml_models import TCNRegressor, GRURegressor, LSTMRegressor
+                            
+                            model_class_name = model_info['model_class']
+                            if model_class_name == 'TCNRegressor':
+                                model = TCNRegressor(
+                                    input_size=model_info.get('input_size', 35),
+                                    num_filters=32, kernel_size=3, num_levels=2, dropout=0.1
+                                )
+                            elif model_class_name == 'GRURegressor':
+                                model = GRURegressor(
+                                    input_size=model_info.get('input_size', 35),
+                                    hidden_size=model_info.get('hidden_size', 64),
+                                    num_layers=model_info.get('num_layers', 2),
+                                    output_size=1, dropout_rate=0.5
+                                )
+                            elif model_class_name == 'LSTMRegressor':
+                                model = LSTMRegressor(
+                                    input_size=model_info.get('input_size', 35),
+                                    hidden_size=model_info.get('hidden_size', 64),
+                                    num_layers=model_info.get('num_layers', 2),
+                                    output_size=1, dropout_rate=0.5
+                                )
+                            
+                            state_dict = torch.load(model_path, map_location='cpu')
+                            model.load_state_dict(state_dict)
+                        else:
+                            model = joblib.load(model_path)
+                    else:
+                        # Regular sklearn models
+                        model = joblib.load(model_path)
+                    
+                    scaler = joblib.load(scaler_path)
+                    y_scaler = joblib.load(res['y_scaler_path']) if res.get('y_scaler_path') else None
+                    
+                except Exception as e:
+                    print(f"⚠️ Failed to load model from disk for {ticker}: {e}")
+                    continue
+            else:
+                # Fallback: use returned objects (for backward compatibility)
+                model = res.get('model')
+                scaler = res.get('scaler')
+                y_scaler = res.get('y_scaler')
+            
+            # Single model - use same model for both buy and sell logic
+            models_buy[ticker] = model
+            models_sell[ticker] = model  # Same model for both
+            scalers[ticker] = scaler
+            y_scalers[ticker] = y_scaler
+            
+            # ✅ NEW: Add to result list for backtest compatibility (with loaded models)
+            res_with_models = res.copy()
+            res_with_models['model'] = model
+            res_with_models['scaler'] = scaler
+            res_with_models['y_scaler'] = y_scaler
+            result_list.append(res_with_models)
             
             # Track winners for statistics
             if 'winner' in res:
-                winner_key = f"{res['ticker']}_Regression"
+                winner_key = f"{ticker}_Regression"
                 model_winners[winner_key] = res['winner']
+    
+    print(f"🐛 DEBUG: Dictionary assignment complete, collected {len(result_list)} models", flush=True)
+    sys.stdout.flush()
     
     # Return separate dictionaries as expected by callers
     # Since we want only one model per stock, we use models_buy as the single model dict
+    print(f"🐛 DEBUG: Creating models reference from models_buy...", flush=True)
+    sys.stdout.flush()
     models = models_buy  # Single model per stock (previously models_buy)
-
-    print(f"✅ {period_name} training complete: {len([t for t in tickers if t in models])} models trained/loaded.")
+    
+    print(f"🐛 DEBUG: Counting trained models...", flush=True)
+    sys.stdout.flush()
+    trained_count = len([t for t in tickers if t in models])
+    
+    print(f"✅ {period_name} training complete: {trained_count} models trained/loaded.", flush=True)
+    sys.stdout.flush()
 
     # Print model selection statistics
+    print(f"🐛 DEBUG: Building model selection statistics...", flush=True)
+    sys.stdout.flush()
     winner_list = [model_winners.get(f"{ticker}_Buy") for ticker in tickers if model_winners.get(f"{ticker}_Buy")]
     if winner_list:
         from collections import Counter
@@ -554,6 +775,9 @@ def train_models_for_period(
             print(f"{model_name:<30} {count:>15}")
         print()
 
+    print(f"🐛 DEBUG: Returning {len(result_list)} results...", flush=True)
+    sys.stdout.flush()
+    
     # ✅ FIX: Return list of results for backtesting compatibility
     return result_list
 

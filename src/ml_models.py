@@ -590,14 +590,19 @@ def initialize_ml_libraries():
             "model": XGBRegressor(random_state=SEED, nthread=1),  # nthread=1 to avoid nested parallelism
             "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2], 'max_depth': [3, 5, 7]}
         }
-        if CUDA_AVAILABLE:
+        # Use XGBOOST_USE_GPU flag instead of CUDA_AVAILABLE
+        from config import XGBOOST_USE_GPU
+        if XGBOOST_USE_GPU and CUDA_AVAILABLE:
             xgb_model_params["model"].set_params(tree_method='gpu_hist')
             models_and_params["XGBoost (GPU)"] = xgb_model_params
             print(f"✅ XGBoostRegressor found. Configured for GPU (gpu_hist tree_method).")
         else:
             xgb_model_params["model"].set_params(tree_method='hist')
             models_and_params["XGBoost (CPU)"] = xgb_model_params
-            print(f"ℹ️ XGBoostRegressor found. Will use CPU (CUDA not available).")
+            if XGBOOST_USE_GPU:
+                print(f"ℹ️ XGBoostRegressor found. Will use CPU (GPU not available).")
+            else:
+                print(f"ℹ️ XGBoostRegressor found. Will use CPU (XGBOOST_USE_GPU=False).")
 
     _ml_libraries_initialized = True
     return models_and_params
@@ -633,7 +638,8 @@ def analyze_shap_for_gru(model, scaler: MinMaxScaler, X_df: pd.DataFrame, featur
 
             X_sequences_tensor = torch.tensor(np.array(X_sequences_for_pred), dtype=torch.float32)
             
-            device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+            from config import FORCE_CPU
+            device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
             model.to(device)
             X_sequences_tensor = X_sequences_tensor.to(device)
 
@@ -973,7 +979,8 @@ def train_and_evaluate_models(
             X_sequences = torch.tensor(np.array(X_sequences), dtype=torch.float32)
             y_sequences = torch.tensor(np.array(y_sequences), dtype=torch.float32).unsqueeze(1)
 
-            device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+            from config import FORCE_CPU
+            device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
             
             dataset = TensorDataset(X_sequences, y_sequences)
             dataloader = DataLoader(dataset, batch_size=LSTM_BATCH_SIZE, shuffle=True)
@@ -983,8 +990,11 @@ def train_and_evaluate_models(
             # Always use MSE loss for regression (predicting returns)
             criterion = nn.MSELoss()
             print(f"    - Using MSE loss for regression (predicting returns)")
+            
+            print(f"   📚 {ticker}: Phase 1/3 - Training Deep Learning models (LSTM, TCN)...", flush=True)
 
             if USE_LSTM:
+                print(f"      🔹 {ticker}: Training LSTM ({LSTM_EPOCHS} epochs)...", flush=True)
                 from ml_models import LSTMRegressor
                 lstm_model = safe_to_device(LSTMRegressor(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT), device)
                 if initial_model and isinstance(initial_model, LSTMClassifier):
@@ -997,6 +1007,9 @@ def train_and_evaluate_models(
                 optimizer_lstm = optim.Adam(lstm_model.parameters(), lr=LSTM_LEARNING_RATE)
 
                 for epoch in range(LSTM_EPOCHS):
+                    # Progress indicator every 10 epochs
+                    if epoch % 10 == 0 and epoch > 0:
+                        print(f"      ⏳ {ticker} LSTM: Epoch {epoch}/{LSTM_EPOCHS} ({epoch/LSTM_EPOCHS*100:.0f}%)", flush=True)
                     try:
                         for batch_X, batch_y in dataloader:
                             try:
@@ -1089,10 +1102,14 @@ def train_and_evaluate_models(
 
             # --- TCN Regressor (lightweight) ---
             if USE_TCN:
+                print(f"      🔹 {ticker}: Training TCN ({LSTM_EPOCHS} epochs)...", flush=True)
                 tcn_model = safe_to_device(TCNRegressor(input_size, num_filters=32, kernel_size=3, num_levels=2, dropout=0.1), device)
                 optimizer_tcn = optim.Adam(tcn_model.parameters(), lr=LSTM_LEARNING_RATE)
 
                 for epoch in range(LSTM_EPOCHS):
+                    # Progress indicator every 10 epochs
+                    if epoch % 10 == 0 and epoch > 0:
+                        print(f"      ⏳ {ticker} TCN: Epoch {epoch}/{LSTM_EPOCHS} ({epoch/LSTM_EPOCHS*100:.0f}%)", flush=True)
                     try:
                         for batch_X, batch_y in dataloader:
                             try:
@@ -1606,7 +1623,7 @@ def train_and_evaluate_models(
     total_ml_models = len(traditional_ml_models)
     current_ml_model_index = 0
 
-    print(f"     📊 Optimizing {total_ml_models} traditional ML models with GridSearchCV...")
+    print(f"   📊 {ticker}: Phase 2/3 - Optimizing {total_ml_models} traditional ML models with GridSearchCV...", flush=True)
     print(f"     ⚡ Using {n_splits}-fold cross-validation, parallel processing enabled")
 
     import time
@@ -1637,12 +1654,15 @@ def train_and_evaluate_models(
 
             model_start_time = time.time()
             print(f"    🔍 Optimizing {name} ({current_ml_model_index}/{total_ml_models}) - Testing {total_combinations} parameter combinations × {n_splits}-fold CV = {total_combinations * n_splits} total model trainings...")
+            sys.stdout.flush()
 
             def _run_grid(estimator):
                 # Use n_jobs=1 to avoid nested parallelism deadlock when training multiple tickers in parallel
                 # The parallelism happens at the ticker level (15 processes), not within GridSearchCV
                 gs = GridSearchCV(estimator, params, cv=cv, scoring='neg_mean_squared_error', n_jobs=1, verbose=0)
+                print(f"       ⏳ {ticker} {name}: Starting GridSearchCV fit...", flush=True)
                 gs.fit(X, y)
+                print(f"       ✅ {ticker} {name}: GridSearchCV complete", flush=True)
                 return gs
 
             try:
@@ -1707,6 +1727,7 @@ def train_and_evaluate_models(
     # Select best model based on lowest MSE (regression) or highest AUC (classification)
     best_model_name = min(results, key=results.get)  # Lowest MSE wins
     best_score = results[best_model_name]
+    print(f"   ✅ {ticker}: Phase 3/3 - Model selection complete!", flush=True)
     print(f"  🏆 WINNER for {ticker} ({target_col}): {best_model_name} with MSE={best_score:.4f}")
     
     # Track model selection for statistics (store in a way that can be aggregated later)

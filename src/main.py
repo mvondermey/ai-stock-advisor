@@ -36,6 +36,7 @@ from config import (
     ENABLE_AI_STRATEGY,
     ENABLE_MEAN_REVERSION,
     ENABLE_QUALITY_MOM,
+    ENABLE_MOMENTUM_AI_HYBRID,
     FEAT_SMA_SHORT, FEAT_SMA_LONG, FEAT_VOL_WINDOW, ATR_PERIOD,
     GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS,
     GRU_HIDDEN_SIZE_OPTIONS, GRU_NUM_LAYERS_OPTIONS, GRU_DROPOUT_OPTIONS,
@@ -380,10 +381,20 @@ def main(
     # Set the start method for multiprocessing to 'spawn'
     # This is crucial for CUDA compatibility with multiprocessing
     try:
-        if PYTORCH_AVAILABLE and torch.cuda.is_available():
-            import multiprocessing
-            multiprocessing.set_start_method('spawn', force=True)
-            print("✅ Multiprocessing start method set to 'spawn' for CUDA compatibility.")
+        if PYTORCH_AVAILABLE:
+            import torch
+            from config import FORCE_CPU
+            if FORCE_CPU:
+                print("🖥️  FORCE_CPU enabled - PyTorch models will run on CPU (allows higher parallelism)")
+                import multiprocessing
+                multiprocessing.set_start_method('spawn', force=True)
+            elif torch.cuda.is_available():
+                print("🎮 GPU detected - PyTorch models will use CUDA")
+                import multiprocessing
+                multiprocessing.set_start_method('spawn', force=True)
+                print("✅ Multiprocessing start method set to 'spawn' for CUDA compatibility.")
+            else:
+                print("🖥️  No GPU detected - PyTorch models will run on CPU")
     except RuntimeError as e:
         print(f"⚠️ Could not set multiprocessing start method to 'spawn': {e}. This might cause issues with CUDA and multiprocessing.")
 
@@ -437,13 +448,14 @@ def main(
     train_start_1y = end_date - timedelta(days=BACKTEST_DAYS + TRAIN_LOOKBACK_DAYS + 1)
     earliest_date_needed = train_start_1y
 
-    # Expand the download range to cache more historical data (2 years back)
-    # This ensures future runs can use cached data for overlapping periods
-    cache_start_date = end_date - timedelta(days=730)  # 2 years back
+    # Use the actual earliest date needed instead of hardcoded 730 days
+    # This prevents cache misses when cache has sufficient data for analysis
+    cache_start_date = earliest_date_needed  # Use calculated date
     actual_start_date = earliest_date_needed
 
+    days_back = (end_date - cache_start_date).days
     print(f"🚀 Step 1: Batch downloading data for {len(all_available_tickers)} tickers from {cache_start_date.date()} to {end_date.date()}...")
-    print(f"  (This caches 2+ years of data for future use, but we'll use data from {actual_start_date.date()} for analysis)")
+    print(f"  (Requesting {days_back} days of data based on BACKTEST_DAYS={BACKTEST_DAYS} + TRAIN_LOOKBACK_DAYS={TRAIN_LOOKBACK_DAYS})")
 
     all_tickers_data_list = []
     for i in range(0, len(all_available_tickers), BATCH_DOWNLOAD_SIZE):
@@ -501,6 +513,26 @@ def main(
         print(f"   ✅ Converted to long format: {len(all_tickers_data)} rows, {len(all_tickers_data['ticker'].unique())} tickers")
     else:
         print("   ℹ️ Data already in long format, skipping conversion")
+    
+    # ✅ Filter out delisted stocks (no recent data within last 30 days)
+    print("🔍 Filtering out delisted stocks (no recent data)...")
+    cutoff_date = end_date - timedelta(days=30)
+    
+    # Find tickers with data in the last 30 days
+    recent_data = all_tickers_data[all_tickers_data['date'] >= cutoff_date]
+    active_tickers = recent_data['ticker'].unique().tolist()
+    
+    # Remove tickers without recent data
+    all_tickers_before = all_tickers_data['ticker'].nunique()
+    all_tickers_data = all_tickers_data[all_tickers_data['ticker'].isin(active_tickers)]
+    all_tickers_after = all_tickers_data['ticker'].nunique()
+    
+    delisted_count = all_tickers_before - all_tickers_after
+    if delisted_count > 0:
+        print(f"   ✅ Filtered out {delisted_count} delisted/stale tickers (no data in last 30 days)")
+        print(f"   ✅ Remaining: {all_tickers_after} active tickers")
+    else:
+        print(f"   ✅ All {all_tickers_after} tickers have recent data")
     
     # Ensure 'date' column is timezone-aware
     if 'date' in all_tickers_data.columns:
@@ -614,24 +646,99 @@ def main(
     print(f"   - Date range: {all_tickers_data['date'].min()} to {all_tickers_data['date'].max()}")
     print(f"   - Columns: {list(all_tickers_data.columns)}")
     
-    # ✅ NEW: Generate data quality diagnostics for all tickers
+    # ✅ OPTIMIZED: Generate data quality diagnostics efficiently
     print("\n🔍 Analyzing data quality for each ticker...")
-    data_summaries = []
-    for ticker in all_available_tickers:
-        ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-        if not ticker_data.empty:
-            ticker_data = ticker_data.set_index('date')
-        summary = get_data_summary(ticker_data, ticker)
-        data_summaries.append(summary)
     
-    # Print diagnostics table
-    print_data_diagnostics(data_summaries)
-    
-    # Warn if many tickers have insufficient data
-    insufficient_count = sum(1 for s in data_summaries if s['status'] == 'INSUFFICIENT')
-    if insufficient_count > len(data_summaries) * 0.3:  # More than 30% insufficient
-        print(f"⚠️  WARNING: {insufficient_count}/{len(data_summaries)} tickers have insufficient data!")
-        print(f"   💡 Consider using a longer data period or filtering these tickers")
+    # For large ticker lists (>1000), use fast aggregation without detailed checks
+    if len(all_available_tickers) > 1000:
+        print(f"   📊 Fast validation for {len(all_available_tickers)} tickers...")
+        
+        # Quick aggregation: count rows per ticker
+        ticker_counts = all_tickers_data.groupby('ticker').size()
+        
+        data_summaries = []
+        for ticker in tqdm(all_available_tickers, desc="Quick validation", ncols=100):
+            row_count = ticker_counts.get(ticker, 0)
+            if row_count >= 175:  # 70% of 250 days minimum
+                status = 'OK'
+                message = ''
+            elif row_count > 0:
+                status = 'INSUFFICIENT'
+                message = f"Only {row_count} rows"
+            else:
+                status = 'EMPTY'
+                message = 'No data'
+            
+            data_summaries.append({
+                'ticker': ticker,
+                'rows': row_count,
+                'status': status,
+                'message': message
+            })
+        
+        # Print summary stats
+        ok_count = sum(1 for s in data_summaries if s['status'] == 'OK')
+        insufficient_count = sum(1 for s in data_summaries if s['status'] == 'INSUFFICIENT')
+        empty = sum(1 for s in data_summaries if s['status'] == 'EMPTY')
+        
+        print(f"\n   ✅ Validation complete: {ok_count} OK, {insufficient_count} insufficient, {empty} empty")
+        print(f"   📊 Overall data: {all_tickers_data.shape[0]} rows, {len(all_available_tickers)} tickers\n")
+        
+        # Show problematic tickers (INSUFFICIENT or EMPTY)
+        problematic = [s for s in data_summaries if s['status'] in ['INSUFFICIENT', 'EMPTY', 'ERROR']]
+        if problematic:
+            print(f"   ⚠️  Tickers with issues ({len(problematic)} total):")
+            print("   " + "=" * 90)
+            print(f"   {'Ticker':<10} {'Rows':<8} {'Status':<15} {'Message':<40}")
+            print("   " + "-" * 90)
+            
+            # Show first 50 problematic tickers
+            for i, s in enumerate(problematic[:50]):
+                print(f"   {s['ticker']:<10} {s['rows']:<8} {s['status']:<15} {s.get('message', ''):<40}")
+            
+            if len(problematic) > 50:
+                print(f"   ... and {len(problematic) - 50} more problematic tickers")
+            print("   " + "=" * 90)
+            print()
+        
+        # Warn if many tickers have insufficient data
+        if insufficient_count > len(data_summaries) * 0.3:
+            print(f"   ⚠️  WARNING: {insufficient_count}/{len(data_summaries)} tickers have insufficient data!")
+            print(f"   💡 Consider using a longer data period or filtering these tickers\n")
+    else:
+        # For smaller lists, use optimized groupby approach
+        data_summaries = []
+        
+        # Optimize: Group by ticker once (much faster than filtering repeatedly)
+        grouped = all_tickers_data.groupby('ticker')
+        
+        for ticker in tqdm(all_available_tickers, desc="Validating data quality"):
+            try:
+                if ticker in grouped.groups:
+                    ticker_data = grouped.get_group(ticker).copy()
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                    summary = get_data_summary(ticker_data, ticker)
+                else:
+                    # Ticker has no data
+                    summary = {
+                        'ticker': ticker,
+                        'rows': 0,
+                        'status': 'EMPTY',
+                        'message': 'No data available'
+                    }
+                data_summaries.append(summary)
+            except Exception as e:
+                # Skip problematic tickers
+                data_summaries.append({
+                    'ticker': ticker,
+                    'rows': 0,
+                    'status': 'ERROR',
+                    'message': f'Error: {str(e)[:30]}'
+                })
+        
+        # Print diagnostics table (includes warnings)
+        print_data_diagnostics(data_summaries)
     
     # --- Calculate backtest dates first (needed for ticker selection) ---
     bt_end = end_date  # Use the provided end_date
@@ -716,6 +823,10 @@ def main(
                 run_parallel=run_parallel
             )
 
+            print(f"🐛 DEBUG: train_models_for_period returned, processing {len(training_results)} results...", flush=True)
+            import sys
+            sys.stdout.flush()
+
             # ✅ FIX: Convert list of results to dictionaries
             for result in training_results:
                 if result and result.get('status') in ['trained', 'loaded']:
@@ -739,6 +850,20 @@ def main(
     print(f"  ✅ {len(top_tickers_1y_filtered)} tickers available for AI Portfolio training: {', '.join(top_tickers_1y_filtered)}")
 
     # --- Train AI Portfolio Rebalancing Model ---
+    # ✅ CRITICAL: Force memory cleanup before AI Portfolio training (prevents OOM)
+    print(f"\n🧹 Cleaning up memory before AI Portfolio training...")
+    import gc
+    gc.collect()
+    if CUDA_AVAILABLE and PYTORCH_AVAILABLE:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                print(f"   ✅ GPU cache cleared")
+        except Exception as e:
+            print(f"   ⚠️ Could not clear GPU cache: {e}")
+    print(f"   ✅ Memory cleanup complete")
+    
     print(f"DEBUG: About to check ENABLE_AI_PORTFOLIO = {ENABLE_AI_PORTFOLIO}")
     if ENABLE_AI_PORTFOLIO:
         print(f"DEBUG: ENABLE_AI_PORTFOLIO is True, starting training...")
@@ -856,7 +981,7 @@ def main(
         initial_capital_1y = capital_per_stock_1y * n_top_rebal
         
         # Use walk-forward backtest with periodic retraining and rebalancing
-        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y = _run_portfolio_backtest_walk_forward(
+        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y = _run_portfolio_backtest_walk_forward(
             all_tickers_data=all_tickers_data,
             train_start_date=train_start_1y_calc,
             backtest_start_date=bt_start_1y,
@@ -1092,6 +1217,8 @@ def main(
         mean_reversion_1y_return=((mean_reversion_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_quality_momentum_value_1y=quality_momentum_portfolio_value_1y,
         quality_momentum_1y_return=((quality_momentum_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_momentum_ai_hybrid_value_1y=momentum_ai_hybrid_portfolio_value_1y,
+        momentum_ai_hybrid_1y_return=((momentum_ai_hybrid_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         ai_transaction_costs=ai_transaction_costs_1y,
         static_bh_transaction_costs=static_bh_transaction_costs_1y,
         dynamic_bh_1y_transaction_costs=dynamic_bh_1y_transaction_costs_1y,
@@ -1101,6 +1228,7 @@ def main(
         risk_adj_mom_transaction_costs=risk_adj_mom_transaction_costs_1y,
         mean_reversion_transaction_costs=mean_reversion_transaction_costs_1y,
         quality_momentum_transaction_costs=quality_momentum_transaction_costs_1y,
+        momentum_ai_hybrid_transaction_costs=momentum_ai_hybrid_transaction_costs_1y,
         period_name=actual_period_name,  # Dynamic period name
         backtest_days=actual_backtest_days,  # ✅ NEW: Pass backtest days for annualization
         strategy_results_ytd=None,

@@ -55,11 +55,46 @@ def get_all_tickers() -> List[str]:
                     status=AssetStatus.ACTIVE
                 )
                 assets = trading_client.get_all_assets(search_params)
-                tradable_assets = [a for a in assets if a.tradable]
+                
+                # ✅ Use Alpaca's built-in attributes to filter common stocks
+                # fractionable=True typically indicates common stocks (not warrants/preferred/rights)
+                # If fractionable attribute doesn't exist, assume it's NOT a common stock (safer)
+                tradable_assets = [
+                    a for a in assets 
+                    if a.tradable 
+                    and getattr(a, 'fractionable', False)  # ✅ Default False = exclude if unknown
+                ]
+                
                 # Filter by exchange if specified in config
                 if ALPACA_STOCKS_EXCHANGES:
                     tradable_assets = [a for a in tradable_assets if a.exchange in ALPACA_STOCKS_EXCHANGES]
+                
+                # Get symbols
                 alpaca_tickers = [asset.symbol for asset in tradable_assets]
+                print(f"   📊 After fractionable filter: {len(alpaca_tickers)} tickers")
+                
+                # ✅ Additional filtering: Remove foreign ADRs and special securities
+                def is_us_common_stock(symbol: str) -> bool:
+                    """Filter out foreign ADRs (ending in Y) and other special securities"""
+                    symbol_upper = symbol.upper()
+                    # Exclude ADRs (5-letter tickers ending in Y, e.g., BTVCY, ASAZY)
+                    if len(symbol_upper) == 5 and symbol_upper.endswith('Y'):
+                        return False
+                    # Exclude very long symbols (usually special securities)
+                    if len(symbol_upper) > 5:
+                        return False
+                    # Exclude symbols with special characters (except hyphen for class shares like BRK-A)
+                    if '$' in symbol_upper or '/' in symbol_upper or '_' in symbol_upper:
+                        return False
+                    return True
+                
+                alpaca_tickers_before = len(alpaca_tickers)
+                alpaca_tickers = [t for t in alpaca_tickers if is_us_common_stock(t)]
+                filtered_count = alpaca_tickers_before - len(alpaca_tickers)
+                print(f"   📊 After ADR/special filter: {len(alpaca_tickers)} tickers (filtered out {filtered_count})")
+                if filtered_count > 0:
+                    print(f"   ✅ Removed {filtered_count} foreign ADRs/special securities (e.g., symbols ending in Y)")
+                
 
                 # Apply ALPACA_STOCKS_LIMIT to prevent downloading too many stocks
                 exchange_filter_desc = f" ({', '.join(ALPACA_STOCKS_EXCHANGES)} only)" if ALPACA_STOCKS_EXCHANGES else ""
@@ -80,9 +115,14 @@ def get_all_tickers() -> List[str]:
             url = 'ftp://ftp.nasdaqtrader.com/symboldirectory/nasdaqlisted.txt'
             df = pd.read_csv(url, sep='|')
             df_clean = df.iloc[:-1]
-            nasdaq_tickers = df_clean[df_clean['Test Issue'] == 'N']['Symbol'].tolist()
+            # ✅ Filter: Test Issue = 'N' (not test), and exclude delisted (ETF column should be 'N' for stocks)
+            # Also check if there's a delisting indicator
+            nasdaq_tickers = df_clean[
+                (df_clean['Test Issue'] == 'N') &  # Not a test issue
+                (df_clean.get('Financial Status', 'N') != 'D')  # Not delisted (if column exists)
+            ]['Symbol'].tolist()
             all_tickers.update(nasdaq_tickers)
-            print(f"✅ Fetched {len(nasdaq_tickers)} tickers from NASDAQ (including ETFs).")
+            print(f"✅ Fetched {len(nasdaq_tickers)} active NASDAQ tickers (delisted excluded).")
         except Exception as e:
             print(f"⚠️ Could not fetch full NASDAQ list ({e}).")
 

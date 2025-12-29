@@ -360,7 +360,8 @@ class RuleTradingEnv:
 
                 X_tensor = torch.tensor(X_scaled_seq, dtype=torch.float32).unsqueeze(0)
                 
-                device = torch.device("cuda" if CUDA_AVAILABLE else "cpu")
+                from config import FORCE_CPU
+                device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
                 X_tensor = X_tensor.to(device)
 
                 model.to(device)
