@@ -32,13 +32,21 @@ TWELVEDATA_MAX_WORKERS  = 5  # Max parallel API requests (free tier: 800 credits
 ALPACA_AVAILABLE = False
 TWELVEDATA_SDK_AVAILABLE = True  # Runtime detection will confirm availability
 # --- GPU vs CPU Control (must be set BEFORE imports) ---
-# Force PyTorch models (LSTM/TCN/GRU) to run on CPU even if GPU is available
-# For 5000 tickers: CPU is often FASTER due to higher parallelism (15 workers vs 3 GPU workers)
-FORCE_CPU = True  # True = CPU only for PyTorch, False = use GPU if available
+# ============================================
+# GPU Control: Independent flags for each framework
+# ============================================
 
-# XGBoost GPU control (independent of FORCE_CPU)
-# XGBoost gpu_hist is stable and fast - keep enabled unless you have GPU memory issues
-XGBOOST_USE_GPU = True  # True = use gpu_hist, False = use hist (CPU)
+# PyTorch models (LSTM/TCN/GRU) GPU control
+# For 164 tickers: GPU may be faster per model, but reduces parallelism (3 workers vs 15)
+# For 5000 tickers: CPU is often FASTER due to higher parallelism
+PYTORCH_USE_GPU = True  # True = use GPU for LSTM/TCN/GRU, False = CPU only
+
+# XGBoost GPU control
+# XGBoost GPU is stable and fast - recommended to keep enabled
+XGBOOST_USE_GPU = True  # True = use device='cuda', False = use device='cpu'
+
+# Legacy flag - kept for backward compatibility, derived from PYTORCH_USE_GPU
+FORCE_CPU = not PYTORCH_USE_GPU  # Deprecated: use PYTORCH_USE_GPU instead
 
 try:
     import torch
@@ -73,7 +81,7 @@ ALPACA_STOCKS_LIMIT = 20000  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = []  # NASDAQ only
-N_TOP_TICKERS           = 1000        # ✅ Select top 1000 from ~630 major index tickers
+N_TOP_TICKERS           = 10        # ✅ Select top 1000 from ~630 major index tickers
 BATCH_DOWNLOAD_SIZE     = 1000        # ✅ Download in batches of 1000
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -88,8 +96,8 @@ NUM_PROCESSES           = max(1, cpu_count() - 5)
 # --- GPU Concurrency Control for PyTorch ---
 # When using multiprocessing with PyTorch on GPU, too many concurrent trainers can cause OOM.
 # This limits how many worker processes can run PyTorch models on GPU simultaneously.
-# ⚠️ Only applies when FORCE_CPU = False (PyTorch uses GPU)
-# ⚠️ Does NOT apply to XGBoost gpu_hist (XGBoost manages its own GPU memory)
+# ⚠️ Only applies when PYTORCH_USE_GPU = True (PyTorch uses GPU)
+# ⚠️ Does NOT apply to XGBoost GPU (XGBoost manages its own GPU memory)
 GPU_MAX_CONCURRENT_TRAINING_WORKERS = 2  # Max 3 PyTorch models on GPU at once
 
 # Limit GPU memory per training worker process (PyTorch).
@@ -119,14 +127,14 @@ PER_TICKER_TIMEOUT = 600  # 10 minutes max per ticker
 # For 5000 tickers, use parallel training. Models are saved to disk and loaded back (no pickling overhead).
 #
 # Worker count strategy:
-# - All CPU (FORCE_CPU=True, XGBOOST_USE_GPU=False): 15 workers
-# - PyTorch CPU + XGBoost GPU (FORCE_CPU=True, XGBOOST_USE_GPU=True): 15 workers ← YOUR CURRENT SETUP
-# - PyTorch GPU + XGBoost CPU (FORCE_CPU=False, XGBOOST_USE_GPU=False): 3 workers
-# - PyTorch GPU + XGBoost GPU (FORCE_CPU=False, XGBOOST_USE_GPU=True): 3 workers (NOT RECOMMENDED - causes OOM)
+# - All CPU (PYTORCH_USE_GPU=False, XGBOOST_USE_GPU=False): 15 workers
+# - PyTorch CPU + XGBoost GPU (PYTORCH_USE_GPU=False, XGBOOST_USE_GPU=True): 15 workers ← YOUR CURRENT SETUP
+# - PyTorch GPU + XGBoost CPU (PYTORCH_USE_GPU=True, XGBOOST_USE_GPU=False): 3 workers
+# - PyTorch GPU + XGBoost GPU (PYTORCH_USE_GPU=True, XGBOOST_USE_GPU=True): 3 workers (may cause OOM)
 #
-if FORCE_CPU and not XGBOOST_USE_GPU:
+if not PYTORCH_USE_GPU and not XGBOOST_USE_GPU:
     TRAINING_NUM_PROCESSES = NUM_PROCESSES  # Full CPU, no GPU bottleneck
-elif FORCE_CPU and XGBOOST_USE_GPU:
+elif not PYTORCH_USE_GPU and XGBOOST_USE_GPU:
     TRAINING_NUM_PROCESSES = NUM_PROCESSES  # PyTorch on CPU, XGBoost on GPU (current setup)
 else:
     TRAINING_NUM_PROCESSES = GPU_MAX_CONCURRENT_TRAINING_WORKERS  # PyTorch on GPU (limited by VRAM)

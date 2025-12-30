@@ -383,13 +383,13 @@ def main(
     try:
         if PYTORCH_AVAILABLE:
             import torch
-            from config import FORCE_CPU
-            if FORCE_CPU:
-                print("🖥️  FORCE_CPU enabled - PyTorch models will run on CPU (allows higher parallelism)")
+            from config import PYTORCH_USE_GPU
+            if not PYTORCH_USE_GPU:
+                print("🖥️  PYTORCH_USE_GPU=False - PyTorch models will run on CPU (allows higher parallelism)")
                 import multiprocessing
                 multiprocessing.set_start_method('spawn', force=True)
             elif torch.cuda.is_available():
-                print("🎮 GPU detected - PyTorch models will use CUDA")
+                print("🎮 PYTORCH_USE_GPU=True - PyTorch models will use CUDA")
                 import multiprocessing
                 multiprocessing.set_start_method('spawn', force=True)
                 print("✅ Multiprocessing start method set to 'spawn' for CUDA compatibility.")

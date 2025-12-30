@@ -593,9 +593,9 @@ def initialize_ml_libraries():
         # Use XGBOOST_USE_GPU flag instead of CUDA_AVAILABLE
         from config import XGBOOST_USE_GPU
         if XGBOOST_USE_GPU and CUDA_AVAILABLE:
-            xgb_model_params["model"].set_params(tree_method='gpu_hist')
+            xgb_model_params["model"].set_params(device='cuda')  # XGBoost 2.0+ API
             models_and_params["XGBoost (GPU)"] = xgb_model_params
-            print(f"✅ XGBoostRegressor found. Configured for GPU (gpu_hist tree_method).")
+            print(f"✅ XGBoostRegressor found. Configured for GPU (device='cuda').")
         else:
             xgb_model_params["model"].set_params(tree_method='hist')
             models_and_params["XGBoost (CPU)"] = xgb_model_params
@@ -2029,14 +2029,14 @@ def train_single_model_type(
             if model_type == 'XGBoost':
                 try:
                     import xgboost as xgb
-                    device_param = "cuda" if (XGBOOST_USE_GPU and CUDA_AVAILABLE) else None
+                    use_gpu = XGBOOST_USE_GPU and CUDA_AVAILABLE
                     common_kwargs = {
                         "random_state": SEED,
-                        "tree_method": "hist",
+                        "tree_method": "hist",  # XGBoost 2.0+ uses 'hist' for both CPU and GPU
                         "nthread": 1,
                     }
-                    if device_param:
-                        common_kwargs["device"] = device_param
+                    if use_gpu:
+                        common_kwargs["device"] = "cuda"  # This enables GPU in XGBoost 2.0+
                     
                     model = xgb.XGBRegressor(**common_kwargs)
                     params = {

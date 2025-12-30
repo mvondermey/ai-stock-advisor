@@ -413,13 +413,13 @@ def train_ai_portfolio_model(
             }
             
             if gpu_available:
-                # ✅ GPU acceleration
-                xgb_params['tree_method'] = 'gpu_hist'
-                xgb_params['predictor'] = 'gpu_predictor'
-                xgb_params['gpu_id'] = 0
+                # ✅ GPU acceleration (XGBoost 2.0+ API)
+                xgb_params['tree_method'] = 'hist'
+                xgb_params['device'] = 'cuda'
             else:
                 # CPU parallel
                 xgb_params['tree_method'] = 'hist'
+                xgb_params['device'] = 'cpu'
                 xgb_params['n_jobs'] = n_jobs
             
             models_to_try['XGBoost'] = xgb.XGBClassifier(**xgb_params)
