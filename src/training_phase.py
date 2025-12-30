@@ -8,6 +8,7 @@ from typing import Tuple, Dict, List, Optional
 import json
 import joblib
 import pandas as pd
+import numpy as np
 from datetime import datetime
 import multiprocessing
 from multiprocessing import current_process
@@ -21,7 +22,8 @@ from config import (
     GPU_CLEAR_CACHE_ON_WORKER_INIT,
     GPU_CLEAR_CACHE_AFTER_EACH_TICKER,
     TRAINING_POOL_MAXTASKSPERCHILD,
-    TRAINING_NUM_PROCESSES
+    TRAINING_NUM_PROCESSES,
+    USE_UNIFIED_PARALLEL_TRAINING
 )
 from data_utils import fetch_training_data, _ensure_dir
 from ml_models import initialize_ml_libraries, train_and_evaluate_models, LSTMRegressor, GRURegressor
@@ -458,6 +460,82 @@ def train_models_for_period(
         List of training result dictionaries with keys: 'status', 'ticker', 'model', 'scaler', 'y_scaler'
     """
     print(f"\n🔍 Step 3: Training AI models for {period_name} backtest...")
+    
+    # ============================================
+    # NEW: Use Unified Parallel Training if enabled
+    # ============================================
+    if USE_UNIFIED_PARALLEL_TRAINING:
+        print(f"   🚀 Using Unified Parallel Training System (model-level parallelization)")
+        from parallel_training import train_all_models_parallel
+        
+        # Calculate period-specific horizon
+        period_horizon = PERIOD_HORIZONS.get(period_name, 60)
+        
+        # Get Buy & Hold returns for target percentage calculation
+        ticker_bh_returns = {}
+        for t, perf_1y in top_performers_data:
+            ticker_bh_returns[t] = perf_1y / 100.0
+        
+        # Calculate average target percentage
+        days_in_period = max((train_end - train_start).days, 1)
+        horizon_scale = min(1.0, period_horizon / days_in_period)
+        
+        # Use median B&H return for target percentage
+        if ticker_bh_returns:
+            median_bh = np.median(list(ticker_bh_returns.values()))
+            period_target_pct = max(abs(median_bh) * horizon_scale, 0.01)
+        else:
+            period_target_pct = 0.01
+        
+        print(f"   📊 Training Horizon: {period_horizon} days, Target: {period_target_pct:.2%}")
+        
+        # Train all models in parallel (ticker models only, no AI Portfolio here)
+        ticker_models, _ = train_all_models_parallel(
+            tickers=tickers,
+            all_tickers_data=all_tickers_data,
+            train_start=train_start,
+            train_end=train_end,
+            target_percentage=period_target_pct,
+            class_horizon=period_horizon,
+            feature_set=feature_set,
+            include_ai_portfolio=False,  # AI Portfolio trained separately
+            ai_portfolio_features=None
+        )
+        
+        # Convert to return format expected by calling code
+        training_results = []
+        for ticker, model_dict in ticker_models.items():
+            training_results.append({
+                'ticker': ticker,
+                'model': model_dict['model'],
+                'scaler': model_dict['scaler'],
+                'y_scaler': model_dict.get('y_scaler'),
+                'gru_hyperparams': None,  # Not used in unified system
+                'winner': model_dict['model_type'],
+                'status': 'trained',
+                'reason': None
+            })
+        
+        # Add failed tickers
+        failed_tickers = set(tickers) - set(ticker_models.keys())
+        for ticker in failed_tickers:
+            training_results.append({
+                'ticker': ticker,
+                'model': None,
+                'scaler': None,
+                'y_scaler': None,
+                'gru_hyperparams': None,
+                'winner': None,
+                'status': 'failed',
+                'reason': 'Training failed or insufficient data'
+            })
+        
+        return training_results
+    
+    # ============================================
+    # LEGACY: Sequential ticker-by-ticker training
+    # ============================================
+    print(f"   ⚙️  Using Legacy Training System (ticker-level parallelization)")
     
     models_buy = {}
     models_sell = {}

@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import re
 import time
@@ -25,7 +26,7 @@ from config import (
     DATA_PROVIDER, N_TOP_TICKERS, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES,
     PAUSE_BETWEEN_YF_CALLS, MARKET_SELECTION, USE_PERFORMANCE_BENCHMARK,
     ALPACA_API_KEY, ALPACA_SECRET_KEY, TOP_CACHE_PATH, VALID_TICKERS_CACHE_PATH,
-    ALPACA_STOCKS_LIMIT, ALPACA_STOCKS_EXCHANGES
+    ALPACA_STOCKS_LIMIT, ALPACA_STOCKS_EXCHANGES, NUM_PROCESSES
 )
 from data_fetcher import load_prices_robust, _download_batch_robust
 from utils import _ensure_dir, _normalize_symbol, _to_utc
@@ -326,6 +327,9 @@ def get_all_tickers() -> List[str]:
         else:
             final_tickers.add(s_ticker.replace('.', '-'))
 
+    # ✅ Always include benchmark tickers to ensure they're cached
+    final_tickers.update(['QQQ', 'SPY'])
+    
     print(f"Total unique tickers found: {len(final_tickers)}")
     return sorted(list(final_tickers))
 
@@ -350,6 +354,35 @@ def get_tickers_for_backtest(n: int = 10) -> List[str]:
     
     print(f"Randomly selected {n} tickers: {', '.join(selected_tickers)}")
     return selected_tickers
+
+def _prepare_ticker_data_worker(args: Tuple) -> Optional[Tuple[str, pd.DataFrame]]:
+    """Worker function to prepare data for a single ticker (for parallel processing)."""
+    ticker, ticker_data_slice = args
+    
+    try:
+        # Find Close column
+        close_col = None
+        for attr in ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']:
+            if attr in ticker_data_slice.columns:
+                close_col = attr
+                break
+        
+        if close_col is None:
+            return None
+        
+        # Create time series
+        s = pd.to_numeric(ticker_data_slice[close_col], errors='coerce')
+        s = s.ffill().bfill()
+        
+        if s.dropna().shape[0] < 2:
+            return None
+        
+        ticker_df = pd.DataFrame({'Close': s})
+        return (ticker, ticker_df)
+    
+    except Exception:
+        return None
+
 
 def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[Tuple[str, float, pd.DataFrame]]:
     """Robust 1Y performance: tolerate gaps, weekends, and column variants."""
@@ -422,18 +455,43 @@ def find_top_performers(
     if USE_PERFORMANCE_BENCHMARK:
         print("- Calculating 1-Year Performance Benchmarks...")
         benchmark_perfs = {}
+        
+        # ✅ Use pre-fetched data from all_tickers_data instead of re-downloading
         for bench_ticker in ['QQQ', 'SPY']:
             try:
-                df = load_prices_robust(bench_ticker, start_date, end_date)
-                if df is not None and not df.empty:
-                    start_price = df['Close'].iloc[0]
-                    end_price = df['Close'].iloc[-1]
-                    if start_price > 0:
-                        perf = ((end_price - start_price) / start_price) * 100
-                        benchmark_perfs[bench_ticker] = perf
-                        print(f"  ✅ {bench_ticker} 1-Year Performance: {perf:.2f}%")
+                # Extract benchmark data from all_tickers_data (long format)
+                if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
+                    bench_data = all_tickers_data[
+                        (all_tickers_data['ticker'] == bench_ticker) &
+                        (all_tickers_data['date'] >= start_date) &
+                        (all_tickers_data['date'] <= end_date)
+                    ].sort_values('date')
+                    
+                    if not bench_data.empty and 'Close' in bench_data.columns:
+                        start_price = bench_data['Close'].iloc[0]
+                        end_price = bench_data['Close'].iloc[-1]
+                        if start_price > 0:
+                            perf = ((end_price - start_price) / start_price) * 100
+                            benchmark_perfs[bench_ticker] = perf
+                            print(f"  ✅ {bench_ticker} 1-Year Performance: {perf:.2f}%")
+                        else:
+                            print(f"  ⚠️ {bench_ticker}: Invalid start price ({start_price})")
+                    else:
+                        print(f"  ⚠️ {bench_ticker}: No data found in pre-fetched dataset")
+                else:
+                    # Fallback to old method if data is in wide format
+                    df = load_prices_robust(bench_ticker, start_date, end_date)
+                    if df is not None and not df.empty:
+                        start_price = df['Close'].iloc[0]
+                        end_price = df['Close'].iloc[-1]
+                        if start_price > 0:
+                            perf = ((end_price - start_price) / start_price) * 100
+                            benchmark_perfs[bench_ticker] = perf
+                            print(f"  ✅ {bench_ticker} 1-Year Performance: {perf:.2f}%")
             except Exception as e:
-                print(f"⚠️ Could not calculate {bench_ticker} performance: {e}.")
+                print(f"  ⚠️ Could not calculate {bench_ticker} performance: {e}")
+                import traceback
+                traceback.print_exc()
         
         if not benchmark_perfs:
             print("❌ Could not calculate any benchmark performance. Cannot proceed.")
@@ -448,74 +506,119 @@ def find_top_performers(
     
     # ✅ FIX: Handle both long-format and wide-format data
     if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
-        # Long format: filter using boolean indexing
+        # Long format: use groupby for FAST splitting (much faster than filtering in a loop!)
+        print(f"   📊 Filtering data for period {start_date.date()} to {end_date.date()}...", flush=True)
         all_data = all_tickers_data[
             (all_tickers_data['date'] >= start_date) & 
             (all_tickers_data['date'] <= end_date)
         ].copy()
-        valid_tickers = all_data['ticker'].unique()
+        
+        # Use groupby to split data in ONE operation (instead of 5644 filter operations!)
+        print(f"   📋 Splitting data by ticker using groupby (fast)...", flush=True)
+        sys.stdout.flush()
+        
+        grouped = all_data.groupby('ticker')
+        valid_tickers = list(grouped.groups.keys())
+        print(f"   📊 Found {len(valid_tickers)} tickers with data", flush=True)
+        
+        # Build prep_args using pre-grouped data (very fast!)
+        print(f"   🔧 Building parameter list...", flush=True)
+        prep_args = []
+        for ticker in tqdm(valid_tickers, desc="Building params", ncols=100):
+            try:
+                ticker_data = grouped.get_group(ticker).copy()
+                ticker_data = ticker_data.set_index('date')
+                prep_args.append((ticker, ticker_data))
+            except KeyError:
+                pass
+        
+        # Parallelize actual data preparation (finding Close column, cleaning data)
+        num_prep_workers = min(NUM_PROCESSES, len(prep_args)) if prep_args else 1
+        prep_chunksize = max(1, len(prep_args) // (num_prep_workers * 2))
+        
+        print(f"   🚀 Processing {len(prep_args)} tickers with {num_prep_workers} workers (chunksize={prep_chunksize})", flush=True)
+        sys.stdout.flush()
         
         params = []
-        for ticker in valid_tickers:
-            try:
-                # Filter data for this ticker
-                ticker_data = all_data[all_data['ticker'] == ticker].copy()
-                
-                # Find Close column
-                close_col = None
-                for attr in ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']:
-                    if attr in ticker_data.columns:
-                        close_col = attr
-                        break
-                
-                if close_col is None:
-                    continue
-                
-                # Create time series with date index
-                ticker_data = ticker_data.set_index('date')
-                s = pd.to_numeric(ticker_data[close_col], errors='coerce')
-                s = s.ffill().bfill()
-                
-                if s.dropna().shape[0] < 2:
-                    continue
-                    
-                ticker_df = pd.DataFrame({'Close': s})
-                params.append((ticker, ticker_df))
-            except (KeyError, ValueError) as e:
-                pass
+        with Pool(processes=num_prep_workers) as pool:
+            prep_results = list(tqdm(
+                pool.imap(_prepare_ticker_data_worker, prep_args, chunksize=prep_chunksize),
+                total=len(prep_args),
+                desc="Processing ticker data",
+                ncols=100
+            ))
+            params = [r for r in prep_results if r is not None]
     else:
         # Wide format: use original logic
+        print(f"   📊 Filtering data for period {start_date.date()} to {end_date.date()}...", flush=True)
         all_data = all_tickers_data.loc[start_date:end_date]
-        valid_tickers = all_data.columns.get_level_values(1).unique()
+        valid_tickers = list(all_data.columns.get_level_values(1).unique())
 
-        params = []
-        for ticker in valid_tickers:
+        print(f"   📋 Building parameters for {len(valid_tickers)} tickers...", flush=True)
+        
+        # Prepare data slices (wide format is already column-based, so this is fast)
+        prep_args = []
+        for ticker in tqdm(valid_tickers, desc="Building params", ncols=100):
             try:
+                # Extract close column
                 close_key = None
                 for attr in ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']:
                     if (attr, ticker) in all_data.columns:
                         close_key = (attr, ticker)
                         break
-                if close_key is None:
-                    continue
-                s = pd.to_numeric(all_data.loc[:, close_key], errors='coerce')
-                s = s.ffill().bfill()
-                s = s.loc[start_date:end_date]
-                if s.dropna().shape[0] < 2:
-                    continue
-                ticker_data = pd.DataFrame({'Close': s})
-                params.append((ticker, ticker_data))
+                
+                if close_key is not None:
+                    s = all_data.loc[:, close_key]
+                    ticker_df = pd.DataFrame({'Close': s})
+                    ticker_df.index = all_data.index
+                    prep_args.append((ticker, ticker_df))
             except KeyError:
                 pass
+        
+        # Parallelize data processing
+        num_prep_workers = min(NUM_PROCESSES, len(prep_args)) if prep_args else 1
+        prep_chunksize = max(1, len(prep_args) // (num_prep_workers * 2))
+        
+        print(f"   🚀 Processing {len(prep_args)} tickers with {num_prep_workers} workers (chunksize={prep_chunksize})", flush=True)
+        sys.stdout.flush()
+        
+        params = []
+        with Pool(processes=num_prep_workers) as pool:
+            prep_results = list(tqdm(
+                pool.imap(_prepare_ticker_data_worker, prep_args, chunksize=prep_chunksize),
+                total=len(prep_args),
+                desc="Processing ticker data",
+                ncols=100
+            ))
+            params = [r for r in prep_results if r is not None]
     
-    print("...performance calculation complete.")
-
+    # Prepare for parallel processing
+    if not params:
+        print("   ⚠️ No valid tickers found for performance calculation")
+        return []
+    
+    print(f"   📊 Prepared {len(params)} tickers for performance calculation", flush=True)
+    
     all_tickers_performance_with_df = []
-    with Pool() as pool: # Use default number of processes
-        results = list(tqdm(pool.imap(_calculate_performance_worker, params), total=len(params), desc="Calculating 1Y Performance"))
+    # Use configured number of processes for optimal performance
+    num_workers = min(NUM_PROCESSES, len(params)) if params else 1
+    chunksize = max(1, len(params) // (num_workers * 4)) if params else 1  # Optimal chunking
+    
+    print(f"   🚀 Starting parallel calculation with {num_workers} workers (chunksize={chunksize})", flush=True)
+    sys.stdout.flush()
+    
+    with Pool(processes=num_workers) as pool:
+        results = list(tqdm(
+            pool.imap(_calculate_performance_worker, params, chunksize=chunksize), 
+            total=len(params), 
+            desc="Calculating 1Y Performance",
+            ncols=100
+        ))
         for res in results:
             if res:
                 all_tickers_performance_with_df.append(res)
+    
+    print(f"   ✅ Performance calculation complete! Processed {len(all_tickers_performance_with_df)}/{len(params)} tickers")
 
     if not all_tickers_performance_with_df:
         print("❌ No tickers with valid 1-Year performance found. Aborting.")
@@ -540,8 +643,19 @@ def find_top_performers(
     ]
     performance_data = []
 
-    with Pool() as pool: # Use default number of processes
-        results = list(tqdm(pool.imap(_finalize_single_ticker_performance, finalize_params), total=len(finalize_params), desc="Finalizing Top Performers"))
+    # Use configured number of processes
+    num_workers_bench = min(NUM_PROCESSES, len(finalize_params)) if finalize_params else 1
+    chunksize_bench = max(1, len(finalize_params) // (num_workers_bench * 4)) if finalize_params else 1
+    
+    print(f"   Using {num_workers_bench} parallel workers with chunksize={chunksize_bench}")
+    
+    with Pool(processes=num_workers_bench) as pool:
+        results = list(tqdm(
+            pool.imap(_finalize_single_ticker_performance, finalize_params, chunksize=chunksize_bench), 
+            total=len(finalize_params), 
+            desc="Finalizing Top Performers",
+            ncols=100
+        ))
         for res in results:
             if res:
                 performance_data.append(res)
@@ -565,8 +679,19 @@ def find_top_performers(
         ]
         screened_performers = []
 
-        with Pool() as pool: # Use default number of processes
-            results = list(tqdm(pool.imap(_apply_fundamental_screen_worker, fundamental_screen_params), total=len(fundamental_screen_params), desc="Applying fundamental screens"))
+        # Use configured number of processes
+        num_workers_fund = min(NUM_PROCESSES, len(fundamental_screen_params)) if fundamental_screen_params else 1
+        chunksize_fund = max(1, len(fundamental_screen_params) // (num_workers_fund * 4)) if fundamental_screen_params else 1
+        
+        print(f"   Using {num_workers_fund} parallel workers with chunksize={chunksize_fund}")
+        
+        with Pool(processes=num_workers_fund) as pool:
+            results = list(tqdm(
+                pool.imap(_apply_fundamental_screen_worker, fundamental_screen_params, chunksize=chunksize_fund), 
+                total=len(fundamental_screen_params), 
+                desc="Applying fundamental screens",
+                ncols=100
+            ))
             for res in results:
                 if res:
                     screened_performers.append(res)
@@ -586,7 +711,7 @@ def find_top_performers(
         print(f"{i:<5} | {ticker:<10} | {perf:14.2f}%")
     
     print("-" * 60)
-    return list(final_tickers)
+    return [ticker for ticker, perf in final_performers]
 
 def _finalize_single_ticker_performance(params: Tuple) -> Optional[Tuple[str, float]]:
     """Worker to apply performance benchmarks."""

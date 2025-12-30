@@ -59,11 +59,108 @@ except ImportError:
     LIGHTGBM_AVAILABLE = False
 
 
-def train_ai_portfolio_model(
+def generate_ai_portfolio_training_data(
     all_tickers_data: pd.DataFrame,
     train_start_date: datetime,
     train_end_date: datetime,
     top_tickers: List[str]
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """
+    Generate training features and labels for AI Portfolio model.
+    This can be called before parallel training to prepare data.
+    
+    Returns:
+        (X, y) tuple or None if generation fails
+    """
+    if len(top_tickers) < 3:
+        print(f"   ⚠️ AI Portfolio: Need at least 3 tickers, got {len(top_tickers)}")
+        return None
+    
+    try:
+        print(f"   🧠 AI Portfolio: Generating training data from {len(top_tickers)} candidates...")
+        print(f"   📊 Period: {train_start_date.date()} to {train_end_date.date()}")
+        
+        # Filter data to training period only
+        train_data = all_tickers_data[
+            (all_tickers_data['date'] >= train_start_date) & 
+            (all_tickers_data['date'] <= train_end_date)
+        ].copy()
+        
+        if train_data.empty:
+            print(f"   ⚠️ AI Portfolio: No data available in training period")
+            return None
+        
+        # Get training parameters from config
+        try:
+            from config import (
+                AI_PORTFOLIO_EVALUATION_WINDOW,
+                AI_PORTFOLIO_STEP_SIZE,
+                AI_PORTFOLIO_PERFORMANCE_THRESHOLD_ANNUAL
+            )
+            evaluation_window = AI_PORTFOLIO_EVALUATION_WINDOW
+            step_size = AI_PORTFOLIO_STEP_SIZE
+            annual_threshold = AI_PORTFOLIO_PERFORMANCE_THRESHOLD_ANNUAL
+        except ImportError:
+            evaluation_window = 30
+            step_size = 15
+            annual_threshold = 0.50
+        
+        # Convert annualized threshold to evaluation window period
+        performance_threshold = (1 + annual_threshold) ** (evaluation_window / 365.0) - 1
+        
+        print(f"   📐 Evaluation window: {evaluation_window} days, Threshold: {performance_threshold:.2%}")
+        
+        training_samples = []
+        training_labels = []
+        
+        # Sliding window approach
+        current_eval_start = train_start_date
+        while current_eval_start + timedelta(days=evaluation_window) <= train_end_date:
+            eval_end = current_eval_start + timedelta(days=evaluation_window)
+            
+            # Generate combinations and evaluate
+            from itertools import combinations
+            sample_size = min(50, len(list(combinations(top_tickers, 3))))  # Limit samples
+            
+            for combo in list(combinations(top_tickers, 3))[:sample_size]:
+                # Extract features and calculate performance
+                features = _extract_portfolio_features(train_data, combo, current_eval_start, eval_end)
+                if features is None:
+                    continue
+                
+                perf = _calculate_portfolio_performance(train_data, combo, current_eval_start, eval_end)
+                if perf is None:
+                    continue
+                
+                training_samples.append(features)
+                training_labels.append(1 if perf > performance_threshold else 0)
+            
+            current_eval_start += timedelta(days=step_size)
+        
+        if len(training_samples) < 10:
+            print(f"   ⚠️ AI Portfolio: Too few training samples ({len(training_samples)})")
+            return None
+        
+        X = np.array(training_samples)
+        y = np.array(training_labels)
+        
+        print(f"   ✅ Generated {len(X)} training samples ({np.sum(y)} positive, {len(y)-np.sum(y)} negative)")
+        
+        return X, y
+    
+    except Exception as e:
+        print(f"   ❌ AI Portfolio data generation error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def train_ai_portfolio_model(
+    all_tickers_data: pd.DataFrame,
+    train_start_date: datetime,
+    train_end_date: datetime,
+    top_tickers: List[str],
+    use_unified_training: bool = False
 ) -> Optional[Dict]:
     """
     Train AI Portfolio Selection Model.
@@ -83,6 +180,7 @@ def train_ai_portfolio_model(
         train_start_date: Start of training period
         train_end_date: End of training period
         top_tickers: Candidate tickers for portfolio
+        use_unified_training: Whether to use unified parallel training system
     
     Returns:
         Dict with trained model and scaler, or None if training fails
@@ -96,6 +194,57 @@ def train_ai_portfolio_model(
         print(f"   ⚠️ AI Portfolio: Need at least 3 tickers, got {len(top_tickers)}")
         return None
     
+    # ============================================
+    # NEW: Use Unified Parallel Training if enabled
+    # ============================================
+    if use_unified_training:
+        try:
+            from config import USE_UNIFIED_PARALLEL_TRAINING
+            from parallel_training import train_all_models_parallel
+            
+            print(f"   🚀 Using Unified Parallel Training for AI Portfolio models")
+            
+            # Generate training data
+            ai_portfolio_data = generate_ai_portfolio_training_data(
+                all_tickers_data, train_start_date, train_end_date, top_tickers
+            )
+            
+            if ai_portfolio_data is None:
+                return None
+            
+            # Train using unified system (only AI Portfolio models, no ticker models)
+            _, ai_portfolio_model_dict = train_all_models_parallel(
+                tickers=[],  # No ticker models to train
+                all_tickers_data=all_tickers_data,
+                train_start=train_start_date,
+                train_end=train_end_date,
+                target_percentage=0.01,  # Not used for AI Portfolio
+                class_horizon=60,  # Not used for AI Portfolio
+                feature_set=None,
+                include_ai_portfolio=True,
+                ai_portfolio_features=ai_portfolio_data
+            )
+            
+            if ai_portfolio_model_dict is not None:
+                return {
+                    'model': ai_portfolio_model_dict['model'],
+                    'model_name': ai_portfolio_model_dict['model_name'],
+                    'cv_score': ai_portfolio_model_dict['cv_score'],
+                    'scaler': ai_portfolio_model_dict['scaler'],
+                    'train_date': train_end_date,
+                    'n_features': ai_portfolio_data[0].shape[1]
+                }
+            else:
+                print(f"   ⚠️ AI Portfolio: Unified training returned no model")
+                return None
+        
+        except Exception as e:
+            print(f"   ⚠️ AI Portfolio: Unified training failed ({e}), falling back to sequential")
+            # Fall through to legacy training
+    
+    # ============================================
+    # LEGACY: Sequential model training
+    # ============================================
     try:
         print(f"   🧠 AI Portfolio: Training model to select best 3-stock combinations...")
         print(f"   📊 Training on {len(top_tickers)} candidates from {train_start_date.date()} to {train_end_date.date()}")

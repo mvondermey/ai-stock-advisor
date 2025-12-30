@@ -26,6 +26,7 @@ ALPACA_SECRET_KEY       = "8By7ituNTmspLsWc191hQfviD3xaNNdd2opB8tJAfmK6"
 
 # TwelveData API credentials
 TWELVEDATA_API_KEY      = "aed912386d7c47939ebc28a86a96a021"
+TWELVEDATA_MAX_WORKERS  = 5  # Max parallel API requests (free tier: 800 credits/day)
 
 # --- ML Library Availability Flags (initialized to False, updated in main.py) ---
 ALPACA_AVAILABLE = False
@@ -129,6 +130,15 @@ elif FORCE_CPU and XGBOOST_USE_GPU:
 else:
     TRAINING_NUM_PROCESSES = GPU_MAX_CONCURRENT_TRAINING_WORKERS  # PyTorch on GPU (limited by VRAM)
 
+# --- Unified Parallel Training System ---
+# Enable the new parallel training system that trains models by model-type instead of by ticker.
+# Benefits:
+#   - Better GPU utilization (GPU models train while CPU models train in parallel)
+#   - Faster overall training time (~18x speedup for large universes)
+#   - More granular progress tracking
+# Set to False to use the legacy sequential training system (train all models for one ticker, then move to next)
+USE_UNIFIED_PARALLEL_TRAINING = True
+
 # AI Portfolio: avoid nested joblib multiprocessing when the main program is already parallel.
 AI_PORTFOLIO_N_JOBS = 1
 
@@ -150,13 +160,13 @@ RETRAIN_FREQUENCY_DAYS = 5  # Bi-weekly retraining - consider 20 for S&P 500
 ENABLE_1YEAR_BACKTEST   = True   # ✅ Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = True  # ❌ DISABLED - Not needed (AI Portfolio has its own training)
+ENABLE_1YEAR_TRAINING   = False  # ❌ DISABLED - Not needed (AI Portfolio uses only historical prices, not individual models)
 
 # --- Portfolio Strategy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
-# All strategies enabled EXCEPT AI Strategy
+# AI Portfolio + traditional strategies (no AI Strategy or AI Hybrid)
 ENABLE_AI_STRATEGY      = False  # ❌ DISABLED - Not using AI Strategy
-ENABLE_AI_PORTFOLIO     = True   # ✅ ENABLED - AI Portfolio meta-learning
+ENABLE_AI_PORTFOLIO     = False   # ✅ ENABLED - AI Portfolio meta-learning
 ENABLE_STATIC_BH        = True   # ✅ ENABLED - Static Buy & Hold benchmark
 ENABLE_DYNAMIC_BH_1Y    = True   # ✅ ENABLED - Dynamic BH 1-year
 ENABLE_DYNAMIC_BH_3M    = True   # ✅ ENABLED - Dynamic BH 3-month
@@ -165,7 +175,7 @@ ENABLE_RISK_ADJ_MOM     = True   # ✅ ENABLED - Risk-Adjusted Momentum
 ENABLE_MEAN_REVERSION   = True   # ✅ ENABLED - Mean Reversion
 ENABLE_SEASONAL         = True   # ✅ ENABLED - Seasonal strategy
 ENABLE_QUALITY_MOM      = True   # ✅ ENABLED - Quality + Momentum
-ENABLE_MOMENTUM_AI_HYBRID = True  # ✅ ENABLED - NEW: Momentum + AI Hybrid
+ENABLE_MOMENTUM_AI_HYBRID = False  # ❌ DISABLED - Not using AI Hybrid
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -174,7 +184,12 @@ ATR_PERIOD              = 14
 ATR_MULT_TRAIL          = 2.0
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
 INVESTMENT_PER_STOCK    = 33333.33    # Fixed amount to invest per stock ($100,000 total for 3 stocks)
-TRANSACTION_COST        = 0.01       # 2%
+TRANSACTION_COST        = 0.01       # 1% per trade leg (buy or sell)
+
+# --- Dynamic Buy & Hold (BH) rebalancing guard ---
+# Dynamic BH checks candidates daily, but only trades if:
+#   expected_gain_from_price_diff - estimated_total_transaction_cost > 0
+# This is computed from recent price performance (lookback depends on 1Y/3M/1M variant).
 
 # --- Feature windows (for ML only)
 FEAT_SMA_SHORT          = 5

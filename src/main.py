@@ -886,11 +886,15 @@ def main(
             print(f"   🔒 Data Separation: Training ends {(bt_start_1y - ai_portfolio_train_end).days} day(s) before backtest starts")
             print(f"   ✅ No overlap between training and backtest data (preventing look-ahead bias)")
 
+            # Import config flag for unified training
+            from config import USE_UNIFIED_PARALLEL_TRAINING
+            
             ai_portfolio_trained = train_ai_portfolio_model(
                 all_tickers_data=all_tickers_data,
                 top_tickers=top_tickers_1y_filtered,
                 train_start_date=ai_portfolio_train_start,
-                train_end_date=ai_portfolio_train_end
+                train_end_date=ai_portfolio_train_end,
+                use_unified_training=USE_UNIFIED_PARALLEL_TRAINING
             )
 
             print(f"DEBUG: train_ai_portfolio_model returned: {ai_portfolio_trained}")

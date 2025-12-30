@@ -1862,3 +1862,272 @@ def train_worker(params: Tuple) -> Dict:
         
         print(f"  ❌ Failed to train models for {ticker}. Reason: {reason}")
         return {'ticker': ticker, 'model': None, 'scaler': None, 'status': 'failed', 'reason': reason}
+
+
+def train_single_model_type(
+    df_train: pd.DataFrame,
+    model_type: str,
+    ticker: str,
+    feature_set: Optional[List[str]] = None
+) -> Optional[Dict]:
+    """
+    Train a single model type for a ticker.
+    Used by parallel training system to train models individually.
+    
+    Args:
+        df_train: Training data with features and target
+        model_type: Type of model to train (LSTM, XGBoost, RandomForest, etc.)
+        ticker: Ticker symbol (for logging)
+        feature_set: Optional list of features to use
+    
+    Returns:
+        Dict with model, scaler, y_scaler, mse, or None if training fails
+    """
+    from config import (
+        USE_ALPHA_WEIGHTS, SEED, LSTM_EPOCHS, LSTM_BATCH_SIZE, LSTM_LEARNING_RATE,
+        LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, LSTM_DROPOUT, SEQUENCE_LENGTH,
+        PYTORCH_AVAILABLE, CUDA_AVAILABLE, FORCE_CPU, XGBOOST_USE_GPU
+    )
+    from sklearn.preprocessing import StandardScaler, MinMaxScaler
+    from sklearn.model_selection import train_test_split
+    
+    try:
+        # Prepare data
+        d = df_train.copy()
+        
+        # Target column
+        target_col = "TargetReturn"
+        if target_col not in d.columns:
+            print(f"  ⚠️ {ticker} {model_type}: Missing target column {target_col}")
+            return None
+        
+        # Features
+        if feature_set:
+            feature_cols = [col for col in feature_set if col in d.columns and col != target_col]
+        else:
+            feature_cols = [col for col in d.columns if col not in [target_col, 'ticker', 'date']]
+        
+        if not feature_cols:
+            print(f"  ⚠️ {ticker} {model_type}: No features available")
+            return None
+        
+        X = d[feature_cols].copy()
+        y = d[target_col].copy()
+        
+        # Remove NaN rows
+        valid_mask = ~(X.isna().any(axis=1) | y.isna())
+        X = X[valid_mask]
+        y = y[valid_mask]
+        
+        if len(X) < 50:
+            print(f"  ⚠️ {ticker} {model_type}: Insufficient data ({len(X)} rows)")
+            return None
+        
+        # ============================================
+        # DEEP LEARNING MODELS (LSTM, TCN, GRU)
+        # ============================================
+        if model_type in ['LSTM', 'TCN', 'GRU'] and PYTORCH_AVAILABLE:
+            import torch
+            import torch.nn as nn
+            import torch.optim as optim
+            from torch.utils.data import TensorDataset, DataLoader
+            
+            # Scale features to [0, 1]
+            dl_scaler = MinMaxScaler(feature_range=(0, 1))
+            X_scaled_dl = dl_scaler.fit_transform(X)
+            
+            # Scale targets to [-1, 1]
+            y_scaler = MinMaxScaler(feature_range=(-1, 1))
+            y_scaled = y_scaler.fit_transform(y.values.reshape(-1, 1)).flatten()
+            
+            # Create sequences
+            X_sequences = []
+            y_sequences = []
+            for i in range(len(X_scaled_dl) - SEQUENCE_LENGTH):
+                X_sequences.append(X_scaled_dl[i:i + SEQUENCE_LENGTH])
+                y_sequences.append(y_scaled[i + SEQUENCE_LENGTH])
+            
+            if len(X_sequences) < 10:
+                print(f"  ⚠️ {ticker} {model_type}: Not enough sequences ({len(X_sequences)})")
+                return None
+            
+            X_sequences = torch.tensor(np.array(X_sequences), dtype=torch.float32)
+            y_sequences = torch.tensor(np.array(y_sequences), dtype=torch.float32).unsqueeze(1)
+            
+            device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
+            
+            dataset = TensorDataset(X_sequences, y_sequences)
+            dataloader = DataLoader(dataset, batch_size=LSTM_BATCH_SIZE, shuffle=True)
+            
+            input_size = X_sequences.shape[2]
+            criterion = nn.MSELoss()
+            
+            # Initialize model based on type
+            if model_type == 'LSTM':
+                from ml_models import LSTMRegressor
+                model = LSTMRegressor(input_size, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, 1, LSTM_DROPOUT)
+            elif model_type == 'TCN':
+                from ml_models import TCNRegressor
+                model = TCNRegressor(input_size, num_filters=32, kernel_size=3, num_levels=2, dropout=0.1)
+            elif model_type == 'GRU':
+                from ml_models import GRURegressor
+                model = GRURegressor(input_size, 64, 2, 1, 0.5)
+            
+            model = model.to(device)
+            optimizer = optim.Adam(model.parameters(), lr=LSTM_LEARNING_RATE)
+            
+            # Training loop
+            for epoch in range(LSTM_EPOCHS):
+                model.train()
+                for batch_X, batch_y in dataloader:
+                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                    
+                    optimizer.zero_grad()
+                    outputs = model(batch_X)
+                    loss = criterion(outputs, batch_y)
+                    loss.backward()
+                    optimizer.step()
+            
+            # Evaluate
+            model.eval()
+            with torch.no_grad():
+                predictions = model(X_sequences.to(device)).cpu().numpy()
+                mse = np.mean((predictions - y_sequences.numpy()) ** 2)
+            
+            # Move to CPU for saving
+            model = model.cpu()
+            
+            return {
+                'model': model,
+                'scaler': dl_scaler,
+                'y_scaler': y_scaler,
+                'mse': float(mse)
+            }
+        
+        # ============================================
+        # TRADITIONAL ML MODELS
+        # ============================================
+        else:
+            from sklearn.model_selection import GridSearchCV, KFold
+            
+            # Standard scaling for traditional ML
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+            
+            # No y scaling for traditional ML
+            y_scaler = None
+            
+            # Split for validation
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_scaled, y.values, test_size=0.2, random_state=SEED
+            )
+            
+            # Initialize model and parameters based on type
+            model = None
+            params = {}
+            
+            if model_type == 'XGBoost':
+                try:
+                    import xgboost as xgb
+                    device_param = "cuda" if (XGBOOST_USE_GPU and CUDA_AVAILABLE) else None
+                    common_kwargs = {
+                        "random_state": SEED,
+                        "tree_method": "hist",
+                        "nthread": 1,
+                    }
+                    if device_param:
+                        common_kwargs["device"] = device_param
+                    
+                    model = xgb.XGBRegressor(**common_kwargs)
+                    params = {
+                        'n_estimators': [100, 200],
+                        'learning_rate': [0.05, 0.1],
+                        'max_depth': [5, 7]
+                    }
+                except ImportError:
+                    print(f"  ⚠️ {ticker}: XGBoost not available")
+                    return None
+            
+            elif model_type == 'RandomForest':
+                from sklearn.ensemble import RandomForestRegressor
+                model = RandomForestRegressor(random_state=SEED, n_jobs=1)
+                params = {
+                    'n_estimators': [100, 200],
+                    'max_depth': [10, 15]
+                }
+            
+            elif model_type == 'LightGBM':
+                try:
+                    from lightgbm import LGBMRegressor
+                    model = LGBMRegressor(random_state=SEED, verbosity=-1, device='cpu', n_jobs=1)
+                    params = {
+                        'n_estimators': [100, 200],
+                        'learning_rate': [0.01, 0.05, 0.1],
+                        'max_depth': [-1, 5, 7]
+                    }
+                except ImportError:
+                    print(f"  ⚠️ {ticker}: LightGBM not available")
+                    return None
+            
+            elif model_type == 'Ridge':
+                from sklearn.linear_model import Ridge
+                model = Ridge(random_state=SEED, max_iter=2000, solver="lsqr")
+                params = {'alpha': [0.1, 1.0]}
+            
+            elif model_type == 'ElasticNet':
+                from sklearn.linear_model import ElasticNet
+                model = ElasticNet(random_state=SEED, max_iter=2000)
+                params = {'alpha': [0.1, 1.0], 'l1_ratio': [0.5]}
+            
+            elif model_type == 'SVR':
+                from sklearn.svm import SVR
+                model = SVR()
+                params = {'C': [1.0, 100.0], 'kernel': ['rbf'], 'epsilon': [0.01, 0.1]}
+            
+            elif model_type == 'MLPRegressor':
+                from sklearn.neural_network import MLPRegressor
+                model = MLPRegressor(random_state=SEED, max_iter=500, early_stopping=True)
+                params = {
+                    'hidden_layer_sizes': [(100,), (100, 50)],
+                    'activation': ['relu'],
+                    'alpha': [0.0001, 0.001]
+                }
+            
+            else:
+                print(f"  ⚠️ {ticker}: Unknown model type {model_type}")
+                return None
+            
+            if model is None:
+                return None
+            
+            # GridSearchCV
+            cv = KFold(n_splits=min(3, len(X_train) // 20), shuffle=True, random_state=SEED)
+            grid_search = GridSearchCV(
+                model, params, cv=cv,
+                scoring='neg_mean_squared_error',
+                n_jobs=1,
+                verbose=0
+            )
+            
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                grid_search.fit(X_train, y_train)
+            
+            best_model = grid_search.best_estimator_
+            
+            # Evaluate on validation set
+            y_pred = best_model.predict(X_val)
+            mse = np.mean((y_pred - y_val) ** 2)
+            
+            return {
+                'model': best_model,
+                'scaler': scaler,
+                'y_scaler': y_scaler,
+                'mse': float(mse)
+            }
+    
+    except Exception as e:
+        print(f"  ❌ {ticker} {model_type}: Training error - {str(e)[:100]}")
+        import traceback
+        traceback.print_exc()
+        return None

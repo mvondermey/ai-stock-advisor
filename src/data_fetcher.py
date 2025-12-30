@@ -10,6 +10,8 @@ from pathlib import Path
 
 from typing import List, Dict, Tuple, Optional
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 
 import numpy as np
@@ -81,7 +83,7 @@ from config import (
     DATA_PROVIDER, USE_YAHOO_FALLBACK, DATA_INTERVAL, DATA_CACHE_DIR, CACHE_DAYS,
     ENABLE_PRICE_CACHE,
 
-    ALPACA_API_KEY, ALPACA_SECRET_KEY, TWELVEDATA_API_KEY,
+    ALPACA_API_KEY, ALPACA_SECRET_KEY, TWELVEDATA_API_KEY, TWELVEDATA_MAX_WORKERS,
 
     PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS, INVESTMENT_PER_STOCK
 
@@ -286,6 +288,85 @@ def _fetch_from_alpaca(ticker: str, start: datetime, end: datetime) -> pd.DataFr
         return pd.DataFrame()
 
 
+def _fetch_batch_from_alpaca(tickers: List[str], start: datetime, end: datetime) -> Tuple[pd.DataFrame, List[str]]:
+    """
+    Batch fetch OHLCV from Alpaca for multiple tickers.
+    Returns: (DataFrame with MultiIndex columns like yfinance, list of failed tickers)
+    """
+    if not ALPACA_AVAILABLE or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        return pd.DataFrame(), tickers  # All failed
+    
+    if not tickers:
+        return pd.DataFrame(), []
+    
+    try:
+        client = StockHistoricalDataClient(ALPACA_API_KEY, ALPACA_SECRET_KEY)
+        
+        # Convert DATA_INTERVAL to Alpaca TimeFrame
+        if DATA_INTERVAL in ['1d', '1day']:
+            timeframe = TimeFrame.Day
+        elif DATA_INTERVAL in ['1h', '1hour']:
+            timeframe = TimeFrame.Hour
+        elif DATA_INTERVAL in ['1m', '1min']:
+            timeframe = TimeFrame.Minute
+        else:
+            timeframe = TimeFrame.Day
+        
+        request_params = StockBarsRequest(
+            symbol_or_symbols=tickers,
+            timeframe=timeframe,
+            start=start,
+            end=end
+        )
+        
+        bars = client.get_stock_bars(request_params)
+        df = bars.df
+        
+        if df.empty:
+            return pd.DataFrame(), tickers  # All failed
+        
+        # Convert Alpaca format to yfinance-like MultiIndex format
+        # Alpaca returns MultiIndex (symbol, timestamp) on rows
+        # We need MultiIndex (Field, Ticker) on columns
+        result_frames = []
+        successful_tickers = []
+        failed_tickers = []
+        
+        for ticker in tickers:
+            try:
+                if ticker in df.index.get_level_values(0):
+                    ticker_df = df.loc[ticker].copy()
+                    ticker_df = ticker_df.rename(columns={
+                        'open': 'Open', 'high': 'High', 'low': 'Low', 
+                        'close': 'Close', 'volume': 'Volume'
+                    })
+                    ticker_df.index = pd.to_datetime(ticker_df.index, utc=True)
+                    ticker_df.index.name = "Date"
+                    
+                    # Convert to yfinance-like MultiIndex columns
+                    ticker_df.columns = pd.MultiIndex.from_product([ticker_df.columns, [ticker]])
+                    result_frames.append(ticker_df)
+                    successful_tickers.append(ticker)
+                else:
+                    failed_tickers.append(ticker)
+            except Exception:
+                failed_tickers.append(ticker)
+        
+        if result_frames:
+            combined = pd.concat(result_frames, axis=1)
+            return combined, failed_tickers
+        else:
+            return pd.DataFrame(), tickers
+            
+    except Exception as e:
+        error_msg = str(e)
+        if "subscription does not permit querying recent SIP data" in error_msg:
+            print(f"  ℹ️ Alpaca (free tier) does not provide recent data. Falling back to yfinance...")
+        else:
+            print(f"  ⚠️ Alpaca batch fetch failed: {e}. Falling back to yfinance...")
+        return pd.DataFrame(), tickers  # All failed
+
+
 
 def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime, api_key: Optional[str] = None) -> pd.DataFrame:
 
@@ -371,7 +452,11 @@ def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime, api_key:
         return df.sort_index()
 
     except Exception as e:
-
+        error_msg = str(e).lower()
+        # Re-raise rate limit errors so caller can detect them
+        if "run out of api credits" in error_msg or "api credits were used" in error_msg:
+            raise
+        
         print(f"  ⚠️ An error occurred while fetching data from TwelveData SDK for {ticker}: {e}")
 
         return pd.DataFrame()
@@ -428,6 +513,129 @@ def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFr
 
     return pd.DataFrame()
 
+
+
+def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: datetime, show_progress: bool = True) -> List[pd.DataFrame]:
+    """
+    Fetch batch data using multi-provider strategy: Alpaca → TwelveData → yfinance.
+    Returns list of DataFrames with yfinance-compatible MultiIndex columns.
+    """
+    remaining_tickers = list(tickers)
+    result_frames = []
+    max_retries = 7
+    base_wait_time = 30
+    
+    # 1. Try Alpaca first (if available and configured)
+    if DATA_PROVIDER == 'alpaca' and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
+        print(f"  📡 Trying Alpaca for {len(remaining_tickers)} tickers...")
+        alpaca_data, failed_tickers = _fetch_batch_from_alpaca(remaining_tickers, start, end)
+        if not alpaca_data.empty:
+            result_frames.append(alpaca_data)
+            success_count = len(remaining_tickers) - len(failed_tickers)
+            print(f"  ✅ Alpaca: {success_count}/{len(remaining_tickers)} tickers")
+        remaining_tickers = failed_tickers
+    
+    # 2. Try TwelveData for remaining tickers (PARALLEL with rate limit detection)
+    if remaining_tickers and TWELVEDATA_SDK_AVAILABLE and TWELVEDATA_API_KEY:
+        print(f"  📡 Trying TwelveData for {len(remaining_tickers)} remaining tickers in parallel...")
+        twelvedata_frames = []
+        twelvedata_failed = []
+        rate_limit_hit = False
+        
+        def _fetch_td_single(ticker):
+            """Helper for parallel TwelveData fetch"""
+            try:
+                td_df = _fetch_from_twelvedata(ticker, start, end)
+                if not td_df.empty:
+                    # Convert to yfinance-like MultiIndex format
+                    td_df.columns = pd.MultiIndex.from_product([td_df.columns, [ticker]])
+                    return (ticker, td_df, True, None)
+                return (ticker, None, False, None)
+            except Exception as e:
+                error_msg = str(e).lower()
+                # Detect rate limit errors
+                if "run out of api credits" in error_msg or "api credits were used" in error_msg:
+                    return (ticker, None, False, "RATE_LIMIT")
+                return (ticker, None, False, str(e))
+        
+        # Use thread pool for parallel API requests (I/O bound)
+        max_workers = min(TWELVEDATA_MAX_WORKERS, len(remaining_tickers))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_fetch_td_single, ticker): ticker for ticker in remaining_tickers}
+            
+            pbar = tqdm(total=len(remaining_tickers), desc="TwelveData", unit="ticker")
+            for future in as_completed(futures):
+                try:
+                    ticker, df, success, error = future.result()
+                    
+                    # Check for rate limit
+                    if error == "RATE_LIMIT":
+                        if not rate_limit_hit:
+                            print(f"\n  ⚠️ TwelveData API rate limit reached. Skipping remaining TwelveData requests...")
+                            rate_limit_hit = True
+                        twelvedata_failed.append(ticker)
+                        # Cancel pending futures
+                        for f in futures:
+                            if not f.done():
+                                f.cancel()
+                    elif success:
+                        twelvedata_frames.append(df)
+                    else:
+                        twelvedata_failed.append(ticker)
+                except Exception:
+                    ticker = futures[future]
+                    twelvedata_failed.append(ticker)
+                finally:
+                    pbar.update(1)
+            pbar.close()
+        
+        if twelvedata_frames:
+            result_frames.extend(twelvedata_frames)
+            success_count = len(remaining_tickers) - len(twelvedata_failed)
+            if rate_limit_hit:
+                print(f"  ⚠️ TwelveData: {success_count}/{len(remaining_tickers)} tickers (rate limit hit, rest will use yfinance)")
+            else:
+                print(f"  ✅ TwelveData: {success_count}/{len(remaining_tickers)} tickers")
+        remaining_tickers = twelvedata_failed
+    
+    # 3. Fall back to yfinance for remaining tickers
+    if remaining_tickers:
+        if DATA_PROVIDER == 'alpaca':
+            print(f"  📡 Falling back to yfinance for {len(remaining_tickers)} remaining tickers...")
+        
+        for attempt in range(max_retries):
+            try:
+                yf_data = yf.download(
+                    remaining_tickers,
+                    start=start,
+                    end=end,
+                    interval=DATA_INTERVAL,
+                    auto_adjust=True,
+                    progress=show_progress,
+                    threads=True,  # ✅ Enable yfinance internal threading
+                    keepna=False
+                )
+                
+                if not yf_data.empty and not yf_data.isnull().all().all():
+                    print(f"  ✅ yfinance: {len(remaining_tickers)} tickers")
+                    result_frames.append(yf_data)
+                    break
+                else:
+                    if attempt == 0:
+                        print(f"  ℹ️  yfinance returned empty data")
+                    break
+                    
+            except Exception as e:
+                error_str = str(e).lower()
+                if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str:
+                    wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, 2)
+                    print(f"  ⚠️ yfinance failed (attempt {attempt + 1}/{max_retries}): {error_str}. Retrying in {wait_time:.2f}s...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"  ⚠️ yfinance error: {e}")
+                    break
+    
+    return result_frames
 
 
 def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -> pd.DataFrame:
@@ -491,10 +699,19 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                             expected_end_utc = expected_end_utc - pd.Timedelta(days=1)
 
                     # ✅ Calculate gap to determine if we need to download recent data
-                    gap_days = max(0, (expected_end_utc - cache_end).days) if cache_end < expected_end_utc else 0
+                    # Use total_seconds to avoid .days truncation issues (which can trigger false positives)
+                    gap_seconds = (expected_end_utc - cache_end).total_seconds() if cache_end < expected_end_utc else 0
+                    gap_days = max(0, int(gap_seconds / 86400))  # Convert seconds to days
                     
-                    # Full cache coverage (check against expected_end_utc, not end_utc)
-                    if cache_start <= start_utc and cache_end >= expected_end_utc:
+                    # Add tolerance: if gap is less than 18 hours, treat as "up to date" (same trading day)
+                    # This prevents re-downloading when running multiple times in the same day
+                    gap_tolerance_hours = 18
+                    if gap_seconds > 0 and gap_seconds < (gap_tolerance_hours * 3600):
+                        gap_days = 0
+                    
+                    # Full cache coverage - use gap_days instead of strict datetime comparison
+                    # This ensures tolerance check is respected
+                    if cache_start <= start_utc and gap_days == 0:
                         # Filter to requested date range
                         filtered_df = cached_df.loc[(cached_df.index >= start_utc) & (cached_df.index <= end_utc)].copy()
 
@@ -519,7 +736,7 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                                 'end_date': filtered_df.index.max().strftime('%Y-%m-%d') if not filtered_df.empty else 'N/A'
                             })
                             
-                            print(f"  ✅ Cache hit for {ticker} ({len(filtered_df)} rows, 100% coverage)")
+                            print(f"  ✅ Cache hit for {ticker} ({len(filtered_df)} rows, up to date)")
                     
                     # ✅ Partial cache - download only missing recent data (incremental update)
                     elif cache_start <= start_utc and gap_days > 0:
@@ -584,41 +801,16 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
     # ✅ STEP 1: Download full range for tickers needing complete data
     if tickers_to_download_full:
         print(f"  📥 Downloading FULL range for {len(tickers_to_download_full)} tickers...")
-        for attempt in range(max_retries):
-            try:
-                # For daily bars, treat end as inclusive day; yfinance end is exclusive, so add 1 day.
-                download_end = end
-                if str(DATA_INTERVAL).lower() in ["1d", "1day", "day"]:
-                    end_utc_eff = _effective_end_utc_for_daily(end)
-                    download_end = (end_utc_eff + pd.Timedelta(days=1)).to_pydatetime()
-
-                fresh_data_full = yf.download(
-                    tickers_to_download_full,
-                    start=start,
-                    end=download_end,
-                    interval=DATA_INTERVAL,
-                    auto_adjust=True,
-                    progress=True,
-                    threads=False,
-                    keepna=False
-                )
-
-                if not fresh_data_full.empty and not fresh_data_full.isnull().all().all():
-                    print(f"  ✅ Successfully downloaded full range for {len(tickers_to_download_full)} tickers")
-                    fresh_data_frames.append(fresh_data_full)
-                    break
-                else:
-                    raise ValueError("Batch download failed: DataFrame is empty or all-NaN.")
-
-            except Exception as e:
-                error_str = str(e).lower()
-                if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str or "batch download failed" in error_str:
-                    wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, 2)
-                    print(f"  ⚠️ Full batch download failed (attempt {attempt + 1}/{max_retries}): {error_str}. Retrying in {wait_time:.2f} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    print(f"  ⚠️ Unexpected error during full batch download: {e}.")
-                    break
+        
+        # For daily bars, treat end as inclusive day; yfinance end is exclusive, so add 1 day.
+        download_end = end
+        if str(DATA_INTERVAL).lower() in ["1d", "1day", "day"]:
+            end_utc_eff = _effective_end_utc_for_daily(end)
+            download_end = (end_utc_eff + pd.Timedelta(days=1)).to_pydatetime()
+        
+        # Use shared multi-provider function
+        full_frames = _fetch_batch_multi_provider(tickers_to_download_full, start, download_end, show_progress=True)
+        fresh_data_frames.extend(full_frames)
     
     # ✅ STEP 2: Download only missing date ranges for tickers with partial cache (INCREMENTAL)
     if tickers_to_download_incremental:
@@ -633,13 +825,18 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                 date_groups[date_key] = []
             date_groups[date_key].append(ticker)
         
-        # Download each group with its specific start date
-        for cache_date, ticker_group in date_groups.items():
+        # Download each group with its specific start date - show progress bar
+        total_groups = len(date_groups)
+        processed_tickers = 0
+        for group_idx, (cache_date, ticker_group) in enumerate(tqdm(date_groups.items(), desc="Incremental download", unit="batch"), 1):
             incremental_start = pd.Timestamp(cache_date) + pd.Timedelta(days=1)
             download_end = end
             if str(DATA_INTERVAL).lower() in ["1d", "1day", "day"]:
                 end_utc_eff = _effective_end_utc_for_daily(end)
                 download_end = (end_utc_eff + pd.Timedelta(days=1)).to_pydatetime()
+                # Ensure incremental_start is timezone-aware to match download_end
+                if incremental_start.tzinfo is None and download_end.tzinfo is not None:
+                    incremental_start = incremental_start.tz_localize('UTC')
             
             # Only download if there's actually data to fetch
             if incremental_start >= download_end:
@@ -647,42 +844,41 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                 continue
             
             # Check if we should expect new data yet (market hours/weekends)
-            if not _is_market_day_complete(download_end):
-                print(f"  ℹ️  Skipping {len(ticker_group)} tickers - market data not available yet (market closed or weekend)")
-                continue
+            # IMPORTANT:
+            # For daily bars, we request yfinance with `end = effective_end + 1 day` (exclusive end),
+            # so `download_end` often lands on "today". If we check completeness on `download_end`,
+            # we can incorrectly skip downloading the last completed bar (yesterday / last business day)
+            # when running intraday.
+            if str(DATA_INTERVAL).lower() in ["1d", "1day", "day"]:
+                # Only require that the *effective* last day we want is complete.
+                # (If end_utc_eff is in the past, this will be True and we won't churn downloads.)
+                if not _is_market_day_complete(end_utc_eff.to_pydatetime()):
+                    print(f"  ℹ️  Skipping {len(ticker_group)} tickers - market data not available yet for {end_utc_eff.date()} (market closed or weekend)")
+                    continue
+            else:
+                if not _is_market_day_complete(download_end):
+                    print(f"  ℹ️  Skipping {len(ticker_group)} tickers - market data not available yet (market closed or weekend)")
+                    continue
             
-            for attempt in range(max_retries):
-                try:
-                    fresh_data_incremental = yf.download(
-                        ticker_group,
-                        start=incremental_start,
-                        end=download_end,
-                        interval=DATA_INTERVAL,
-                        auto_adjust=True,
-                        progress=False,  # Less verbose for incremental
-                        threads=False,
-                        keepna=False
-                    )
-
-                    if not fresh_data_incremental.empty and not fresh_data_incremental.isnull().all().all():
-                        days_downloaded = (pd.Timestamp(download_end) - incremental_start).days
-                        print(f"  ✅ Downloaded {days_downloaded} days for {len(ticker_group)} tickers (from {cache_date})")
-                        fresh_data_frames.append(fresh_data_incremental)
-                        break
-                    else:
-                        # Empty result might be OK (no new data yet)
-                        print(f"  ℹ️  No new data available for {len(ticker_group)} tickers since {cache_date}")
-                        break
-
-                except Exception as e:
-                    error_str = str(e).lower()
-                    if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str:
-                        wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, 2)
-                        print(f"  ⚠️ Incremental download failed (attempt {attempt + 1}/{max_retries}): {error_str}. Retrying in {wait_time:.2f} seconds...")
-                        time.sleep(wait_time)
-                    else:
-                        print(f"  ⚠️ Unexpected error during incremental download: {e}.")
-                        break
+            # ✅ Use shared multi-provider function
+            days_downloaded = (pd.Timestamp(download_end) - incremental_start).days
+            
+            # Convert start to proper datetime
+            start_dt = incremental_start.to_pydatetime() if hasattr(incremental_start, 'to_pydatetime') else incremental_start
+            
+            # Debug logging for incremental downloads
+            if days_downloaded <= 7:  # Only log for recent small updates
+                print(f"  📅 Requesting incremental data from {start_dt.date()} to {download_end.date()} (~{days_downloaded} days)")
+            
+            # Show progress for larger batches
+            show_progress = len(ticker_group) > 50
+            group_frames = _fetch_batch_multi_provider(ticker_group, start_dt, download_end, show_progress=show_progress)
+            
+            if group_frames:
+                fresh_data_frames.extend(group_frames)
+            
+            processed_tickers += len(ticker_group)
+            print(f"  ✅ Downloaded {days_downloaded} days for {len(ticker_group)} tickers ({processed_tickers}/{len(tickers_to_download_incremental)} total)")
     
     # Combine all downloaded data
     if not fresh_data_frames:
@@ -699,7 +895,21 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
             return combined_df
         return pd.DataFrame()
     
-    fresh_data = pd.concat(fresh_data_frames, axis=1) if len(fresh_data_frames) > 1 else fresh_data_frames[0]
+    # ✅ Normalize timezone on all fresh dataframes before concatenation
+    normalized_fresh_frames = []
+    for df in fresh_data_frames:
+        if not df.empty:
+            df = df.copy()
+            # Convert timezone-aware to UTC, then remove timezone for consistency
+            if isinstance(df.index, pd.DatetimeIndex):
+                if df.index.tz is not None:
+                    df.index = df.index.tz_convert('UTC').tz_localize(None)
+                else:
+                    # Ensure naive datetimes are treated as UTC
+                    df.index = pd.to_datetime(df.index, utc=False)
+            normalized_fresh_frames.append(df)
+    
+    fresh_data = pd.concat(normalized_fresh_frames, axis=1) if len(normalized_fresh_frames) > 1 else normalized_fresh_frames[0]
 
     # Ensure yfinance batch output uses MultiIndex columns (Field, Ticker)
     if not isinstance(fresh_data.columns, pd.MultiIndex):
@@ -744,6 +954,13 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                     if cache_file.exists():
                         try:
                             existing_cache = pd.read_csv(cache_file, index_col=0, parse_dates=True)
+                            
+                            # ✅ For incremental updates, filter ticker_df to only NEW data (after last cache date)
+                            if ticker in tickers_to_download_incremental:
+                                last_cache_date = tickers_to_download_incremental[ticker]
+                                # Only keep rows AFTER the last cached date
+                                ticker_df = ticker_df[ticker_df.index > last_cache_date]
+                            
                             # Combine old + new data, remove duplicates (keep new data)
                             combined = pd.concat([existing_cache, ticker_df])
                             combined = combined[~combined.index.duplicated(keep='last')]  # Keep latest data for duplicate dates
@@ -752,10 +969,11 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                             
                             # Track download info for summary
                             download_type = "Incremental" if ticker in tickers_to_download_incremental else "Full"
+                            actual_new_rows = len(ticker_df)  # Now reflects truly NEW rows
                             download_summary.append({
                                 'ticker': ticker,
                                 'type': download_type,
-                                'new_rows': len(ticker_df),
+                                'new_rows': actual_new_rows,
                                 'start_date': ticker_df.index.min().strftime('%Y-%m-%d') if not ticker_df.empty else 'N/A',
                                 'end_date': ticker_df.index.max().strftime('%Y-%m-%d') if not ticker_df.empty else 'N/A',
                                 'total_cached': len(combined)
@@ -763,8 +981,10 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                             
                             # Show appropriate message
                             if ticker in tickers_to_download_incremental:
-                                new_rows = len(ticker_df)
-                                print(f"      🔄 Incremental update for {ticker}: added {new_rows} new rows")
+                                new_rows = actual_new_rows
+                                if new_rows > 0:
+                                    date_range = f"{ticker_df.index.min().strftime('%Y-%m-%d')} to {ticker_df.index.max().strftime('%Y-%m-%d')}" if not ticker_df.empty else "none"
+                                    print(f"      🔄 Incremental update for {ticker}: added {new_rows} new rows ({date_range})")
                             else:
                                 print(f"      ✅ Updated cache for {ticker} (full download)")
                         except Exception as e:
@@ -857,24 +1077,55 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
         print()
 
     # Combine cached and fresh data
-    all_data_frames = cached_data_frames + [fresh_data] if not fresh_data.empty else cached_data_frames
-
-    if all_data_frames:
-        # ✅ FIX: Normalize timezone info before concat (remove timezone awareness)
-        normalized_frames = []
-        for df in all_data_frames:
-            if not df.empty and isinstance(df.index, pd.DatetimeIndex):
-                if df.index.tz is not None:
-                    # Remove timezone info
-                    df = df.copy()
-                    df.index = df.index.tz_localize(None)
-            normalized_frames.append(df)
+    # ✅ For incremental updates, fresh_data contains updated data that was merged with cache files
+    # So we need to RELOAD from cache instead of using old cached_data_frames to avoid duplicates
+    if tickers_to_download_incremental or tickers_to_download_full:
+        # Re-read all tickers from cache (which now includes the updates we just wrote)
+        print(f"  🔄 Reloading {len(tickers)} tickers from updated cache...")
+        all_frames = []
+        for ticker in tickers:
+            cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
+            if cache_file.exists():
+                try:
+                    df = pd.read_csv(cache_file, index_col='Date', parse_dates=True)
+                    if not df.empty:
+                        # Ensure timezone-naive
+                        if df.index.tz is not None:
+                            df.index = df.index.tz_localize(None)
+                        # Convert to MultiIndex format
+                        df.columns = [str(c).capitalize() for c in df.columns]
+                        df.columns = pd.MultiIndex.from_product([df.columns, [ticker]])
+                        all_frames.append(df)
+                except Exception as e:
+                    print(f"  ⚠️ Could not reload cache for {ticker}: {e}")
         
-        combined_df = pd.concat(normalized_frames, axis=1, join='outer')
-        print(f"  📊 Combined data: {len(cached_data_frames)} cached + {1 if not fresh_data.empty else 0} fresh = {len(combined_df.columns)} total columns")
-        return combined_df
-
-    return fresh_data
+        if all_frames:
+            combined_df = pd.concat(all_frames, axis=1, join='outer')
+            print(f"  📊 Reloaded data: {len(all_frames)} tickers = {len(combined_df.columns)} total columns")
+        else:
+            print(f"  ⚠️ No data available after reload")
+            return pd.DataFrame()
+    else:
+        # No downloads needed, use cached data directly
+        all_data_frames = cached_data_frames
+        if all_data_frames:
+            # ✅ FIX: Normalize timezone info before concat (remove timezone awareness)
+            normalized_frames = []
+            for df in all_data_frames:
+                if not df.empty and isinstance(df.index, pd.DatetimeIndex):
+                    if df.index.tz is not None:
+                        # Remove timezone info
+                        df = df.copy()
+                        df.index = df.index.tz_localize(None)
+                normalized_frames.append(df)
+            
+            combined_df = pd.concat(normalized_frames, axis=1, join='outer')
+            print(f"  📊 Combined data: {len(cached_data_frames)} cached = {len(combined_df.columns)} total columns")
+        else:
+            print(f"  ⚠️ No cached data available")
+            return pd.DataFrame()
+    
+    return combined_df
 
 
 
@@ -1021,9 +1272,9 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
     price_df = pd.DataFrame()
 
-    # For benchmark tickers (QQQ, SPY), always refetch to ensure fresh data
+    # Check cache for all tickers (including benchmarks) - cache is updated daily via batch download
     cache_valid = False
-    if ENABLE_PRICE_CACHE and cache_file.exists() and ticker not in ['QQQ', 'SPY']:
+    if ENABLE_PRICE_CACHE and cache_file.exists():
 
         file_mod_time = datetime.fromtimestamp(cache_file.stat().st_mtime, timezone.utc)
 
@@ -1088,7 +1339,11 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                     else:
                         print(f"  ℹ️ TwelveData fetch failed for {ticker}. Trying Yahoo Finance...")
                 except Exception as e:
-                    print(f"  ⚠️ TwelveData error for {ticker}: {e}. Trying Yahoo Finance...")
+                    error_msg = str(e).lower()
+                    if "run out of api credits" in error_msg or "api credits were used" in error_msg:
+                        print(f"  ⚠️ TwelveData API rate limit reached. Falling back to Yahoo Finance...")
+                    else:
+                        print(f"  ⚠️ TwelveData error for {ticker}: {e}. Trying Yahoo Finance...")
             elif price_df.empty:
                 print(f"  ℹ️ TwelveData not available. Trying Yahoo Finance...")
 
@@ -1158,7 +1413,12 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 except Exception as e:
                     print(f"⚠️ Could not cache data for {ticker}: {e}")
 
-
+        # ✅ Ensure index is timezone-aware before comparison
+        if isinstance(price_df.index, pd.DatetimeIndex):
+            if price_df.index.tz is None:
+                price_df.index = price_df.index.tz_localize('UTC')
+            else:
+                price_df.index = price_df.index.tz_convert('UTC')
 
         result = price_df.loc[(price_df.index >= _to_utc(start)) & (price_df.index <= _to_utc(end))].copy()
         return result if not result.empty else pd.DataFrame()
