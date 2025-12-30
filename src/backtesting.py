@@ -486,11 +486,11 @@ def optimize_single_ticker_worker(params):
         if len(portfolio_history) > 1 and len(df_backtest_opt) > 1:
             # Calculate daily returns for strategy (portfolio value changes)
             strategy_values = pd.Series(portfolio_history)
-            strategy_returns = strategy_values.pct_change().dropna()
+            strategy_returns = strategy_values.pct_change(fill_method=None).dropna()
             
             # Calculate daily returns for buy & hold (price changes)
             close_prices = pd.to_numeric(df_backtest_opt["Close"], errors='coerce').dropna()
-            bh_returns = close_prices.pct_change().dropna()
+            bh_returns = close_prices.pct_change(fill_method=None).dropna()
             
             # Align returns - portfolio_history has same length as df_backtest_opt rows
             # Both should start from index 1 (after pct_change().dropna())
@@ -1637,7 +1637,7 @@ def _run_portfolio_backtest_walk_forward(
                                         basic_return = ((end_price - start_price) / start_price) * 100
 
                                         # Calculate volatility (standard deviation of daily returns)
-                                        daily_returns = valid_close_risk_adj.pct_change().dropna()
+                                        daily_returns = valid_close_risk_adj.pct_change(fill_method=None).dropna()
                                         if len(daily_returns) > 5:
                                             volatility = daily_returns.std() * 100  # Convert to percentage
 
@@ -1736,7 +1736,7 @@ def _run_portfolio_backtest_walk_forward(
                                         momentum_score = ((end_price - start_price) / start_price) * 100 if start_price > 0 else -100
 
                                         # QUALITY SCORE: Consistency (low volatility) + trend strength
-                                        returns = recent_data['Close'].pct_change().dropna()
+                                        returns = recent_data['Close'].pct_change(fill_method=None).dropna()
                                         if len(returns) > 5:
                                             # Volatility (lower = higher quality)
                                             volatility = returns.std() * np.sqrt(252)  # Annualized

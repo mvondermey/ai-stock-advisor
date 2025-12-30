@@ -43,8 +43,9 @@ XGBOOST_USE_GPU = True  # True = use gpu_hist, False = use hist (CPU)
 try:
     import torch
     PYTORCH_AVAILABLE = True
-    # Respect FORCE_CPU setting - if True, treat as if CUDA is not available
-    CUDA_AVAILABLE = False if FORCE_CPU else torch.cuda.is_available()
+    # Detect if CUDA is actually available (independent of FORCE_CPU)
+    # FORCE_CPU only controls PyTorch model placement, not XGBoost
+    CUDA_AVAILABLE = torch.cuda.is_available()
 except ImportError:
     PYTORCH_AVAILABLE = False
     CUDA_AVAILABLE = False
@@ -53,11 +54,11 @@ USE_GRU = False
 
 # --- Universe / selection
 MARKET_SELECTION = {
-    "ALPACA_STOCKS": True,
+    "ALPACA_STOCKS": False,    # ❌ DISABLED - Using curated indices instead
     "NASDAQ_ALL": False,
-    "NASDAQ_100": False,       # ~100 stocks
-    "SP500": False,            # ~500 stocks  
-    "DOW_JONES": False,        # ~30 stocks
+    "NASDAQ_100": True,        # ✅ ~100 stocks
+    "SP500": True,             # ✅ ~500 stocks  
+    "DOW_JONES": True,         # ✅ ~30 stocks
     "POPULAR_ETFS": False,
     "CRYPTO": False,
     "DAX": False,
@@ -72,8 +73,8 @@ ALPACA_STOCKS_LIMIT = 20000  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = []  # NASDAQ only
-N_TOP_TICKERS           = 20000       # Testing with 1 stock to verify predictions work
-BATCH_DOWNLOAD_SIZE     = 20000       # Reduced batch size for stability
+N_TOP_TICKERS           = 1000        # ✅ Select top 1000 from ~630 major index tickers
+BATCH_DOWNLOAD_SIZE     = 1000        # ✅ Download in batches of 1000
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
 
@@ -119,8 +120,8 @@ PER_TICKER_TIMEOUT = 600  # 10 minutes max per ticker
 #
 # Worker count strategy:
 # - All CPU (FORCE_CPU=True, XGBOOST_USE_GPU=False): 15 workers
-# - PyTorch CPU + XGBoost GPU (FORCE_CPU=True, XGBOOST_USE_GPU=True): 10 workers
-# - PyTorch GPU + XGBoost CPU (FORCE_CPU=False, XGBOOST_USE_GPU=False): 3 workers ← YOUR CURRENT SETUP
+# - PyTorch CPU + XGBoost GPU (FORCE_CPU=True, XGBOOST_USE_GPU=True): 15 workers ← YOUR CURRENT SETUP
+# - PyTorch GPU + XGBoost CPU (FORCE_CPU=False, XGBOOST_USE_GPU=False): 3 workers
 # - PyTorch GPU + XGBoost GPU (FORCE_CPU=False, XGBOOST_USE_GPU=True): 3 workers (NOT RECOMMENDED - causes OOM)
 #
 if FORCE_CPU and not XGBOOST_USE_GPU:
@@ -160,13 +161,13 @@ RETRAIN_FREQUENCY_DAYS = 5  # Bi-weekly retraining - consider 20 for S&P 500
 ENABLE_1YEAR_BACKTEST   = True   # ✅ Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = False  # ❌ DISABLED - Not needed (AI Portfolio uses only historical prices, not individual models)
+ENABLE_1YEAR_TRAINING   = True  # ✅ ENABLED - Train models for AI Strategy and individual ticker predictions
 
 # --- Portfolio Strategy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
 # AI Portfolio + traditional strategies (no AI Strategy or AI Hybrid)
-ENABLE_AI_STRATEGY      = False  # ❌ DISABLED - Not using AI Strategy
-ENABLE_AI_PORTFOLIO     = False   # ✅ ENABLED - AI Portfolio meta-learning
+ENABLE_AI_STRATEGY      = True  # ✅ ENABLED - AI Strategy with individual ticker models
+ENABLE_AI_PORTFOLIO     = True   # ✅ ENABLED - AI Portfolio meta-learning
 ENABLE_STATIC_BH        = True   # ✅ ENABLED - Static Buy & Hold benchmark
 ENABLE_DYNAMIC_BH_1Y    = True   # ✅ ENABLED - Dynamic BH 1-year
 ENABLE_DYNAMIC_BH_3M    = True   # ✅ ENABLED - Dynamic BH 3-month
@@ -175,7 +176,7 @@ ENABLE_RISK_ADJ_MOM     = True   # ✅ ENABLED - Risk-Adjusted Momentum
 ENABLE_MEAN_REVERSION   = True   # ✅ ENABLED - Mean Reversion
 ENABLE_SEASONAL         = True   # ✅ ENABLED - Seasonal strategy
 ENABLE_QUALITY_MOM      = True   # ✅ ENABLED - Quality + Momentum
-ENABLE_MOMENTUM_AI_HYBRID = False  # ❌ DISABLED - Not using AI Hybrid
+ENABLE_MOMENTUM_AI_HYBRID = True  # ✅ ENABLED - Momentum + AI Hybrid strategy
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -258,6 +259,9 @@ USE_RANDOM_FOREST       = True       # ✅ KEEP - Good ensemble baseline
 USE_TCN                 = True       # ✅ KEEP - Fast temporal model
 USE_ELASTIC_NET         = False      # Too simple - linear models don't capture patterns
 USE_RIDGE               = False      # Too simple - linear models don't capture patterns
+
+# --- ML Training Settings ---
+USE_ALPHA_WEIGHTS       = True       # Use alpha-based sample weights for training
 
 # Simple Rule-Based Strategy removed - using AI strategy only
 

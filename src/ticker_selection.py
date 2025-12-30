@@ -502,23 +502,46 @@ def find_top_performers(
             try:
                 # Extract benchmark data from all_tickers_data (long format)
                 if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
+                    # Check if ticker exists in dataset
+                    ticker_check = all_tickers_data[all_tickers_data['ticker'] == bench_ticker]
+                    if ticker_check.empty:
+                        print(f"  ⚠️ {bench_ticker}: Not in dataset (available tickers: {sorted(all_tickers_data['ticker'].unique())[:10]}...)")
+                        continue
+                    
                     bench_data = all_tickers_data[
                         (all_tickers_data['ticker'] == bench_ticker) &
                         (all_tickers_data['date'] >= start_date) &
                         (all_tickers_data['date'] <= end_date)
                     ].sort_values('date')
                     
-                    if not bench_data.empty and 'Close' in bench_data.columns:
-                        start_price = bench_data['Close'].iloc[0]
-                        end_price = bench_data['Close'].iloc[-1]
-                        if start_price > 0:
-                            perf = ((end_price - start_price) / start_price) * 100
-                            benchmark_perfs[bench_ticker] = perf
-                            print(f"  ✅ {bench_ticker} 1-Year Performance: {perf:.2f}%")
-                        else:
-                            print(f"  ⚠️ {bench_ticker}: Invalid start price ({start_price})")
+                    if bench_data.empty:
+                        print(f"  ⚠️ {bench_ticker}: No data in date range {start_date.date()} to {end_date.date()}")
+                        print(f"      Available date range: {ticker_check['date'].min().date()} to {ticker_check['date'].max().date()}")
+                        continue
+                    
+                    if 'Close' not in bench_data.columns:
+                        print(f"  ⚠️ {bench_ticker}: 'Close' column not found (columns: {list(bench_data.columns)})")
+                        continue
+                    
+                    # Drop NaN values
+                    valid_prices = bench_data['Close'].dropna()
+                    if len(valid_prices) < 2:
+                        print(f"  ⚠️ {bench_ticker}: Insufficient valid prices ({len(valid_prices)} non-NaN values)")
+                        continue
+                    
+                    start_price = valid_prices.iloc[0]
+                    end_price = valid_prices.iloc[-1]
+                    
+                    if pd.isna(start_price) or pd.isna(end_price):
+                        print(f"  ⚠️ {bench_ticker}: NaN prices (start={start_price}, end={end_price})")
+                        continue
+                    
+                    if start_price > 0:
+                        perf = ((end_price - start_price) / start_price) * 100
+                        benchmark_perfs[bench_ticker] = perf
+                        print(f"  ✅ {bench_ticker} 1-Year Performance: {perf:.2f}% (${start_price:.2f} → ${end_price:.2f})")
                     else:
-                        print(f"  ⚠️ {bench_ticker}: No data found in pre-fetched dataset")
+                        print(f"  ⚠️ {bench_ticker}: Invalid start price ({start_price})")
                 else:
                     # Fallback to old method if data is in wide format
                     df = load_prices_robust(bench_ticker, start_date, end_date)

@@ -766,6 +766,16 @@ def main(
             performance_end_date=bt_start_1y
         )
         
+        # ✅ Always include benchmark ETFs (QQQ, SPY, GLD) for strategies that need them
+        # Add them with dummy performance so they're available for Mean Reversion and Quality+Momentum
+        benchmark_tickers = ['QQQ', 'SPY', 'GLD']
+        existing_tickers = {ticker for ticker, _ in market_selected_performers}
+        for benchmark in benchmark_tickers:
+            if benchmark not in existing_tickers and benchmark in all_available_tickers:
+                market_selected_performers.append((benchmark, 0.0))  # Add with 0% performance
+        
+        print(f"  ✅ Added {len([b for b in benchmark_tickers if b in all_available_tickers])} benchmark tickers (QQQ, SPY, GLD)")
+        
 
     top_performers_data = market_selected_performers
 

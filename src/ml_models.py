@@ -1027,7 +1027,7 @@ def train_and_evaluate_models(
                                 break
                             optimizer_lstm.zero_grad()
                             outputs = lstm_model(batch_X)
-                            loss = criterion(outputs, batch_y)
+                            loss = criterion(outputs.squeeze(), batch_y.squeeze())
                             loss.backward()
                             optimizer_lstm.step()
                     except RuntimeError as e:
@@ -1057,7 +1057,7 @@ def train_and_evaluate_models(
                                     batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                                     optimizer_lstm.zero_grad()
                                     outputs = lstm_model(batch_X)
-                                    loss = criterion(outputs, batch_y)
+                                    loss = criterion(outputs.squeeze(), batch_y.squeeze())
                                     loss.backward()
                                     optimizer_lstm.step()
                         else:
@@ -1127,7 +1127,7 @@ def train_and_evaluate_models(
                                 break
                             optimizer_tcn.zero_grad()
                             outputs = tcn_model(batch_X)
-                            loss = criterion(outputs, batch_y.squeeze())
+                            loss = criterion(outputs.squeeze(), batch_y.squeeze())
                             loss.backward()
                             optimizer_tcn.step()
                     except RuntimeError as e:
@@ -1148,7 +1148,7 @@ def train_and_evaluate_models(
                                     batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                                     optimizer_tcn.zero_grad()
                                     outputs = tcn_model(batch_X)
-                                    loss = criterion(outputs, batch_y.squeeze())
+                                    loss = criterion(outputs.squeeze(), batch_y.squeeze())
                                     loss.backward()
                                     optimizer_tcn.step()
                         else:
@@ -1360,7 +1360,7 @@ def train_and_evaluate_models(
                                             break
                                         optimizer_gru.zero_grad()
                                         outputs = gru_model(batch_X)
-                                        loss = criterion(outputs, batch_y)
+                                        loss = criterion(outputs.squeeze(), batch_y.squeeze())
                                         loss.backward()
                                         optimizer_gru.step()
                                 except RuntimeError as e:
@@ -1384,7 +1384,7 @@ def train_and_evaluate_models(
                                                 batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                                                 optimizer_gru.zero_grad()
                                                 outputs = gru_model(batch_X)
-                                                loss = criterion(outputs, batch_y)
+                                                loss = criterion(outputs.squeeze(), batch_y.squeeze())
                                                 loss.backward()
                                                 optimizer_gru.step()
                                     else:
@@ -1526,7 +1526,7 @@ def train_and_evaluate_models(
                                     break
                                 optimizer_gru.zero_grad()
                                 outputs = gru_model(batch_X)
-                                loss = criterion(outputs, batch_y)
+                                loss = criterion(outputs.squeeze(), batch_y.squeeze())
                                 loss.backward()
                                 optimizer_gru.step()
                         except RuntimeError as e:
@@ -1550,7 +1550,7 @@ def train_and_evaluate_models(
                                         batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                                         optimizer_gru.zero_grad()
                                         outputs = gru_model(batch_X)
-                                        loss = criterion(outputs, batch_y)
+                                        loss = criterion(outputs.squeeze(), batch_y.squeeze())
                                         loss.backward()
                                         optimizer_gru.step()
                             else:
@@ -1984,7 +1984,7 @@ def train_single_model_type(
                     
                     optimizer.zero_grad()
                     outputs = model(batch_X)
-                    loss = criterion(outputs, batch_y)
+                    loss = criterion(outputs.squeeze(), batch_y.squeeze())  # Fix shape mismatch
                     loss.backward()
                     optimizer.step()
             
