@@ -242,7 +242,8 @@ def _fetch_from_alpaca(ticker: str, start: datetime, end: datetime) -> pd.DataFr
             symbol_or_symbols=[ticker],
             timeframe=timeframe,
             start=start,
-            end=end
+            end=end,
+            adjustment='split'  # ✅ Apply split adjustments to prevent fake gains
         )
 
         bars = client.get_stock_bars(request_params)
@@ -316,7 +317,8 @@ def _fetch_batch_from_alpaca(tickers: List[str], start: datetime, end: datetime)
             symbol_or_symbols=tickers,
             timeframe=timeframe,
             start=start,
-            end=end
+            end=end,
+            adjustment='split'  # ✅ Apply split adjustments to prevent fake gains
         )
         
         bars = client.get_stock_bars(request_params)

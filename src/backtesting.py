@@ -3254,10 +3254,16 @@ def _rebalance_mean_reversion_portfolio(new_stocks, current_date, all_tickers_da
         for ticker in stocks_to_sell:
             if ticker in mean_reversion_positions:
                 try:
-                    current_price = all_tickers_data[
+                    ticker_data = all_tickers_data[
                         (all_tickers_data['ticker'] == ticker) &
                         (all_tickers_data['date'] == current_date)
-                    ]['Close'].iloc[0]
+                    ]['Close']
+                    
+                    if ticker_data.empty:
+                        print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping sell")
+                        continue
+                    
+                    current_price = ticker_data.iloc[0]
 
                     if current_price > 0:
                         shares = mean_reversion_positions[ticker]['shares']
@@ -3285,10 +3291,16 @@ def _rebalance_mean_reversion_portfolio(new_stocks, current_date, all_tickers_da
 
             for ticker in stocks_to_buy:
                 try:
-                    current_price = all_tickers_data[
+                    ticker_data = all_tickers_data[
                         (all_tickers_data['ticker'] == ticker) &
                         (all_tickers_data['date'] == current_date)
-                    ]['Close'].iloc[0]
+                    ]['Close']
+                    
+                    if ticker_data.empty:
+                        print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping buy")
+                        continue
+                    
+                    current_price = ticker_data.iloc[0]
 
                     if current_price > 0:
                         shares_to_buy = int(target_value_per_stock / current_price)
@@ -3342,10 +3354,16 @@ def _rebalance_quality_momentum_portfolio(new_stocks, current_date, all_tickers_
         for ticker in stocks_to_sell:
             if ticker in quality_momentum_positions:
                 try:
-                    current_price = all_tickers_data[
+                    ticker_data = all_tickers_data[
                         (all_tickers_data['ticker'] == ticker) &
                         (all_tickers_data['date'] == current_date)
-                    ]['Close'].iloc[0]
+                    ]['Close']
+                    
+                    if ticker_data.empty:
+                        print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping sell")
+                        continue
+                    
+                    current_price = ticker_data.iloc[0]
 
                     if current_price > 0:
                         shares = quality_momentum_positions[ticker]['shares']
@@ -3372,10 +3390,16 @@ def _rebalance_quality_momentum_portfolio(new_stocks, current_date, all_tickers_
 
             for ticker in stocks_to_buy:
                 try:
-                    current_price = all_tickers_data[
+                    ticker_data = all_tickers_data[
                         (all_tickers_data['ticker'] == ticker) &
                         (all_tickers_data['date'] == current_date)
-                    ]['Close'].iloc[0]
+                    ]['Close']
+                    
+                    if ticker_data.empty:
+                        print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping buy")
+                        continue
+                    
+                    current_price = ticker_data.iloc[0]
 
                     if current_price > 0:
                         buy_value = target_value_per_stock

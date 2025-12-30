@@ -445,8 +445,9 @@ def main(
         return (None,) * 15
 
     # Determine the absolute earliest date needed for any calculation
+    # Need extra 365 days BEFORE the training period for 1-year performance measurement
     train_start_1y = end_date - timedelta(days=BACKTEST_DAYS + TRAIN_LOOKBACK_DAYS + 1)
-    earliest_date_needed = train_start_1y
+    earliest_date_needed = train_start_1y - timedelta(days=365)  # Add 1 year buffer for performance calculation
 
     # Use the actual earliest date needed instead of hardcoded 730 days
     # This prevents cache misses when cache has sufficient data for analysis

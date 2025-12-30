@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from multiprocessing import Pool
 from typing import List, Dict, Tuple, Optional
 from io import StringIO
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
@@ -355,6 +356,31 @@ def get_tickers_for_backtest(n: int = 10) -> List[str]:
     print(f"Randomly selected {n} tickers: {', '.join(selected_tickers)}")
     return selected_tickers
 
+def _get_yahoo_1y_return(ticker: str, end_date: datetime) -> Optional[float]:
+    """
+    Fetch actual 1-year return from Yahoo Finance for comparison.
+    Returns the actual 1Y% from Yahoo's live data.
+    """
+    try:
+        start_date = end_date - timedelta(days=365)
+        # Quick fetch with 1-year data
+        ticker_obj = yf.Ticker(ticker)
+        hist = ticker_obj.history(start=start_date, end=end_date + timedelta(days=1))
+        
+        if hist.empty or len(hist) < 10:
+            return None
+        
+        start_price = hist['Close'].iloc[0]
+        end_price = hist['Close'].iloc[-1]
+        
+        if start_price <= 0:
+            return None
+        
+        return_pct = ((end_price - start_price) / start_price) * 100
+        return float(return_pct)
+    except Exception:
+        return None
+
 def _prepare_ticker_data_worker(args: Tuple) -> Optional[Tuple[str, pd.DataFrame]]:
     """Worker function to prepare data for a single ticker (for parallel processing)."""
     ticker, ticker_data_slice = args
@@ -403,6 +429,11 @@ def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[
         s = s.dropna()
         if s.empty or len(s) < 2:
             return None
+        
+        # ✅ Data quality check: Require at least 200 trading days (~10 months minimum)
+        # This filters out recent IPOs and stocks with insufficient history
+        if len(s) < 200:
+            return None  # Insufficient data for reliable 1-year performance
 
         start_price = s.iloc[0]
         end_price = s.iloc[-1]
@@ -410,6 +441,16 @@ def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[
             return None
 
         perf_1y = (end_price / start_price - 1.0) * 100.0
+        
+        # ✅ Data quality check: Flag extreme returns (likely data issues or penny stocks)
+        # Filter out stocks with >300% annual returns (usually data quality issues)
+        if perf_1y > 300.0:
+            start_date = s.index[0]
+            end_date = s.index[-1]
+            days_of_data = (end_date - start_date).days
+            # Only log, don't exclude - let the user see what's happening
+            print(f"  ⚠️ High return: {ticker}: {perf_1y:.1f}% | ${start_price:.4f} → ${end_price:.2f} | {days_of_data} days ({len(s)} data points)")
+        
         if np.isfinite(perf_1y):
             out = df_1y.copy()
             if price_col != 'Close':
@@ -699,10 +740,68 @@ def find_top_performers(
         print(f"  ✅ Found {len(screened_performers)} stocks passing the fundamental screens.")
         final_performers = screened_performers
 
+    # ✅ Fetch actual Yahoo Finance 1-year returns for comparison (parallel)
+    print(f"\n  📊 Fetching actual Yahoo 1Y returns for comparison (top {min(50, len(final_performers))} tickers)...")
+    yahoo_returns = {}
+    
+    # Only fetch for top 50 to avoid rate limiting
+    tickers_to_check = [ticker for ticker, _ in final_performers[:50]]
+    
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_ticker = {
+            executor.submit(_get_yahoo_1y_return, ticker, end_date): ticker 
+            for ticker in tickers_to_check
+        }
+        
+        for future in tqdm(as_completed(future_to_ticker), total=len(tickers_to_check), desc="Yahoo comparison", ncols=100):
+            ticker = future_to_ticker[future]
+            try:
+                yahoo_return = future.result()
+                if yahoo_return is not None:
+                    yahoo_returns[ticker] = yahoo_return
+            except Exception:
+                pass
+    
+    # ✅ ALWAYS display comparison table (even when return_tickers=True)
+    print(f"\n\n🏆 Top Performers with Yahoo Finance Comparison 🏆")
+    print("-" * 110)
+    print(f"{'Rank':<5} | {'Ticker':<10} | {'Cached 1Y':>12} | {'Yahoo 1Y':>12} | {'Difference':>12} | {'Status':>15}")
+    print("-" * 110)
+    
+    # Show top 25 for comparison
+    for i, (ticker, perf) in enumerate(final_performers[:25], 1):
+        yahoo_perf = yahoo_returns.get(ticker)
+        if yahoo_perf is not None:
+            diff = perf - yahoo_perf
+            # Flag suspicious discrepancies > 50%
+            status = "⚠️ LARGE DIFF" if abs(diff) > 50 else "✅ Match"
+            print(f"{i:<5} | {ticker:<10} | {perf:11.2f}% | {yahoo_perf:11.2f}% | {diff:+11.2f}% | {status:>15}")
+        else:
+            print(f"{i:<5} | {ticker:<10} | {perf:11.2f}% | {'N/A':>12} | {'N/A':>12} | {'No Yahoo data':>15}")
+    
+    if len(final_performers) > 25:
+        print(f"   ... and {len(final_performers) - 25} more tickers")
+    
+    print("-" * 110)
+    
+    # Summary stats
+    if yahoo_returns:
+        matched_tickers = [t for t in tickers_to_check if t in yahoo_returns]
+        if matched_tickers:
+            avg_cached = np.mean([perf for ticker, perf in final_performers if ticker in matched_tickers])
+            avg_yahoo = np.mean([yahoo_returns[t] for t in matched_tickers])
+            print(f"\n📊 Summary ({len(matched_tickers)} tickers): Avg Cached = {avg_cached:.1f}%, Avg Yahoo = {avg_yahoo:.1f}%, Avg Difference = {avg_cached - avg_yahoo:+.1f}%")
+            
+            # Count large discrepancies
+            perf_dict = {ticker: perf for ticker, perf in final_performers}
+            large_diffs = sum(1 for t in matched_tickers if abs(perf_dict.get(t, 0) - yahoo_returns[t]) > 50)
+            if large_diffs > 0:
+                print(f"⚠️  WARNING: {large_diffs} tickers have >50% discrepancy - consider clearing cache and re-downloading!")
+    
     if return_tickers:
         return final_performers
     
-    print(f"\n\n🏆 Stocks Outperforming {final_benchmark_perf:.2f}%) 🏆")
+    print(f"\n\n🏆 Stocks Outperforming {final_benchmark_perf:.2f}% (Full List) 🏆")
     print("-" * 60)
     print(f"{'Rank':<5} | {'Ticker':<10} | {'Performance':>15}")
     print("-" * 60)
@@ -711,6 +810,7 @@ def find_top_performers(
         print(f"{i:<5} | {ticker:<10} | {perf:14.2f}%")
     
     print("-" * 60)
+    
     return [ticker for ticker, perf in final_performers]
 
 def _finalize_single_ticker_performance(params: Tuple) -> Optional[Tuple[str, float]]:

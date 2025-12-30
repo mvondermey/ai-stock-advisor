@@ -52,10 +52,10 @@ except ImportError:
 
 
 # --- Configuration ---
-LIVE_TRADING_ENABLED = True  # Set to False for dry-run (no actual orders)
+LIVE_TRADING_ENABLED = False  # ⚠️ Set to True to execute real orders (start with False for dry-run)
 INVESTMENT_PER_STOCK_LIVE = INVESTMENT_PER_STOCK  # Inherit from config.py
 MODEL_MAX_AGE_DAYS = 1  # Only use models trained in last 90 days
-USE_PAPER_TRADING = True  # True = paper trading (fake money), False = REAL MONEY
+USE_PAPER_TRADING = True  # True = paper trading (fake money), False = REAL MONEY ⚠️
 TOP_N_STOCKS = 3  # Number of stocks to hold (matches backtest)
 
 # --- Strategy Selection ---
@@ -63,12 +63,12 @@ TOP_N_STOCKS = 3  # Number of stocks to hold (matches backtest)
 # 'ai' = AI predictions (requires trained models)
 # 'ai_portfolio' = AI-driven portfolio rebalancing (intelligent rebalancing)
 # 'static_bh' = Static Buy & Hold (top performers from backtest)
-# 'dynamic_bh_1y' = Dynamic BH rebalancing annually
-# 'dynamic_bh_3m' = Dynamic BH rebalancing quarterly
-# 'dynamic_bh_1m' = Dynamic BH rebalancing monthly
+# 'dynamic_bh_1y' = Dynamic BH rebalancing annually  ← Best for long-term (less trading costs)
+# 'dynamic_bh_3m' = Dynamic BH rebalancing quarterly ← Good balance
+# 'dynamic_bh_1m' = Dynamic BH rebalancing monthly   ← More aggressive
 # 'risk_adj_mom' = Risk-Adjusted Momentum
 # 'mean_reversion' = Mean Reversion
-LIVE_TRADING_STRATEGY = 'dynamic_bh_3m'  # Change this to select your strategy
+LIVE_TRADING_STRATEGY = 'dynamic_bh_1y'  # 👈 Change this to your best strategy from backtest!
 
 
 def get_alpaca_client() -> Optional[TradingClient]:
