@@ -510,6 +510,17 @@ def main(
         all_tickers_data_long = all_tickers_data.stack(level=1, future_stack=True)
         all_tickers_data_long.index.names = ['date', 'ticker']
         all_tickers_data_long = all_tickers_data_long.reset_index()
+        
+        # ✅ IMPORTANT: Drop rows with NaN in critical columns immediately after stacking
+        # Wide-to-long conversion creates NaNs for dates where some tickers have data but others don't.
+        # These sparse rows cause data validation warnings and downstream errors.
+        initial_len = len(all_tickers_data_long)
+        all_tickers_data_long = all_tickers_data_long.dropna(subset=['Close'])
+        cleaned_len = len(all_tickers_data_long)
+        
+        if initial_len > cleaned_len:
+            print(f"   🧹 Removed {initial_len - cleaned_len} rows with missing 'Close' price (sparse data cleanup)")
+            
         all_tickers_data = all_tickers_data_long
         print(f"   ✅ Converted to long format: {len(all_tickers_data)} rows, {len(all_tickers_data['ticker'].unique())} tickers")
     else:

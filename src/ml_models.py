@@ -2062,8 +2062,8 @@ def train_single_model_type(
                     model = LGBMRegressor(random_state=SEED, verbosity=-1, device='cpu', n_jobs=1)
                     params = {
                         'n_estimators': [100, 200],
-                        'learning_rate': [0.01, 0.05, 0.1],
-                        'max_depth': [-1, 5, 7]
+                        'learning_rate': [0.05, 0.1],  # Reduced from 3 to 2
+                        'max_depth': [5, 7]  # Reduced from 3 to 2
                     }
                 except ImportError:
                     print(f"  ⚠️ {ticker}: LightGBM not available")

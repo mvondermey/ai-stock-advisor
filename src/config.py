@@ -1,5 +1,7 @@
+from operator import truediv
 import os
 from pathlib import Path
+from pickle import FALSE
 from unittest.runner import TextTestRunner
 
 # ============================
@@ -65,8 +67,8 @@ MARKET_SELECTION = {
     "ALPACA_STOCKS": False,    # ❌ DISABLED - Using curated indices instead
     "NASDAQ_ALL": False,
     "NASDAQ_100": True,        # ✅ ~100 stocks
-    "SP500": True,             # ✅ ~500 stocks  
-    "DOW_JONES": True,         # ✅ ~30 stocks
+    "SP500": False,             # ✅ ~500 stocks  
+    "DOW_JONES": False,         # ✅ ~30 stocks
     "POPULAR_ETFS": False,
     "CRYPTO": False,
     "DAX": False,
@@ -81,8 +83,8 @@ ALPACA_STOCKS_LIMIT = 20000  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = []  # NASDAQ only
-N_TOP_TICKERS           = 10        # ✅ Select top 1000 from ~630 major index tickers
-BATCH_DOWNLOAD_SIZE     = 1000        # ✅ Download in batches of 1000
+N_TOP_TICKERS           = 10       # ✅ Select top 1000 from ~630 major index tickers
+BATCH_DOWNLOAD_SIZE     = 10000     # ✅ Download in batches of 1000
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
 
@@ -169,13 +171,13 @@ RETRAIN_FREQUENCY_DAYS = 5  # Bi-weekly retraining - consider 20 for S&P 500
 ENABLE_1YEAR_BACKTEST   = True   # ✅ Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = True  # ✅ ENABLED - Train models for AI Strategy and individual ticker predictions
+ENABLE_1YEAR_TRAINING   = False  # ✅ ENABLED - Train models for AI Strategy and individual ticker predictions
 
 # --- Portfolio Strategy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
 # AI Portfolio + traditional strategies (no AI Strategy or AI Hybrid)
-ENABLE_AI_STRATEGY      = True  # ✅ ENABLED - AI Strategy with individual ticker models
-ENABLE_AI_PORTFOLIO     = True   # ✅ ENABLED - AI Portfolio meta-learning
+ENABLE_AI_STRATEGY      = False  # ✅ ENABLED - AI Strategy with individual ticker models
+ENABLE_AI_PORTFOLIO     = False   # ✅ ENABLED - AI Portfolio meta-learning
 ENABLE_STATIC_BH        = True   # ✅ ENABLED - Static Buy & Hold benchmark
 ENABLE_DYNAMIC_BH_1Y    = True   # ✅ ENABLED - Dynamic BH 1-year
 ENABLE_DYNAMIC_BH_3M    = True   # ✅ ENABLED - Dynamic BH 3-month
@@ -184,7 +186,7 @@ ENABLE_RISK_ADJ_MOM     = True   # ✅ ENABLED - Risk-Adjusted Momentum
 ENABLE_MEAN_REVERSION   = True   # ✅ ENABLED - Mean Reversion
 ENABLE_SEASONAL         = True   # ✅ ENABLED - Seasonal strategy
 ENABLE_QUALITY_MOM      = True   # ✅ ENABLED - Quality + Momentum
-ENABLE_MOMENTUM_AI_HYBRID = True  # ✅ ENABLED - Momentum + AI Hybrid strategy
+ENABLE_MOMENTUM_AI_HYBRID = False  # ✅ ENABLED - Momentum + AI Hybrid strategy
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -209,8 +211,8 @@ FEAT_VOL_WINDOW         = 10
 # How many days of historical data to use when making predictions
 # Must be >= 120 to have enough data after feature calculation (indicators need 50+ days lookback)
 # Higher = more stable predictions, Lower = more reactive to recent changes
-# Recommended: 60-250 days (120 = ~6 months, good balance)
-PREDICTION_LOOKBACK_DAYS = 120
+# Recommended: 180-250 days to ensure sufficient valid rows after feature engineering
+PREDICTION_LOOKBACK_DAYS = 252
 
 # --- AI Portfolio Rebalancing Strategy knobs ---
 # Check portfolio daily but only rebalance when stocks actually change (cost-effective).
