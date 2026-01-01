@@ -68,6 +68,7 @@ TOP_N_STOCKS = 3  # Number of stocks to hold (matches backtest)
 # 'dynamic_bh_1m' = Dynamic BH rebalancing monthly   ← More aggressive
 # 'risk_adj_mom' = Risk-Adjusted Momentum
 # 'mean_reversion' = Mean Reversion
+# 'volatility_adj_mom' = Volatility-Adjusted Momentum
 LIVE_TRADING_STRATEGY = 'dynamic_bh_1y'  # 👈 Change this to your best strategy from backtest!
 
 
@@ -223,6 +224,10 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str]) -> List[str]:
         # Mean Reversion Strategy
         return get_mean_reversion_tickers(all_tickers)
 
+    elif strategy == 'volatility_adj_mom':
+        # Volatility-Adjusted Momentum Strategy
+        return get_volatility_adj_mom_tickers(all_tickers)
+
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
         return get_dynamic_bh_tickers(all_tickers, '3m')
@@ -294,6 +299,15 @@ def get_mean_reversion_tickers(all_tickers: List[str]) -> List[str]:
     return get_dynamic_bh_tickers(all_tickers, '1m')
 
 
+def get_volatility_adj_mom_tickers(all_tickers: List[str]) -> List[str]:
+    """Volatility-Adjusted Momentum Strategy: Select based on volatility-adjusted momentum."""
+    print(f" Volatility-Adjusted Momentum: Selecting top {TOP_N_STOCKS}...")
+
+    # Simplified implementation - would need the full volatility-adjusted momentum logic
+    # For now, use dynamic BH 3-month as approximation
+    return get_dynamic_bh_tickers(all_tickers, '3m')
+
+
 def run_live_trading():
     """Main live trading function."""
     print("=" * 80)
@@ -304,12 +318,14 @@ def run_live_trading():
     # Display selected strategy
     strategy_names = {
         'ai': 'AI Predictions',
+        'ai_portfolio': 'AI Portfolio',
         'static_bh': 'Static Buy & Hold',
         'dynamic_bh_1y': 'Dynamic BH (1-Year)',
         'dynamic_bh_3m': 'Dynamic BH (3-Month)',
         'dynamic_bh_1m': 'Dynamic BH (1-Month)',
         'risk_adj_mom': 'Risk-Adjusted Momentum',
-        'mean_reversion': 'Mean Reversion'
+        'mean_reversion': 'Mean Reversion',
+        'volatility_adj_mom': 'Volatility-Adjusted Momentum'
     }
 
     strategy_name = strategy_names.get(LIVE_TRADING_STRATEGY, LIVE_TRADING_STRATEGY)

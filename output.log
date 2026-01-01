@@ -6,7 +6,7 @@ DEBUG: Script execution initiated.
 🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
 🎮 PYTORCH_USE_GPU=True - PyTorch models will use CUDA
 ✅ Multiprocessing start method set to 'spawn' for CUDA compatibility.
-[INTERNET] Connection verified, using local time with internet sync: 2026-01-01 21:27:35 UTC
+[INTERNET] Connection verified, using local time with internet sync: 2026-01-01 21:53:37 UTC
 ✅ CUDA is available and working. GPU acceleration enabled with deterministic algorithms.
 ℹ️ LightGBM: using CPU (OpenCL not compatible with NVIDIA/PoCL in WSL2).
 ✅ XGBoostRegressor found. Configured for GPU (device='cuda').
@@ -792,27 +792,21 @@ DEBUG: Script execution initiated.
 [GPU] LightGBM version: 4.6.0
 DEBUG: Script execution initiated.
 🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
-  High return: APP: 420.3% | $75.0900 → $390.70 | 364 days (250 data points)
  Detected 8.0GB VRAM - configuring slots dynamically
 [GPU] torch.cuda.is_available(): True
 [GPU] XGBoost version: 3.1.2
 [GPU] LightGBM version: 4.6.0
 DEBUG: Script execution initiated.
 🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
+ Detected 8.0GB VRAM - configuring slots dynamically
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.2
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
+  High return: APP: 420.3% | $75.0900 → $390.70 | 364 days (250 data points)
   High return: HOOD: 409.1% | $20.2400 → $103.05 | 364 days (250 data points)
   High return: PLTR: 507.2% | $26.0800 → $158.35 | 364 days (250 data points)
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
  Detected 8.0GB VRAM - configuring slots dynamically
 [GPU] torch.cuda.is_available(): True
 [GPU] XGBoost version: 3.1.2
@@ -831,173 +825,3 @@ DEBUG: Script execution initiated.
 
  Applying performance benchmarks for selected tickers in parallel...
    Using 15 parallel workers with chunksize=1
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
-
- Found 20 stocks that passed the performance benchmarks.
-  Screening 20 strong performers for fundamental metrics in parallel...
-   Using 15 parallel workers with chunksize=1
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
-  Found 19 stocks passing the fundamental screens.
-
-  Fetching actual Yahoo 1Y returns for comparison (top 19 tickers)...
-
-
- Top Performers with Yahoo Finance Comparison 
---------------------------------------------------------------------------------------------------------------
-Rank  | Ticker     |    Cached 1Y |     Yahoo 1Y |   Difference |          Status
---------------------------------------------------------------------------------------------------------------
-1     | PLTR       |      507.17% |      488.88% |      +18.29% |           Match
-2     | APP        |      420.31% |      406.74% |      +13.56% |           Match
-3     | HOOD       |      409.14% |      400.97% |       +8.17% |           Match
-4     | ENR.DE     |      290.36% |      279.04% |      +11.31% |           Match
-5     | GEV        |      279.41% |      271.17% |       +8.24% |           Match
-6     | RHM.DE     |      251.32% |      246.23% |       +5.09% |           Match
-7     | TKA.DE     |      209.28% |      198.09% |      +11.19% |           Match
-8     | TPR        |      175.94% |      175.67% |       +0.27% |           Match
-9     | VST        |      174.25% |      165.09% |       +9.16% |           Match
-10    | MSTR       |      165.82% |      148.92% |      +16.90% |           Match
-11    | AXON       |      152.14% |      151.82% |       +0.32% |           Match
-12    | DASH       |      131.28% |      126.02% |       +5.26% |           Match
-13    | CBK.DE     |      130.28% |      117.85% |      +12.44% |           Match
-14    | NRG        |      127.48% |      126.54% |       +0.95% |           Match
-15    | IBKR       |      120.37% |      121.20% |       -0.83% |           Match
-16    | HEI.DE     |      118.76% |      113.59% |       +5.17% |           Match
-17    | FIX        |      116.43% |      112.41% |       +4.03% |           Match
-18    | RCL        |      114.65% |      105.06% |       +9.59% |           Match
-19    | DBK.DE     |      112.88% |      106.37% |       +6.52% |           Match
---------------------------------------------------------------------------------------------------------------
-
- Summary (19 tickers): Avg Cached = 210.9%, Avg Yahoo = 203.2%, Avg Difference = +7.7%
-  ✅ Added 2 benchmark tickers (QQQ, SPY, GLD)
-
-✅ Identified 21 stocks for backtesting: PLTR, APP, HOOD, ENR.DE, GEV, RHM.DE, TKA.DE, TPR, VST, MSTR, AXON, DASH, CBK.DE, NRG, IBKR, HEI.DE, FIX, RCL, DBK.DE, QQQ, SPY
-
-📅 Backtest configured for 90 days (~3-Month)
-   📋 Training 19 tickers (excluding 3 benchmark ETFs: QQQ, GLD, SPY)
-
-🔍 Step 3: Training AI models for 3-Month backtest...
-   🚀 Using Unified Parallel Training System (model-level parallelization)
-   📊 Training Horizon: 60 days, Target: 25.01%
-
-🚀 UNIFIED PARALLEL TRAINING SYSTEM
-==========================================
-   Tickers: 19
-   Period: 2024-07-30 to 2025-07-30
-   Workers: 4
-   GPU Mode: Enabled
-==========================================
-📋 Generating tasks for 19 tickers...
-   Enabled models: LSTM, TCN, XGBoost, RandomForest, LightGBM
-   Data structure check:
-     - Has 'date' column: True
-     - Has 'ticker' column: True
-     - Total rows in all_tickers_data: 351189
-     - Unique tickers in data: 625
-     - Train period: 2024-07-30 05:00:00+00:00 to 2025-07-30 05:00:00+00:00
-     - Available tickers in data: 625
-   📅 Normalized date range for comparison:
-      - Train start: 2024-07-30 05:00:00+00:00 (tz: UTC)
-      - Train end: 2025-07-30 05:00:00+00:00 (tz: UTC)
-      - Sample data date: 2023-10-04 00:00:00+00:00 (tz: UTC)
-      - Data date range: 2023-10-04 00:00:00+00:00 to 2025-12-31 05:00:00+00:00
-   🔍 DEBUG PLTR: 562 total rows, dates: 2023-10-04 04:00:00+00:00 to 2025-12-30 05:00:00+00:00
-   🔍 DEBUG APP: 562 total rows, dates: 2023-10-04 00:00:00+00:00 to 2025-12-30 00:00:00+00:00
-   🔍 DEBUG HOOD: 562 total rows, dates: 2023-10-04 04:00:00+00:00 to 2025-12-30 05:00:00+00:00
-   Generated 95 ticker model tasks (19 tickers × 5 models)
-✅ Total tasks generated: 95
-
-🏃 Executing 95 training tasks in parallel...

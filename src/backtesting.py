@@ -22,7 +22,9 @@ from config import (
     N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
     DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
     FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD, NUM_PROCESSES, SEQUENCE_LENGTH,
-    RETRAIN_FREQUENCY_DAYS, PREDICTION_LOOKBACK_DAYS, AI_STRATEGY_MIN_IMPROVEMENT_THRESHOLD_ANNUAL
+    RETRAIN_FREQUENCY_DAYS, PREDICTION_LOOKBACK_DAYS, AI_STRATEGY_MIN_IMPROVEMENT_THRESHOLD_ANNUAL,
+    ENABLE_RISK_ADJ_MOM, ENABLE_MEAN_REVERSION, ENABLE_QUALITY_MOM, ENABLE_MOMENTUM_AI_HYBRID,
+    ENABLE_VOLATILITY_ADJ_MOM, VOLATILITY_ADJ_MOM_LOOKBACK, VOLATILITY_ADJ_MOM_VOL_WINDOW, VOLATILITY_ADJ_MOM_MIN_SCORE
 )
 from config import (
     ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, TARGET_PERCENTAGE, PERIOD_HORIZONS,
@@ -46,6 +48,7 @@ risk_adj_mom_transaction_costs = None
 mean_reversion_transaction_costs = None
 quality_momentum_transaction_costs = None
 momentum_ai_hybrid_transaction_costs = None
+volatility_adj_mom_transaction_costs = None
 
 
 def _last_valid_close_up_to(ticker_df: pd.DataFrame, current_date: datetime) -> Optional[float]:
@@ -1278,9 +1281,16 @@ def _run_portfolio_backtest_walk_forward(
     current_momentum_ai_hybrid_stocks = []  # Current stocks held by momentum + AI hybrid
     last_momentum_ai_hybrid_rebalance_day = 0  # Track days since last rebalance
 
+    # VOLATILITY-ADJUSTED MOMENTUM: Initialize portfolio tracking
+    volatility_adj_mom_portfolio_value = 0.0
+    volatility_adj_mom_portfolio_history = [volatility_adj_mom_portfolio_value]
+    volatility_adj_mom_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    volatility_adj_mom_cash = initial_capital_needed  # Start with same capital as AI
+    current_volatility_adj_mom_stocks = []  # Current top 3 stocks held by volatility-adjusted momentum
+
     # Reset global transaction cost tracking variables for this backtest
     global ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs
-    global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, ai_portfolio_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs
+    global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, ai_portfolio_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs
     ai_transaction_costs = 0.0
     static_bh_transaction_costs = 0.0  # Static BH has no transaction costs (buy once, hold)
     dynamic_bh_1y_transaction_costs = 0.0
@@ -1291,6 +1301,7 @@ def _run_portfolio_backtest_walk_forward(
     mean_reversion_transaction_costs = 0.0
     quality_momentum_transaction_costs = 0.0
     momentum_ai_hybrid_transaction_costs = 0.0
+    volatility_adj_mom_transaction_costs = 0.0
 
     all_processed_tickers = []
     all_performance_metrics = []
@@ -1777,6 +1788,55 @@ def _run_portfolio_backtest_walk_forward(
 
                     except Exception as e:
                         print(f"   ⚠️ Quality + momentum selection failed: {e}")
+
+                # VOLATILITY-ADJUSTED MOMENTUM: Rebalance to top performers by volatility-adjusted momentum DAILY
+                if ENABLE_VOLATILITY_ADJ_MOM:
+                    try:
+                        # Calculate volatility-adjusted momentum scores
+                        volatility_adj_mom_scores = []
+                        # Use initial_top_tickers (the tickers we trained models for)
+                        available_tickers = initial_top_tickers if initial_top_tickers else []
+                        
+                        for ticker in available_tickers:
+                            try:
+                                if ticker not in ticker_data_grouped:
+                                    continue
+                                ticker_history = ticker_data_grouped[ticker].reset_index()
+                                ticker_history = ticker_history[ticker_history['date'] <= current_date].tail(VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW + 10)
+                                
+                                if len(ticker_history) >= VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW:
+                                    # Calculate volatility-adjusted momentum score
+                                    vol_adj_score = calculate_volatility_adjusted_momentum(
+                                        ticker_history, 
+                                        VOLATILITY_ADJ_MOM_LOOKBACK, 
+                                        VOLATILITY_ADJ_MOM_VOL_WINDOW
+                                    )
+                                    
+                                    if vol_adj_score > VOLATILITY_ADJ_MOM_MIN_SCORE:
+                                        volatility_adj_mom_scores.append((ticker, vol_adj_score))
+                            
+                            except Exception:
+                                continue
+                        
+                        if volatility_adj_mom_scores:
+                            # Sort by volatility-adjusted score and get top 3
+                            volatility_adj_mom_scores.sort(key=lambda x: x[1], reverse=True)
+                            new_volatility_adj_mom_stocks = [ticker for ticker, score in volatility_adj_mom_scores[:3]]
+                            
+                            if new_volatility_adj_mom_stocks != current_volatility_adj_mom_stocks:
+                                print(f"   🔄 Volatility-Adjusted Momentum rebalancing: {current_volatility_adj_mom_stocks} → {new_volatility_adj_mom_stocks}")
+                                print(f"     Top scores: {[(t, f'{s:.2f}') for t, s in volatility_adj_mom_scores[:3]]}")
+                                
+                                # Rebalance volatility-adjusted momentum portfolio
+                                volatility_adj_mom_cash = _rebalance_volatility_adj_mom_portfolio(
+                                    new_volatility_adj_mom_stocks, current_date, all_tickers_data,
+                                    volatility_adj_mom_positions, volatility_adj_mom_cash, capital_per_stock
+                                )
+                            
+                            current_volatility_adj_mom_stocks = new_volatility_adj_mom_stocks
+
+                    except Exception as e:
+                        print(f"   ⚠️ Volatility-adjusted momentum selection failed: {e}")
 
                 else:
                     print(f"   ⚠️ No valid performance data for dynamic BH rebalancing")
@@ -2348,6 +2408,34 @@ def _run_portfolio_backtest_walk_forward(
         quality_momentum_portfolio_value = quality_momentum_invested_value + quality_momentum_cash
         quality_momentum_portfolio_history.append(quality_momentum_portfolio_value)
 
+        # Update VOLATILITY-ADJUSTED MOMENTUM portfolio value daily (skip if disabled)
+        if ENABLE_VOLATILITY_ADJ_MOM:
+            volatility_adj_mom_invested_value = 0.0
+            for ticker, pos in volatility_adj_mom_positions.items():
+                try:
+                    # Get current price
+                    ticker_data = all_tickers_data[
+                        (all_tickers_data['ticker'] == ticker) &
+                        (all_tickers_data['date'] == current_date)
+                    ]['Close']
+                    
+                    if not ticker_data.empty:
+                        current_price = ticker_data.iloc[0]
+                        position_value = pos['shares'] * current_price
+                        volatility_adj_mom_invested_value += position_value
+                        
+                        # Update stored position value
+                        pos['value'] = position_value
+                    else:
+                        # Use previous value if current price is invalid
+                        volatility_adj_mom_invested_value += pos.get('value', 0.0)
+                except Exception as e:
+                    # Keep previous value if price lookup fails
+                    volatility_adj_mom_invested_value += pos.get('value', 0.0)
+
+        volatility_adj_mom_portfolio_value = volatility_adj_mom_invested_value + volatility_adj_mom_cash
+        volatility_adj_mom_portfolio_history.append(volatility_adj_mom_portfolio_value)
+
         # === MOMENTUM + AI HYBRID: Update portfolio value ===
         if ENABLE_MOMENTUM_AI_HYBRID:
             momentum_ai_hybrid_invested_value = 0.0
@@ -2723,7 +2811,7 @@ def _run_portfolio_backtest_walk_forward(
             total_portfolio_value = initial_capital_needed
             print(f"⚠️ AI Portfolio: No positions, using initial capital (${total_portfolio_value:,.0f})")
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, ai_portfolio_value, ai_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, ai_portfolio_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, ai_portfolio_value, ai_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, ai_portfolio_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs
 
 
 def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
@@ -4524,6 +4612,141 @@ def print_final_summary(
     print("  - Consider enabling `USE_MARKET_FILTER` and `USE_PERFORMANCE_BENCHMARK` for additional filtering.")
     print("  - Explore advanced ML models or feature engineering for further improvements.")
     print("="*80)
+
+
+def calculate_volatility_adjusted_momentum(ticker_data, lookback_days=VOLATILITY_ADJ_MOM_LOOKBACK, 
+                                          vol_window=VOLATILITY_ADJ_MOM_VOL_WINDOW):
+    """
+    Calculate volatility-adjusted momentum score for a ticker.
+    
+    Args:
+        ticker_data: DataFrame with price data for a single ticker
+        lookback_days: Period for momentum calculation (default 90 days)
+        vol_window: Period for volatility calculation (default 20 days)
+    
+    Returns:
+        Volatility-adjusted momentum score
+    """
+    try:
+        if len(ticker_data) < lookback_days + vol_window:
+            return 0.0
+        
+        # Calculate momentum return over lookback period
+        if len(ticker_data) >= lookback_days:
+            momentum_return = (ticker_data['Close'].iloc[-1] / ticker_data['Close'].iloc[-lookback_days] - 1)
+        else:
+            momentum_return = 0.0
+        
+        # Calculate volatility (standard deviation of daily returns)
+        daily_returns = ticker_data['Close'].pct_change().dropna()
+        if len(daily_returns) >= vol_window:
+            volatility = daily_returns.iloc[-vol_window:].std()
+        else:
+            volatility = daily_returns.std()
+        
+        # Avoid division by zero
+        if volatility <= 0:
+            return 0.0
+        
+        # Volatility-adjusted momentum (higher is better)
+        # This penalizes high volatility and rewards steady momentum
+        vol_adjusted_score = momentum_return / (volatility ** 0.5)
+        
+        return vol_adjusted_score
+        
+    except Exception as e:
+        print(f"   ⚠️ Error calculating volatility-adjusted momentum: {e}")
+        return 0.0
+
+
+def _rebalance_volatility_adj_mom_portfolio(new_stocks, current_date, all_tickers_data,
+                                           volatility_adj_mom_positions, volatility_adj_mom_cash, capital_per_stock):
+    """
+    Rebalance volatility-adjusted momentum portfolio to hold the new top 3 stocks.
+    
+    Args:
+        new_stocks: List of tickers to hold
+        current_date: Current date for rebalancing
+        all_tickers_data: All price data
+        volatility_adj_mom_positions: Current positions dictionary
+        volatility_adj_mom_cash: Available cash
+        capital_per_stock: Target investment per stock
+    
+    Returns:
+        Updated cash balance after rebalancing
+    """
+    global volatility_adj_mom_transaction_costs
+    
+    # Sell stocks not in new selection
+    stocks_to_sell = [ticker for ticker in volatility_adj_mom_positions if ticker not in new_stocks]
+    for ticker in stocks_to_sell:
+        try:
+            # Get current price
+            ticker_data = all_tickers_data[
+                (all_tickers_data['ticker'] == ticker) &
+                (all_tickers_data['date'] == current_date)
+            ]['Close']
+            
+            if ticker_data.empty:
+                print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping sell")
+                continue
+            
+            current_price = ticker_data.iloc[0]
+            shares = volatility_adj_mom_positions[ticker]['shares']
+            proceeds = shares * current_price
+            fee = proceeds * TRANSACTION_COST
+            volatility_adj_mom_cash += proceeds - fee
+            volatility_adj_mom_transaction_costs += fee
+            
+            del volatility_adj_mom_positions[ticker]
+            
+        except Exception as e:
+            print(f"   ⚠️ Error selling {ticker}: {e}")
+    
+    # Buy new stocks
+    stocks_to_buy = [t for t in new_stocks if t not in volatility_adj_mom_positions]
+    if stocks_to_buy:
+        # Split available cash across remaining buys, accounting for transaction costs
+        target_value_per_stock = volatility_adj_mom_cash / (len(stocks_to_buy) * (1 + TRANSACTION_COST))
+        
+        for ticker in stocks_to_buy:
+            try:
+                ticker_data = all_tickers_data[
+                    (all_tickers_data['ticker'] == ticker) &
+                    (all_tickers_data['date'] == current_date)
+                ]['Close']
+                
+                if ticker_data.empty:
+                    print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping buy")
+                    continue
+                
+                current_price = ticker_data.iloc[0]
+                
+                if current_price <= 0:
+                    print(f"   ⚠️ Invalid price for {ticker}: ${current_price}, skipping buy")
+                    continue
+                
+                # Calculate shares to buy (accounting for transaction cost)
+                max_affordable_shares = int(target_value_per_stock / (current_price * (1 + TRANSACTION_COST)))
+                
+                if max_affordable_shares > 0:
+                    cost = max_affordable_shares * current_price
+                    fee = cost * TRANSACTION_COST
+                    total_cost = cost + fee
+                    
+                    if total_cost <= volatility_adj_mom_cash:
+                        volatility_adj_mom_cash -= total_cost
+                        volatility_adj_mom_transaction_costs += fee
+                        volatility_adj_mom_positions[ticker] = {
+                            'shares': max_affordable_shares,
+                            'entry_price': current_price,
+                            'value': cost
+                        }
+                        
+            except Exception as e:
+                print(f"   ⚠️ Error buying {ticker}: {e}")
+    
+    return volatility_adj_mom_cash
 
 
 # Module for backtesting functions - not meant to be run directly

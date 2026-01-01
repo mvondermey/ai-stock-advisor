@@ -131,7 +131,7 @@ GPU_CLEAR_CACHE_AFTER_EACH_TICKER = False
 # This limits how many worker processes can run PyTorch models on GPU simultaneously.
 # Only applies when PYTORCH_USE_GPU = True (PyTorch uses GPU)
 # Does NOT apply to XGBoost GPU (XGBoost manages its own GPU memory)
-GPU_MAX_CONCURRENT_TRAINING_WORKERS = GPU_MODEL_SLOTS['LSTM'] # Use dynamic calculation instead of hardcoded value
+GPU_MAX_CONCURRENT_TRAINING_WORKERS = 3 # Use dynamic calculation instead of hardcoded value
 
 # Multiprocessing stability: recycle worker processes periodically to avoid RAM creep / leaked semaphores
 # when training many tickers under WSL + spawn.
@@ -208,6 +208,7 @@ ENABLE_MEAN_REVERSION   = True   # ENABLED - Mean Reversion
 ENABLE_SEASONAL         = True   # ENABLED - Seasonal strategy
 ENABLE_QUALITY_MOM      = True   # ENABLED - Quality + Momentum
 ENABLE_MOMENTUM_AI_HYBRID = True  # ENABLED - Momentum + AI Hybrid strategy
+ENABLE_VOLATILITY_ADJ_MOM = True  # ENABLED - Volatility-Adjusted Momentum strategy
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -269,6 +270,11 @@ MOMENTUM_AI_HYBRID_REBALANCE_DAYS = 7  # Check weekly (not daily = less transact
 MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK = 90  # 3-month momentum for stock ranking
 MOMENTUM_AI_HYBRID_STOP_LOSS = 0.10  # 10% stop loss from entry
 MOMENTUM_AI_HYBRID_TRAILING_STOP = 0.08  # 8% trailing stop once in profit
+
+# --- Volatility-Adjusted Momentum Strategy Parameters ---
+VOLATILITY_ADJ_MOM_LOOKBACK = 90  # 90-day momentum lookback
+VOLATILITY_ADJ_MOM_VOL_WINDOW = 20  # 20-day volatility window
+VOLATILITY_ADJ_MOM_MIN_SCORE = 0.5  # Minimum volatility-adjusted score threshold
 
 # REGRESSION MODE: Probability thresholds removed - using simplified trading logic
 TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification (balanced for 3-day moves)
