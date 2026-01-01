@@ -834,9 +834,14 @@ def main(
 
         # Train individual stock models if enabled
         if ENABLE_1YEAR_TRAINING:
+            # Exclude benchmark ETFs from training (they are used for comparison, not AI trading)
+            BENCHMARK_ETFS = {'QQQ', 'SPY', 'GLD'}
+            tickers_for_training = [t for t in top_tickers if t not in BENCHMARK_ETFS]
+            print(f"   📋 Training {len(tickers_for_training)} tickers (excluding {len(BENCHMARK_ETFS)} benchmark ETFs: {', '.join(BENCHMARK_ETFS)})")
+            
             training_results = train_models_for_period(
                 period_name=actual_period_name,
-                tickers=top_tickers,
+                tickers=tickers_for_training,
                 all_tickers_data=all_tickers_data,
                 train_start=train_start_1y_calc,
                 train_end=train_end_1y,

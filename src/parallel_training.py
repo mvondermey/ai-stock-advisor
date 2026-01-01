@@ -511,6 +511,7 @@ def aggregate_results(
     
     if ticker_results:
         print(f"\n📈 Aggregating ticker models for {len(tickers)} tickers...")
+        print(f"   📋 Received {len(ticker_results)} successful ticker results")
         
         # Group results by ticker
         ticker_groups = {}
@@ -519,6 +520,8 @@ def aggregate_results(
             if ticker not in ticker_groups:
                 ticker_groups[ticker] = []
             ticker_groups[ticker].append(result)
+        
+        print(f"   📋 Grouped into {len(ticker_groups)} unique tickers: {list(ticker_groups.keys())}")
         
         # Select best model per ticker (lowest MSE)
         for ticker, group in ticker_groups.items():

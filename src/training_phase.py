@@ -507,13 +507,14 @@ def train_models_for_period(
         )
         
         # Convert to return format expected by calling code
+        # ✅ Return None for models to avoid GPU/CPU memory issues - load from disk instead
         training_results = []
         for ticker, model_dict in ticker_models.items():
             training_results.append({
                 'ticker': ticker,
-                'model': model_dict['model'],
-                'scaler': model_dict['scaler'],
-                'y_scaler': model_dict.get('y_scaler'),
+                'model': None,  # Don't pass models directly - load from disk
+                'scaler': None,  # Don't pass scalers directly - load from disk
+                'y_scaler': None,  # Don't pass y_scalers directly - load from disk
                 'gru_hyperparams': None,  # Not used in unified system
                 'winner': model_dict['model_type'],
                 'status': 'trained',

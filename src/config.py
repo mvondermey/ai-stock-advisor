@@ -83,7 +83,7 @@ ALPACA_STOCKS_LIMIT = 20000  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = []  # NASDAQ only
-N_TOP_TICKERS           = 10     # Select top 1000 from ~630 major index tickers
+N_TOP_TICKERS           = 20     # Select top 10 from ~630 major index tickers (reduced from 20 to avoid GPU deadlock)
 BATCH_DOWNLOAD_SIZE     = 10000     # Download in batches of 1000
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -131,7 +131,7 @@ GPU_CLEAR_CACHE_AFTER_EACH_TICKER = False
 # This limits how many worker processes can run PyTorch models on GPU simultaneously.
 # Only applies when PYTORCH_USE_GPU = True (PyTorch uses GPU)
 # Does NOT apply to XGBoost GPU (XGBoost manages its own GPU memory)
-GPU_MAX_CONCURRENT_TRAINING_WORKERS = GPU_MODEL_SLOTS['LSTM'] # Max 3 PyTorch models on GPU at once
+GPU_MAX_CONCURRENT_TRAINING_WORKERS = GPU_MODEL_SLOTS['LSTM'] # Use dynamic calculation instead of hardcoded value
 
 # Multiprocessing stability: recycle worker processes periodically to avoid RAM creep / leaked semaphores
 # when training many tickers under WSL + spawn.
@@ -143,7 +143,7 @@ TRAINING_POOL_MAXTASKSPERCHILD = None  # Disable recycling
 # - Set to 600 (10 min) for normal use (handles slow XGBoost GridSearchCV)
 # - Set to 1800 (30 min) for very large datasets or complex models
 # - Set to None to disable timeout (not recommended - can hang forever)
-PER_TICKER_TIMEOUT = 600  # 10 minutes max per ticker
+PER_TICKER_TIMEOUT = 300  # 5 minutes max per ticker (reduced from 10 to prevent hangs)
 
 # Training worker process count (separate from global NUM_PROCESSES).
 # For 5000 tickers, use parallel training. Models are saved to disk and loaded back (no pickling overhead).
@@ -261,7 +261,7 @@ AI_PORTFOLIO_PERFORMANCE_THRESHOLD_ANNUAL = 0.50  # ANNUALIZED return threshold 
 #    Higher values = more selective (fewer "good" portfolios), lower = more examples
 
 # --- Momentum + AI Hybrid Strategy Parameters ---
-MOMENTUM_AI_HYBRID_TOP_N = 10  # Select top N stocks by momentum
+MOMENTUM_AI_HYBRID_TOP_N = 20  # Select top N stocks by momentum
 MOMENTUM_AI_HYBRID_PORTFOLIO_SIZE = 5  # Hold 5 stocks at a time (diversification)
 MOMENTUM_AI_HYBRID_BUY_THRESHOLD = 0.02  # Buy if AI predicts >2% return
 MOMENTUM_AI_HYBRID_SELL_THRESHOLD = -0.01  # Sell if AI predicts <-1% return

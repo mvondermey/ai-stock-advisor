@@ -222,77 +222,128 @@ def print_final_summary(
     
     print("="*170)
 
-    print(f"\n📈 Individual Ticker Performance (AI Strategy - Sorted by {period_name} Performance):")
-    print("-" * 170)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Max Shares Held':>25}")
-    print("-" * 170)
+    # ============================================
+    # UNIFIED TABLE: All Strategies Side by Side
+    # ============================================
+    print(f"\n📊 UNIFIED TICKER PERFORMANCE TABLE (Sorted by 1Y Performance):")
+    print("=" * 200)
+    print(f"{'Ticker':<10} | {'1Y Perf':>10} | {'AI Gain':>12} | {'AI Status':<12} | {'BH Gain':>12} | {'AI vs BH':>10} | {'AI Sharpe':>10} | {'BH Sharpe':>10} | {'Last Action':<12} | {'Days Held':>10}")
+    print("=" * 200)
+    
+    # Build lookup for Buy & Hold results
+    bh_lookup = {}
+    if performance_metrics_buy_hold_1y and isinstance(performance_metrics_buy_hold_1y, list):
+        for bh_res in performance_metrics_buy_hold_1y:
+            if isinstance(bh_res, dict):
+                bh_ticker = str(bh_res.get('ticker', ''))
+                bh_lookup[bh_ticker] = bh_res
+    
+    # Build lookup for 1Y performance from top_performers_data
+    perf_lookup = {}
+    for item in top_performers_data:
+        if len(item) >= 2:
+            perf_lookup[item[0]] = item[1] if pd.notna(item[1]) else np.nan
+    
+    # Collect all tickers from both AI and BH results
+    all_tickers = set()
     for res in sorted_final_results:
-        ticker = str(res.get('ticker', 'N/A'))
-        # ✅ UPDATED: Use new strategy_gain field from tracking
-        if res.get('status') == 'failed':
-            allocated_capital = 0.0
-            strategy_gain = 0.0
+        all_tickers.add(str(res.get('ticker', '')))
+    for ticker in bh_lookup.keys():
+        all_tickers.add(ticker)
+    
+    # Create unified data for sorting
+    unified_data = []
+    for ticker in all_tickers:
+        # Get AI result
+        ai_res = None
+        for res in sorted_final_results:
+            if str(res.get('ticker', '')) == ticker:
+                ai_res = res
+                break
+        
+        # Get BH result
+        bh_res = bh_lookup.get(ticker)
+        
+        # Get 1Y performance
+        one_year_perf = perf_lookup.get(ticker, np.nan)
+        
+        unified_data.append({
+            'ticker': ticker,
+            'one_year_perf': one_year_perf,
+            'ai_res': ai_res,
+            'bh_res': bh_res
+        })
+    
+    # Sort by 1Y performance
+    unified_data.sort(key=lambda x: x['one_year_perf'] if pd.notna(x['one_year_perf']) else -np.inf, reverse=True)
+    
+    for item in unified_data:
+        ticker = item['ticker']
+        ai_res = item['ai_res']
+        bh_res = item['bh_res']
+        one_year_perf = item['one_year_perf']
+        
+        # Format 1Y performance
+        one_year_perf_str = f"{one_year_perf:>9.2f}%" if pd.notna(one_year_perf) else "N/A".rjust(10)
+        
+        # AI Strategy metrics
+        if ai_res and ai_res.get('status') != 'failed':
+            ai_gain = ai_res.get('strategy_gain', 0.0)
+            ai_gain_str = f"${ai_gain:>10,.0f}"
+            ai_status = "✅ Trained"
+            ai_sharpe = ai_res.get('sharpe', np.nan)
+            ai_sharpe_str = f"{ai_sharpe:>9.2f}" if pd.notna(ai_sharpe) else "N/A".rjust(10)
+            last_action = str(ai_res.get('last_ai_action', 'HOLD'))[:12]
+            days_held = ai_res.get('days_held', 0)
+            days_held_str = f"{days_held:>10}"
+        elif ai_res and ai_res.get('status') == 'failed':
+            ai_gain_str = "N/A".rjust(12)
+            ai_status = "❌ Failed"
+            ai_sharpe_str = "N/A".rjust(10)
+            last_action = "FAILED"
+            days_held_str = "N/A".rjust(10)
         else:
-            allocated_capital = res.get('total_invested', INVESTMENT_PER_STOCK)
-            strategy_gain = res.get('strategy_gain', 0.0)  # ✅ Use tracked gain
-
-        one_year_perf_str = f"{res.get('one_year_perf', 0.0):>9.2f}%" if pd.notna(res.get('one_year_perf')) else "N/A".rjust(10)
-        ytd_perf_str = f"{res.get('ytd_perf', 0.0):>9.2f}%" if pd.notna(res.get('ytd_perf')) else "N/A".rjust(10)
-        sharpe_str = f"{res.get('sharpe', 0.0):>11.2f}" if pd.notna(res.get('sharpe')) else "N/A".rjust(12)
-        buy_prob_str = f"{res.get('buy_prob', 0.0):>9.2f}" if pd.notna(res.get('buy_prob')) else "N/A".rjust(10)
-        sell_prob_str = f"{res.get('sell_prob', 0.0):>9.2f}" if pd.notna(res.get('sell_prob')) else "N/A".rjust(10)
-        last_ai_action_str = str(res.get('last_ai_action', 'HOLD'))
-        days_held = res.get('days_held', 0)
+            ai_gain_str = "N/A".rjust(12)
+            ai_status = "⚪ No Data"
+            ai_sharpe_str = "N/A".rjust(10)
+            last_action = "N/A"
+            days_held_str = "N/A".rjust(10)
         
-        # ✅ UPDATED: Show actual max shares held
-        if res.get('status') == 'failed':
-            max_shares_str = "N/A".rjust(25)
+        # Buy & Hold metrics
+        if bh_res:
+            bh_final = bh_res.get('final_val', INVESTMENT_PER_STOCK)
+            bh_gain = (bh_final - INVESTMENT_PER_STOCK) if bh_final is not None else 0.0
+            bh_gain_str = f"${bh_gain:>10,.0f}"
+            bh_sharpe = bh_res.get('perf_data', {}).get('sharpe_ratio', np.nan) if isinstance(bh_res.get('perf_data'), dict) else np.nan
+            bh_sharpe_str = f"{bh_sharpe:>9.2f}" if pd.notna(bh_sharpe) else "N/A".rjust(10)
         else:
-            max_shares_value = res.get('final_shares', 0.0)
-            max_shares_str = f"{max_shares_value:>24.2f}"
+            bh_gain = 0.0
+            bh_gain_str = "N/A".rjust(12)
+            bh_sharpe_str = "N/A".rjust(10)
         
-        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {max_shares_str}")
-    print("-" * 170)
-
-    print(f"\n📈 Individual Ticker Performance (Buy & Hold Strategy - Sorted by {period_name} Performance):")
-    print("-" * 136)
-    print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
-    print("-" * 136)
-
-    # Handle empty or invalid performance_metrics_buy_hold_1y
-    if not performance_metrics_buy_hold_1y or not isinstance(performance_metrics_buy_hold_1y, list):
-        print(f"  ⚠️ No Buy & Hold performance metrics available")
-        sorted_buy_hold_results = []
-    else:
-        sorted_buy_hold_results = sorted(performance_metrics_buy_hold_1y, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
-
-    for res in sorted_buy_hold_results:
-        ticker = str(res.get('ticker', 'N/A'))
-        allocated_capital = INVESTMENT_PER_STOCK
-        strategy_gain = (res.get('final_val', 0.0) - allocated_capital) if res.get('final_val') is not None else 0.0
+        # AI vs BH comparison
+        if ai_res and ai_res.get('status') != 'failed' and bh_res:
+            ai_gain_val = ai_res.get('strategy_gain', 0.0)
+            diff = ai_gain_val - bh_gain
+            if diff > 0:
+                ai_vs_bh_str = f"+${diff:>7,.0f}"
+            else:
+                ai_vs_bh_str = f"-${abs(diff):>7,.0f}"
+        else:
+            ai_vs_bh_str = "N/A".rjust(10)
         
-        one_year_perf_benchmark, ytd_perf_benchmark = np.nan, np.nan
-        for item in top_performers_data:
-            if len(item) == 3:
-                t, p1y, pytd = item
-                if t == ticker:
-                    one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
-                    ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
-                    break
-            elif len(item) == 2:
-                t, p1y = item
-                if t == ticker:
-                    one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
-                    ytd_perf_benchmark = np.nan
-                    break
-
-        one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
-        ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
-        sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
-        shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}"
-
-        print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
-    print("-" * 136)
+        print(f"{ticker:<10} | {one_year_perf_str} | {ai_gain_str} | {ai_status:<12} | {bh_gain_str} | {ai_vs_bh_str} | {ai_sharpe_str} | {bh_sharpe_str} | {last_action:<12} | {days_held_str}")
+    
+    print("=" * 200)
+    
+    # Summary row
+    total_ai_gain = sum(res.get('strategy_gain', 0.0) for res in sorted_final_results if res.get('status') != 'failed')
+    total_bh_gain = sum((bh_res.get('final_val', INVESTMENT_PER_STOCK) - INVESTMENT_PER_STOCK) for bh_res in bh_lookup.values() if bh_res.get('final_val') is not None)
+    trained_count = sum(1 for res in sorted_final_results if res.get('status') != 'failed')
+    failed_count = sum(1 for res in sorted_final_results if res.get('status') == 'failed')
+    
+    print(f"{'TOTALS':<10} | {'':>10} | ${total_ai_gain:>10,.0f} | {trained_count}✅ {failed_count}❌    | ${total_bh_gain:>10,.0f} | {'':>10} | {'':>10} | {'':>10} | {'':>12} | {'':>10}")
+    print("=" * 200)
 
     # Show Buy & Hold results for tickers not selected by the AI strategy
     ai_tickers = {str(res.get('ticker')) for res in sorted_final_results}
@@ -331,86 +382,6 @@ def print_final_summary(
 
             print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
         print("-" * 126)
-
-        if strategy_results and len(strategy_results) > 0:
-            print(f"\n📈 Individual Ticker Performance ({period_name} - AI Strategy):")
-            print("-" * 170)
-            print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'AI Sharpe':>12} | {'Last AI Action':<16} | {'Buy Prob':>10} | {'Sell Prob':>10} | {'Max Shares Held':>25}")
-            print("-" * 170)
-            
-            # Handle both dict and non-dict items safely
-            if strategy_results and len(strategy_results) > 0 and isinstance(strategy_results[0], dict):
-                sorted_period_results = sorted(strategy_results, key=lambda x: x.get('one_year_perf', -np.inf) if pd.notna(x.get('one_year_perf')) else -np.inf, reverse=True)
-            else:
-                sorted_period_results = []  # Empty list if invalid data
-            
-            for res in sorted_period_results:
-                # Extra safety check
-                if not isinstance(res, dict):
-                    continue
-                ticker = str(res.get('ticker', 'N/A'))
-                
-                if res.get('status') == 'failed':
-                    allocated_capital = 0.0
-                    strategy_gain = 0.0
-                else:
-                    allocated_capital = INVESTMENT_PER_STOCK
-                    strategy_gain = res.get('performance', 0.0) - allocated_capital
-                
-                one_year_perf_str = f"{res.get('one_year_perf', 0.0):>9.2f}%" if pd.notna(res.get('one_year_perf')) else "N/A".rjust(10)
-                ytd_perf_str = f"{res.get('ytd_perf', 0.0):>9.2f}%" if pd.notna(res.get('ytd_perf')) else "N/A".rjust(10)
-                sharpe_str = f"{res.get('sharpe', 0.0):>11.2f}" if pd.notna(res.get('sharpe')) else "N/A".rjust(12)
-                buy_prob_str = f"{res.get('buy_prob', 0.0):>9.2f}" if pd.notna(res.get('buy_prob')) else "N/A".rjust(10)
-                sell_prob_str = f"{res.get('sell_prob', 0.0):>9.2f}" if pd.notna(res.get('sell_prob')) else "N/A".rjust(10)
-                last_ai_action_str = str(res.get('last_ai_action', 'HOLD'))
-                
-                if res.get('status') == 'failed':
-                    max_shares_str = "N/A".rjust(25)
-                else:
-                    max_shares_value = res.get('final_shares', res.get('shares_before_liquidation', 0.0))
-                    max_shares_str = f"{max_shares_value:>24.2f}"
-                
-                print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {ytd_perf_str} | {sharpe_str} | {last_ai_action_str:<16} | {buy_prob_str} | {sell_prob_str} | {max_shares_str}")
-            print("-" * 170)
-        
-        if buy_hold_results and len(buy_hold_results) > 0:
-            print(f"\n📈 Individual Ticker Performance ({period_name} - Buy & Hold Strategy):")
-            print("-" * 126)
-            print(f"{'Ticker':<10} | {'Allocated Capital':>18} | {'Strategy Gain':>15} | {'1Y Perf':>10} | {'Sharpe':>12} | {'Shares Before Liquidation':>25}")
-            print("-" * 126)
-            
-            if buy_hold_results and isinstance(buy_hold_results[0], dict):
-                sorted_buy_hold_period = sorted(buy_hold_results, key=lambda x: x.get('individual_bh_return', -np.inf) if pd.notna(x.get('individual_bh_return')) else -np.inf, reverse=True)
-            else:
-                sorted_buy_hold_period = buy_hold_results
-            
-            for res in sorted_buy_hold_period:
-                ticker = str(res.get('ticker', 'N/A'))
-                allocated_capital = INVESTMENT_PER_STOCK
-                strategy_gain = (res.get('final_val', 0.0) - allocated_capital) if res.get('final_val') is not None else 0.0
-                
-                one_year_perf_benchmark, ytd_perf_benchmark = np.nan, np.nan
-                for item in top_performers_data:
-                    if len(item) == 3:
-                        t, p1y, pytd = item
-                        if t == ticker:
-                            one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
-                            ytd_perf_benchmark = pytd if pd.notna(pytd) else np.nan
-                            break
-                    elif len(item) == 2:
-                        t, p1y = item
-                        if t == ticker:
-                            one_year_perf_benchmark = p1y if pd.notna(p1y) else np.nan
-                            ytd_perf_benchmark = np.nan
-                            break
-                
-                one_year_perf_str = f"{one_year_perf_benchmark:>9.2f}%" if pd.notna(one_year_perf_benchmark) else "N/A".rjust(10)
-                ytd_perf_str = f"{ytd_perf_benchmark:>9.2f}%" if pd.notna(ytd_perf_benchmark) else "N/A".rjust(10)
-                sharpe_str = f"{res['perf_data']['sharpe_ratio']:>11.2f}" if pd.notna(res['perf_data']['sharpe_ratio']) else "N/A".rjust(12)
-                shares_before_liquidation_str = f"{res.get('shares_before_liquidation', 0.0):>24.2f}"
-                
-                print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
-            print("-" * 126)
 
     print("\n🤖 ML Model Status:")
     # ✅ FIX: Only show unique tickers (avoid duplicates)
