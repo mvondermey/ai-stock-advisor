@@ -83,7 +83,7 @@ ALPACA_STOCKS_LIMIT = 20000  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = []  # NASDAQ only
-N_TOP_TICKERS           = 5       # ✅ Select top 1000 from ~630 major index tickers
+N_TOP_TICKERS           = 10     # ✅ Select top 1000 from ~630 major index tickers
 BATCH_DOWNLOAD_SIZE     = 10000     # ✅ Download in batches of 1000
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -100,7 +100,7 @@ NUM_PROCESSES           = max(1, cpu_count() - 5)
 # This limits how many worker processes can run PyTorch models on GPU simultaneously.
 # ⚠️ Only applies when PYTORCH_USE_GPU = True (PyTorch uses GPU)
 # ⚠️ Does NOT apply to XGBoost GPU (XGBoost manages its own GPU memory)
-GPU_MAX_CONCURRENT_TRAINING_WORKERS = NUM_PROCESSES # Max 3 PyTorch models on GPU at once
+GPU_MAX_CONCURRENT_TRAINING_WORKERS = 2 # Max 3 PyTorch models on GPU at once
 
 # Limit GPU memory per training worker process (PyTorch).
 # - Set to None to auto-calculate: 0.95 / GPU_MAX_CONCURRENT_TRAINING_WORKERS (recommended)
@@ -177,7 +177,7 @@ ENABLE_1YEAR_TRAINING   = True  # ✅ ENABLED - Train models for AI Strategy and
 # --- Portfolio Strategy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
 # AI Portfolio + traditional strategies (no AI Strategy or AI Hybrid)
-ENABLE_AI_STRATEGY      = False  # ✅ ENABLED - AI Strategy with individual ticker models
+ENABLE_AI_STRATEGY      = True  # ✅ ENABLED - AI Strategy with individual ticker models
 ENABLE_AI_PORTFOLIO     = True   # ✅ ENABLED - AI Portfolio meta-learning
 ENABLE_STATIC_BH        = True   # ✅ ENABLED - Static Buy & Hold benchmark
 ENABLE_DYNAMIC_BH_1Y    = True   # ✅ ENABLED - Dynamic BH 1-year
@@ -187,7 +187,7 @@ ENABLE_RISK_ADJ_MOM     = True   # ✅ ENABLED - Risk-Adjusted Momentum
 ENABLE_MEAN_REVERSION   = True   # ✅ ENABLED - Mean Reversion
 ENABLE_SEASONAL         = True   # ✅ ENABLED - Seasonal strategy
 ENABLE_QUALITY_MOM      = True   # ✅ ENABLED - Quality + Momentum
-ENABLE_MOMENTUM_AI_HYBRID = False  # ✅ ENABLED - Momentum + AI Hybrid strategy
+ENABLE_MOMENTUM_AI_HYBRID = True  # ✅ ENABLED - Momentum + AI Hybrid strategy
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
