@@ -466,7 +466,7 @@ def train_models_for_period(
     # ============================================
     if USE_UNIFIED_PARALLEL_TRAINING:
         print(f"   🚀 Using Unified Parallel Training System (model-level parallelization)")
-        from parallel_training import train_all_models_parallel
+        from src.parallel_training import train_all_models_parallel
         
         # Calculate period-specific horizon
         period_horizon = PERIOD_HORIZONS.get(period_name, 60)
