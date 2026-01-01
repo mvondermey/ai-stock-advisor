@@ -470,6 +470,7 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
 
     # Stochastic Oscillator
     low_14, high_14 = df['Low'].rolling(window=14).min(), df['High'].rolling(window=14).max()
+    denominator_k = high_14 - low_14
     df['%K'] = np.where(denominator_k != 0, (df['Close'] - low_14) / denominator_k * 100, 0)
     df['%D'] = df['%K'].rolling(window=3).mean()
     df['%K'] = df['%K'].fillna(0)

@@ -88,40 +88,117 @@ def generate_training_tasks(
     
     print(f"📋 Generating tasks for {len(tickers)} tickers...")
     print(f"   Enabled models: {', '.join(enabled_models)}")
-    print(f"   Training period: {train_start.date()} to {train_end.date()}")
-    print(f"   Data shape: {all_tickers_data.shape}")
-    print(f"   Data columns: {list(all_tickers_data.columns)[:10]}")
+    print(f"   Data structure check:")
+    print(f"     - Has 'date' column: {'date' in all_tickers_data.columns}")
+    print(f"     - Has 'ticker' column: {'ticker' in all_tickers_data.columns}")
+    print(f"     - Total rows in all_tickers_data: {len(all_tickers_data)}")
+    print(f"     - Unique tickers in data: {all_tickers_data['ticker'].nunique() if 'ticker' in all_tickers_data.columns else 'N/A'}")
+    print(f"     - Train period: {train_start} to {train_end}")
+    
+    # Validate data before processing
+    if 'ticker' in all_tickers_data.columns:
+        available_tickers = set(all_tickers_data['ticker'].unique())
+        print(f"     - Available tickers in data: {len(available_tickers)}")
+        missing_tickers = [t for t in tickers if t not in available_tickers]
+        if missing_tickers:
+            print(f"   ⚠️  WARNING: {len(missing_tickers)} tickers not found in data: {missing_tickers[:5]}{'...' if len(missing_tickers) > 5 else ''}")
     
     # Generate ticker model tasks
     ticker_tasks = []
+    
+    # ✅ Normalize dates for comparison (handle timezone-aware vs timezone-naive)
+    # Convert to pandas Timestamps for proper comparison with DataFrame dates
+    train_start_normalized = pd.Timestamp(train_start)
+    train_end_normalized = pd.Timestamp(train_end)
+    
+    if 'date' in all_tickers_data.columns:
+        # Check if dates in DataFrame are timezone-aware
+        sample_date = all_tickers_data['date'].iloc[0] if len(all_tickers_data) > 0 else None
+        if sample_date is not None:
+            sample_tz = getattr(sample_date, 'tzinfo', None)
+            
+            if sample_tz is not None:
+                # DataFrame has timezone-aware dates - localize train dates to same timezone
+                if train_start_normalized.tzinfo is None:
+                    train_start_normalized = train_start_normalized.tz_localize(sample_tz)
+                else:
+                    train_start_normalized = train_start_normalized.tz_convert(sample_tz)
+                if train_end_normalized.tzinfo is None:
+                    train_end_normalized = train_end_normalized.tz_localize(sample_tz)
+                else:
+                    train_end_normalized = train_end_normalized.tz_convert(sample_tz)
+            else:
+                # DataFrame has timezone-naive dates - ensure train dates are also naive
+                if train_start_normalized.tzinfo is not None:
+                    train_start_normalized = train_start_normalized.tz_localize(None)
+                if train_end_normalized.tzinfo is not None:
+                    train_end_normalized = train_end_normalized.tz_localize(None)
+        
+        print(f"   📅 Normalized date range for comparison:")
+        print(f"      - Train start: {train_start_normalized} (tz: {train_start_normalized.tzinfo})")
+        print(f"      - Train end: {train_end_normalized} (tz: {train_end_normalized.tzinfo})")
+        if sample_date is not None:
+            print(f"      - Sample data date: {sample_date} (tz: {getattr(sample_date, 'tzinfo', None)})")
+            print(f"      - Data date range: {all_tickers_data['date'].min()} to {all_tickers_data['date'].max()}")
+            # Debug: Check if dates overlap
+            data_min = pd.Timestamp(all_tickers_data['date'].min())
+            data_max = pd.Timestamp(all_tickers_data['date'].max())
+            if train_end_normalized < data_min or train_start_normalized > data_max:
+                print(f"      ⚠️ WARNING: Train period does NOT overlap with data range!")
+                print(f"         Train: {train_start_normalized} to {train_end_normalized}")
+                print(f"         Data:  {data_min} to {data_max}")
+    
+    # Debug: Track first few tickers for detailed diagnostics
+    debug_ticker_count = 0
+    max_debug_tickers = 3
+    
     for ticker in tickers:
         try:
             # ✅ FIX: Handle both long-format and wide-format data
             if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
                 # Long format: filter by ticker and date range
-                df_train_period = all_tickers_data[
-                    (all_tickers_data['ticker'] == ticker) &
-                    (all_tickers_data['date'] >= train_start) &
-                    (all_tickers_data['date'] <= train_end)
-                ].copy()
+                ticker_mask = all_tickers_data['ticker'] == ticker
+                ticker_rows_total = ticker_mask.sum()
                 
-                # Remove ticker column and set date as index for training
-                if not df_train_period.empty:
-                    if 'date' in df_train_period.columns:
-                        df_train_period = df_train_period.set_index('date')
-                    if 'ticker' in df_train_period.columns:
-                        df_train_period = df_train_period.drop('ticker', axis=1)
+                # Debug first few tickers
+                if debug_ticker_count < max_debug_tickers:
+                    ticker_data_all = all_tickers_data[ticker_mask]
+                    if len(ticker_data_all) > 0:
+                        ticker_date_min = ticker_data_all['date'].min()
+                        ticker_date_max = ticker_data_all['date'].max()
+                        print(f"   🔍 DEBUG {ticker}: {ticker_rows_total} total rows, dates: {ticker_date_min} to {ticker_date_max}")
+                    else:
+                        print(f"   🔍 DEBUG {ticker}: 0 rows in data")
+                    debug_ticker_count += 1
+                
+                df_train_period = all_tickers_data[
+                    ticker_mask &
+                    (all_tickers_data['date'] >= train_start_normalized) &
+                    (all_tickers_data['date'] <= train_end_normalized)
+                ].copy()
             else:
-                # Wide format: use index-based slicing
-                print(f"  ⚠️ Wide format data not supported in unified training")
-                continue
+                # Wide format: filter by ticker and index
+                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                if ticker_data.empty:
+                    print(f"  ⚠️ No data for {ticker}, skipping")
+                    continue
+                
+                # Filter by index if it's a DatetimeIndex
+                if hasattr(ticker_data.index, 'tz_localize'):
+                    df_train_period = ticker_data[
+                        (ticker_data.index >= train_start_normalized) & (ticker_data.index <= train_end_normalized)
+                    ].copy()
+                else:
+                    # Fallback: no date filtering
+                    df_train_period = ticker_data.copy()
             
             if df_train_period.empty:
-                print(f"  ⚠️ No training data found for {ticker} in period {train_start.date()} to {train_end.date()}. Skipping.")
+                if debug_ticker_count <= max_debug_tickers:
+                    print(f"  ⚠️ No training data found for {ticker} in period {train_start_normalized} to {train_end_normalized}. Skipping.")
                 continue
             
             if len(df_train_period) < 50:
-                print(f"  ⚠️ Insufficient data for {ticker} ({len(df_train_period)} rows < 50), skipping")
+                print(f"  ⚠️ Insufficient data for {ticker} ({len(df_train_period)} rows), skipping")
                 continue
         except Exception as e:
             print(f"  ⚠️ Error processing {ticker}: {e}")
@@ -262,6 +339,11 @@ def universal_model_worker(task: Dict) -> Dict:
             }
         
         except Exception as e:
+            import traceback
+            error_msg = str(e)
+            tb_str = traceback.format_exc()
+            print(f"  ❌ ERROR {ticker} {model_type}: {error_msg[:100]}")
+            print(f"     Traceback: {tb_str[-500:]}")  # Last 500 chars of traceback
             return {
                 'task_type': 'ticker',
                 'ticker': ticker,
@@ -462,40 +544,16 @@ def aggregate_results(
                     'mse': best_result['mse']
                 }
                 
-                # Save with standard naming (matching load_models_for_tickers expectations)
+                # Save with standard naming
                 models_dir = Path("logs/models")
-                final_model_path = models_dir / f"{ticker}_model.joblib"
-                final_scaler_path = models_dir / f"{ticker}_scaler.joblib"
+                final_model_path = models_dir / f"{ticker}_TargetReturn_model.joblib"
+                final_scaler_path = models_dir / f"{ticker}_TargetReturn_scaler.joblib"
                 
-                # Handle PyTorch models - save state_dict instead of full model
-                if PYTORCH_AVAILABLE and hasattr(model, 'state_dict'):
-                    import torch
-                    torch.save(model.state_dict(), final_model_path)
-                    # Save model metadata for reconstruction
-                    model_info = {
-                        'model_class': model.__class__.__name__,
-                        'state_dict_path': str(final_model_path)
-                    }
-                    # Save architecture info for reconstruction
-                    if hasattr(model, 'gru') or hasattr(model, 'lstm'):
-                        rnn = getattr(model, 'gru', None) or getattr(model, 'lstm', None)
-                        if rnn:
-                            model_info['input_size'] = rnn.input_size
-                            model_info['hidden_size'] = rnn.hidden_size
-                            model_info['num_layers'] = rnn.num_layers
-                    elif hasattr(model, 'net') and len(model.net) > 0:
-                        # TCN model
-                        first_conv = model.net[0]
-                        if hasattr(first_conv, 'in_channels'):
-                            model_info['input_size'] = first_conv.in_channels
-                    joblib.dump(model_info, final_model_path.with_suffix('.info'))
-                else:
-                    joblib.dump(model, final_model_path)
-                
+                joblib.dump(model, final_model_path)
                 joblib.dump(scaler, final_scaler_path)
                 
                 if y_scaler is not None:
-                    final_y_scaler_path = models_dir / f"{ticker}_y_scaler.joblib"
+                    final_y_scaler_path = models_dir / f"{ticker}_TargetReturn_y_scaler.joblib"
                     joblib.dump(y_scaler, final_y_scaler_path)
                 
                 # Clean up temporary files
