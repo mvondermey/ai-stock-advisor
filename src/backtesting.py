@@ -940,10 +940,15 @@ def _run_portfolio_backtest(
             # STEP 1: Engineer features from raw OHLCV data
             df_with_features = df_slice.copy()
             df_with_features = _calculate_technical_indicators(df_with_features)
+            
+            # Only drop rows with NaN if we have enough rows to spare
+            rows_before = len(df_with_features)
             df_with_features = df_with_features.dropna()
+            rows_after = len(df_with_features)
 
             # If not enough rows remain after feature calc, bail out early
-            if df_with_features.empty:
+            if df_with_features.empty or rows_after == 0:
+                print(f"   ⚠️ All rows dropped during feature engineering ({rows_before} -> {rows_after})")
                 return -np.inf
 
             # Get latest data point
@@ -1329,7 +1334,7 @@ def _run_portfolio_backtest_walk_forward(
         day_count += 1
 
         # Check if it's time to retrain (every RETRAIN_FREQUENCY_DAYS)
-        should_retrain = (day_count % RETRAIN_FREQUENCY_DAYS == 1)  # Retrain on day 1, 11, 21, etc.
+        should_retrain = (day_count % RETRAIN_FREQUENCY_DAYS == 1)  # Retrain on day 1, 6, 11, 16, etc.
 
         # ✅ FIX: Train models on Day 1 if initial_models is empty, OR on regular retrain schedule
         # Only train individual stock prediction models when main AI strategy is enabled
@@ -1353,24 +1358,24 @@ def _run_portfolio_backtest_walk_forward(
                     feature_set=None
                 )
 
-                # Process and update models
-                new_models = {}
-                new_scalers = {}
-                new_y_scalers = {}
-                for result in retraining_results:
-                    if result and result.get('status') == 'trained':
-                        ticker = result['ticker']
-                        new_models[ticker] = result['model']
-                        new_scalers[ticker] = result['scaler']
-                        if result.get('y_scaler'):
-                            new_y_scalers[ticker] = result['y_scaler']
-
-                # Update current models
-                current_models.update(new_models)
-                current_scalers.update(new_scalers)
-                current_y_scalers.update(new_y_scalers)
-
-                print(f"   ✅ Retrained models for {len(new_models)} stocks")
+                # ✅ Load retrained models from disk (training returns None to avoid GPU/CPU memory issues)
+                from prediction import load_models_for_tickers
+                
+                # Get list of successfully retrained tickers
+                retrained_tickers = [r['ticker'] for r in retraining_results if r and r.get('status') in ['trained', 'loaded']]
+                
+                if retrained_tickers:
+                    new_models, new_scalers, new_y_scalers = load_models_for_tickers(retrained_tickers)
+                    
+                    # Update current models
+                    current_models.update(new_models)
+                    current_scalers.update(new_scalers)
+                    current_y_scalers.update(new_y_scalers)
+                    
+                    print(f"   ✅ Retrained and loaded models for {len(new_models)} stocks")
+                else:
+                    new_models = {}
+                    print(f"   ⚠️ No models successfully retrained")
                 
                 # ✅ FIX: Check if training completely failed
                 if len(new_models) == 0:
@@ -3904,10 +3909,21 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
         else:
             df_with_features["Annualized_BH_Return"] = 0.0
 
+        # Only drop rows with NaN if we have enough rows to spare
+        rows_before_dropna = len(df_with_features)
         df_with_features = df_with_features.dropna()
-        print(f"   🔧 {ticker}: After dropna: {len(df_with_features)} rows")
+        rows_after_dropna = len(df_with_features)
+        print(f"   🔧 {ticker}: After dropna: {rows_after_dropna} rows (dropped {rows_before_dropna - rows_after_dropna})")
 
         # ✅ VALIDATION: Check if enough rows remain after feature engineering
+        if rows_after_dropna == 0:
+            print(f"   ❌ {ticker}: All rows dropped during prediction feature engineering!")
+            print(f"   💡 This usually means:")
+            print(f"      - Not enough historical data for technical indicators")
+            print(f"      - Too many NaN/missing values in source data")
+            print(f"      - Feature calculation window is too large for available data")
+            return -np.inf
+        
         try:
             validate_features_after_engineering(df_with_features, ticker, min_rows=1, context="prediction")
         except InsufficientDataError as e:
@@ -4148,10 +4164,15 @@ def _run_portfolio_backtest_single_chunk(
             # STEP 1: Engineer features from raw OHLCV data
             df_with_features = df_slice.copy()
             df_with_features = _calculate_technical_indicators(df_with_features)
+            
+            # Only drop rows with NaN if we have enough rows to spare
+            rows_before = len(df_with_features)
             df_with_features = df_with_features.dropna()
+            rows_after = len(df_with_features)
 
             # If not enough rows remain after feature calc, bail out early
-            if df_with_features.empty:
+            if df_with_features.empty or rows_after == 0:
+                print(f"   ⚠️ All rows dropped during feature engineering ({rows_before} -> {rows_after})")
                 return -np.inf
 
             # STEP 2: Prepare feature columns

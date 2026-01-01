@@ -88,6 +88,9 @@ def generate_training_tasks(
     
     print(f"📋 Generating tasks for {len(tickers)} tickers...")
     print(f"   Enabled models: {', '.join(enabled_models)}")
+    print(f"   Training period: {train_start.date()} to {train_end.date()}")
+    print(f"   Data shape: {all_tickers_data.shape}")
+    print(f"   Data columns: {list(all_tickers_data.columns)[:10]}")
     
     # Generate ticker model tasks
     ticker_tasks = []
@@ -101,31 +104,29 @@ def generate_training_tasks(
                     (all_tickers_data['date'] >= train_start) &
                     (all_tickers_data['date'] <= train_end)
                 ].copy()
-            else:
-                # Wide format: filter by ticker and index
-                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-                if ticker_data.empty:
-                    print(f"  ⚠️ No data for {ticker}, skipping")
-                    continue
                 
-                # Filter by index if it's a DatetimeIndex
-                if hasattr(ticker_data.index, 'tz_localize'):
-                    df_train_period = ticker_data[
-                        (ticker_data.index >= train_start) & (ticker_data.index <= train_end)
-                    ].copy()
-                else:
-                    # Fallback: no date filtering
-                    df_train_period = ticker_data.copy()
+                # Remove ticker column and set date as index for training
+                if not df_train_period.empty:
+                    if 'date' in df_train_period.columns:
+                        df_train_period = df_train_period.set_index('date')
+                    if 'ticker' in df_train_period.columns:
+                        df_train_period = df_train_period.drop('ticker', axis=1)
+            else:
+                # Wide format: use index-based slicing
+                print(f"  ⚠️ Wide format data not supported in unified training")
+                continue
             
             if df_train_period.empty:
-                print(f"  ⚠️ No training data found for {ticker} in period {train_start} to {train_end}. Skipping.")
+                print(f"  ⚠️ No training data found for {ticker} in period {train_start.date()} to {train_end.date()}. Skipping.")
                 continue
             
             if len(df_train_period) < 50:
-                print(f"  ⚠️ Insufficient data for {ticker} ({len(df_train_period)} rows), skipping")
+                print(f"  ⚠️ Insufficient data for {ticker} ({len(df_train_period)} rows < 50), skipping")
                 continue
         except Exception as e:
             print(f"  ⚠️ Error processing {ticker}: {e}")
+            import traceback
+            traceback.print_exc()
             continue
         
         # Create one task per model type for this ticker
@@ -461,16 +462,40 @@ def aggregate_results(
                     'mse': best_result['mse']
                 }
                 
-                # Save with standard naming
+                # Save with standard naming (matching load_models_for_tickers expectations)
                 models_dir = Path("logs/models")
-                final_model_path = models_dir / f"{ticker}_TargetReturn_model.joblib"
-                final_scaler_path = models_dir / f"{ticker}_TargetReturn_scaler.joblib"
+                final_model_path = models_dir / f"{ticker}_model.joblib"
+                final_scaler_path = models_dir / f"{ticker}_scaler.joblib"
                 
-                joblib.dump(model, final_model_path)
+                # Handle PyTorch models - save state_dict instead of full model
+                if PYTORCH_AVAILABLE and hasattr(model, 'state_dict'):
+                    import torch
+                    torch.save(model.state_dict(), final_model_path)
+                    # Save model metadata for reconstruction
+                    model_info = {
+                        'model_class': model.__class__.__name__,
+                        'state_dict_path': str(final_model_path)
+                    }
+                    # Save architecture info for reconstruction
+                    if hasattr(model, 'gru') or hasattr(model, 'lstm'):
+                        rnn = getattr(model, 'gru', None) or getattr(model, 'lstm', None)
+                        if rnn:
+                            model_info['input_size'] = rnn.input_size
+                            model_info['hidden_size'] = rnn.hidden_size
+                            model_info['num_layers'] = rnn.num_layers
+                    elif hasattr(model, 'net') and len(model.net) > 0:
+                        # TCN model
+                        first_conv = model.net[0]
+                        if hasattr(first_conv, 'in_channels'):
+                            model_info['input_size'] = first_conv.in_channels
+                    joblib.dump(model_info, final_model_path.with_suffix('.info'))
+                else:
+                    joblib.dump(model, final_model_path)
+                
                 joblib.dump(scaler, final_scaler_path)
                 
                 if y_scaler is not None:
-                    final_y_scaler_path = models_dir / f"{ticker}_TargetReturn_y_scaler.joblib"
+                    final_y_scaler_path = models_dir / f"{ticker}_y_scaler.joblib"
                     joblib.dump(y_scaler, final_y_scaler_path)
                 
                 # Clean up temporary files

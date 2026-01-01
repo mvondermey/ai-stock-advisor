@@ -849,14 +849,24 @@ def main(
             import sys
             sys.stdout.flush()
 
-            # ✅ FIX: Convert list of results to dictionaries
-            for result in training_results:
-                if result and result.get('status') in ['trained', 'loaded']:
-                    ticker = result['ticker']
-                    models[ticker] = result['model']
-                    scalers[ticker] = result['scaler']
-                    if result.get('y_scaler'):
-                        y_scalers[ticker] = result['y_scaler']
+            # ✅ Load models from disk (training returns None to avoid GPU/CPU memory issues)
+            from prediction import load_models_for_tickers
+            
+            # Get list of successfully trained tickers and track failed ones
+            trained_tickers = []
+            for r in training_results:
+                if r and r.get('status') in ['trained', 'loaded']:
+                    trained_tickers.append(r['ticker'])
+                elif r and r.get('status') == 'failed':
+                    failed_training_tickers_1y[r['ticker']] = r.get('reason', 'Unknown failure')
+            
+            if trained_tickers:
+                print(f"\n📦 Loading {len(trained_tickers)} trained models from disk...")
+                models, scalers, y_scalers = load_models_for_tickers(trained_tickers)
+                print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers")
+            else:
+                print(f"\n⚠️ No models were successfully trained")
+                models, scalers, y_scalers = {}, {}, {}
         else:
             training_results = []
             print(f"\n⏭️ Skipping individual stock model training (ENABLE_1YEAR_TRAINING = False)")

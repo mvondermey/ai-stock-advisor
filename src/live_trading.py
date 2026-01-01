@@ -354,7 +354,8 @@ def run_live_trading():
 
         valid_tickers = []
         for ticker in all_tickers:
-            model_path = models_dir / f"{ticker}_model_buy.joblib"
+            # ✅ FIX: Use correct filename pattern (models saved as {ticker}_model.joblib, not {ticker}_model_buy.joblib)
+            model_path = models_dir / f"{ticker}_model.joblib"
             if model_path.exists():
                 model_age = current_time - datetime.fromtimestamp(model_path.stat().st_mtime, timezone.utc)
                 if model_age <= max_age:

@@ -229,15 +229,16 @@ def load_models_for_tickers(
     
     for ticker in tickers:
         try:
-            model_buy_path = models_dir / f"{ticker}_model_buy.joblib"
+            # ✅ FIX: Use correct filename pattern (models saved as {ticker}_model.joblib, not {ticker}_model_buy.joblib)
+            model_path = models_dir / f"{ticker}_model.joblib"
             scaler_path = models_dir / f"{ticker}_scaler.joblib"
             y_scaler_path = models_dir / f"{ticker}_y_scaler.joblib"
             
-            if model_buy_path.exists():
+            if model_path.exists():
                 # Handle PyTorch models specially
-                if PYTORCH_AVAILABLE and model_buy_path.with_suffix('.info').exists():
+                if PYTORCH_AVAILABLE and model_path.with_suffix('.info').exists():
                     try:
-                        model_info = joblib.load(model_buy_path.with_suffix('.info'))
+                        model_info = joblib.load(model_path.with_suffix('.info'))
                         if model_info.get('model_class'):
                             # Reconstruct PyTorch model
                             import torch
@@ -282,20 +283,20 @@ def load_models_for_tickers(
                                 model = None
 
                             if model:
-                                state_dict = torch.load(model_buy_path, map_location='cpu')
+                                state_dict = torch.load(model_path, map_location='cpu')
                                 model.load_state_dict(state_dict)
                                 model.eval()  # Set to evaluation mode
                                 models_buy[ticker] = model
-                                print(f"  ✅ Loaded PyTorch model {model_class_name} for {ticker} from {model_buy_path}")
+                                print(f"  ✅ Loaded PyTorch model {model_class_name} for {ticker} from {model_path}")
                             else:
-                                models_buy[ticker] = joblib.load(model_buy_path)
+                                models_buy[ticker] = joblib.load(model_path)
                         else:
-                            models_buy[ticker] = joblib.load(model_buy_path)
+                            models_buy[ticker] = joblib.load(model_path)
                     except Exception as e:
                         print(f"  ⚠️ Error loading PyTorch model for {ticker}: {e}. Falling back to joblib.")
-                        models_buy[ticker] = joblib.load(model_buy_path)
+                        models_buy[ticker] = joblib.load(model_path)
                 else:
-                    models_buy[ticker] = joblib.load(model_buy_path)
+                    models_buy[ticker] = joblib.load(model_path)
             
             if scaler_path.exists():
                 scalers[ticker] = joblib.load(scaler_path)

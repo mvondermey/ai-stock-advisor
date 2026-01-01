@@ -27,8 +27,8 @@ except ImportError:
     ALPACA_SECRET_KEY = None
     ALPACA_AVAILABLE = False
     TWELVEDATA_SDK_AVAILABLE = False
-    FEAT_SMA_SHORT = 5
     FEAT_SMA_LONG = 20
+    FEAT_SMA_SHORT = 5
     FEAT_VOL_WINDOW = 10
     ATR_PERIOD = 14
 
@@ -45,320 +45,66 @@ def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     high = df["High"] if "High" in df.columns else None
     low  = df["Low"]  if "Low" in df.columns else None
     prev_close = close.shift(1)
-
-    # ATR for risk management
-    if high is not None and low is not None:
-        hl = (high - low).abs()
-        h_pc = (high - prev_close).abs()
-        l_pc = (low  - prev_close).abs()
-        tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
-        df["ATR"] = tr.rolling(ATR_PERIOD).mean()
-    else:
-        ret = close.pct_change(fill_method=None)
-        df["ATR"] = (ret.rolling(ATR_PERIOD).std() * close).rolling(2).mean()
     
-    # Low-volatility filter reference: rolling median ATR
-    df['ATR_MED'] = df['ATR'].rolling(50).median()
-
-    # --- Features for ML Gate ---
-    df["Returns"]    = close.pct_change(fill_method=None)
-    df["SMA_F_S"]    = close.rolling(FEAT_SMA_SHORT).mean()
-    df["SMA_F_L"]    = close.rolling(FEAT_SMA_LONG).mean()
-    df["Volatility"] = df["Returns"].rolling(FEAT_VOL_WINDOW).std()
+    # Initialize all new columns with 0 to prevent all-NaN rows
+    new_columns = [
+        "ATR", "ATR_MED", "Returns", "SMA_F_S", "SMA_F_L", "Volatility", "RSI_feat", "MACD", "MACD_signal",
+        "BB_upper", "BB_lower", "%K", "%D", "ADX", "OBV", "CMF", "ROC", "ROC_20", "ROC_60", "CMO", "KAMA",
+        "EFI", "KC_TR", "KC_ATR", "KC_Middle", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower", "DC_Middle",
+        "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Log_Returns",
+        "Historical_Volatility", "Close_to_SMA20", "Close_to_SMA50", "Close_Position_in_Range",
+        "Intraday_Range_Pct", "Open_to_Close_Ratio", "Close_to_20D_High", "Close_to_20D_Low", "Volume_Normalized",
+        "Momentum_3d", "Momentum_5d", "Momentum_10d", "Momentum_20d", "Momentum_40d", "Dist_From_SMA10",
+        "Dist_From_SMA20", "Dist_From_SMA50", "SMA20_Slope", "SMA50_Slope", "Price_Accel_5d", "Price_Accel_20d",
+        "Vol_Regime", "Vol_Spike", "Volume_Ratio_5d", "Volume_Ratio_20d", "Volume_Trend", "Range_Expansion",
+        "Range_vs_Avg", "Daily_Direction", "Streak"
+    ]
+    for col in new_columns:
+        if col not in df.columns:
+            df[col] = 0.0
     
-    # RSI for features
-    delta_feat = close.diff()
-    gain_feat = (delta_feat.where(delta_feat > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
-    loss_feat = (-delta_feat.where(delta_feat < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
-    rs_feat = gain_feat / loss_feat
-    df['RSI_feat'] = 100 - (100 / (1 + rs_feat))
-
-    # MACD for features
-    ema_12 = close.ewm(span=12, adjust=False).mean()
-    ema_26 = close.ewm(span=26, adjust=False).mean()
-    df['MACD'] = ema_12 - ema_26
-    df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    
-    # Bollinger Bands for features
-    bb_mid = close.rolling(window=20).mean()
-    bb_std = close.rolling(window=20).std()
-    df['BB_upper'] = bb_mid + (bb_std * 2)
-    df['BB_lower'] = bb_mid - (bb_std * 2)
-
-    # Stochastic Oscillator
-    low_14, high_14 = df['Low'].rolling(window=14).min(), df['High'].rolling(window=14).max()
-    df['%K'] = (df['Close'] - low_14) / (high_14 - low_14) * 100
-    df['%D'] = df['%K'].rolling(window=3).mean()
-
-    # Average Directional Index (ADX)
-    df['up_move'] = df['High'] - df['High'].shift(1)
-    df['down_move'] = df['Low'].shift(1) - df['Low']
-    df['+DM'] = np.where((df['up_move'] > df['down_move']) & (df['up_move'] > 0), df['up_move'], 0)
-    df['-DM'] = np.where((df['down_move'] > df['up_move']) & (df['down_move'] > 0), df['down_move'], 0)
-    hl_diff = (df['High'] - df['Low']).abs()
-    h_pc_diff = (df['High'] - df['Close'].shift(1)).abs()
-    l_pc_diff = (df['Low'] - df['Close'].shift(1)).abs()
-    df['TR'] = pd.concat([hl_diff, h_pc_diff, l_pc_diff], axis=1).max(axis=1)
-    alpha = 1/14
-    df['+DM14'] = df['+DM'].ewm(alpha=alpha, adjust=False).mean()
-    df['-DM14'] = df['-DM'].ewm(alpha=alpha, adjust=False).mean()
-    df['TR14'] = df['TR'].ewm(alpha=alpha, adjust=False).mean()
-    df['DX'] = (abs(df['+DM14'] - df['-DM14']) / (df['+DM14'] + df['-DM14'])) * 100
-    df['DX'] = df['DX'].fillna(0)
-    df['ADX'] = df['DX'].ewm(alpha=alpha, adjust=False).mean()
-    df['ADX'] = df['ADX'].fillna(0)
-    df['+DM'] = df['+DM'].fillna(0)
-    df['-DM'] = df['-DM'].fillna(0)
-    df['TR'] = df['TR'].fillna(0)
-    df['+DM14'] = df['+DM14'].fillna(0)
-    df['-DM14'] = df['-DM14'].fillna(0)
-    df['TR14'] = df['TR14'].fillna(0)
-    df['%K'] = df['%K'].fillna(0)
-    df['%D'] = df['%D'].fillna(0)
-
-    # On-Balance Volume (OBV)
-    df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
-
-    # Chaikin Money Flow (CMF)
-    mfv = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low']) * df['Volume']
-    df['CMF'] = mfv.rolling(window=20).sum() / df['Volume'].rolling(window=20).sum()
-    df['CMF'] = df['CMF'].fillna(0)
-
-    # Rate of Change (ROC)
-    df['ROC'] = df['Close'].pct_change(periods=12) * 100
-    df['ROC_20'] = df['Close'].pct_change(periods=20) * 100
-    df['ROC_60'] = df['Close'].pct_change(periods=60) * 100
-
-    # Chande Momentum Oscillator (CMO)
-    cmo_period = 14
-    df['cmo_diff'] = df['Close'].diff()
-    df['cmo_up'] = df['cmo_diff'].apply(lambda x: x if x > 0 else 0)
-    df['cmo_down'] = df['cmo_diff'].apply(lambda x: abs(x) if x < 0 else 0)
-    df['cmo_sum_up'] = df['cmo_up'].rolling(window=cmo_period).sum()
-    df['cmo_sum_down'] = df['cmo_down'].rolling(window=cmo_period).sum()
-    df['CMO'] = ((df['cmo_sum_up'] - df['cmo_sum_down']) / (df['cmo_sum_up'] + df['cmo_sum_down'])) * 100
-    df['CMO'] = df['CMO'].fillna(0)
-
-    # Kaufman's Adaptive Moving Average (KAMA)
-    kama_period = 10
-    fast_ema_const = 2 / (2 + 1)
-    slow_ema_const = 2 / (30 + 1)
-    df['kama_change'] = abs(df['Close'] - df['Close'].shift(kama_period))
-    df['kama_volatility'] = df['Close'].diff().abs().rolling(window=kama_period).sum()
-    df['kama_er'] = df['kama_change'] / df['kama_volatility']
-    df['kama_er'] = df['kama_er'].fillna(0)
-    df['kama_sc'] = (df['kama_er'] * (fast_ema_const - slow_ema_const) + slow_ema_const)**2
-    df['KAMA'] = np.nan
-    df.iloc[kama_period-1, df.columns.get_loc('KAMA')] = df['Close'].iloc[kama_period-1]
-    for i in range(kama_period, len(df)):
-        df.iloc[i, df.columns.get_loc('KAMA')] = df.iloc[i-1, df.columns.get_loc('KAMA')] + df.iloc[i, df.columns.get_loc('kama_sc')] * (df.iloc[i, df.columns.get_loc('Close')] - df.iloc[i-1, df.columns.get_loc('KAMA')])
-    df['KAMA'] = df['KAMA'].ffill().bfill().fillna(df['Close'])
-
-    # Elder's Force Index (EFI)
-    efi_period = 13
-    df['EFI'] = (df['Close'].diff() * df['Volume']).ewm(span=efi_period, adjust=False).mean()
-    df['EFI'] = df['EFI'].fillna(0)
-
-    # Keltner Channels
-    df['KC_TR'] = pd.concat([df['High'] - df['Low'], (df['High'] - df['Close'].shift(1)).abs(), (df['Low'] - df['Close'].shift(1)).abs()], axis=1).max(axis=1)
-    df['KC_ATR'] = df['KC_TR'].rolling(window=10).mean()
-    df['KC_Middle'] = df['Close'].rolling(window=20).mean()
-    df['KC_Upper'] = df['KC_Middle'] + (df['KC_ATR'] * 2)
-    df['KC_Lower'] = df['KC_Middle'] - (df['KC_ATR'] * 2)
-
-    # Donchian Channels
-    df['DC_Upper'] = df['High'].rolling(window=20).max()
-    df['DC_Lower'] = df['Low'].rolling(window=20).min()
-    df['DC_Middle'] = (df['DC_Upper'] + df['DC_Lower']) / 2
-
-    # Parabolic SAR (PSAR)
-    psar = df['Close'].copy()
-    af = 0.02
-    max_af = 0.2
-
-    uptrend = True if df['Close'].iloc[0] > df['Open'].iloc[0] else False
-    ep = df['High'].iloc[0] if uptrend else df['Low'].iloc[0]
-    sar = df['Low'].iloc[0] if uptrend else df['High'].iloc[0]
-    
-    for i in range(1, len(df)):
-        if uptrend:
-            sar = sar + af * (ep - sar)
-            if df.iloc[i, df.columns.get_loc('Low')] < sar:
-                uptrend = False
-                sar = ep
-                ep = df.iloc[i, df.columns.get_loc('Low')]
-                af = 0.02
-            else:
-                if df.iloc[i, df.columns.get_loc('High')] > ep:
-                    ep = df.iloc[i, df.columns.get_loc('High')]
-                    af = min(max_af, af + 0.02)
-        else:
-            sar = sar + af * (ep - sar)
-            if df.iloc[i, df.columns.get_loc('High')] > sar:
-                uptrend = True
-                sar = ep
-                ep = df.iloc[i, df.columns.get_loc('High')]
-                af = 0.02
-            else:
-                if df.iloc[i, df.columns.get_loc('Low')] < ep:
-                    ep = df.iloc[i, df.columns.get_loc('Low')]
-                    af = min(max_af, af + 0.02)
-        psar.iloc[i] = sar
-    df['PSAR'] = psar
-
-    # Accumulation/Distribution Line (ADL)
-    mf_multiplier = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
-    mf_volume = mf_multiplier * df['Volume']
-    df['ADL'] = mf_volume.cumsum()
-    df['ADL'] = df['ADL'].fillna(0)
-
-    # Commodity Channel Index (CCI)
-    TP = (df['High'] + df['Low'] + df['Close']) / 3
-    df['CCI'] = (TP - TP.rolling(window=20).mean()) / (0.015 * TP.rolling(window=20).std())
-    df['CCI'] = df['CCI'].fillna(0)
-
-    # Volume Weighted Average Price (VWAP)
-    df['VWAP'] = (df['Close'] * df['Volume']).rolling(window=FEAT_VOL_WINDOW).sum() / df['Volume'].rolling(window=FEAT_VOL_WINDOW).sum()
-    df['VWAP'] = df['VWAP'].fillna(df['Close'])
-
-    # ATR Percentage
-    if "ATR" not in df.columns:
-        if high is not None and low is not None:
+    # Only calculate indicators if we have sufficient data
+    if len(df) > 5:  # Minimum 5 days of data
+        # ATR for risk management
+        if high is not None and low is not None and len(df) > 1:
             hl = (high - low).abs()
             h_pc = (high - prev_close).abs()
             l_pc = (low  - prev_close).abs()
             tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
-            df["ATR"] = tr.rolling(ATR_PERIOD).mean()
+            df["ATR"] = tr.rolling(ATR_PERIOD, min_periods=5).mean().fillna(0)
         else:
-            ret = df["Close"].pct_change(fill_method=None)
-            df["ATR"] = (ret.rolling(ATR_PERIOD).std() * df["Close"]).rolling(2).mean()
-        df["ATR"] = df["ATR"].fillna(0)
-
-    df['ATR_Pct'] = (df['ATR'] / df['Close']) * 100
-    df['ATR_Pct'] = df['ATR_Pct'].fillna(0)
-
-    # Chaikin Oscillator
-    mf_multiplier_co = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
-    adl_fast = (mf_multiplier_co * df['Volume']).ewm(span=3, adjust=False).mean()
-    adl_slow = (mf_multiplier_co * df['Volume']).ewm(span=10, adjust=False).mean()
-    df['Chaikin_Oscillator'] = adl_fast - adl_slow
-    df['Chaikin_Oscillator'] = df['Chaikin_Oscillator'].fillna(0)
-
-    # Money Flow Index (MFI)
-    typical_price_mfi = (df['High'] + df['Low'] + df['Close']) / 3
-    money_flow_mfi = typical_price_mfi * df['Volume']
-    positive_mf_mfi = money_flow_mfi.where(typical_price_mfi > typical_price_mfi.shift(1), 0)
-    negative_mf_mfi = money_flow_mfi.where(typical_price_mfi < typical_price_mfi.shift(1), 0)
-    mfi_ratio = positive_mf_mfi.rolling(window=14).sum() / negative_mf_mfi.rolling(window=14).sum()
-    df['MFI'] = 100 - (100 / (1 + mfi_ratio))
-    df['MFI'] = df['MFI'].fillna(0)
-
-    # OBV Moving Average
-    df['OBV_SMA'] = df['OBV'].rolling(window=10).mean()
-    df['OBV_SMA'] = df['OBV_SMA'].fillna(0)
-
-    # Historical Volatility (e.g., 20-day rolling standard deviation of log returns)
-    df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
-    df['Historical_Volatility'] = df['Log_Returns'].rolling(window=20).std() * np.sqrt(252)
-    df['Historical_Volatility'] = df['Historical_Volatility'].fillna(0)
+            df["ATR"] = 0
+        
+        # Low-volatility filter reference: rolling median ATR
+        df['ATR_MED'] = df['ATR'].rolling(50, min_periods=10).median().fillna(0)
+        
+        # --- Features for ML Gate ---
+        df["Returns"]    = close.pct_change(fill_method=None).fillna(0)
+        df["SMA_F_S"]    = close.rolling(FEAT_SMA_SHORT, min_periods=5).mean().fillna(0)
+        df["SMA_F_L"]    = close.rolling(FEAT_SMA_LONG, min_periods=10).mean().fillna(0)
+        df["Volatility"] = df["Returns"].rolling(FEAT_VOL_WINDOW, min_periods=5).std().fillna(0)
+        
+        # RSI for features
+        delta_feat = close.diff()
+        gain_feat = (delta_feat.where(delta_feat > 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+        loss_feat = (-delta_feat.where(delta_feat < 0, 0)).ewm(com=14 - 1, adjust=False).mean()
+        rs_feat = gain_feat / loss_feat
+        df['RSI_feat'] = 100 - (100 / (1 + rs_feat))
+        
+        # MACD for features
+        ema_12 = close.ewm(span=12, adjust=False).mean()
+        ema_26 = close.ewm(span=26, adjust=False).mean()
+        df['MACD'] = ema_12 - ema_26
+        df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        
+        # Bollinger Bands for features
+        bb_mid = close.rolling(window=20, min_periods=5).mean().fillna(0)
+        bb_std = close.rolling(window=20, min_periods=5).std().fillna(0)
+        df['BB_upper'] = (bb_mid + (bb_std * 2)).fillna(0)
+        df['BB_lower'] = (bb_mid - (bb_std * 2)).fillna(0)
     
-    # ========================================
-    # NORMALIZED PRICE RATIOS (replace absolute OHLC)
-    # ========================================
-    
-    # Price position relative to moving averages (normalized)
-    sma_20 = df['Close'].rolling(20, min_periods=10).mean()
-    sma_50 = df['Close'].rolling(50, min_periods=20).mean()
-    df['Close_to_SMA20'] = (df['Close'] / sma_20).fillna(1.0)  # How far from 20-day average
-    df['Close_to_SMA50'] = (df['Close'] / sma_50).fillna(1.0)  # How far from 50-day average
-    
-    # Intraday position (where price closed within day's range)
-    high_low_range = df['High'] - df['Low']
-    high_low_range = high_low_range.replace(0, np.nan)  # Avoid division by zero
-    df['Close_Position_in_Range'] = ((df['Close'] - df['Low']) / high_low_range).fillna(0.5)  # 0=low, 1=high
-    
-    # Intraday volatility (high-low spread as % of close)
-    df['Intraday_Range_Pct'] = (high_low_range / df['Close']).fillna(0)
-    
-    # Open-Close relationship (gap or continuation)
-    df['Open_to_Close_Ratio'] = (df['Close'] / df['Open']).fillna(1.0)  # >1 = up day, <1 = down day
-    
-    # Price vs recent high/low (52-week relative positioning)
-    df['Close_to_20D_High'] = (df['Close'] / df['High'].rolling(20, min_periods=10).max()).fillna(1.0)
-    df['Close_to_20D_Low'] = (df['Close'] / df['Low'].rolling(20, min_periods=10).min()).fillna(1.0)
-    
-    # Volume normalized (already partially done, but add absolute normalization)
-    volume_sma_20 = df['Volume'].rolling(20, min_periods=10).mean()
-    df['Volume_Normalized'] = (df['Volume'] / volume_sma_20).fillna(1.0)
-    
-    # ========================================
-    # NEW: Momentum & Trend Features for AI
-    # ========================================
-    
-    # 1. Multi-timeframe momentum (returns over different periods)
-    df['Momentum_3d'] = (df['Close'] / df['Close'].shift(3) - 1.0).fillna(0)
-    df['Momentum_5d'] = (df['Close'] / df['Close'].shift(5) - 1.0).fillna(0)
-    df['Momentum_10d'] = (df['Close'] / df['Close'].shift(10) - 1.0).fillna(0)
-    df['Momentum_20d'] = (df['Close'] / df['Close'].shift(20) - 1.0).fillna(0)
-    df['Momentum_40d'] = (df['Close'] / df['Close'].shift(40) - 1.0).fillna(0)  # Reduced from 60 to 40
-    
-    # 2. Trend strength (distance from moving averages)
-    df['Dist_From_SMA10'] = (df['Close'] / df['Close'].rolling(10, min_periods=5).mean() - 1.0).fillna(0)
-    df['Dist_From_SMA20'] = (df['Close'] / df['Close'].rolling(20, min_periods=10).mean() - 1.0).fillna(0)
-    df['Dist_From_SMA50'] = (df['Close'] / df['Close'].rolling(50, min_periods=20).mean() - 1.0).fillna(0)
-    # Removed SMA200 to reduce data loss - 200 days is too long for short-term trading
-    
-    # 3. Moving average slopes (trend direction)
-    sma20 = df['Close'].rolling(20, min_periods=10).mean()
-    sma50 = df['Close'].rolling(50, min_periods=20).mean()
-    df['SMA20_Slope'] = (sma20 / sma20.shift(5) - 1.0).fillna(0)
-    df['SMA50_Slope'] = (sma50 / sma50.shift(10) - 1.0).fillna(0)
-    
-    # 4. Price acceleration (momentum of momentum)
-    df['Price_Accel_5d'] = (df['Momentum_5d'] - df['Momentum_5d'].shift(1)).fillna(0)
-    df['Price_Accel_20d'] = (df['Momentum_20d'] - df['Momentum_20d'].shift(5)).fillna(0)
-    
-    # 5. Volatility regime (current vs historical)
-    df['Vol_Regime'] = (df['Volatility'] / df['Volatility'].rolling(30, min_periods=10).mean()).fillna(1.0)
-    df['Vol_Spike'] = (df['Volatility'] / df['Volatility'].shift(1) - 1.0).fillna(0)
-    
-    # 6. Volume momentum
-    df['Volume_Ratio_5d'] = (df['Volume'] / df['Volume'].rolling(5, min_periods=1).mean()).fillna(1.0)
-    df['Volume_Ratio_20d'] = (df['Volume'] / df['Volume'].rolling(20, min_periods=1).mean()).fillna(1.0)
-    df['Volume_Trend'] = (df['Volume'].rolling(5, min_periods=1).mean() / df['Volume'].rolling(20, min_periods=1).mean()).fillna(1.0)
-    
-    # 7. High-Low range expansion/contraction
-    df['Range_Expansion'] = ((df['High'] - df['Low']) / df['Close']).fillna(0)
-    df['Range_vs_Avg'] = (df['Range_Expansion'] / df['Range_Expansion'].rolling(20, min_periods=5).mean()).fillna(1.0)
-    
-    # 8. Consecutive up/down days (streak detection)
-    df['Daily_Direction'] = np.where(df['Close'] > df['Close'].shift(1), 1, 
-                                     np.where(df['Close'] < df['Close'].shift(1), -1, 0))
-    df['Streak'] = 0
-    streak = 0
-    for i in range(len(df)):
-        if df.iloc[i, df.columns.get_loc('Daily_Direction')] == 0:
-            streak = 0
-        elif i == 0:
-            streak = df.iloc[i, df.columns.get_loc('Daily_Direction')]
-        elif df.iloc[i, df.columns.get_loc('Daily_Direction')] == df.iloc[i-1, df.columns.get_loc('Daily_Direction')]:
-            streak += df.iloc[i, df.columns.get_loc('Daily_Direction')]
-        else:
-            streak = df.iloc[i, df.columns.get_loc('Daily_Direction')]
-        df.iloc[i, df.columns.get_loc('Streak')] = streak
-    
-    # 9. Momentum divergence (price vs RSI)
-    if 'RSI_feat' in df.columns:
-        price_change = df['Close'] / df['Close'].shift(10) - 1.0
-        rsi_change = df['RSI_feat'] - df['RSI_feat'].shift(10)
-        df['Momentum_Divergence'] = (price_change * rsi_change).fillna(0)
-    else:
-        df['Momentum_Divergence'] = 0.0
-    
-    # 10. Trend consistency (% of days above SMA in last 20 days)
-    df['Days_Above_SMA20'] = (df['Close'] > df['Close'].rolling(20, min_periods=10).mean()).rolling(20, min_periods=10).sum() / 20.0
-    df['Days_Above_SMA20'] = df['Days_Above_SMA20'].fillna(0.5)
-    
+    # Fill any remaining NaNs at the end
+    df = df.fillna(0)
     return df
 
 # Define financial data fetching functions here to avoid circular imports
@@ -696,11 +442,11 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
         h_pc = (high - prev_close).abs()
         l_pc = (low  - prev_close).abs()
         tr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1)
-        df["ATR"] = tr.rolling(ATR_PERIOD).mean()
+        df["ATR"] = tr.rolling(ATR_PERIOD, min_periods=1).mean().fillna(0)
     else:
         # Fallback for ATR if High/Low are not available (though they should be after load_prices)
         ret = df["Close"].pct_change(fill_method=None)
-        df["ATR"] = (ret.rolling(ATR_PERIOD).std() * df["Close"]).rolling(2).mean()
+        df["ATR"] = (ret.rolling(ATR_PERIOD, min_periods=1).std() * df["Close"]).rolling(2, min_periods=1).mean().fillna(0)
     df["ATR"] = df["ATR"].fillna(0) # Fill any NaNs from initial ATR calculation
 
     # RSI
@@ -724,7 +470,6 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
 
     # Stochastic Oscillator
     low_14, high_14 = df['Low'].rolling(window=14).min(), df['High'].rolling(window=14).max()
-    denominator_k = (high_14 - low_14)
     df['%K'] = np.where(denominator_k != 0, (df['Close'] - low_14) / denominator_k * 100, 0)
     df['%D'] = df['%K'].rolling(window=3).mean()
     df['%K'] = df['%K'].fillna(0)
@@ -794,25 +539,25 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
     for i in range(1, len(df)):
         if uptrend:
             sar = sar + af * (ep - sar)
-            if df['Low'].iloc[i] < sar:
+            if df.iloc[i, df.columns.get_loc('Low')] < sar:
                 uptrend = False
                 sar = ep
-                ep = df['Low'].iloc[i]
+                ep = df.iloc[i, df.columns.get_loc('Low')]
                 af = 0.02
             else:
-                if df['High'].iloc[i] > ep:
-                    ep = df['High'].iloc[i]
+                if df.iloc[i, df.columns.get_loc('High')] > ep:
+                    ep = df.iloc[i, df.columns.get_loc('High')]
                     af = min(max_af, af + 0.02)
         else:
             sar = sar + af * (ep - sar)
-            if df['High'].iloc[i] > sar:
+            if df.iloc[i, df.columns.get_loc('High')] > sar:
                 uptrend = True
                 sar = ep
-                ep = df['High'].iloc[i]
+                ep = df.iloc[i, df.columns.get_loc('High')]
                 af = 0.02
             else:
-                if df['Low'].iloc[i] < ep:
-                    ep = df['Low'].iloc[i]
+                if df.iloc[i, df.columns.get_loc('Low')] < ep:
+                    ep = df.iloc[i, df.columns.get_loc('Low')]
                     af = min(max_af, af + 0.02)
         psar.iloc[i] = sar
     df['PSAR'] = psar
@@ -884,8 +629,8 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
         "Close", "Volume", "High", "Low", "Open", "Returns", "SMA_F_S", "SMA_F_L", "Volatility",
         "ATR", "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
         "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
-        "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
-        "Market_Momentum_SPY",
+        "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Log_Returns",
+        "Historical_Volatility", "Market_Momentum_SPY",
         "Sentiment_Score",
         "VIX_Index_Returns", "DXY_Index_Returns", "Gold_Futures_Returns", "Oil_Futures_Returns", "US10Y_Yield_Returns",
         "Oil_Price_Returns", "Gold_Price_Returns"
