@@ -6,7 +6,7 @@ DEBUG: Script execution initiated.
 🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
 🎮 PYTORCH_USE_GPU=True - PyTorch models will use CUDA
 ✅ Multiprocessing start method set to 'spawn' for CUDA compatibility.
-[INTERNET] Connection verified, using local time with internet sync: 2026-01-01 15:00:24 UTC
+[INTERNET] Connection verified, using local time with internet sync: 2026-01-01 18:23:57 UTC
 ✅ CUDA is available and working. GPU acceleration enabled with deterministic algorithms.
 ℹ️ LightGBM: using CPU (OpenCL not compatible with NVIDIA/PoCL in WSL2).
 ✅ XGBoostRegressor found. Configured for GPU (device='cuda').
@@ -24,10 +24,10 @@ Total unique tickers found: 626
   - Downloading batch 1/1 (626 tickers)...
   ℹ️  Market data not available yet (markets closed or processing). Using cached data.
   📂 Checking cache for 626 tickers...
-  📥 Cache miss for 8TRA.DE - will download (no cache)
+  ✅ Cache hit for 8TRA.DE (579 rows, up to date)
   ✅ Cache hit for A (1124 rows, up to date)
   ✅ Cache hit for AAPL (1124 rows, up to date)
-  📥 Cache miss for ABBN.SW - will download (no cache)
+  ✅ Cache hit for ABBN.SW (579 rows, up to date)
   ✅ Cache hit for ABBV (1124 rows, up to date)
   ✅ Cache hit for ABNB (1124 rows, up to date)
   ✅ Cache hit for ABT (1124 rows, up to date)
@@ -37,26 +37,26 @@ Total unique tickers found: 626
   ✅ Cache hit for ADI (1124 rows, up to date)
   ✅ Cache hit for ADM (1124 rows, up to date)
   ✅ Cache hit for ADP (1124 rows, up to date)
-  📥 Cache miss for ADS.DE - will download (no cache)
+  ✅ Cache hit for ADS.DE (579 rows, up to date)
   ✅ Cache hit for ADSK (1124 rows, up to date)
   ✅ Cache hit for AEE (1124 rows, up to date)
   ✅ Cache hit for AEP (1124 rows, up to date)
   ✅ Cache hit for AES (1124 rows, up to date)
   ✅ Cache hit for AFL (1124 rows, up to date)
-  📥 Cache miss for AFX.DE - will download (no cache)
+  ✅ Cache hit for AFX.DE (579 rows, up to date)
   ✅ Cache hit for AIG (1124 rows, up to date)
-  📥 Cache miss for AIR.PA - will download (no cache)
-  📥 Cache miss for AIXA.DE - will download (no cache)
+  ✅ Cache hit for AIR.PA (579 rows, up to date)
+  ✅ Cache hit for AIXA.DE (579 rows, up to date)
   ✅ Cache hit for AIZ (1124 rows, up to date)
   ✅ Cache hit for AJG (1124 rows, up to date)
   ✅ Cache hit for AKAM (1124 rows, up to date)
   ✅ Cache hit for ALB (1124 rows, up to date)
-  📥 Cache miss for ALC.SW - will download (no cache)
+  ✅ Cache hit for ALC.SW (579 rows, up to date)
   ✅ Cache hit for ALGN (1124 rows, up to date)
   ✅ Cache hit for ALL (1124 rows, up to date)
   ✅ Cache hit for ALLE (1124 rows, up to date)
   ✅ Cache hit for ALNY (1124 rows, up to date)
-  📥 Cache miss for ALV.DE - will download (no cache)
+  ✅ Cache hit for ALV.DE (579 rows, up to date)
   ✅ Cache hit for AMAT (1124 rows, up to date)
   ✅ Cache hit for AMCR (1124 rows, up to date)
   ✅ Cache hit for AMD (1124 rows, up to date)
@@ -78,7 +78,7 @@ Total unique tickers found: 626
   ✅ Cache hit for ARES (1124 rows, up to date)
   ✅ Cache hit for ARM (1124 rows, up to date)
   ✅ Cache hit for ASML (1124 rows, up to date)
-  📥 Cache miss for AT1.DE - will download (no cache)
+  ✅ Cache hit for AT1.DE (579 rows, up to date)
   ✅ Cache hit for ATO (1124 rows, up to date)
   ✅ Cache hit for AVB (1124 rows, up to date)
   ✅ Cache hit for AVGO (1124 rows, up to date)
@@ -91,16 +91,16 @@ Total unique tickers found: 626
   ✅ Cache hit for BA (1124 rows, up to date)
   ✅ Cache hit for BAC (1124 rows, up to date)
   ✅ Cache hit for BALL (1124 rows, up to date)
-  📥 Cache miss for BAS.DE - will download (no cache)
+  ✅ Cache hit for BAS.DE (579 rows, up to date)
   ✅ Cache hit for BAX (1124 rows, up to date)
-  📥 Cache miss for BAYN.DE - will download (no cache)
+  ✅ Cache hit for BAYN.DE (579 rows, up to date)
   ✅ Cache hit for BBY (1124 rows, up to date)
-  📥 Cache miss for BC8.DE - will download (no cache)
+  ✅ Cache hit for BC8.DE (579 rows, up to date)
   ✅ Cache hit for BDX (1124 rows, up to date)
-  📥 Cache miss for BEI.DE - will download (no cache)
+  ✅ Cache hit for BEI.DE (579 rows, up to date)
   ✅ Cache hit for BEN (1124 rows, up to date)
   ✅ Cache hit for BF-B (1124 rows, up to date)
-  📥 Cache miss for BFSA.DE - will download (no cache)
+  ✅ Cache hit for BFSA.DE (579 rows, up to date)
   ✅ Cache hit for BG (1124 rows, up to date)
   ✅ Cache hit for BIIB (1124 rows, up to date)
   ✅ Cache hit for BK (1124 rows, up to date)
@@ -108,10 +108,10 @@ Total unique tickers found: 626
   ✅ Cache hit for BKR (1124 rows, up to date)
   ✅ Cache hit for BLDR (1124 rows, up to date)
   ✅ Cache hit for BLK (1124 rows, up to date)
-  📥 Cache miss for BMW.DE - will download (no cache)
+  ✅ Cache hit for BMW.DE (579 rows, up to date)
   ✅ Cache hit for BMY (1124 rows, up to date)
-  📥 Cache miss for BNR.DE - will download (no cache)
-  📥 Cache miss for BOSS.DE - will download (no cache)
+  ✅ Cache hit for BNR.DE (579 rows, up to date)
+  ✅ Cache hit for BOSS.DE (579 rows, up to date)
   ✅ Cache hit for BR (1124 rows, up to date)
   ✅ Cache hit for BRK-B (1124 rows, up to date)
   ✅ Cache hit for BRO (1124 rows, up to date)
@@ -124,7 +124,7 @@ Total unique tickers found: 626
   ✅ Cache hit for CARR (1124 rows, up to date)
   ✅ Cache hit for CAT (1124 rows, up to date)
   ✅ Cache hit for CB (1124 rows, up to date)
-  📥 Cache miss for CBK.DE - will download (no cache)
+  ✅ Cache hit for CBK.DE (579 rows, up to date)
   ✅ Cache hit for CBOE (1124 rows, up to date)
   ✅ Cache hit for CBRE (1124 rows, up to date)
   ✅ Cache hit for CCEP (1124 rows, up to date)
@@ -135,7 +135,7 @@ Total unique tickers found: 626
   ✅ Cache hit for CEG (1124 rows, up to date)
   ✅ Cache hit for CF (1124 rows, up to date)
   ✅ Cache hit for CFG (1124 rows, up to date)
-  📥 Cache miss for CFR.SW - will download (no cache)
+  ✅ Cache hit for CFR.SW (579 rows, up to date)
   ✅ Cache hit for CHD (1124 rows, up to date)
   ✅ Cache hit for CHRW (1124 rows, up to date)
   ✅ Cache hit for CHTR (1070 rows, up to date)
@@ -152,7 +152,7 @@ Total unique tickers found: 626
   ✅ Cache hit for CNP (1070 rows, up to date)
   ✅ Cache hit for COF (1070 rows, up to date)
   ✅ Cache hit for COIN (1070 rows, up to date)
-  📥 Cache miss for CON.DE - will download (no cache)
+  ✅ Cache hit for CON.DE (579 rows, up to date)
   ✅ Cache hit for COO (1070 rows, up to date)
   ✅ Cache hit for COP (1070 rows, up to date)
   ✅ Cache hit for COR (1070 rows, up to date)
@@ -177,8 +177,8 @@ Total unique tickers found: 626
   ✅ Cache hit for DAL (1070 rows, up to date)
   ✅ Cache hit for DASH (1070 rows, up to date)
   ✅ Cache hit for DAY (1070 rows, up to date)
-  📥 Cache miss for DB1.DE - will download (no cache)
-  📥 Cache miss for DBK.DE - will download (no cache)
+  ✅ Cache hit for DB1.DE (579 rows, up to date)
+  ✅ Cache hit for DBK.DE (579 rows, up to date)
   ✅ Cache hit for DD (1070 rows, up to date)
   ✅ Cache hit for DDOG (1070 rows, up to date)
   ✅ Cache hit for DE (1070 rows, up to date)
@@ -186,9 +186,9 @@ Total unique tickers found: 626
   ✅ Cache hit for DELL (1070 rows, up to date)
   ✅ Cache hit for DG (1070 rows, up to date)
   ✅ Cache hit for DGX (1070 rows, up to date)
-  📥 Cache miss for DHER.DE - will download (no cache)
+  ✅ Cache hit for DHER.DE (579 rows, up to date)
   ✅ Cache hit for DHI (1070 rows, up to date)
-  📥 Cache miss for DHL.DE - will download (no cache)
+  ✅ Cache hit for DHL.DE (579 rows, up to date)
   ✅ Cache hit for DHR (1070 rows, up to date)
   ✅ Cache hit for DIS (1070 rows, up to date)
   ✅ Cache hit for DLR (1070 rows, up to date)
@@ -199,8 +199,8 @@ Total unique tickers found: 626
   ✅ Cache hit for DPZ (1070 rows, up to date)
   ✅ Cache hit for DRI (1070 rows, up to date)
   ✅ Cache hit for DTE (1070 rows, up to date)
-  📥 Cache miss for DTE.DE - will download (no cache)
-  📥 Cache miss for DTG.DE - will download (no cache)
+  ✅ Cache hit for DTE.DE (579 rows, up to date)
+  ✅ Cache hit for DTG.DE (579 rows, up to date)
   ✅ Cache hit for DUK (1070 rows, up to date)
   ✅ Cache hit for DVA (1070 rows, up to date)
   ✅ Cache hit for DVN (1070 rows, up to date)
@@ -208,7 +208,7 @@ Total unique tickers found: 626
   ✅ Cache hit for EA (1070 rows, up to date)
   ✅ Cache hit for EBAY (1070 rows, up to date)
   ✅ Cache hit for ECL (1070 rows, up to date)
-  📥 Cache miss for ECV.DE - will download (no cache)
+  ✅ Cache hit for ECV.DE (579 rows, up to date)
   ✅ Cache hit for ED (1070 rows, up to date)
   ✅ Cache hit for EFX (1070 rows, up to date)
   ✅ Cache hit for EG (1070 rows, up to date)
@@ -217,8 +217,8 @@ Total unique tickers found: 626
   ✅ Cache hit for ELV (1070 rows, up to date)
   ✅ Cache hit for EME (1070 rows, up to date)
   ✅ Cache hit for EMR (1070 rows, up to date)
-  📥 Cache miss for ENR.DE - will download (no cache)
-  📥 Cache miss for EOAN.DE - will download (no cache)
+  ✅ Cache hit for ENR.DE (579 rows, up to date)
+  ✅ Cache hit for EOAN.DE (579 rows, up to date)
   ✅ Cache hit for EOG (1070 rows, up to date)
   ✅ Cache hit for EPAM (1070 rows, up to date)
   ✅ Cache hit for EQIX (1070 rows, up to date)
@@ -229,10 +229,10 @@ Total unique tickers found: 626
   ✅ Cache hit for ESS (1070 rows, up to date)
   ✅ Cache hit for ETN (1070 rows, up to date)
   ✅ Cache hit for ETR (1070 rows, up to date)
-  📥 Cache miss for EVD.DE - will download (no cache)
-  📥 Cache miss for EVK.DE - will download (no cache)
+  ✅ Cache hit for EVD.DE (579 rows, up to date)
+  ✅ Cache hit for EVK.DE (579 rows, up to date)
   ✅ Cache hit for EVRG (1070 rows, up to date)
-  📥 Cache miss for EVT.DE - will download (no cache)
+  ✅ Cache hit for EVT.DE (579 rows, up to date)
   ✅ Cache hit for EW (1070 rows, up to date)
   ✅ Cache hit for EXC (1070 rows, up to date)
   ✅ Cache hit for EXE (1070 rows, up to date)
@@ -252,31 +252,31 @@ Total unique tickers found: 626
   ✅ Cache hit for FIS (1070 rows, up to date)
   ✅ Cache hit for FISV (1070 rows, up to date)
   ✅ Cache hit for FITB (1070 rows, up to date)
-  📥 Cache miss for FIX - will download (insufficient coverage)
-  📥 Cache miss for FME.DE - will download (no cache)
-  📥 Cache miss for FNTN.DE - will download (no cache)
+  ✅ Cache hit for FIX (1141 rows, up to date)
+  ✅ Cache hit for FME.DE (579 rows, up to date)
+  ✅ Cache hit for FNTN.DE (579 rows, up to date)
   ✅ Cache hit for FOX (1070 rows, up to date)
   ✅ Cache hit for FOXA (1070 rows, up to date)
-  📥 Cache miss for FPE3.DE - will download (no cache)
-  📥 Cache miss for FRA.DE - will download (no cache)
-  📥 Cache miss for FRE.DE - will download (no cache)
+  ✅ Cache hit for FPE3.DE (579 rows, up to date)
+  ✅ Cache hit for FRA.DE (579 rows, up to date)
+  ✅ Cache hit for FRE.DE (579 rows, up to date)
   ✅ Cache hit for FRT (1070 rows, up to date)
   ✅ Cache hit for FSLR (1070 rows, up to date)
   ✅ Cache hit for FTNT (1070 rows, up to date)
   ✅ Cache hit for FTV (1070 rows, up to date)
-  📥 Cache miss for G1A.DE - will download (no cache)
-  📥 Cache miss for G24.DE - will download (no cache)
-  📥 Cache miss for GBF.DE - will download (no cache)
+  ✅ Cache hit for G1A.DE (579 rows, up to date)
+  ✅ Cache hit for G24.DE (579 rows, up to date)
+  ✅ Cache hit for GBF.DE (579 rows, up to date)
   ✅ Cache hit for GD (1070 rows, up to date)
   ✅ Cache hit for GDDY (1070 rows, up to date)
   ✅ Cache hit for GE (1070 rows, up to date)
-  📥 Cache miss for GEBN.SW - will download (no cache)
+  ✅ Cache hit for GEBN.SW (579 rows, up to date)
   ✅ Cache hit for GEHC (1070 rows, up to date)
   ✅ Cache hit for GEN (1070 rows, up to date)
   ✅ Cache hit for GEV (1070 rows, up to date)
   ✅ Cache hit for GILD (1070 rows, up to date)
   ✅ Cache hit for GIS (1070 rows, up to date)
-  📥 Cache miss for GIVN.SW - will download (no cache)
+  ✅ Cache hit for GIVN.SW (579 rows, up to date)
   ✅ Cache hit for GL (1070 rows, up to date)
   ✅ Cache hit for GLW (1070 rows, up to date)
   ✅ Cache hit for GM (1070 rows, up to date)
@@ -288,26 +288,26 @@ Total unique tickers found: 626
   ✅ Cache hit for GRMN (1070 rows, up to date)
   ✅ Cache hit for GS (1070 rows, up to date)
   ✅ Cache hit for GWW (1070 rows, up to date)
-  📥 Cache miss for GXI.DE - will download (no cache)
-  📥 Cache miss for HAG.DE - will download (no cache)
+  ✅ Cache hit for GXI.DE (579 rows, up to date)
+  ✅ Cache hit for HAG.DE (579 rows, up to date)
   ✅ Cache hit for HAL (1070 rows, up to date)
   ✅ Cache hit for HAS (1070 rows, up to date)
   ✅ Cache hit for HBAN (1070 rows, up to date)
   ✅ Cache hit for HCA (1070 rows, up to date)
   ✅ Cache hit for HD (1070 rows, up to date)
-  📥 Cache miss for HEI.DE - will download (no cache)
-  📥 Cache miss for HEN3.DE - will download (no cache)
-  📥 Cache miss for HFG.DE - will download (no cache)
+  ✅ Cache hit for HEI.DE (579 rows, up to date)
+  ✅ Cache hit for HEN3.DE (579 rows, up to date)
+  ✅ Cache hit for HFG.DE (579 rows, up to date)
   ✅ Cache hit for HIG (1070 rows, up to date)
   ✅ Cache hit for HII (1070 rows, up to date)
-  📥 Cache miss for HLE.DE - will download (no cache)
+  ✅ Cache hit for HLE.DE (579 rows, up to date)
   ✅ Cache hit for HLT (1070 rows, up to date)
-  📥 Cache miss for HNR1.DE - will download (no cache)
-  📥 Cache miss for HOLN.SW - will download (no cache)
+  ✅ Cache hit for HNR1.DE (579 rows, up to date)
+  ✅ Cache hit for HOLN.SW (579 rows, up to date)
   ✅ Cache hit for HOLX (1070 rows, up to date)
   ✅ Cache hit for HON (1070 rows, up to date)
   ✅ Cache hit for HOOD (1070 rows, up to date)
-  📥 Cache miss for HOT.DE - will download (no cache)
+  ✅ Cache hit for HOT.DE (579 rows, up to date)
   ✅ Cache hit for HPE (1070 rows, up to date)
   ✅ Cache hit for HPQ (1070 rows, up to date)
   ✅ Cache hit for HRL (1070 rows, up to date)
@@ -323,7 +323,7 @@ Total unique tickers found: 626
   ✅ Cache hit for IDXX (1070 rows, up to date)
   ✅ Cache hit for IEX (1070 rows, up to date)
   ✅ Cache hit for IFF (1070 rows, up to date)
-  📥 Cache miss for IFX.DE - will download (no cache)
+  ✅ Cache hit for IFX.DE (579 rows, up to date)
   ✅ Cache hit for INCY (1070 rows, up to date)
   ✅ Cache hit for INSM (1070 rows, up to date)
   ✅ Cache hit for INTC (1070 rows, up to date)
@@ -341,55 +341,55 @@ Total unique tickers found: 626
   ✅ Cache hit for JBHT (1070 rows, up to date)
   ✅ Cache hit for JBL (1070 rows, up to date)
   ✅ Cache hit for JCI (1070 rows, up to date)
-  📥 Cache miss for JEN.DE - will download (no cache)
+  ✅ Cache hit for JEN.DE (579 rows, up to date)
   ✅ Cache hit for JKHY (1070 rows, up to date)
   ✅ Cache hit for JNJ (1070 rows, up to date)
   ✅ Cache hit for JPM (1070 rows, up to date)
-  📥 Cache miss for JUN3.DE - will download (no cache)
-  📥 Cache miss for KBX.DE - will download (no cache)
+  ✅ Cache hit for JUN3.DE (579 rows, up to date)
+  ✅ Cache hit for KBX.DE (579 rows, up to date)
   ✅ Cache hit for KDP (1070 rows, up to date)
   ✅ Cache hit for KEY (1070 rows, up to date)
   ✅ Cache hit for KEYS (1070 rows, up to date)
-  📥 Cache miss for KGX.DE - will download (no cache)
+  ✅ Cache hit for KGX.DE (579 rows, up to date)
   ✅ Cache hit for KHC (1070 rows, up to date)
   ✅ Cache hit for KIM (1070 rows, up to date)
   ✅ Cache hit for KKR (1070 rows, up to date)
   ✅ Cache hit for KLAC (1070 rows, up to date)
   ✅ Cache hit for KMB (1070 rows, up to date)
   ✅ Cache hit for KMI (1070 rows, up to date)
-  📥 Cache miss for KNIN.SW - will download (no cache)
+  ✅ Cache hit for KNIN.SW (579 rows, up to date)
   ✅ Cache hit for KO (1070 rows, up to date)
   ✅ Cache hit for KR (1070 rows, up to date)
-  📥 Cache miss for KRN.DE - will download (no cache)
+  ✅ Cache hit for KRN.DE (579 rows, up to date)
   ✅ Cache hit for KVUE (1070 rows, up to date)
   ✅ Cache hit for L (1070 rows, up to date)
   ✅ Cache hit for LDOS (1070 rows, up to date)
-  📥 Cache miss for LEG.DE - will download (no cache)
+  ✅ Cache hit for LEG.DE (579 rows, up to date)
   ✅ Cache hit for LEN (1070 rows, up to date)
   ✅ Cache hit for LH (1070 rows, up to date)
-  📥 Cache miss for LHA.DE - will download (no cache)
+  ✅ Cache hit for LHA.DE (579 rows, up to date)
   ✅ Cache hit for LHX (1070 rows, up to date)
   ✅ Cache hit for LII (1070 rows, up to date)
   ✅ Cache hit for LIN (1070 rows, up to date)
   ✅ Cache hit for LLY (1070 rows, up to date)
   ✅ Cache hit for LMT (1070 rows, up to date)
   ✅ Cache hit for LNT (1070 rows, up to date)
-  📥 Cache miss for LOGN.SW - will download (no cache)
-  📥 Cache miss for LONN.SW - will download (no cache)
+  ✅ Cache hit for LOGN.SW (579 rows, up to date)
+  ✅ Cache hit for LONN.SW (579 rows, up to date)
   ✅ Cache hit for LOW (1070 rows, up to date)
   ✅ Cache hit for LRCX (1070 rows, up to date)
   ✅ Cache hit for LULU (1070 rows, up to date)
   ✅ Cache hit for LUV (1070 rows, up to date)
   ✅ Cache hit for LVS (1070 rows, up to date)
   ✅ Cache hit for LW (1070 rows, up to date)
-  📥 Cache miss for LXS.DE - will download (no cache)
+  ✅ Cache hit for LXS.DE (579 rows, up to date)
   ✅ Cache hit for LYB (1070 rows, up to date)
   ✅ Cache hit for LYV (1070 rows, up to date)
   ✅ Cache hit for MA (1070 rows, up to date)
   ✅ Cache hit for MAA (1070 rows, up to date)
   ✅ Cache hit for MAR (1070 rows, up to date)
   ✅ Cache hit for MAS (1070 rows, up to date)
-  📥 Cache miss for MBG.DE - will download (no cache)
+  ✅ Cache hit for MBG.DE (579 rows, up to date)
   ✅ Cache hit for MCD (1070 rows, up to date)
   ✅ Cache hit for MCHP (1070 rows, up to date)
   ✅ Cache hit for MCK (1070 rows, up to date)
@@ -411,7 +411,7 @@ Total unique tickers found: 626
   ✅ Cache hit for MPC (1070 rows, up to date)
   ✅ Cache hit for MPWR (1070 rows, up to date)
   ✅ Cache hit for MRK (1070 rows, up to date)
-  📥 Cache miss for MRK.DE - will download (no cache)
+  ✅ Cache hit for MRK.DE (579 rows, up to date)
   ✅ Cache hit for MRNA (1070 rows, up to date)
   ✅ Cache hit for MRVL (1070 rows, up to date)
   ✅ Cache hit for MS (1070 rows, up to date)
@@ -422,23 +422,23 @@ Total unique tickers found: 626
   ✅ Cache hit for MTB (1070 rows, up to date)
   ✅ Cache hit for MTCH (1070 rows, up to date)
   ✅ Cache hit for MTD (1070 rows, up to date)
-  📥 Cache miss for MTX.DE - will download (no cache)
+  ✅ Cache hit for MTX.DE (579 rows, up to date)
   ✅ Cache hit for MU (1070 rows, up to date)
-  📥 Cache miss for MUV2.DE - will download (no cache)
+  ✅ Cache hit for MUV2.DE (579 rows, up to date)
   ✅ Cache hit for NCLH (1070 rows, up to date)
-  📥 Cache miss for NDA.DE - will download (no cache)
+  ✅ Cache hit for NDA.DE (579 rows, up to date)
   ✅ Cache hit for NDAQ (1070 rows, up to date)
   ✅ Cache hit for NDSN (1070 rows, up to date)
-  📥 Cache miss for NDX1.DE - will download (no cache)
+  ✅ Cache hit for NDX1.DE (579 rows, up to date)
   ✅ Cache hit for NEE (1070 rows, up to date)
   ✅ Cache hit for NEM (1070 rows, up to date)
-  📥 Cache miss for NEM.DE - will download (no cache)
-  📥 Cache miss for NESN.SW - will download (no cache)
+  ✅ Cache hit for NEM.DE (579 rows, up to date)
+  ✅ Cache hit for NESN.SW (579 rows, up to date)
   ✅ Cache hit for NFLX (1070 rows, up to date)
   ✅ Cache hit for NI (1070 rows, up to date)
   ✅ Cache hit for NKE (1070 rows, up to date)
   ✅ Cache hit for NOC (1070 rows, up to date)
-  📥 Cache miss for NOVN.SW - will download (no cache)
+  ✅ Cache hit for NOVN.SW (579 rows, up to date)
   ✅ Cache hit for NOW (1070 rows, up to date)
   ✅ Cache hit for NRG (1070 rows, up to date)
   ✅ Cache hit for NSC (1070 rows, up to date)
@@ -459,7 +459,7 @@ Total unique tickers found: 626
   ✅ Cache hit for ORLY (1070 rows, up to date)
   ✅ Cache hit for OTIS (1070 rows, up to date)
   ✅ Cache hit for OXY (1070 rows, up to date)
-  📥 Cache miss for PAH3.DE - will download (no cache)
+  ✅ Cache hit for PAH3.DE (579 rows, up to date)
   ✅ Cache hit for PANW (1070 rows, up to date)
   ✅ Cache hit for PAYC (1070 rows, up to date)
   ✅ Cache hit for PAYX (1070 rows, up to date)
@@ -471,7 +471,7 @@ Total unique tickers found: 626
   ✅ Cache hit for PFE (1070 rows, up to date)
   ✅ Cache hit for PFG (1070 rows, up to date)
   ✅ Cache hit for PG (1070 rows, up to date)
-  📥 Cache miss for PGHN.SW - will download (no cache)
+  ✅ Cache hit for PGHN.SW (579 rows, up to date)
   ✅ Cache hit for PGR (1070 rows, up to date)
   ✅ Cache hit for PH (1070 rows, up to date)
   ✅ Cache hit for PHM (1070 rows, up to date)
@@ -491,47 +491,47 @@ Total unique tickers found: 626
   ✅ Cache hit for PSKY (1070 rows, up to date)
   ✅ Cache hit for PSX (1070 rows, up to date)
   ✅ Cache hit for PTC (1070 rows, up to date)
-  📥 Cache miss for PUM.DE - will download (no cache)
+  ✅ Cache hit for PUM.DE (579 rows, up to date)
   ✅ Cache hit for PWR (1070 rows, up to date)
   ✅ Cache hit for PYPL (1070 rows, up to date)
   ✅ Cache hit for Q (1070 rows, up to date)
   ✅ Cache hit for QCOM (1070 rows, up to date)
-  📥 Cache miss for QIA.DE - will download (no cache)
-  📥 Cache miss for RAA.DE - will download (no cache)
+  ✅ Cache hit for QIA.DE (579 rows, up to date)
+  ✅ Cache hit for RAA.DE (579 rows, up to date)
   ✅ Cache hit for RCL (1070 rows, up to date)
-  📥 Cache miss for RDC.DE - will download (no cache)
+  ✅ Cache hit for RDC.DE (579 rows, up to date)
   ✅ Cache hit for REG (1070 rows, up to date)
   ✅ Cache hit for REGN (1070 rows, up to date)
   ✅ Cache hit for RF (1070 rows, up to date)
-  📥 Cache miss for RHM.DE - will download (no cache)
+  ✅ Cache hit for RHM.DE (579 rows, up to date)
   ✅ Cache hit for RJF (1070 rows, up to date)
   ✅ Cache hit for RL (1070 rows, up to date)
   ✅ Cache hit for RMD (1070 rows, up to date)
-  📥 Cache miss for ROG.SW - will download (no cache)
+  ✅ Cache hit for ROG.SW (579 rows, up to date)
   ✅ Cache hit for ROK (1070 rows, up to date)
   ✅ Cache hit for ROL (1070 rows, up to date)
   ✅ Cache hit for ROP (1070 rows, up to date)
   ✅ Cache hit for ROST (1070 rows, up to date)
-  📥 Cache miss for RRTL.DE - will download (no cache)
+  ✅ Cache hit for RRTL.DE (579 rows, up to date)
   ✅ Cache hit for RSG (1070 rows, up to date)
   ✅ Cache hit for RTX (1070 rows, up to date)
   ✅ Cache hit for RVTY (1070 rows, up to date)
-  📥 Cache miss for RWE.DE - will download (no cache)
-  📥 Cache miss for SAP.DE - will download (no cache)
-  📥 Cache miss for SAX.DE - will download (no cache)
+  ✅ Cache hit for RWE.DE (579 rows, up to date)
+  ✅ Cache hit for SAP.DE (579 rows, up to date)
+  ✅ Cache hit for SAX.DE (579 rows, up to date)
   ✅ Cache hit for SBAC (1070 rows, up to date)
   ✅ Cache hit for SBUX (1070 rows, up to date)
   ✅ Cache hit for SCHW (1070 rows, up to date)
-  📥 Cache miss for SCMN.SW - will download (no cache)
-  📥 Cache miss for SDF.DE - will download (no cache)
-  📥 Cache miss for SHL.DE - will download (no cache)
+  ✅ Cache hit for SCMN.SW (579 rows, up to date)
+  ✅ Cache hit for SDF.DE (579 rows, up to date)
+  ✅ Cache hit for SHL.DE (579 rows, up to date)
   ✅ Cache hit for SHOP (1070 rows, up to date)
   ✅ Cache hit for SHW (1070 rows, up to date)
-  📥 Cache miss for SIE.DE - will download (no cache)
-  📥 Cache miss for SIKA.SW - will download (no cache)
+  ✅ Cache hit for SIE.DE (579 rows, up to date)
+  ✅ Cache hit for SIKA.SW (579 rows, up to date)
   ✅ Cache hit for SJM (1070 rows, up to date)
   ✅ Cache hit for SLB (1070 rows, up to date)
-  📥 Cache miss for SLHN.SW - will download (no cache)
+  ✅ Cache hit for SLHN.SW (579 rows, up to date)
   ✅ Cache hit for SMCI (1070 rows, up to date)
   ✅ Cache hit for SNA (1070 rows, up to date)
   ✅ Cache hit for SNDK (1070 rows, up to date)
@@ -539,21 +539,21 @@ Total unique tickers found: 626
   ✅ Cache hit for SO (1070 rows, up to date)
   ✅ Cache hit for SOLS (1070 rows, up to date)
   ✅ Cache hit for SOLV (1070 rows, up to date)
-  📥 Cache miss for SOON.SW - will download (no cache)
+  ✅ Cache hit for SOON.SW (579 rows, up to date)
   ✅ Cache hit for SPG (1070 rows, up to date)
   ✅ Cache hit for SPGI (1070 rows, up to date)
   ✅ Cache hit for SRE (1070 rows, up to date)
-  📥 Cache miss for SREN.SW - will download (no cache)
+  ✅ Cache hit for SREN.SW (579 rows, up to date)
   ✅ Cache hit for STE (1070 rows, up to date)
   ✅ Cache hit for STLD (1070 rows, up to date)
-  📥 Cache miss for STM.DE - will download (no cache)
+  ✅ Cache hit for STM.DE (579 rows, up to date)
   ✅ Cache hit for STT (1070 rows, up to date)
   ✅ Cache hit for STX (1070 rows, up to date)
   ✅ Cache hit for STZ (1070 rows, up to date)
   ✅ Cache hit for SW (1070 rows, up to date)
   ✅ Cache hit for SWK (1070 rows, up to date)
   ✅ Cache hit for SWKS (1070 rows, up to date)
-  📥 Cache miss for SY1.DE - will download (no cache)
+  ✅ Cache hit for SY1.DE (579 rows, up to date)
   ✅ Cache hit for SYF (1070 rows, up to date)
   ✅ Cache hit for SYK (1070 rows, up to date)
   ✅ Cache hit for SYY (1070 rows, up to date)
@@ -563,18 +563,18 @@ Total unique tickers found: 626
   ✅ Cache hit for TDY (1070 rows, up to date)
   ✅ Cache hit for TEAM (1070 rows, up to date)
   ✅ Cache hit for TECH (1070 rows, up to date)
-  📥 Cache miss for TEG.DE - will download (no cache)
+  ✅ Cache hit for TEG.DE (579 rows, up to date)
   ✅ Cache hit for TEL (1070 rows, up to date)
   ✅ Cache hit for TER (1070 rows, up to date)
   ✅ Cache hit for TFC (1070 rows, up to date)
   ✅ Cache hit for TGT (1070 rows, up to date)
   ✅ Cache hit for TJX (1070 rows, up to date)
-  📥 Cache miss for TKA.DE - will download (no cache)
+  ✅ Cache hit for TKA.DE (579 rows, up to date)
   ✅ Cache hit for TKO (1070 rows, up to date)
-  📥 Cache miss for TLX.DE - will download (no cache)
+  ✅ Cache hit for TLX.DE (579 rows, up to date)
   ✅ Cache hit for TMO (1070 rows, up to date)
   ✅ Cache hit for TMUS (1070 rows, up to date)
-  📥 Cache miss for TMV.DE - will download (no cache)
+  ✅ Cache hit for TMV.DE (579 rows, up to date)
   ✅ Cache hit for TPL (1070 rows, up to date)
   ✅ Cache hit for TPR (1070 rows, up to date)
   ✅ Cache hit for TRGP (1070 rows, up to date)
@@ -588,13 +588,13 @@ Total unique tickers found: 626
   ✅ Cache hit for TT (1070 rows, up to date)
   ✅ Cache hit for TTD (1070 rows, up to date)
   ✅ Cache hit for TTWO (1070 rows, up to date)
-  📥 Cache miss for TUI1.DE - will download (no cache)
+  ✅ Cache hit for TUI1.DE (579 rows, up to date)
   ✅ Cache hit for TXN (1070 rows, up to date)
   ✅ Cache hit for TXT (1070 rows, up to date)
   ✅ Cache hit for TYL (1070 rows, up to date)
   ✅ Cache hit for UAL (1070 rows, up to date)
   ✅ Cache hit for UBER (1070 rows, up to date)
-  📥 Cache miss for UBSG.SW - will download (no cache)
+  ✅ Cache hit for UBSG.SW (579 rows, up to date)
   ✅ Cache hit for UDR (1070 rows, up to date)
   ✅ Cache hit for UHS (1070 rows, up to date)
   ✅ Cache hit for ULTA (1070 rows, up to date)
@@ -603,14 +603,14 @@ Total unique tickers found: 626
   ✅ Cache hit for UPS (1070 rows, up to date)
   ✅ Cache hit for URI (1070 rows, up to date)
   ✅ Cache hit for USB (1070 rows, up to date)
-  📥 Cache miss for UTDI.DE - will download (no cache)
+  ✅ Cache hit for UTDI.DE (579 rows, up to date)
   ✅ Cache hit for V (1070 rows, up to date)
   ✅ Cache hit for VICI (1070 rows, up to date)
   ✅ Cache hit for VLO (1070 rows, up to date)
   ✅ Cache hit for VLTO (1070 rows, up to date)
   ✅ Cache hit for VMC (1070 rows, up to date)
-  📥 Cache miss for VNA.DE - will download (no cache)
-  📥 Cache miss for VOW3.DE - will download (no cache)
+  ✅ Cache hit for VNA.DE (579 rows, up to date)
+  ✅ Cache hit for VOW3.DE (579 rows, up to date)
   ✅ Cache hit for VRSK (1070 rows, up to date)
   ✅ Cache hit for VRSN (1070 rows, up to date)
   ✅ Cache hit for VRTX (1070 rows, up to date)
@@ -619,10 +619,10 @@ Total unique tickers found: 626
   ✅ Cache hit for VTRS (1070 rows, up to date)
   ✅ Cache hit for VZ (1070 rows, up to date)
   ✅ Cache hit for WAB (1070 rows, up to date)
-  📥 Cache miss for WAF.DE - will download (no cache)
+  ✅ Cache hit for WAF.DE (579 rows, up to date)
   ✅ Cache hit for WAT (1070 rows, up to date)
   ✅ Cache hit for WBD (1070 rows, up to date)
-  📥 Cache miss for WCH.DE - will download (no cache)
+  ✅ Cache hit for WCH.DE (579 rows, up to date)
   ✅ Cache hit for WDAY (1070 rows, up to date)
   ✅ Cache hit for WDC (1070 rows, up to date)
   ✅ Cache hit for WEC (1070 rows, up to date)
@@ -642,149 +642,27 @@ Total unique tickers found: 626
   ✅ Cache hit for XYL (1070 rows, up to date)
   ✅ Cache hit for XYZ (1070 rows, up to date)
   ✅ Cache hit for YUM (1070 rows, up to date)
-  📥 Cache miss for ZAL.DE - will download (no cache)
+  ✅ Cache hit for ZAL.DE (579 rows, up to date)
   ✅ Cache hit for ZBH (1070 rows, up to date)
   ✅ Cache hit for ZBRA (1070 rows, up to date)
   ✅ Cache hit for ZS (1070 rows, up to date)
   ✅ Cache hit for ZTS (1070 rows, up to date)
-  📥 Cache miss for ZURN.SW - will download (no cache)
-  🔄 Downloading data for 110 tickers (110 full, 0 incremental)...
-  📥 Downloading FULL range for 110 tickers...
-  📡 Trying Alpaca for 110 tickers...
-  ⚠️ Alpaca batch fetch failed: {"message":"invalid symbol: 8TRA.DE"}
-. Falling back to yfinance...
-  📡 Trying TwelveData for 110 remaining tickers in parallel...
-  ⚠️ An error occurred while fetching data from TwelveData SDK for ABBN.SW: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
-  ⚠️ An error occurred while fetching data from TwelveData SDK for AIR.PA: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
-  ⚠️ An error occurred while fetching data from TwelveData SDK for ALC.SW: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
-  ⚠️ An error occurred while fetching data from TwelveData SDK for 8TRA.DE: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
-  ⚠️ An error occurred while fetching data from TwelveData SDK for ALV.DE: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
-  ⚠️ An error occurred while fetching data from TwelveData SDK for AIXA.DE: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
-  ⚠️ An error occurred while fetching data from TwelveData SDK for ADS.DE: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
-  ⚠️ An error occurred while fetching data from TwelveData SDK for AFX.DE: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
-
-  ⚠️ TwelveData API rate limit reached. Skipping remaining TwelveData requests...
-  📡 Falling back to yfinance for 110 remaining tickers...
-  ✅ yfinance: 110 tickers
-      ✅ Created new cache for 8TRA.DE
-      ✅ Created new cache for ABBN.SW
-      ✅ Created new cache for ADS.DE
-      ✅ Created new cache for AFX.DE
-      ✅ Created new cache for AIR.PA
-      ✅ Created new cache for AIXA.DE
-      ✅ Created new cache for ALC.SW
-      ✅ Created new cache for ALV.DE
-      ✅ Created new cache for AT1.DE
-      ✅ Created new cache for BAS.DE
-      ✅ Created new cache for BAYN.DE
-      ✅ Created new cache for BC8.DE
-      ✅ Created new cache for BEI.DE
-      ✅ Created new cache for BFSA.DE
-      ✅ Created new cache for BMW.DE
-      ✅ Created new cache for BNR.DE
-      ✅ Created new cache for BOSS.DE
-      ✅ Created new cache for CBK.DE
-      ✅ Created new cache for CFR.SW
-      ✅ Created new cache for CON.DE
-      ✅ Created new cache for DB1.DE
-      ✅ Created new cache for DBK.DE
-      ✅ Created new cache for DHER.DE
-      ✅ Created new cache for DHL.DE
-      ✅ Created new cache for DTE.DE
-      ✅ Created new cache for DTG.DE
-      ✅ Created new cache for ECV.DE
-      ✅ Created new cache for ENR.DE
-      ✅ Created new cache for EOAN.DE
-      ✅ Created new cache for EVD.DE
-      ✅ Created new cache for EVK.DE
-      ✅ Created new cache for EVT.DE
-      ✅ Updated cache for FIX (full download)
-      ✅ Created new cache for FME.DE
-      ✅ Created new cache for FNTN.DE
-      ✅ Created new cache for FPE3.DE
-      ✅ Created new cache for FRA.DE
-      ✅ Created new cache for FRE.DE
-      ✅ Created new cache for G1A.DE
-      ✅ Created new cache for G24.DE
-      ✅ Created new cache for GBF.DE
-      ✅ Created new cache for GEBN.SW
-      ✅ Created new cache for GIVN.SW
-      ✅ Created new cache for GXI.DE
-      ✅ Created new cache for HAG.DE
-      ✅ Created new cache for HEI.DE
-      ✅ Created new cache for HEN3.DE
-      ✅ Created new cache for HFG.DE
-      ✅ Created new cache for HLE.DE
-      ✅ Created new cache for HNR1.DE
-      ✅ Created new cache for HOLN.SW
-      ✅ Created new cache for HOT.DE
-      ✅ Created new cache for IFX.DE
-      ✅ Created new cache for JEN.DE
-      ✅ Created new cache for JUN3.DE
-      ✅ Created new cache for KBX.DE
-      ✅ Created new cache for KGX.DE
-      ✅ Created new cache for KNIN.SW
-      ✅ Created new cache for KRN.DE
-      ✅ Created new cache for LEG.DE
-      ✅ Created new cache for LHA.DE
-      ✅ Created new cache for LOGN.SW
-      ✅ Created new cache for LONN.SW
-      ✅ Created new cache for LXS.DE
-      ✅ Created new cache for MBG.DE
-      ✅ Created new cache for MRK.DE
-      ✅ Created new cache for MTX.DE
-      ✅ Created new cache for MUV2.DE
-      ✅ Created new cache for NDA.DE
-      ✅ Created new cache for NDX1.DE
-      ✅ Created new cache for NEM.DE
-      ✅ Created new cache for NESN.SW
-      ✅ Created new cache for NOVN.SW
-      ✅ Created new cache for PAH3.DE
-      ✅ Created new cache for PGHN.SW
-      ✅ Created new cache for PUM.DE
-      ✅ Created new cache for QIA.DE
+  ✅ Cache hit for ZURN.SW (579 rows, up to date)
+  🔄 Downloading data for 2 tickers (2 full, 0 incremental)...
+  📥 Downloading FULL range for 2 tickers...
+  📡 Trying Alpaca for 2 tickers...
+  ✅ Alpaca: 2/2 tickers
       ✅ Updated cache for QQQ (full download)
-      ✅ Created new cache for RAA.DE
-      ✅ Created new cache for RDC.DE
-      ✅ Created new cache for RHM.DE
-      ✅ Created new cache for ROG.SW
-      ✅ Created new cache for RRTL.DE
-      ✅ Created new cache for RWE.DE
-      ✅ Created new cache for SAP.DE
-      ✅ Created new cache for SAX.DE
-      ✅ Created new cache for SCMN.SW
-      ✅ Created new cache for SDF.DE
-      ✅ Created new cache for SHL.DE
-      ✅ Created new cache for SIE.DE
-      ✅ Created new cache for SIKA.SW
-      ✅ Created new cache for SLHN.SW
-      ✅ Created new cache for SOON.SW
       ✅ Updated cache for SPY (full download)
-      ✅ Created new cache for SREN.SW
-      ✅ Created new cache for STM.DE
-      ✅ Created new cache for SY1.DE
-      ✅ Created new cache for TEG.DE
-      ✅ Created new cache for TKA.DE
-      ✅ Created new cache for TLX.DE
-      ✅ Created new cache for TMV.DE
-      ✅ Created new cache for TUI1.DE
-      ✅ Created new cache for UBSG.SW
-      ✅ Created new cache for UTDI.DE
-      ✅ Created new cache for VNA.DE
-      ✅ Created new cache for VOW3.DE
-      ✅ Created new cache for WAF.DE
-      ✅ Created new cache for WCH.DE
-      ✅ Created new cache for ZAL.DE
-      ✅ Created new cache for ZURN.SW
 
   📊 Data Summary for 626 Tickers
   ===============================================================================================
   Ticker   Status          Rows     Start Date   End Date     Info                
   -----------------------------------------------------------------------------------------------
-  8TRA.DE  New DL          580      2023-10-03   2025-12-31   +580 new rows       
+  8TRA.DE  Cache Hit       579      2023-10-04   2025-12-31   From cache          
   A        Cache Hit       1124     2023-10-04   2025-12-30   From cache          
   AAPL     Cache Hit       1124     2023-10-04   2025-12-30   From cache          
-  ABBN.SW  New DL          580      2023-10-03   2025-12-31   +580 new rows       
+  ABBN.SW  Cache Hit       579      2023-10-04   2025-12-31   From cache          
   ABBV     Cache Hit       1124     2023-10-04   2025-12-30   From cache          
   ABNB     Cache Hit       1124     2023-10-04   2025-12-30   From cache          
   ABT      Cache Hit       1124     2023-10-04   2025-12-30   From cache          
@@ -794,22 +672,22 @@ Total unique tickers found: 626
   ADI      Cache Hit       1124     2023-10-04   2025-12-30   From cache          
   ADM      Cache Hit       1124     2023-10-04   2025-12-30   From cache          
   ADP      Cache Hit       1124     2023-10-04   2025-12-30   From cache          
-  ADS.DE   New DL          580      2023-10-03   2025-12-31   +580 new rows       
+  ADS.DE   Cache Hit       579      2023-10-04   2025-12-31   From cache          
   ADSK     Cache Hit       1124     2023-10-04   2025-12-30   From cache          
   AEE      Cache Hit       1124     2023-10-04   2025-12-30   From cache          
   AEP      Cache Hit       1124     2023-10-04   2025-12-30   From cache          
   AES      Cache Hit       1124     2023-10-04   2025-12-30   From cache          
   AFL      Cache Hit       1124     2023-10-04   2025-12-30   From cache          
-  AFX.DE   New DL          580      2023-10-03   2025-12-31   +580 new rows       
+  AFX.DE   Cache Hit       579      2023-10-04   2025-12-31   From cache          
   AIG      Cache Hit       1124     2023-10-04   2025-12-30   From cache          
-  AIR.PA   New DL          580      2023-10-03   2025-12-31   +580 new rows       
-  AIXA.DE  New DL          580      2023-10-03   2025-12-31   +580 new rows       
+  AIR.PA   Cache Hit       579      2023-10-04   2025-12-31   From cache          
+  AIXA.DE  Cache Hit       579      2023-10-04   2025-12-31   From cache          
   AIZ      Cache Hit       1124     2023-10-04   2025-12-30   From cache          
   AJG      Cache Hit       1124     2023-10-04   2025-12-30   From cache          
   ... and 601 more tickers
   ===============================================================================================
-  ✅ 516 cache hits, 110 downloads (63800 new rows)
-  📋 Download types: 107 new, 3 full, 0 incremental
+  ✅ 624 cache hits, 2 downloads (1126 new rows)
+  📋 Download types: 0 new, 2 full, 0 incremental
 
   🔄 Reloading 626 tickers from updated cache...
   📊 Reloaded data: 626 tickers = 3979 total columns
@@ -902,20 +780,6 @@ DEBUG: Script execution initiated.
 [GPU] LightGBM version: 4.6.0
 DEBUG: Script execution initiated.
 🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
-  High return: APP: 420.3% | $75.0900 → $390.70 | 364 days (250 data points)
-  High return: HOOD: 409.1% | $20.2400 → $103.05 | 364 days (250 data points)
   High return: PLTR: 507.2% | $26.0800 → $158.35 | 364 days (250 data points)
  Detected 8.0GB VRAM - configuring slots dynamically
 [GPU] torch.cuda.is_available(): True
@@ -923,6 +787,14 @@ DEBUG: Script execution initiated.
 [GPU] LightGBM version: 4.6.0
 DEBUG: Script execution initiated.
 🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
+  High return: HOOD: 409.1% | $20.2400 → $103.05 | 364 days (250 data points)
+ Detected 8.0GB VRAM - configuring slots dynamically
+[GPU] torch.cuda.is_available(): True
+[GPU] XGBoost version: 3.1.2
+[GPU] LightGBM version: 4.6.0
+DEBUG: Script execution initiated.
+🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
+  High return: APP: 420.3% | $75.0900 → $390.70 | 364 days (250 data points)
  Detected 8.0GB VRAM - configuring slots dynamically
 [GPU] torch.cuda.is_available(): True
 [GPU] XGBoost version: 3.1.2
@@ -1036,271 +908,16 @@ Rank  | Ticker     |    Cached 1Y |     Yahoo 1Y |   Difference |          Statu
    🚀 Using Unified Parallel Training System (model-level parallelization)
    📊 Training Horizon: 60 days, Target: 41.31%
 
-================================================================================
 🚀 UNIFIED PARALLEL TRAINING SYSTEM
-================================================================================
+==========================================
    Tickers: 11
    Period: 2024-07-30 to 2025-07-30
    Workers: 4
-   PyTorch (LSTM/TCN/GRU): GPU
-   XGBoost: GPU
-================================================================================
-
+   GPU Mode: Enabled
+==========================================
 📋 Generating tasks for 11 tickers...
    Enabled models: LSTM, TCN, XGBoost, RandomForest, LightGBM
    Generated 55 ticker model tasks (11 tickers × 5 models)
 ✅ Total tasks generated: 55
 
 🏃 Executing 55 training tasks in parallel...
-   Progress will be shown below:
-
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
-  [DIAGNOSTIC] PLTR: fetch_training_data - Initial data rows: 250
-   ↳ PLTR: rows after features available: 171
-  [DEBUG] PLTR/TCN: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: PLTR_TCN - Acquired GPU slot
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
-  [DIAGNOSTIC] PLTR: fetch_training_data - Initial data rows: 250
-   ↳ PLTR: rows after features available: 171
-  [DEBUG] PLTR/LSTM: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: PLTR_LSTM - Acquired GPU slot
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
-  [DIAGNOSTIC] PLTR: fetch_training_data - Initial data rows: 250
-   ↳ PLTR: rows after features available: 171
-  [DEBUG] PLTR/XGBoost: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: PLTR_XGBoost - Acquired GPU slot
-  [DEBUG] PLTR/TCN: Starting train_single_model_type...
-  [DEBUG] PLTR/TCN: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: PLTR_TCN - Released GPU slot
-  [DIAGNOSTIC] PLTR: fetch_training_data - Initial data rows: 250
-   ↳ PLTR: rows after features available: 171
-  [DEBUG] PLTR/LightGBM: fetch_training_data returned 171 rows, 35 features
-  [DEBUG] PLTR/LightGBM: Starting train_single_model_type...
-  [DEBUG] PLTR/LightGBM: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] APP: fetch_training_data - Initial data rows: 250
-   ↳ APP: rows after features available: 171
-  [DEBUG] APP/LSTM: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: APP_LSTM - Acquired GPU slot
-  [DEBUG] PLTR/LSTM: Starting train_single_model_type...
-  [DEBUG] PLTR/LSTM: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: PLTR_LSTM - Released GPU slot
-  [DIAGNOSTIC] APP: fetch_training_data - Initial data rows: 250
-   ↳ APP: rows after features available: 171
-  [DEBUG] APP/TCN: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: APP_TCN - Acquired GPU slot
- Detected 8.0GB VRAM - configuring slots dynamically
-[GPU] torch.cuda.is_available(): True
-[GPU] XGBoost version: 3.1.2
-[GPU] LightGBM version: 4.6.0
-DEBUG: Script execution initiated.
-🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility
-  [DIAGNOSTIC] PLTR: fetch_training_data - Initial data rows: 250
-   ↳ PLTR: rows after features available: 171
-  [DEBUG] PLTR/RandomForest: fetch_training_data returned 171 rows, 35 features
-  [DEBUG] PLTR/RandomForest: Starting train_single_model_type...
-  [DEBUG] PLTR/RandomForest: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] APP: fetch_training_data - Initial data rows: 250
-   ↳ APP: rows after features available: 171
-  [DEBUG] APP/XGBoost: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: APP_XGBoost - Acquired GPU slot
-  [DEBUG] APP/LSTM: Starting train_single_model_type...
-  [DEBUG] APP/LSTM: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: APP_LSTM - Released GPU slot
-  [DEBUG] APP/TCN: Starting train_single_model_type...
-  [DEBUG] APP/TCN: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: APP_TCN - Released GPU slot
-  [DIAGNOSTIC] APP: fetch_training_data - Initial data rows: 250
-   ↳ APP: rows after features available: 171
-  [DEBUG] APP/LightGBM: fetch_training_data returned 171 rows, 35 features
-  [DEBUG] APP/LightGBM: Starting train_single_model_type...
-  [DEBUG] APP/LightGBM: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] HOOD: fetch_training_data - Initial data rows: 250
-   ↳ HOOD: rows after features available: 171
-  [DEBUG] HOOD/LSTM: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: HOOD_LSTM - Acquired GPU slot
-  [DEBUG] HOOD/LSTM: Starting train_single_model_type...
-  [DEBUG] HOOD/LSTM: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: HOOD_LSTM - Released GPU slot
-  [DIAGNOSTIC] HOOD: fetch_training_data - Initial data rows: 250
-   ↳ HOOD: rows after features available: 171
-  [DEBUG] HOOD/TCN: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: HOOD_TCN - Acquired GPU slot
-  [DEBUG] HOOD/TCN: Starting train_single_model_type...
-  [DEBUG] HOOD/TCN: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: HOOD_TCN - Released GPU slot
-  [DIAGNOSTIC] HOOD: fetch_training_data - Initial data rows: 250
-   ↳ HOOD: rows after features available: 171
-  [DEBUG] HOOD/XGBoost: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: HOOD_XGBoost - Acquired GPU slot
-  [DIAGNOSTIC] APP: fetch_training_data - Initial data rows: 250
-   ↳ APP: rows after features available: 171
-  [DEBUG] APP/RandomForest: fetch_training_data returned 171 rows, 35 features
-  [DEBUG] APP/RandomForest: Starting train_single_model_type...
-  [DEBUG] APP/RandomForest: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] HOOD: fetch_training_data - Initial data rows: 250
-   ↳ HOOD: rows after features available: 171
-  [DEBUG] HOOD/RandomForest: fetch_training_data returned 171 rows, 35 features
-  [DEBUG] HOOD/RandomForest: Starting train_single_model_type...
-  [DEBUG] HOOD/RandomForest: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] HOOD: fetch_training_data - Initial data rows: 250
-   ↳ HOOD: rows after features available: 171
-  [DEBUG] HOOD/LightGBM: fetch_training_data returned 171 rows, 35 features
-  [DEBUG] HOOD/LightGBM: Starting train_single_model_type...
-  [DEBUG] HOOD/LightGBM: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] ENR.DE: fetch_training_data - Initial data rows: 253
-   ↳ ENR.DE: rows after features available: 174
-  [DEBUG] ENR.DE/LSTM: fetch_training_data returned 174 rows, 35 features
-🐛 DEBUG: ENR.DE_LSTM - Acquired GPU slot
-  [DEBUG] ENR.DE/LSTM: Starting train_single_model_type...
-  [DEBUG] ENR.DE/LSTM: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: ENR.DE_LSTM - Released GPU slot
-  [DIAGNOSTIC] ENR.DE: fetch_training_data - Initial data rows: 253
-   ↳ ENR.DE: rows after features available: 174
-  [DEBUG] ENR.DE/TCN: fetch_training_data returned 174 rows, 35 features
-🐛 DEBUG: ENR.DE_TCN - Acquired GPU slot
-  [DEBUG] ENR.DE/TCN: Starting train_single_model_type...
-  [DEBUG] ENR.DE/TCN: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: ENR.DE_TCN - Released GPU slot
-  [DIAGNOSTIC] ENR.DE: fetch_training_data - Initial data rows: 253
-   ↳ ENR.DE: rows after features available: 174
-  [DEBUG] ENR.DE/XGBoost: fetch_training_data returned 174 rows, 35 features
-🐛 DEBUG: ENR.DE_XGBoost - Acquired GPU slot
-  [DEBUG] PLTR/XGBoost: Starting train_single_model_type...
-  [DEBUG] PLTR/XGBoost: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: PLTR_XGBoost - Released GPU slot
-  [DIAGNOSTIC] ENR.DE: fetch_training_data - Initial data rows: 253
-   ↳ ENR.DE: rows after features available: 174
-  [DEBUG] ENR.DE/RandomForest: fetch_training_data returned 174 rows, 35 features
-  [DEBUG] ENR.DE/RandomForest: Starting train_single_model_type...
-  [DEBUG] ENR.DE/RandomForest: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] ENR.DE: fetch_training_data - Initial data rows: 253
-   ↳ ENR.DE: rows after features available: 174
-  [DEBUG] ENR.DE/LightGBM: fetch_training_data returned 174 rows, 35 features
-  [DEBUG] ENR.DE/LightGBM: Starting train_single_model_type...
-  [DEBUG] ENR.DE/LightGBM: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] GEV: fetch_training_data - Initial data rows: 250
-   ↳ GEV: rows after features available: 171
-  [DEBUG] GEV/LSTM: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: GEV_LSTM - Acquired GPU slot
-  [DEBUG] GEV/LSTM: Starting train_single_model_type...
-  [DEBUG] GEV/LSTM: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: GEV_LSTM - Released GPU slot
-  [DIAGNOSTIC] GEV: fetch_training_data - Initial data rows: 250
-   ↳ GEV: rows after features available: 171
-  [DEBUG] GEV/TCN: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: GEV_TCN - Acquired GPU slot
-  [DEBUG] GEV/TCN: Starting train_single_model_type...
-  [DEBUG] GEV/TCN: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: GEV_TCN - Released GPU slot
-  [DIAGNOSTIC] GEV: fetch_training_data - Initial data rows: 250
-   ↳ GEV: rows after features available: 171
-  [DEBUG] GEV/XGBoost: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: GEV_XGBoost - Acquired GPU slot
-  [DEBUG] APP/XGBoost: Starting train_single_model_type...
-  [DEBUG] APP/XGBoost: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: APP_XGBoost - Released GPU slot
-  [DEBUG] HOOD/XGBoost: Starting train_single_model_type...
-  [DEBUG] HOOD/XGBoost: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: HOOD_XGBoost - Released GPU slot
-  [DIAGNOSTIC] GEV: fetch_training_data - Initial data rows: 250
-   ↳ GEV: rows after features available: 171
-  [DEBUG] GEV/LightGBM: fetch_training_data returned 171 rows, 35 features
-  [DEBUG] GEV/LightGBM: Starting train_single_model_type...
-  [DEBUG] GEV/LightGBM: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] RHM.DE: fetch_training_data - Initial data rows: 253
-   ↳ RHM.DE: rows after features available: 174
-  [DEBUG] RHM.DE/LSTM: fetch_training_data returned 174 rows, 35 features
-🐛 DEBUG: RHM.DE_LSTM - Acquired GPU slot
-  [DEBUG] RHM.DE/LSTM: Starting train_single_model_type...
-  [DEBUG] RHM.DE/LSTM: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: RHM.DE_LSTM - Released GPU slot
-  [DIAGNOSTIC] RHM.DE: fetch_training_data - Initial data rows: 253
-   ↳ RHM.DE: rows after features available: 174
-  [DEBUG] RHM.DE/TCN: fetch_training_data returned 174 rows, 35 features
-🐛 DEBUG: RHM.DE_TCN - Acquired GPU slot
-  [DIAGNOSTIC] GEV: fetch_training_data - Initial data rows: 250
-   ↳ GEV: rows after features available: 171
-  [DEBUG] GEV/RandomForest: fetch_training_data returned 171 rows, 35 features
-  [DEBUG] GEV/RandomForest: Starting train_single_model_type...
-  [DEBUG] GEV/RandomForest: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] RHM.DE: fetch_training_data - Initial data rows: 253
-   ↳ RHM.DE: rows after features available: 174
-  [DEBUG] RHM.DE/XGBoost: fetch_training_data returned 174 rows, 35 features
-🐛 DEBUG: RHM.DE_XGBoost - Acquired GPU slot
-  [DEBUG] RHM.DE/TCN: Starting train_single_model_type...
-  [DEBUG] RHM.DE/TCN: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: RHM.DE_TCN - Released GPU slot
-  [DEBUG] ENR.DE/XGBoost: Starting train_single_model_type...
-  [DEBUG] ENR.DE/XGBoost: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: ENR.DE_XGBoost - Released GPU slot
-  [DIAGNOSTIC] TKA.DE: fetch_training_data - Initial data rows: 253
-   ↳ TKA.DE: rows after features available: 174
-  [DEBUG] TKA.DE/LSTM: fetch_training_data returned 174 rows, 35 features
-🐛 DEBUG: TKA.DE_LSTM - Acquired GPU slot
-  [DIAGNOSTIC] RHM.DE: fetch_training_data - Initial data rows: 253
-   ↳ RHM.DE: rows after features available: 174
-  [DEBUG] RHM.DE/RandomForest: fetch_training_data returned 174 rows, 35 features
-  [DEBUG] RHM.DE/RandomForest: Starting train_single_model_type...
-  [DEBUG] RHM.DE/RandomForest: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] RHM.DE: fetch_training_data - Initial data rows: 253
-   ↳ RHM.DE: rows after features available: 174
-  [DEBUG] RHM.DE/LightGBM: fetch_training_data returned 174 rows, 35 features
-  [DEBUG] RHM.DE/LightGBM: Starting train_single_model_type...
-  [DEBUG] RHM.DE/LightGBM: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] TKA.DE: fetch_training_data - Initial data rows: 253
-   ↳ TKA.DE: rows after features available: 174
-  [DEBUG] TKA.DE/TCN: fetch_training_data returned 174 rows, 35 features
-🐛 DEBUG: TKA.DE_TCN - Acquired GPU slot
-  [DEBUG] TKA.DE/TCN: Starting train_single_model_type...
-  [DEBUG] TKA.DE/TCN: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: TKA.DE_TCN - Released GPU slot
-  [DIAGNOSTIC] TKA.DE: fetch_training_data - Initial data rows: 253
-   ↳ TKA.DE: rows after features available: 174
-  [DEBUG] TKA.DE/XGBoost: fetch_training_data returned 174 rows, 35 features
-🐛 DEBUG: TKA.DE_XGBoost - Acquired GPU slot
-  [DEBUG] TKA.DE/LSTM: Starting train_single_model_type...
-  [DEBUG] TKA.DE/LSTM: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: TKA.DE_LSTM - Released GPU slot
-  [DIAGNOSTIC] TKA.DE: fetch_training_data - Initial data rows: 253
-   ↳ TKA.DE: rows after features available: 174
-  [DEBUG] TKA.DE/RandomForest: fetch_training_data returned 174 rows, 35 features
-  [DEBUG] TKA.DE/RandomForest: Starting train_single_model_type...
-  [DEBUG] TKA.DE/RandomForest: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] TKA.DE: fetch_training_data - Initial data rows: 253
-   ↳ TKA.DE: rows after features available: 174
-  [DEBUG] TKA.DE/LightGBM: fetch_training_data returned 174 rows, 35 features
-  [DEBUG] TKA.DE/LightGBM: Starting train_single_model_type...
-  [DEBUG] TKA.DE/LightGBM: train_single_model_type returned: <class 'dict'>, has model: True
-  [DIAGNOSTIC] TPR: fetch_training_data - Initial data rows: 250
-   ↳ TPR: rows after features available: 171
-  [DEBUG] TPR/LSTM: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: TPR_LSTM - Acquired GPU slot
-  [DEBUG] TPR/LSTM: Starting train_single_model_type...
-  [DEBUG] TPR/LSTM: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: TPR_LSTM - Released GPU slot
-  [DIAGNOSTIC] TPR: fetch_training_data - Initial data rows: 250
-   ↳ TPR: rows after features available: 171
-  [DEBUG] TPR/TCN: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: TPR_TCN - Acquired GPU slot
-  [DEBUG] TPR/TCN: Starting train_single_model_type...
-  [DEBUG] TPR/TCN: train_single_model_type returned: <class 'dict'>, has model: True
-🐛 DEBUG: TPR_TCN - Released GPU slot
-  [DIAGNOSTIC] TPR: fetch_training_data - Initial data rows: 250
-   ↳ TPR: rows after features available: 171
-  [DEBUG] TPR/XGBoost: fetch_training_data returned 171 rows, 35 features
-🐛 DEBUG: TPR_XGBoost - Acquired GPU slot

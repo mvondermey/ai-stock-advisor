@@ -75,69 +75,38 @@ def _init_pool_worker(gpu_semaphore):
         pass
 
 
-def _acquire_gpu_slot(ticker: str, model_type: str = 'LSTM'):
+def _acquire_gpu_slot(ticker: str):
     """Acquire a GPU training slot if CUDA is enabled and semaphore is available."""
     global _GPU_TRAIN_SEMAPHORE
-    from config import FORCE_CPU, GPU_MODEL_SLOTS
-    
+    from config import FORCE_CPU
     # Skip GPU slot management if FORCE_CPU is enabled
     if FORCE_CPU:
         return
-    
     # If single-process training, don't gate GPU usage
     if NUM_PROCESSES <= 1:
         return
-    
-    # Determine model category and max slots
-    model_category = 'LSTM' if model_type in ['LSTM', 'TCN', 'GRU'] else 'XGBoost'
-    max_slots = GPU_MODEL_SLOTS.get(model_category, 0)
-    
-    if max_slots == 0 or not CUDA_AVAILABLE:
+    if not CUDA_AVAILABLE or _GPU_TRAIN_SEMAPHORE is None:
         return
-    
-    # Initialize semaphore if needed
-    if _GPU_TRAIN_SEMAPHORE is None:
-        import threading
-        _GPU_TRAIN_SEMAPHORE = threading.Semaphore(max_slots)
-    
-    print(f"🐛 DEBUG: {ticker} - Waiting for GPU slot ({model_type}, {max_slots} max)...", flush=True)
-    
-    try:
-        # Try to acquire slot with 5-minute timeout
-        acquired = _GPU_TRAIN_SEMAPHORE.acquire(timeout=300)
-        if acquired:
-            print(f"🐛 DEBUG: {ticker} - Acquired GPU slot ✅", flush=True)
-        else:
-            print(f"⏱️ {ticker} - GPU slot timeout after 5min, using CPU fallback", flush=True)
-    except Exception as e:
-        print(f"⚠️ {ticker} - GPU acquisition error: {e}", flush=True)
+    print(f"🐛 DEBUG: {ticker} - Waiting for GPU slot ({GPU_MAX_CONCURRENT_TRAINING_WORKERS} max)...", flush=True)
+    _GPU_TRAIN_SEMAPHORE.acquire()
+    print(f"🐛 DEBUG: {ticker} - Acquired GPU slot ✅", flush=True)
 
 
-def _release_gpu_slot(ticker: str, model_type: str = 'LSTM'):
+def _release_gpu_slot(ticker: str):
     global _GPU_TRAIN_SEMAPHORE
     from config import FORCE_CPU
-    
     # Skip GPU slot management if FORCE_CPU is enabled
     if FORCE_CPU:
         return
-    
     if NUM_PROCESSES <= 1:
         return
-    
     if not CUDA_AVAILABLE or _GPU_TRAIN_SEMAPHORE is None:
         return
-    
     try:
-        # Check if we can release (avoid releasing too many times)
-        if _GPU_TRAIN_SEMAPHORE._value < _GPU_TRAIN_SEMAPHORE._initial_value:
-            _GPU_TRAIN_SEMAPHORE.release()
-            print(f"🐛 DEBUG: {ticker} - Released GPU slot ({model_type})", flush=True)
-        else:
-            print(f"⚠️ {ticker} - No GPU slot to release (already at max)", flush=True)
-    except ValueError as e:
-        print(f"⚠️ {ticker} - Semaphore release error: {e}", flush=True)
-    except Exception as e:
-        print(f"⚠️ {ticker} - GPU release error: {e}", flush=True)
+        _GPU_TRAIN_SEMAPHORE.release()
+        print(f"🐛 DEBUG: {ticker} - Released GPU slot", flush=True)
+    except Exception:
+        pass
 
 # Conditionally import LSTM/GRU classes if PyTorch is available
 try:
@@ -497,7 +466,11 @@ def train_models_for_period(
     # ============================================
     if USE_UNIFIED_PARALLEL_TRAINING:
         print(f"   🚀 Using Unified Parallel Training System (model-level parallelization)")
-        from src.parallel_training import train_all_models_parallel
+        try:
+            from parallel_training import train_all_models_parallel
+        except ModuleNotFoundError:
+            # Fallback for different import contexts
+            from src.parallel_training import train_all_models_parallel
         
         # Calculate period-specific horizon
         period_horizon = PERIOD_HORIZONS.get(period_name, 60)

@@ -983,7 +983,7 @@ def train_and_evaluate_models(
             device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
             
             dataset = TensorDataset(X_sequences, y_sequences)
-            dataloader = DataLoader(dataset, batch_size=LSTM_BATCH_SIZE, shuffle=True)
+            dataloader = DataLoader(dataset, batch_size=LSTM_BATCH_SIZE, shuffle=True, drop_last=True)
 
             input_size = X_sequences.shape[2]
             
@@ -1334,7 +1334,7 @@ def train_and_evaluate_models(
                                 gru_model = safe_to_device(GRURegressor(input_size, temp_hyperparams["hidden_size"], temp_hyperparams["num_layers"], 1, temp_hyperparams["dropout_rate"]), device)
                             optimizer_gru = optim.Adam(gru_model.parameters(), lr=temp_hyperparams["learning_rate"])
                             
-                            current_dataloader = DataLoader(dataset, batch_size=temp_hyperparams["batch_size"], shuffle=True)
+                            current_dataloader = DataLoader(dataset, batch_size=temp_hyperparams["batch_size"], shuffle=True, drop_last=True)
 
                             # Show training progress every 10 epochs or at key milestones
                             epochs_to_show = [0, temp_hyperparams["epochs"]//4, temp_hyperparams["epochs"]//2, 3*temp_hyperparams["epochs"]//4, temp_hyperparams["epochs"]-1]
@@ -1506,7 +1506,7 @@ def train_and_evaluate_models(
                     optimizer_gru = optim.Adam(gru_model.parameters(), lr=learning_rate)
                     
                     # Create DataLoader for current batch_size
-                    current_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+                    current_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 
                     for epoch in range(epochs):
                         try:
@@ -1957,7 +1957,7 @@ def train_single_model_type(
             device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
             
             dataset = TensorDataset(X_sequences, y_sequences)
-            dataloader = DataLoader(dataset, batch_size=LSTM_BATCH_SIZE, shuffle=True)
+            dataloader = DataLoader(dataset, batch_size=LSTM_BATCH_SIZE, shuffle=True, drop_last=True)
             
             input_size = X_sequences.shape[2]
             criterion = nn.MSELoss()
