@@ -58,13 +58,13 @@ def get_all_tickers() -> List[str]:
                 )
                 assets = trading_client.get_all_assets(search_params)
                 
-                # ✅ Use Alpaca's built-in attributes to filter common stocks
+                # Use Alpaca's built-in attributes to filter common stocks
                 # fractionable=True typically indicates common stocks (not warrants/preferred/rights)
                 # If fractionable attribute doesn't exist, assume it's NOT a common stock (safer)
                 tradable_assets = [
                     a for a in assets 
                     if a.tradable 
-                    and getattr(a, 'fractionable', False)  # ✅ Default False = exclude if unknown
+                    and getattr(a, 'fractionable', False)  # Default False = exclude if unknown
                 ]
                 
                 # Filter by exchange if specified in config
@@ -73,9 +73,9 @@ def get_all_tickers() -> List[str]:
                 
                 # Get symbols
                 alpaca_tickers = [asset.symbol for asset in tradable_assets]
-                print(f"   📊 After fractionable filter: {len(alpaca_tickers)} tickers")
+                print(f"   After fractionable filter: {len(alpaca_tickers)} tickers")
                 
-                # ✅ Additional filtering: Remove foreign ADRs and special securities
+                # Additional filtering: Remove foreign ADRs and special securities
                 def is_us_common_stock(symbol: str) -> bool:
                     """Filter out foreign ADRs (ending in Y) and other special securities"""
                     symbol_upper = symbol.upper()
@@ -93,9 +93,9 @@ def get_all_tickers() -> List[str]:
                 alpaca_tickers_before = len(alpaca_tickers)
                 alpaca_tickers = [t for t in alpaca_tickers if is_us_common_stock(t)]
                 filtered_count = alpaca_tickers_before - len(alpaca_tickers)
-                print(f"   📊 After ADR/special filter: {len(alpaca_tickers)} tickers (filtered out {filtered_count})")
+                print(f"   After ADR/special filter: {len(alpaca_tickers)} tickers (filtered out {filtered_count})")
                 if filtered_count > 0:
-                    print(f"   ✅ Removed {filtered_count} foreign ADRs/special securities (e.g., symbols ending in Y)")
+                    print(f"   Removed {filtered_count} foreign ADRs/special securities (e.g., symbols ending in Y)")
                 
 
                 # Apply ALPACA_STOCKS_LIMIT to prevent downloading too many stocks
@@ -110,23 +110,23 @@ def get_all_tickers() -> List[str]:
             except Exception as e:
                 print(f"[WARNING] Could not fetch asset list from Alpaca ({e}).")
         else:
-            print("⚠️ Alpaca stock selection is enabled, but SDK/API keys are not available.")
+            print(" Alpaca stock selection is enabled, but SDK/API keys are not available.")
 
     if MARKET_SELECTION.get("NASDAQ_ALL"):
         try:
             url = 'ftp://ftp.nasdaqtrader.com/symboldirectory/nasdaqlisted.txt'
             df = pd.read_csv(url, sep='|')
             df_clean = df.iloc[:-1]
-            # ✅ Filter: Test Issue = 'N' (not test), and exclude delisted (ETF column should be 'N' for stocks)
+            # Filter: Test Issue = 'N' (not test), and exclude delisted (ETF column should be 'N' for stocks)
             # Also check if there's a delisting indicator
             nasdaq_tickers = df_clean[
                 (df_clean['Test Issue'] == 'N') &  # Not a test issue
                 (df_clean.get('Financial Status', 'N') != 'D')  # Not delisted (if column exists)
             ]['Symbol'].tolist()
             all_tickers.update(nasdaq_tickers)
-            print(f"✅ Fetched {len(nasdaq_tickers)} active NASDAQ tickers (delisted excluded).")
+            print(f" Fetched {len(nasdaq_tickers)} active NASDAQ tickers (delisted excluded).")
         except Exception as e:
-            print(f"⚠️ Could not fetch full NASDAQ list ({e}).")
+            print(f" Could not fetch full NASDAQ list ({e}).")
 
     if MARKET_SELECTION.get("NASDAQ_100"):
         try:
@@ -136,9 +136,9 @@ def get_all_tickers() -> List[str]:
             table_nasdaq = pd.read_html(StringIO(response_nasdaq.text))[4]
             nasdaq_100_tickers = [s.replace('.', '-') for s in table_nasdaq['Ticker'].tolist()]
             all_tickers.update(nasdaq_100_tickers)
-            print(f"✅ Fetched {len(nasdaq_100_tickers)} tickers from NASDAQ 100.")
+            print(f" Fetched {len(nasdaq_100_tickers)} tickers from NASDAQ 100.")
         except Exception as e:
-            print(f"⚠️ Could not fetch NASDAQ 100 list ({e}). Using fallback list.")
+            print(f" Could not fetch NASDAQ 100 list ({e}). Using fallback list.")
             # Fallback list of popular NASDAQ 100 stocks
             nasdaq_100_tickers = [
                 'AAPL', 'MSFT', 'AMZN', 'GOOGL', 'GOOG', 'TSLA', 'NVDA', 'META', 'NFLX', 'AMD',
@@ -148,7 +148,7 @@ def get_all_tickers() -> List[str]:
                 'ASML', 'MNST', 'CSCO', 'EA', 'TTWO', 'ADI', 'AEP', 'AMGN', 'CCEP', 'EXC'
             ]
             all_tickers.update(nasdaq_100_tickers)
-            print(f"✅ Using fallback list with {len(nasdaq_100_tickers)} NASDAQ 100 tickers.")
+            print(f" Using fallback list with {len(nasdaq_100_tickers)} NASDAQ 100 tickers.")
 
     if MARKET_SELECTION.get("SP500"):
         try:
@@ -159,9 +159,9 @@ def get_all_tickers() -> List[str]:
             col = "Symbol" if "Symbol" in table_sp500.columns else table_sp500.columns[0]
             sp500_tickers = [s.replace('.', '-') for s in table_sp500[col].tolist()]
             all_tickers.update(sp500_tickers)
-            print(f"✅ Fetched {len(sp500_tickers)} tickers from S%26P 500.")
+            print(f" Fetched {len(sp500_tickers)} tickers from S%26P 500.")
         except Exception as e:
-            print(f"⚠️ Could not fetch S%26P 500 list ({e}).")
+            print(f" Could not fetch S%26P 500 list ({e}).")
 
     if MARKET_SELECTION.get("DOW_JONES"):
         try:
@@ -179,9 +179,9 @@ def get_all_tickers() -> List[str]:
             col = "Symbol"
             dow_tickers = [str(s).replace('.', '-') for s in table_dow[col].tolist()]
             all_tickers.update(dow_tickers)
-            print(f"✅ Fetched {len(dow_tickers)} tickers from Dow Jones. ")
+            print(f" Fetched {len(dow_tickers)} tickers from Dow Jones. ")
         except Exception as e:
-            print(f"⚠️ Could not fetch Dow Jones list ({e}).")
+            print(f" Could not fetch Dow Jones list ({e}).")
 
     if MARKET_SELECTION.get("POPULAR_ETFS"):
         try:
@@ -204,9 +204,9 @@ def get_all_tickers() -> List[str]:
                 raise ValueError("No ETF tickers found on the page.")
 
             all_tickers.update(etf_tickers)
-            print(f"✅ Fetched {len(etf_tickers)} tickers from Popular ETFs list.")
+            print(f" Fetched {len(etf_tickers)} tickers from Popular ETFs list.")
         except Exception as e:
-            print(f"⚠️ Could not fetch Popular ETFs list ({e}).")
+            print(f" Could not fetch Popular ETFs list ({e}).")
 
     if MARKET_SELECTION.get("CRYPTO"):
         try:
@@ -229,16 +229,16 @@ def get_all_tickers() -> List[str]:
                         if match:
                             crypto_tickers.add(f"{match.group(1)}-USD")
                 all_tickers.update(crypto_tickers)
-                print(f"✅ Fetched {len(crypto_tickers)} tickers from Cryptocurrency list.")
+                print(f" Fetched {len(crypto_tickers)} tickers from Cryptocurrency list.")
         except Exception as e:
-            print(f"⚠️ Could not fetch Cryptocurrency list ({e}).")
+            print(f" Could not fetch Cryptocurrency list ({e}).")
 
     if MARKET_SELECTION.get("DAX"):
         try:
             url_dax = "https://en.wikipedia.org/wiki/DAX"
             response_dax = requests.get(url_dax, headers=headers)
             response_dax.raise_for_status()
-            tables_dax = pd.read_html(StringIO(response_dax.text))[0]
+            tables_dax = pd.read_html(StringIO(response_dax.text))
             table_dax = None
             for table in tables_dax:
                 if 'Ticker' in table.columns:
@@ -248,16 +248,16 @@ def get_all_tickers() -> List[str]:
                 raise ValueError("Could not find the ticker table on the DAX Wikipedia page.")
             dax_tickers = [s if '.' in s else f"{s}.DE" for s in table_dax['Ticker'].tolist()]
             all_tickers.update(dax_tickers)
-            print(f"✅ Fetched {len(dax_tickers)} tickers from DAX.")
+            print(f" Fetched {len(dax_tickers)} tickers from DAX.")
         except Exception as e:
-            print(f"⚠️ Could not fetch DAX list ({e}).")
+            print(f" Could not fetch DAX list ({e}).")
 
     if MARKET_SELECTION.get("MDAX"):
         try:
             url_mdax = "https://en.wikipedia.org/wiki/MDAX"
             response_mdax = requests.get(url_mdax, headers=headers)
             response_mdax.raise_for_status()
-            tables_mdax = pd.read_html(StringIO(response_mdax.text))[0]
+            tables_mdax = pd.read_html(StringIO(response_mdax.text))
             table_mdax = None
             for table in tables_mdax:
                 if 'Ticker' in table.columns or 'Symbol' in table.columns:
@@ -268,16 +268,16 @@ def get_all_tickers() -> List[str]:
             ticker_col = 'Ticker' if 'Ticker' in table_mdax.columns else 'Symbol'
             mdax_tickers = [s if '.' in s else f"{s}.DE" for s in table_mdax[ticker_col].tolist()]
             all_tickers.update(mdax_tickers)
-            print(f"✅ Fetched {len(mdax_tickers)} tickers from MDAX.")
+            print(f" Fetched {len(mdax_tickers)} tickers from MDAX.")
         except Exception as e:
-            print(f"⚠️ Could not fetch MDAX list ({e}).")
+            print(f" Could not fetch MDAX list ({e}).")
 
     if MARKET_SELECTION.get("SMI"):
         try:
             url_smi = "https://en.wikipedia.org/wiki/Swiss_Market_Index"
             response_smi = requests.get(url_smi, headers=headers)
             response_smi.raise_for_status()
-            tables_smi = pd.read_html(StringIO(response_smi.text))[0]
+            tables_smi = pd.read_html(StringIO(response_smi.text))
             table_smi = None
             for table in tables_smi:
                 if 'Ticker' in table.columns:
@@ -287,16 +287,16 @@ def get_all_tickers() -> List[str]:
                 raise ValueError("Could not find the ticker table on the SMI Wikipedia page.")
             smi_tickers = [s if '.' in s else f"{s}.SW" for s in table_smi['Ticker'].tolist()]
             all_tickers.update(smi_tickers)
-            print(f"✅ Fetched {len(smi_tickers)} tickers from SMI.")
+            print(f" Fetched {len(smi_tickers)} tickers from SMI.")
         except Exception as e:
-            print(f"⚠️ Could not fetch SMI list ({e}).")
+            print(f" Could not fetch SMI list ({e}).")
 
     if MARKET_SELECTION.get("FTSE_MIB"):
         try:
             url_mib = "https://en.wikipedia.org/wiki/FTSE_MIB"
             response_mib = requests.get(url_mib, headers=headers)
             response_mib.raise_for_status()
-            tables_mib = pd.read_html(StringIO(response_mib.text))[0]
+            tables_mib = pd.read_html(StringIO(response_mib.text))
             table_mib = None
             for table in tables_mib:
                 if 'Ticker' in table.columns:
@@ -307,12 +307,12 @@ def get_all_tickers() -> List[str]:
             ticker_col = 'Ticker'
             mib_tickers = [s if '.' in s else f"{s}.MI" for s in table_mib[ticker_col].tolist()]
             all_tickers.update(mib_tickers)
-            print(f"✅ Fetched {len(mib_tickers)} tickers from FTSE MIB.")
+            print(f" Fetched {len(mib_tickers)} tickers from FTSE MIB.")
         except Exception as e:
-            print(f"⚠️ Could not fetch FTSE MIB list ({e}).")
+            print(f" Could not fetch FTSE MIB list ({e}).")
 
     if not all_tickers:
-        print("⚠️ No tickers fetched. Returning empty list.")
+        print(" No tickers fetched. Returning empty list.")
         return []
 
     string_tickers = {str(s) for s in all_tickers if pd.notna(s)}
@@ -328,7 +328,7 @@ def get_all_tickers() -> List[str]:
         else:
             final_tickers.add(s_ticker.replace('.', '-'))
 
-    # ✅ Always include benchmark tickers to ensure they're cached
+    # Always include benchmark tickers to ensure they're cached
     final_tickers.update(['QQQ', 'SPY'])
     
     print(f"Total unique tickers found: {len(final_tickers)}")
@@ -343,7 +343,7 @@ def get_tickers_for_backtest(n: int = 10) -> List[str]:
         col = "Symbol" if "Symbol" in table.columns else table.columns[0]
         tickers_all = [_normalize_symbol(sym, DATA_PROVIDER) for sym in table[col].tolist()]
     except Exception as e:
-        print(f"⚠️ Could not fetch S%26P 500 list ({e}). Using static fallback.")
+        print(f" Could not fetch S%26P 500 list ({e}). Using static fallback.")
         tickers_all = [_normalize_symbol(sym, DATA_PROVIDER) for sym in fallback]
 
     import random
@@ -430,7 +430,7 @@ def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[
         if s.empty or len(s) < 2:
             return None
         
-        # ✅ Data quality check: Require at least 200 trading days (~10 months minimum)
+        # Data quality check: Require at least 200 trading days (~10 months minimum)
         # This filters out recent IPOs and stocks with insufficient history
         if len(s) < 200:
             return None  # Insufficient data for reliable 1-year performance
@@ -442,14 +442,14 @@ def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[
 
         perf_1y = (end_price / start_price - 1.0) * 100.0
         
-        # ✅ Data quality check: Flag extreme returns (likely data issues or penny stocks)
+        # Data quality check: Flag extreme returns (likely data issues or penny stocks)
         # Filter out stocks with >300% annual returns (usually data quality issues)
         if perf_1y > 300.0:
             start_date = s.index[0]
             end_date = s.index[-1]
             days_of_data = (end_date - start_date).days
             # Only log, don't exclude - let the user see what's happening
-            print(f"  ⚠️ High return: {ticker}: {perf_1y:.1f}% | ${start_price:.4f} → ${end_price:.2f} | {days_of_data} days ({len(s)} data points)")
+            print(f"  High return: {ticker}: {perf_1y:.1f}% | ${start_price:.4f} → ${end_price:.2f} | {days_of_data} days ({len(s)} data points)")
         
         if np.isfinite(perf_1y):
             out = df_1y.copy()
@@ -473,14 +473,14 @@ def find_top_performers(
     Screens pre-fetched data for the top N performers and returns a list of (ticker, performance) tuples.
     """
     if all_tickers_data.empty:
-        print("❌ No ticker data provided to find_top_performers. Exiting.")
+        print(" No ticker data provided to find_top_performers. Exiting.")
         return []
 
     # Use provided performance end date, or fall back to data's max date
     if performance_end_date is not None:
         end_date = performance_end_date
     else:
-        # ✅ FIX: Handle both long-format (with 'date' column) and wide-format (DatetimeIndex)
+        # FIX: Handle both long-format (with 'date' column) and wide-format (DatetimeIndex)
         if 'date' in all_tickers_data.columns:
             # Long format: dates are in 'date' column
             end_date = pd.to_datetime(all_tickers_data['date']).max()
@@ -497,7 +497,7 @@ def find_top_performers(
         print("- Calculating 1-Year Performance Benchmarks...")
         benchmark_perfs = {}
         
-        # ✅ Use pre-fetched data from all_tickers_data instead of re-downloading
+        # Use pre-fetched data from all_tickers_data instead of re-downloading
         for bench_ticker in ['QQQ', 'SPY']:
             try:
                 # Extract benchmark data from all_tickers_data (long format)
@@ -505,7 +505,7 @@ def find_top_performers(
                     # Check if ticker exists in dataset
                     ticker_check = all_tickers_data[all_tickers_data['ticker'] == bench_ticker]
                     if ticker_check.empty:
-                        print(f"  ⚠️ {bench_ticker}: Not in dataset (available tickers: {sorted(all_tickers_data['ticker'].unique())[:10]}...)")
+                        print(f"  {bench_ticker}: Not in dataset (available tickers: {sorted(all_tickers_data['ticker'].unique())[:10]}...)")
                         continue
                     
                     bench_data = all_tickers_data[
@@ -515,33 +515,33 @@ def find_top_performers(
                     ].sort_values('date')
                     
                     if bench_data.empty:
-                        print(f"  ⚠️ {bench_ticker}: No data in date range {start_date.date()} to {end_date.date()}")
+                        print(f"  {bench_ticker}: No data in date range {start_date.date()} to {end_date.date()}")
                         print(f"      Available date range: {ticker_check['date'].min().date()} to {ticker_check['date'].max().date()}")
                         continue
                     
                     if 'Close' not in bench_data.columns:
-                        print(f"  ⚠️ {bench_ticker}: 'Close' column not found (columns: {list(bench_data.columns)})")
+                        print(f"  {bench_ticker}: 'Close' column not found (columns: {list(bench_data.columns)})")
                         continue
                     
                     # Drop NaN values
                     valid_prices = bench_data['Close'].dropna()
                     if len(valid_prices) < 2:
-                        print(f"  ⚠️ {bench_ticker}: Insufficient valid prices ({len(valid_prices)} non-NaN values)")
+                        print(f"  {bench_ticker}: Insufficient valid prices ({len(valid_prices)} non-NaN values)")
                         continue
                     
                     start_price = valid_prices.iloc[0]
                     end_price = valid_prices.iloc[-1]
                     
                     if pd.isna(start_price) or pd.isna(end_price):
-                        print(f"  ⚠️ {bench_ticker}: NaN prices (start={start_price}, end={end_price})")
+                        print(f"  {bench_ticker}: NaN prices (start={start_price}, end={end_price})")
                         continue
                     
                     if start_price > 0:
                         perf = ((end_price - start_price) / start_price) * 100
                         benchmark_perfs[bench_ticker] = perf
-                        print(f"  ✅ {bench_ticker} 1-Year Performance: {perf:.2f}% (${start_price:.2f} → ${end_price:.2f})")
+                        print(f"  {bench_ticker} 1-Year Performance: {perf:.2f}% (${start_price:.2f} → ${end_price:.2f})")
                     else:
-                        print(f"  ⚠️ {bench_ticker}: Invalid start price ({start_price})")
+                        print(f"  {bench_ticker}: Invalid start price ({start_price})")
                 else:
                     # Fallback to old method if data is in wide format
                     df = load_prices_robust(bench_ticker, start_date, end_date)
@@ -551,42 +551,42 @@ def find_top_performers(
                         if start_price > 0:
                             perf = ((end_price - start_price) / start_price) * 100
                             benchmark_perfs[bench_ticker] = perf
-                            print(f"  ✅ {bench_ticker} 1-Year Performance: {perf:.2f}%")
+                            print(f"  {bench_ticker} 1-Year Performance: {perf:.2f}%")
             except Exception as e:
-                print(f"  ⚠️ Could not calculate {bench_ticker} performance: {e}")
+                print(f"  Could not calculate {bench_ticker} performance: {e}")
                 import traceback
                 traceback.print_exc()
         
         if not benchmark_perfs:
-            print("❌ Could not calculate any benchmark performance. Cannot proceed.")
+            print(" Could not calculate any benchmark performance. Cannot proceed.")
             return []
             
         final_benchmark_perf = max(benchmark_perfs.values())
-        print(f"  📈 Using final 1-Year performance benchmark of {final_benchmark_perf:.2f}%")
+        print(f"  Using final 1-Year performance benchmark of {final_benchmark_perf:.2f}%")
     else:
-        print("ℹ️ Performance benchmark is disabled. All tickers will be considered.")
+        print(" Performance benchmark is disabled. All tickers will be considered.")
 
-    print("🔍 Calculating 1-Year performance from pre-fetched data...")
+    print(" Calculating 1-Year performance from pre-fetched data...")
     
-    # ✅ FIX: Handle both long-format and wide-format data
+    # FIX: Handle both long-format and wide-format data
     if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
         # Long format: use groupby for FAST splitting (much faster than filtering in a loop!)
-        print(f"   📊 Filtering data for period {start_date.date()} to {end_date.date()}...", flush=True)
+        print(f"   Filtering data for period {start_date.date()} to {end_date.date()}...", flush=True)
         all_data = all_tickers_data[
             (all_tickers_data['date'] >= start_date) & 
             (all_tickers_data['date'] <= end_date)
         ].copy()
         
         # Use groupby to split data in ONE operation (instead of 5644 filter operations!)
-        print(f"   📋 Splitting data by ticker using groupby (fast)...", flush=True)
+        print(f"   Splitting data by ticker using groupby (fast)...", flush=True)
         sys.stdout.flush()
         
         grouped = all_data.groupby('ticker')
         valid_tickers = list(grouped.groups.keys())
-        print(f"   📊 Found {len(valid_tickers)} tickers with data", flush=True)
+        print(f"   Found {len(valid_tickers)} tickers with data", flush=True)
         
         # Build prep_args using pre-grouped data (very fast!)
-        print(f"   🔧 Building parameter list...", flush=True)
+        print(f"   Building parameter list...", flush=True)
         prep_args = []
         for ticker in tqdm(valid_tickers, desc="Building params", ncols=100):
             try:
@@ -600,7 +600,7 @@ def find_top_performers(
         num_prep_workers = min(NUM_PROCESSES, len(prep_args)) if prep_args else 1
         prep_chunksize = max(1, len(prep_args) // (num_prep_workers * 2))
         
-        print(f"   🚀 Processing {len(prep_args)} tickers with {num_prep_workers} workers (chunksize={prep_chunksize})", flush=True)
+        print(f"   Processing {len(prep_args)} tickers with {num_prep_workers} workers (chunksize={prep_chunksize})", flush=True)
         sys.stdout.flush()
         
         params = []
@@ -614,11 +614,11 @@ def find_top_performers(
             params = [r for r in prep_results if r is not None]
     else:
         # Wide format: use original logic
-        print(f"   📊 Filtering data for period {start_date.date()} to {end_date.date()}...", flush=True)
+        print(f"   Filtering data for period {start_date.date()} to {end_date.date()}...", flush=True)
         all_data = all_tickers_data.loc[start_date:end_date]
         valid_tickers = list(all_data.columns.get_level_values(1).unique())
 
-        print(f"   📋 Building parameters for {len(valid_tickers)} tickers...", flush=True)
+        print(f"   Building parameters for {len(valid_tickers)} tickers...", flush=True)
         
         # Prepare data slices (wide format is already column-based, so this is fast)
         prep_args = []
@@ -643,7 +643,7 @@ def find_top_performers(
         num_prep_workers = min(NUM_PROCESSES, len(prep_args)) if prep_args else 1
         prep_chunksize = max(1, len(prep_args) // (num_prep_workers * 2))
         
-        print(f"   🚀 Processing {len(prep_args)} tickers with {num_prep_workers} workers (chunksize={prep_chunksize})", flush=True)
+        print(f"   Processing {len(prep_args)} tickers with {num_prep_workers} workers (chunksize={prep_chunksize})", flush=True)
         sys.stdout.flush()
         
         params = []
@@ -658,17 +658,17 @@ def find_top_performers(
     
     # Prepare for parallel processing
     if not params:
-        print("   ⚠️ No valid tickers found for performance calculation")
+        print("   No valid tickers found for performance calculation")
         return []
     
-    print(f"   📊 Prepared {len(params)} tickers for performance calculation", flush=True)
+    print(f"   Prepared {len(params)} tickers for performance calculation", flush=True)
     
     all_tickers_performance_with_df = []
     # Use configured number of processes for optimal performance
     num_workers = min(NUM_PROCESSES, len(params)) if params else 1
     chunksize = max(1, len(params) // (num_workers * 4)) if params else 1  # Optimal chunking
     
-    print(f"   🚀 Starting parallel calculation with {num_workers} workers (chunksize={chunksize})", flush=True)
+    print(f"   Starting parallel calculation with {num_workers} workers (chunksize={chunksize})", flush=True)
     sys.stdout.flush()
     
     with Pool(processes=num_workers) as pool:
@@ -682,10 +682,10 @@ def find_top_performers(
             if res:
                 all_tickers_performance_with_df.append(res)
     
-    print(f"   ✅ Performance calculation complete! Processed {len(all_tickers_performance_with_df)}/{len(params)} tickers")
+    print(f"   Performance calculation complete! Processed {len(all_tickers_performance_with_df)}/{len(params)} tickers")
 
     if not all_tickers_performance_with_df:
-        print("❌ No tickers with valid 1-Year performance found. Aborting.")
+        print(" No tickers with valid 1-Year performance found. Aborting.")
         return []
 
     sorted_all_tickers_performance_with_df = sorted(all_tickers_performance_with_df, key=lambda item: item[1], reverse=True)
@@ -694,12 +694,12 @@ def find_top_performers(
 
     if n_top > 0:
         final_performers_for_selection = sorted_all_tickers_performance_with_df[:n_top]
-        print(f"\n✅ Selected top {len(final_performers_for_selection)} tickers based on 1-Year performance.")
+        print(f"\n Selected top {len(final_performers_for_selection)} tickers based on 1-Year performance.")
     else:
         final_performers_for_selection = sorted_all_tickers_performance_with_df
-        print(f"\n✅ Analyzing all {len(final_performers_for_selection)} tickers (N_TOP_TICKERS is {n_top}).")
+        print(f"\n Analyzing all {len(final_performers_for_selection)} tickers (N_TOP_TICKERS is {n_top}).")
 
-    print(f"🔍 Applying performance benchmarks for selected tickers in parallel...")
+    print(f"\n Applying performance benchmarks for selected tickers in parallel...")
     
     finalize_params = [
         (ticker, perf_1y, df_1y, ytd_start_date, end_date, final_benchmark_perf, ytd_benchmark_perf, USE_PERFORMANCE_BENCHMARK)
@@ -725,9 +725,9 @@ def find_top_performers(
                 performance_data.append(res)
 
     if USE_PERFORMANCE_BENCHMARK:
-        print(f"\n✅ Found {len(performance_data)} stocks that passed the performance benchmarks.")
+        print(f"\n Found {len(performance_data)} stocks that passed the performance benchmarks.")
     else:
-        print(f"\n✅ Found {len(performance_data)} stocks for analysis (performance benchmark disabled).")
+        print(f"\n Found {len(performance_data)} stocks for analysis (performance benchmark disabled).")
         
     if not performance_data:
         return []
@@ -735,7 +735,7 @@ def find_top_performers(
     final_performers = performance_data
 
     if fcf_min_threshold is not None or ebitda_min_threshold is not None:
-        print(f"  🔍 Screening {len(final_performers)} strong performers for fundamental metrics in parallel...")
+        print(f"  Screening {len(final_performers)} strong performers for fundamental metrics in parallel...")
         
         fundamental_screen_params = [
             (ticker, perf_1y, fcf_min_threshold, ebitda_min_threshold)
@@ -760,11 +760,11 @@ def find_top_performers(
                 if res:
                     screened_performers.append(res)
 
-        print(f"  ✅ Found {len(screened_performers)} stocks passing the fundamental screens.")
+        print(f"  Found {len(screened_performers)} stocks passing the fundamental screens.")
         final_performers = screened_performers
 
-    # ✅ Fetch actual Yahoo Finance 1-year returns for comparison (parallel)
-    print(f"\n  📊 Fetching actual Yahoo 1Y returns for comparison (top {min(50, len(final_performers))} tickers)...")
+    # Fetch actual Yahoo Finance 1-year returns for comparison (parallel)
+    print(f"\n  Fetching actual Yahoo 1Y returns for comparison (top {min(50, len(final_performers))} tickers)...")
     yahoo_returns = {}
     
     # Only fetch for top 50 to avoid rate limiting
@@ -785,8 +785,8 @@ def find_top_performers(
             except Exception:
                 pass
     
-    # ✅ ALWAYS display comparison table (even when return_tickers=True)
-    print(f"\n\n🏆 Top Performers with Yahoo Finance Comparison 🏆")
+    # ALWAYS display comparison table (even when return_tickers=True)
+    print(f"\n\n Top Performers with Yahoo Finance Comparison ")
     print("-" * 110)
     print(f"{'Rank':<5} | {'Ticker':<10} | {'Cached 1Y':>12} | {'Yahoo 1Y':>12} | {'Difference':>12} | {'Status':>15}")
     print("-" * 110)
@@ -797,7 +797,7 @@ def find_top_performers(
         if yahoo_perf is not None:
             diff = perf - yahoo_perf
             # Flag suspicious discrepancies > 50%
-            status = "⚠️ LARGE DIFF" if abs(diff) > 50 else "✅ Match"
+            status = " LARGE DIFF" if abs(diff) > 50 else " Match"
             print(f"{i:<5} | {ticker:<10} | {perf:11.2f}% | {yahoo_perf:11.2f}% | {diff:+11.2f}% | {status:>15}")
         else:
             print(f"{i:<5} | {ticker:<10} | {perf:11.2f}% | {'N/A':>12} | {'N/A':>12} | {'No Yahoo data':>15}")
@@ -813,18 +813,18 @@ def find_top_performers(
         if matched_tickers:
             avg_cached = np.mean([perf for ticker, perf in final_performers if ticker in matched_tickers])
             avg_yahoo = np.mean([yahoo_returns[t] for t in matched_tickers])
-            print(f"\n📊 Summary ({len(matched_tickers)} tickers): Avg Cached = {avg_cached:.1f}%, Avg Yahoo = {avg_yahoo:.1f}%, Avg Difference = {avg_cached - avg_yahoo:+.1f}%")
+            print(f"\n Summary ({len(matched_tickers)} tickers): Avg Cached = {avg_cached:.1f}%, Avg Yahoo = {avg_yahoo:.1f}%, Avg Difference = {avg_cached - avg_yahoo:+.1f}%")
             
             # Count large discrepancies
             perf_dict = {ticker: perf for ticker, perf in final_performers}
             large_diffs = sum(1 for t in matched_tickers if abs(perf_dict.get(t, 0) - yahoo_returns[t]) > 50)
             if large_diffs > 0:
-                print(f"⚠️  WARNING: {large_diffs} tickers have >50% discrepancy - consider clearing cache and re-downloading!")
+                print(f"  WARNING: {large_diffs} tickers have >50% discrepancy - consider clearing cache and re-downloading!")
     
     if return_tickers:
         return final_performers
     
-    print(f"\n\n🏆 Stocks Outperforming {final_benchmark_perf:.2f}% (Full List) 🏆")
+    print(f"\n\n Stocks Outperforming {final_benchmark_perf:.2f}% (Full List) ")
     print("-" * 60)
     print(f"{'Rank':<5} | {'Ticker':<10} | {'Performance':>15}")
     print("-" * 60)
