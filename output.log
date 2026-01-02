@@ -2191,3 +2191,311 @@ DEBUG: ENABLE_AI_PORTFOLIO is False, skipping training
    ⏭️ Skip Dynamic BH 3M rebalance: value_after_cost<=last (now≈$97,478 - cost≈$1,300 = $96,179 <= last≈$100,996; Δ≈$-4,817; changed=2/3)
    🏆 Top 3 performers (1-month): APP, TKA.DE, RHM.DE
    ⏭️ Skip Dynamic BH 1M rebalance: no change
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, CVNA
+   📊 Risk-Adj Mom portfolio: $95,833 invested + $276 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-09-16
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['CBK.DE', 'MSTR', 'AXON']
+   🔄 Mean Reversion rebalancing: ['MSTR', 'CBK.DE', 'AXON'] → ['CBK.DE', 'MSTR', 'AXON']
+   ⚠️ No price data for CBK.DE on 2025-09-16, skipping buy
+   ⚠️ No price data for MSTR on 2025-09-16, skipping buy
+   ⚠️ No price data for AXON on 2025-09-16, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-09-16
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'TPR']
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-09-16
+   📊 Vol-Adj Mom: Found 20 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['HOOD', 'TPR', 'FIX']
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 35 (2025-09-17): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, APP, PLTR
+   ⏭️ Skip Dynamic BH 1Y rebalance: no change
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: value_after_cost<=last (now≈$97,397 - cost≈$1,299 = $96,099 <= last≈$100,996; Δ≈$-4,897; changed=2/3)
+   🏆 Top 3 performers (1-month): APP, TKA.DE, RHM.DE
+   ⏭️ Skip Dynamic BH 1M rebalance: no change
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, GEV
+   💰 Risk-Adj Mom sold CVNA: 71 shares @ $378.06 = $26,842 (-$268.42 cost) = $26,574
+   🛒 Risk-Adj Mom bought GEV: 43 shares @ $614.53 = $26,425 (+$264.25 cost) = $26,689
+   📊 Risk-Adj Mom portfolio: $96,891 invested + $161 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-09-17
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['CBK.DE', 'HEI.DE', 'RCL']
+   🔄 Mean Reversion rebalancing: ['CBK.DE', 'MSTR', 'AXON'] → ['CBK.DE', 'HEI.DE', 'RCL']
+   ⚠️ No price data for CBK.DE on 2025-09-17, skipping buy
+   ⚠️ No price data for HEI.DE on 2025-09-17, skipping buy
+   ⚠️ No price data for RCL on 2025-09-17, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-09-17
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'TPR']
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-09-17
+   📊 Vol-Adj Mom: Found 20 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['HOOD', 'TPR', 'APP']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['HOOD', 'TPR', 'FIX'] → ['HOOD', 'TPR', 'APP']
+     Top scores: [('HOOD', '3.92'), ('TPR', '3.74'), ('APP', '3.18')]
+   ⚠️ No price data for HOOD on 2025-09-17, skipping buy
+   ⚠️ No price data for TPR on 2025-09-17, skipping buy
+   ⚠️ No price data for APP on 2025-09-17, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 36 (2025-09-18): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, APP, PLTR
+   ⏭️ Skip Dynamic BH 1Y rebalance: no change
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: value_after_cost<=last (now≈$99,403 - cost≈$1,325 = $98,078 <= last≈$100,996; Δ≈$-2,918; changed=2/3)
+   🏆 Top 3 performers (1-month): APP, TKA.DE, RHM.DE
+   ⏭️ Skip Dynamic BH 1M rebalance: no change
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, GEV
+   📊 Risk-Adj Mom portfolio: $96,653 invested + $161 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-09-18
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['CBK.DE', 'RCL', 'HEI.DE']
+   🔄 Mean Reversion rebalancing: ['CBK.DE', 'HEI.DE', 'RCL'] → ['CBK.DE', 'RCL', 'HEI.DE']
+   ⚠️ No price data for CBK.DE on 2025-09-18, skipping buy
+   ⚠️ No price data for RCL on 2025-09-18, skipping buy
+   ⚠️ No price data for HEI.DE on 2025-09-18, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-09-18
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'IBKR']
+   🏆 Quality+Momentum rebalancing: ['APP', 'HOOD', 'TPR'] → ['APP', 'HOOD', 'IBKR']
+     Top scores: [('APP', '59.7'), ('HOOD', '40.9'), ('IBKR', '24.7')]
+   ⚠️ No price data for APP on 2025-09-18, skipping buy
+   ⚠️ No price data for HOOD on 2025-09-18, skipping buy
+   ⚠️ No price data for IBKR on 2025-09-18, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-09-18
+   📊 Vol-Adj Mom: Found 20 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['TPR', 'HOOD', 'APP']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['HOOD', 'TPR', 'APP'] → ['TPR', 'HOOD', 'APP']
+     Top scores: [('TPR', '3.94'), ('HOOD', '3.86'), ('APP', '3.22')]
+   ⚠️ No price data for TPR on 2025-09-18, skipping buy
+   ⚠️ No price data for HOOD on 2025-09-18, skipping buy
+   ⚠️ No price data for APP on 2025-09-18, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 37 (2025-09-19): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, APP, PLTR
+   ⏭️ Skip Dynamic BH 1Y rebalance: no change
+   🏆 Top 3 performers (3-month): APP, HOOD, FIX
+   ⏭️ Skip Dynamic BH 3M rebalance: value_after_cost<=last (now≈$102,221 - cost≈$1,363 = $100,858 <= last≈$100,996; Δ≈$-137; changed=2/3)
+   🏆 Top 3 performers (1-month): APP, TKA.DE, RHM.DE
+   ⏭️ Skip Dynamic BH 1M rebalance: no change
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, CVNA
+   💰 Risk-Adj Mom sold GEV: 43 shares @ $623.91 = $26,828 (-$268.28 cost) = $26,560
+   🛒 Risk-Adj Mom bought CVNA: 67 shares @ $391.89 = $26,257 (+$262.57 cost) = $26,519
+   📊 Risk-Adj Mom portfolio: $98,791 invested + $202 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-09-19
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['CBK.DE', 'HEI.DE', 'RCL']
+   🔄 Mean Reversion rebalancing: ['CBK.DE', 'RCL', 'HEI.DE'] → ['CBK.DE', 'HEI.DE', 'RCL']
+   ⚠️ No price data for CBK.DE on 2025-09-19, skipping buy
+   ⚠️ No price data for HEI.DE on 2025-09-19, skipping buy
+   ⚠️ No price data for RCL on 2025-09-19, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-09-19
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'TPR']
+   🏆 Quality+Momentum rebalancing: ['APP', 'HOOD', 'IBKR'] → ['APP', 'HOOD', 'TPR']
+     Top scores: [('APP', '65.6'), ('HOOD', '44.4'), ('TPR', '25.5')]
+   ⚠️ No price data for APP on 2025-09-19, skipping buy
+   ⚠️ No price data for HOOD on 2025-09-19, skipping buy
+   ⚠️ No price data for TPR on 2025-09-19, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-09-19
+   📊 Vol-Adj Mom: Found 20 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['TPR', 'APP', 'HOOD']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['TPR', 'HOOD', 'APP'] → ['TPR', 'APP', 'HOOD']
+     Top scores: [('TPR', '4.07'), ('APP', '3.68'), ('HOOD', '3.66')]
+   ⚠️ No price data for TPR on 2025-09-19, skipping buy
+   ⚠️ No price data for APP on 2025-09-19, skipping buy
+   ⚠️ No price data for HOOD on 2025-09-19, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 38 (2025-09-22): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, APP, PLTR
+   ⏭️ Skip Dynamic BH 1Y rebalance: no change
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   💰 Dynamic BH 3M sold GEV: 50 shares @ $644.10 = $32,205 (-$322.05 cost) = $31,883
+   💰 Dynamic BH 3M sold PLTR: 170 shares @ $179.33 = $30,486 (-$304.86 cost) = $30,181
+   🛒 Dynamic BH 3M bought APP: 47 shares @ $643.50 = $30,244 (+$302.44 cost) = $30,547
+   🛒 Dynamic BH 3M bought FIX: 37 shares @ $821.62 = $30,400 (+$304.00 cost) = $30,704
+   📊 Dynamic BH 3M portfolio: $100,574 invested + $903 cash
+   🏆 Top 3 performers (1-month): APP, TKA.DE, FIX
+   💰 Dynamic BH 1M sold RHM.DE: 17 shares @ $1928.00 = $32,776 (-$327.76 cost) = $32,448
+   🛒 Dynamic BH 1M bought FIX: 39 shares @ $821.62 = $32,043 (+$320.43 cost) = $32,364
+   📊 Dynamic BH 1M portfolio: $112,230 invested + $89 cash
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, GEV
+   💰 Risk-Adj Mom sold CVNA: 67 shares @ $390.85 = $26,187 (-$261.87 cost) = $25,925
+   🛒 Risk-Adj Mom bought GEV: 40 shares @ $644.10 = $25,764 (+$257.64 cost) = $26,022
+   📊 Risk-Adj Mom portfolio: $99,420 invested + $105 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-09-22
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['CBK.DE', 'RCL', 'MSTR']
+   🔄 Mean Reversion rebalancing: ['CBK.DE', 'HEI.DE', 'RCL'] → ['CBK.DE', 'RCL', 'MSTR']
+   ⚠️ No price data for CBK.DE on 2025-09-22, skipping buy
+   ⚠️ No price data for RCL on 2025-09-22, skipping buy
+   ⚠️ No price data for MSTR on 2025-09-22, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-09-22
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'TPR']
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-09-22
+   📊 Vol-Adj Mom: Found 19 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['TPR', 'HOOD', 'FIX']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['TPR', 'APP', 'HOOD'] → ['TPR', 'HOOD', 'FIX']
+     Top scores: [('TPR', '4.07'), ('HOOD', '3.61'), ('FIX', '3.56')]
+   ⚠️ No price data for TPR on 2025-09-22, skipping buy
+   ⚠️ No price data for HOOD on 2025-09-22, skipping buy
+   ⚠️ No price data for FIX on 2025-09-22, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 39 (2025-09-23): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, APP, PLTR
+   ⏭️ Skip Dynamic BH 1Y rebalance: no change
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): APP, TKA.DE, TPR
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$111,543 - cost≈$744 = $110,800 <= last≈$111,892; Δ≈$-1,093; changed=1/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, GEV
+   📊 Risk-Adj Mom portfolio: $100,506 invested + $105 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-09-23
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['CBK.DE', 'MSTR', 'RCL']
+   🔄 Mean Reversion rebalancing: ['CBK.DE', 'RCL', 'MSTR'] → ['CBK.DE', 'MSTR', 'RCL']
+   ⚠️ No price data for CBK.DE on 2025-09-23, skipping buy
+   ⚠️ No price data for MSTR on 2025-09-23, skipping buy
+   ⚠️ No price data for RCL on 2025-09-23, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-09-23
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'TPR']
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-09-23
+   📊 Vol-Adj Mom: Found 19 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['TPR', 'HOOD', 'FIX']
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 40 (2025-09-24): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, APP, PLTR
+   ⏭️ Skip Dynamic BH 1Y rebalance: no change
+   🏆 Top 3 performers (3-month): APP, HOOD, FIX
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): APP, TKA.DE, RHM.DE
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$110,621 - cost≈$737 = $109,883 <= last≈$111,892; Δ≈$-2,009; changed=1/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, GEV
+   📊 Risk-Adj Mom portfolio: $99,708 invested + $105 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-09-24
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['AXON', 'MSTR', 'RCL']
+   🔄 Mean Reversion rebalancing: ['CBK.DE', 'MSTR', 'RCL'] → ['AXON', 'MSTR', 'RCL']
+   ⚠️ No price data for AXON on 2025-09-24, skipping buy
+   ⚠️ No price data for MSTR on 2025-09-24, skipping buy
+   ⚠️ No price data for RCL on 2025-09-24, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-09-24
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'PLTR']
+   🏆 Quality+Momentum rebalancing: ['APP', 'HOOD', 'TPR'] → ['APP', 'HOOD', 'PLTR']
+     Top scores: [('APP', '64.6'), ('HOOD', '36.9'), ('PLTR', '28.3')]
+   ⚠️ No price data for APP on 2025-09-24, skipping buy
+   ⚠️ No price data for HOOD on 2025-09-24, skipping buy
+   ⚠️ No price data for PLTR on 2025-09-24, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-09-24
+   📊 Vol-Adj Mom: Found 19 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['TPR', 'HOOD', 'FIX']
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+   🔮 Day 40: AI predictions disabled, running BH strategies only
+   🔍 DEBUG: enable_ai_strategy=False, valid_predictions=0, consecutive_no_predictions=0
+   📊 Day 40: No portfolio changes needed
+
+🔄 Day 41 (2025-09-25): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, APP, PLTR
+   ⏭️ Skip Dynamic BH 1Y rebalance: no change
+   🏆 Top 3 performers (3-month): APP, FIX, PLTR
+   ⏭️ Skip Dynamic BH 3M rebalance: value_after_cost<=last (now≈$99,157 - cost≈$661 = $98,496 <= last≈$101,512; Δ≈$-3,017; changed=1/3)
+   🏆 Top 3 performers (1-month): APP, TKA.DE, RHM.DE
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$109,405 - cost≈$729 = $108,675 <= last≈$111,892; Δ≈$-3,217; changed=1/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, APP
+   💰 Risk-Adj Mom sold GEV: 40 shares @ $607.27 = $24,291 (-$242.91 cost) = $24,048
+   🛒 Risk-Adj Mom bought APP: 37 shares @ $639.91 = $23,677 (+$236.77 cost) = $23,913
+   📊 Risk-Adj Mom portfolio: $97,682 invested + $239 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-09-25
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['MSTR', 'RCL', 'AXON']
+   🔄 Mean Reversion rebalancing: ['AXON', 'MSTR', 'RCL'] → ['MSTR', 'RCL', 'AXON']
+   ⚠️ No price data for MSTR on 2025-09-25, skipping buy
+   ⚠️ No price data for RCL on 2025-09-25, skipping buy
+   ⚠️ No price data for AXON on 2025-09-25, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-09-25
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'TKA.DE', 'PLTR']
+   🏆 Quality+Momentum rebalancing: ['APP', 'HOOD', 'PLTR'] → ['APP', 'TKA.DE', 'PLTR']
+     Top scores: [('APP', '58.0'), ('TKA.DE', '24.3'), ('PLTR', '24.3')]
+   ⚠️ No price data for APP on 2025-09-25, skipping buy
+   ⚠️ No price data for TKA.DE on 2025-09-25, skipping buy
+   ⚠️ No price data for PLTR on 2025-09-25, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-09-25
+   📊 Vol-Adj Mom: Found 19 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'HOOD', 'FIX']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['TPR', 'HOOD', 'FIX'] → ['APP', 'HOOD', 'FIX']
+     Top scores: [('APP', '3.92'), ('HOOD', '3.40'), ('FIX', '2.94')]
+   ⚠️ No price data for APP on 2025-09-25, skipping buy
+   ⚠️ No price data for HOOD on 2025-09-25, skipping buy
+   ⚠️ No price data for FIX on 2025-09-25, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 42 (2025-09-26): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): APP, HOOD, PLTR
+   ⏭️ Skip Dynamic BH 1Y rebalance: no change
+   🏆 Top 3 performers (3-month): APP, FIX, PLTR
+   ⏭️ Skip Dynamic BH 3M rebalance: value_after_cost<=last (now≈$101,118 - cost≈$674 = $100,443 <= last≈$101,512; Δ≈$-1,069; changed=1/3)
+   🏆 Top 3 performers (1-month): APP, TKA.DE, RHM.DE
+   💰 Dynamic BH 1M sold FIX: 39 shares @ $804.36 = $31,370 (-$313.70 cost) = $31,056
+   🛒 Dynamic BH 1M bought RHM.DE: 15 shares @ $1960.50 = $29,408 (+$294.07 cost) = $29,702
+   📊 Dynamic BH 1M portfolio: $108,230 invested + $1,443 cash
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, APP
+   📊 Risk-Adj Mom portfolio: $95,978 invested + $239 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-09-26
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['RCL', 'AXON', 'MSTR']
+   🔄 Mean Reversion rebalancing: ['MSTR', 'RCL', 'AXON'] → ['RCL', 'AXON', 'MSTR']
+   ⚠️ No price data for RCL on 2025-09-26, skipping buy
+   ⚠️ No price data for AXON on 2025-09-26, skipping buy
+   ⚠️ No price data for MSTR on 2025-09-26, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-09-26
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'PLTR', 'HOOD']
+   🏆 Quality+Momentum rebalancing: ['APP', 'TKA.DE', 'PLTR'] → ['APP', 'PLTR', 'HOOD']
+     Top scores: [('APP', '63.9'), ('PLTR', '23.6'), ('HOOD', '21.0')]
+   ⚠️ No price data for APP on 2025-09-26, skipping buy
+   ⚠️ No price data for PLTR on 2025-09-26, skipping buy
+   ⚠️ No price data for HOOD on 2025-09-26, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-09-26
+   📊 Vol-Adj Mom: Found 19 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'HOOD', 'TPR']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['APP', 'HOOD', 'FIX'] → ['APP', 'HOOD', 'TPR']
+     Top scores: [('APP', '4.37'), ('HOOD', '3.43'), ('TPR', '2.71')]
+   ⚠️ No price data for APP on 2025-09-26, skipping buy
+   ⚠️ No price data for HOOD on 2025-09-26, skipping buy
+   ⚠️ No price data for TPR on 2025-09-26, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 43 (2025-09-29): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, APP, PLTR
+   ⏭️ Skip Dynamic BH 1Y rebalance: no change
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): APP, HOOD, TKA.DE
+   💰 Dynamic BH 1M sold RHM.DE: 15 shares @ $1988.50 = $29,828 (-$298.28 cost) = $29,529
+   🛒 Dynamic BH 1M bought HOOD: 224 shares @ $136.72 = $30,625 (+$306.25 cost) = $30,932
+   📊 Dynamic BH 1M portfolio: $112,753 invested + $41 cash
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, CVNA
+   💰 Risk-Adj Mom sold APP: 37 shares @ $712.36 = $26,357 (-$263.57 cost) = $26,094
