@@ -112,6 +112,7 @@ from summary_phase import print_final_summary
 from training_phase import train_worker, train_models_for_period
 from backtesting_phase import _run_portfolio_backtest_walk_forward
 from data_validation import get_data_summary, print_data_diagnostics, InsufficientDataError
+from selection_backtester import run_selection_strategy_comparison, print_strategy_stock_overlap
 import json
 import time
 import re
@@ -796,6 +797,43 @@ def main(
 
     top_tickers = [ticker for ticker, _ in top_performers_data]
     print(f"\n✅ Identified {len(top_tickers)} stocks for backtesting: {', '.join(top_tickers)}\n")
+
+    # --- Run Selection Strategy Comparison ---
+    # Compare multiple selection strategies to see which would have picked the best performers
+    print("\n" + "="*80)
+    print("📊 Running Selection Strategy Comparison...")
+    print("   This compares different stock selection criteria to find the best approach.")
+    print("="*80)
+    
+    # Convert all_tickers_data to dict format for selection backtester
+    ticker_data_dict = {}
+    if isinstance(all_tickers_data, pd.DataFrame):
+        if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
+            # Long format - convert to dict
+            for ticker in all_available_tickers:
+                ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                if not ticker_df.empty:
+                    ticker_df = ticker_df.set_index('date')
+                    ticker_data_dict[ticker] = ticker_df
+        else:
+            # Already wide format with ticker columns
+            ticker_data_dict = all_tickers_data
+    elif isinstance(all_tickers_data, dict):
+        ticker_data_dict = all_tickers_data
+    
+    # Run the comparison
+    selection_comparison_results = run_selection_strategy_comparison(
+        all_tickers_data=ticker_data_dict,
+        all_available_tickers=all_available_tickers,
+        selection_date=bt_start_1y,
+        evaluation_date=bt_end,
+        n_top=N_TOP_TICKERS,
+        benchmark_ticker='SPY'
+    )
+    
+    # Print stock overlap analysis
+    if selection_comparison_results and 'strategy_results' in selection_comparison_results:
+        print_strategy_stock_overlap(selection_comparison_results['strategy_results'])
 
     # Log skipped tickers
     skipped_tickers = set(all_available_tickers) - set(top_tickers)

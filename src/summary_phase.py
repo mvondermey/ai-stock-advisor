@@ -65,10 +65,13 @@ def print_final_summary(
     mean_reversion_1y_return: float = None,
     final_quality_momentum_value_1y: float = None,
     quality_momentum_1y_return: float = None,
+    final_volatility_adj_mom_value_1y: float = None,
+    volatility_adj_mom_1y_return: float = None,
     final_momentum_ai_hybrid_value_1y: float = None,
     momentum_ai_hybrid_1y_return: float = None,
     mean_reversion_transaction_costs: float = None,
     quality_momentum_transaction_costs: float = None,
+    volatility_adj_mom_transaction_costs: float = None,
     momentum_ai_hybrid_transaction_costs: float = None,
     backtest_days: int = None  # ✅ NEW: Number of days in backtest for annualization
 ) -> None:
@@ -128,8 +131,8 @@ def print_final_summary(
     print(f"  Initial Capital: ${initial_balance_used:,.2f}")
     print(f"  Number of Tickers Analyzed: {num_tickers_analyzed}")
     print("-" * 150)
-    print(f"{'Period':<12} | {'AI Strategy':<18} | {'Static BH':<18} | {'Dyn BH 1Y':<18} | {'Dyn BH 3M':<18} | {'AI Portfolio':<18} | {'Dyn BH 1M':<18} | {'Risk-Adj Mom':<18} | {'Mean Reversion':<18} | {'Quality+Mom':<18} | {'Mom+AI Hybrid':<18}")
-    print("-" * 170)
+    print(f"{'Period':<12} | {'AI Strategy':<18} | {'Static BH':<18} | {'Dyn BH 1Y':<18} | {'Dyn BH 3M':<18} | {'AI Portfolio':<18} | {'Dyn BH 1M':<18} | {'Risk-Adj Mom':<18} | {'Mean Reversion':<18} | {'Quality+Mom':<18} | {'Vol-Adj Mom':<18} | {'Mom+AI Hybrid':<18}")
+    print("-" * 190)
 
     # Format each result
     ai_result = f"${final_strategy_value_1y:,.0f} ({ai_1y_return:+.1f}%)"
@@ -168,11 +171,15 @@ def print_final_summary(
     if final_quality_momentum_value_1y is not None and quality_momentum_1y_return is not None:
         quality_momentum_result = f"${final_quality_momentum_value_1y:,.0f} ({quality_momentum_1y_return:+.1f}%)"
 
+    volatility_adj_mom_result = "N/A"
+    if final_volatility_adj_mom_value_1y is not None and volatility_adj_mom_1y_return is not None:
+        volatility_adj_mom_result = f"${final_volatility_adj_mom_value_1y:,.0f} ({volatility_adj_mom_1y_return:+.1f}%)"
+
     momentum_ai_hybrid_result = "N/A"
     if final_momentum_ai_hybrid_value_1y is not None and momentum_ai_hybrid_1y_return is not None:
         momentum_ai_hybrid_result = f"${final_momentum_ai_hybrid_value_1y:,.0f} ({momentum_ai_hybrid_1y_return:+.1f}%)"
 
-    print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {ai_portfolio_result:<17} | {dynamic_bh_1m_result:<17} | {risk_adj_mom_result:<17} | {mean_reversion_result:<17} | {quality_momentum_result:<17} | {momentum_ai_hybrid_result:<17}")
+    print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {ai_portfolio_result:<17} | {dynamic_bh_1m_result:<17} | {risk_adj_mom_result:<17} | {mean_reversion_result:<17} | {quality_momentum_result:<17} | {volatility_adj_mom_result:<17} | {momentum_ai_hybrid_result:<17}")
 
     # Transaction costs row
     ai_costs = f"${ai_transaction_costs:,.0f}" if ai_transaction_costs is not None else "N/A"
@@ -189,9 +196,10 @@ def print_final_summary(
     risk_adj_mom_costs = f"${risk_adj_mom_transaction_costs:,.0f}" if risk_adj_mom_transaction_costs is not None else "N/A"
     mean_reversion_costs = f"${mean_reversion_transaction_costs:,.0f}" if mean_reversion_transaction_costs is not None else "N/A"
     quality_momentum_costs = f"${quality_momentum_transaction_costs:,.0f}" if quality_momentum_transaction_costs is not None else "N/A"
+    volatility_adj_mom_costs = f"${volatility_adj_mom_transaction_costs:,.0f}" if volatility_adj_mom_transaction_costs is not None else "N/A"
     momentum_ai_hybrid_costs = f"${momentum_ai_hybrid_transaction_costs:,.0f}" if momentum_ai_hybrid_transaction_costs is not None else "N/A"
 
-    print(f"{'Txn Costs':<12} | {ai_costs:<17} | {static_bh_costs:<17} | {dynamic_bh_1y_costs:<17} | {dynamic_bh_3m_costs:<17} | {ai_portfolio_costs:<17} | {dynamic_bh_1m_costs:<17} | {risk_adj_mom_costs:<17} | {mean_reversion_costs:<17} | {quality_momentum_costs:<17} | {momentum_ai_hybrid_costs:<17}")
+    print(f"{'Txn Costs':<12} | {ai_costs:<17} | {static_bh_costs:<17} | {dynamic_bh_1y_costs:<17} | {dynamic_bh_3m_costs:<17} | {ai_portfolio_costs:<17} | {dynamic_bh_1m_costs:<17} | {risk_adj_mom_costs:<17} | {mean_reversion_costs:<17} | {quality_momentum_costs:<17} | {volatility_adj_mom_costs:<17} | {momentum_ai_hybrid_costs:<17}")
     
     # ✅ NEW: Add annualized return row for comparison
     if backtest_days is not None and backtest_days > 0:
@@ -216,9 +224,10 @@ def print_final_summary(
         risk_adj_mom_ann = f"{annualize_return(risk_adj_mom_1y_return, backtest_days):+.1f}%" if risk_adj_mom_1y_return is not None else "N/A"
         mean_reversion_ann = f"{annualize_return(mean_reversion_1y_return, backtest_days):+.1f}%" if mean_reversion_1y_return is not None else "N/A"
         quality_momentum_ann = f"{annualize_return(quality_momentum_1y_return, backtest_days):+.1f}%" if quality_momentum_1y_return is not None else "N/A"
+        volatility_adj_mom_ann = f"{annualize_return(volatility_adj_mom_1y_return, backtest_days):+.1f}%" if volatility_adj_mom_1y_return is not None else "N/A"
         momentum_ai_hybrid_ann = f"{annualize_return(momentum_ai_hybrid_1y_return, backtest_days):+.1f}%" if momentum_ai_hybrid_1y_return is not None else "N/A"
         
-        print(f"{'Annualized':<12} | {ai_ann:<17} | {static_bh_ann:<17} | {dyn_bh_1y_ann:<17} | {dyn_bh_3m_ann:<17} | {ai_portfolio_ann:<17} | {dyn_bh_1m_ann:<17} | {risk_adj_mom_ann:<17} | {mean_reversion_ann:<17} | {quality_momentum_ann:<17} | {momentum_ai_hybrid_ann:<17}")
+        print(f"{'Annualized':<12} | {ai_ann:<17} | {static_bh_ann:<17} | {dyn_bh_1y_ann:<17} | {dyn_bh_3m_ann:<17} | {ai_portfolio_ann:<17} | {dyn_bh_1m_ann:<17} | {risk_adj_mom_ann:<17} | {mean_reversion_ann:<17} | {quality_momentum_ann:<17} | {volatility_adj_mom_ann:<17} | {momentum_ai_hybrid_ann:<17}")
     
     print("="*170)
 

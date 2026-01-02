@@ -1681,168 +1681,204 @@ def _run_portfolio_backtest_walk_forward(
 
                         current_risk_adj_mom_stocks = new_risk_adj_mom_stocks
 
-                # MEAN REVERSION: Rebalance to bottom 3 performers DAILY
-                if ENABLE_MEAN_REVERSION:
-                    try:
-                        # Calculate current bottom 3 performers based on recent short-term performance
-                        # Mean reversion: buy stocks that have declined recently (expecting bounce back)
-                        current_bottom_performers = []
-
-                        # ✅ OPTIMIZED: Use pre-grouped data
-                        for ticker in initial_top_tickers:
-                            try:
-                                if ticker not in ticker_data_grouped:
-                                    continue
-                                ticker_data = ticker_data_grouped[ticker]
-                                
-                                # Use 1-month performance for mean reversion (opposite of momentum)
-                                data_slice = ticker_data.loc[:current_date]
-                                if len(data_slice) >= 21:  # At least 1 month of data
-                                    recent_data = data_slice.tail(21)  # Last ~1 month
-                                    if len(recent_data) >= 2:
-                                        start_price = recent_data['Close'].iloc[0]
-                                        end_price = recent_data['Close'].iloc[-1]
-                                        if start_price > 0:
-                                            monthly_return = ((end_price - start_price) / start_price) * 100
-                                            current_bottom_performers.append((ticker, monthly_return))
-
-                            except Exception as e:
-                                continue
-
-                        if current_bottom_performers:
-                            current_bottom_performers.sort(key=lambda x: x[1])  # Sort by return (ascending = worst performers)
-                            new_mean_reversion_stocks = [ticker for ticker, ret in current_bottom_performers[:3]]
-
-                            if new_mean_reversion_stocks != current_mean_reversion_stocks:
-                                print(f"   🔄 Mean Reversion rebalancing: {current_mean_reversion_stocks} → {new_mean_reversion_stocks}")
-
-                                # Rebalance mean reversion portfolio (capture returned cash)
-                                mean_reversion_cash = _rebalance_mean_reversion_portfolio(
-                                    new_mean_reversion_stocks, current_date, all_tickers_data,
-                                    mean_reversion_positions, mean_reversion_cash, capital_per_stock
-                                )
-
-                            current_mean_reversion_stocks = new_mean_reversion_stocks
-
-                    except Exception as e:
-                        print(f"   ⚠️ Mean reversion selection failed: {e}")
-
-                # QUALITY + MOMENTUM: Rebalance to top performers by combined quality+momentum score DAILY
-                if ENABLE_QUALITY_MOM:
-                    try:
-                        # Calculate combined quality + momentum scores
-                        quality_momentum_scores = []
-
-                        # ✅ OPTIMIZED: Use pre-grouped data
-                        for ticker in initial_top_tickers:
-                            try:
-                                if ticker not in ticker_data_grouped:
-                                    continue
-                                ticker_data = ticker_data_grouped[ticker]
-                                
-                                # Use 3-month period for both quality and momentum assessment
-                                data_slice = ticker_data.loc[:current_date]
-                                if len(data_slice) >= 63:  # At least 3 months of data
-                                    recent_data = data_slice.tail(63)  # Last ~3 months
-
-                                    if len(recent_data) >= 10:
-                                        # MOMENTUM SCORE: 3-month return
-                                        start_price = recent_data['Close'].iloc[0]
-                                        end_price = recent_data['Close'].iloc[-1]
-                                        momentum_score = ((end_price - start_price) / start_price) * 100 if start_price > 0 else -100
-
-                                        # QUALITY SCORE: Consistency (low volatility) + trend strength
-                                        returns = recent_data['Close'].pct_change(fill_method=None).dropna()
-                                        if len(returns) > 5:
-                                            # Volatility (lower = higher quality)
-                                            volatility = returns.std() * np.sqrt(252)  # Annualized
-                                            quality_volatility = max(0, 50 - volatility * 100)  # Higher score for lower volatility
-
-                                            # Trend consistency (higher = higher quality)
-                                            trend_strength = abs(momentum_score) * (1 - volatility)  # Strong trend with low volatility
-
-                                            # Combined score: 70% momentum, 30% quality
-                                            combined_score = (momentum_score * 0.7) + (quality_volatility * 0.3)
-
-                                            quality_momentum_scores.append((ticker, combined_score, momentum_score, quality_volatility))
-
-                            except Exception as e:
-                                continue
-
-                        if quality_momentum_scores:
-                            # Sort by combined score (descending)
-                            quality_momentum_scores.sort(key=lambda x: x[1], reverse=True)
-                            new_quality_momentum_stocks = [ticker for ticker, score, mom, qual in quality_momentum_scores[:3]]
-
-                            if new_quality_momentum_stocks != current_quality_momentum_stocks:
-                                print(f"   🏆 Quality+Momentum rebalancing: {current_quality_momentum_stocks} → {new_quality_momentum_stocks}")
-                                print(f"     Top scores: {[(t, f'{s:.1f}') for t, s, _, _ in quality_momentum_scores[:3]]}")
-
-                                # Rebalance quality + momentum portfolio
-                                quality_momentum_cash = _rebalance_quality_momentum_portfolio(
-                                    new_quality_momentum_stocks, current_date, all_tickers_data,
-                                    quality_momentum_positions, quality_momentum_cash, capital_per_stock
-                                )
-
-                            current_quality_momentum_stocks = new_quality_momentum_stocks
-
-                    except Exception as e:
-                        print(f"   ⚠️ Quality + momentum selection failed: {e}")
-
-                # VOLATILITY-ADJUSTED MOMENTUM: Rebalance to top performers by volatility-adjusted momentum DAILY
-                if ENABLE_VOLATILITY_ADJ_MOM:
-                    try:
-                        # Calculate volatility-adjusted momentum scores
-                        volatility_adj_mom_scores = []
-                        # Use initial_top_tickers (the tickers we trained models for)
-                        available_tickers = initial_top_tickers if initial_top_tickers else []
-                        
-                        for ticker in available_tickers:
-                            try:
-                                if ticker not in ticker_data_grouped:
-                                    continue
-                                ticker_history = ticker_data_grouped[ticker].reset_index()
-                                ticker_history = ticker_history[ticker_history['date'] <= current_date].tail(VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW + 10)
-                                
-                                if len(ticker_history) >= VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW:
-                                    # Calculate volatility-adjusted momentum score
-                                    vol_adj_score = calculate_volatility_adjusted_momentum(
-                                        ticker_history, 
-                                        VOLATILITY_ADJ_MOM_LOOKBACK, 
-                                        VOLATILITY_ADJ_MOM_VOL_WINDOW
-                                    )
-                                    
-                                    if vol_adj_score > VOLATILITY_ADJ_MOM_MIN_SCORE:
-                                        volatility_adj_mom_scores.append((ticker, vol_adj_score))
-                            
-                            except Exception:
-                                continue
-                        
-                        if volatility_adj_mom_scores:
-                            # Sort by volatility-adjusted score and get top 3
-                            volatility_adj_mom_scores.sort(key=lambda x: x[1], reverse=True)
-                            new_volatility_adj_mom_stocks = [ticker for ticker, score in volatility_adj_mom_scores[:3]]
-                            
-                            if new_volatility_adj_mom_stocks != current_volatility_adj_mom_stocks:
-                                print(f"   🔄 Volatility-Adjusted Momentum rebalancing: {current_volatility_adj_mom_stocks} → {new_volatility_adj_mom_stocks}")
-                                print(f"     Top scores: {[(t, f'{s:.2f}') for t, s in volatility_adj_mom_scores[:3]]}")
-                                
-                                # Rebalance volatility-adjusted momentum portfolio
-                                volatility_adj_mom_cash = _rebalance_volatility_adj_mom_portfolio(
-                                    new_volatility_adj_mom_stocks, current_date, all_tickers_data,
-                                    volatility_adj_mom_positions, volatility_adj_mom_cash, capital_per_stock
-                                )
-                            
-                            current_volatility_adj_mom_stocks = new_volatility_adj_mom_stocks
-
-                    except Exception as e:
-                        print(f"   ⚠️ Volatility-adjusted momentum selection failed: {e}")
-
                 else:
                     print(f"   ⚠️ No valid performance data for dynamic BH rebalancing")
 
             except Exception as e:
                 print(f"   ⚠️ Dynamic BH rebalancing failed: {e}")
+
+        # === MEAN REVERSION, QUALITY+MOM, VOL-ADJ MOM STRATEGIES ===
+        # These strategies run independently of Dynamic BH performance data
+        
+        # MEAN REVERSION: Rebalance to bottom 3 performers DAILY
+        if ENABLE_MEAN_REVERSION:
+            try:
+                # Calculate current bottom 3 performers based on recent short-term performance
+                # Mean reversion: buy stocks that have declined recently (expecting bounce back)
+                current_bottom_performers = []
+                
+                print(f"   🔍 Mean Reversion: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+
+                # ✅ OPTIMIZED: Use pre-grouped data
+                for ticker in initial_top_tickers:
+                    try:
+                        if ticker not in ticker_data_grouped:
+                            continue
+                        ticker_data = ticker_data_grouped[ticker]
+                        
+                        # Use 1-month performance for mean reversion (opposite of momentum)
+                        # ✅ FIX: Use explicit date range like other working strategies
+                        perf_start_date_mr = current_date - timedelta(days=30)
+                        data_slice = ticker_data.loc[perf_start_date_mr:current_date]
+                        if len(data_slice) >= 10:  # Relaxed: at least 10 days of data
+                            recent_data = data_slice.tail(21) if len(data_slice) >= 21 else data_slice
+                            if len(recent_data) >= 2:
+                                start_price = recent_data['Close'].iloc[0]
+                                end_price = recent_data['Close'].iloc[-1]
+                                if start_price > 0:
+                                    monthly_return = ((end_price - start_price) / start_price) * 100
+                                    current_bottom_performers.append((ticker, monthly_return))
+
+                    except Exception as e:
+                        continue
+
+                print(f"   📊 Mean Reversion: Found {len(current_bottom_performers)} tickers with valid data")
+
+                if current_bottom_performers:
+                    current_bottom_performers.sort(key=lambda x: x[1])  # Sort by return (ascending = worst performers)
+                    new_mean_reversion_stocks = [ticker for ticker, ret in current_bottom_performers[:3]]
+                    print(f"   🎯 Mean Reversion: Selected {new_mean_reversion_stocks}")
+
+                    if new_mean_reversion_stocks != current_mean_reversion_stocks:
+                        print(f"   🔄 Mean Reversion rebalancing: {current_mean_reversion_stocks} → {new_mean_reversion_stocks}")
+
+                        # Rebalance mean reversion portfolio (capture returned cash)
+                        mean_reversion_cash = _rebalance_mean_reversion_portfolio(
+                            new_mean_reversion_stocks, current_date, all_tickers_data,
+                            mean_reversion_positions, mean_reversion_cash, capital_per_stock
+                        )
+
+                    current_mean_reversion_stocks = new_mean_reversion_stocks
+                else:
+                    print(f"   ⚠️ Mean Reversion: No valid tickers found on {current_date.strftime('%Y-%m-%d')}")
+
+            except Exception as e:
+                print(f"   ⚠️ Mean reversion selection failed: {e}")
+
+        # QUALITY + MOMENTUM: Rebalance to top performers by combined quality+momentum score DAILY
+        if ENABLE_QUALITY_MOM:
+            try:
+                # Calculate combined quality + momentum scores
+                quality_momentum_scores = []
+                
+                print(f"   🔍 Quality+Mom: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+
+                # ✅ OPTIMIZED: Use pre-grouped data
+                for ticker in initial_top_tickers:
+                    try:
+                        if ticker not in ticker_data_grouped:
+                            continue
+                        ticker_data = ticker_data_grouped[ticker]
+                        
+                        # Use 3-month period for both quality and momentum assessment
+                        # ✅ FIX: Use explicit date range like other working strategies
+                        perf_start_date_qm = current_date - timedelta(days=90)
+                        data_slice = ticker_data.loc[perf_start_date_qm:current_date]
+                        if len(data_slice) >= 30:  # Relaxed: at least 30 days of data
+                            recent_data = data_slice.tail(63) if len(data_slice) >= 63 else data_slice
+
+                            if len(recent_data) >= 10:
+                                # MOMENTUM SCORE: 3-month return
+                                start_price = recent_data['Close'].iloc[0]
+                                end_price = recent_data['Close'].iloc[-1]
+                                momentum_score = ((end_price - start_price) / start_price) * 100 if start_price > 0 else -100
+
+                                # QUALITY SCORE: Consistency (low volatility) + trend strength
+                                returns = recent_data['Close'].pct_change(fill_method=None).dropna()
+                                if len(returns) > 5:
+                                    # Volatility (lower = higher quality)
+                                    volatility = returns.std() * np.sqrt(252)  # Annualized
+                                    quality_volatility = max(0, 50 - volatility * 100)  # Higher score for lower volatility
+
+                                    # Trend consistency (higher = higher quality)
+                                    trend_strength = abs(momentum_score) * (1 - volatility)  # Strong trend with low volatility
+
+                                    # Combined score: 70% momentum, 30% quality
+                                    combined_score = (momentum_score * 0.7) + (quality_volatility * 0.3)
+
+                                    quality_momentum_scores.append((ticker, combined_score, momentum_score, quality_volatility))
+
+                    except Exception as e:
+                        continue
+
+                print(f"   📊 Quality+Mom: Found {len(quality_momentum_scores)} tickers with valid data")
+
+                if quality_momentum_scores:
+                    # Sort by combined score (descending)
+                    quality_momentum_scores.sort(key=lambda x: x[1], reverse=True)
+                    new_quality_momentum_stocks = [ticker for ticker, score, mom, qual in quality_momentum_scores[:3]]
+                    print(f"   🎯 Quality+Mom: Selected {new_quality_momentum_stocks}")
+
+                    if new_quality_momentum_stocks != current_quality_momentum_stocks:
+                        print(f"   🏆 Quality+Momentum rebalancing: {current_quality_momentum_stocks} → {new_quality_momentum_stocks}")
+                        print(f"     Top scores: {[(t, f'{s:.1f}') for t, s, _, _ in quality_momentum_scores[:3]]}")
+
+                        # Rebalance quality + momentum portfolio
+                        quality_momentum_cash = _rebalance_quality_momentum_portfolio(
+                            new_quality_momentum_stocks, current_date, all_tickers_data,
+                            quality_momentum_positions, quality_momentum_cash, capital_per_stock
+                        )
+
+                    current_quality_momentum_stocks = new_quality_momentum_stocks
+                else:
+                    print(f"   ⚠️ Quality+Mom: No valid tickers found on {current_date.strftime('%Y-%m-%d')}")
+
+            except Exception as e:
+                print(f"   ⚠️ Quality + momentum selection failed: {e}")
+
+        # VOLATILITY-ADJUSTED MOMENTUM: Rebalance to top performers by volatility-adjusted momentum DAILY
+        if ENABLE_VOLATILITY_ADJ_MOM:
+            try:
+                # Calculate volatility-adjusted momentum scores
+                volatility_adj_mom_scores = []
+                # Use initial_top_tickers (the tickers we trained models for)
+                available_tickers = initial_top_tickers if initial_top_tickers else []
+                
+                print(f"   🔍 Vol-Adj Mom: Analyzing {len(available_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+                
+                for ticker in available_tickers:
+                    try:
+                        if ticker not in ticker_data_grouped:
+                            continue
+                        ticker_history = ticker_data_grouped[ticker].reset_index()
+                        # ✅ FIX: Use explicit date range like other working strategies
+                        lookback_start = current_date - timedelta(days=VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW + 30)
+                        ticker_history = ticker_history[
+                            (ticker_history['date'] >= lookback_start) & 
+                            (ticker_history['date'] <= current_date)
+                        ]
+                        
+                        # Relaxed requirement: need at least 60 days instead of full lookback
+                        min_required = min(60, VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW)
+                        if len(ticker_history) >= min_required:
+                            # Calculate volatility-adjusted momentum score
+                            vol_adj_score = calculate_volatility_adjusted_momentum(
+                                ticker_history, 
+                                min(VOLATILITY_ADJ_MOM_LOOKBACK, len(ticker_history) - VOLATILITY_ADJ_MOM_VOL_WINDOW), 
+                                VOLATILITY_ADJ_MOM_VOL_WINDOW
+                            )
+                            
+                            # Relaxed threshold: accept any positive score
+                            if vol_adj_score > 0:
+                                volatility_adj_mom_scores.append((ticker, vol_adj_score))
+                    
+                    except Exception:
+                        continue
+                
+                print(f"   📊 Vol-Adj Mom: Found {len(volatility_adj_mom_scores)} tickers with valid data")
+                
+                if volatility_adj_mom_scores:
+                    # Sort by volatility-adjusted score and get top 3
+                    volatility_adj_mom_scores.sort(key=lambda x: x[1], reverse=True)
+                    new_volatility_adj_mom_stocks = [ticker for ticker, score in volatility_adj_mom_scores[:3]]
+                    print(f"   🎯 Vol-Adj Mom: Selected {new_volatility_adj_mom_stocks}")
+                    
+                    if new_volatility_adj_mom_stocks != current_volatility_adj_mom_stocks:
+                        print(f"   🔄 Volatility-Adjusted Momentum rebalancing: {current_volatility_adj_mom_stocks} → {new_volatility_adj_mom_stocks}")
+                        print(f"     Top scores: {[(t, f'{s:.2f}') for t, s in volatility_adj_mom_scores[:3]]}")
+                        
+                        # Rebalance volatility-adjusted momentum portfolio
+                        volatility_adj_mom_cash = _rebalance_volatility_adj_mom_portfolio(
+                            new_volatility_adj_mom_stocks, current_date, all_tickers_data,
+                            volatility_adj_mom_positions, volatility_adj_mom_cash, capital_per_stock
+                        )
+
+                    current_volatility_adj_mom_stocks = new_volatility_adj_mom_stocks
+                else:
+                    print(f"   ⚠️ Vol-Adj Mom: No valid tickers found on {current_date.strftime('%Y-%m-%d')}")
+
+            except Exception as e:
+                print(f"   ⚠️ Volatility-adjusted momentum selection failed: {e}")
 
         # === MOMENTUM + AI HYBRID STRATEGY ===
         if ENABLE_MOMENTUM_AI_HYBRID:

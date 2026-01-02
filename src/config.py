@@ -131,19 +131,20 @@ GPU_CLEAR_CACHE_AFTER_EACH_TICKER = False
 # This limits how many worker processes can run PyTorch models on GPU simultaneously.
 # Only applies when PYTORCH_USE_GPU = True (PyTorch uses GPU)
 # Does NOT apply to XGBoost GPU (XGBoost manages its own GPU memory)
-GPU_MAX_CONCURRENT_TRAINING_WORKERS = 3 # Use dynamic calculation instead of hardcoded value
+GPU_MAX_CONCURRENT_TRAINING_WORKERS = GPU_MODEL_SLOTS['LSTM'] # Use dynamic calculation
+GPU_MAX_CONCURRENT_TRAINING_WORKERS = 2
 
 # Multiprocessing stability: recycle worker processes periodically to avoid RAM creep / leaked semaphores
 # when training many tickers under WSL + spawn.
 # - Set to 1 for max stability (one ticker per worker process).
 # - Set to None to disable recycling (faster, but may accumulate memory/semaphores).
-TRAINING_POOL_MAXTASKSPERCHILD = None  # Disable recycling
+TRAINING_POOL_MAXTASKSPERCHILD = 1  # Enable recycling for maximum stability
 
 # Per-ticker training timeout (seconds). If a ticker takes longer, it will be skipped.
 # - Set to 600 (10 min) for normal use (handles slow XGBoost GridSearchCV)
 # - Set to 1800 (30 min) for very large datasets or complex models
 # - Set to None to disable timeout (not recommended - can hang forever)
-PER_TICKER_TIMEOUT = 300  # 5 minutes max per ticker (reduced from 10 to prevent hangs)
+PER_TICKER_TIMEOUT = 180  # 3 minutes max per ticker (more aggressive timeout)
 
 # Training worker process count (separate from global NUM_PROCESSES).
 # For 5000 tickers, use parallel training. Models are saved to disk and loaded back (no pickling overhead).
@@ -192,13 +193,13 @@ RETRAIN_FREQUENCY_DAYS = 5  # Bi-weekly retraining - consider 20 for S&P 500
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = True  # ENABLED - Train models for AI Strategy and individual ticker predictions
+ENABLE_1YEAR_TRAINING   = False  # ENABLED - Train models for AI Strategy and individual ticker predictions
 
 # --- Portfolio Strategy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
 # AI Portfolio + traditional strategies (no AI Strategy or AI Hybrid)
-ENABLE_AI_STRATEGY      = True  # ENABLED - AI Strategy with individual ticker models
-ENABLE_AI_PORTFOLIO     = True   # ENABLED - AI Portfolio meta-learning
+ENABLE_AI_STRATEGY      = False  # ENABLED - AI Strategy with individual ticker models
+ENABLE_AI_PORTFOLIO     = False   # ENABLED - AI Portfolio meta-learning
 ENABLE_STATIC_BH        = True   # ENABLED - Static Buy & Hold benchmark
 ENABLE_DYNAMIC_BH_1Y    = True   # ENABLED - Dynamic BH 1-year
 ENABLE_DYNAMIC_BH_3M    = True   # ENABLED - Dynamic BH 3-month
@@ -207,7 +208,7 @@ ENABLE_RISK_ADJ_MOM     = True   # ENABLED - Risk-Adjusted Momentum
 ENABLE_MEAN_REVERSION   = True   # ENABLED - Mean Reversion
 ENABLE_SEASONAL         = True   # ENABLED - Seasonal strategy
 ENABLE_QUALITY_MOM      = True   # ENABLED - Quality + Momentum
-ENABLE_MOMENTUM_AI_HYBRID = True  # ENABLED - Momentum + AI Hybrid strategy
+ENABLE_MOMENTUM_AI_HYBRID = False  # ENABLED - Momentum + AI Hybrid strategy
 ENABLE_VOLATILITY_ADJ_MOM = True  # ENABLED - Volatility-Adjusted Momentum strategy
 
 # --- Strategy (separate from feature windows)

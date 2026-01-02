@@ -687,8 +687,17 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
 
                 # Get available date range in cache
                 if not cached_df.empty:
-                    cache_start = cached_df.index.min()
-                    cache_end = cached_df.index.max()
+                    try:
+                        cache_start = cached_df.index.min()
+                        cache_end = cached_df.index.max()
+                        
+                        # Ensure cache_end is a pandas Timestamp for consistent comparisons
+                        if not isinstance(cache_end, pd.Timestamp):
+                            cache_end = pd.Timestamp(cache_end)
+                    except Exception as e:
+                        print(f"  ⚠️ Could not extract date range from cache for {ticker}: {e}")
+                        cache_start = None
+                        cache_end = None
 
                     # ✅ Adjust expected end date based on market hours/weekends
                     # Don't expect today's data if market hasn't closed yet or if it's a weekend
@@ -697,13 +706,17 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                         # If today's data isn't available yet, only expect data up to yesterday
                         expected_end_utc = end_utc - pd.Timedelta(days=1)
                         # Keep going back until we find a trading day
-                        while not _is_market_day_complete(expected_end_utc) and expected_end_utc > cache_end:
+                        while not _is_market_day_complete(expected_end_utc) and cache_end is not None and expected_end_utc > cache_end:
                             expected_end_utc = expected_end_utc - pd.Timedelta(days=1)
 
                     # ✅ Calculate gap to determine if we need to download recent data
                     # Use total_seconds to avoid .days truncation issues (which can trigger false positives)
-                    gap_seconds = (expected_end_utc - cache_end).total_seconds() if cache_end < expected_end_utc else 0
-                    gap_days = max(0, int(gap_seconds / 86400))  # Convert seconds to days
+                    gap_seconds = 0  # Initialize to 0
+                    if cache_end is not None:
+                        gap_seconds = (expected_end_utc - cache_end).total_seconds() if cache_end < expected_end_utc else 0
+                        gap_days = max(0, int(gap_seconds / 86400))  # Convert seconds to days
+                    else:
+                        gap_days = 0  # Default to no gap if cache_end is None
                     
                     # Add tolerance: if gap is less than 18 hours, treat as "up to date" (same trading day)
                     # This prevents re-downloading when running multiple times in the same day
@@ -713,7 +726,7 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                     
                     # Full cache coverage - use gap_days instead of strict datetime comparison
                     # This ensures tolerance check is respected
-                    if cache_start <= start_utc and gap_days == 0:
+                    if cache_start is not None and cache_start <= start_utc and gap_days == 0:
                         # Filter to requested date range
                         filtered_df = cached_df.loc[(cached_df.index >= start_utc) & (cached_df.index <= end_utc)].copy()
 
@@ -741,7 +754,7 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                             print(f"  ✅ Cache hit for {ticker} ({len(filtered_df)} rows, up to date)")
                     
                     # ✅ Partial cache - download only missing recent data (incremental update)
-                    elif cache_start <= start_utc and gap_days > 0:
+                    elif cache_start is not None and cache_start <= start_utc and gap_days > 0:
                         # Use cached data + will download only the missing gap
                         filtered_df = cached_df.loc[cached_df.index >= start_utc].copy()
                         
@@ -959,9 +972,23 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                             
                             # ✅ For incremental updates, filter ticker_df to only NEW data (after last cache date)
                             if ticker in tickers_to_download_incremental:
-                                last_cache_date = tickers_to_download_incremental[ticker]
-                                # Only keep rows AFTER the last cached date
-                                ticker_df = ticker_df[ticker_df.index > last_cache_date]
+                                try:
+                                    last_cache_date = tickers_to_download_incremental[ticker]
+                                    # Standardize datetime formats to prevent comparison errors
+                                    # Convert both to pandas Timestamp for consistent comparison
+                                    if not isinstance(last_cache_date, pd.Timestamp):
+                                        last_cache_date = pd.Timestamp(last_cache_date)
+                                    
+                                    # Ensure ticker_df.index is also pandas Timestamp
+                                    if not isinstance(ticker_df.index, pd.DatetimeIndex):
+                                        ticker_df.index = pd.to_datetime(ticker_df.index)
+                                    
+                                    # Only keep rows AFTER the last cached date
+                                    ticker_df = ticker_df[ticker_df.index > last_cache_date]
+                                except Exception as e:
+                                    print(f"      ⚠️ DateTime comparison failed for {ticker}, downloading full data: {e}")
+                                    # Fall back to full download if datetime comparison fails
+                                    pass
                             
                             # Combine old + new data, remove duplicates (keep new data)
                             combined = pd.concat([existing_cache, ticker_df])

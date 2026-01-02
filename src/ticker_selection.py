@@ -381,6 +381,49 @@ def _get_yahoo_1y_return(ticker: str, end_date: datetime) -> Optional[float]:
     except Exception:
         return None
 
+
+def _get_current_1y_return_from_cache(ticker: str, all_tickers_data: dict, today: datetime) -> Optional[float]:
+    """
+    Calculate current 1-year return from cached data (ending today).
+    This shows the actual 1Y performance as of today, matching what Yahoo Finance shows.
+    """
+    try:
+        if ticker not in all_tickers_data or all_tickers_data[ticker].empty:
+            return None
+        
+        df = all_tickers_data[ticker]
+        
+        # Find price column
+        candidates = ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']
+        price_col = next((c for c in candidates if c in df.columns), None)
+        if price_col is None:
+            return None
+        
+        # Get data for last 365 days ending today
+        start_date = today - timedelta(days=365)
+        
+        # Filter to date range
+        mask = (df.index >= start_date) & (df.index <= today)
+        df_1y = df.loc[mask]
+        
+        if df_1y.empty or len(df_1y) < 10:
+            return None
+        
+        s = pd.to_numeric(df_1y[price_col], errors='coerce').ffill().bfill().dropna()
+        if s.empty or len(s) < 2:
+            return None
+        
+        start_price = s.iloc[0]
+        end_price = s.iloc[-1]
+        
+        if start_price <= 0:
+            return None
+        
+        return_pct = ((end_price / start_price) - 1.0) * 100.0
+        return float(return_pct) if np.isfinite(return_pct) else None
+    except Exception:
+        return None
+
 def _prepare_ticker_data_worker(args: Tuple) -> Optional[Tuple[str, pd.DataFrame]]:
     """Worker function to prepare data for a single ticker (for parallel processing)."""
     ticker, ticker_data_slice = args
@@ -785,41 +828,85 @@ def find_top_performers(
             except Exception:
                 pass
     
+    # Calculate "Current 1Y" returns from cached data (ending today, not at backtest start)
+    # This matches what Yahoo Finance shows on their website
+    today = datetime.now(timezone.utc)
+    current_1y_returns = {}
+    
+    # Build a dict lookup for ticker data
+    ticker_data_dict = {}
+    if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
+        # Long format
+        for ticker in tickers_to_check:
+            ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+            if not ticker_df.empty:
+                ticker_df = ticker_df.set_index('date')
+                ticker_data_dict[ticker] = ticker_df
+    else:
+        # Wide format - data is already in dict-like structure
+        ticker_data_dict = all_tickers_data if isinstance(all_tickers_data, dict) else {}
+    
+    # Calculate current 1Y for each ticker
+    for ticker in tickers_to_check:
+        current_1y = _get_current_1y_return_from_cache(ticker, ticker_data_dict, today)
+        if current_1y is not None:
+            current_1y_returns[ticker] = current_1y
+    
     # ALWAYS display comparison table (even when return_tickers=True)
     print(f"\n\n Top Performers with Yahoo Finance Comparison ")
-    print("-" * 110)
-    print(f"{'Rank':<5} | {'Ticker':<10} | {'Cached 1Y':>12} | {'Yahoo 1Y':>12} | {'Difference':>12} | {'Status':>15}")
-    print("-" * 110)
+    print(f"  NOTE: 'Historical 1Y' = 1Y ending at backtest start ({end_date.strftime('%Y-%m-%d')})")
+    print(f"        'Current 1Y' = 1Y ending today ({today.strftime('%Y-%m-%d')}) - matches Yahoo Finance")
+    print("-" * 140)
+    print(f"{'Rank':<5} | {'Ticker':<10} | {'Historical 1Y':>14} | {'Current 1Y':>12} | {'Yahoo 1Y':>12} | {'Curr vs Yahoo':>14} | {'Status':>12}")
+    print("-" * 140)
     
     # Show top 25 for comparison
     for i, (ticker, perf) in enumerate(final_performers[:25], 1):
         yahoo_perf = yahoo_returns.get(ticker)
-        if yahoo_perf is not None:
-            diff = perf - yahoo_perf
-            # Flag suspicious discrepancies > 50%
-            status = " LARGE DIFF" if abs(diff) > 50 else " Match"
-            print(f"{i:<5} | {ticker:<10} | {perf:11.2f}% | {yahoo_perf:11.2f}% | {diff:+11.2f}% | {status:>15}")
+        current_perf = current_1y_returns.get(ticker)
+        
+        current_str = f"{current_perf:11.2f}%" if current_perf is not None else "N/A"
+        yahoo_str = f"{yahoo_perf:11.2f}%" if yahoo_perf is not None else "N/A"
+        
+        if current_perf is not None and yahoo_perf is not None:
+            diff = current_perf - yahoo_perf
+            # Flag suspicious discrepancies > 20% between current and Yahoo
+            status = "LARGE DIFF" if abs(diff) > 20 else "Match"
+            diff_str = f"{diff:+13.2f}%"
         else:
-            print(f"{i:<5} | {ticker:<10} | {perf:11.2f}% | {'N/A':>12} | {'N/A':>12} | {'No Yahoo data':>15}")
+            diff_str = "N/A"
+            status = "No data"
+        
+        print(f"{i:<5} | {ticker:<10} | {perf:13.2f}% | {current_str:>12} | {yahoo_str:>12} | {diff_str:>14} | {status:>12}")
     
     if len(final_performers) > 25:
         print(f"   ... and {len(final_performers) - 25} more tickers")
     
-    print("-" * 110)
+    print("-" * 140)
     
     # Summary stats
     if yahoo_returns:
         matched_tickers = [t for t in tickers_to_check if t in yahoo_returns]
         if matched_tickers:
-            avg_cached = np.mean([perf for ticker, perf in final_performers if ticker in matched_tickers])
+            avg_historical = np.mean([perf for ticker, perf in final_performers if ticker in matched_tickers])
             avg_yahoo = np.mean([yahoo_returns[t] for t in matched_tickers])
-            print(f"\n Summary ({len(matched_tickers)} tickers): Avg Cached = {avg_cached:.1f}%, Avg Yahoo = {avg_yahoo:.1f}%, Avg Difference = {avg_cached - avg_yahoo:+.1f}%")
             
-            # Count large discrepancies
-            perf_dict = {ticker: perf for ticker, perf in final_performers}
-            large_diffs = sum(1 for t in matched_tickers if abs(perf_dict.get(t, 0) - yahoo_returns[t]) > 50)
+            # Calculate average current 1Y for matched tickers
+            current_matched = [t for t in matched_tickers if t in current_1y_returns]
+            if current_matched:
+                avg_current = np.mean([current_1y_returns[t] for t in current_matched])
+                print(f"\n Summary ({len(matched_tickers)} tickers):")
+                print(f"   Historical 1Y (ending {end_date.strftime('%Y-%m-%d')}): Avg = {avg_historical:.1f}%")
+                print(f"   Current 1Y (ending today):                    Avg = {avg_current:.1f}%")
+                print(f"   Yahoo 1Y:                                     Avg = {avg_yahoo:.1f}%")
+                print(f"   Current vs Yahoo difference:                  Avg = {avg_current - avg_yahoo:+.1f}%")
+            else:
+                print(f"\n Summary ({len(matched_tickers)} tickers): Avg Historical = {avg_historical:.1f}%, Avg Yahoo = {avg_yahoo:.1f}%")
+            
+            # Count large discrepancies between current and Yahoo (more relevant comparison)
+            large_diffs = sum(1 for t in current_matched if abs(current_1y_returns.get(t, 0) - yahoo_returns[t]) > 20)
             if large_diffs > 0:
-                print(f"  WARNING: {large_diffs} tickers have >50% discrepancy - consider clearing cache and re-downloading!")
+                print(f"  ⚠️ WARNING: {large_diffs} tickers have >20% discrepancy between Current 1Y and Yahoo - may indicate data issues!")
     
     if return_tickers:
         return final_performers
