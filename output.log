@@ -2803,3 +2803,537 @@ DEBUG: ENABLE_AI_PORTFOLIO is False, skipping training
    ⚠️ No price data for APP on 2025-10-10, skipping buy
    ⚠️ No price data for TKA.DE on 2025-10-10, skipping buy
    🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 53 (2025-10-13): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, APP
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$116,968 - cost≈$780 = $116,188 <= last≈$128,160; Δ≈$-11,972; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): HOOD, ENR.DE, IBKR
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$101,763 - cost≈$1,357 = $100,406 <= last≈$115,262; Δ≈$-14,856; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, QQQ
+   📊 Risk-Adj Mom portfolio: $97,710 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-13
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['CVNA', 'TKA.DE', 'RCL']
+   🔄 Mean Reversion rebalancing: ['CVNA', 'RCL', 'MSTR'] → ['CVNA', 'TKA.DE', 'RCL']
+   ⚠️ No price data for CVNA on 2025-10-13, skipping buy
+   ⚠️ No price data for TKA.DE on 2025-10-13, skipping buy
+   ⚠️ No price data for RCL on 2025-10-13, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-13
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'FIX']
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-13
+   📊 Vol-Adj Mom: Found 18 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['HOOD', 'APP', 'IBKR']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['HOOD', 'APP', 'TKA.DE'] → ['HOOD', 'APP', 'IBKR']
+     Top scores: [('HOOD', '3.45'), ('APP', '3.41'), ('IBKR', '2.35')]
+   ⚠️ No price data for HOOD on 2025-10-13, skipping buy
+   ⚠️ No price data for APP on 2025-10-13, skipping buy
+   ⚠️ No price data for IBKR on 2025-10-13, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 54 (2025-10-14): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, APP
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$115,089 - cost≈$767 = $114,321 <= last≈$128,160; Δ≈$-13,839; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): HOOD, IBKR, ENR.DE
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$100,003 - cost≈$1,333 = $98,669 <= last≈$115,262; Δ≈$-16,593; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, QQQ
+   📊 Risk-Adj Mom portfolio: $99,958 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-14
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'MSTR', 'CVNA']
+   🔄 Mean Reversion rebalancing: ['CVNA', 'TKA.DE', 'RCL'] → ['TKA.DE', 'MSTR', 'CVNA']
+   ⚠️ No price data for TKA.DE on 2025-10-14, skipping buy
+   ⚠️ No price data for MSTR on 2025-10-14, skipping buy
+   ⚠️ No price data for CVNA on 2025-10-14, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-14
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'FIX', 'HOOD']
+   🏆 Quality+Momentum rebalancing: ['APP', 'HOOD', 'FIX'] → ['APP', 'FIX', 'HOOD']
+     Top scores: [('APP', '43.5'), ('FIX', '19.8'), ('HOOD', '19.6')]
+   ⚠️ No price data for APP on 2025-10-14, skipping buy
+   ⚠️ No price data for FIX on 2025-10-14, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-14, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-14
+   📊 Vol-Adj Mom: Found 19 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'HOOD', 'TPR']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['HOOD', 'APP', 'IBKR'] → ['APP', 'HOOD', 'TPR']
+     Top scores: [('APP', '3.22'), ('HOOD', '2.89'), ('TPR', '2.24')]
+   ⚠️ No price data for APP on 2025-10-14, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-14, skipping buy
+   ⚠️ No price data for TPR on 2025-10-14, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 55 (2025-10-15): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, APP
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$114,291 - cost≈$762 = $113,529 <= last≈$128,160; Δ≈$-14,631; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): HOOD, ENR.DE, IBKR
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$100,256 - cost≈$1,337 = $98,920 <= last≈$115,262; Δ≈$-16,343; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, QQQ
+   📊 Risk-Adj Mom portfolio: $97,439 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-15
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'AXON', 'CVNA']
+   🔄 Mean Reversion rebalancing: ['TKA.DE', 'MSTR', 'CVNA'] → ['TKA.DE', 'AXON', 'CVNA']
+   ⚠️ No price data for TKA.DE on 2025-10-15, skipping buy
+   ⚠️ No price data for AXON on 2025-10-15, skipping buy
+   ⚠️ No price data for CVNA on 2025-10-15, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-15
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'FIX', 'QQQ']
+   🏆 Quality+Momentum rebalancing: ['APP', 'FIX', 'HOOD'] → ['APP', 'FIX', 'QQQ']
+     Top scores: [('APP', '45.7'), ('FIX', '21.0'), ('QQQ', '16.5')]
+   ⚠️ No price data for APP on 2025-10-15, skipping buy
+   ⚠️ No price data for FIX on 2025-10-15, skipping buy
+   ⚠️ No price data for QQQ on 2025-10-15, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-15
+   📊 Vol-Adj Mom: Found 18 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'HOOD', 'PLTR']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['APP', 'HOOD', 'TPR'] → ['APP', 'HOOD', 'PLTR']
+     Top scores: [('APP', '3.70'), ('HOOD', '2.98'), ('PLTR', '2.21')]
+   ⚠️ No price data for APP on 2025-10-15, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-15, skipping buy
+   ⚠️ No price data for PLTR on 2025-10-15, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 56 (2025-10-16): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, APP
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$111,656 - cost≈$744 = $110,911 <= last≈$128,160; Δ≈$-17,249; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): ENR.DE, HOOD, FIX
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$98,686 - cost≈$1,316 = $97,370 <= last≈$115,262; Δ≈$-17,892; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, QQQ
+   📊 Risk-Adj Mom portfolio: $97,556 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-16
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'MSTR', 'AXON']
+   🔄 Mean Reversion rebalancing: ['TKA.DE', 'AXON', 'CVNA'] → ['TKA.DE', 'MSTR', 'AXON']
+   ⚠️ No price data for TKA.DE on 2025-10-16, skipping buy
+   ⚠️ No price data for MSTR on 2025-10-16, skipping buy
+   ⚠️ No price data for AXON on 2025-10-16, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-16
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'FIX', 'HOOD']
+   🏆 Quality+Momentum rebalancing: ['APP', 'FIX', 'QQQ'] → ['APP', 'FIX', 'HOOD']
+     Top scores: [('APP', '45.8'), ('FIX', '20.9'), ('HOOD', '18.2')]
+   ⚠️ No price data for APP on 2025-10-16, skipping buy
+   ⚠️ No price data for FIX on 2025-10-16, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-16, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-16
+   📊 Vol-Adj Mom: Found 16 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'TPR', 'HOOD']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['APP', 'HOOD', 'PLTR'] → ['APP', 'TPR', 'HOOD']
+     Top scores: [('APP', '3.37'), ('TPR', '2.14'), ('HOOD', '1.95')]
+   ⚠️ No price data for APP on 2025-10-16, skipping buy
+   ⚠️ No price data for TPR on 2025-10-16, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-16, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 57 (2025-10-17): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, APP
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$111,444 - cost≈$743 = $110,701 <= last≈$128,160; Δ≈$-17,459; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): HOOD, ENR.DE, FIX
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$98,122 - cost≈$1,308 = $96,814 <= last≈$115,262; Δ≈$-18,449; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, QQQ
+   📊 Risk-Adj Mom portfolio: $96,721 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-17
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'MSTR', 'RHM.DE']
+   🔄 Mean Reversion rebalancing: ['TKA.DE', 'MSTR', 'AXON'] → ['TKA.DE', 'MSTR', 'RHM.DE']
+   ⚠️ No price data for TKA.DE on 2025-10-17, skipping buy
+   ⚠️ No price data for MSTR on 2025-10-17, skipping buy
+   ⚠️ No price data for RHM.DE on 2025-10-17, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-17
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'FIX']
+   🏆 Quality+Momentum rebalancing: ['APP', 'FIX', 'HOOD'] → ['APP', 'HOOD', 'FIX']
+     Top scores: [('APP', '49.9'), ('HOOD', '19.3'), ('FIX', '17.3')]
+   ⚠️ No price data for APP on 2025-10-17, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-17, skipping buy
+   ⚠️ No price data for FIX on 2025-10-17, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-17
+   📊 Vol-Adj Mom: Found 14 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'PLTR', 'TPR']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['APP', 'TPR', 'HOOD'] → ['APP', 'PLTR', 'TPR']
+     Top scores: [('APP', '3.64'), ('PLTR', '2.27'), ('TPR', '2.25')]
+   ⚠️ No price data for APP on 2025-10-17, skipping buy
+   ⚠️ No price data for PLTR on 2025-10-17, skipping buy
+   ⚠️ No price data for TPR on 2025-10-17, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 58 (2025-10-20): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, RHM.DE
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$116,439 - cost≈$776 = $115,663 <= last≈$128,160; Δ≈$-12,497; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): HOOD, ENR.DE, IBKR
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$99,078 - cost≈$1,321 = $97,757 <= last≈$115,262; Δ≈$-17,505; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, QQQ
+   📊 Risk-Adj Mom portfolio: $95,896 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-20
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'APP', 'AXON']
+   🔄 Mean Reversion rebalancing: ['TKA.DE', 'MSTR', 'RHM.DE'] → ['TKA.DE', 'APP', 'AXON']
+   ⚠️ No price data for TKA.DE on 2025-10-20, skipping buy
+   ⚠️ No price data for APP on 2025-10-20, skipping buy
+   ⚠️ No price data for AXON on 2025-10-20, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-20
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'FIX']
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-20
+   📊 Vol-Adj Mom: Found 17 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'PLTR', 'TPR']
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 59 (2025-10-21): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, RHM.DE
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$112,830 - cost≈$752 = $112,077 <= last≈$128,160; Δ≈$-16,083; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): HOOD, ENR.DE, IBKR
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$95,344 - cost≈$1,271 = $94,073 <= last≈$115,262; Δ≈$-21,189; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, QQQ, HOOD
+   📊 Risk-Adj Mom portfolio: $98,348 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-21
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'APP', 'AXON']
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-21
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'FIX']
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-21
+   📊 Vol-Adj Mom: Found 15 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'PLTR', 'TPR']
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 60 (2025-10-22): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, RHM.DE
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$110,519 - cost≈$737 = $109,783 <= last≈$128,160; Δ≈$-18,377; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, HOOD, FIX
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): QQQ, HOOD, SPY
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$95,508 - cost≈$1,273 = $94,235 <= last≈$115,262; Δ≈$-21,028; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, QQQ, HOOD
+   📊 Risk-Adj Mom portfolio: $96,795 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-22
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'MSTR', 'APP']
+   🔄 Mean Reversion rebalancing: ['TKA.DE', 'APP', 'AXON'] → ['TKA.DE', 'MSTR', 'APP']
+   ⚠️ No price data for TKA.DE on 2025-10-22, skipping buy
+   ⚠️ No price data for MSTR on 2025-10-22, skipping buy
+   ⚠️ No price data for APP on 2025-10-22, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-22
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'SPY', 'HOOD']
+   🏆 Quality+Momentum rebalancing: ['APP', 'HOOD', 'FIX'] → ['APP', 'SPY', 'HOOD']
+     Top scores: [('APP', '38.6'), ('SPY', '15.1'), ('HOOD', '14.9')]
+   ⚠️ No price data for APP on 2025-10-22, skipping buy
+   ⚠️ No price data for SPY on 2025-10-22, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-22, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-22
+   📊 Vol-Adj Mom: Found 15 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'HOOD', 'TPR']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['APP', 'PLTR', 'TPR'] → ['APP', 'HOOD', 'TPR']
+     Top scores: [('APP', '2.92'), ('HOOD', '1.70'), ('TPR', '1.65')]
+   ⚠️ No price data for APP on 2025-10-22, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-22, skipping buy
+   ⚠️ No price data for TPR on 2025-10-22, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+   🔮 Day 60: AI predictions disabled, running BH strategies only
+   🔍 DEBUG: enable_ai_strategy=False, valid_predictions=0, consecutive_no_predictions=0
+   📊 Day 60: No portfolio changes needed
+
+🔄 Day 61 (2025-10-23): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, APP
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$112,746 - cost≈$752 = $111,994 <= last≈$128,160; Δ≈$-16,166; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, HOOD, FIX
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): HOOD, FIX, IBKR
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$97,947 - cost≈$1,306 = $96,641 <= last≈$115,262; Δ≈$-18,621; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, QQQ
+   📊 Risk-Adj Mom portfolio: $93,478 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-23
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'RHM.DE', 'CBK.DE']
+   🔄 Mean Reversion rebalancing: ['TKA.DE', 'MSTR', 'APP'] → ['TKA.DE', 'RHM.DE', 'CBK.DE']
+   ⚠️ No price data for TKA.DE on 2025-10-23, skipping buy
+   ⚠️ No price data for RHM.DE on 2025-10-23, skipping buy
+   ⚠️ No price data for CBK.DE on 2025-10-23, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-23
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'SPY']
+   🏆 Quality+Momentum rebalancing: ['APP', 'SPY', 'HOOD'] → ['APP', 'HOOD', 'SPY']
+     Top scores: [('APP', '41.3'), ('HOOD', '18.1'), ('SPY', '15.5')]
+   ⚠️ No price data for APP on 2025-10-23, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-23, skipping buy
+   ⚠️ No price data for SPY on 2025-10-23, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-23
+   📊 Vol-Adj Mom: Found 16 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'HOOD', 'PLTR']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['APP', 'HOOD', 'TPR'] → ['APP', 'HOOD', 'PLTR']
+     Top scores: [('APP', '3.21'), ('HOOD', '2.20'), ('PLTR', '1.78')]
+   ⚠️ No price data for APP on 2025-10-23, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-23, skipping buy
+   ⚠️ No price data for PLTR on 2025-10-23, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 62 (2025-10-24): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, APP
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$116,421 - cost≈$776 = $115,645 <= last≈$128,160; Δ≈$-12,515; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): FIX, HOOD, ENR.DE
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$102,168 - cost≈$1,362 = $100,806 <= last≈$115,262; Δ≈$-14,456; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, QQQ
+   📊 Risk-Adj Mom portfolio: $97,347 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-24
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'RHM.DE', 'CBK.DE']
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-24
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'FIX']
+   🏆 Quality+Momentum rebalancing: ['APP', 'HOOD', 'SPY'] → ['APP', 'HOOD', 'FIX']
+     Top scores: [('APP', '50.0'), ('HOOD', '24.7'), ('FIX', '21.1')]
+   ⚠️ No price data for APP on 2025-10-24, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-24, skipping buy
+   ⚠️ No price data for FIX on 2025-10-24, skipping buy
+   📊 Quality+Momentum portfolio: $0 invested + $100,000 cash
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-24
+   📊 Vol-Adj Mom: Found 14 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'HOOD', 'FIX']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['APP', 'HOOD', 'PLTR'] → ['APP', 'HOOD', 'FIX']
+     Top scores: [('APP', '3.42'), ('HOOD', '2.22'), ('FIX', '1.99')]
+   ⚠️ No price data for APP on 2025-10-24, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-24, skipping buy
+   ⚠️ No price data for FIX on 2025-10-24, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 63 (2025-10-27): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, APP
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$119,803 - cost≈$799 = $119,004 <= last≈$128,160; Δ≈$-9,156; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): FIX, HOOD, HEI.DE
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$105,551 - cost≈$1,407 = $104,144 <= last≈$115,262; Δ≈$-11,118; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, QQQ
+   📊 Risk-Adj Mom portfolio: $106,135 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-27
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'RHM.DE', 'APP']
+   🔄 Mean Reversion rebalancing: ['TKA.DE', 'RHM.DE', 'CBK.DE'] → ['TKA.DE', 'RHM.DE', 'APP']
+   ⚠️ No price data for TKA.DE on 2025-10-27, skipping buy
+   ⚠️ No price data for RHM.DE on 2025-10-27, skipping buy
+   ⚠️ No price data for APP on 2025-10-27, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-27
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'FIX']
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-27
+   📊 Vol-Adj Mom: Found 16 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'HOOD', 'PLTR']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['APP', 'HOOD', 'FIX'] → ['APP', 'HOOD', 'PLTR']
+     Top scores: [('APP', '3.92'), ('HOOD', '2.42'), ('PLTR', '1.97')]
+   ⚠️ No price data for APP on 2025-10-27, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-27, skipping buy
+   ⚠️ No price data for PLTR on 2025-10-27, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 64 (2025-10-28): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, APP
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$120,290 - cost≈$802 = $119,488 <= last≈$128,160; Δ≈$-8,672; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, HOOD, FIX
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): FIX, HEI.DE, HOOD
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$104,726 - cost≈$1,396 = $103,329 <= last≈$115,262; Δ≈$-11,933; changed=2/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, QQQ
+   📊 Risk-Adj Mom portfolio: $108,133 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-28
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'APP', 'RHM.DE']
+   🔄 Mean Reversion rebalancing: ['TKA.DE', 'RHM.DE', 'APP'] → ['TKA.DE', 'APP', 'RHM.DE']
+   ⚠️ No price data for TKA.DE on 2025-10-28, skipping buy
+   ⚠️ No price data for APP on 2025-10-28, skipping buy
+   ⚠️ No price data for RHM.DE on 2025-10-28, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-28
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'FIX']
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-28
+   📊 Vol-Adj Mom: Found 14 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'HOOD', 'PLTR']
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🔄 Day 65 (2025-10-29): Daily Dynamic BH Rebalancing...
+   🏆 Top 3 performers (1-year): HOOD, PLTR, APP
+   ⏭️ Skip Dynamic BH 1Y rebalance: value_after_cost<=last (now≈$121,503 - cost≈$810 = $120,693 <= last≈$128,160; Δ≈$-7,467; changed=1/3)
+   🏆 Top 3 performers (3-month): APP, FIX, HOOD
+   ⏭️ Skip Dynamic BH 3M rebalance: no change
+   🏆 Top 3 performers (1-month): FIX, NRG, PLTR
+   ⏭️ Skip Dynamic BH 1M rebalance: value_after_cost<=last (now≈$104,510 - cost≈$2,090 = $102,420 <= last≈$115,262; Δ≈$-12,842; changed=3/3)
+   🏆 Top 3 risk-adjusted performers (6-month): FIX, HOOD, QQQ
+   📊 Risk-Adj Mom portfolio: $108,607 invested + $250 cash
+   🔍 Mean Reversion: Analyzing 21 tickers on 2025-10-29
+   📊 Mean Reversion: Found 21 tickers with valid data
+   🎯 Mean Reversion: Selected ['TKA.DE', 'MSTR', 'RCL']
+   🔄 Mean Reversion rebalancing: ['TKA.DE', 'APP', 'RHM.DE'] → ['TKA.DE', 'MSTR', 'RCL']
+   ⚠️ No price data for TKA.DE on 2025-10-29, skipping buy
+   ⚠️ No price data for MSTR on 2025-10-29, skipping buy
+   ⚠️ No price data for RCL on 2025-10-29, skipping buy
+   📊 Mean Reversion portfolio: $0 invested + $100,000 cash
+   🔍 Quality+Mom: Analyzing 21 tickers on 2025-10-29
+   📊 Quality+Mom: Found 21 tickers with valid data
+   🎯 Quality+Mom: Selected ['APP', 'HOOD', 'FIX']
+   🔍 Vol-Adj Mom: Analyzing 21 tickers on 2025-10-29
+   📊 Vol-Adj Mom: Found 15 tickers with valid data
+   🎯 Vol-Adj Mom: Selected ['APP', 'HOOD', 'FIX']
+   🔄 Volatility-Adjusted Momentum rebalancing: ['APP', 'HOOD', 'PLTR'] → ['APP', 'HOOD', 'FIX']
+     Top scores: [('APP', '3.54'), ('HOOD', '2.33'), ('FIX', '2.00')]
+   ⚠️ No price data for APP on 2025-10-29, skipping buy
+   ⚠️ No price data for HOOD on 2025-10-29, skipping buy
+   ⚠️ No price data for FIX on 2025-10-29, skipping buy
+   🤖 AI predictions disabled (ENABLE_AI_STRATEGY=False)
+
+🏁 Daily selection backtest complete!
+   📊 Total days processed: 65
+   🧠 Model retrains: 0
+   🔄 Portfolio rebalances: 0 (only when stocks change)
+   💰 Transaction costs minimized - daily monitoring, trading only when portfolio changes
+
+⚠️ WARNING: No predictions were logged during backtest!
+🏆 BH Portfolio: Investing in top 3 performers based on 1-year performance up to 2025-07-31:
+  1. PLTR: +507.2% 1-year return
+  2. APP: +420.3% 1-year return
+  3. HOOD: +409.1% 1-year return
+  📊 BH PLTR: $42,068 (+28.9%) - 213 shares @ $154.27 → $198.81 (2025-07-31 to 2025-10-29)
+  📊 BH APP: $54,381 (+66.5%) - 87 shares @ $379.17 → $631.20 (2025-07-31 to 2025-10-29)
+  📊 BH HOOD: $47,343 (+44.9%) - 330 shares @ $99.90 → $144.80 (2025-07-31 to 2025-10-29)
+✅ BH Portfolio Value: $143,792 across 3 top performers
+ℹ️ AI Strategy disabled - using initial capital ($100,000) for AI strategy results
+
+[DEBUG] 1-Year Backtest Results:
+  - top_tickers_1y_filtered: ['PLTR', 'APP', 'HOOD', 'ENR.DE', 'GEV', 'RHM.DE', 'TKA.DE', 'TPR', 'VST', 'CVNA', 'MSTR', 'AXON', 'DASH', 'NRG', 'CBK.DE', 'IBKR', 'HEI.DE', 'RCL', 'FIX', 'QQQ', 'SPY']
+  - final_strategy_value_1y: $99,999.99
+  - processed_tickers_1y: ['PLTR', 'APP', 'HOOD', 'ENR.DE', 'GEV', 'RHM.DE', 'TKA.DE', 'TPR', 'VST', 'CVNA', 'MSTR', 'AXON', 'DASH', 'NRG', 'CBK.DE', 'IBKR', 'HEI.DE', 'RCL', 'FIX', 'QQQ', 'SPY']
+  - strategy_results_1y count: 0
+  - ai_1y_return: 0.00%
+
+
+📊 Calculating Buy & Hold performance for 3-Month period...
+   Processing 21 tickers (using cached data)...
+✅ BH Portfolio (Top 3 Performers): $143,792
+✅ 3-Month Buy & Hold calculation complete.
+
+📝 Preparing final summary data...
+
+[DEBUG] Before print_final_summary:
+  - final_strategy_value_1y: $99,999.99
+  - final_buy_hold_value_1y: $143,792.03
+  - performance_metrics_buy_hold_1y_actual type: <class 'list'>
+  - performance_metrics_buy_hold_1y_actual length: 21
+
+[DEBUG] Inside print_final_summary - Received parameters:
+  - final_strategy_value_1y: $99,999.99
+  - final_buy_hold_value_1y: $143,792.03
+  - ai_1y_return: 0.00%
+
+
+================================================================================
+                     🚀 AI-POWERED STOCK ADVISOR FINAL SUMMARY 🚀
+================================================================================
+
+📊 Overall Portfolio Performance:
+  Initial Capital: $99,999.99
+  Number of Tickers Analyzed: 21
+------------------------------------------------------------------------------------------------------------------------------------------------------
+Period       | AI Strategy        | Static BH          | Dyn BH 1Y          | Dyn BH 3M          | AI Portfolio       | Dyn BH 1M          | Risk-Adj Mom       | Mean Reversion     | Quality+Mom        | Vol-Adj Mom        | Mom+AI Hybrid     
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+3-Month      | $100,000 (+0.0%)  | $143,792 (+43.8%) | $121,503 (+21.5%) | $114,299 (+14.3%) | $0 (-100.0%)      | $104,510 (+4.5%)  | $109,806 (+9.8%)  | $100,000 (+0.0%)  | $100,000 (+0.0%)  | $100,000 (+0.0%)  | $0 (-100.0%)     
+Txn Costs    | $0                | $2,439            | $1,938            | $2,853            | $0                | $6,763            | $9,251            | $0                | $0                | $0                | $0               
+Annualized   | 0.0%              | +336.2%           | +120.3%           | +71.9%            | -100.0%           | +19.6%            | +46.1%            | +0.0%             | +0.0%             | +0.0%             | -100.0%          
+==========================================================================================================================================================================
+
+📊 UNIFIED TICKER PERFORMANCE TABLE (Sorted by 1Y Performance):
+========================================================================================================================================================================================================
+Ticker     |    1Y Perf |      AI Gain | AI Status    |      BH Gain |   AI vs BH |  AI Sharpe |  BH Sharpe | Last Action  |  Days Held
+========================================================================================================================================================================================================
+PLTR       |    507.17% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+APP        |    420.31% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+HOOD       |    409.14% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+ENR.DE     |    290.36% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+GEV        |    280.15% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+RHM.DE     |    251.32% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+TKA.DE     |    209.28% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+TPR        |    182.29% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+VST        |    176.17% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+CVNA       |    166.29% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+MSTR       |    165.81% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+AXON       |    152.14% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+DASH       |    131.28% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+NRG        |    130.43% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+CBK.DE     |    130.28% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+IBKR       |    121.69% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+HEI.DE     |    118.76% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+RCL        |    117.01% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+FIX        |    116.43% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+QQQ        |      0.00% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+SPY        |      0.00% | $         0 | ✅ Trained    | $         0 | -$      0 |      0.00 |        N/A | Held 0d      |          0
+========================================================================================================================================================================================================
+TOTALS     |            | $         0 | 21✅ 0❌    | $         0 |            |            |            |              |           
+========================================================================================================================================================================================================
+
+🤖 ML Model Status:
+  - PLTR: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - APP: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - HOOD: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - ENR.DE: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - GEV: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - RHM.DE: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - TKA.DE: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - TPR: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - VST: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - CVNA: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - MSTR: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - AXON: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - DASH: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - NRG: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - CBK.DE: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - IBKR: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - HEI.DE: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - RCL: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - FIX: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - QQQ: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+  - SPY: Buy Model: ❌ Not Trained, Sell Model: ❌ Not Trained
+================================================================================
+
+💡 Next Steps:
+  - Review individual ticker performance and trade logs for deeper insights.
+  - Experiment with different `MARKET_SELECTION` options and `N_TOP_TICKERS`.
+  - Adjust `TARGET_PERCENTAGE` and `RISK_PER_TRADE` for different risk appetites.
+  - Consider enabling `USE_MARKET_FILTER` and `USE_PERFORMANCE_BENCHMARK` for additional filtering.
+  - Explore advanced ML models or feature engineering for further improvements.
+================================================================================
+
+✅ Final summary prepared and printed.
+
+🏆 Saving best performing models for live trading from 3-Month period...
