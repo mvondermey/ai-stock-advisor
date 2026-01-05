@@ -40,6 +40,7 @@ from scipy.stats import uniform, beta
 # Global transaction cost tracking variables (initialized in main function)
 ai_transaction_costs = None
 static_bh_transaction_costs = None
+static_bh_3m_transaction_costs = None
 dynamic_bh_1y_transaction_costs = None
 dynamic_bh_3m_transaction_costs = None
 dynamic_bh_1m_transaction_costs = None
@@ -1289,10 +1290,11 @@ def _run_portfolio_backtest_walk_forward(
     current_volatility_adj_mom_stocks = []  # Current top 3 stocks held by volatility-adjusted momentum
 
     # Reset global transaction cost tracking variables for this backtest
-    global ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs
+    global ai_transaction_costs, static_bh_transaction_costs, static_bh_3m_transaction_costs, dynamic_bh_1y_transaction_costs
     global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, ai_portfolio_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs
     ai_transaction_costs = 0.0
     static_bh_transaction_costs = 0.0  # Static BH has no transaction costs (buy once, hold)
+    static_bh_3m_transaction_costs = 0.0
     dynamic_bh_1y_transaction_costs = 0.0
     dynamic_bh_3m_transaction_costs = 0.0
     dynamic_bh_1m_transaction_costs = 0.0
@@ -2740,6 +2742,7 @@ def _run_portfolio_backtest_walk_forward(
     # Only calculate if Static BH strategy is enabled
     if ENABLE_STATIC_BH:
         bh_portfolio_value = 0.0
+        bh_3m_portfolio_value = 0.0
 
         if top_performers_data:
             # Sort by 1-year performance and get top 3
@@ -2813,14 +2816,61 @@ def _run_portfolio_backtest_walk_forward(
 
             print(f"✅ BH Portfolio Value: ${bh_portfolio_value:,.0f} across {len(top_3_tickers)} top performers")
 
+            perf_3m = []
+            for ticker, ticker_df in ticker_data_grouped.items():
+                r = _return_over_lookback(ticker_df, backtest_start_date, 90)
+                if r is not None:
+                    perf_3m.append((ticker, r * 100.0))
+
+            if perf_3m:
+                perf_3m.sort(key=lambda x: x[1], reverse=True)
+                top_3_tickers_3m = [t for t, _ in perf_3m[:3]]
+
+                for ticker in top_3_tickers_3m:
+                    try:
+                        if ticker not in ticker_data_grouped:
+                            continue
+
+                        ticker_df = ticker_data_grouped[ticker]
+                        backtest_data = ticker_df.loc[backtest_start_date:backtest_end_date]
+                        if backtest_data.empty or len(backtest_data) < 2:
+                            continue
+
+                        valid_close = backtest_data['Close'].dropna()
+                        if len(valid_close) < 2:
+                            continue
+
+                        start_price = valid_close.iloc[0]
+                        end_price = valid_close.iloc[-1]
+                        if pd.isna(start_price) or pd.isna(end_price) or start_price <= 0 or end_price <= 0:
+                            continue
+
+                        shares = int(capital_per_stock / (start_price * (1 + TRANSACTION_COST)))
+                        buy_value = shares * start_price
+                        buy_cost = buy_value * TRANSACTION_COST
+                        cash_left = capital_per_stock - (buy_value + buy_cost)
+                        static_bh_3m_transaction_costs += buy_cost
+
+                        gross_sale = shares * end_price
+                        sell_cost = gross_sale * TRANSACTION_COST
+                        net_sale = gross_sale - sell_cost
+                        static_bh_3m_transaction_costs += sell_cost
+
+                        final_value = cash_left + net_sale
+                        bh_3m_portfolio_value += final_value
+                    except Exception:
+                        continue
+
         else:
             # Fallback: use initial capital for 3 stocks
             bh_portfolio_value = capital_per_stock * 3
+            bh_3m_portfolio_value = capital_per_stock * 3
             print(f"⚠️ BH Portfolio: Using fallback (${bh_portfolio_value:,.0f}) - no performance data")
 
     else:
         # Static BH strategy is disabled
         bh_portfolio_value = initial_capital_needed
+        bh_3m_portfolio_value = initial_capital_needed
         print(f"⏭️ Static BH strategy disabled (ENABLE_STATIC_BH = False)")
 
     # Handle AI strategy disabled
@@ -2847,7 +2897,7 @@ def _run_portfolio_backtest_walk_forward(
             total_portfolio_value = initial_capital_needed
             print(f"⚠️ AI Portfolio: No positions, using initial capital (${total_portfolio_value:,.0f})")
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, ai_portfolio_value, ai_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, ai_portfolio_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, bh_3m_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, ai_portfolio_value, ai_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, static_bh_3m_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, ai_portfolio_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs
 
 
 def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
@@ -3383,16 +3433,23 @@ def _rebalance_mean_reversion_portfolio(new_stocks, current_date, all_tickers_da
         for ticker in stocks_to_sell:
             if ticker in mean_reversion_positions:
                 try:
-                    ticker_data = all_tickers_data[
-                        (all_tickers_data['ticker'] == ticker) &
-                        (all_tickers_data['date'] == current_date)
-                    ]['Close']
-                    
-                    if ticker_data.empty:
-                        print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping sell")
+                    ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if ticker_df.empty:
+                        print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping sell")
                         continue
-                    
-                    current_price = ticker_data.iloc[0]
+
+                    ticker_df = ticker_df.set_index('date')
+                    price_data = ticker_df.loc[:current_date]
+                    if price_data.empty:
+                        print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping sell")
+                        continue
+
+                    valid_prices = price_data['Close'].dropna()
+                    if len(valid_prices) == 0:
+                        print(f"   ⚠️ No valid price data for {ticker} up to {current_date.date()}, skipping sell")
+                        continue
+
+                    current_price = valid_prices.iloc[-1]
 
                     if current_price > 0:
                         shares = mean_reversion_positions[ticker]['shares']
@@ -3420,16 +3477,23 @@ def _rebalance_mean_reversion_portfolio(new_stocks, current_date, all_tickers_da
 
             for ticker in stocks_to_buy:
                 try:
-                    ticker_data = all_tickers_data[
-                        (all_tickers_data['ticker'] == ticker) &
-                        (all_tickers_data['date'] == current_date)
-                    ]['Close']
-                    
-                    if ticker_data.empty:
-                        print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping buy")
+                    ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if ticker_df.empty:
+                        print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping buy")
                         continue
-                    
-                    current_price = ticker_data.iloc[0]
+
+                    ticker_df = ticker_df.set_index('date')
+                    price_data = ticker_df.loc[:current_date]
+                    if price_data.empty:
+                        print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping buy")
+                        continue
+
+                    valid_prices = price_data['Close'].dropna()
+                    if len(valid_prices) == 0:
+                        print(f"   ⚠️ No valid price data for {ticker} up to {current_date.date()}, skipping buy")
+                        continue
+
+                    current_price = valid_prices.iloc[-1]
 
                     if current_price > 0:
                         shares_to_buy = int(target_value_per_stock / current_price)
@@ -3483,16 +3547,23 @@ def _rebalance_quality_momentum_portfolio(new_stocks, current_date, all_tickers_
         for ticker in stocks_to_sell:
             if ticker in quality_momentum_positions:
                 try:
-                    ticker_data = all_tickers_data[
-                        (all_tickers_data['ticker'] == ticker) &
-                        (all_tickers_data['date'] == current_date)
-                    ]['Close']
-                    
-                    if ticker_data.empty:
-                        print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping sell")
+                    ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if ticker_df.empty:
+                        print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping sell")
                         continue
-                    
-                    current_price = ticker_data.iloc[0]
+
+                    ticker_df = ticker_df.set_index('date')
+                    price_data = ticker_df.loc[:current_date]
+                    if price_data.empty:
+                        print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping sell")
+                        continue
+
+                    valid_prices = price_data['Close'].dropna()
+                    if len(valid_prices) == 0:
+                        print(f"   ⚠️ No valid price data for {ticker} up to {current_date.date()}, skipping sell")
+                        continue
+
+                    current_price = valid_prices.iloc[-1]
 
                     if current_price > 0:
                         shares = quality_momentum_positions[ticker]['shares']
@@ -3519,16 +3590,23 @@ def _rebalance_quality_momentum_portfolio(new_stocks, current_date, all_tickers_
 
             for ticker in stocks_to_buy:
                 try:
-                    ticker_data = all_tickers_data[
-                        (all_tickers_data['ticker'] == ticker) &
-                        (all_tickers_data['date'] == current_date)
-                    ]['Close']
-                    
-                    if ticker_data.empty:
-                        print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping buy")
+                    ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if ticker_df.empty:
+                        print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping buy")
                         continue
-                    
-                    current_price = ticker_data.iloc[0]
+
+                    ticker_df = ticker_df.set_index('date')
+                    price_data = ticker_df.loc[:current_date]
+                    if price_data.empty:
+                        print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping buy")
+                        continue
+
+                    valid_prices = price_data['Close'].dropna()
+                    if len(valid_prices) == 0:
+                        print(f"   ⚠️ No valid price data for {ticker} up to {current_date.date()}, skipping buy")
+                        continue
+
+                    current_price = valid_prices.iloc[-1]
 
                     if current_price > 0:
                         buy_value = target_value_per_stock
@@ -4718,16 +4796,23 @@ def _rebalance_volatility_adj_mom_portfolio(new_stocks, current_date, all_ticker
     for ticker in stocks_to_sell:
         try:
             # Get current price
-            ticker_data = all_tickers_data[
-                (all_tickers_data['ticker'] == ticker) &
-                (all_tickers_data['date'] == current_date)
-            ]['Close']
-            
-            if ticker_data.empty:
-                print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping sell")
+            ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker]
+            if ticker_df.empty:
+                print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping sell")
                 continue
-            
-            current_price = ticker_data.iloc[0]
+
+            ticker_df = ticker_df.set_index('date')
+            price_data = ticker_df.loc[:current_date]
+            if price_data.empty:
+                print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping sell")
+                continue
+
+            valid_prices = price_data['Close'].dropna()
+            if len(valid_prices) == 0:
+                print(f"   ⚠️ No valid price data for {ticker} up to {current_date.date()}, skipping sell")
+                continue
+
+            current_price = valid_prices.iloc[-1]
             shares = volatility_adj_mom_positions[ticker]['shares']
             proceeds = shares * current_price
             fee = proceeds * TRANSACTION_COST
@@ -4747,16 +4832,23 @@ def _rebalance_volatility_adj_mom_portfolio(new_stocks, current_date, all_ticker
         
         for ticker in stocks_to_buy:
             try:
-                ticker_data = all_tickers_data[
-                    (all_tickers_data['ticker'] == ticker) &
-                    (all_tickers_data['date'] == current_date)
-                ]['Close']
-                
-                if ticker_data.empty:
-                    print(f"   ⚠️ No price data for {ticker} on {current_date.date()}, skipping buy")
+                ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                if ticker_df.empty:
+                    print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping buy")
                     continue
-                
-                current_price = ticker_data.iloc[0]
+
+                ticker_df = ticker_df.set_index('date')
+                price_data = ticker_df.loc[:current_date]
+                if price_data.empty:
+                    print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping buy")
+                    continue
+
+                valid_prices = price_data['Close'].dropna()
+                if len(valid_prices) == 0:
+                    print(f"   ⚠️ No valid price data for {ticker} up to {current_date.date()}, skipping buy")
+                    continue
+
+                current_price = valid_prices.iloc[-1]
                 
                 if current_price <= 0:
                     print(f"   ⚠️ Invalid price for {ticker}: ${current_price}, skipping buy")

@@ -25,6 +25,7 @@ def print_final_summary(
     num_tickers_analyzed: int,
     performance_metrics_buy_hold_1y: List[Dict],
     top_performers_data: List[Tuple],
+    final_buy_hold_value_3m: float = None,
     period_name: str = "1-Year",  # ✅ NEW: Dynamic period name
     strategy_results_ytd: List[Dict] = None,
     strategy_results_3month: List[Dict] = None,
@@ -56,6 +57,7 @@ def print_final_summary(
     risk_adj_mom_1y_return: float = None,
     ai_transaction_costs: float = None,
     static_bh_transaction_costs: float = None,
+    static_bh_3m_transaction_costs: float = None,
     dynamic_bh_1y_transaction_costs: float = None,
     dynamic_bh_3m_transaction_costs: float = None,
     ai_portfolio_transaction_costs: float = None,
@@ -131,7 +133,7 @@ def print_final_summary(
     print(f"  Initial Capital: ${initial_balance_used:,.2f}")
     print(f"  Number of Tickers Analyzed: {num_tickers_analyzed}")
     print("-" * 150)
-    print(f"{'Period':<12} | {'AI Strategy':<18} | {'Static BH':<18} | {'Dyn BH 1Y':<18} | {'Dyn BH 3M':<18} | {'AI Portfolio':<18} | {'Dyn BH 1M':<18} | {'Risk-Adj Mom':<18} | {'Mean Reversion':<18} | {'Quality+Mom':<18} | {'Vol-Adj Mom':<18} | {'Mom+AI Hybrid':<18}")
+    print(f"{'Period':<12} | {'AI Strategy':<18} | {'Static BH':<18} | {'Static BH 3M':<18} | {'Dyn BH 1Y':<18} | {'Dyn BH 3M':<18} | {'AI Portfolio':<18} | {'Dyn BH 1M':<18} | {'Risk-Adj Mom':<18} | {'Mean Reversion':<18} | {'Quality+Mom':<18} | {'Vol-Adj Mom':<18} | {'Mom+AI Hybrid':<18}")
     print("-" * 190)
 
     # Format each result
@@ -142,6 +144,10 @@ def print_final_summary(
         static_bh_result = f"${final_buy_hold_value_1y:,.0f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.1f}%)"
     else:
         static_bh_result = "N/A (Disabled)"
+
+    static_bh_3m_result = "N/A"
+    if ENABLE_STATIC_BH and final_buy_hold_value_3m is not None:
+        static_bh_3m_result = f"${final_buy_hold_value_3m:,.0f} ({((final_buy_hold_value_3m - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.1f}%)"
 
     dynamic_bh_1y_result = "N/A"
     if final_dynamic_bh_value_1y is not None:
@@ -179,7 +185,7 @@ def print_final_summary(
     if final_momentum_ai_hybrid_value_1y is not None and momentum_ai_hybrid_1y_return is not None:
         momentum_ai_hybrid_result = f"${final_momentum_ai_hybrid_value_1y:,.0f} ({momentum_ai_hybrid_1y_return:+.1f}%)"
 
-    print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {ai_portfolio_result:<17} | {dynamic_bh_1m_result:<17} | {risk_adj_mom_result:<17} | {mean_reversion_result:<17} | {quality_momentum_result:<17} | {volatility_adj_mom_result:<17} | {momentum_ai_hybrid_result:<17}")
+    print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {static_bh_3m_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {ai_portfolio_result:<17} | {dynamic_bh_1m_result:<17} | {risk_adj_mom_result:<17} | {mean_reversion_result:<17} | {quality_momentum_result:<17} | {volatility_adj_mom_result:<17} | {momentum_ai_hybrid_result:<17}")
 
     # Transaction costs row
     ai_costs = f"${ai_transaction_costs:,.0f}" if ai_transaction_costs is not None else "N/A"
@@ -189,6 +195,7 @@ def print_final_summary(
         static_bh_costs = f"${static_bh_transaction_costs:,.0f}" if static_bh_transaction_costs is not None else "N/A"
     else:
         static_bh_costs = "N/A"
+    static_bh_3m_costs = f"${static_bh_3m_transaction_costs:,.0f}" if (ENABLE_STATIC_BH and static_bh_3m_transaction_costs is not None) else "N/A"
     dynamic_bh_1y_costs = f"${dynamic_bh_1y_transaction_costs:,.0f}" if dynamic_bh_1y_transaction_costs is not None else "N/A"
     dynamic_bh_3m_costs = f"${dynamic_bh_3m_transaction_costs:,.0f}" if dynamic_bh_3m_transaction_costs is not None else "N/A"
     ai_portfolio_costs = f"${ai_portfolio_transaction_costs:,.0f}" if ai_portfolio_transaction_costs is not None else "N/A"
@@ -199,7 +206,7 @@ def print_final_summary(
     volatility_adj_mom_costs = f"${volatility_adj_mom_transaction_costs:,.0f}" if volatility_adj_mom_transaction_costs is not None else "N/A"
     momentum_ai_hybrid_costs = f"${momentum_ai_hybrid_transaction_costs:,.0f}" if momentum_ai_hybrid_transaction_costs is not None else "N/A"
 
-    print(f"{'Txn Costs':<12} | {ai_costs:<17} | {static_bh_costs:<17} | {dynamic_bh_1y_costs:<17} | {dynamic_bh_3m_costs:<17} | {ai_portfolio_costs:<17} | {dynamic_bh_1m_costs:<17} | {risk_adj_mom_costs:<17} | {mean_reversion_costs:<17} | {quality_momentum_costs:<17} | {volatility_adj_mom_costs:<17} | {momentum_ai_hybrid_costs:<17}")
+    print(f"{'Txn Costs':<12} | {ai_costs:<17} | {static_bh_costs:<17} | {static_bh_3m_costs:<17} | {dynamic_bh_1y_costs:<17} | {dynamic_bh_3m_costs:<17} | {ai_portfolio_costs:<17} | {dynamic_bh_1m_costs:<17} | {risk_adj_mom_costs:<17} | {mean_reversion_costs:<17} | {quality_momentum_costs:<17} | {volatility_adj_mom_costs:<17} | {momentum_ai_hybrid_costs:<17}")
     
     # ✅ NEW: Add annualized return row for comparison
     if backtest_days is not None and backtest_days > 0:
@@ -216,6 +223,9 @@ def print_final_summary(
         
         static_bh_return_pct = ((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0
         static_bh_ann = f"{annualize_return(static_bh_return_pct, backtest_days):+.1f}%" if ENABLE_STATIC_BH else "N/A"
+
+        static_bh_3m_return_pct = ((final_buy_hold_value_3m - initial_balance_used) / abs(initial_balance_used)) * 100 if (final_buy_hold_value_3m is not None and initial_balance_used != 0) else 0.0
+        static_bh_3m_ann = f"{annualize_return(static_bh_3m_return_pct, backtest_days):+.1f}%" if (ENABLE_STATIC_BH and final_buy_hold_value_3m is not None) else "N/A"
         
         dyn_bh_1y_ann = f"{annualize_return(dynamic_bh_1y_return, backtest_days):+.1f}%" if dynamic_bh_1y_return is not None else "N/A"
         dyn_bh_3m_ann = f"{annualize_return(dynamic_bh_3m_1y_return, backtest_days):+.1f}%" if dynamic_bh_3m_1y_return is not None else "N/A"
@@ -227,7 +237,7 @@ def print_final_summary(
         volatility_adj_mom_ann = f"{annualize_return(volatility_adj_mom_1y_return, backtest_days):+.1f}%" if volatility_adj_mom_1y_return is not None else "N/A"
         momentum_ai_hybrid_ann = f"{annualize_return(momentum_ai_hybrid_1y_return, backtest_days):+.1f}%" if momentum_ai_hybrid_1y_return is not None else "N/A"
         
-        print(f"{'Annualized':<12} | {ai_ann:<17} | {static_bh_ann:<17} | {dyn_bh_1y_ann:<17} | {dyn_bh_3m_ann:<17} | {ai_portfolio_ann:<17} | {dyn_bh_1m_ann:<17} | {risk_adj_mom_ann:<17} | {mean_reversion_ann:<17} | {quality_momentum_ann:<17} | {volatility_adj_mom_ann:<17} | {momentum_ai_hybrid_ann:<17}")
+        print(f"{'Annualized':<12} | {ai_ann:<17} | {static_bh_ann:<17} | {static_bh_3m_ann:<17} | {dyn_bh_1y_ann:<17} | {dyn_bh_3m_ann:<17} | {ai_portfolio_ann:<17} | {dyn_bh_1m_ann:<17} | {risk_adj_mom_ann:<17} | {mean_reversion_ann:<17} | {quality_momentum_ann:<17} | {volatility_adj_mom_ann:<17} | {momentum_ai_hybrid_ann:<17}")
     
     print("="*170)
 
