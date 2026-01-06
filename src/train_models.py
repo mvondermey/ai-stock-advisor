@@ -17,7 +17,7 @@ import pandas as pd
 from ticker_selection import get_all_tickers, find_top_performers
 from training_phase import train_models_for_period
 from data_fetcher import _download_batch_robust
-from config import TRAIN_LOOKBACK_DAYS, N_TOP_TICKERS, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES
+from config import TRAIN_LOOKBACK_DAYS, N_TOP_TICKERS, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, TOP_TICKER_SELECTION_LOOKBACK
 
 print("=" * 80)
 print("🤖 AI STOCK ADVISOR - MODEL TRAINING (No Backtest)")
@@ -97,7 +97,7 @@ except Exception as e:
     sys.exit(1)
 
 # 3. Filter to top N by momentum
-print(f"\n🎯 Step 3: Filtering to top {N_TOP_TICKERS} by 1-year momentum...")
+print(f"\n🎯 Step 3: Filtering to top {N_TOP_TICKERS} by {TOP_TICKER_SELECTION_LOOKBACK} momentum...")
 
 try:
     # For training only (not backtesting), we can use all available data
@@ -113,7 +113,7 @@ try:
     print(f"✅ Selected {len(tickers)} top performers")
     
     # Show top 10
-    print(f"\n📊 Top 10 by 1-year performance:")
+    print(f"\n📊 Top 10 by {TOP_TICKER_SELECTION_LOOKBACK} performance:")
     for i, (ticker, perf_1y, _) in enumerate(top_performers_data[:10], 1):
         print(f"  {i}. {ticker}: {perf_1y:+.2f}%")
     

@@ -66,7 +66,7 @@ USE_GRU = False
 MARKET_SELECTION = {
     "ALPACA_STOCKS": False,    # DISABLED - Using curated indices instead
     "NASDAQ_ALL": False,
-    "NASDAQ_100": True,        # ~100 stocks
+    "NASDAQ_100": True,        # ENABLED - ~100 tech stocks for growth
     "SP500": True,             # ~500 stocks  
     "DOW_JONES": True,         # ~30 stocks
     "POPULAR_ETFS": False,
@@ -74,7 +74,7 @@ MARKET_SELECTION = {
     "DAX": True,
     "MDAX": True,
     "SMI": True,
-    "FTSE_MIB": False,
+    "FTSE_MIB": False,        # DISABLED - focus on core markets
 }
 
 # If ALPACA_STOCKS is enabled, Alpaca can return thousands of symbols.
@@ -83,7 +83,8 @@ ALPACA_STOCKS_LIMIT = 20000  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = []  # NASDAQ only
-N_TOP_TICKERS           = 1000     # Select top 10 from ~630 major index tickers (reduced from 20 to avoid GPU deadlock)
+N_TOP_TICKERS           = 1200     # Reduced from 2000 - balance quality and quantity
+TOP_TICKER_SELECTION_LOOKBACK = "1M"     # Try 1-month for more responsive selection
 BATCH_DOWNLOAD_SIZE     = 10000     # Download in batches of 1000
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -176,7 +177,7 @@ USE_UNIFIED_PARALLEL_TRAINING = True
 AI_PORTFOLIO_N_JOBS = 1
 
 # --- Backtest & training windows
-BACKTEST_DAYS           = 90         # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr)
+BACKTEST_DAYS           = 500         # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr)
 TRAIN_LOOKBACK_DAYS     = 365        # Train on ~1 year of history (user request)
 VALIDATION_DAYS         = 90         # FIX 4: Validation period for threshold optimization
 
@@ -210,6 +211,8 @@ ENABLE_SEASONAL         = True   # ENABLED - Seasonal strategy
 ENABLE_QUALITY_MOM      = True   # ENABLED - Quality + Momentum
 ENABLE_MOMENTUM_AI_HYBRID = False  # ENABLED - Momentum + AI Hybrid strategy
 ENABLE_VOLATILITY_ADJ_MOM = True  # ENABLED - Volatility-Adjusted Momentum strategy
+ENABLE_DYNAMIC_BH_1Y_VOL_FILTER = True  # NEW - Dynamic BH 1Y with Volatility Filter
+ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP = True  # NEW - Dynamic BH 1Y with 20% Trailing Stop
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -217,8 +220,47 @@ STRAT_SMA_LONG          = 20
 ATR_PERIOD              = 14
 ATR_MULT_TRAIL          = 2.0
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
-INVESTMENT_PER_STOCK    = 33333.33    # Fixed amount to invest per stock ($100,000 total for 3 stocks)
+PORTFOLIO_SIZE          = 10          # Number of stocks to hold in portfolio (default: 3)
+TOTAL_CAPITAL           = 100000     # Total capital to invest ($100,000)
+INVESTMENT_PER_STOCK    = TOTAL_CAPITAL / PORTFOLIO_SIZE  # Automatically calculated
 TRANSACTION_COST        = 0.01       # 1% per trade leg (buy or sell)
+
+# --- Dynamic BH 1Y + Volatility Filter Parameters ---
+# Maximum allowed annualized volatility for stock selection (as percentage)
+# Higher values allow more volatile stocks, lower values are more conservative
+DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY = 120.0  # Maximum 120% annualized volatility (allow most stocks)
+
+# --- Dynamic BH 1Y + Trailing Stop Parameters ---
+# Trailing stop to protect gains and limit downside
+DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT = 20.0  # Sell if price drops 20% from peak
+DYNAMIC_BH_1Y_TRAILING_STOP_REBALANCE_DAYS = 1  # Check daily for stop triggers
+
+# --- Risk-Adjusted Momentum Improvements ---
+# The existing Risk-Adjusted Momentum already uses return/volatility scoring
+# We can adjust its parameters to potentially improve performance
+RISK_ADJ_MOM_PERFORMANCE_WINDOW = 365  # Days to look back for performance (1 year)
+RISK_ADJ_MOM_VOLATILITY_WINDOW = 15   # More aggressive - less volatility penalty
+
+# --- Momentum Confirmation Filter ---
+# Require positive momentum in multiple timeframes for more robust selection
+RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION = True  # Enable momentum confirmation
+RISK_ADJ_MOM_CONFIRM_SHORT = True   # RE-ENABLED - capture short-term momentum
+RISK_ADJ_MOM_CONFIRM_MEDIUM = True  # KEEP - 6-month momentum sweet spot
+RISK_ADJ_MOM_CONFIRM_LONG = False    # DISABLED - reduce filtering
+RISK_ADJ_MOM_MIN_CONFIRMATIONS = 2  # Reduced from 2 - only 1 timeframe needed
+
+# --- Volume Confirmation Filter ---
+# Require increasing volume to confirm price momentum strength
+RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION = False  # TEMPORARILY DISABLED - too restrictive
+RISK_ADJ_MOM_VOLUME_WINDOW = 20  # Days to compare recent volume vs average
+RISK_ADJ_MOM_VOLUME_MULTIPLIER = 1.2  # Recent volume must be 20% above average
+
+# --- Static Buy & Hold (BH) rebalancing period ---
+# How often to rebalance Static BH portfolios (in trading days)
+# Set to 0 or None to disable rebalancing (buy once at start, hold until end)
+# Recommended values: 20 (monthly), 60 (quarterly), 0 (no rebalancing)
+STATIC_BH_1Y_REBALANCE_DAYS = 0   # Static BH 1Y: rebalance every N days (0 = no rebalancing)
+STATIC_BH_3M_REBALANCE_DAYS = 0   # Static BH 3M: rebalance every N days (0 = no rebalancing)
 
 # --- Dynamic Buy & Hold (BH) rebalancing guard ---
 # Dynamic BH checks candidates daily, but only trades if:

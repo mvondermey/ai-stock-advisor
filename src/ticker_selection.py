@@ -27,7 +27,8 @@ from config import (
     DATA_PROVIDER, N_TOP_TICKERS, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES,
     PAUSE_BETWEEN_YF_CALLS, MARKET_SELECTION, USE_PERFORMANCE_BENCHMARK,
     ALPACA_API_KEY, ALPACA_SECRET_KEY, TOP_CACHE_PATH, VALID_TICKERS_CACHE_PATH,
-    ALPACA_STOCKS_LIMIT, ALPACA_STOCKS_EXCHANGES, NUM_PROCESSES
+    ALPACA_STOCKS_LIMIT, ALPACA_STOCKS_EXCHANGES, NUM_PROCESSES,
+    TOP_TICKER_SELECTION_LOOKBACK
 )
 from data_fetcher import load_prices_robust, _download_batch_robust
 from utils import _ensure_dir, _normalize_symbol, _to_utc
@@ -356,13 +357,13 @@ def get_tickers_for_backtest(n: int = 10) -> List[str]:
     print(f"Randomly selected {n} tickers: {', '.join(selected_tickers)}")
     return selected_tickers
 
-def _get_yahoo_1y_return(ticker: str, end_date: datetime) -> Optional[float]:
+def _get_yahoo_1y_return(ticker: str, end_date: datetime, lookback_days: int = 365) -> Optional[float]:
     """
     Fetch actual 1-year return from Yahoo Finance for comparison.
     Returns the actual 1Y% from Yahoo's live data.
     """
     try:
-        start_date = end_date - timedelta(days=365)
+        start_date = end_date - timedelta(days=lookback_days)
         # Quick fetch with 1-year data
         ticker_obj = yf.Ticker(ticker)
         hist = ticker_obj.history(start=start_date, end=end_date + timedelta(days=1))
@@ -382,7 +383,7 @@ def _get_yahoo_1y_return(ticker: str, end_date: datetime) -> Optional[float]:
         return None
 
 
-def _get_current_1y_return_from_cache(ticker: str, all_tickers_data: dict, today: datetime) -> Optional[float]:
+def _get_current_1y_return_from_cache(ticker: str, all_tickers_data: dict, today: datetime, lookback_days: int = 365) -> Optional[float]:
     """
     Calculate current 1-year return from cached data (ending today).
     This shows the actual 1Y performance as of today, matching what Yahoo Finance shows.
@@ -399,8 +400,8 @@ def _get_current_1y_return_from_cache(ticker: str, all_tickers_data: dict, today
         if price_col is None:
             return None
         
-        # Get data for last 365 days ending today
-        start_date = today - timedelta(days=365)
+        # Get data for last lookback_days ending today
+        start_date = today - timedelta(days=lookback_days)
         
         # Filter to date range
         mask = (df.index >= start_date) & (df.index <= today)
@@ -453,9 +454,9 @@ def _prepare_ticker_data_worker(args: Tuple) -> Optional[Tuple[str, pd.DataFrame
         return None
 
 
-def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[Tuple[str, float, pd.DataFrame]]:
+def _calculate_performance_worker(params: Tuple[str, pd.DataFrame, int]) -> Optional[Tuple[str, float, pd.DataFrame]]:
     """Robust 1Y performance: tolerate gaps, weekends, and column variants."""
-    ticker, df_1y = params
+    ticker, df_1y, min_points = params
     try:
         candidates = ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']
         price_col = next((c for c in candidates if c in df_1y.columns), None)
@@ -473,10 +474,9 @@ def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[
         if s.empty or len(s) < 2:
             return None
         
-        # Data quality check: Require at least 200 trading days (~10 months minimum)
-        # This filters out recent IPOs and stocks with insufficient history
-        if len(s) < 200:
-            return None  # Insufficient data for reliable 1-year performance
+        # Data quality check: Require enough points for the configured lookback window
+        if len(s) < min_points:
+            return None
 
         start_price = s.iloc[0]
         end_price = s.iloc[-1]
@@ -531,13 +531,21 @@ def find_top_performers(
             # Wide format: dates are in index
             end_date = all_tickers_data.index.max()
 
-    start_date = end_date - timedelta(days=365)
+    lookback_setting = str(TOP_TICKER_SELECTION_LOOKBACK).strip().upper() if TOP_TICKER_SELECTION_LOOKBACK is not None else "1Y"
+    if lookback_setting in {"3M", "3-M", "3MONTH", "3MONTHS", "90", "90D", "90DAYS"}:
+        lookback_days = 90
+        lookback_label = "3-Month"
+    else:
+        lookback_days = 365
+        lookback_label = "1-Year"
+
+    start_date = end_date - timedelta(days=lookback_days)
     ytd_start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
 
     final_benchmark_perf = -np.inf
     ytd_benchmark_perf = -np.inf
     if USE_PERFORMANCE_BENCHMARK:
-        print("- Calculating 1-Year Performance Benchmarks...")
+        print(f"- Calculating {lookback_label} Performance Benchmarks...")
         benchmark_perfs = {}
         
         # Use pre-fetched data from all_tickers_data instead of re-downloading
@@ -582,7 +590,7 @@ def find_top_performers(
                     if start_price > 0:
                         perf = ((end_price - start_price) / start_price) * 100
                         benchmark_perfs[bench_ticker] = perf
-                        print(f"  {bench_ticker} 1-Year Performance: {perf:.2f}% (${start_price:.2f} → ${end_price:.2f})")
+                        print(f"  {bench_ticker} {lookback_label} Performance: {perf:.2f}% (${start_price:.2f} → ${end_price:.2f})")
                     else:
                         print(f"  {bench_ticker}: Invalid start price ({start_price})")
                 else:
@@ -594,7 +602,7 @@ def find_top_performers(
                         if start_price > 0:
                             perf = ((end_price - start_price) / start_price) * 100
                             benchmark_perfs[bench_ticker] = perf
-                            print(f"  {bench_ticker} 1-Year Performance: {perf:.2f}%")
+                            print(f"  {bench_ticker} {lookback_label} Performance: {perf:.2f}%")
             except Exception as e:
                 print(f"  Could not calculate {bench_ticker} performance: {e}")
                 import traceback
@@ -605,28 +613,45 @@ def find_top_performers(
             return []
             
         final_benchmark_perf = max(benchmark_perfs.values())
-        print(f"  Using final 1-Year performance benchmark of {final_benchmark_perf:.2f}%")
+        print(f"  Using final {lookback_label} performance benchmark of {final_benchmark_perf:.2f}%")
     else:
         print(" Performance benchmark is disabled. All tickers will be considered.")
 
-    print(" Calculating 1-Year performance from pre-fetched data...")
+    print(f" Calculating {lookback_label} performance from pre-fetched data...")
     
     # FIX: Handle both long-format and wide-format data
     if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
-        # Long format: use groupby for FAST splitting (much faster than filtering in a loop!)
+        # Long format: First filter by data quality on FULL dataset, then filter to lookback window
+        
+        # Step 1: Group by ticker on FULL dataset to check data quality
+        print(f"   Checking data quality on full dataset...", flush=True)
+        full_grouped = all_tickers_data.groupby('ticker')
+        
+        # Filter tickers that have at least 252 data points in the FULL dataset
+        min_points_quality = 252  # Require 1 year of data for quality
+        quality_tickers = []
+        for ticker in full_grouped.groups.keys():
+            ticker_data = full_grouped.get_group(ticker)
+            if len(ticker_data) >= min_points_quality:
+                quality_tickers.append(ticker)
+        
+        print(f"   Found {len(quality_tickers)} tickers with {min_points_quality}+ data points", flush=True)
+        
+        # Step 2: Now filter to lookback period for performance calculation
         print(f"   Filtering data for period {start_date.date()} to {end_date.date()}...", flush=True)
         all_data = all_tickers_data[
             (all_tickers_data['date'] >= start_date) & 
-            (all_tickers_data['date'] <= end_date)
+            (all_tickers_data['date'] <= end_date) &
+            (all_tickers_data['ticker'].isin(quality_tickers))
         ].copy()
         
-        # Use groupby to split data in ONE operation (instead of 5644 filter operations!)
+        # Use groupby to split data in ONE operation
         print(f"   Splitting data by ticker using groupby (fast)...", flush=True)
         sys.stdout.flush()
         
         grouped = all_data.groupby('ticker')
         valid_tickers = list(grouped.groups.keys())
-        print(f"   Found {len(valid_tickers)} tickers with data", flush=True)
+        print(f"   Found {len(valid_tickers)} tickers with data in lookback period", flush=True)
         
         # Build prep_args using pre-grouped data (very fast!)
         print(f"   Building parameter list...", flush=True)
@@ -655,11 +680,40 @@ def find_top_performers(
                 ncols=100
             ))
             params = [r for r in prep_results if r is not None]
+
+        # min_points for performance calculation - just need enough points in the lookback window
+        # Since we already filtered for quality (252 points in full data), use a lower threshold here
+        min_points = 10  # Just need some data points in the lookback window
+        params = [(ticker, ticker_df, min_points) for ticker, ticker_df in params]
     else:
-        # Wide format: use original logic
+        # Wide format: First filter by data quality on FULL dataset, then filter to lookback window
+        
+        # Step 1: Check data quality on FULL dataset
+        print(f"   Checking data quality on full dataset...", flush=True)
+        all_tickers_in_data = list(all_tickers_data.columns.get_level_values(1).unique())
+        min_points_quality = 252  # Require 1 year of data for quality
+        
+        quality_tickers = []
+        for ticker in all_tickers_in_data:
+            try:
+                close_key = None
+                for attr in ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']:
+                    if (attr, ticker) in all_tickers_data.columns:
+                        close_key = (attr, ticker)
+                        break
+                if close_key is not None:
+                    s = all_tickers_data.loc[:, close_key].dropna()
+                    if len(s) >= min_points_quality:
+                        quality_tickers.append(ticker)
+            except KeyError:
+                pass
+        
+        print(f"   Found {len(quality_tickers)} tickers with {min_points_quality}+ data points", flush=True)
+        
+        # Step 2: Now filter to lookback period for performance calculation
         print(f"   Filtering data for period {start_date.date()} to {end_date.date()}...", flush=True)
         all_data = all_tickers_data.loc[start_date:end_date]
-        valid_tickers = list(all_data.columns.get_level_values(1).unique())
+        valid_tickers = [t for t in quality_tickers if t in all_data.columns.get_level_values(1)]
 
         print(f"   Building parameters for {len(valid_tickers)} tickers...", flush=True)
         
@@ -698,6 +752,11 @@ def find_top_performers(
                 ncols=100
             ))
             params = [r for r in prep_results if r is not None]
+
+        # min_points for performance calculation - just need enough points in the lookback window
+        # Since we already filtered for quality (252 points in full data), use a lower threshold here
+        min_points = 10  # Just need some data points in the lookback window
+        params = [(ticker, ticker_df, min_points) for ticker, ticker_df in params]
     
     # Prepare for parallel processing
     if not params:
@@ -718,7 +777,7 @@ def find_top_performers(
         results = list(tqdm(
             pool.imap(_calculate_performance_worker, params, chunksize=chunksize), 
             total=len(params), 
-            desc="Calculating 1Y Performance",
+            desc=f"Calculating {lookback_label} Performance",
             ncols=100
         ))
         for res in results:
@@ -728,7 +787,7 @@ def find_top_performers(
     print(f"   Performance calculation complete! Processed {len(all_tickers_performance_with_df)}/{len(params)} tickers")
 
     if not all_tickers_performance_with_df:
-        print(" No tickers with valid 1-Year performance found. Aborting.")
+        print(f" No tickers with valid {lookback_label} performance found. Aborting.")
         return []
 
     sorted_all_tickers_performance_with_df = sorted(all_tickers_performance_with_df, key=lambda item: item[1], reverse=True)
@@ -737,7 +796,7 @@ def find_top_performers(
 
     if n_top > 0:
         final_performers_for_selection = sorted_all_tickers_performance_with_df[:n_top]
-        print(f"\n Selected top {len(final_performers_for_selection)} tickers based on 1-Year performance.")
+        print(f"\n Selected top {len(final_performers_for_selection)} tickers based on {lookback_label} performance.")
     else:
         final_performers_for_selection = sorted_all_tickers_performance_with_df
         print(f"\n Analyzing all {len(final_performers_for_selection)} tickers (N_TOP_TICKERS is {n_top}).")
@@ -807,7 +866,7 @@ def find_top_performers(
         final_performers = screened_performers
 
     # Fetch actual Yahoo Finance 1-year returns for comparison (parallel)
-    print(f"\n  Fetching actual Yahoo 1Y returns for comparison (top {min(50, len(final_performers))} tickers)...")
+    print(f"\n  Fetching actual Yahoo {lookback_label} returns for comparison (top {min(50, len(final_performers))} tickers)...")
     yahoo_returns = {}
     
     # Only fetch for top 50 to avoid rate limiting
@@ -815,7 +874,7 @@ def find_top_performers(
     
     with ThreadPoolExecutor(max_workers=10) as executor:
         future_to_ticker = {
-            executor.submit(_get_yahoo_1y_return, ticker, end_date): ticker 
+            executor.submit(_get_yahoo_1y_return, ticker, end_date, lookback_days): ticker 
             for ticker in tickers_to_check
         }
         
@@ -828,8 +887,7 @@ def find_top_performers(
             except Exception:
                 pass
     
-    # Calculate "Current 1Y" returns from cached data (ending today, not at backtest start)
-    # This matches what Yahoo Finance shows on their website
+    # Calculate "Current" returns from cached data (ending today, not at backtest start)
     today = datetime.now(timezone.utc)
     current_1y_returns = {}
     
@@ -846,18 +904,18 @@ def find_top_performers(
         # Wide format - data is already in dict-like structure
         ticker_data_dict = all_tickers_data if isinstance(all_tickers_data, dict) else {}
     
-    # Calculate current 1Y for each ticker
+    # Calculate current return for each ticker
     for ticker in tickers_to_check:
-        current_1y = _get_current_1y_return_from_cache(ticker, ticker_data_dict, today)
+        current_1y = _get_current_1y_return_from_cache(ticker, ticker_data_dict, today, lookback_days)
         if current_1y is not None:
             current_1y_returns[ticker] = current_1y
     
     # ALWAYS display comparison table (even when return_tickers=True)
     print(f"\n\n Top Performers with Yahoo Finance Comparison ")
-    print(f"  NOTE: 'Historical 1Y' = 1Y ending at backtest start ({end_date.strftime('%Y-%m-%d')})")
-    print(f"        'Current 1Y' = 1Y ending today ({today.strftime('%Y-%m-%d')}) - matches Yahoo Finance")
+    print(f"  NOTE: 'Historical {lookback_label}' = window ending at backtest start ({end_date.strftime('%Y-%m-%d')})")
+    print(f"        'Current {lookback_label}' = window ending today ({today.strftime('%Y-%m-%d')}) - matches Yahoo Finance")
     print("-" * 140)
-    print(f"{'Rank':<5} | {'Ticker':<10} | {'Historical 1Y':>14} | {'Current 1Y':>12} | {'Yahoo 1Y':>12} | {'Curr vs Yahoo':>14} | {'Status':>12}")
+    print(f"{'Rank':<5} | {'Ticker':<10} | {('Historical ' + lookback_label):>14} | {('Current ' + lookback_label):>12} | {('Yahoo ' + lookback_label):>12} | {'Curr vs Yahoo':>14} | {'Status':>12}")
     print("-" * 140)
     
     # Show top 25 for comparison
@@ -896,17 +954,17 @@ def find_top_performers(
             if current_matched:
                 avg_current = np.mean([current_1y_returns[t] for t in current_matched])
                 print(f"\n Summary ({len(matched_tickers)} tickers):")
-                print(f"   Historical 1Y (ending {end_date.strftime('%Y-%m-%d')}): Avg = {avg_historical:.1f}%")
-                print(f"   Current 1Y (ending today):                    Avg = {avg_current:.1f}%")
-                print(f"   Yahoo 1Y:                                     Avg = {avg_yahoo:.1f}%")
+                print(f"   Historical {lookback_label} (ending {end_date.strftime('%Y-%m-%d')}): Avg = {avg_historical:.1f}%")
+                print(f"   Current {lookback_label} (ending today):                    Avg = {avg_current:.1f}%")
+                print(f"   Yahoo {lookback_label}:                                     Avg = {avg_yahoo:.1f}%")
                 print(f"   Current vs Yahoo difference:                  Avg = {avg_current - avg_yahoo:+.1f}%")
             else:
                 print(f"\n Summary ({len(matched_tickers)} tickers): Avg Historical = {avg_historical:.1f}%, Avg Yahoo = {avg_yahoo:.1f}%")
             
-            # Count large discrepancies between current and Yahoo (more relevant comparison)
+            # Count large discrepancies between current and Yahoo
             large_diffs = sum(1 for t in current_matched if abs(current_1y_returns.get(t, 0) - yahoo_returns[t]) > 20)
             if large_diffs > 0:
-                print(f"  ⚠️ WARNING: {large_diffs} tickers have >20% discrepancy between Current 1Y and Yahoo - may indicate data issues!")
+                print(f"  ⚠️ WARNING: {large_diffs} tickers have >20% discrepancy between Current {lookback_label} and Yahoo - may indicate data issues!")
     
     if return_tickers:
         return final_performers

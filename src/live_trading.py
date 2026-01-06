@@ -69,7 +69,7 @@ TOP_N_STOCKS = 3  # Number of stocks to hold (matches backtest)
 # 'risk_adj_mom' = Risk-Adjusted Momentum
 # 'mean_reversion' = Mean Reversion
 # 'volatility_adj_mom' = Volatility-Adjusted Momentum
-LIVE_TRADING_STRATEGY = 'dynamic_bh_1y'  # 👈 Change this to your best strategy from backtest!
+LIVE_TRADING_STRATEGY = 'risk_adj_mom'  # 👈 Optimized Risk-Adjusted Momentum (+179.4% backtest!)
 
 
 def get_alpaca_client() -> Optional[TradingClient]:
@@ -204,7 +204,7 @@ def rebalance_portfolio(
     print(" Portfolio rebalancing complete")
 
 
-def get_strategy_tickers(strategy: str, all_tickers: List[str]) -> List[str]:
+def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Get the tickers to hold based on the selected strategy."""
 
     if strategy == 'ai':
@@ -218,7 +218,7 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str]) -> List[str]:
 
     elif strategy == 'risk_adj_mom':
         # Risk-Adjusted Momentum Strategy
-        return get_risk_adj_mom_tickers(all_tickers)
+        return get_risk_adj_mom_tickers(all_tickers, all_tickers_data)
 
     elif strategy == 'mean_reversion':
         # Mean Reversion Strategy
@@ -227,6 +227,10 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str]) -> List[str]:
     elif strategy == 'volatility_adj_mom':
         # Volatility-Adjusted Momentum Strategy
         return get_volatility_adj_mom_tickers(all_tickers)
+
+    elif strategy == 'quality_momentum':
+        # Quality + Momentum Strategy
+        return get_quality_momentum_tickers(all_tickers)
 
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
@@ -281,31 +285,57 @@ def get_dynamic_bh_tickers(all_tickers: List[str], period: str) -> List[str]:
     return target_tickers
 
 
-def get_risk_adj_mom_tickers(all_tickers: List[str]) -> List[str]:
-    """Risk-Adjusted Momentum Strategy: Select based on risk-adjusted returns."""
-    print(f" Risk-Adjusted Momentum: Selecting top {TOP_N_STOCKS}...")
-
-    # Simplified implementation - would need the full risk-adjusted logic
-    # For now, use dynamic BH 6-month as approximation
-    return get_dynamic_bh_tickers(all_tickers, '6m')
+def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Risk-Adjusted Momentum Strategy: Use shared strategy logic."""
+    from shared_strategies import select_risk_adj_mom_stocks
+    
+    # Prepare data for shared strategy
+    ticker_data_grouped = {}
+    if all_tickers_data is not None:
+        # Handle different data formats
+        if isinstance(all_tickers_data.columns, pd.MultiIndex):
+            # Wide format: columns are (field, ticker)
+            for ticker in all_tickers_data.columns.levels[1]:
+                ticker_cols = [col for col in all_tickers_data.columns if col[1] == ticker]
+                if ticker_cols:
+                    ticker_data = all_tickers_data[ticker_cols].copy()
+                    ticker_data.columns = [col[0] for col in ticker_cols]
+                    ticker_data_grouped[ticker] = ticker_data
+        elif 'ticker' in all_tickers_data.index.names:
+            # Long format: group by ticker
+            ticker_data_grouped = {ticker: group for ticker, group in all_tickers_data.groupby('ticker')}
+        else:
+            # Assume ticker columns
+            for ticker in all_tickers:
+                if ticker in all_tickers_data.columns:
+                    ticker_data_grouped[ticker] = all_tickers_data[[ticker]].copy()
+                    ticker_data_grouped[ticker].columns = ['Close']
+    
+    return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, top_n=PORTFOLIO_SIZE)
 
 
 def get_mean_reversion_tickers(all_tickers: List[str]) -> List[str]:
-    """Mean Reversion Strategy: Select oversold stocks."""
-    print(f" Mean Reversion: Selecting top {TOP_N_STOCKS}...")
-
-    # Simplified implementation - would need the full mean reversion logic
-    # For now, use dynamic BH 1-month as approximation
-    return get_dynamic_bh_tickers(all_tickers, '1m')
+    """Mean Reversion Strategy: Use shared strategy logic."""
+    from shared_strategies import select_mean_reversion_stocks
+    return select_mean_reversion_stocks(all_tickers, {}, top_n=PORTFOLIO_SIZE)
 
 
 def get_volatility_adj_mom_tickers(all_tickers: List[str]) -> List[str]:
-    """Volatility-Adjusted Momentum Strategy: Select based on volatility-adjusted momentum."""
-    print(f" Volatility-Adjusted Momentum: Selecting top {TOP_N_STOCKS}...")
+    """Volatility-Adjusted Momentum Strategy: Use shared strategy logic."""
+    from shared_strategies import select_volatility_adj_mom_stocks
+    return select_volatility_adj_mom_stocks(all_tickers, {}, top_n=PORTFOLIO_SIZE)
 
-    # Simplified implementation - would need the full volatility-adjusted momentum logic
-    # For now, use dynamic BH 3-month as approximation
-    return get_dynamic_bh_tickers(all_tickers, '3m')
+
+def get_dynamic_bh_tickers(all_tickers: List[str], period: str) -> List[str]:
+    """Dynamic Buy & Hold Strategy: Use shared strategy logic."""
+    from shared_strategies import select_dynamic_bh_stocks
+    return select_dynamic_bh_stocks(all_tickers, {}, period=period, top_n=PORTFOLIO_SIZE)
+
+
+def get_quality_momentum_tickers(all_tickers: List[str]) -> List[str]:
+    """Quality + Momentum Strategy: Use shared strategy logic."""
+    from shared_strategies import select_quality_momentum_stocks
+    return select_quality_momentum_stocks(all_tickers, {}, top_n=PORTFOLIO_SIZE)
 
 
 def run_live_trading():
@@ -325,7 +355,8 @@ def run_live_trading():
         'dynamic_bh_1m': 'Dynamic BH (1-Month)',
         'risk_adj_mom': 'Risk-Adjusted Momentum',
         'mean_reversion': 'Mean Reversion',
-        'volatility_adj_mom': 'Volatility-Adjusted Momentum'
+        'volatility_adj_mom': 'Volatility-Adjusted Momentum',
+        'quality_momentum': 'Quality + Momentum'
     }
 
     strategy_name = strategy_names.get(LIVE_TRADING_STRATEGY, LIVE_TRADING_STRATEGY)
@@ -356,7 +387,71 @@ def run_live_trading():
         print(f" Error fetching tickers: {e}")
         return
 
-    # 4. Load AI models only if strategy requires them
+    # 4. Download fresh data for Risk-Adjusted Momentum strategy
+    if LIVE_TRADING_STRATEGY == 'risk_adj_mom':
+        print("\n Downloading fresh data for Risk-Adjusted Momentum analysis...")
+        try:
+            from data_fetcher import _download_batch_robust
+            from utils import _to_utc
+            
+            # Download 1 year of data for all tickers
+            end_date = datetime.now(timezone.utc)
+            start_date = end_date - timedelta(days=365)
+            
+            print(f"   Downloading data from {start_date.date()} to {end_date.date()}...")
+            
+            # Download in batches to avoid API limits
+            batch_size = 100
+            all_data_list = []
+            
+            for i in range(0, len(all_tickers), batch_size):
+                batch = all_tickers[i:i + batch_size]
+                print(f"   - Downloading batch {i//batch_size + 1}/{(len(all_tickers) + batch_size - 1)//batch_size} ({len(batch)} tickers)...")
+                
+                try:
+                    batch_data = _download_batch_robust(batch, start_date, end_date)
+                    if batch_data is not None and not batch_data.empty:
+                        # Convert timezone-aware index to UTC for comparison
+                        if hasattr(batch_data.index, 'tz_localize') and batch_data.index.tz is None:
+                            batch_data.index = batch_data.index.tz_localize('UTC')
+                        elif hasattr(batch_data.index, 'tz_convert') and batch_data.index.tz != 'UTC':
+                            batch_data.index = batch_data.index.tz_convert('UTC')
+                        
+                        # Filter to our date range (both are now UTC)
+                        filtered_batch_data = batch_data[
+                            (batch_data.index >= start_date) & 
+                            (batch_data.index <= end_date)
+                        ]
+                        if not filtered_batch_data.empty:
+                            all_data_list.append(filtered_batch_data)
+                except Exception as e:
+                    print(f"     ⚠️ Batch {i//batch_size + 1} failed: {e}")
+                    continue
+                
+                # Small pause between batches
+                if i + batch_size < len(all_tickers):
+                    import time
+                    time.sleep(1.0)
+            
+            if all_data_list:
+                all_tickers_data = pd.concat(all_data_list, ignore_index=False)
+                print(f"   ✅ Downloaded data for {len(all_tickers_data.columns)} tickers")
+                
+                # Check the actual structure - it might be a regular DataFrame with ticker columns
+                print(f"   📊 Data structure: {type(all_tickers_data.index)}")
+                if hasattr(all_tickers_data.index, 'names'):
+                    print(f"   📊 Index names: {all_tickers_data.index.names}")
+                print(f"   📊 Columns: {list(all_tickers_data.columns)[:5]}...")  # Show first 5 columns
+                
+            else:
+                print("   ❌ No data downloaded")
+                return
+                
+        except Exception as e:
+            print(f"   ❌ Data download failed: {e}")
+            return
+
+    # 5. Load AI models only if strategy requires them
     if LIVE_TRADING_STRATEGY == 'ai':
         models_dir = Path("logs/models")
         if not models_dir.exists():
@@ -480,7 +575,46 @@ def run_live_trading():
         target_tickers = [ticker for ticker, _ in ranked_predictions]
     else:
         # Non-AI strategy - use strategy-specific logic
-        target_tickers = get_strategy_tickers(LIVE_TRADING_STRATEGY, valid_tickers)
+        print(f"\n 🎯 Running {LIVE_TRADING_STRATEGY} strategy...")
+        print(f"    Available tickers: {len(valid_tickers)}")
+        
+        # Pass downloaded data if available for Risk-Adjusted Momentum
+        all_tickers_data_for_strategy = all_tickers_data if LIVE_TRADING_STRATEGY == 'risk_adj_mom' and 'all_tickers_data' in locals() else None
+        if LIVE_TRADING_STRATEGY == 'risk_adj_mom':
+            print(f"    Data available: {all_tickers_data_for_strategy is not None}")
+        
+        target_tickers = get_strategy_tickers(LIVE_TRADING_STRATEGY, valid_tickers, all_tickers_data_for_strategy)
+        
+        print(f"\n🎯 SELECTED STOCKS FOR TRADING:")
+        print(f"   Strategy: {LIVE_TRADING_STRATEGY}")
+        print(f"   Number of stocks: {len(target_tickers)}")
+        print(f"   Stocks to buy: {target_tickers}")
+        
+        # Show current vs target positions
+        print(f"\n📊 PORTFOLIO CHANGES:")
+        current_stocks = list(current_positions.keys())
+        stocks_to_sell = [ticker for ticker in current_stocks if ticker not in target_tickers]
+        stocks_to_buy = [ticker for ticker in target_tickers if ticker not in current_stocks]
+        
+        if stocks_to_sell:
+            print(f"   SELL: {stocks_to_sell}")
+        if stocks_to_buy:
+            print(f"   BUY:  {stocks_to_buy}")
+        if not stocks_to_sell and not stocks_to_buy:
+            print(f"   No changes needed - portfolio already aligned")
+        
+        print(f"\n⚠️  TRADING MODE: {'DRY RUN' if not LIVE_TRADING_ENABLED else ('PAPER TRADING' if USE_PAPER_TRADING else 'LIVE TRADING')}")
+        
+        # Ask for confirmation in live mode
+        if LIVE_TRADING_ENABLED and not USE_PAPER_TRADING:
+            try:
+                confirm = input("\n❓ Execute these trades? (y/N): ").strip().lower()
+                if confirm != 'y':
+                    print("❌ Trading cancelled by user")
+                    return
+            except KeyboardInterrupt:
+                print("\n❌ Trading cancelled by user")
+                return
 
     # 7. Rebalance portfolio
     rebalance_portfolio(

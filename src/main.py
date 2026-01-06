@@ -16,6 +16,7 @@ Trading AI — Improved Rule-Based System with Optional ML Gate
 
 # Import config FIRST before any other local imports to avoid circular dependencies
 import sys
+import argparse
 from pathlib import Path
 
 # --- Add project root and src directory to sys.path ---
@@ -1061,7 +1062,7 @@ def main(
         initial_capital_1y = capital_per_stock_1y * n_top_rebal
         
         # Use walk-forward backtest with periodic retraining and rebalancing
-        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y = _run_portfolio_backtest_walk_forward(
+        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y = _run_portfolio_backtest_walk_forward(
             all_tickers_data=all_tickers_data,
             train_start_date=train_start_1y_calc,
             backtest_start_date=bt_start_1y,
@@ -1303,10 +1304,16 @@ def main(
         volatility_adj_mom_1y_return=((volatility_adj_mom_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_momentum_ai_hybrid_value_1y=momentum_ai_hybrid_portfolio_value_1y,
         momentum_ai_hybrid_1y_return=((momentum_ai_hybrid_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_dynamic_bh_1y_vol_filter_value_1y=dynamic_bh_1y_vol_filter_portfolio_value_1y,
+        dynamic_bh_1y_vol_filter_1y_return=((dynamic_bh_1y_vol_filter_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_dynamic_bh_1y_trailing_stop_value_1y=dynamic_bh_1y_trailing_stop_portfolio_value_1y,
+        dynamic_bh_1y_trailing_stop_1y_return=((dynamic_bh_1y_trailing_stop_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         ai_transaction_costs=ai_transaction_costs_1y,
         static_bh_transaction_costs=static_bh_transaction_costs_1y,
         static_bh_3m_transaction_costs=static_bh_3m_transaction_costs_1y,
         dynamic_bh_1y_transaction_costs=dynamic_bh_1y_transaction_costs_1y,
+        dynamic_bh_1y_vol_filter_transaction_costs=dynamic_bh_1y_vol_filter_transaction_costs_1y,
+        dynamic_bh_1y_trailing_stop_transaction_costs=dynamic_bh_1y_trailing_stop_transaction_costs_1y,
         dynamic_bh_3m_transaction_costs=dynamic_bh_3m_transaction_costs_1y,
         ai_portfolio_transaction_costs=ai_portfolio_transaction_costs_1y,
         dynamic_bh_1m_transaction_costs=dynamic_bh_1m_transaction_costs_1y,
@@ -1368,9 +1375,55 @@ def main(
         except Exception as e:
             print(f"  ⚠️ Error processing model for {ticker} from {best_period_name} period: {e}")
 
+def run_live_trading():
+    """Live trading mode using the same logic as backtest."""
+    print("=" * 80)
+    print("🚀 AI STOCK ADVISOR - LIVE TRADING MODE")
+    print("=" * 80)
+    
+    # Import live trading functionality
+    try:
+        from live_trading import run_live_trading as execute_live_trading
+        execute_live_trading()
+    except ImportError as e:
+        print(f"❌ Could not import live trading: {e}")
+        print("Make sure live_trading.py exists in src directory")
+    except Exception as e:
+        print(f"❌ Live trading failed: {e}")
+
 # ============================
 # Main
 # ============================
 
 if __name__ == "__main__":
-    main()
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="AI Stock Advisor - Backtesting and Live Trading")
+    parser.add_argument("--live-trading", action="store_true", 
+                       help="Run in live trading mode instead of backtesting")
+    parser.add_argument("--strategy", type=str, default="risk_adj_mom",
+                       choices=["ai", "risk_adj_mom", "dynamic_bh_1y", "dynamic_bh_3m", "dynamic_bh_1m"],
+                       help="Strategy to use for live trading (default: risk_adj_mom)")
+    
+    args = parser.parse_args()
+    
+    if args.live_trading:
+        # Set strategy in config for live trading
+        import config
+        config.LIVE_TRADING_STRATEGY = args.strategy
+        print(f"🚀 Starting Live Trading with Strategy: {args.strategy}")
+        print(f"📋 Available strategies: ai, risk_adj_mom, dynamic_bh_1y, dynamic_bh_3m, dynamic_bh_1m")
+        print(f"💡 Example: python src/main.py --live-trading --strategy risk_adj_mom")
+        print("=" * 80)
+        
+        # Use the fixed live trading implementation
+        try:
+            from live_trading_fixed import run_live_trading_with_backtest_logic
+            run_live_trading_with_backtest_logic()
+        except ImportError as e:
+            print(f"❌ Could not import live trading: {e}")
+            print("Make sure live_trading_fixed.py exists in src directory")
+        except Exception as e:
+            print(f"❌ Live trading failed: {e}")
+    else:
+        # Run normal backtesting
+        main()

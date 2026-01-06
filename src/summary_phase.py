@@ -71,10 +71,16 @@ def print_final_summary(
     volatility_adj_mom_1y_return: float = None,
     final_momentum_ai_hybrid_value_1y: float = None,
     momentum_ai_hybrid_1y_return: float = None,
+    final_dynamic_bh_1y_vol_filter_value_1y: float = None,
+    dynamic_bh_1y_vol_filter_1y_return: float = None,
+    final_dynamic_bh_1y_trailing_stop_value_1y: float = None,
+    dynamic_bh_1y_trailing_stop_1y_return: float = None,
     mean_reversion_transaction_costs: float = None,
     quality_momentum_transaction_costs: float = None,
     volatility_adj_mom_transaction_costs: float = None,
     momentum_ai_hybrid_transaction_costs: float = None,
+    dynamic_bh_1y_vol_filter_transaction_costs: float = None,
+    dynamic_bh_1y_trailing_stop_transaction_costs: float = None,
     backtest_days: int = None  # ✅ NEW: Number of days in backtest for annualization
 ) -> None:
     """Prints the final summary of the backtest results."""
@@ -129,12 +135,12 @@ def print_final_summary(
     print("                     🚀 AI-POWERED STOCK ADVISOR FINAL SUMMARY 🚀")
     print("="*80)
 
-    print("\n📊 Overall Portfolio Performance:")
+    print("\n Overall Portfolio Performance:")
     print(f"  Initial Capital: ${initial_balance_used:,.2f}")
     print(f"  Number of Tickers Analyzed: {num_tickers_analyzed}")
     print("-" * 150)
-    print(f"{'Period':<12} | {'AI Strategy':<18} | {'Static BH':<18} | {'Static BH 3M':<18} | {'Dyn BH 1Y':<18} | {'Dyn BH 3M':<18} | {'AI Portfolio':<18} | {'Dyn BH 1M':<18} | {'Risk-Adj Mom':<18} | {'Mean Reversion':<18} | {'Quality+Mom':<18} | {'Vol-Adj Mom':<18} | {'Mom+AI Hybrid':<18}")
-    print("-" * 190)
+    print(f"{'Period':<12} | {'AI Strategy':<17} | {'Static BH':<17} | {'Static BH 3M':<17} | {'Dyn BH 1Y':<17} | {'Dyn BH 3M':<17} | {'AI Portfolio':<17} | {'Dyn BH 1M':<17} | {'Risk-Adj Mom':<17} | {'Mean Reversion':<17} | {'Quality+Mom':<17} | {'Vol-Adj Mom':<17} | {'Mom+AI Hybrid':<17} | {'Dyn BH 1Y+Vol':<17} | {'Dyn BH 1Y+TS':<17}")
+    print("-" * 210)
 
     # Format each result
     ai_result = f"${final_strategy_value_1y:,.0f} ({ai_1y_return:+.1f}%)"
@@ -185,7 +191,15 @@ def print_final_summary(
     if final_momentum_ai_hybrid_value_1y is not None and momentum_ai_hybrid_1y_return is not None:
         momentum_ai_hybrid_result = f"${final_momentum_ai_hybrid_value_1y:,.0f} ({momentum_ai_hybrid_1y_return:+.1f}%)"
 
-    print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {static_bh_3m_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {ai_portfolio_result:<17} | {dynamic_bh_1m_result:<17} | {risk_adj_mom_result:<17} | {mean_reversion_result:<17} | {quality_momentum_result:<17} | {volatility_adj_mom_result:<17} | {momentum_ai_hybrid_result:<17}")
+    dynamic_bh_1y_vol_filter_result = "N/A"
+    if final_dynamic_bh_1y_vol_filter_value_1y is not None and dynamic_bh_1y_vol_filter_1y_return is not None:
+        dynamic_bh_1y_vol_filter_result = f"${final_dynamic_bh_1y_vol_filter_value_1y:,.0f} ({dynamic_bh_1y_vol_filter_1y_return:+.1f}%)"
+
+    dynamic_bh_1y_trailing_stop_result = "N/A"
+    if final_dynamic_bh_1y_trailing_stop_value_1y is not None and dynamic_bh_1y_trailing_stop_1y_return is not None:
+        dynamic_bh_1y_trailing_stop_result = f"${final_dynamic_bh_1y_trailing_stop_value_1y:,.0f} ({dynamic_bh_1y_trailing_stop_1y_return:+.1f}%)"
+
+    print(f"{period_name:<12} | {ai_result:<17} | {static_bh_result:<17} | {static_bh_3m_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {ai_portfolio_result:<17} | {dynamic_bh_1m_result:<17} | {risk_adj_mom_result:<17} | {mean_reversion_result:<17} | {quality_momentum_result:<17} | {volatility_adj_mom_result:<17} | {momentum_ai_hybrid_result:<17} | {dynamic_bh_1y_vol_filter_result:<17} | {dynamic_bh_1y_trailing_stop_result:<17}")
 
     # Transaction costs row
     ai_costs = f"${ai_transaction_costs:,.0f}" if ai_transaction_costs is not None else "N/A"
@@ -205,8 +219,10 @@ def print_final_summary(
     quality_momentum_costs = f"${quality_momentum_transaction_costs:,.0f}" if quality_momentum_transaction_costs is not None else "N/A"
     volatility_adj_mom_costs = f"${volatility_adj_mom_transaction_costs:,.0f}" if volatility_adj_mom_transaction_costs is not None else "N/A"
     momentum_ai_hybrid_costs = f"${momentum_ai_hybrid_transaction_costs:,.0f}" if momentum_ai_hybrid_transaction_costs is not None else "N/A"
+    dynamic_bh_1y_vol_filter_costs = f"${dynamic_bh_1y_vol_filter_transaction_costs:,.0f}" if dynamic_bh_1y_vol_filter_transaction_costs is not None else "N/A"
+    dynamic_bh_1y_trailing_stop_costs = f"${dynamic_bh_1y_trailing_stop_transaction_costs:,.0f}" if dynamic_bh_1y_trailing_stop_transaction_costs is not None else "N/A"
 
-    print(f"{'Txn Costs':<12} | {ai_costs:<17} | {static_bh_costs:<17} | {static_bh_3m_costs:<17} | {dynamic_bh_1y_costs:<17} | {dynamic_bh_3m_costs:<17} | {ai_portfolio_costs:<17} | {dynamic_bh_1m_costs:<17} | {risk_adj_mom_costs:<17} | {mean_reversion_costs:<17} | {quality_momentum_costs:<17} | {volatility_adj_mom_costs:<17} | {momentum_ai_hybrid_costs:<17}")
+    print(f"{'Txn Costs':<12} | {ai_costs:<17} | {static_bh_costs:<17} | {static_bh_3m_costs:<17} | {dynamic_bh_1y_costs:<17} | {dynamic_bh_3m_costs:<17} | {ai_portfolio_costs:<17} | {dynamic_bh_1m_costs:<17} | {risk_adj_mom_costs:<17} | {mean_reversion_costs:<17} | {quality_momentum_costs:<17} | {volatility_adj_mom_costs:<17} | {momentum_ai_hybrid_costs:<17} | {dynamic_bh_1y_vol_filter_costs:<17} | {dynamic_bh_1y_trailing_stop_costs:<17}")
     
     # ✅ NEW: Add annualized return row for comparison
     if backtest_days is not None and backtest_days > 0:
@@ -236,8 +252,10 @@ def print_final_summary(
         quality_momentum_ann = f"{annualize_return(quality_momentum_1y_return, backtest_days):+.1f}%" if quality_momentum_1y_return is not None else "N/A"
         volatility_adj_mom_ann = f"{annualize_return(volatility_adj_mom_1y_return, backtest_days):+.1f}%" if volatility_adj_mom_1y_return is not None else "N/A"
         momentum_ai_hybrid_ann = f"{annualize_return(momentum_ai_hybrid_1y_return, backtest_days):+.1f}%" if momentum_ai_hybrid_1y_return is not None else "N/A"
+        dynamic_bh_1y_vol_filter_ann = f"{annualize_return(dynamic_bh_1y_vol_filter_1y_return, backtest_days):+.1f}%" if dynamic_bh_1y_vol_filter_1y_return is not None else "N/A"
+        dynamic_bh_1y_trailing_stop_ann = f"{annualize_return(dynamic_bh_1y_trailing_stop_1y_return, backtest_days):+.1f}%" if dynamic_bh_1y_trailing_stop_1y_return is not None else "N/A"
         
-        print(f"{'Annualized':<12} | {ai_ann:<17} | {static_bh_ann:<17} | {static_bh_3m_ann:<17} | {dyn_bh_1y_ann:<17} | {dyn_bh_3m_ann:<17} | {ai_portfolio_ann:<17} | {dyn_bh_1m_ann:<17} | {risk_adj_mom_ann:<17} | {mean_reversion_ann:<17} | {quality_momentum_ann:<17} | {volatility_adj_mom_ann:<17} | {momentum_ai_hybrid_ann:<17}")
+        print(f"{'Annualized':<12} | {ai_ann:<17} | {static_bh_ann:<17} | {static_bh_3m_ann:<17} | {dyn_bh_1y_ann:<17} | {dyn_bh_3m_ann:<17} | {ai_portfolio_ann:<17} | {dyn_bh_1m_ann:<17} | {risk_adj_mom_ann:<17} | {mean_reversion_ann:<17} | {quality_momentum_ann:<17} | {volatility_adj_mom_ann:<17} | {momentum_ai_hybrid_ann:<17} | {dynamic_bh_1y_vol_filter_ann:<17} | {dynamic_bh_1y_trailing_stop_ann:<17}")
     
     print("="*170)
 

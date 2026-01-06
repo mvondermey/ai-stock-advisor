@@ -17,7 +17,7 @@ import logging
 from pathlib import Path
 from config import (
     GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS,
-    TRANSACTION_COST, SEED, INVESTMENT_PER_STOCK,
+    TRANSACTION_COST, SEED, INVESTMENT_PER_STOCK, PORTFOLIO_SIZE,
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS,
     N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
     DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
@@ -32,7 +32,12 @@ from config import (
     ENABLE_AI_PORTFOLIO, ENABLE_STATIC_BH, ENABLE_DYNAMIC_BH_1Y, ENABLE_DYNAMIC_BH_3M, ENABLE_DYNAMIC_BH_1M, ENABLE_RISK_ADJ_MOM, ENABLE_MEAN_REVERSION, ENABLE_QUALITY_MOM,
     ENABLE_MOMENTUM_AI_HYBRID, MOMENTUM_AI_HYBRID_TOP_N, MOMENTUM_AI_HYBRID_PORTFOLIO_SIZE, MOMENTUM_AI_HYBRID_BUY_THRESHOLD,
     MOMENTUM_AI_HYBRID_SELL_THRESHOLD, MOMENTUM_AI_HYBRID_REBALANCE_DAYS, MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK,
-    MOMENTUM_AI_HYBRID_STOP_LOSS, MOMENTUM_AI_HYBRID_TRAILING_STOP
+    MOMENTUM_AI_HYBRID_STOP_LOSS, MOMENTUM_AI_HYBRID_TRAILING_STOP,
+    STATIC_BH_1Y_REBALANCE_DAYS, STATIC_BH_3M_REBALANCE_DAYS,
+    ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY,
+    ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT, DYNAMIC_BH_1Y_TRAILING_STOP_REBALANCE_DAYS,
+    RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION, RISK_ADJ_MOM_CONFIRM_SHORT, RISK_ADJ_MOM_CONFIRM_MEDIUM, RISK_ADJ_MOM_CONFIRM_LONG, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
+    RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER
 )
 from alpha_training import AlphaThresholdConfig, select_threshold_by_alpha
 from scipy.stats import uniform, beta
@@ -118,13 +123,15 @@ def _should_rebalance_by_profit_since_last_rebalance(
     last_rebalance_value: float
 ) -> Tuple[bool, str]:
     """
-    User-requested rule (no "expected gain"):
-      Save the portfolio value when it was last rebalanced (last_rebalance_value).
-      When considering a rebalance, compute current portfolio value (mark-to-market),
-      subtract estimated transaction costs for switching, and only rebalance if:
-
-        (current_value - estimated_rebalance_cost) > last_rebalance_value
-
+    Transaction cost guard: Only rebalance if the portfolio has grown enough
+    since the last rebalance to cover the transaction costs.
+    
+    Logic:
+    1. Save portfolio value when last rebalanced (last_rebalance_value)
+    2. Calculate current portfolio value (mark-to-market)
+    3. Calculate transaction costs for the stocks being changed
+    4. Rebalance if: (current_value - transaction_costs) > last_rebalance_value
+    
     This ensures we only trade if we are "up enough" since the last rebalance
     to pay for the next rebalance.
     """
@@ -135,23 +142,55 @@ def _should_rebalance_by_profit_since_last_rebalance(
 
     current_set = set(current_stocks)
     new_set = set(new_stocks)
-    n_changed = len(new_set - current_set)
-    if n_changed == 0:
+    
+    stocks_to_sell = current_set - new_set  # Stocks to exit
+    stocks_to_buy = new_set - current_set   # Stocks to enter
+    
+    if len(stocks_to_sell) == 0 and len(stocks_to_buy) == 0:
         return False, "no change"
 
+    # Calculate current portfolio value
     portfolio_value_now = _mark_to_market_value(positions, cash, ticker_data_grouped, current_date)
-    est_cost = portfolio_value_now * (2.0 * float(transaction_cost) * (float(n_changed) / 3.0))
-    value_after_cost = portfolio_value_now - est_cost
-    delta_vs_last = value_after_cost - float(last_rebalance_value or 0.0)
-
+    
+    # Calculate actual transaction costs for the specific trades
+    total_sell_value = 0.0
+    for ticker in stocks_to_sell:
+        if ticker in positions:
+            pos = positions[ticker]
+            shares = pos.get('shares', 0)
+            if ticker in ticker_data_grouped:
+                price_data = ticker_data_grouped[ticker].loc[:current_date]
+                if not price_data.empty:
+                    current_price = price_data['Close'].dropna().iloc[-1]
+                    total_sell_value += shares * current_price
+    
+    total_buy_value = 0.0
+    # Estimate buy value based on equal allocation of freed capital
+    if stocks_to_buy:
+        # Capital available = cash + sell proceeds (after sell costs)
+        sell_proceeds_after_cost = total_sell_value * (1 - transaction_cost)
+        available_capital = cash + sell_proceeds_after_cost
+        # Each new stock gets equal share
+        per_stock_allocation = available_capital / len(new_stocks) if new_stocks else 0
+        total_buy_value = per_stock_allocation * len(stocks_to_buy)
+    
+    # Transaction costs: sell cost + buy cost
+    sell_cost = total_sell_value * transaction_cost
+    buy_cost = total_buy_value * transaction_cost
+    total_transaction_cost = sell_cost + buy_cost
+    
+    # Check if portfolio value after costs exceeds last rebalance value
+    value_after_costs = portfolio_value_now - total_transaction_cost
+    delta_vs_last = value_after_costs - float(last_rebalance_value or 0.0)
+    
     if delta_vs_last > 0:
         return True, (
-            f"value_after_cost>last (now≈${portfolio_value_now:,.0f} - cost≈${est_cost:,.0f} = "
-            f"${value_after_cost:,.0f} > last≈${last_rebalance_value:,.0f}; Δ≈${delta_vs_last:,.0f}; changed={n_changed}/3)"
+            f"value_after_cost>last (now ${portfolio_value_now:,.0f} - cost ${total_transaction_cost:,.0f} = "
+            f"${value_after_costs:,.0f} > last ${last_rebalance_value:,.0f}; Δ=${delta_vs_last:,.0f})"
         )
     return False, (
-        f"value_after_cost<=last (now≈${portfolio_value_now:,.0f} - cost≈${est_cost:,.0f} = "
-        f"${value_after_cost:,.0f} <= last≈${last_rebalance_value:,.0f}; Δ≈${delta_vs_last:,.0f}; changed={n_changed}/3)"
+        f"value_after_cost<=last (now ${portfolio_value_now:,.0f} - cost ${total_transaction_cost:,.0f} = "
+        f"${value_after_costs:,.0f} <= last ${last_rebalance_value:,.0f}; Δ=${delta_vs_last:,.0f})"
     )
 from data_validation import validate_prediction_data, validate_features_after_engineering, InsufficientDataError
 import os
@@ -1222,6 +1261,24 @@ def _run_portfolio_backtest_walk_forward(
     initial_capital_needed = 3 * capital_per_stock
     cash_balance = initial_capital_needed  # Start with cash available for initial purchases
 
+    # Track STATIC BH 1Y PORTFOLIO (with optional periodic rebalancing)
+    static_bh_1y_portfolio_value = 0.0
+    static_bh_1y_portfolio_history = [static_bh_1y_portfolio_value]
+    static_bh_1y_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    static_bh_1y_cash = initial_capital_needed
+    current_static_bh_1y_stocks = []
+    static_bh_1y_days_since_rebalance = 0
+    static_bh_1y_initialized = False
+
+    # Track STATIC BH 3M PORTFOLIO (with optional periodic rebalancing)
+    static_bh_3m_portfolio_value = 0.0
+    static_bh_3m_portfolio_history = [static_bh_3m_portfolio_value]
+    static_bh_3m_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    static_bh_3m_cash = initial_capital_needed
+    current_static_bh_3m_stocks = []
+    static_bh_3m_days_since_rebalance = 0
+    static_bh_3m_initialized = False
+
     # Track DYNAMIC BH PORTFOLIO (rebalances to top 3 performers periodically)
     dynamic_bh_portfolio_value = 0.0
     dynamic_bh_portfolio_history = [dynamic_bh_portfolio_value]
@@ -1229,6 +1286,22 @@ def _run_portfolio_backtest_walk_forward(
     dynamic_bh_cash = initial_capital_needed  # Start with same capital as AI
     current_dynamic_bh_stocks = []  # Current top 3 stocks held by dynamic BH
     dynamic_bh_last_rebalance_value = initial_capital_needed  # Threshold value recorded at last rebalance
+
+    # Track DYNAMIC BH 1Y + VOLATILITY FILTER PORTFOLIO (same as Dynamic BH 1Y but with volatility filter)
+    dynamic_bh_1y_vol_filter_portfolio_value = 0.0
+    dynamic_bh_1y_vol_filter_portfolio_history = [dynamic_bh_1y_vol_filter_portfolio_value]
+    dynamic_bh_1y_vol_filter_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    dynamic_bh_1y_vol_filter_cash = initial_capital_needed  # Start with same capital as AI
+    current_dynamic_bh_1y_vol_filter_stocks = []  # Current top 3 stocks held by dynamic BH 1Y vol filter
+    dynamic_bh_1y_vol_filter_last_rebalance_value = initial_capital_needed  # Threshold value recorded at last rebalance
+
+    # Track DYNAMIC BH 1Y + TRAILING STOP PORTFOLIO (same as Dynamic BH 1Y but with 20% trailing stop)
+    dynamic_bh_1y_trailing_stop_portfolio_value = 0.0
+    dynamic_bh_1y_trailing_stop_portfolio_history = [dynamic_bh_1y_trailing_stop_portfolio_value]
+    dynamic_bh_1y_trailing_stop_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float, 'peak_price': float}
+    dynamic_bh_1y_trailing_stop_cash = initial_capital_needed  # Start with same capital as AI
+    current_dynamic_bh_1y_trailing_stop_stocks = []  # Current top stocks held by dynamic BH 1Y trailing stop
+    dynamic_bh_1y_trailing_stop_last_rebalance_value = initial_capital_needed  # Threshold value recorded at last rebalance
 
     # Track DYNAMIC BH 3-MONTH PORTFOLIO (rebalances to top 3 based on 3-month performance)
     dynamic_bh_3m_portfolio_value = 0.0
@@ -1259,6 +1332,7 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
     risk_adj_mom_cash = initial_capital_needed  # Start with same capital as AI
     current_risk_adj_mom_stocks = []  # Current top 3 stocks held by risk-adjusted momentum
+    risk_adj_mom_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
     # MEAN REVERSION: Initialize portfolio tracking
     mean_reversion_portfolio_value = 0.0
@@ -1266,6 +1340,7 @@ def _run_portfolio_backtest_walk_forward(
     mean_reversion_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
     mean_reversion_cash = initial_capital_needed  # Start with same capital as AI
     current_mean_reversion_stocks = []  # Current bottom 3 stocks held by mean reversion
+    mean_reversion_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
     # QUALITY + MOMENTUM: Initialize portfolio tracking
     quality_momentum_portfolio_value = 0.0
@@ -1273,6 +1348,7 @@ def _run_portfolio_backtest_walk_forward(
     quality_momentum_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
     quality_momentum_cash = initial_capital_needed  # Start with same capital as AI
     current_quality_momentum_stocks = []  # Current top 3 stocks held by quality + momentum
+    quality_momentum_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
     # MOMENTUM + AI HYBRID: Initialize portfolio tracking
     momentum_ai_hybrid_portfolio_value = 0.0
@@ -1288,10 +1364,11 @@ def _run_portfolio_backtest_walk_forward(
     volatility_adj_mom_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
     volatility_adj_mom_cash = initial_capital_needed  # Start with same capital as AI
     current_volatility_adj_mom_stocks = []  # Current top 3 stocks held by volatility-adjusted momentum
+    volatility_adj_mom_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
     # Reset global transaction cost tracking variables for this backtest
     global ai_transaction_costs, static_bh_transaction_costs, static_bh_3m_transaction_costs, dynamic_bh_1y_transaction_costs
-    global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, ai_portfolio_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs
+    global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, ai_portfolio_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs
     ai_transaction_costs = 0.0
     static_bh_transaction_costs = 0.0  # Static BH has no transaction costs (buy once, hold)
     static_bh_3m_transaction_costs = 0.0
@@ -1301,6 +1378,8 @@ def _run_portfolio_backtest_walk_forward(
     ai_portfolio_transaction_costs = 0.0
     risk_adj_mom_transaction_costs = 0.0
     mean_reversion_transaction_costs = 0.0
+    dynamic_bh_1y_vol_filter_transaction_costs = 0.0
+    dynamic_bh_1y_trailing_stop_transaction_costs = 0.0
     quality_momentum_transaction_costs = 0.0
     momentum_ai_hybrid_transaction_costs = 0.0
     volatility_adj_mom_transaction_costs = 0.0
@@ -1419,6 +1498,142 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"\n❌ ABORT: Training has failed {consecutive_training_failures} times in a row!")
                     raise InsufficientDataError(f"Training consistently failing: {e}")
 
+        # STATIC BH PORTFOLIOS: Optional periodic rebalancing
+        # Static BH 1Y and 3M can now rebalance every N days (configured in config.py)
+        # ONLY run this tracking if rebalancing is enabled (REBALANCE_DAYS > 0)
+        if ENABLE_STATIC_BH and (STATIC_BH_1Y_REBALANCE_DAYS > 0 or STATIC_BH_3M_REBALANCE_DAYS > 0):
+            # Increment days since last rebalance
+            static_bh_1y_days_since_rebalance += 1
+            static_bh_3m_days_since_rebalance += 1
+            
+            # STATIC BH 1Y: Initialize on day 1, then rebalance every N days if configured
+            should_rebalance_1y = STATIC_BH_1Y_REBALANCE_DAYS > 0 and (
+                (not static_bh_1y_initialized) or 
+                static_bh_1y_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS
+            )
+            
+            if should_rebalance_1y:
+                # Calculate top 3 by 1-year performance
+                perf_1y_list = []
+                for ticker in initial_top_tickers:
+                    if ticker not in ticker_data_grouped:
+                        continue
+                    ticker_data = ticker_data_grouped[ticker]
+                    perf_start = max(train_start_date, current_date - timedelta(days=365))
+                    perf_data = ticker_data.loc[perf_start:current_date]
+                    if len(perf_data) >= 50:
+                        valid_close = perf_data['Close'].dropna()
+                        if len(valid_close) >= 2:
+                            start_p = valid_close.iloc[0]
+                            end_p = valid_close.iloc[-1]
+                            if start_p > 0:
+                                perf_pct = ((end_p - start_p) / start_p) * 100
+                                perf_1y_list.append((ticker, perf_pct))
+                
+                if perf_1y_list:
+                    perf_1y_list.sort(key=lambda x: x[1], reverse=True)
+                    new_static_bh_1y_stocks = [t for t, _ in perf_1y_list[:3]]
+                    
+                    if new_static_bh_1y_stocks != current_static_bh_1y_stocks:
+                        action = "Initializing" if not static_bh_1y_initialized else "Rebalancing"
+                        print(f"   📊 Static BH 1Y: {action} → {new_static_bh_1y_stocks}")
+                        
+                        # Sell existing positions
+                        for ticker in list(static_bh_1y_positions.keys()):
+                            if ticker in ticker_data_grouped:
+                                price_data = ticker_data_grouped[ticker].loc[:current_date]
+                                if not price_data.empty:
+                                    current_price = price_data['Close'].dropna().iloc[-1]
+                                    shares = static_bh_1y_positions[ticker]['shares']
+                                    gross_sale = shares * current_price
+                                    sell_cost = gross_sale * TRANSACTION_COST
+                                    static_bh_transaction_costs += sell_cost
+                                    static_bh_1y_cash += gross_sale - sell_cost
+                            del static_bh_1y_positions[ticker]
+                        
+                        # Buy new positions
+                        for ticker in new_static_bh_1y_stocks:
+                            if ticker in ticker_data_grouped:
+                                price_data = ticker_data_grouped[ticker].loc[:current_date]
+                                if not price_data.empty:
+                                    current_price = price_data['Close'].dropna().iloc[-1]
+                                    if current_price > 0:
+                                        shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
+                                        buy_value = shares * current_price
+                                        buy_cost = buy_value * TRANSACTION_COST
+                                        static_bh_transaction_costs += buy_cost
+                                        static_bh_1y_cash -= (buy_value + buy_cost)
+                                        static_bh_1y_positions[ticker] = {'shares': shares, 'entry_price': current_price}
+                        
+                        current_static_bh_1y_stocks = new_static_bh_1y_stocks
+                    
+                    static_bh_1y_initialized = True
+                    static_bh_1y_days_since_rebalance = 0
+            
+            # STATIC BH 3M: Initialize on day 1, then rebalance every N days if configured
+            should_rebalance_3m = STATIC_BH_3M_REBALANCE_DAYS > 0 and (
+                (not static_bh_3m_initialized) or 
+                static_bh_3m_days_since_rebalance >= STATIC_BH_3M_REBALANCE_DAYS
+            )
+            
+            if should_rebalance_3m:
+                # Calculate top 3 by 3-month performance
+                perf_3m_list = []
+                for ticker in initial_top_tickers:
+                    if ticker not in ticker_data_grouped:
+                        continue
+                    ticker_data = ticker_data_grouped[ticker]
+                    perf_start = max(train_start_date, current_date - timedelta(days=90))
+                    perf_data = ticker_data.loc[perf_start:current_date]
+                    if len(perf_data) >= 30:
+                        valid_close = perf_data['Close'].dropna()
+                        if len(valid_close) >= 2:
+                            start_p = valid_close.iloc[0]
+                            end_p = valid_close.iloc[-1]
+                            if start_p > 0:
+                                perf_pct = ((end_p - start_p) / start_p) * 100
+                                perf_3m_list.append((ticker, perf_pct))
+                
+                if perf_3m_list:
+                    perf_3m_list.sort(key=lambda x: x[1], reverse=True)
+                    new_static_bh_3m_stocks = [t for t, _ in perf_3m_list[:3]]
+                    
+                    if new_static_bh_3m_stocks != current_static_bh_3m_stocks:
+                        action = "Initializing" if not static_bh_3m_initialized else "Rebalancing"
+                        print(f"   📊 Static BH 3M: {action} → {new_static_bh_3m_stocks}")
+                        
+                        # Sell existing positions
+                        for ticker in list(static_bh_3m_positions.keys()):
+                            if ticker in ticker_data_grouped:
+                                price_data = ticker_data_grouped[ticker].loc[:current_date]
+                                if not price_data.empty:
+                                    current_price = price_data['Close'].dropna().iloc[-1]
+                                    shares = static_bh_3m_positions[ticker]['shares']
+                                    gross_sale = shares * current_price
+                                    sell_cost = gross_sale * TRANSACTION_COST
+                                    static_bh_3m_transaction_costs += sell_cost
+                                    static_bh_3m_cash += gross_sale - sell_cost
+                            del static_bh_3m_positions[ticker]
+                        
+                        # Buy new positions
+                        for ticker in new_static_bh_3m_stocks:
+                            if ticker in ticker_data_grouped:
+                                price_data = ticker_data_grouped[ticker].loc[:current_date]
+                                if not price_data.empty:
+                                    current_price = price_data['Close'].dropna().iloc[-1]
+                                    if current_price > 0:
+                                        shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
+                                        buy_value = shares * current_price
+                                        buy_cost = buy_value * TRANSACTION_COST
+                                        static_bh_3m_transaction_costs += buy_cost
+                                        static_bh_3m_cash -= (buy_value + buy_cost)
+                                        static_bh_3m_positions[ticker] = {'shares': shares, 'entry_price': current_price}
+                        
+                        current_static_bh_3m_stocks = new_static_bh_3m_stocks
+                    
+                    static_bh_3m_initialized = True
+                    static_bh_3m_days_since_rebalance = 0
+
         # DYNAMIC BH PORTFOLIO: Rebalance to current top 3 performers DAILY
         # Uses 1-year performance (same as initial selection) to determine top performers
         if ENABLE_DYNAMIC_BH_1Y or ENABLE_DYNAMIC_BH_3M or ENABLE_DYNAMIC_BH_1M:
@@ -1484,6 +1699,181 @@ def _run_portfolio_backtest_walk_forward(
                         )
                     else:
                         print(f"   ⏭️ Skip Dynamic BH 1Y rebalance: {reason}")
+
+                # DYNAMIC BH 1Y + VOLATILITY FILTER: Same as Dynamic BH 1Y but with volatility filter
+                if ENABLE_DYNAMIC_BH_1Y_VOL_FILTER:
+                    current_top_performers_vol_filter = []
+                    stocks_evaluated = 0
+                    stocks_passed_vol_filter = 0
+                    
+                    # ✅ OPTIMIZED: Use pre-grouped data (fast lookup instead of slow filter)
+                    for ticker in initial_top_tickers:
+                        stocks_evaluated += 1
+                        try:
+                            if ticker not in ticker_data_grouped:
+                                continue
+                            ticker_data = ticker_data_grouped[ticker]
+                            
+                            # Use 1-year performance for selection
+                            perf_start_date = current_date - timedelta(days=365)
+                            perf_data = ticker_data.loc[perf_start_date:current_date]
+                            if len(perf_data) >= 50:
+                                valid_close = perf_data['Close'].dropna()
+                                if len(valid_close) >= 2:
+                                    start_price = valid_close.iloc[0]
+                                    end_price = valid_close.iloc[-1]
+
+                                    if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
+                                        perf_pct = ((end_price - start_price) / start_price) * 100
+                                        
+                                        # Calculate annualized volatility
+                                        daily_returns = valid_close.pct_change(fill_method=None).dropna()
+                                        if len(daily_returns) > 10:
+                                            # Annualize volatility: std_dev * sqrt(252) * 100%
+                                            annualized_volatility = daily_returns.std() * (252 ** 0.5) * 100
+                                            
+                                            # Apply volatility filter
+                                            if annualized_volatility <= DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY:
+                                                current_top_performers_vol_filter.append((ticker, perf_pct, annualized_volatility))
+                                                stocks_passed_vol_filter += 1
+
+                        except Exception as e:
+                            continue
+
+                    # Sort by performance and get top 3 (from filtered list)
+                    if current_top_performers_vol_filter:
+                        current_top_performers_vol_filter.sort(key=lambda x: x[1], reverse=True)
+                        new_dynamic_bh_1y_vol_filter_stocks = [ticker for ticker, perf, vol in current_top_performers_vol_filter[:3]]
+                        
+                        # Show volatility info
+                        vol_info = [(ticker, f"{perf:.1f}%", f"{vol:.1f}%") for ticker, perf, vol in current_top_performers_vol_filter[:3]]
+                        print(f"   🎯 Top 3 performers (1Y + Vol Filter): {', '.join([f'{t}({p}/{v})' for t, p, v in vol_info])}")
+                        print(f"   🔍 Filter stats: {stocks_passed_vol_filter}/{stocks_evaluated} stocks passed volatility filter")
+
+                        # Rebalance only if current portfolio value since last rebalance is high enough to pay costs
+                        should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
+                            current_dynamic_bh_1y_vol_filter_stocks,
+                            new_dynamic_bh_1y_vol_filter_stocks,
+                            ticker_data_grouped,
+                            current_date,
+                            dynamic_bh_1y_vol_filter_positions,
+                            dynamic_bh_1y_vol_filter_cash,
+                            TRANSACTION_COST,
+                            dynamic_bh_1y_vol_filter_last_rebalance_value
+                        )
+                        if should_rebal:
+                            dynamic_bh_1y_vol_filter_cash = _rebalance_dynamic_bh_1y_vol_filter_portfolio(
+                                new_dynamic_bh_1y_vol_filter_stocks, current_date, all_tickers_data,
+                                dynamic_bh_1y_vol_filter_positions, dynamic_bh_1y_vol_filter_cash, capital_per_stock
+                            )
+                            current_dynamic_bh_1y_vol_filter_stocks = new_dynamic_bh_1y_vol_filter_stocks
+                            dynamic_bh_1y_vol_filter_last_rebalance_value = _mark_to_market_value(
+                                dynamic_bh_1y_vol_filter_positions, dynamic_bh_1y_vol_filter_cash, ticker_data_grouped, current_date
+                            )
+                        else:
+                            print(f"   ⏭️ Skip Dynamic BH 1Y+Vol rebalance: {reason}")
+                    else:
+                        print(f"   ⚠️ No stocks passed volatility filter (max {DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY:.1f}% annualized)")
+                        print(f"   🔍 Filter stats: {stocks_passed_vol_filter}/{stocks_evaluated} stocks passed volatility filter")
+                        # Debug: show what volatilities we saw
+                        if current_top_performers_vol_filter:
+                            vol_debug = [(ticker, f"{vol:.1f}%") for ticker, perf, vol in current_top_performers_vol_filter[:5]]
+                            print(f"   🔍 Sample volatilities: {', '.join([f'{t}({v})' for t, v in vol_debug])}")
+                        else:
+                            print(f"   🔍 No stocks had valid volatility calculations")
+
+                # DYNAMIC BH 1Y + TRAILING STOP: Same as Dynamic BH 1Y but with 20% trailing stop
+                if ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP:
+                    # First, check trailing stops on existing positions
+                    positions_to_sell = []
+                    for ticker in list(current_dynamic_bh_1y_trailing_stop_stocks):
+                        if ticker in dynamic_bh_1y_trailing_stop_positions:
+                            try:
+                                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                                ticker_data = ticker_data[ticker_data['date'] == current_date]
+                                if len(ticker_data) > 0:
+                                    current_price = ticker_data['close'].iloc[0]
+                                    position = dynamic_bh_1y_trailing_stop_positions[ticker]
+                                    peak_price = position.get('peak_price', position['entry_price'])
+                                    
+                                    # Update peak price if current price is higher
+                                    if current_price > peak_price:
+                                        dynamic_bh_1y_trailing_stop_positions[ticker]['peak_price'] = current_price
+                                        peak_price = current_price
+                                    
+                                    # Check if trailing stop triggered (20% drop from peak)
+                                    stop_price = peak_price * (1 - DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT / 100)
+                                    if current_price <= stop_price:
+                                        positions_to_sell.append(ticker)
+                                        print(f"   🛑 Trailing stop triggered for {ticker}: ${current_price:.2f} <= ${stop_price:.2f} (peak: ${peak_price:.2f})")
+                            except Exception as e:
+                                continue
+                    
+                    # Sell positions that hit trailing stop
+                    for ticker in positions_to_sell:
+                        if ticker in dynamic_bh_1y_trailing_stop_positions:
+                            position = dynamic_bh_1y_trailing_stop_positions[ticker]
+                            shares = position['shares']
+                            try:
+                                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                                ticker_data = ticker_data[ticker_data['date'] == current_date]
+                                if len(ticker_data) > 0:
+                                    current_price = ticker_data['close'].iloc[0]
+                                    sell_value = shares * current_price
+                                    sell_cost = sell_value * TRANSACTION_COST
+                                    dynamic_bh_1y_trailing_stop_transaction_costs += sell_cost
+                                    dynamic_bh_1y_trailing_stop_cash += (sell_value - sell_cost)
+                                    del dynamic_bh_1y_trailing_stop_positions[ticker]
+                                    current_dynamic_bh_1y_trailing_stop_stocks.remove(ticker)
+                            except Exception as e:
+                                continue
+                    
+                    # Regular rebalancing (same as Dynamic BH 1Y)
+                    current_top_performers_ts = []
+                    for ticker in initial_top_tickers:
+                        try:
+                            if ticker not in ticker_data_grouped:
+                                continue
+                            ticker_data = ticker_data_grouped[ticker]
+                            perf_start_date = max(train_start_date, current_date - timedelta(days=365))
+                            perf_data = ticker_data.loc[perf_start_date:current_date]
+                            if len(perf_data) >= 50:
+                                valid_close = perf_data['Close'].dropna()
+                                if len(valid_close) >= 2:
+                                    start_price = valid_close.iloc[0]
+                                    end_price = valid_close.iloc[-1]
+                                    if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
+                                        perf_pct = ((end_price - start_price) / start_price) * 100
+                                        current_top_performers_ts.append((ticker, perf_pct))
+                        except Exception as e:
+                            continue
+
+                    if current_top_performers_ts:
+                        current_top_performers_ts.sort(key=lambda x: x[1], reverse=True)
+                        new_dynamic_bh_1y_trailing_stop_stocks = [ticker for ticker, perf in current_top_performers_ts[:PORTFOLIO_SIZE]]
+                        print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-year + Trailing Stop): {', '.join(new_dynamic_bh_1y_trailing_stop_stocks)}")
+
+                        should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
+                            current_dynamic_bh_1y_trailing_stop_stocks,
+                            new_dynamic_bh_1y_trailing_stop_stocks,
+                            ticker_data_grouped,
+                            current_date,
+                            dynamic_bh_1y_trailing_stop_positions,
+                            dynamic_bh_1y_trailing_stop_cash,
+                            TRANSACTION_COST,
+                            dynamic_bh_1y_trailing_stop_last_rebalance_value
+                        )
+                        if should_rebal:
+                            dynamic_bh_1y_trailing_stop_cash = _rebalance_dynamic_bh_1y_trailing_stop_portfolio(
+                                new_dynamic_bh_1y_trailing_stop_stocks, current_date, all_tickers_data,
+                                dynamic_bh_1y_trailing_stop_positions, dynamic_bh_1y_trailing_stop_cash, capital_per_stock
+                            )
+                            current_dynamic_bh_1y_trailing_stop_stocks = new_dynamic_bh_1y_trailing_stop_stocks
+                            dynamic_bh_1y_trailing_stop_last_rebalance_value = _mark_to_market_value(
+                                dynamic_bh_1y_trailing_stop_positions, dynamic_bh_1y_trailing_stop_cash, ticker_data_grouped, current_date
+                            )
+                        else:
+                            print(f"   ⏭️ Skip Dynamic BH 1Y+TS rebalance: {reason}")
 
                 # DYNAMIC BH 3-MONTH: Rebalance to current top 3 based on 3-month performance
                 if ENABLE_DYNAMIC_BH_3M:
@@ -1627,61 +2017,43 @@ def _run_portfolio_backtest_walk_forward(
                         else:
                             print(f"   ⏭️ Skip Dynamic BH 1M rebalance: {reason}")
 
-                # RISK-ADJUSTED MOMENTUM: Rebalance to current top 3 based on 6-month risk-adjusted performance
+                # RISK-ADJUSTED MOMENTUM: Rebalance to current top 3 using shared strategy
                 if ENABLE_RISK_ADJ_MOM:
-                    current_top_performers_risk_adj = []
+                    from shared_strategies import select_risk_adj_mom_stocks
+                    
+                    # Use shared strategy for consistent selection
+                    new_risk_adj_mom_stocks = select_risk_adj_mom_stocks(
+                        initial_top_tickers, 
+                        ticker_data_grouped, 
+                        current_date,
+                        train_start_date,  # Add train_start_date parameter
+                        top_n=PORTFOLIO_SIZE
+                    )
 
-                    # ✅ OPTIMIZED: Use pre-grouped data
-                    for ticker in initial_top_tickers:
-                        try:
-                            if ticker not in ticker_data_grouped:
-                                continue
-                            ticker_data = ticker_data_grouped[ticker]
-                            
-                            # Use 6-month (180-day) performance for selection
-                            perf_start_date_risk_adj = max(train_start_date, current_date - timedelta(days=180))
-                            perf_data_risk_adj = ticker_data.loc[perf_start_date_risk_adj:current_date]
-
-                            if len(perf_data_risk_adj) >= 60:  # Need at least 60 days
-                                # Drop NaN values for valid calculation
-                                valid_close_risk_adj = perf_data_risk_adj['Close'].dropna()
-                                if len(valid_close_risk_adj) >= 10:
-                                    # Calculate basic return
-                                    start_price = valid_close_risk_adj.iloc[0]
-                                    end_price = valid_close_risk_adj.iloc[-1]
-
-                                    if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
-                                        # Basic return percentage
-                                        basic_return = ((end_price - start_price) / start_price) * 100
-
-                                        # Calculate volatility (standard deviation of daily returns)
-                                        daily_returns = valid_close_risk_adj.pct_change(fill_method=None).dropna()
-                                        if len(daily_returns) > 5:
-                                            volatility = daily_returns.std() * 100  # Convert to percentage
-
-                                            # Risk-adjusted momentum: return divided by volatility (higher is better)
-                                            # Add small epsilon to avoid division by zero
-                                            risk_adj_score = basic_return / (volatility + 0.01)
-
-                                            current_top_performers_risk_adj.append((ticker, risk_adj_score, basic_return, volatility))
-
-                        except Exception as e:
-                            continue
-
-                    # Sort by risk-adjusted score and get top 3
-                    if current_top_performers_risk_adj:
-                        current_top_performers_risk_adj.sort(key=lambda x: x[1], reverse=True)
-                        new_risk_adj_mom_stocks = [ticker for ticker, score, ret, vol in current_top_performers_risk_adj[:3]]
-
-                        print(f"   🏆 Top 3 risk-adjusted performers (6-month): {', '.join(new_risk_adj_mom_stocks)}")
-
-                        # Rebalance risk-adjusted momentum portfolio (capture returned cash)
-                        risk_adj_mom_cash = _rebalance_risk_adj_mom_portfolio(
-                            new_risk_adj_mom_stocks, current_date, all_tickers_data,
-                            risk_adj_mom_positions, risk_adj_mom_cash, capital_per_stock
+                    if new_risk_adj_mom_stocks:
+                        # Apply transaction cost guard (same as Dynamic BH)
+                        should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
+                            current_risk_adj_mom_stocks,
+                            new_risk_adj_mom_stocks,
+                            ticker_data_grouped,
+                            current_date,
+                            risk_adj_mom_positions,
+                            risk_adj_mom_cash,
+                            TRANSACTION_COST,
+                            risk_adj_mom_last_rebalance_value
                         )
-
-                        current_risk_adj_mom_stocks = new_risk_adj_mom_stocks
+                        if should_rebal:
+                            # Rebalance risk-adjusted momentum portfolio (capture returned cash)
+                            risk_adj_mom_cash = _rebalance_risk_adj_mom_portfolio(
+                                new_risk_adj_mom_stocks, current_date, all_tickers_data,
+                                risk_adj_mom_positions, risk_adj_mom_cash, capital_per_stock
+                            )
+                            current_risk_adj_mom_stocks = new_risk_adj_mom_stocks
+                            risk_adj_mom_last_rebalance_value = _mark_to_market_value(
+                                risk_adj_mom_positions, risk_adj_mom_cash, ticker_data_grouped, current_date
+                            )
+                        else:
+                            print(f"   ⏭️ Skip Risk-Adj Mom rebalance: {reason}")
 
                 else:
                     print(f"   ⚠️ No valid performance data for dynamic BH rebalancing")
@@ -1732,15 +2104,31 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   🎯 Mean Reversion: Selected {new_mean_reversion_stocks}")
 
                     if new_mean_reversion_stocks != current_mean_reversion_stocks:
-                        print(f"   🔄 Mean Reversion rebalancing: {current_mean_reversion_stocks} → {new_mean_reversion_stocks}")
-
-                        # Rebalance mean reversion portfolio (capture returned cash)
-                        mean_reversion_cash = _rebalance_mean_reversion_portfolio(
-                            new_mean_reversion_stocks, current_date, all_tickers_data,
-                            mean_reversion_positions, mean_reversion_cash, capital_per_stock
+                        # Apply transaction cost guard (same as Dynamic BH)
+                        should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
+                            current_mean_reversion_stocks,
+                            new_mean_reversion_stocks,
+                            ticker_data_grouped,
+                            current_date,
+                            mean_reversion_positions,
+                            mean_reversion_cash,
+                            TRANSACTION_COST,
+                            mean_reversion_last_rebalance_value
                         )
+                        if should_rebal:
+                            print(f"   🔄 Mean Reversion rebalancing: {current_mean_reversion_stocks} → {new_mean_reversion_stocks}")
 
-                    current_mean_reversion_stocks = new_mean_reversion_stocks
+                            # Rebalance mean reversion portfolio (capture returned cash)
+                            mean_reversion_cash = _rebalance_mean_reversion_portfolio(
+                                new_mean_reversion_stocks, current_date, all_tickers_data,
+                                mean_reversion_positions, mean_reversion_cash, capital_per_stock
+                            )
+                            current_mean_reversion_stocks = new_mean_reversion_stocks
+                            mean_reversion_last_rebalance_value = _mark_to_market_value(
+                                mean_reversion_positions, mean_reversion_cash, ticker_data_grouped, current_date
+                            )
+                        else:
+                            print(f"   ⏭️ Skip Mean Reversion rebalance: {reason}")
                 else:
                     print(f"   ⚠️ Mean Reversion: No valid tickers found on {current_date.strftime('%Y-%m-%d')}")
 
@@ -1802,16 +2190,32 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   🎯 Quality+Mom: Selected {new_quality_momentum_stocks}")
 
                     if new_quality_momentum_stocks != current_quality_momentum_stocks:
-                        print(f"   🏆 Quality+Momentum rebalancing: {current_quality_momentum_stocks} → {new_quality_momentum_stocks}")
-                        print(f"     Top scores: {[(t, f'{s:.1f}') for t, s, _, _ in quality_momentum_scores[:3]]}")
-
-                        # Rebalance quality + momentum portfolio
-                        quality_momentum_cash = _rebalance_quality_momentum_portfolio(
-                            new_quality_momentum_stocks, current_date, all_tickers_data,
-                            quality_momentum_positions, quality_momentum_cash, capital_per_stock
+                        # Apply transaction cost guard (same as Dynamic BH)
+                        should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
+                            current_quality_momentum_stocks,
+                            new_quality_momentum_stocks,
+                            ticker_data_grouped,
+                            current_date,
+                            quality_momentum_positions,
+                            quality_momentum_cash,
+                            TRANSACTION_COST,
+                            quality_momentum_last_rebalance_value
                         )
+                        if should_rebal:
+                            print(f"   🏆 Quality+Momentum rebalancing: {current_quality_momentum_stocks} → {new_quality_momentum_stocks}")
+                            print(f"     Top scores: {[(t, f'{s:.1f}') for t, s, _, _ in quality_momentum_scores[:3]]}")
 
-                    current_quality_momentum_stocks = new_quality_momentum_stocks
+                            # Rebalance quality + momentum portfolio
+                            quality_momentum_cash = _rebalance_quality_momentum_portfolio(
+                                new_quality_momentum_stocks, current_date, all_tickers_data,
+                                quality_momentum_positions, quality_momentum_cash, capital_per_stock
+                            )
+                            current_quality_momentum_stocks = new_quality_momentum_stocks
+                            quality_momentum_last_rebalance_value = _mark_to_market_value(
+                                quality_momentum_positions, quality_momentum_cash, ticker_data_grouped, current_date
+                            )
+                        else:
+                            print(f"   ⏭️ Skip Quality+Mom rebalance: {reason}")
                 else:
                     print(f"   ⚠️ Quality+Mom: No valid tickers found on {current_date.strftime('%Y-%m-%d')}")
 
@@ -1866,16 +2270,32 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   🎯 Vol-Adj Mom: Selected {new_volatility_adj_mom_stocks}")
                     
                     if new_volatility_adj_mom_stocks != current_volatility_adj_mom_stocks:
-                        print(f"   🔄 Volatility-Adjusted Momentum rebalancing: {current_volatility_adj_mom_stocks} → {new_volatility_adj_mom_stocks}")
-                        print(f"     Top scores: {[(t, f'{s:.2f}') for t, s in volatility_adj_mom_scores[:3]]}")
-                        
-                        # Rebalance volatility-adjusted momentum portfolio
-                        volatility_adj_mom_cash = _rebalance_volatility_adj_mom_portfolio(
-                            new_volatility_adj_mom_stocks, current_date, all_tickers_data,
-                            volatility_adj_mom_positions, volatility_adj_mom_cash, capital_per_stock
+                        # Apply transaction cost guard (same as Dynamic BH)
+                        should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
+                            current_volatility_adj_mom_stocks,
+                            new_volatility_adj_mom_stocks,
+                            ticker_data_grouped,
+                            current_date,
+                            volatility_adj_mom_positions,
+                            volatility_adj_mom_cash,
+                            TRANSACTION_COST,
+                            volatility_adj_mom_last_rebalance_value
                         )
-
-                    current_volatility_adj_mom_stocks = new_volatility_adj_mom_stocks
+                        if should_rebal:
+                            print(f"   🔄 Volatility-Adjusted Momentum rebalancing: {current_volatility_adj_mom_stocks} → {new_volatility_adj_mom_stocks}")
+                            print(f"     Top scores: {[(t, f'{s:.2f}') for t, s in volatility_adj_mom_scores[:3]]}")
+                            
+                            # Rebalance volatility-adjusted momentum portfolio
+                            volatility_adj_mom_cash = _rebalance_volatility_adj_mom_portfolio(
+                                new_volatility_adj_mom_stocks, current_date, all_tickers_data,
+                                volatility_adj_mom_positions, volatility_adj_mom_cash, capital_per_stock
+                            )
+                            current_volatility_adj_mom_stocks = new_volatility_adj_mom_stocks
+                            volatility_adj_mom_last_rebalance_value = _mark_to_market_value(
+                                volatility_adj_mom_positions, volatility_adj_mom_cash, ticker_data_grouped, current_date
+                            )
+                        else:
+                            print(f"   ⏭️ Skip Vol-Adj Mom rebalance: {reason}")
                 else:
                     print(f"   ⚠️ Vol-Adj Mom: No valid tickers found on {current_date.strftime('%Y-%m-%d')}")
 
@@ -2275,6 +2695,63 @@ def _run_portfolio_backtest_walk_forward(
 
         dynamic_bh_portfolio_value = dynamic_bh_invested_value + dynamic_bh_cash
         dynamic_bh_portfolio_history.append(dynamic_bh_portfolio_value)
+
+        # Update DYNAMIC BH 1Y + VOLATILITY FILTER portfolio value daily (skip if disabled)
+        dynamic_bh_1y_vol_filter_invested_value = 0.0
+        if ENABLE_DYNAMIC_BH_1Y_VOL_FILTER:
+          for ticker in current_dynamic_bh_1y_vol_filter_stocks:
+            if ticker in dynamic_bh_1y_vol_filter_positions:
+                try:
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            # Drop NaN values to avoid NaN propagation
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    position_value = dynamic_bh_1y_vol_filter_positions[ticker]['shares'] * current_price
+                                    dynamic_bh_1y_vol_filter_positions[ticker]['value'] = position_value
+                                    dynamic_bh_1y_vol_filter_invested_value += position_value
+                                else:
+                                    dynamic_bh_1y_vol_filter_invested_value += dynamic_bh_1y_vol_filter_positions[ticker].get('value', 0.0)
+                            else:
+                                dynamic_bh_1y_vol_filter_invested_value += dynamic_bh_1y_vol_filter_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating dynamic BH 1Y+Vol position for {ticker}: {e}")
+
+        dynamic_bh_1y_vol_filter_portfolio_value = dynamic_bh_1y_vol_filter_invested_value + dynamic_bh_1y_vol_filter_cash
+        dynamic_bh_1y_vol_filter_portfolio_history.append(dynamic_bh_1y_vol_filter_portfolio_value)
+
+        # Update DYNAMIC BH 1Y + TRAILING STOP portfolio value daily (skip if disabled)
+        dynamic_bh_1y_trailing_stop_invested_value = 0.0
+        if ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP:
+          for ticker in current_dynamic_bh_1y_trailing_stop_stocks:
+            if ticker in dynamic_bh_1y_trailing_stop_positions:
+                try:
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    position_value = dynamic_bh_1y_trailing_stop_positions[ticker]['shares'] * current_price
+                                    dynamic_bh_1y_trailing_stop_positions[ticker]['value'] = position_value
+                                    dynamic_bh_1y_trailing_stop_invested_value += position_value
+                                else:
+                                    dynamic_bh_1y_trailing_stop_invested_value += dynamic_bh_1y_trailing_stop_positions[ticker].get('value', 0.0)
+                            else:
+                                dynamic_bh_1y_trailing_stop_invested_value += dynamic_bh_1y_trailing_stop_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating dynamic BH 1Y+TS position for {ticker}: {e}")
+
+        dynamic_bh_1y_trailing_stop_portfolio_value = dynamic_bh_1y_trailing_stop_invested_value + dynamic_bh_1y_trailing_stop_cash
+        dynamic_bh_1y_trailing_stop_portfolio_history.append(dynamic_bh_1y_trailing_stop_portfolio_value)
 
         # Update DYNAMIC BH 3-MONTH portfolio value daily (skip if disabled)
         dynamic_bh_3m_invested_value = 0.0
@@ -2738,130 +3215,110 @@ def _run_portfolio_backtest_walk_forward(
         })
     
     # Calculate BH portfolio value for TOP 3 PERFORMERS ONLY
-    # BH buys the top 3 performers at backtest start and holds until end
-    # Only calculate if Static BH strategy is enabled
+    # If rebalancing was enabled, use tracked positions; otherwise use old buy-once-hold method
     if ENABLE_STATIC_BH:
-        bh_portfolio_value = 0.0
-        bh_3m_portfolio_value = 0.0
-
-        if top_performers_data:
-            # Sort by 1-year performance and get top 3
-            sorted_performers = sorted(top_performers_data, key=lambda x: x[1], reverse=True)
-            # Handle both 2-tuple (ticker, perf_1y) and 3-tuple (ticker, perf_1y, perf_ytd) formats
-            top_3_tickers = []
-            for item in sorted_performers[:3]:
-                if len(item) >= 2:
-                    top_3_tickers.append(item[0])  # ticker is always first element
-
-            print(f"🏆 BH Portfolio: Investing in top 3 performers based on 1-year performance up to {backtest_start_date.date()}:")
-            for i, item in enumerate(sorted_performers[:3]):
-                ticker = item[0]
-                perf_1y = item[1]
-                print(f"  {i+1}. {ticker}: {perf_1y:+.1f}% 1-year return")
-
-            # Calculate BH performance for each top performer over the backtest period
-            # Note: static_bh_transaction_costs already declared global at function start
-            for ticker in top_3_tickers:
-                try:
-                    # Get ticker data for the backtest period
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-                    if ticker_data.empty:
-                        print(f"  ⚠️ No data for BH stock {ticker}")
+        # Check if we used the new tracking system (rebalancing enabled or positions were tracked)
+        if static_bh_1y_positions or static_bh_1y_initialized:
+            # Calculate final value from tracked positions
+            bh_portfolio_value = static_bh_1y_cash
+            for ticker, pos in static_bh_1y_positions.items():
+                if ticker in ticker_data_grouped:
+                    price_data = ticker_data_grouped[ticker].loc[:backtest_end_date]
+                    if not price_data.empty:
+                        current_price = price_data['Close'].dropna().iloc[-1]
+                        bh_portfolio_value += pos['shares'] * current_price
+            
+            rebal_info = f" (rebalanced every {STATIC_BH_1Y_REBALANCE_DAYS} days)" if STATIC_BH_1Y_REBALANCE_DAYS > 0 else " (no rebalancing)"
+            print(f"✅ Static BH 1Y Portfolio Value: ${bh_portfolio_value:,.0f}{rebal_info}")
+            print(f"   Final holdings: {list(static_bh_1y_positions.keys())}")
+        else:
+            # Fallback to old calculation if tracking wasn't used
+            bh_portfolio_value = 0.0
+            if top_performers_data:
+                sorted_performers = sorted(top_performers_data, key=lambda x: x[1], reverse=True)
+                top_3_tickers = [item[0] for item in sorted_performers[:3] if len(item) >= 2]
+                
+                for ticker in top_3_tickers:
+                    try:
+                        ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                        if ticker_data.empty:
+                            continue
+                        ticker_data = ticker_data.set_index('date')
+                        backtest_data = ticker_data.loc[backtest_start_date:backtest_end_date]
+                        if backtest_data.empty or len(backtest_data) < 2:
+                            continue
+                        valid_close = backtest_data['Close'].dropna()
+                        if len(valid_close) < 2:
+                            continue
+                        start_price = valid_close.iloc[0]
+                        end_price = valid_close.iloc[-1]
+                        if start_price > 0 and end_price > 0:
+                            shares = int(capital_per_stock / (start_price * (1 + TRANSACTION_COST)))
+                            buy_value = shares * start_price
+                            buy_cost = buy_value * TRANSACTION_COST
+                            cash_left = capital_per_stock - (buy_value + buy_cost)
+                            gross_sale = shares * end_price
+                            sell_cost = gross_sale * TRANSACTION_COST
+                            net_sale = gross_sale - sell_cost
+                            bh_portfolio_value += cash_left + net_sale
+                    except Exception:
                         continue
+                print(f"✅ Static BH 1Y Portfolio Value: ${bh_portfolio_value:,.0f} (legacy calculation)")
 
-                    ticker_data = ticker_data.set_index('date')
-                    backtest_data = ticker_data.loc[backtest_start_date:backtest_end_date]
-
-                    if backtest_data.empty or len(backtest_data) < 2:
-                        print(f"  ⚠️ Insufficient BH data for {ticker}")
-                        continue
-
-                    # Buy at the beginning of backtest period - drop NaN values first
-                    valid_close = backtest_data['Close'].dropna()
-                    if len(valid_close) < 2:
-                        print(f"  ⚠️ Insufficient valid price data for BH stock {ticker}")
-                        continue
-
-                    start_price = valid_close.iloc[0]
-                    end_price = valid_close.iloc[-1]
-
-                    # Validate prices are not NaN
-                    if pd.isna(start_price) or pd.isna(end_price):
-                        print(f"  ⚠️ Invalid prices for BH stock {ticker}: start={start_price}, end={end_price}")
-                        continue
-
-                    if start_price > 0 and end_price > 0:
-                        # ✅ Fair comparison: apply the same transaction cost model to Static BH.
-                        # Buy at start (pay fees), then sell at end (pay fees).
-                        shares = int(capital_per_stock / (start_price * (1 + TRANSACTION_COST)))
-                        buy_value = shares * start_price
-                        buy_cost = buy_value * TRANSACTION_COST
-                        cash_left = capital_per_stock - (buy_value + buy_cost)
-                        static_bh_transaction_costs += buy_cost
-
-                        gross_sale = shares * end_price
-                        sell_cost = gross_sale * TRANSACTION_COST
-                        net_sale = gross_sale - sell_cost
-                        static_bh_transaction_costs += sell_cost
-
-                        final_value = cash_left + net_sale
-                        bh_portfolio_value += final_value
-
-                        return_pct = ((end_price - start_price) / start_price) * 100
-                        print(f"  📊 BH {ticker}: ${final_value:,.0f} ({return_pct:+.1f}%) - {shares} shares @ ${start_price:.2f} → ${end_price:.2f} ({backtest_start_date.date()} to {backtest_end_date.date()})")
-
-                except Exception as e:
-                    print(f"  ⚠️ Error calculating BH for {ticker}: {e}")
-                    continue
-
-            print(f"✅ BH Portfolio Value: ${bh_portfolio_value:,.0f} across {len(top_3_tickers)} top performers")
-
+        # Static BH 3M
+        if static_bh_3m_positions or static_bh_3m_initialized:
+            # Calculate final value from tracked positions
+            bh_3m_portfolio_value = static_bh_3m_cash
+            for ticker, pos in static_bh_3m_positions.items():
+                if ticker in ticker_data_grouped:
+                    price_data = ticker_data_grouped[ticker].loc[:backtest_end_date]
+                    if not price_data.empty:
+                        current_price = price_data['Close'].dropna().iloc[-1]
+                        bh_3m_portfolio_value += pos['shares'] * current_price
+            
+            rebal_info = f" (rebalanced every {STATIC_BH_3M_REBALANCE_DAYS} days)" if STATIC_BH_3M_REBALANCE_DAYS > 0 else " (no rebalancing)"
+            print(f"✅ Static BH 3M Portfolio Value: ${bh_3m_portfolio_value:,.0f}{rebal_info}")
+            print(f"   Final holdings: {list(static_bh_3m_positions.keys())}")
+        else:
+            # Fallback to old calculation
+            bh_3m_portfolio_value = 0.0
             perf_3m = []
             for ticker, ticker_df in ticker_data_grouped.items():
                 r = _return_over_lookback(ticker_df, backtest_start_date, 90)
                 if r is not None:
                     perf_3m.append((ticker, r * 100.0))
-
+            
             if perf_3m:
                 perf_3m.sort(key=lambda x: x[1], reverse=True)
                 top_3_tickers_3m = [t for t, _ in perf_3m[:3]]
-
+                
                 for ticker in top_3_tickers_3m:
                     try:
                         if ticker not in ticker_data_grouped:
                             continue
-
                         ticker_df = ticker_data_grouped[ticker]
                         backtest_data = ticker_df.loc[backtest_start_date:backtest_end_date]
                         if backtest_data.empty or len(backtest_data) < 2:
                             continue
-
                         valid_close = backtest_data['Close'].dropna()
                         if len(valid_close) < 2:
                             continue
-
                         start_price = valid_close.iloc[0]
                         end_price = valid_close.iloc[-1]
-                        if pd.isna(start_price) or pd.isna(end_price) or start_price <= 0 or end_price <= 0:
-                            continue
-
-                        shares = int(capital_per_stock / (start_price * (1 + TRANSACTION_COST)))
-                        buy_value = shares * start_price
-                        buy_cost = buy_value * TRANSACTION_COST
-                        cash_left = capital_per_stock - (buy_value + buy_cost)
-                        static_bh_3m_transaction_costs += buy_cost
-
-                        gross_sale = shares * end_price
-                        sell_cost = gross_sale * TRANSACTION_COST
-                        net_sale = gross_sale - sell_cost
-                        static_bh_3m_transaction_costs += sell_cost
-
-                        final_value = cash_left + net_sale
-                        bh_3m_portfolio_value += final_value
+                        if start_price > 0 and end_price > 0:
+                            shares = int(capital_per_stock / (start_price * (1 + TRANSACTION_COST)))
+                            buy_value = shares * start_price
+                            buy_cost = buy_value * TRANSACTION_COST
+                            cash_left = capital_per_stock - (buy_value + buy_cost)
+                            gross_sale = shares * end_price
+                            sell_cost = gross_sale * TRANSACTION_COST
+                            net_sale = gross_sale - sell_cost
+                            bh_3m_portfolio_value += cash_left + net_sale
                     except Exception:
                         continue
+            print(f"✅ Static BH 3M Portfolio Value: ${bh_3m_portfolio_value:,.0f} (legacy calculation)")
 
-        else:
+        if not top_performers_data and not static_bh_1y_initialized:
             # Fallback: use initial capital for 3 stocks
             bh_portfolio_value = capital_per_stock * 3
             bh_3m_portfolio_value = capital_per_stock * 3
@@ -2897,7 +3354,53 @@ def _run_portfolio_backtest_walk_forward(
             total_portfolio_value = initial_capital_needed
             print(f"⚠️ AI Portfolio: No positions, using initial capital (${total_portfolio_value:,.0f})")
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, bh_3m_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, ai_portfolio_value, ai_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, static_bh_3m_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, ai_portfolio_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs
+    # Fix Mean Reversion and Quality+Mom: if they never rebalanced, use initial capital
+    if mean_reversion_portfolio_value == 0.0:
+        mean_reversion_portfolio_value = initial_capital_needed
+        print(f"⚠️ Mean Reversion: Never rebalanced, using initial capital (${mean_reversion_portfolio_value:,.0f})")
+    
+    if quality_momentum_portfolio_value == 0.0:
+        quality_momentum_portfolio_value = initial_capital_needed
+        print(f"⚠️ Quality+Mom: Never rebalanced, using initial capital (${quality_momentum_portfolio_value:,.0f})")
+    
+    if dynamic_bh_1y_vol_filter_portfolio_value == 0.0:
+        dynamic_bh_1y_vol_filter_portfolio_value = initial_capital_needed
+        print(f"⚠️ Dynamic BH 1Y+Vol: Never rebalanced, using initial capital (${dynamic_bh_1y_vol_filter_portfolio_value:,.0f})")
+
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, bh_3m_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, ai_portfolio_value, ai_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, dynamic_bh_1y_vol_filter_portfolio_value, dynamic_bh_1y_vol_filter_portfolio_history, dynamic_bh_1y_trailing_stop_portfolio_value, dynamic_bh_1y_trailing_stop_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, static_bh_3m_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, ai_portfolio_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs
+
+
+def _get_current_risk_adj_mom_selections(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """
+    Get current Risk-Adjusted Momentum stock selections using shared logic.
+    This ensures identical behavior between backtesting and live trading.
+    """
+    from shared_strategies import select_risk_adj_mom_stocks
+    
+    # Group data by ticker for shared strategy
+    ticker_data_grouped = {}
+    if all_tickers_data is not None:
+        # Handle different data formats (wide vs long)
+        if isinstance(all_tickers_data.columns, pd.MultiIndex):
+            # Wide format: columns are (field, ticker)
+            for ticker in all_tickers_data.columns.levels[1]:
+                ticker_cols = [col for col in all_tickers_data.columns if col[1] == ticker]
+                if ticker_cols:
+                    ticker_data = all_tickers_data[ticker_cols].copy()
+                    ticker_data.columns = [col[0] for col in ticker_cols]
+                    ticker_data_grouped[ticker] = ticker_data
+        elif 'ticker' in all_tickers_data.index.names:
+            # Long format: group by ticker
+            ticker_data_grouped = {ticker: group for ticker, group in all_tickers_data.groupby('ticker')}
+        else:
+            # Assume ticker columns
+            for ticker in all_tickers:
+                if ticker in all_tickers_data.columns:
+                    ticker_data_grouped[ticker] = all_tickers_data[[ticker]].copy()
+                    ticker_data_grouped[ticker].columns = ['Close']
+    
+    # Use shared strategy logic
+    return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, top_n=PORTFOLIO_SIZE)
 
 
 def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
@@ -3004,6 +3507,154 @@ def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
         print(f"   ⚠️ Dynamic BH rebalancing failed: {e}")
     
     return dynamic_bh_cash  # Return updated cash (float passed by value)
+
+
+def _rebalance_dynamic_bh_1y_vol_filter_portfolio(new_stocks, current_date, all_tickers_data,
+                                                   dynamic_bh_1y_vol_filter_positions, dynamic_bh_1y_vol_filter_cash, capital_per_stock):
+    """
+    Rebalance dynamic BH 1Y with volatility filter portfolio to hold the new top 3 stocks.
+    Happens DAILY - sells stocks no longer in top 3 and buys new ones.
+
+    Returns: Updated cash balance (since float is passed by value, not reference)
+    """
+    global dynamic_bh_1y_vol_filter_transaction_costs
+    try:
+        # Calculate target allocation per stock ($15,000 each for 3 stocks = $45,000 total)
+        target_allocation = capital_per_stock  # $15,000 per stock
+        total_target = 3 * target_allocation   # $45,000 total
+
+        # Sell stocks no longer in top 3
+        stocks_to_sell = []
+        for ticker in list(dynamic_bh_1y_vol_filter_positions.keys()):
+            if ticker not in new_stocks:
+                stocks_to_sell.append(ticker)
+
+        # Execute sells
+        for ticker in stocks_to_sell:
+            if ticker in dynamic_bh_1y_vol_filter_positions:
+                pos = dynamic_bh_1y_vol_filter_positions[ticker]
+                shares = pos.get('shares', 0)
+                if shares > 0:
+                    # Get current price
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    sell_value = shares * current_price
+                                    sell_cost = sell_value * TRANSACTION_COST
+                                    dynamic_bh_1y_vol_filter_cash += sell_value - sell_cost
+                                    dynamic_bh_1y_vol_filter_transaction_costs += sell_cost
+                                    del dynamic_bh_1y_vol_filter_positions[ticker]
+
+        # Execute buys
+        for ticker in new_stocks:
+            if ticker not in dynamic_bh_1y_vol_filter_positions:
+                # Get current price
+                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                if not ticker_data.empty:
+                    ticker_data = ticker_data.set_index('date')
+                    current_price_data = ticker_data.loc[:current_date]
+                    if not current_price_data.empty:
+                        valid_prices = current_price_data['Close'].dropna()
+                        if len(valid_prices) > 0:
+                            current_price = valid_prices.iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                shares_to_buy = int(target_allocation / current_price)
+                                if shares_to_buy > 0:
+                                    buy_cost = shares_to_buy * current_price * TRANSACTION_COST
+                                    total_cost = shares_to_buy * current_price + buy_cost
+                                    if dynamic_bh_1y_vol_filter_cash >= total_cost:
+                                        dynamic_bh_1y_vol_filter_cash -= total_cost
+                                        dynamic_bh_1y_vol_filter_transaction_costs += buy_cost
+                                        dynamic_bh_1y_vol_filter_positions[ticker] = {
+                                            'shares': shares_to_buy,
+                                            'entry_price': current_price,
+                                            'value': shares_to_buy * current_price
+                                        }
+
+    except Exception as e:
+        print(f"   ⚠️ Dynamic BH 1Y+Vol rebalancing failed: {e}")
+    
+    return dynamic_bh_1y_vol_filter_cash  # Return updated cash (float passed by value)
+
+
+def _rebalance_dynamic_bh_1y_trailing_stop_portfolio(new_stocks, current_date, all_tickers_data,
+                                                      dynamic_bh_1y_trailing_stop_positions, dynamic_bh_1y_trailing_stop_cash, capital_per_stock):
+    """
+    Rebalance dynamic BH 1Y with trailing stop portfolio to hold the new top stocks.
+    Happens DAILY - sells stocks no longer in top and buys new ones.
+    Sets initial peak_price for new positions.
+
+    Returns: Updated cash balance (since float is passed by value, not reference)
+    """
+    global dynamic_bh_1y_trailing_stop_transaction_costs
+    try:
+        # Calculate target allocation per stock
+        target_allocation = capital_per_stock
+
+        # Sell stocks no longer in top
+        stocks_to_sell = []
+        for ticker in list(dynamic_bh_1y_trailing_stop_positions.keys()):
+            if ticker not in new_stocks:
+                stocks_to_sell.append(ticker)
+
+        # Execute sells
+        for ticker in stocks_to_sell:
+            if ticker in dynamic_bh_1y_trailing_stop_positions:
+                pos = dynamic_bh_1y_trailing_stop_positions[ticker]
+                shares = pos.get('shares', 0)
+                if shares > 0:
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    sell_value = shares * current_price
+                                    sell_cost = sell_value * TRANSACTION_COST
+                                    dynamic_bh_1y_trailing_stop_cash += sell_value - sell_cost
+                                    dynamic_bh_1y_trailing_stop_transaction_costs += sell_cost
+                                    del dynamic_bh_1y_trailing_stop_positions[ticker]
+
+        # Execute buys
+        for ticker in new_stocks:
+            if ticker not in dynamic_bh_1y_trailing_stop_positions:
+                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                if not ticker_data.empty:
+                    ticker_data = ticker_data.set_index('date')
+                    current_price_data = ticker_data.loc[:current_date]
+                    if not current_price_data.empty:
+                        valid_prices = current_price_data['Close'].dropna()
+                        if len(valid_prices) > 0:
+                            current_price = valid_prices.iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                shares_to_buy = int(target_allocation / current_price)
+                                if shares_to_buy > 0:
+                                    buy_cost = shares_to_buy * current_price * TRANSACTION_COST
+                                    total_cost = shares_to_buy * current_price + buy_cost
+                                    if dynamic_bh_1y_trailing_stop_cash >= total_cost:
+                                        dynamic_bh_1y_trailing_stop_cash -= total_cost
+                                        dynamic_bh_1y_trailing_stop_transaction_costs += buy_cost
+                                        # Initialize position with peak_price set to entry_price
+                                        dynamic_bh_1y_trailing_stop_positions[ticker] = {
+                                            'shares': shares_to_buy,
+                                            'entry_price': current_price,
+                                            'peak_price': current_price,  # Track peak for trailing stop
+                                            'value': shares_to_buy * current_price
+                                        }
+
+    except Exception as e:
+        print(f"   ⚠️ Dynamic BH 1Y+TS rebalancing failed: {e}")
+
+    return dynamic_bh_1y_trailing_stop_cash  # Return updated cash (float passed by value)
 
 
 def _rebalance_dynamic_bh_3m_portfolio(new_stocks, current_date, all_tickers_data,
