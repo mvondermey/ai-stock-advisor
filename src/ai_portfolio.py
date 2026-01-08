@@ -350,27 +350,23 @@ def train_ai_portfolio_model(
         # === MULTI-MODEL TRAINING & SELECTION ===
         print(f"   🧪 AI Portfolio: Training multiple models and selecting the best...")
         
-        # Check GPU availability
+        # Import config flags for parallel training (same as ml_models.py)
         try:
-            from config import XGBOOST_USE_GPU
-            import torch
-            # Check if GPU is actually available (not just CUDA_AVAILABLE which respects FORCE_CPU)
-            gpu_actually_available = torch.cuda.is_available() and XGBOOST_USE_GPU
-            gpu_available = gpu_actually_available
+            from config import XGBOOST_USE_GPU, CUDA_AVAILABLE, TRAINING_NUM_PROCESSES
         except ImportError:
-            gpu_available = False
+            XGBOOST_USE_GPU = True
+            CUDA_AVAILABLE = False
+            TRAINING_NUM_PROCESSES = 1
         
-        if gpu_available:
+        # Use same GPU detection pattern as ml_models.py
+        use_gpu = XGBOOST_USE_GPU and CUDA_AVAILABLE
+        
+        if use_gpu:
             print(f"   🚀 GPU detected - XGBoost and LightGBM will use GPU acceleration")
         else:
-            print(f"   💻 Using CPU (joblib parallelism limited to avoid nested multiprocessing)")
-
-        # When the main program is already parallel (ticker-level Pool), avoid n_jobs=-1 here.
-        try:
-            from config import AI_PORTFOLIO_N_JOBS
-            n_jobs = int(AI_PORTFOLIO_N_JOBS)
-        except Exception:
-            n_jobs = 1
+            print(f"   💻 Using CPU (n_jobs={TRAINING_NUM_PROCESSES})")
+        
+        n_jobs = TRAINING_NUM_PROCESSES
         
         models_to_try = {}
         
@@ -412,15 +408,16 @@ def train_ai_portfolio_model(
                 'eval_metric': 'logloss'
             }
             
-            if gpu_available:
+            if use_gpu:
                 # ✅ GPU acceleration (XGBoost 2.0+ API)
                 xgb_params['tree_method'] = 'hist'
                 xgb_params['device'] = 'cuda'
+                xgb_params['nthread'] = n_jobs  # Use nthread for consistency with ml_models.py
             else:
                 # CPU parallel
                 xgb_params['tree_method'] = 'hist'
                 xgb_params['device'] = 'cpu'
-                xgb_params['n_jobs'] = n_jobs
+                xgb_params['nthread'] = n_jobs  # Use nthread for consistency with ml_models.py
             
             models_to_try['XGBoost'] = xgb.XGBClassifier(**xgb_params)
         
@@ -434,15 +431,16 @@ def train_ai_portfolio_model(
                 'verbose': -1
             }
             
-            if gpu_available:
+            if use_gpu:
                 # ✅ GPU acceleration
                 lgb_params['device'] = 'gpu'
                 lgb_params['gpu_platform_id'] = 0
                 lgb_params['gpu_device_id'] = 0
+                lgb_params['n_jobs'] = n_jobs  # Still use n_jobs for LightGBM
             else:
                 # CPU parallel
                 lgb_params['device'] = 'cpu'
-                lgb_params['n_jobs'] = n_jobs
+                lgb_params['n_jobs'] = n_jobs  # Still use n_jobs for LightGBM
             
             models_to_try['LightGBM'] = lgb.LGBMClassifier(**lgb_params)
         

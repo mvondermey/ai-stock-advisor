@@ -27,7 +27,7 @@ from config import (
     DATA_PROVIDER, N_TOP_TICKERS, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES,
     PAUSE_BETWEEN_YF_CALLS, MARKET_SELECTION, USE_PERFORMANCE_BENCHMARK,
     ALPACA_API_KEY, ALPACA_SECRET_KEY, TOP_CACHE_PATH, VALID_TICKERS_CACHE_PATH,
-    ALPACA_STOCKS_LIMIT, ALPACA_STOCKS_EXCHANGES, NUM_PROCESSES,
+    ALPACA_STOCKS_LIMIT, ALPACA_STOCKS_EXCHANGES, NUM_PROCESSES, PARALLEL_THRESHOLD,
     TOP_TICKER_SELECTION_LOOKBACK
 )
 from data_fetcher import load_prices_robust, _download_batch_robust
@@ -208,6 +208,32 @@ def get_all_tickers() -> List[str]:
             print(f" Fetched {len(etf_tickers)} tickers from Popular ETFs list.")
         except Exception as e:
             print(f" Could not fetch Popular ETFs list ({e}).")
+        
+        # Add custom ETF list including leveraged and popular ETFs
+        custom_etfs = [
+            # Leveraged ETFs
+            'QQQ3', 'TQQQ', 'SQQQ',  # 3x NASDAQ-100 (long/short)
+            'UPRO', 'SPXU',           # 3x S&P 500 (long/short)
+            'TNA', 'TZA',             # 3x Russell 2000 (long/short)
+            'TECL', 'TECS',           # 3x Technology (long/short)
+            'FAS', 'FAZ',             # 3x Financials (long/short)
+            'SOXL', 'SOXS',           # 3x Semiconductors (long/short)
+            # Popular Index ETFs
+            'SPY', 'QQQ', 'DIA', 'IWM',  # Major indices
+            'VOO', 'VTI', 'VEA', 'VWO',  # Vanguard
+            # Sector ETFs (for Sector Rotation strategy)
+            'XLK', 'XLF', 'XLE', 'XLV', 'XLI', 'XLP', 'XLY', 'XLU', 'XLRE', 'XLC', 'XLB',
+            # Additional sector ETFs for rotation
+            'GDX', 'USO', 'TLT',  # Gold, Oil, Treasury (used in sector rotation)
+            # Bond ETFs
+            'AGG', 'BND', 'LQD', 'HYG',
+            # Commodity ETFs
+            'GLD', 'SLV', 'UNG',
+            # International ETFs
+            'EFA', 'EEM', 'FXI', 'EWJ',
+        ]
+        all_tickers.update(custom_etfs)
+        print(f" Added {len(custom_etfs)} custom ETFs (including leveraged ETFs like QQQ3, TQQQ)")
 
     if MARKET_SELECTION.get("CRYPTO"):
         try:
@@ -693,8 +719,7 @@ def find_top_performers(
         all_tickers_in_data = list(all_tickers_data.columns.get_level_values(1).unique())
         min_points_quality = 252  # Require 1 year of data for quality
         
-        quality_tickers = []
-        for ticker in all_tickers_in_data:
+        def check_single_ticker_quality(ticker):
             try:
                 close_key = None
                 for attr in ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']:
@@ -704,9 +729,26 @@ def find_top_performers(
                 if close_key is not None:
                     s = all_tickers_data.loc[:, close_key].dropna()
                     if len(s) >= min_points_quality:
-                        quality_tickers.append(ticker)
+                        return ticker
             except KeyError:
                 pass
+            return None
+        
+        # Use parallel processing for large ticker sets
+        if len(all_tickers_in_data) > PARALLEL_THRESHOLD:
+            print(f"   Using parallel quality check for {len(all_tickers_in_data)} tickers...")
+            num_workers = min(NUM_PROCESSES, len(all_tickers_in_data))
+            
+            with Pool(processes=num_workers) as pool:
+                results = pool.map(check_single_ticker_quality, all_tickers_in_data)
+            quality_tickers = [t for t in results if t is not None]
+        else:
+            # Sequential for small lists
+            quality_tickers = []
+            for ticker in all_tickers_in_data:
+                result = check_single_ticker_quality(ticker)
+                if result:
+                    quality_tickers.append(result)
         
         print(f"   Found {len(quality_tickers)} tickers with {min_points_quality}+ data points", flush=True)
         

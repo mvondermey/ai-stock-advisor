@@ -31,7 +31,7 @@ from config import (
     TARGET_PERCENTAGE,
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, VALIDATION_DAYS,
-    TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
+    TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, PARALLEL_THRESHOLD, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
     ENABLE_1YEAR_TRAINING,
     ENABLE_1YEAR_BACKTEST,
     ENABLE_AI_STRATEGY,
@@ -59,6 +59,56 @@ from alpha_training import select_threshold_by_alpha, AlphaThresholdConfig
 # Toggle: use alpha-optimized probability threshold for buys/sells
 USE_ALPHA_THRESHOLD_BUY = True
 USE_ALPHA_THRESHOLD_SELL = True
+
+# Global variables for parallel processing (will be set in main)
+_grouped_data = None
+
+def validate_detailed_ticker(ticker):
+    """Validate a single ticker's data quality (for parallel processing)"""
+    global _grouped_data
+    try:
+        if _grouped_data and ticker in _grouped_data.groups:
+            ticker_data = _grouped_data.get_group(ticker).copy()
+            if not ticker_data.empty:
+                ticker_data = ticker_data.set_index('date')
+            summary = get_data_summary(ticker_data, ticker)
+        else:
+            # Ticker has no data
+            summary = {
+                'ticker': ticker,
+                'rows': 0,
+                'status': 'EMPTY',
+                'message': 'No data available'
+            }
+        return summary
+    except Exception as e:
+        # Skip problematic tickers
+        return {
+            'ticker': ticker,
+            'rows': 0,
+            'status': 'ERROR',
+            'message': f'Error: {str(e)[:30]}'
+        }
+
+def validate_single_ticker(ticker, ticker_counts):
+    """Validate a single ticker's row count (for parallel processing)"""
+    row_count = ticker_counts.get(ticker, 0)
+    if row_count >= 175:  # 70% of 250 days minimum
+        status = 'OK'
+        message = ''
+    elif row_count > 0:
+        status = 'INSUFFICIENT'
+        message = f"Only {row_count} rows"
+    else:
+        status = 'EMPTY'
+        message = 'No data'
+    
+    return {
+        'ticker': ticker,
+        'rows': row_count,
+        'status': status,
+        'message': message
+    }
 
 def _gpu_diag():
     """Run GPU diagnostics only for enabled models"""
@@ -670,25 +720,29 @@ def main(
         # Quick aggregation: count rows per ticker
         ticker_counts = all_tickers_data.groupby('ticker').size()
         
-        data_summaries = []
-        for ticker in tqdm(all_available_tickers, desc="Quick validation", ncols=100):
-            row_count = ticker_counts.get(ticker, 0)
-            if row_count >= 175:  # 70% of 250 days minimum
-                status = 'OK'
-                message = ''
-            elif row_count > 0:
-                status = 'INSUFFICIENT'
-                message = f"Only {row_count} rows"
-            else:
-                status = 'EMPTY'
-                message = 'No data'
+        # Use parallel processing for large ticker sets
+        if len(all_available_tickers) > PARALLEL_THRESHOLD:
+            print(f"   Using parallel validation for {len(all_available_tickers)} tickers...")
+            from multiprocessing import Pool
+            from tqdm import tqdm
+            import functools
             
-            data_summaries.append({
-                'ticker': ticker,
-                'rows': row_count,
-                'status': status,
-                'message': message
-            })
+            # Partial function to pass ticker_counts
+            validate_func = functools.partial(validate_single_ticker, ticker_counts=ticker_counts)
+            
+            num_workers = min(NUM_PROCESSES, len(all_available_tickers))
+            with Pool(processes=num_workers) as pool:
+                data_summaries = list(tqdm(
+                    pool.imap(validate_func, all_available_tickers),
+                    total=len(all_available_tickers),
+                    desc="Quick validation",
+                    ncols=100
+                ))
+        else:
+            # Sequential for small lists
+            data_summaries = []
+            for ticker in tqdm(all_available_tickers, desc="Quick validation", ncols=100):
+                data_summaries.append(validate_single_ticker(ticker, ticker_counts))
         
         # Print summary stats
         ok_count = sum(1 for s in data_summaries if s['status'] == 'OK')
@@ -724,32 +778,31 @@ def main(
         data_summaries = []
         
         # Optimize: Group by ticker once (much faster than filtering repeatedly)
-        grouped = all_tickers_data.groupby('ticker')
+        global _grouped_data
+        _grouped_data = all_tickers_data.groupby('ticker')
         
-        for ticker in tqdm(all_available_tickers, desc="Validating data quality"):
-            try:
-                if ticker in grouped.groups:
-                    ticker_data = grouped.get_group(ticker).copy()
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
-                    summary = get_data_summary(ticker_data, ticker)
-                else:
-                    # Ticker has no data
-                    summary = {
-                        'ticker': ticker,
-                        'rows': 0,
-                        'status': 'EMPTY',
-                        'message': 'No data available'
-                    }
-                data_summaries.append(summary)
-            except Exception as e:
-                # Skip problematic tickers
-                data_summaries.append({
-                    'ticker': ticker,
-                    'rows': 0,
-                    'status': 'ERROR',
-                    'message': f'Error: {str(e)[:30]}'
-                })
+        # Use parallel processing for large ticker sets
+        if len(all_available_tickers) > PARALLEL_THRESHOLD:
+            print(f"   Using parallel detailed validation for {len(all_available_tickers)} tickers...")
+            from multiprocessing import Pool
+            from tqdm import tqdm
+            
+            num_workers = min(NUM_PROCESSES, len(all_available_tickers))
+            with Pool(processes=num_workers) as pool:
+                data_summaries = list(tqdm(
+                    pool.imap(validate_detailed_ticker, all_available_tickers),
+                    total=len(all_available_tickers),
+                    desc="Validating data quality",
+                    ncols=100
+                ))
+        else:
+            # Sequential for small lists
+            data_summaries = []
+            for ticker in tqdm(all_available_tickers, desc="Validating data quality"):
+                data_summaries.append(validate_detailed_ticker(ticker))
+        
+        # Clean up global variable
+        _grouped_data = None
         
         # Print diagnostics table (includes warnings)
         print_data_diagnostics(data_summaries)
@@ -778,16 +831,6 @@ def main(
             ebitda_min_threshold=ebitda_threshold,
             performance_end_date=bt_start_1y
         )
-        
-        # ✅ Always include benchmark ETFs (QQQ, SPY, GLD) for strategies that need them
-        # Add them with dummy performance so they're available for Mean Reversion and Quality+Momentum
-        benchmark_tickers = ['QQQ', 'SPY', 'GLD']
-        existing_tickers = {ticker for ticker, _ in market_selected_performers}
-        for benchmark in benchmark_tickers:
-            if benchmark not in existing_tickers and benchmark in all_available_tickers:
-                market_selected_performers.append((benchmark, 0.0))  # Add with 0% performance
-        
-        print(f"  ✅ Added {len([b for b in benchmark_tickers if b in all_available_tickers])} benchmark tickers (QQQ, SPY, GLD)")
         
 
     top_performers_data = market_selected_performers
@@ -908,12 +951,33 @@ def main(
                 print(f"\n📦 Loading {len(trained_tickers)} trained models from disk...")
                 models, scalers, y_scalers = load_models_for_tickers(trained_tickers)
                 print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers")
+                ai_strategy_available = True
             else:
                 print(f"\n⚠️ No models were successfully trained")
                 models, scalers, y_scalers = {}, {}, {}
+                ai_strategy_available = False
         else:
             training_results = []
             print(f"\n⏭️ Skipping individual stock model training (ENABLE_1YEAR_TRAINING = False)")
+            
+            # Load existing models from disk for AI Strategy
+            print(f"\n📦 Loading existing models from disk for AI Strategy...")
+            from prediction import load_models_for_tickers
+            
+            # Try to load models for all top tickers
+            models, scalers, y_scalers = load_models_for_tickers(top_tickers)
+            print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers")
+            
+            if not models:
+                print(f"   ⚠️ No existing models found. AI Strategy will not be available.")
+                print(f"   💡 To use AI Strategy, either:")
+                print(f"      - Set ENABLE_1YEAR_TRAINING = True to train new models")
+                print(f"      - Or ensure models exist in logs/models/ directory")
+                
+                # Set flag to disable AI Strategy in backtest
+                ai_strategy_available = False
+            else:
+                ai_strategy_available = True
     
     # ✅ FIX: Filter tickers BEFORE AI Portfolio training
     # When training is disabled, use all top_tickers
@@ -1062,7 +1126,7 @@ def main(
         initial_capital_1y = capital_per_stock_1y * n_top_rebal
         
         # Use walk-forward backtest with periodic retraining and rebalancing
-        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y = _run_portfolio_backtest_walk_forward(
+        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, actual_backtest_day_count = _run_portfolio_backtest_walk_forward(
             all_tickers_data=all_tickers_data,
             train_start_date=train_start_1y_calc,
             backtest_start_date=bt_start_1y,
@@ -1076,7 +1140,7 @@ def main(
             period_name=actual_period_name,
             top_performers_data=top_performers_data,
             horizon_days=PERIOD_HORIZONS.get("1-Year", 60),
-            enable_ai_strategy=ENABLE_AI_STRATEGY
+            enable_ai_strategy=ENABLE_AI_STRATEGY and ai_strategy_available
         )
         
         ai_1y_return = ((final_strategy_value_1y - initial_capital_1y) / initial_capital_1y) * 100
@@ -1275,8 +1339,9 @@ def main(
     actual_initial_capital_1y = initial_capital_1y
     actual_tickers_analyzed = len(processed_tickers_1y)
     
-    # ✅ Calculate actual backtest days for annualization
-    actual_backtest_days = (bt_end - bt_start_1y).days
+    # ✅ Calculate actual backtest days for annualization (use actual day count from backtest)
+    actual_backtest_days = actual_backtest_day_count if actual_backtest_day_count else (bt_end - bt_start_1y).days
+    print(f"   📅 Actual backtest days: {actual_backtest_days} (config BACKTEST_DAYS={BACKTEST_DAYS})")
     
     print_final_summary(
         sorted_final_results, models, models, scalers, optimized_params_per_ticker,
@@ -1296,6 +1361,8 @@ def main(
         dynamic_bh_1m_1y_return=((dynamic_bh_1m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_risk_adj_mom_value_1y=risk_adj_mom_portfolio_value_1y,
         risk_adj_mom_1y_return=((risk_adj_mom_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_multitask_value_1y=multitask_portfolio_value_1y,
+        multitask_1y_return=((multitask_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_mean_reversion_value_1y=mean_reversion_portfolio_value_1y,
         mean_reversion_1y_return=((mean_reversion_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_quality_momentum_value_1y=quality_momentum_portfolio_value_1y,
@@ -1308,12 +1375,15 @@ def main(
         dynamic_bh_1y_vol_filter_1y_return=((dynamic_bh_1y_vol_filter_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_dynamic_bh_1y_trailing_stop_value_1y=dynamic_bh_1y_trailing_stop_portfolio_value_1y,
         dynamic_bh_1y_trailing_stop_1y_return=((dynamic_bh_1y_trailing_stop_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_sector_rotation_value_1y=sector_rotation_portfolio_value_1y,
+        sector_rotation_1y_return=((sector_rotation_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         ai_transaction_costs=ai_transaction_costs_1y,
         static_bh_transaction_costs=static_bh_transaction_costs_1y,
         static_bh_3m_transaction_costs=static_bh_3m_transaction_costs_1y,
         dynamic_bh_1y_transaction_costs=dynamic_bh_1y_transaction_costs_1y,
         dynamic_bh_1y_vol_filter_transaction_costs=dynamic_bh_1y_vol_filter_transaction_costs_1y,
         dynamic_bh_1y_trailing_stop_transaction_costs=dynamic_bh_1y_trailing_stop_transaction_costs_1y,
+        sector_rotation_transaction_costs=sector_rotation_transaction_costs_1y,
         dynamic_bh_3m_transaction_costs=dynamic_bh_3m_transaction_costs_1y,
         ai_portfolio_transaction_costs=ai_portfolio_transaction_costs_1y,
         dynamic_bh_1m_transaction_costs=dynamic_bh_1m_transaction_costs_1y,
@@ -1401,7 +1471,7 @@ if __name__ == "__main__":
     parser.add_argument("--live-trading", action="store_true", 
                        help="Run in live trading mode instead of backtesting")
     parser.add_argument("--strategy", type=str, default="risk_adj_mom",
-                       choices=["ai", "risk_adj_mom", "dynamic_bh_1y", "dynamic_bh_3m", "dynamic_bh_1m"],
+                       choices=["ai_individual", "ai_portfolio", "multitask", "risk_adj_mom", "dynamic_bh_1y", "dynamic_bh_3m", "dynamic_bh_1m"],
                        help="Strategy to use for live trading (default: risk_adj_mom)")
     
     args = parser.parse_args()
@@ -1411,7 +1481,7 @@ if __name__ == "__main__":
         import config
         config.LIVE_TRADING_STRATEGY = args.strategy
         print(f"🚀 Starting Live Trading with Strategy: {args.strategy}")
-        print(f"📋 Available strategies: ai, risk_adj_mom, dynamic_bh_1y, dynamic_bh_3m, dynamic_bh_1m")
+        print(f"📋 Available strategies: ai_individual, ai_portfolio, multitask, risk_adj_mom, dynamic_bh_1y, dynamic_bh_3m, dynamic_bh_1m")
         print(f"💡 Example: python src/main.py --live-trading --strategy risk_adj_mom")
         print("=" * 80)
         

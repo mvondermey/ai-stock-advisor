@@ -21,8 +21,7 @@ from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, FORCE_CPU, XGBOOST_USE_GPU,
     GPU_MAX_CONCURRENT_TRAINING_WORKERS, TRAINING_NUM_PROCESSES,
     USE_LSTM, USE_GRU, USE_TCN, USE_XGBOOST, USE_RANDOM_FOREST, 
-    USE_LIGHTGBM, USE_RIDGE, USE_ELASTIC_NET, USE_SVM, USE_MLP_CLASSIFIER,
-    AI_PORTFOLIO_N_JOBS
+    USE_LIGHTGBM, USE_RIDGE, USE_ELASTIC_NET, USE_SVM, USE_MLP_CLASSIFIER
 )
 
 # Import utilities
@@ -387,14 +386,14 @@ def universal_model_worker(task: Dict) -> Dict:
                 from sklearn.ensemble import RandomForestClassifier
                 model = RandomForestClassifier(
                     n_estimators=200, max_depth=10, random_state=SEED, 
-                    n_jobs=AI_PORTFOLIO_N_JOBS
+                    n_jobs=TRAINING_NUM_PROCESSES
                 )
             elif model_type == 'XGBoost':
                 import xgboost as xgb
                 common_kwargs = {
                     "random_state": SEED,
                     "tree_method": "hist",
-                    "nthread": AI_PORTFOLIO_N_JOBS,
+                    "nthread": TRAINING_NUM_PROCESSES,
                 }
                 if XGBOOST_USE_GPU and CUDA_AVAILABLE and not FORCE_CPU:
                     common_kwargs["device"] = "cuda"
@@ -404,11 +403,11 @@ def universal_model_worker(task: Dict) -> Dict:
                 from lightgbm import LGBMClassifier
                 model = LGBMClassifier(
                     n_estimators=200, max_depth=7, random_state=SEED, 
-                    verbosity=-1, n_jobs=AI_PORTFOLIO_N_JOBS
+                    verbosity=-1, n_jobs=TRAINING_NUM_PROCESSES
                 )
             elif model_type == 'Ridge':
                 from sklearn.linear_model import LogisticRegression
-                model = LogisticRegression(random_state=SEED, max_iter=1000, n_jobs=AI_PORTFOLIO_N_JOBS)
+                model = LogisticRegression(random_state=SEED, max_iter=1000, n_jobs=TRAINING_NUM_PROCESSES)
             
             if model is None:
                 return {
@@ -706,10 +705,15 @@ def train_all_models_parallel(
             initargs=(gpu_semaphore,)
         ) as pool:
             # Use imap_unordered for progress tracking
+            # file=sys.stdout ensures tqdm doesn't suppress print statements
+            import sys
             results = list(tqdm(
                 pool.imap_unordered(universal_model_worker, all_tasks),
                 total=len(all_tasks),
-                desc="Training models"
+                desc="Training models",
+                file=sys.stdout,
+                dynamic_ncols=True,
+                leave=True
             ))
     
     except Exception as e:

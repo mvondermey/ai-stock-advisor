@@ -69,7 +69,7 @@ MARKET_SELECTION = {
     "NASDAQ_100": True,        # ENABLED - ~100 tech stocks for growth
     "SP500": True,             # ~500 stocks  
     "DOW_JONES": True,         # ~30 stocks
-    "POPULAR_ETFS": False,
+    "POPULAR_ETFS": True,      # ENABLED - Include popular ETFs (includes sector ETFs)
     "CRYPTO": False,
     "DAX": True,
     "MDAX": True,
@@ -84,7 +84,7 @@ ALPACA_STOCKS_LIMIT = 20000  # High limit = train models for ALL tradable stocks
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = []  # NASDAQ only
 N_TOP_TICKERS           = 1200     # Reduced from 2000 - balance quality and quantity
-TOP_TICKER_SELECTION_LOOKBACK = "1M"     # Try 1-month for more responsive selection
+TOP_TICKER_SELECTION_LOOKBACK = "1Y"     # Try 1-month for more responsive selection
 BATCH_DOWNLOAD_SIZE     = 10000     # Download in batches of 1000
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
 PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls for fundamentals
@@ -95,6 +95,10 @@ from multiprocessing import cpu_count
 # PyTorch models (LSTM/GRU/TCN) load on GPU, and too many parallel processes cause OOM kills
 # Use all but 5 CPU cores (keep some headroom for OS, data fetch, and GPU driver overhead)
 NUM_PROCESSES           = max(1, cpu_count() - 5)
+
+# Parallel processing threshold - only use parallel processing for ticker lists larger than this
+# Below this threshold, sequential processing is faster due to lower overhead
+PARALLEL_THRESHOLD     = 200      # Use parallel only for >200 tickers
 
 # --- Dynamic GPU Slot Allocation ---
 # Estimated VRAM requirements per model (in GB)
@@ -133,7 +137,6 @@ GPU_CLEAR_CACHE_AFTER_EACH_TICKER = False
 # Only applies when PYTORCH_USE_GPU = True (PyTorch uses GPU)
 # Does NOT apply to XGBoost GPU (XGBoost manages its own GPU memory)
 GPU_MAX_CONCURRENT_TRAINING_WORKERS = GPU_MODEL_SLOTS['LSTM'] # Use dynamic calculation
-GPU_MAX_CONCURRENT_TRAINING_WORKERS = 2
 
 # Multiprocessing stability: recycle worker processes periodically to avoid RAM creep / leaked semaphores
 # when training many tickers under WSL + spawn.
@@ -173,9 +176,6 @@ else:
 # ENABLED: Trains all models in parallel by model type for maximum efficiency
 USE_UNIFIED_PARALLEL_TRAINING = True
 
-# AI Portfolio: avoid nested joblib multiprocessing when the main program is already parallel.
-AI_PORTFOLIO_N_JOBS = 1
-
 # --- Backtest & training windows
 BACKTEST_DAYS           = 500         # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr)
 TRAIN_LOOKBACK_DAYS     = 365        # Train on ~1 year of history (user request)
@@ -212,7 +212,9 @@ ENABLE_QUALITY_MOM      = True   # ENABLED - Quality + Momentum
 ENABLE_MOMENTUM_AI_HYBRID = False  # ENABLED - Momentum + AI Hybrid strategy
 ENABLE_VOLATILITY_ADJ_MOM = True  # ENABLED - Volatility-Adjusted Momentum strategy
 ENABLE_DYNAMIC_BH_1Y_VOL_FILTER = True  # NEW - Dynamic BH 1Y with Volatility Filter
-ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP = True  # NEW - Dynamic BH 1Y with 20% Trailing Stop
+ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP = True   # ENABLED - Dynamic BH 1Y with trailing stop
+ENABLE_SECTOR_ROTATION = True   # NEW - Sector Rotation Strategy
+ENABLE_MULTITASK_LEARNING = False   # NEW - Multi-Task Learning Strategy
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -220,7 +222,7 @@ STRAT_SMA_LONG          = 20
 ATR_PERIOD              = 14
 ATR_MULT_TRAIL          = 2.0
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
-PORTFOLIO_SIZE          = 10          # Number of stocks to hold in portfolio (default: 3)
+PORTFOLIO_SIZE          = 10        # Number of stocks to hold in portfolio
 TOTAL_CAPITAL           = 100000     # Total capital to invest ($100,000)
 INVESTMENT_PER_STOCK    = TOTAL_CAPITAL / PORTFOLIO_SIZE  # Automatically calculated
 TRANSACTION_COST        = 0.01       # 1% per trade leg (buy or sell)
@@ -235,25 +237,36 @@ DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY = 120.0  # Maximum 120% annualized volat
 DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT = 20.0  # Sell if price drops 20% from peak
 DYNAMIC_BH_1Y_TRAILING_STOP_REBALANCE_DAYS = 1  # Check daily for stop triggers
 
+# --- Sector Rotation Strategy Parameters ---
+# PROPOSAL 2: Rotate between sector ETFs based on momentum
+SECTOR_ROTATION_TOP_N = 5  # Number of top sectors to hold
+SECTOR_ROTATION_REBALANCE_DAYS = 21  # Monthly rebalancing (21 trading days)
+SECTOR_ROTATION_MOMENTUM_WINDOW = 60  # 60-day momentum for sector selection
+SECTOR_ROTATION_MIN_MOMENTUM = 0.0  # TEMPORARILY reduced to 0% for debugging - was 5.0%
+
 # --- Risk-Adjusted Momentum Improvements ---
 # The existing Risk-Adjusted Momentum already uses return/volatility scoring
-# We can adjust its parameters to potentially improve performance
+# PROPOSAL 1: Enhanced parameters for better performance
 RISK_ADJ_MOM_PERFORMANCE_WINDOW = 365  # Days to look back for performance (1 year)
-RISK_ADJ_MOM_VOLATILITY_WINDOW = 15   # More aggressive - less volatility penalty
+RISK_ADJ_MOM_VOLATILITY_WINDOW = 10   # REDUCED from 15 - less volatility penalty, more aggressive
 
 # --- Momentum Confirmation Filter ---
-# Require positive momentum in multiple timeframes for more robust selection
-RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION = True  # Enable momentum confirmation
-RISK_ADJ_MOM_CONFIRM_SHORT = True   # RE-ENABLED - capture short-term momentum
-RISK_ADJ_MOM_CONFIRM_MEDIUM = True  # KEEP - 6-month momentum sweet spot
+# PROPOSAL 1: Less restrictive momentum confirmation
+RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION = False  # DISABLED - too restrictive, allow more stocks
+RISK_ADJ_MOM_CONFIRM_SHORT = True   # Available if re-enabled
+RISK_ADJ_MOM_CONFIRM_MEDIUM = True  # Available if re-enabled
 RISK_ADJ_MOM_CONFIRM_LONG = False    # DISABLED - reduce filtering
-RISK_ADJ_MOM_MIN_CONFIRMATIONS = 2  # Reduced from 2 - only 1 timeframe needed
+RISK_ADJ_MOM_MIN_CONFIRMATIONS = 1  # Only 1 timeframe needed if re-enabled
 
 # --- Volume Confirmation Filter ---
 # Require increasing volume to confirm price momentum strength
 RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION = False  # TEMPORARILY DISABLED - too restrictive
 RISK_ADJ_MOM_VOLUME_WINDOW = 20  # Days to compare recent volume vs average
 RISK_ADJ_MOM_VOLUME_MULTIPLIER = 1.2  # Recent volume must be 20% above average
+
+# --- Risk-Adjusted Momentum Minimum Score ---
+# PROPOSAL 1: Lower minimum score to allow more high-potential stocks
+RISK_ADJ_MOM_MIN_SCORE = 30.0  # REVERTED - too low was hurting performance
 
 # --- Static Buy & Hold (BH) rebalancing period ---
 # How often to rebalance Static BH portfolios (in trading days)

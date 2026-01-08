@@ -66,6 +66,9 @@ TOP_N_STOCKS = 3  # Number of stocks to hold (matches backtest)
 # 'dynamic_bh_1y' = Dynamic BH rebalancing annually  ← Best for long-term (less trading costs)
 # 'dynamic_bh_3m' = Dynamic BH rebalancing quarterly ← Good balance
 # 'dynamic_bh_1m' = Dynamic BH rebalancing monthly   ← More aggressive
+# 'ai_individual' = AI Strategy (individual models per stock)
+# 'ai_portfolio' = AI Portfolio (meta-learning approach)
+# 'multitask' = Multi-Task Learning (unified models)
 # 'risk_adj_mom' = Risk-Adjusted Momentum
 # 'mean_reversion' = Mean Reversion
 # 'volatility_adj_mom' = Volatility-Adjusted Momentum
@@ -207,9 +210,17 @@ def rebalance_portfolio(
 def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Get the tickers to hold based on the selected strategy."""
 
-    if strategy == 'ai':
+    if strategy == 'ai_individual':
         # AI Strategy: Use model predictions (existing logic)
         return get_ai_strategy_tickers(all_tickers)
+
+    elif strategy == 'ai_portfolio':
+        # AI Portfolio Strategy: Use AI Portfolio model
+        return get_ai_portfolio_tickers(all_tickers)
+
+    elif strategy == 'multitask':
+        # Multi-Task Learning Strategy: Use Multi-Task model
+        return get_multitask_tickers(all_tickers)
 
     elif strategy.startswith('dynamic_bh_'):
         # Dynamic BH Strategy: Select based on performance period
@@ -338,6 +349,20 @@ def get_quality_momentum_tickers(all_tickers: List[str]) -> List[str]:
     return select_quality_momentum_stocks(all_tickers, {}, top_n=PORTFOLIO_SIZE)
 
 
+def get_ai_portfolio_tickers(all_tickers: List[str]) -> List[str]:
+    """AI Portfolio Strategy: Use AI Portfolio model for selection."""
+    # This would use the AI Portfolio model
+    # For now, return top N tickers as placeholder
+    return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
+
+
+def get_multitask_tickers(all_tickers: List[str]) -> List[str]:
+    """Multi-Task Learning Strategy: Use Multi-Task model for selection."""
+    # This would use the Multi-Task Learning model
+    # For now, return top N tickers as placeholder
+    return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
+
+
 def run_live_trading():
     """Main live trading function."""
     print("=" * 80)
@@ -347,15 +372,11 @@ def run_live_trading():
 
     # Display selected strategy
     strategy_names = {
-        'ai': 'AI Predictions',
-        'ai_portfolio': 'AI Portfolio',
-        'static_bh': 'Static Buy & Hold',
-        'dynamic_bh_1y': 'Dynamic BH (1-Year)',
-        'dynamic_bh_3m': 'Dynamic BH (3-Month)',
-        'dynamic_bh_1m': 'Dynamic BH (1-Month)',
+        'ai_individual': 'AI Strategy (Individual Models)',
+        'ai_portfolio': 'AI Portfolio (Meta-Learning)',
+        'multitask': 'Multi-Task Learning',
         'risk_adj_mom': 'Risk-Adjusted Momentum',
         'mean_reversion': 'Mean Reversion',
-        'volatility_adj_mom': 'Volatility-Adjusted Momentum',
         'quality_momentum': 'Quality + Momentum'
     }
 
@@ -452,7 +473,7 @@ def run_live_trading():
             return
 
     # 5. Load AI models only if strategy requires them
-    if LIVE_TRADING_STRATEGY == 'ai':
+    if LIVE_TRADING_STRATEGY in ['ai_individual', 'ai_portfolio', 'multitask']:
         models_dir = Path("logs/models")
         if not models_dir.exists():
             print(f"\n Models directory not found: {models_dir}")
@@ -566,13 +587,30 @@ def run_live_trading():
         ranked_predictions = None
 
     # 6. Get target tickers based on strategy
-    if LIVE_TRADING_STRATEGY == 'ai':
-        # AI strategy - display predictions and get tickers
-        for i, (ticker, pred_return) in enumerate(ranked_predictions, 1):
-            print(f"{i:<6} | {ticker:<10} | {pred_return:>17.2%}")
-
+    if LIVE_TRADING_STRATEGY in ['ai_individual', 'ai_portfolio', 'multitask']:
+        # AI strategies - display predictions and get tickers
+        if LIVE_TRADING_STRATEGY == 'ai_individual':
+            # AI strategy - display predictions and get tickers
+            for i, (ticker, pred_return) in enumerate(ranked_predictions, 1):
+                print(f"{i:<6} | {ticker:<10} | {pred_return:>17.2%}")
+            target_tickers = [ticker for ticker, _ in ranked_predictions]
+        elif LIVE_TRADING_STRATEGY == 'ai_portfolio':
+            # AI Portfolio strategy
+            target_tickers = get_ai_portfolio_tickers(valid_tickers)
+            print(f"\n🎯 AI Portfolio selected {len(target_tickers)} stocks:")
+            for i, ticker in enumerate(target_tickers, 1):
+                print(f"{i:<6} | {ticker:<10}")
+        elif LIVE_TRADING_STRATEGY == 'multitask':
+            # Multi-Task Learning strategy
+            from multitask_strategy import select_multitask_stocks
+            from datetime import datetime
+            target_tickers = select_multitask_stocks(valid_tickers, all_data_dict, 
+                                                  current_date=datetime.now(), top_n=TOP_N_STOCKS)
+            print(f"\n🎯 Multi-Task Learning selected {len(target_tickers)} stocks:")
+            for i, ticker in enumerate(target_tickers, 1):
+                print(f"{i:<6} | {ticker:<10}")
+        
         print("=" * 80)
-        target_tickers = [ticker for ticker, _ in ranked_predictions]
     else:
         # Non-AI strategy - use strategy-specific logic
         print(f"\n 🎯 Running {LIVE_TRADING_STRATEGY} strategy...")
