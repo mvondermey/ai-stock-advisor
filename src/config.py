@@ -181,6 +181,12 @@ BACKTEST_DAYS           = 500         # Backtest period in trading days (~60=2mo
 TRAIN_LOOKBACK_DAYS     = 365        # Train on ~1 year of history (user request)
 VALIDATION_DAYS         = 90         # FIX 4: Validation period for threshold optimization
 
+# --- Live Trading
+LIVE_TRADING_ENABLED     = False       # ⚠️ Set to True to execute real orders (start with False for dry-run)
+MODEL_MAX_AGE_DAYS        = 1           # Only use models trained in last X days
+USE_PAPER_TRADING        = True        # True = paper trading (fake money), False = REAL MONEY ⚠️
+TOP_N_STOCKS             = N_TOP_TICKERS  # Number of stocks to hold (from config)
+
 # --- Walk-Forward Retraining Frequency ---
 # How often to retrain models during walk-forward backtest
 # Options:

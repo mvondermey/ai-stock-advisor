@@ -20,11 +20,18 @@ import pandas as pd
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
+import src.config as config
 from src.config import (
     ALPACA_API_KEY as CONFIG_ALPACA_API_KEY,
     ALPACA_SECRET_KEY as CONFIG_ALPACA_SECRET_KEY,
     INVESTMENT_PER_STOCK,
-    PERIOD_HORIZONS
+    PERIOD_HORIZONS,
+    PORTFOLIO_SIZE,
+    N_TOP_TICKERS,
+    LIVE_TRADING_ENABLED,
+    MODEL_MAX_AGE_DAYS,
+    USE_PAPER_TRADING,
+    TOP_N_STOCKS
 )
 
 # Use environment variables if set, otherwise fall back to config
@@ -52,11 +59,7 @@ except ImportError:
 
 
 # --- Configuration ---
-LIVE_TRADING_ENABLED = False  # ⚠️ Set to True to execute real orders (start with False for dry-run)
-INVESTMENT_PER_STOCK_LIVE = INVESTMENT_PER_STOCK  # Inherit from config.py
-MODEL_MAX_AGE_DAYS = 1  # Only use models trained in last 90 days
-USE_PAPER_TRADING = True  # True = paper trading (fake money), False = REAL MONEY ⚠️
-TOP_N_STOCKS = 3  # Number of stocks to hold (matches backtest)
+# All parameters are imported from config.py
 
 # --- Strategy Selection ---
 # Choose which strategy to use for live trading:
@@ -72,7 +75,9 @@ TOP_N_STOCKS = 3  # Number of stocks to hold (matches backtest)
 # 'risk_adj_mom' = Risk-Adjusted Momentum
 # 'mean_reversion' = Mean Reversion
 # 'volatility_adj_mom' = Volatility-Adjusted Momentum
-LIVE_TRADING_STRATEGY = 'risk_adj_mom'  # 👈 Optimized Risk-Adjusted Momentum (+179.4% backtest!)
+def get_live_trading_strategy():
+    """Get the live trading strategy from config (set dynamically by main.py)."""
+    return getattr(config, 'LIVE_TRADING_STRATEGY', 'risk_adj_mom')
 
 
 def get_alpaca_client() -> Optional[TradingClient]:
@@ -169,6 +174,34 @@ def rebalance_portfolio(
         investment_per_stock: Amount to invest per stock
     """
     print(f"\n Rebalancing portfolio to hold: {target_tickers}")
+    
+    if not target_tickers:
+        print(f"   ⚠️  NO TARGET TICKERS SELECTED!")
+        print(f"   💡 Possible reasons:")
+        print(f"      - No stocks met the Risk-Adjusted Momentum criteria (min score: 30.0)")
+        print(f"      - Insufficient data for momentum calculation")
+        print(f"      - Data format issue")
+        print(f"   ℹ️  Skipping rebalancing - portfolio unchanged")
+        return
+    
+    # Get account information
+    try:
+        account = client.get_account()
+        buying_power = float(account.buying_power)
+        cash = float(account.cash)
+        portfolio_value = float(account.portfolio_value)
+        print(f"   💰 Account Info:")
+        print(f"      Cash: ${cash:,.2f}")
+        print(f"      Buying Power: ${buying_power:,.2f}")
+        print(f"      Portfolio Value: ${portfolio_value:,.2f}")
+        print(f"      Investment per stock: ${investment_per_stock:,.2f}")
+        print(f"      Total needed for {len(target_tickers)} stocks: ${investment_per_stock * len(target_tickers):,.2f}")
+        
+        if buying_power < investment_per_stock * len(target_tickers):
+            print(f"   ⚠️  INSUFFICIENT FUNDS: Need ${investment_per_stock * len(target_tickers):,.2f}, only have ${buying_power:,.2f}")
+            print(f"   💡 Consider reducing INVESTMENT_PER_STOCK")
+    except Exception as e:
+        print(f"   ⚠️ Could not get account info: {e}")
 
     # Calculate target quantities
     target_positions = {}
@@ -180,15 +213,52 @@ def rebalance_portfolio(
             price = 100.0  # Placeholder price
             qty = int(investment_per_stock / price)
             target_positions[ticker] = qty
+            print(f"   📊 {ticker}: ${investment_per_stock:,.2f} → {qty} shares @ ${price:.2f}")
         except Exception as e:
             print(f"   Error calculating quantity for {ticker}: {e}")
             continue
 
+    # Get all open orders once and group by ticker
+    orders_by_ticker = {}
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+        # Get ALL orders (not just 'open') to catch pending orders
+        request = GetOrdersRequest(status=QueryOrderStatus.OPEN)
+        orders = client.get_orders(filter=request)
+        print(f"   📋 Found {len(orders)} open orders")
+        for order in orders:
+            if order.symbol not in orders_by_ticker:
+                orders_by_ticker[order.symbol] = []
+            orders_by_ticker[order.symbol].append(order)
+        if orders_by_ticker:
+            print(f"   📋 Active orders for {len(orders_by_ticker)} tickers")
+    except Exception as e:
+        print(f"   Could not get orders: {e}")
+
     # Close positions not in target
     for ticker, current_qty in current_positions.items():
         if ticker not in target_tickers:
-            print(f" Selling {current_qty} shares of {ticker} (not in target portfolio)")
-            place_order(client, ticker, abs(int(current_qty)), OrderSide.SELL)
+            # Check if there are existing orders for this ticker
+            if ticker in orders_by_ticker:
+                open_orders = orders_by_ticker[ticker]
+                print(f" ⏳ Skipping {ticker}: {len(open_orders)} open order(s) still pending")
+                for order in open_orders:
+                    print(f"      Order {order.id}: {order.side.value} {order.qty} shares (status: {order.status})")
+                continue
+            
+            # Check available qty from position before selling
+            try:
+                position = client.get_open_position(ticker)
+                qty_available = float(position.qty_available) if hasattr(position, 'qty_available') else float(position.qty)
+                if qty_available <= 0:
+                    print(f" ⏳ Skipping {ticker}: 0 shares available (held for pending orders)")
+                    continue
+                sell_qty = min(abs(int(current_qty)), int(qty_available))
+                print(f" Selling {sell_qty} shares of {ticker} (not in target portfolio)")
+                place_order(client, ticker, sell_qty, OrderSide.SELL)
+            except Exception as e:
+                print(f" ⚠️ Could not check position for {ticker}: {e}")
 
     # Open positions for target tickers
     for ticker in target_tickers:
@@ -209,6 +279,7 @@ def rebalance_portfolio(
 
 def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Get the tickers to hold based on the selected strategy."""
+    print(f"   🎯 DEBUG: Strategy passed = '{strategy}'")
 
     if strategy == 'ai_individual':
         # AI Strategy: Use model predictions (existing logic)
@@ -225,7 +296,7 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
     elif strategy.startswith('dynamic_bh_'):
         # Dynamic BH Strategy: Select based on performance period
         period = strategy.replace('dynamic_bh_', '')  # '1y', '3m', or '1m'
-        return get_dynamic_bh_tickers(all_tickers, period)
+        return get_dynamic_bh_tickers(all_tickers, period, all_tickers_data)
 
     elif strategy == 'risk_adj_mom':
         # Risk-Adjusted Momentum Strategy
@@ -254,75 +325,72 @@ def get_ai_strategy_tickers(all_tickers: List[str]) -> List[str]:
     return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
-def get_dynamic_bh_tickers(all_tickers: List[str], period: str) -> List[str]:
-    """Dynamic BH Strategy: Select top performers based on specified period."""
-    print(f" Dynamic BH ({period}): Selecting top {TOP_N_STOCKS} performers...")
-
-    # This would implement the same logic as the backtest
-    # For now, use a simplified version
-    performances = []
-    for ticker in all_tickers[:50]:  # Limit to avoid too many API calls
-        try:
-            # Get data for the appropriate period
-            if period == '1y':
-                start_date = datetime.now() - timedelta(days=365)
-            elif period == '3m':
-                start_date = datetime.now() - timedelta(days=90)
-            elif period == '1m':
-                start_date = datetime.now() - timedelta(days=30)
-            else:
-                start_date = datetime.now() - timedelta(days=365)
-
-            df = load_prices_robust(ticker, start_date, datetime.now())
-            if df is not None and len(df) >= 10:
-                start_price = df['Close'].iloc[0]
-                end_price = df['Close'].iloc[-1]
-                if start_price > 0:
-                    performance = ((end_price - start_price) / start_price) * 100
-                    performances.append((ticker, performance))
-
-        except Exception as e:
-            continue
-
-    # Sort by performance and get top N
-    performances.sort(key=lambda x: x[1], reverse=True)
-    target_tickers = [ticker for ticker, _ in performances[:TOP_N_STOCKS]]
-
-    if target_tickers:
-        print(f" Top {TOP_N_STOCKS} performers ({period}): {target_tickers}")
-        for i, (ticker, perf) in enumerate(performances[:TOP_N_STOCKS], 1):
-            print(".1f")
-
-    return target_tickers
-
-
 def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Risk-Adjusted Momentum Strategy: Use shared strategy logic."""
     from shared_strategies import select_risk_adj_mom_stocks
     
+    print(f"   🔍 Risk-Adj Mom: Processing {len(all_tickers)} tickers")
+    print(f"   🔍 Risk-Adj Mom: Data available: {all_tickers_data is not None}")
+    
     # Prepare data for shared strategy
     ticker_data_grouped = {}
     if all_tickers_data is not None:
+        print(f"   🔍 Risk-Adj Mom: Data shape: {all_tickers_data.shape}")
+        print(f"   🔍 Risk-Adj Mom: Columns: {list(all_tickers_data.columns[:5])}")
+        print(f"   🔍 Risk-Adj Mom: Index names: {all_tickers_data.index.names}")
+        print(f"   🔍 Risk-Adj Mom: Is MultiIndex: {isinstance(all_tickers_data.columns, pd.MultiIndex)}")
+        
         # Handle different data formats
         if isinstance(all_tickers_data.columns, pd.MultiIndex):
             # Wide format: columns are (field, ticker)
+            print("   🔍 Risk-Adj Mom: Using MultiIndex format")
             for ticker in all_tickers_data.columns.levels[1]:
                 ticker_cols = [col for col in all_tickers_data.columns if col[1] == ticker]
                 if ticker_cols:
                     ticker_data = all_tickers_data[ticker_cols].copy()
                     ticker_data.columns = [col[0] for col in ticker_cols]
                     ticker_data_grouped[ticker] = ticker_data
-        elif 'ticker' in all_tickers_data.index.names:
+        elif 'ticker' in all_tickers_data.columns:
             # Long format: group by ticker
+            print("   🔍 Risk-Adj Mom: Using long format (ticker in columns)")
+            ticker_data_grouped = {ticker: group for ticker, group in all_tickers_data.groupby('ticker')}
+        elif 'ticker' in all_tickers_data.index.names:
+            # Long format: ticker in index
+            print("   🔍 Risk-Adj Mom: Using long format (ticker in index)")
             ticker_data_grouped = {ticker: group for ticker, group in all_tickers_data.groupby('ticker')}
         else:
             # Assume ticker columns
+            print("   🔍 Risk-Adj Mom: Using ticker columns format")
             for ticker in all_tickers:
                 if ticker in all_tickers_data.columns:
                     ticker_data_grouped[ticker] = all_tickers_data[[ticker]].copy()
                     ticker_data_grouped[ticker].columns = ['Close']
     
-    return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, top_n=PORTFOLIO_SIZE)
+    print(f"   🔍 Risk-Adj Mom: Prepared {len(ticker_data_grouped)} ticker data groups")
+    
+    # Normalize column names to lowercase for compatibility
+    for ticker in ticker_data_grouped:
+        df = ticker_data_grouped[ticker]
+        df.columns = [c.lower() if isinstance(c, str) else c for c in df.columns]
+        ticker_data_grouped[ticker] = df
+    
+    # Pass required date parameters
+    current_date = datetime.now()
+    train_start_date = current_date - timedelta(days=365)
+    
+    selected = select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, 
+                                          current_date=current_date, 
+                                          train_start_date=train_start_date,
+                                          top_n=PORTFOLIO_SIZE)
+    
+    if selected:
+        print(f"   ✅ Risk-Adj Mom: Selected {len(selected)} stocks: {selected}")
+    else:
+        print(f"   ⚠️  Risk-Adj Mom: No stocks selected!")
+        print(f"      - Check if data has 'Close' column")
+        print(f"      - Check if stocks meet min score threshold (30.0)")
+    
+    return selected
 
 
 def get_mean_reversion_tickers(all_tickers: List[str]) -> List[str]:
@@ -337,10 +405,56 @@ def get_volatility_adj_mom_tickers(all_tickers: List[str]) -> List[str]:
     return select_volatility_adj_mom_stocks(all_tickers, {}, top_n=PORTFOLIO_SIZE)
 
 
-def get_dynamic_bh_tickers(all_tickers: List[str], period: str) -> List[str]:
+def get_dynamic_bh_tickers(all_tickers: List[str], period: str, all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Dynamic Buy & Hold Strategy: Use shared strategy logic."""
     from shared_strategies import select_dynamic_bh_stocks
-    return select_dynamic_bh_stocks(all_tickers, {}, period=period, top_n=PORTFOLIO_SIZE)
+    
+    print(f"   🔍 Dynamic BH ({period}): Processing {len(all_tickers)} tickers")
+    print(f"   🔍 Dynamic BH ({period}): Data available: {all_tickers_data is not None}")
+    
+    # Prepare data for shared strategy (similar to risk_adj_mom)
+    ticker_data_grouped = {}
+    if all_tickers_data is not None:
+        print(f"   🔍 Dynamic BH ({period}): Data shape: {all_tickers_data.shape}")
+        print(f"   🔍 Dynamic BH ({period}): Columns: {list(all_tickers_data.columns[:5])}")
+        
+        # Handle different data formats (same logic as risk_adj_mom)
+        if isinstance(all_tickers_data.columns, pd.MultiIndex):
+            # Wide format: columns are (field, ticker)
+            print(f"   🔍 Dynamic BH ({period}): Using MultiIndex format")
+            for ticker in all_tickers_data.columns.levels[1]:
+                ticker_cols = [col for col in all_tickers_data.columns if col[1] == ticker]
+                if ticker_cols:
+                    ticker_data = all_tickers_data[ticker_cols].copy()
+                    ticker_data.columns = [col[0] for col in ticker_cols]
+                    ticker_data_grouped[ticker] = ticker_data
+        elif 'ticker' in all_tickers_data.columns:
+            # Long format: group by ticker
+            print(f"   🔍 Dynamic BH ({period}): Using long format (ticker in columns)")
+            ticker_data_grouped = {ticker: group for ticker, group in all_tickers_data.groupby('ticker')}
+        elif 'ticker' in all_tickers_data.index.names:
+            # Long format: ticker in index
+            print(f"   🔍 Dynamic BH ({period}): Using long format (ticker in index)")
+            ticker_data_grouped = {ticker: group for ticker, group in all_tickers_data.groupby('ticker')}
+        else:
+            # Assume ticker columns
+            print(f"   🔍 Dynamic BH ({period}): Using ticker columns format")
+            for ticker in all_tickers:
+                if ticker in all_tickers_data.columns:
+                    ticker_data_grouped[ticker] = all_tickers_data[[ticker]].copy()
+                    ticker_data_grouped[ticker].columns = ['Close']
+    
+    print(f"   🔍 Dynamic BH ({period}): Prepared {len(ticker_data_grouped)} ticker data groups")
+    
+    # Pass required date parameters
+    from datetime import datetime, timedelta
+    current_date = datetime.now()
+    
+    selected = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, 
+                                      period=period, 
+                                      current_date=current_date,
+                                      top_n=PORTFOLIO_SIZE)
+    return selected
 
 
 def get_quality_momentum_tickers(all_tickers: List[str]) -> List[str]:
@@ -363,8 +477,16 @@ def get_multitask_tickers(all_tickers: List[str]) -> List[str]:
     return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
-def run_live_trading():
-    """Main live trading function."""
+def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tickers_data: pd.DataFrame = None):
+    """Live trading function that receives pre-filtered tickers from main.py."""
+    # Use the filtered tickers instead of fetching all tickers
+    valid_tickers = filtered_tickers
+    all_tickers_data_for_strategy = all_tickers_data
+    
+    # Get strategy dynamically from config (set by main.py)
+    LIVE_TRADING_STRATEGY = get_live_trading_strategy()
+    
+    # Continue with the rest of the live trading logic
     print("=" * 80)
     print(" AI STOCK ADVISOR - LIVE TRADING")
     print("=" * 80)
@@ -377,12 +499,15 @@ def run_live_trading():
         'multitask': 'Multi-Task Learning',
         'risk_adj_mom': 'Risk-Adjusted Momentum',
         'mean_reversion': 'Mean Reversion',
-        'quality_momentum': 'Quality + Momentum'
+        'quality_momentum': 'Quality + Momentum',
+        'dynamic_bh_1y': 'Dynamic Buy & Hold (1 Year)',
+        'dynamic_bh_3m': 'Dynamic Buy & Hold (3 Months)',
+        'dynamic_bh_1m': 'Dynamic Buy & Hold (1 Month)'
     }
 
     strategy_name = strategy_names.get(LIVE_TRADING_STRATEGY, LIVE_TRADING_STRATEGY)
     print(f" Strategy: {strategy_name}  Hold top {TOP_N_STOCKS}")
-    print(f" Investment per stock: ${INVESTMENT_PER_STOCK_LIVE:,.2f}")
+    print(f" Investment per stock: ${INVESTMENT_PER_STOCK:,.2f}")
 
     mode = " DRY-RUN" if not LIVE_TRADING_ENABLED else (" PAPER" if USE_PAPER_TRADING else "  LIVE")
     print(f" Mode: {mode}")
@@ -393,273 +518,84 @@ def run_live_trading():
         print("\n Cannot proceed without Alpaca connection")
         return
 
-    # 2. Get current positions
-    current_positions = get_current_positions(client)
-    print(f"\n Current Portfolio: {len(current_positions)} positions")
+    # Get current positions
+    current_positions = {}
+    try:
+        positions = client.get_all_positions()
+        for pos in positions:
+            if float(pos.qty_available) != 0:  # Only include positions with available shares
+                current_positions[pos.symbol] = float(pos.qty_available)
+    except Exception as e:
+        print(f"   ⚠️ Could not get current positions: {e}")
+
+    print(f"\n Current positions: {len(current_positions)}")
     for ticker, qty in current_positions.items():
         print(f"  - {ticker}: {int(qty)} shares")
 
-    # 3. Get universe of stocks (S&P 500 based on config.py)
-    print("\n Fetching stock universe from config...")
-    try:
-        all_tickers = get_all_tickers()
-        print(f" Found {len(all_tickers)} tickers in universe")
-    except Exception as e:
-        print(f" Error fetching tickers: {e}")
-        return
-
-    # 4. Download fresh data for Risk-Adjusted Momentum strategy
-    if LIVE_TRADING_STRATEGY == 'risk_adj_mom':
-        print("\n Downloading fresh data for Risk-Adjusted Momentum analysis...")
+    # Get target tickers based on strategy
+    print(f"\n 🎯 Running {LIVE_TRADING_STRATEGY} strategy...")
+    print(f"    Available tickers: {len(valid_tickers)}")
+    
+    # Pass downloaded data if available for strategies that need it
+    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_3m', 'dynamic_bh_1m'] and all_tickers_data_for_strategy is not None else None
+    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_3m', 'dynamic_bh_1m']:
+        print(f"    Data available: {all_tickers_data_for_strategy is not None}")
+    
+    target_tickers = get_strategy_tickers(LIVE_TRADING_STRATEGY, valid_tickers, all_tickers_data_for_strategy)
+    
+    print(f"\n🎯 SELECTED STOCKS FOR TRADING:")
+    print(f"   Strategy: {LIVE_TRADING_STRATEGY}")
+    print(f"   Number of stocks: {len(target_tickers)}")
+    print(f"   Stocks to buy: {target_tickers}")
+    
+    # Show current vs target positions
+    print(f"\n📊 PORTFOLIO CHANGES:")
+    current_stocks = list(current_positions.keys())
+    stocks_to_sell = [ticker for ticker in current_stocks if ticker not in target_tickers]
+    stocks_to_buy = [ticker for ticker in target_tickers if ticker not in current_stocks]
+    
+    if stocks_to_sell:
+        print(f"   SELL: {stocks_to_sell}")
+    if stocks_to_buy:
+        print(f"   BUY:  {stocks_to_buy}")
+    if not stocks_to_sell and not stocks_to_buy:
+        print(f"   No changes needed - portfolio already aligned")
+    
+    print(f"\n⚠️  TRADING MODE: {'DRY RUN' if not LIVE_TRADING_ENABLED else ('PAPER TRADING' if USE_PAPER_TRADING else 'LIVE TRADING')}")
+    
+    # Ask for confirmation in live mode
+    if LIVE_TRADING_ENABLED and not USE_PAPER_TRADING:
         try:
-            from data_fetcher import _download_batch_robust
-            from utils import _to_utc
-            
-            # Download 1 year of data for all tickers
-            end_date = datetime.now(timezone.utc)
-            start_date = end_date - timedelta(days=365)
-            
-            print(f"   Downloading data from {start_date.date()} to {end_date.date()}...")
-            
-            # Download in batches to avoid API limits
-            batch_size = 100
-            all_data_list = []
-            
-            for i in range(0, len(all_tickers), batch_size):
-                batch = all_tickers[i:i + batch_size]
-                print(f"   - Downloading batch {i//batch_size + 1}/{(len(all_tickers) + batch_size - 1)//batch_size} ({len(batch)} tickers)...")
-                
-                try:
-                    batch_data = _download_batch_robust(batch, start_date, end_date)
-                    if batch_data is not None and not batch_data.empty:
-                        # Convert timezone-aware index to UTC for comparison
-                        if hasattr(batch_data.index, 'tz_localize') and batch_data.index.tz is None:
-                            batch_data.index = batch_data.index.tz_localize('UTC')
-                        elif hasattr(batch_data.index, 'tz_convert') and batch_data.index.tz != 'UTC':
-                            batch_data.index = batch_data.index.tz_convert('UTC')
-                        
-                        # Filter to our date range (both are now UTC)
-                        filtered_batch_data = batch_data[
-                            (batch_data.index >= start_date) & 
-                            (batch_data.index <= end_date)
-                        ]
-                        if not filtered_batch_data.empty:
-                            all_data_list.append(filtered_batch_data)
-                except Exception as e:
-                    print(f"     ⚠️ Batch {i//batch_size + 1} failed: {e}")
-                    continue
-                
-                # Small pause between batches
-                if i + batch_size < len(all_tickers):
-                    import time
-                    time.sleep(1.0)
-            
-            if all_data_list:
-                all_tickers_data = pd.concat(all_data_list, ignore_index=False)
-                print(f"   ✅ Downloaded data for {len(all_tickers_data.columns)} tickers")
-                
-                # Check the actual structure - it might be a regular DataFrame with ticker columns
-                print(f"   📊 Data structure: {type(all_tickers_data.index)}")
-                if hasattr(all_tickers_data.index, 'names'):
-                    print(f"   📊 Index names: {all_tickers_data.index.names}")
-                print(f"   📊 Columns: {list(all_tickers_data.columns)[:5]}...")  # Show first 5 columns
-                
-            else:
-                print("   ❌ No data downloaded")
+            confirm = input("\n❓ Execute these trades? (y/N): ").strip().lower()
+            if confirm != 'y':
+                print("❌ Trading cancelled by user")
                 return
-                
-        except Exception as e:
-            print(f"   ❌ Data download failed: {e}")
+        except KeyboardInterrupt:
+            print("\n❌ Trading cancelled by user")
             return
 
-    # 5. Load AI models only if strategy requires them
-    if LIVE_TRADING_STRATEGY in ['ai_individual', 'ai_portfolio', 'multitask']:
-        models_dir = Path("logs/models")
-        if not models_dir.exists():
-            print(f"\n Models directory not found: {models_dir}")
-            print("   Run 'python src/main.py' first to train models")
-            return
+    # Rebalance portfolio
+    rebalance_portfolio(
+        client,
+        target_tickers,
+        current_positions,
+        INVESTMENT_PER_STOCK
+    )
 
-        print(f"\n Loading trained models from {models_dir}...")
-        current_time = datetime.now(timezone.utc)
-        max_age = timedelta(days=MODEL_MAX_AGE_DAYS)
-
-        valid_tickers = []
-        for ticker in all_tickers:
-            # ✅ FIX: Use correct filename pattern (models saved as {ticker}_model.joblib, not {ticker}_model_buy.joblib)
-            model_path = models_dir / f"{ticker}_model.joblib"
-            if model_path.exists():
-                model_age = current_time - datetime.fromtimestamp(model_path.stat().st_mtime, timezone.utc)
-                if model_age <= max_age:
-                    valid_tickers.append(ticker)
-
-        print(f" Found {len(valid_tickers)} tickers with trained models (< {MODEL_MAX_AGE_DAYS} days old)")
-
-        if len(valid_tickers) == 0:
-            print("\n No valid models found. Train models first: python src/main.py")
-            return
-
-        # 5. Load models (AI strategy only)
-        print("\n Loading models, scalers, and feature sets...")
-        models_buy, scalers, y_scalers = load_models_for_tickers(valid_tickers, models_dir)
-
-        # Get feature set from first ticker
-        feature_set = None
-        for ticker in valid_tickers:
-            feature_set = get_feature_set_from_saved_model(ticker, models_dir)
-            if feature_set is not None:
-                break
-
-        if feature_set is None:
-            print(" Could not determine feature set from models")
-            return
-
-        print(f" Loaded {len(models_buy)} models")
-        print(f" Feature set: {len(feature_set)} features")
-
-        # 6. Download recent data for all tickers (AI strategy only)
-        print(f"\n Downloading recent data for {len(valid_tickers)} tickers...")
-        end_date = datetime.now(timezone.utc)
-        start_date = end_date - timedelta(days=365)  # 1 year of history for features
-
-        all_data_dict = {}
-        failed_tickers = []
-
-        for idx, ticker in enumerate(valid_tickers, 1):
-            # Check if cache exists and always update it for live trading
-            cache_file = Path("data_cache") / f"{ticker}.csv"
-            cache_status = "cached"
-            if not cache_file.exists():
-                cache_status = "downloading"
-                print(f"   [{idx}/{len(valid_tickers)}] {ticker}: {cache_status}...")
-            else:
-                # Always update cache to get latest data for live trading
-                cache_status = "updating"
-                print(f"   [{idx}/{len(valid_tickers)}] {ticker}: {cache_status}...")
-
-            if cache_status in ["downloading", "updating"]:
-                try:
-                    ticker_data = load_prices_robust(ticker, start_date, end_date)
-                    if ticker_data is not None and len(ticker_data) > 0:
-                        ticker_data.to_csv(cache_file)
-                    else:
-                        failed_tickers.append(ticker)
-                        continue
-                except Exception as e:
-                    print(f"   Error downloading {ticker}: {e}")
-                    failed_tickers.append(ticker)
-                    continue
-
-            # Load from cache
-            try:
-                ticker_data = pd.read_csv(cache_file, index_col=0, parse_dates=True)
-                all_data_dict[ticker] = ticker_data
-            except Exception as e:
-                print(f"   Error loading cached data for {ticker}: {e}")
-                failed_tickers.append(ticker)
-
-        if failed_tickers:
-            print(f" Failed to get data for {len(failed_tickers)} tickers: {failed_tickers[:5]}...")
-
-        valid_tickers = [t for t in valid_tickers if t in all_data_dict]
-        print(f" Successfully loaded data for {len(valid_tickers)} tickers")
-
-        if len(valid_tickers) == 0:
-            print("\n No valid data available")
-            return
-
-        # 7. Predict returns and rank tickers (AI strategy only)
-        print(f"\n Generating predictions for {len(valid_tickers)} tickers...")
-
-        ranked_predictions = rank_tickers_by_predicted_return(
-            tickers=valid_tickers,
-            all_data=all_data_dict,
-            models_buy=models_buy,
-            scalers=scalers,
-            y_scalers=y_scalers,
-            feature_set=feature_set,
-            horizon_days=PERIOD_HORIZONS["1-Year"],
-            top_n=TOP_N_STOCKS
-        )
-    else:
-        # Non-AI strategy - no models needed
-        valid_tickers = all_tickers
-        ranked_predictions = None
-
-    # 6. Get target tickers based on strategy
-    if LIVE_TRADING_STRATEGY in ['ai_individual', 'ai_portfolio', 'multitask']:
-        # AI strategies - display predictions and get tickers
-        if LIVE_TRADING_STRATEGY == 'ai_individual':
-            # AI strategy - display predictions and get tickers
-            for i, (ticker, pred_return) in enumerate(ranked_predictions, 1):
-                print(f"{i:<6} | {ticker:<10} | {pred_return:>17.2%}")
-            target_tickers = [ticker for ticker, _ in ranked_predictions]
-        elif LIVE_TRADING_STRATEGY == 'ai_portfolio':
-            # AI Portfolio strategy
-            target_tickers = get_ai_portfolio_tickers(valid_tickers)
-            print(f"\n🎯 AI Portfolio selected {len(target_tickers)} stocks:")
-            for i, ticker in enumerate(target_tickers, 1):
-                print(f"{i:<6} | {ticker:<10}")
-        elif LIVE_TRADING_STRATEGY == 'multitask':
-            # Multi-Task Learning strategy
-            from multitask_strategy import select_multitask_stocks
-            from datetime import datetime
-            target_tickers = select_multitask_stocks(valid_tickers, all_data_dict, 
-                                                  current_date=datetime.now(), top_n=TOP_N_STOCKS)
-            print(f"\n🎯 Multi-Task Learning selected {len(target_tickers)} stocks:")
-            for i, ticker in enumerate(target_tickers, 1):
-                print(f"{i:<6} | {ticker:<10}")
-        
-        print("=" * 80)
-    else:
-        # Non-AI strategy - use strategy-specific logic
-        print(f"\n 🎯 Running {LIVE_TRADING_STRATEGY} strategy...")
-        print(f"    Available tickers: {len(valid_tickers)}")
-        
-        # Pass downloaded data if available for Risk-Adjusted Momentum
-        all_tickers_data_for_strategy = all_tickers_data if LIVE_TRADING_STRATEGY == 'risk_adj_mom' and 'all_tickers_data' in locals() else None
-        if LIVE_TRADING_STRATEGY == 'risk_adj_mom':
-            print(f"    Data available: {all_tickers_data_for_strategy is not None}")
-        
-        target_tickers = get_strategy_tickers(LIVE_TRADING_STRATEGY, valid_tickers, all_tickers_data_for_strategy)
-        
-        print(f"\n🎯 SELECTED STOCKS FOR TRADING:")
-        print(f"   Strategy: {LIVE_TRADING_STRATEGY}")
-        print(f"   Number of stocks: {len(target_tickers)}")
-        print(f"   Stocks to buy: {target_tickers}")
-        
-        # Show current vs target positions
-        print(f"\n📊 PORTFOLIO CHANGES:")
-        current_stocks = list(current_positions.keys())
-        stocks_to_sell = [ticker for ticker in current_stocks if ticker not in target_tickers]
-        stocks_to_buy = [ticker for ticker in target_tickers if ticker not in current_stocks]
-        
-        if stocks_to_sell:
-            print(f"   SELL: {stocks_to_sell}")
-        if stocks_to_buy:
-            print(f"   BUY:  {stocks_to_buy}")
-        if not stocks_to_sell and not stocks_to_buy:
-            print(f"   No changes needed - portfolio already aligned")
-        
-        print(f"\n⚠️  TRADING MODE: {'DRY RUN' if not LIVE_TRADING_ENABLED else ('PAPER TRADING' if USE_PAPER_TRADING else 'LIVE TRADING')}")
-        
-        # Ask for confirmation in live mode
-        if LIVE_TRADING_ENABLED and not USE_PAPER_TRADING:
-            try:
-                confirm = input("\n❓ Execute these trades? (y/N): ").strip().lower()
-                if confirm != 'y':
-                    print("❌ Trading cancelled by user")
-                    return
-            except KeyboardInterrupt:
-                print("\n❌ Trading cancelled by user")
-                return
+    # Summary
+    print("\n" + "=" * 80)
+    print(" LIVE TRADING COMPLETE")
+    print("=" * 80)
+    print(f" Portfolio should now hold: {target_tickers}")
+    print(f" Check Alpaca dashboard: https://app.alpaca.markets/{'paper' if USE_PAPER_TRADING else 'live'}/dashboard")
+    print("=" * 80)
 
     # 7. Rebalance portfolio
     rebalance_portfolio(
         client,
         target_tickers,
         current_positions,
-        INVESTMENT_PER_STOCK_LIVE
+        INVESTMENT_PER_STOCK
     )
 
     # 8. Summary
@@ -671,7 +607,5 @@ def run_live_trading():
     print("=" * 80)
 
 
-if __name__ == "__main__":
-    run_live_trading()
 
 

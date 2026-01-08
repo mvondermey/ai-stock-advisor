@@ -784,13 +784,13 @@ def main(
         # Use parallel processing for large ticker sets
         if len(all_available_tickers) > PARALLEL_THRESHOLD:
             print(f"   Using parallel detailed validation for {len(all_available_tickers)} tickers...")
-            from multiprocessing import Pool
+            from concurrent.futures import ThreadPoolExecutor
             from tqdm import tqdm
             
             num_workers = min(NUM_PROCESSES, len(all_available_tickers))
-            with Pool(processes=num_workers) as pool:
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 data_summaries = list(tqdm(
-                    pool.imap(validate_detailed_ticker, all_available_tickers),
+                    executor.map(validate_detailed_ticker, all_available_tickers),
                     total=len(all_available_tickers),
                     desc="Validating data quality",
                     ncols=100
@@ -1445,22 +1445,6 @@ def main(
         except Exception as e:
             print(f"  ⚠️ Error processing model for {ticker} from {best_period_name} period: {e}")
 
-def run_live_trading():
-    """Live trading mode using the same logic as backtest."""
-    print("=" * 80)
-    print("🚀 AI STOCK ADVISOR - LIVE TRADING MODE")
-    print("=" * 80)
-    
-    # Import live trading functionality
-    try:
-        from live_trading import run_live_trading as execute_live_trading
-        execute_live_trading()
-    except ImportError as e:
-        print(f"❌ Could not import live trading: {e}")
-        print("Make sure live_trading.py exists in src directory")
-    except Exception as e:
-        print(f"❌ Live trading failed: {e}")
-
 # ============================
 # Main
 # ============================
@@ -1478,20 +1462,81 @@ if __name__ == "__main__":
     
     if args.live_trading:
         # Set strategy in config for live trading
-        import config
+        import src.config as config
         config.LIVE_TRADING_STRATEGY = args.strategy
         print(f"🚀 Starting Live Trading with Strategy: {args.strategy}")
         print(f"📋 Available strategies: ai_individual, ai_portfolio, multitask, risk_adj_mom, dynamic_bh_1y, dynamic_bh_3m, dynamic_bh_1m")
         print(f"💡 Example: python src/main.py --live-trading --strategy risk_adj_mom")
         print("=" * 80)
         
-        # Use the fixed live trading implementation
+        # Do the same filtering as backtesting
+        print("\n🔍 Step 1: Fetching and filtering tickers (same as backtest)...")
         try:
-            from live_trading_fixed import run_live_trading_with_backtest_logic
-            run_live_trading_with_backtest_logic()
-        except ImportError as e:
-            print(f"❌ Could not import live trading: {e}")
-            print("Make sure live_trading_fixed.py exists in src directory")
+            from ticker_selection import get_all_tickers, find_top_performers
+            from data_fetcher import _download_batch_robust
+            from datetime import datetime, timezone, timedelta
+            from config import N_TOP_TICKERS
+            
+            # Get all tickers from market selection (same as backtest)
+            all_available_tickers = get_all_tickers()
+            print(f"   Found {len(all_available_tickers)} tickers in universe")
+            
+            # Download data (same as backtest)
+            end_date = datetime.now(timezone.utc)
+            start_date = end_date - timedelta(days=365)
+            print(f"   Downloading data from {start_date.date()} to {end_date.date()}...")
+            
+            batch_size = 100
+            all_data_list = []
+            for i in range(0, len(all_available_tickers), batch_size):
+                batch = all_available_tickers[i:i + batch_size]
+                try:
+                    batch_data = _download_batch_robust(batch, start_date, end_date)
+                    if batch_data is not None and not batch_data.empty:
+                        all_data_list.append(batch_data)
+                except Exception as e:
+                    print(f"     ⚠️ Batch {i//batch_size + 1} failed: {e}")
+            
+            if all_data_list:
+                all_tickers_data = pd.concat(all_data_list, ignore_index=False)
+                print(f"   ✅ Downloaded data for {len(all_tickers_data.columns.levels[1] if isinstance(all_tickers_data.columns, pd.MultiIndex) else all_tickers_data.columns)} tickers")
+                
+                # Convert to long format for find_top_performers (same as backtest)
+                if isinstance(all_tickers_data.columns, pd.MultiIndex):
+                    all_tickers_data_long = all_tickers_data.stack(level=1)
+                    all_tickers_data_long = all_tickers_data_long.reset_index()
+                    all_tickers_data_long.columns = ['date', 'ticker'] + list(all_tickers_data_long.columns[2:])
+                    all_tickers_data = all_tickers_data_long
+                
+                # Filter to top performers (same as backtest)
+                print(f"   🔍 Filtering to top {N_TOP_TICKERS} performers...")
+                # Use naive datetime for comparison (same as backtest)
+                naive_end_date = end_date.replace(tzinfo=None)
+                market_selected_performers = find_top_performers(
+                    all_available_tickers=all_available_tickers,
+                    all_tickers_data=all_tickers_data,
+                    return_tickers=True,
+                    n_top=N_TOP_TICKERS,
+                    performance_end_date=naive_end_date
+                )
+                
+                if market_selected_performers:
+                    print(f"   ✅ Filtered to {len(market_selected_performers)} top performers")
+                else:
+                    print(f"   ⚠️ No top performers found, using all tickers")
+                    market_selected_performers = all_available_tickers[:N_TOP_TICKERS]
+            else:
+                print("   ❌ No data downloaded")
+                market_selected_performers = all_available_tickers[:N_TOP_TICKERS]
+                
+        except Exception as e:
+            print(f"   ❌ Ticker filtering failed: {e}")
+            market_selected_performers = all_available_tickers[:N_TOP_TICKERS]
+        
+        # Use the live trading implementation with filtered tickers
+        try:
+            from live_trading import run_live_trading_with_filtered_tickers
+            run_live_trading_with_filtered_tickers(market_selected_performers, all_tickers_data)
         except Exception as e:
             print(f"❌ Live trading failed: {e}")
     else:

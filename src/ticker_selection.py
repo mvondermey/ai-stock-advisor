@@ -383,22 +383,26 @@ def get_tickers_for_backtest(n: int = 10) -> List[str]:
     print(f"Randomly selected {n} tickers: {', '.join(selected_tickers)}")
     return selected_tickers
 
-def _get_yahoo_1y_return(ticker: str, end_date: datetime, lookback_days: int = 365) -> Optional[float]:
+def _get_comparison_return(ticker: str, end_date: datetime, lookback_days: int = 365) -> Optional[float]:
     """
-    Fetch actual 1-year return from Yahoo Finance for comparison.
-    Returns the actual 1Y% from Yahoo's live data.
+    Fetch actual return using unified data fetcher (Alpaca -> TwelveData -> Yahoo).
+    Returns the actual return % from live data.
     """
     try:
         start_date = end_date - timedelta(days=lookback_days)
-        # Quick fetch with 1-year data
-        ticker_obj = yf.Ticker(ticker)
-        hist = ticker_obj.history(start=start_date, end=end_date + timedelta(days=1))
+        # Use unified data fetcher (Alpaca -> TwelveData -> Yahoo)
+        hist = load_prices_robust(ticker, start_date, end_date + timedelta(days=1))
         
         if hist.empty or len(hist) < 10:
             return None
         
-        start_price = hist['Close'].iloc[0]
-        end_price = hist['Close'].iloc[-1]
+        # Find price column
+        price_col = next((c for c in ['Close', 'Adj Close', 'Adj close', 'close'] if c in hist.columns), None)
+        if price_col is None:
+            return None
+        
+        start_price = hist[price_col].iloc[0]
+        end_price = hist[price_col].iloc[-1]
         
         if start_price <= 0:
             return None
@@ -908,19 +912,20 @@ def find_top_performers(
         final_performers = screened_performers
 
     # Fetch actual Yahoo Finance 1-year returns for comparison (parallel)
-    print(f"\n  Fetching actual Yahoo {lookback_label} returns for comparison (top {min(50, len(final_performers))} tickers)...")
+    print(f"\n  Fetching actual {lookback_label} returns for comparison (top {min(N_TOP_TICKERS, len(final_performers))} tickers)...")
     yahoo_returns = {}
     
-    # Only fetch for top 50 to avoid rate limiting
-    tickers_to_check = [ticker for ticker, _ in final_performers[:50]]
+    # Fetch for top N_TOP_TICKERS (uses unified Alpaca -> TwelveData -> Yahoo fetcher)
+    comparison_limit = min(N_TOP_TICKERS, len(final_performers))
+    tickers_to_check = [ticker for ticker, _ in final_performers[:comparison_limit]]
     
     with ThreadPoolExecutor(max_workers=10) as executor:
         future_to_ticker = {
-            executor.submit(_get_yahoo_1y_return, ticker, end_date, lookback_days): ticker 
+            executor.submit(_get_comparison_return, ticker, end_date, lookback_days): ticker 
             for ticker in tickers_to_check
         }
         
-        for future in tqdm(as_completed(future_to_ticker), total=len(tickers_to_check), desc="Yahoo comparison", ncols=100):
+        for future in tqdm(as_completed(future_to_ticker), total=len(tickers_to_check), desc="Fetching comparison returns", ncols=100):
             ticker = future_to_ticker[future]
             try:
                 yahoo_return = future.result()
