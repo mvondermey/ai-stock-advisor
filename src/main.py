@@ -1521,6 +1521,8 @@ if __name__ == "__main__":
                 )
                 
                 if market_selected_performers:
+                    # Extract just ticker strings from (ticker, performance) tuples
+                    market_selected_performers = [ticker for ticker, _ in market_selected_performers]
                     print(f"   ✅ Filtered to {len(market_selected_performers)} top performers")
                 else:
                     print(f"   ⚠️ No top performers found, using all tickers")

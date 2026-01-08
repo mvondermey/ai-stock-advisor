@@ -429,13 +429,23 @@ def get_dynamic_bh_tickers(all_tickers: List[str], period: str, all_tickers_data
                     ticker_data.columns = [col[0] for col in ticker_cols]
                     ticker_data_grouped[ticker] = ticker_data
         elif 'ticker' in all_tickers_data.columns:
-            # Long format: group by ticker
+            # Long format: group by ticker, set date as index
             print(f"   🔍 Dynamic BH ({period}): Using long format (ticker in columns)")
-            ticker_data_grouped = {ticker: group for ticker, group in all_tickers_data.groupby('ticker')}
+            for ticker, group in all_tickers_data.groupby('ticker'):
+                group_copy = group.copy()
+                if 'date' in group_copy.columns:
+                    group_copy['date'] = pd.to_datetime(group_copy['date'])
+                    group_copy = group_copy.set_index('date')
+                ticker_data_grouped[ticker] = group_copy
         elif 'ticker' in all_tickers_data.index.names:
-            # Long format: ticker in index
+            # Long format: ticker in index, ensure date is index
             print(f"   🔍 Dynamic BH ({period}): Using long format (ticker in index)")
-            ticker_data_grouped = {ticker: group for ticker, group in all_tickers_data.groupby('ticker')}
+            for ticker, group in all_tickers_data.groupby('ticker'):
+                group_copy = group.copy()
+                if 'date' in group_copy.columns:
+                    group_copy['date'] = pd.to_datetime(group_copy['date'])
+                    group_copy = group_copy.set_index('date')
+                ticker_data_grouped[ticker] = group_copy
         else:
             # Assume ticker columns
             print(f"   🔍 Dynamic BH ({period}): Using ticker columns format")
