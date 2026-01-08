@@ -80,6 +80,65 @@ def get_live_trading_strategy():
     return getattr(config, 'LIVE_TRADING_STRATEGY', 'risk_adj_mom')
 
 
+def _prepare_ticker_data_grouped(all_tickers: List[str], all_tickers_data: pd.DataFrame, strategy_name: str = "Strategy") -> dict:
+    """
+    Prepare ticker data grouped by ticker with date as index.
+    This is a shared helper for all strategies to ensure consistent data format.
+    """
+    ticker_data_grouped = {}
+    if all_tickers_data is None:
+        return ticker_data_grouped
+    
+    print(f"   🔍 {strategy_name}: Data shape: {all_tickers_data.shape}")
+    print(f"   🔍 {strategy_name}: Columns: {list(all_tickers_data.columns[:5])}")
+    
+    # Debug: Check unique tickers in data
+    if 'ticker' in all_tickers_data.columns:
+        unique_tickers = all_tickers_data['ticker'].unique()
+        print(f"   🔍 {strategy_name}: Unique tickers in data: {len(unique_tickers)}")
+        # Check if requested tickers are in data
+        matching = [t for t in all_tickers[:5] if t in unique_tickers]
+        print(f"   🔍 {strategy_name}: First 5 requested tickers in data: {matching}")
+    
+    if isinstance(all_tickers_data.columns, pd.MultiIndex):
+        # Wide format: columns are (field, ticker)
+        print(f"   🔍 {strategy_name}: Using MultiIndex format")
+        for ticker in all_tickers_data.columns.levels[1]:
+            ticker_cols = [col for col in all_tickers_data.columns if col[1] == ticker]
+            if ticker_cols:
+                ticker_data = all_tickers_data[ticker_cols].copy()
+                ticker_data.columns = [col[0] for col in ticker_cols]
+                ticker_data_grouped[ticker] = ticker_data
+    elif 'ticker' in all_tickers_data.columns:
+        # Long format: group by ticker, set date as index
+        print(f"   🔍 {strategy_name}: Using long format (ticker in columns)")
+        for ticker, group in all_tickers_data.groupby('ticker'):
+            group_copy = group.copy()
+            if 'date' in group_copy.columns:
+                group_copy['date'] = pd.to_datetime(group_copy['date'])
+                group_copy = group_copy.set_index('date')
+            ticker_data_grouped[ticker] = group_copy
+    elif 'ticker' in all_tickers_data.index.names:
+        # Long format: ticker in index, ensure date is index
+        print(f"   🔍 {strategy_name}: Using long format (ticker in index)")
+        for ticker, group in all_tickers_data.groupby('ticker'):
+            group_copy = group.copy()
+            if 'date' in group_copy.columns:
+                group_copy['date'] = pd.to_datetime(group_copy['date'])
+                group_copy = group_copy.set_index('date')
+            ticker_data_grouped[ticker] = group_copy
+    else:
+        # Assume ticker columns
+        print(f"   🔍 {strategy_name}: Using ticker columns format")
+        for ticker in all_tickers:
+            if ticker in all_tickers_data.columns:
+                ticker_data_grouped[ticker] = all_tickers_data[[ticker]].copy()
+                ticker_data_grouped[ticker].columns = ['Close']
+    
+    print(f"   🔍 {strategy_name}: Prepared {len(ticker_data_grouped)} ticker data groups")
+    return ticker_data_grouped
+
+
 def get_alpaca_client() -> Optional[TradingClient]:
     """Initialize Alpaca trading client."""
     if not ALPACA_AVAILABLE:
@@ -304,15 +363,15 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
 
     elif strategy == 'mean_reversion':
         # Mean Reversion Strategy
-        return get_mean_reversion_tickers(all_tickers)
+        return get_mean_reversion_tickers(all_tickers, all_tickers_data)
 
     elif strategy == 'volatility_adj_mom':
         # Volatility-Adjusted Momentum Strategy
-        return get_volatility_adj_mom_tickers(all_tickers)
+        return get_volatility_adj_mom_tickers(all_tickers, all_tickers_data)
 
     elif strategy == 'quality_momentum':
         # Quality + Momentum Strategy
-        return get_quality_momentum_tickers(all_tickers)
+        return get_quality_momentum_tickers(all_tickers, all_tickers_data)
 
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
@@ -332,47 +391,8 @@ def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     print(f"   🔍 Risk-Adj Mom: Processing {len(all_tickers)} tickers")
     print(f"   🔍 Risk-Adj Mom: Data available: {all_tickers_data is not None}")
     
-    # Prepare data for shared strategy
-    ticker_data_grouped = {}
-    if all_tickers_data is not None:
-        print(f"   🔍 Risk-Adj Mom: Data shape: {all_tickers_data.shape}")
-        print(f"   🔍 Risk-Adj Mom: Columns: {list(all_tickers_data.columns[:5])}")
-        print(f"   🔍 Risk-Adj Mom: Index names: {all_tickers_data.index.names}")
-        print(f"   🔍 Risk-Adj Mom: Is MultiIndex: {isinstance(all_tickers_data.columns, pd.MultiIndex)}")
-        
-        # Handle different data formats
-        if isinstance(all_tickers_data.columns, pd.MultiIndex):
-            # Wide format: columns are (field, ticker)
-            print("   🔍 Risk-Adj Mom: Using MultiIndex format")
-            for ticker in all_tickers_data.columns.levels[1]:
-                ticker_cols = [col for col in all_tickers_data.columns if col[1] == ticker]
-                if ticker_cols:
-                    ticker_data = all_tickers_data[ticker_cols].copy()
-                    ticker_data.columns = [col[0] for col in ticker_cols]
-                    ticker_data_grouped[ticker] = ticker_data
-        elif 'ticker' in all_tickers_data.columns:
-            # Long format: group by ticker
-            print("   🔍 Risk-Adj Mom: Using long format (ticker in columns)")
-            ticker_data_grouped = {ticker: group for ticker, group in all_tickers_data.groupby('ticker')}
-        elif 'ticker' in all_tickers_data.index.names:
-            # Long format: ticker in index
-            print("   🔍 Risk-Adj Mom: Using long format (ticker in index)")
-            ticker_data_grouped = {ticker: group for ticker, group in all_tickers_data.groupby('ticker')}
-        else:
-            # Assume ticker columns
-            print("   🔍 Risk-Adj Mom: Using ticker columns format")
-            for ticker in all_tickers:
-                if ticker in all_tickers_data.columns:
-                    ticker_data_grouped[ticker] = all_tickers_data[[ticker]].copy()
-                    ticker_data_grouped[ticker].columns = ['Close']
-    
-    print(f"   🔍 Risk-Adj Mom: Prepared {len(ticker_data_grouped)} ticker data groups")
-    
-    # Normalize column names to lowercase for compatibility
-    for ticker in ticker_data_grouped:
-        df = ticker_data_grouped[ticker]
-        df.columns = [c.lower() if isinstance(c, str) else c for c in df.columns]
-        ticker_data_grouped[ticker] = df
+    # Use shared helper to prepare data with date as index
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Risk-Adj Mom")
     
     # Pass required date parameters
     current_date = datetime.now()
@@ -393,16 +413,26 @@ def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     return selected
 
 
-def get_mean_reversion_tickers(all_tickers: List[str]) -> List[str]:
+def get_mean_reversion_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Mean Reversion Strategy: Use shared strategy logic."""
     from shared_strategies import select_mean_reversion_stocks
-    return select_mean_reversion_stocks(all_tickers, {}, top_n=PORTFOLIO_SIZE)
+    
+    print(f"   🔍 Mean Reversion: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Mean Reversion")
+    
+    current_date = datetime.now()
+    return select_mean_reversion_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_volatility_adj_mom_tickers(all_tickers: List[str]) -> List[str]:
+def get_volatility_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Volatility-Adjusted Momentum Strategy: Use shared strategy logic."""
     from shared_strategies import select_volatility_adj_mom_stocks
-    return select_volatility_adj_mom_stocks(all_tickers, {}, top_n=PORTFOLIO_SIZE)
+    
+    print(f"   🔍 Vol-Adj Mom: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Vol-Adj Mom")
+    
+    current_date = datetime.now()
+    return select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 def get_dynamic_bh_tickers(all_tickers: List[str], period: str, all_tickers_data: pd.DataFrame = None) -> List[str]:
@@ -412,52 +442,10 @@ def get_dynamic_bh_tickers(all_tickers: List[str], period: str, all_tickers_data
     print(f"   🔍 Dynamic BH ({period}): Processing {len(all_tickers)} tickers")
     print(f"   🔍 Dynamic BH ({period}): Data available: {all_tickers_data is not None}")
     
-    # Prepare data for shared strategy (similar to risk_adj_mom)
-    ticker_data_grouped = {}
-    if all_tickers_data is not None:
-        print(f"   🔍 Dynamic BH ({period}): Data shape: {all_tickers_data.shape}")
-        print(f"   🔍 Dynamic BH ({period}): Columns: {list(all_tickers_data.columns[:5])}")
-        
-        # Handle different data formats (same logic as risk_adj_mom)
-        if isinstance(all_tickers_data.columns, pd.MultiIndex):
-            # Wide format: columns are (field, ticker)
-            print(f"   🔍 Dynamic BH ({period}): Using MultiIndex format")
-            for ticker in all_tickers_data.columns.levels[1]:
-                ticker_cols = [col for col in all_tickers_data.columns if col[1] == ticker]
-                if ticker_cols:
-                    ticker_data = all_tickers_data[ticker_cols].copy()
-                    ticker_data.columns = [col[0] for col in ticker_cols]
-                    ticker_data_grouped[ticker] = ticker_data
-        elif 'ticker' in all_tickers_data.columns:
-            # Long format: group by ticker, set date as index
-            print(f"   🔍 Dynamic BH ({period}): Using long format (ticker in columns)")
-            for ticker, group in all_tickers_data.groupby('ticker'):
-                group_copy = group.copy()
-                if 'date' in group_copy.columns:
-                    group_copy['date'] = pd.to_datetime(group_copy['date'])
-                    group_copy = group_copy.set_index('date')
-                ticker_data_grouped[ticker] = group_copy
-        elif 'ticker' in all_tickers_data.index.names:
-            # Long format: ticker in index, ensure date is index
-            print(f"   🔍 Dynamic BH ({period}): Using long format (ticker in index)")
-            for ticker, group in all_tickers_data.groupby('ticker'):
-                group_copy = group.copy()
-                if 'date' in group_copy.columns:
-                    group_copy['date'] = pd.to_datetime(group_copy['date'])
-                    group_copy = group_copy.set_index('date')
-                ticker_data_grouped[ticker] = group_copy
-        else:
-            # Assume ticker columns
-            print(f"   🔍 Dynamic BH ({period}): Using ticker columns format")
-            for ticker in all_tickers:
-                if ticker in all_tickers_data.columns:
-                    ticker_data_grouped[ticker] = all_tickers_data[[ticker]].copy()
-                    ticker_data_grouped[ticker].columns = ['Close']
-    
-    print(f"   🔍 Dynamic BH ({period}): Prepared {len(ticker_data_grouped)} ticker data groups")
+    # Use shared helper to prepare data with date as index
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, f"Dynamic BH ({period})")
     
     # Pass required date parameters
-    from datetime import datetime, timedelta
     current_date = datetime.now()
     
     selected = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, 
@@ -467,10 +455,15 @@ def get_dynamic_bh_tickers(all_tickers: List[str], period: str, all_tickers_data
     return selected
 
 
-def get_quality_momentum_tickers(all_tickers: List[str]) -> List[str]:
+def get_quality_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Quality + Momentum Strategy: Use shared strategy logic."""
     from shared_strategies import select_quality_momentum_stocks
-    return select_quality_momentum_stocks(all_tickers, {}, top_n=PORTFOLIO_SIZE)
+    
+    print(f"   🔍 Quality+Mom: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Quality+Mom")
+    
+    current_date = datetime.now()
+    return select_quality_momentum_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 def get_ai_portfolio_tickers(all_tickers: List[str]) -> List[str]:

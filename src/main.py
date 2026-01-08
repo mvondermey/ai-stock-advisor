@@ -1455,8 +1455,7 @@ if __name__ == "__main__":
     parser.add_argument("--live-trading", action="store_true", 
                        help="Run in live trading mode instead of backtesting")
     parser.add_argument("--strategy", type=str, default="risk_adj_mom",
-                       choices=["ai_individual", "ai_portfolio", "multitask", "risk_adj_mom", "dynamic_bh_1y", "dynamic_bh_3m", "dynamic_bh_1m"],
-                       help="Strategy to use for live trading (default: risk_adj_mom)")
+                       help="Strategy(s) for live trading. Comma-separated for multiple (e.g., 'risk_adj_mom,dynamic_bh_1y'). Available: ai_individual, ai_portfolio, multitask, risk_adj_mom, dynamic_bh_1y, dynamic_bh_3m, dynamic_bh_1m, mean_reversion, volatility_adj_mom, quality_momentum")
     
     args = parser.parse_args()
     
@@ -1537,8 +1536,54 @@ if __name__ == "__main__":
         
         # Use the live trading implementation with filtered tickers
         try:
-            from live_trading import run_live_trading_with_filtered_tickers
-            run_live_trading_with_filtered_tickers(market_selected_performers, all_tickers_data)
+            from live_trading import run_live_trading_with_filtered_tickers, get_strategy_tickers
+            
+            # Check if multiple strategies requested (comma-separated)
+            strategies = [s.strip() for s in args.strategy.split(',')]
+            
+            if len(strategies) > 1:
+                # Multi-strategy mode: just show selected tickers for each
+                print("\n" + "=" * 80)
+                print("📊 MULTI-STRATEGY TICKER SELECTION")
+                print("=" * 80)
+                
+                all_selections = {}
+                for strategy in strategies:
+                    print(f"\n🎯 Strategy: {strategy}")
+                    print("-" * 40)
+                    selected = get_strategy_tickers(strategy, market_selected_performers, all_tickers_data)
+                    all_selections[strategy] = set(selected) if selected else set()
+                    if selected:
+                        print(f"   Selected {len(selected)} tickers: {selected}")
+                    else:
+                        print(f"   ⚠️ No tickers selected")
+                
+                # Show comparison
+                print("\n" + "=" * 80)
+                print("📊 STRATEGY COMPARISON")
+                print("=" * 80)
+                
+                # Find common tickers (intersection of all)
+                if all_selections:
+                    common = set.intersection(*all_selections.values()) if all(all_selections.values()) else set()
+                    print(f"\n✅ COMMON to all strategies ({len(common)}): {sorted(common) if common else 'None'}")
+                    
+                    # Show unique tickers for each strategy
+                    print(f"\n🔀 UNIQUE to each strategy:")
+                    for strategy in strategies:
+                        others = set.union(*[s for name, s in all_selections.items() if name != strategy]) if len(strategies) > 1 else set()
+                        unique = all_selections[strategy] - others
+                        if unique:
+                            print(f"   {strategy}: {sorted(unique)}")
+                        else:
+                            print(f"   {strategy}: None (all shared)")
+                
+                print("\n" + "=" * 80)
+                print("💡 To execute trades, run with a single strategy")
+                print("=" * 80)
+            else:
+                # Single strategy: run full live trading
+                run_live_trading_with_filtered_tickers(market_selected_performers, all_tickers_data)
         except Exception as e:
             print(f"❌ Live trading failed: {e}")
     else:
