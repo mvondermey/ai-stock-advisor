@@ -83,7 +83,7 @@ ALPACA_STOCKS_LIMIT = 20000  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = []  # NASDAQ only
-N_TOP_TICKERS           = 1200     # Reduced from 2000 - balance quality and quantity
+N_TOP_TICKERS           = 199     # Reduced from 2000 - balance quality and quantity
 TOP_TICKER_SELECTION_LOOKBACK = "1Y"     # Try 1-month for more responsive selection
 BATCH_DOWNLOAD_SIZE     = 10000     # Download in batches of 1000
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
@@ -99,6 +99,9 @@ NUM_PROCESSES           = max(1, cpu_count() - 5)
 # Parallel processing threshold - only use parallel processing for ticker lists larger than this
 # Below this threshold, sequential processing is faster due to lower overhead
 PARALLEL_THRESHOLD     = 200      # Use parallel only for >200 tickers
+
+# Training batch size for parallel processing (how many tasks per batch)
+TRAINING_BATCH_SIZE     = 10000      # Smaller batches for better timeout handling
 
 # --- Dynamic GPU Slot Allocation ---
 # Estimated VRAM requirements per model (in GB)
@@ -148,7 +151,7 @@ TRAINING_POOL_MAXTASKSPERCHILD = 1  # Enable recycling for maximum stability
 # - Set to 600 (10 min) for normal use (handles slow XGBoost GridSearchCV)
 # - Set to 1800 (30 min) for very large datasets or complex models
 # - Set to None to disable timeout (not recommended - can hang forever)
-PER_TICKER_TIMEOUT = 180  # 3 minutes max per ticker (more aggressive timeout)
+PER_TICKER_TIMEOUT = 30  # 30 seconds max per ticker (very aggressive for stuck tickers)
 
 # Training worker process count (separate from global NUM_PROCESSES).
 # For 5000 tickers, use parallel training. Models are saved to disk and loaded back (no pickling overhead).
@@ -194,18 +197,18 @@ TOP_N_STOCKS             = N_TOP_TICKERS  # Number of stocks to hold (from confi
 #   10 = Bi-weekly retraining (balanced, recommended for volatile stocks)
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
-RETRAIN_FREQUENCY_DAYS = 5  # Bi-weekly retraining - consider 20 for S&P 500
+RETRAIN_FREQUENCY_DAYS = 300  # Train only once per year (effectively once for 1-year backtest)
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = False  # ENABLED - Train models for AI Strategy and individual ticker predictions
+ENABLE_1YEAR_TRAINING   = True  # ENABLED - Train models for AI Strategy and individual ticker predictions
 
-# --- Portfolio Strategy Enable/Disable Flags ---
+# --- Portfolio Stratebgy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
 # AI Portfolio + traditional strategies (no AI Strategy or AI Hybrid)
-ENABLE_AI_STRATEGY      = False  # ENABLED - AI Strategy with individual ticker models
+ENABLE_AI_STRATEGY      = True   # ENABLED - Use existing saved models (no new training)
 ENABLE_AI_PORTFOLIO     = False   # ENABLED - AI Portfolio meta-learning
 ENABLE_STATIC_BH        = True   # ENABLED - Static Buy & Hold benchmark
 ENABLE_DYNAMIC_BH_1Y    = True   # ENABLED - Dynamic BH 1-year
@@ -215,12 +218,13 @@ ENABLE_RISK_ADJ_MOM     = True   # ENABLED - Risk-Adjusted Momentum
 ENABLE_MEAN_REVERSION   = True   # ENABLED - Mean Reversion
 ENABLE_SEASONAL         = True   # ENABLED - Seasonal strategy
 ENABLE_QUALITY_MOM      = True   # ENABLED - Quality + Momentum
-ENABLE_MOMENTUM_AI_HYBRID = False  # ENABLED - Momentum + AI Hybrid strategy
+ENABLE_MOMENTUM_AI_HYBRID = True   # ENABLED - Use existing saved models
 ENABLE_VOLATILITY_ADJ_MOM = True  # ENABLED - Volatility-Adjusted Momentum strategy
 ENABLE_DYNAMIC_BH_1Y_VOL_FILTER = True  # NEW - Dynamic BH 1Y with Volatility Filter
 ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP = True   # ENABLED - Dynamic BH 1Y with trailing stop
 ENABLE_SECTOR_ROTATION = True   # NEW - Sector Rotation Strategy
 ENABLE_MULTITASK_LEARNING = False   # NEW - Multi-Task Learning Strategy
+ENABLE_3M_1Y_RATIO = True   # NEW - 3M/1Y Ratio Strategy
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -344,7 +348,7 @@ TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification 
 USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
 MARKET_FILTER_SMA       = 200
-USE_PERFORMANCE_BENCHMARK = True  # Disable strict benchmark filtering for small universes
+USE_PERFORMANCE_BENCHMARK = False  # Disable strict benchmark filtering for small universes
 
 # --- ML Model Selection Flags ---
 USE_LOGISTIC_REGRESSION = False      # Not needed - too simple

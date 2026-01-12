@@ -373,6 +373,11 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
         # Quality + Momentum Strategy
         return get_quality_momentum_tickers(all_tickers, all_tickers_data)
 
+    elif strategy.startswith('static_bh_'):
+        # Static BH Strategy: Select based on performance period but hold static
+        period = strategy.replace('static_bh_', '')  # '1y', '3m', or '1m'
+        return get_static_bh_tickers(all_tickers, period, all_tickers_data)
+
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
         return get_dynamic_bh_tickers(all_tickers, '3m')
@@ -444,6 +449,26 @@ def get_dynamic_bh_tickers(all_tickers: List[str], period: str, all_tickers_data
     
     # Use shared helper to prepare data with date as index
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, f"Dynamic BH ({period})")
+    
+    # Pass required date parameters
+    current_date = datetime.now()
+    
+    selected = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, 
+                                      period=period, 
+                                      current_date=current_date,
+                                      top_n=PORTFOLIO_SIZE)
+    return selected
+
+
+def get_static_bh_tickers(all_tickers: List[str], period: str, all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Static Buy & Hold Strategy: Select top performers based on period and hold them."""
+    from shared_strategies import select_dynamic_bh_stocks
+    
+    print(f"   🔍 Static BH ({period}): Processing {len(all_tickers)} tickers")
+    print(f"   🔍 Static BH ({period}): Data available: {all_tickers_data is not None}")
+    
+    # Use shared helper to prepare data with date as index
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, f"Static BH ({period})")
     
     # Pass required date parameters
     current_date = datetime.now()

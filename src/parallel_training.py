@@ -20,6 +20,7 @@ from tqdm import tqdm
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, FORCE_CPU, XGBOOST_USE_GPU,
     GPU_MAX_CONCURRENT_TRAINING_WORKERS, TRAINING_NUM_PROCESSES,
+    TRAINING_BATCH_SIZE,
     USE_LSTM, USE_GRU, USE_TCN, USE_XGBOOST, USE_RANDOM_FOREST, 
     USE_LIGHTGBM, USE_RIDGE, USE_ELASTIC_NET, USE_SVM, USE_MLP_CLASSIFIER
 )
@@ -246,6 +247,39 @@ def generate_training_tasks(
     return ticker_tasks, ai_portfolio_tasks
 
 
+def safe_universal_model_worker(task):
+    """
+    Safe wrapper for universal_model_worker that prevents worker crashes.
+    Catches all exceptions and returns error results instead of crashing.
+    """
+    try:
+        return universal_model_worker(task)
+    except KeyboardInterrupt:
+        # Re-raise KeyboardInterrupt to allow graceful shutdown
+        raise
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        tb_str = traceback.format_exc()
+        
+        # Extract task info for error reporting
+        ticker = task.get('ticker', 'unknown')
+        model_type = task.get('model_type', 'unknown')
+        task_type = task.get('task_type', 'unknown')
+        
+        print(f"  🛡️ SAFE WORKER: Caught exception for {ticker} {model_type}: {error_msg[:100]}")
+        print(f"     Traceback: {tb_str[-300:]}")  # Last 300 chars of traceback
+        
+        # Return error result instead of crashing
+        return {
+            'task_type': task_type,
+            'ticker': ticker,
+            'model_type': model_type,
+            'status': 'error',
+            'reason': f'Worker protection: {error_msg[:200]}'
+        }
+
+
 def universal_model_worker(task: Dict) -> Dict:
     """
     Worker function that trains one model for one task.
@@ -257,6 +291,24 @@ def universal_model_worker(task: Dict) -> Dict:
         Dict with training results
     """
     global _GPU_SEMAPHORE
+    
+    # ✅ IMPLEMENT PER-TICKER TIMEOUT
+    import signal
+    import time
+    from config import PER_TICKER_TIMEOUT
+    
+    def per_ticker_timeout_handler(signum, frame):
+        raise TimeoutError(f"Per-ticker training timeout ({PER_TICKER_TIMEOUT}s)")
+    
+    # Set up per-ticker timeout if enabled
+    timeout_set = False
+    if PER_TICKER_TIMEOUT is not None and PER_TICKER_TIMEOUT > 0:
+        timeout_set = True
+        signal.signal(signal.SIGALRM, per_ticker_timeout_handler)
+        signal.alarm(PER_TICKER_TIMEOUT)
+    
+    # ✅ TRACK PER-TICKER TIMING
+    task_start_time = time.time()
     
     task_type = task.get('task_type')
     model_type = task.get('model_type')
@@ -326,6 +378,10 @@ def universal_model_worker(task: Dict) -> Dict:
                 y_scaler_path = models_dir / f"{ticker}_{model_type}_temp_y_scaler.joblib"
                 joblib.dump(result['y_scaler'], y_scaler_path)
             
+            # ✅ CALCULATE TRAINING TIME
+            task_end_time = time.time()
+            training_time = task_end_time - task_start_time
+            
             return {
                 'task_type': 'ticker',
                 'ticker': ticker,
@@ -334,11 +390,28 @@ def universal_model_worker(task: Dict) -> Dict:
                 'mse': result['mse'],
                 'model_path': str(model_path),
                 'scaler_path': str(scaler_path),
-                'y_scaler_path': str(y_scaler_path) if y_scaler_path else None
+                'y_scaler_path': str(y_scaler_path) if y_scaler_path else None,
+                'training_time': training_time
+            }
+        
+        except TimeoutError as te:
+            # ✅ HANDLE PER-TICKER TIMEOUT
+            task_end_time = time.time()
+            training_time = task_end_time - task_start_time
+            print(f"  ⏰ TIMEOUT: {ticker} {model_type} ({PER_TICKER_TIMEOUT}s)")
+            return {
+                'task_type': 'ticker',
+                'ticker': ticker,
+                'model_type': model_type,
+                'status': 'timeout',
+                'reason': f'Per-ticker timeout ({PER_TICKER_TIMEOUT}s)',
+                'training_time': training_time
             }
         
         except Exception as e:
             import traceback
+            task_end_time = time.time()
+            training_time = task_end_time - task_start_time
             error_msg = str(e)
             tb_str = traceback.format_exc()
             print(f"  ❌ ERROR {ticker} {model_type}: {error_msg[:100]}")
@@ -348,10 +421,15 @@ def universal_model_worker(task: Dict) -> Dict:
                 'ticker': ticker,
                 'model_type': model_type,
                 'status': 'error',
-                'reason': str(e)[:200]
+                'reason': str(e)[:200],
+                'training_time': training_time
             }
         
         finally:
+            # ✅ CLEANUP: Cancel per-ticker timeout
+            if timeout_set:
+                signal.alarm(0)  # Cancel the alarm
+            
             # Release GPU semaphore
             if gpu_acquired and _GPU_SEMAPHORE is not None:
                 _GPU_SEMAPHORE.release()
@@ -449,6 +527,16 @@ def universal_model_worker(task: Dict) -> Dict:
                 'scaler_path': str(scaler_path)
             }
         
+        except TimeoutError as te:
+            # ✅ HANDLE PER-TICKER TIMEOUT
+            print(f"  ⏰ TIMEOUT: AI Portfolio {model_type} ({PER_TICKER_TIMEOUT}s)")
+            return {
+                'task_type': 'ai_portfolio',
+                'model_type': model_type,
+                'status': 'timeout',
+                'reason': f'Per-ticker timeout ({PER_TICKER_TIMEOUT}s)'
+            }
+        
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -460,11 +548,19 @@ def universal_model_worker(task: Dict) -> Dict:
             }
         
         finally:
+            # ✅ CLEANUP: Cancel per-ticker timeout
+            if timeout_set:
+                signal.alarm(0)  # Cancel the alarm
+            
             # Release GPU semaphore
             if gpu_acquired and _GPU_SEMAPHORE is not None:
                 _GPU_SEMAPHORE.release()
     
-    else:
+    # ✅ HANDLE UNKNOWN TASK TYPE (outside try-except)
+    if task_type not in ['ticker', 'ai_portfolio']:
+        # Ensure cleanup on early return
+        if timeout_set:
+            signal.alarm(0)
         return {
             'task_type': task_type,
             'status': 'error',
@@ -497,11 +593,68 @@ def aggregate_results(
     # Count statuses
     success_count = len([r for r in results if r.get('status') == 'success'])
     skipped_count = len([r for r in results if r.get('status') == 'skipped'])
+    timeout_count = len([r for r in results if r.get('status') == 'timeout'])
     error_count = len([r for r in results if r.get('status') in ['failed', 'error']])
     
     print(f"   ✅ Successful: {success_count}")
     print(f"   ⏭️  Skipped: {skipped_count}")
+    print(f"   ⏰ Timeouts: {timeout_count}")
     print(f"   ❌ Errors: {error_count}")
+    
+    # ✅ TIMING ANALYSIS
+    timing_results = [r for r in results if 'training_time' in r and r.get('training_time') is not None]
+    if timing_results:
+        training_times = [r['training_time'] for r in timing_results]
+        avg_time = sum(training_times) / len(training_times)
+        min_time = min(training_times)
+        max_time = max(training_times)
+        median_time = sorted(training_times)[len(training_times) // 2]
+        
+        print(f"\n⏱️  TIMING ANALYSIS:")
+        print(f"   📊 Average: {avg_time:.2f}s")
+        print(f"   ⚡ Fastest: {min_time:.2f}s")
+        print(f"   🐌 Slowest: {max_time:.2f}s")
+        print(f"   📈 Median: {median_time:.2f}s")
+        
+        # Find slowest tickers
+        slowest_results = sorted(timing_results, key=lambda x: x['training_time'], reverse=True)[:5]
+        print(f"\n🐌 SLOWEST 5 TICKERS:")
+        for i, result in enumerate(slowest_results, 1):
+            ticker = result.get('ticker', 'unknown')
+            model_type = result.get('model_type', 'unknown')
+            time_taken = result.get('training_time', 0)
+            status = result.get('status', 'unknown')
+            print(f"   {i}. {ticker} {model_type}: {time_taken:.2f}s ({status})")
+        
+        # Find fastest tickers
+        fastest_results = sorted(timing_results, key=lambda x: x['training_time'])[:5]
+        print(f"\n⚡ FASTEST 5 TICKERS:")
+        for i, result in enumerate(fastest_results, 1):
+            ticker = result.get('ticker', 'unknown')
+            model_type = result.get('model_type', 'unknown')
+            time_taken = result.get('training_time', 0)
+            status = result.get('status', 'unknown')
+            print(f"   {i}. {ticker} {model_type}: {time_taken:.2f}s ({status})")
+    
+    # Log timeout details
+    if timeout_count > 0:
+        timeout_results = [r for r in results if r.get('status') == 'timeout']
+        print(f"\n⏰ TIMEOUT DETAILS:")
+        for result in timeout_results:
+            ticker = result.get('ticker', 'unknown')
+            model_type = result.get('model_type', 'unknown')
+            reason = result.get('reason', 'unknown')
+            print(f"   - {ticker} {model_type}: {reason}")
+        
+        # Save timeout log to file
+        with open("logs/timeout_log.txt", "a") as f:
+            f.write(f"\n=== TIMEOUT LOG ===\n")
+            for result in timeout_results:
+                ticker = result.get('ticker', 'unknown')
+                model_type = result.get('model_type', 'unknown')
+                reason = result.get('reason', 'unknown')
+                f.write(f"{ticker},{model_type},{reason}\n")
+        print(f"   📝 Timeout details saved to logs/timeout_log.txt")
     
     # ============================================
     # AGGREGATE TICKER MODELS
@@ -689,6 +842,9 @@ def train_all_models_parallel(
     
     print(f"\n🏃 Executing {len(all_tasks)} training tasks in parallel...")
     
+    # ✅ IMPORT TIME AT FUNCTION LEVEL (fixes scope issue)
+    import time
+    
     # Create GPU semaphore
     gpu_semaphore = None
     if CUDA_AVAILABLE and not FORCE_CPU:
@@ -698,24 +854,106 @@ def train_all_models_parallel(
     start_time = time.time()
     
     try:
-        # Use multiprocessing pool
+        # Use multiprocessing pool with enhanced error handling and timeout
         with mp.Pool(
             processes=TRAINING_NUM_PROCESSES,
             initializer=_init_worker,
             initargs=(gpu_semaphore,)
         ) as pool:
-            # Use imap_unordered for progress tracking
-            # file=sys.stdout ensures tqdm doesn't suppress print statements
+            # ✅ REMOVE GLOBAL SIGNAL TIMEOUT (conflicts with per-ticker timeouts)
+            # The per-ticker timeouts in workers should handle individual task timeouts
+            # Global timeout causes signal conflicts in WSL multiprocessing
+            
+            # Use imap_unordered for progress tracking with error recovery
             import sys
-            results = list(tqdm(
-                pool.imap_unordered(universal_model_worker, all_tasks),
-                total=len(all_tasks),
-                desc="Training models",
-                file=sys.stdout,
-                dynamic_ncols=True,
-                leave=True
-            ))
-    
+            
+            # Process tasks in smaller batches to prevent cascade failures
+            batch_size = min(TRAINING_BATCH_SIZE, len(all_tasks))  # Use configurable batch size
+            all_results = []
+            
+            for i in range(0, len(all_tasks), batch_size):
+                batch_tasks = all_tasks[i:i + batch_size]
+                print(f"\n🔄 Processing batch {i//batch_size + 1}/{(len(all_tasks) + batch_size - 1)//batch_size} ({len(batch_tasks)} tasks)")
+                
+                try:
+                    # ✅ ADD PROCESS-LEVEL TIMEOUT for stuck workers
+                    # Use imap_unordered with timeout to handle completely stuck workers
+                    batch_results = []
+                    completed_tasks = 0
+                    stuck_timeout = 60  # 60 seconds for entire batch if stuck
+                    
+                    with tqdm(total=len(batch_tasks), desc=f"Batch {i//batch_size + 1}", position=0, leave=True) as pbar:
+                        # Use imap_unordered with timeout
+                        iterator = pool.imap_unordered(safe_universal_model_worker, batch_tasks)
+                        
+                        batch_start_time = time.time()
+                        last_progress_time = time.time()
+                        
+                        while completed_tasks < len(batch_tasks):
+                            try:
+                                # ✅ TIMEOUT CHECK for stuck batch
+                                current_time = time.time()
+                                if current_time - last_progress_time > stuck_timeout:
+                                    print(f"  ⏰ BATCH TIMEOUT: No progress for {stuck_timeout}s - skipping remaining tasks")
+                                    break
+                                
+                                # ✅ ADD TIMEOUT TO NEXT() CALL
+                                # Use a timeout to prevent blocking when workers are stuck
+                                import signal
+                                
+                                def next_timeout_handler(signum, frame):
+                                    raise TimeoutError("next() timeout - worker may be stuck")
+                                
+                                # Set timeout for next() call
+                                signal.signal(signal.SIGALRM, next_timeout_handler)
+                                signal.alarm(30)  # 30 second timeout for next()
+                                
+                                try:
+                                    result = next(iterator, None)
+                                    signal.alarm(0)  # Cancel timeout if successful
+                                    
+                                    if result is None:
+                                        break  # No more results
+                                    
+                                    batch_results.append(result)
+                                    completed_tasks += 1
+                                    pbar.update(1)
+                                    last_progress_time = current_time  # Reset timeout on progress
+                                    
+                                except TimeoutError:
+                                    print(f"  ⏰ NEXT() TIMEOUT: Worker stuck - skipping to next task")
+                                    signal.alarm(0)  # Cancel timeout
+                                    # Skip this stuck task and continue
+                                    completed_tasks += 1  # Count as completed to avoid infinite loop
+                                    pbar.update(1)
+                                    last_progress_time = time.time()  # Reset timeout
+                                    continue
+                                
+                            except StopIteration:
+                                break  # Iterator exhausted
+                            except Exception as e:
+                                print(f"  ❌ Error getting result from iterator: {e}")
+                                break
+                    
+                    all_results.extend(batch_results)
+                    
+                except Exception as batch_error:
+                    print(f"❌ Batch {i//batch_size + 1} failed: {batch_error}")
+                    # Add error results for this batch
+                    for task in batch_tasks:
+                        all_results.append({
+                            'task_type': task.get('task_type', 'unknown'),
+                            'ticker': task.get('ticker', 'unknown'),
+                            'model_type': task.get('model_type', 'unknown'),
+                            'status': 'error',
+                            'reason': f'Batch failure: {str(batch_error)[:100]}'
+                        })
+                    continue
+            
+            results = all_results
+                
+            # ✅ NO GLOBAL SIGNAL CLEANUP NEEDED (removed global timeout)
+                
     except Exception as e:
         print(f"❌ Error during parallel training: {e}")
         import traceback

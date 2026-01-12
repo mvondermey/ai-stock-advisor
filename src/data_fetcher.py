@@ -970,6 +970,13 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                         try:
                             existing_cache = pd.read_csv(cache_file, index_col=0, parse_dates=True)
                             
+                            # ✅ FIX: Normalize timezone to prevent tz-naive vs tz-aware comparison errors
+                            # Ensure both existing_cache and ticker_df have the same timezone format
+                            if existing_cache.index.tz is not None:
+                                existing_cache.index = existing_cache.index.tz_localize(None)
+                            if ticker_df.index.tz is not None:
+                                ticker_df.index = ticker_df.index.tz_localize(None)
+                            
                             # ✅ For incremental updates, filter ticker_df to only NEW data (after last cache date)
                             if ticker in tickers_to_download_incremental:
                                 try:

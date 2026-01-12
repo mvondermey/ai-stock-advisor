@@ -838,6 +838,7 @@ def find_top_performers(
 
     sorted_all_tickers_performance_with_df = sorted(all_tickers_performance_with_df, key=lambda item: item[1], reverse=True)
     
+    # Filter out extreme positive returns (>1000%) - negative performers will be filtered by benchmark
     sorted_all_tickers_performance_with_df = [item for item in sorted_all_tickers_performance_with_df if item[1] < 1000]
 
     if n_top > 0:

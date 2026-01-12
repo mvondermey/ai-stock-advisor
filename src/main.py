@@ -160,6 +160,7 @@ import os
 # from portfolio_rebalancing import run_portfolio_rebalancing_backtest  # Module deleted
 # from rule_based_strategy import run_rule_based_portfolio_strategy  # Module deleted
 from summary_phase import print_final_summary
+from notifications import send_training_notification, send_backtesting_notification, send_error_notification
 from training_phase import train_worker, train_models_for_period
 from backtesting_phase import _run_portfolio_backtest_walk_forward
 from data_validation import get_data_summary, print_data_diagnostics, InsufficientDataError
@@ -453,6 +454,11 @@ def main(
     # Get accurate time from internet source for consistent backtesting
     end_date = get_internet_time()
     bt_end = end_date
+    
+    # Track timing for notifications
+    script_start_time = time.time()
+    training_start_time = None
+    backtest_start_time = None
     
     alpaca_trading_client = None
 
@@ -907,77 +913,90 @@ def main(
         actual_period_name = f"{BACKTEST_DAYS}-Day"
 
     # --- Training Models (for 1-Year Backtest) ---
-    models, scalers, y_scalers = {}, {}, {}
-    gru_hyperparams_dict = {} # Single hyperparams dict for single model
-    failed_training_tickers_1y = {} # New: Store failed tickers and their reasons
-
+    
+    # Initialize variables that are used outside the if-block
+    failed_training_tickers_1y = {}
+    
+    # Train individual stock models if enabled
     if ENABLE_1YEAR_TRAINING:
+        training_start_time = time.time()
         print(f"📅 Backtest configured for {BACKTEST_DAYS} days (~{actual_period_name})")
 
-        # Train individual stock models if enabled
-        if ENABLE_1YEAR_TRAINING:
-            # Exclude benchmark ETFs from training (they are used for comparison, not AI trading)
-            BENCHMARK_ETFS = {'QQQ', 'SPY', 'GLD'}
-            tickers_for_training = [t for t in top_tickers if t not in BENCHMARK_ETFS]
-            print(f"   📋 Training {len(tickers_for_training)} tickers (excluding {len(BENCHMARK_ETFS)} benchmark ETFs: {', '.join(BENCHMARK_ETFS)})")
-            
-            training_results = train_models_for_period(
-                period_name=actual_period_name,
-                tickers=tickers_for_training,
-                all_tickers_data=all_tickers_data,
-                train_start=train_start_1y_calc,
-                train_end=train_end_1y,
-                top_performers_data=top_performers_data,
-                feature_set=feature_set,
-                run_parallel=run_parallel
-            )
+        # Exclude benchmark ETFs from training (they are used for comparison, not AI trading)
+        BENCHMARK_ETFS = {'QQQ', 'SPY', 'GLD'}
+        tickers_for_training = [t for t in top_tickers if t not in BENCHMARK_ETFS]
+        print(f"   📋 Training {len(tickers_for_training)} tickers (excluding {len(BENCHMARK_ETFS)} benchmark ETFs: {', '.join(BENCHMARK_ETFS)})")
+        
+        training_results = train_models_for_period(
+            period_name=actual_period_name,
+            tickers=tickers_for_training,
+            all_tickers_data=all_tickers_data,
+            train_start=train_start_1y_calc,
+            train_end=train_end_1y,
+            top_performers_data=top_performers_data,
+            feature_set=feature_set,
+            run_parallel=run_parallel
+        )
 
-            print(f"🐛 DEBUG: train_models_for_period returned, processing {len(training_results)} results...", flush=True)
-            import sys
-            sys.stdout.flush()
+        print(f"🐛 DEBUG: train_models_for_period returned, processing {len(training_results)} results...", flush=True)
+        import sys
+        sys.stdout.flush()
 
-            # ✅ Load models from disk (training returns None to avoid GPU/CPU memory issues)
-            from prediction import load_models_for_tickers
-            
-            # Get list of successfully trained tickers and track failed ones
-            trained_tickers = []
-            for r in training_results:
-                if r and r.get('status') in ['trained', 'loaded']:
-                    trained_tickers.append(r['ticker'])
-                elif r and r.get('status') == 'failed':
-                    failed_training_tickers_1y[r['ticker']] = r.get('reason', 'Unknown failure')
-            
-            if trained_tickers:
-                print(f"\n📦 Loading {len(trained_tickers)} trained models from disk...")
-                models, scalers, y_scalers = load_models_for_tickers(trained_tickers)
-                print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers")
-                ai_strategy_available = True
-            else:
-                print(f"\n⚠️ No models were successfully trained")
-                models, scalers, y_scalers = {}, {}, {}
-                ai_strategy_available = False
-        else:
-            training_results = []
-            print(f"\n⏭️ Skipping individual stock model training (ENABLE_1YEAR_TRAINING = False)")
-            
-            # Load existing models from disk for AI Strategy
-            print(f"\n📦 Loading existing models from disk for AI Strategy...")
-            from prediction import load_models_for_tickers
-            
-            # Try to load models for all top tickers
-            models, scalers, y_scalers = load_models_for_tickers(top_tickers)
+        # ✅ Load models from disk (training returns None to avoid GPU/CPU memory issues)
+        from prediction import load_models_for_tickers
+        
+        # Get list of successfully trained tickers and track failed ones
+        trained_tickers = []
+        for r in training_results:
+            if r and r.get('status') in ['trained', 'loaded']:
+                trained_tickers.append(r['ticker'])
+            elif r and r.get('status') == 'failed':
+                failed_training_tickers_1y[r['ticker']] = r.get('reason', 'Unknown failure')
+        
+        if trained_tickers:
+            print(f"\n📦 Loading {len(trained_tickers)} trained models from disk...")
+            models, scalers, y_scalers = load_models_for_tickers(trained_tickers)
             print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers")
+            ai_strategy_available = True
+        else:
+            print(f"\n⚠️ No models were successfully trained")
+            models, scalers, y_scalers = {}, {}, {}
+            ai_strategy_available = False
+    
+    # Send training completion notification
+    if training_start_time:
+        training_time_minutes = (time.time() - training_start_time) / 60
+        trained_count = len(models)
+        total_count = len(top_tickers) * 5  # Approximate (5 models per ticker)
+        
+        send_training_notification(
+            models_trained=trained_count,
+            total_models=total_count,
+            training_time_minutes=training_time_minutes,
+            failed_models=failed_training_tickers_1y if 'failed_training_tickers_1y' in locals() else None
+        )
+    else:
+        training_results = []
+        print(f"\n⏭️ Skipping individual stock model training (ENABLE_1YEAR_TRAINING = False)")
+        
+        # Load existing models from disk for AI Strategy
+        print(f"\n📦 Loading existing models from disk for AI Strategy...")
+        from prediction import load_models_for_tickers
+        
+        # Try to load models for all top tickers
+        models, scalers, y_scalers = load_models_for_tickers(top_tickers)
+        print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers")
+        
+        if not models:
+            print(f"   ⚠️ No existing models found. AI Strategy will not be available.")
+            print(f"   💡 To use AI Strategy, either:")
+            print(f"      - Set ENABLE_1YEAR_TRAINING = True to train new models")
+            print(f"      - Or ensure models exist in logs/models/ directory")
             
-            if not models:
-                print(f"   ⚠️ No existing models found. AI Strategy will not be available.")
-                print(f"   💡 To use AI Strategy, either:")
-                print(f"      - Set ENABLE_1YEAR_TRAINING = True to train new models")
-                print(f"      - Or ensure models exist in logs/models/ directory")
-                
-                # Set flag to disable AI Strategy in backtest
-                ai_strategy_available = False
-            else:
-                ai_strategy_available = True
+            # Set flag to disable AI Strategy in backtest
+            ai_strategy_available = False
+        else:
+            ai_strategy_available = True
     
     # ✅ FIX: Filter tickers BEFORE AI Portfolio training
     # When training is disabled, use all top_tickers
@@ -1111,6 +1130,7 @@ def main(
     
     # --- Run 1-Year Backtest ---
     if ENABLE_1YEAR_BACKTEST:
+        backtest_start_time = time.time()
         print("\n🔍 Step 8: Running 1-Year Backtest...")
         # DEBUG: Check what's in models dictionaries
         print(f"\n[DEBUG MAIN] 1-Year models keys: {list(models.keys())}")
@@ -1126,7 +1146,7 @@ def main(
         initial_capital_1y = capital_per_stock_1y * n_top_rebal
         
         # Use walk-forward backtest with periodic retraining and rebalancing
-        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, actual_backtest_day_count = _run_portfolio_backtest_walk_forward(
+        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ratio_3m_1y_portfolio_value_1y, ratio_3m_1y_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, ratio_3m_1y_transaction_costs_1y, actual_backtest_day_count = _run_portfolio_backtest_walk_forward(
             all_tickers_data=all_tickers_data,
             train_start_date=train_start_1y_calc,
             backtest_start_date=bt_start_1y,
@@ -1377,6 +1397,8 @@ def main(
         dynamic_bh_1y_trailing_stop_1y_return=((dynamic_bh_1y_trailing_stop_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_sector_rotation_value_1y=sector_rotation_portfolio_value_1y,
         sector_rotation_1y_return=((sector_rotation_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_ratio_3m_1y_value_1y=ratio_3m_1y_portfolio_value_1y,
+        ratio_3m_1y_1y_return=((ratio_3m_1y_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         ai_transaction_costs=ai_transaction_costs_1y,
         static_bh_transaction_costs=static_bh_transaction_costs_1y,
         static_bh_3m_transaction_costs=static_bh_3m_transaction_costs_1y,
@@ -1384,6 +1406,7 @@ def main(
         dynamic_bh_1y_vol_filter_transaction_costs=dynamic_bh_1y_vol_filter_transaction_costs_1y,
         dynamic_bh_1y_trailing_stop_transaction_costs=dynamic_bh_1y_trailing_stop_transaction_costs_1y,
         sector_rotation_transaction_costs=sector_rotation_transaction_costs_1y,
+        ratio_3m_1y_transaction_costs=ratio_3m_1y_transaction_costs_1y,
         dynamic_bh_3m_transaction_costs=dynamic_bh_3m_transaction_costs_1y,
         ai_portfolio_transaction_costs=ai_portfolio_transaction_costs_1y,
         dynamic_bh_1m_transaction_costs=dynamic_bh_1m_transaction_costs_1y,
@@ -1414,6 +1437,43 @@ def main(
         rule_1month_return=None
     )
     print("\n✅ Final summary prepared and printed.")
+
+    # Send backtesting completion notification
+    if backtest_start_time:
+        backtest_time_minutes = (time.time() - backtest_start_time) / 60
+        
+        # Prepare strategy results for email
+        strategy_results = {}
+        if 'final_strategy_value_1y' in locals() and 'initial_capital_1y' in locals():
+            strategy_results['AI Strategy'] = {'return': ((final_strategy_value_1y - initial_capital_1y) / initial_capital_1y) * 100}
+        if 'final_buy_hold_value_1y' in locals() and 'initial_capital_1y' in locals():
+            strategy_results['Buy & Hold'] = {'return': ((final_buy_hold_value_1y - initial_capital_1y) / initial_capital_1y) * 100}
+        
+        send_backtesting_notification(
+            strategy_results=strategy_results,
+            backtest_time_minutes=backtest_time_minutes
+        )
+    
+    # Send final completion notification
+    total_time_minutes = (time.time() - script_start_time) / 60
+    
+    # Use the generic send_completion_notification function
+    from notifications import send_completion_notification
+    send_completion_notification(
+        subject="AI Stock Advisor - Complete",
+        message_body=f"""
+🎉 AI Stock Advisor execution completed successfully!
+
+📊 Summary:
+• Total Runtime: {total_time_minutes:.1f} minutes
+• Training: {'Completed' if training_start_time else 'Skipped'}
+• Backtesting: {'Completed' if backtest_start_time else 'Skipped'}
+• Models Available: {len(models) if 'models' in locals() else 0}
+
+📈 Ready for live trading or analysis!
+        """.strip(),
+        success=True
+    )
 
     # --- Select and save best performing models for live trading ---
     # Determine which period had the highest portfolio return

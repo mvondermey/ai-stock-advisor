@@ -38,7 +38,7 @@ from config import (
     ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY,
     ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT, DYNAMIC_BH_1Y_TRAILING_STOP_REBALANCE_DAYS,
     ENABLE_SECTOR_ROTATION, SECTOR_ROTATION_TOP_N, SECTOR_ROTATION_REBALANCE_DAYS,
-    ENABLE_MULTITASK_LEARNING,
+    ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO,
     RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION, RISK_ADJ_MOM_CONFIRM_SHORT, RISK_ADJ_MOM_CONFIRM_MEDIUM, RISK_ADJ_MOM_CONFIRM_LONG, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
     RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER
 )
@@ -59,6 +59,7 @@ quality_momentum_transaction_costs = None
 momentum_ai_hybrid_transaction_costs = None
 volatility_adj_mom_transaction_costs = None
 multitask_transaction_costs = None
+ratio_3m_1y_transaction_costs = None
 
 
 def _last_valid_close_up_to(ticker_df: pd.DataFrame, current_date: datetime) -> Optional[float]:
@@ -1354,6 +1355,14 @@ def _run_portfolio_backtest_walk_forward(
     current_multitask_stocks = []  # Current top stocks held by multi-task learning
     multitask_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
+    # 3M/1Y RATIO: Initialize portfolio tracking
+    ratio_3m_1y_portfolio_value = 0.0
+    ratio_3m_1y_portfolio_history = [ratio_3m_1y_portfolio_value]
+    ratio_3m_1y_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    ratio_3m_1y_cash = initial_capital_needed  # Start with same capital as AI
+    current_ratio_3m_1y_stocks = []  # Current top stocks held by 3M/1Y ratio strategy
+    ratio_3m_1y_last_rebalance_value = initial_capital_needed  # Transaction cost guard
+
     # MEAN REVERSION: Initialize portfolio tracking
     mean_reversion_portfolio_value = 0.0
     mean_reversion_portfolio_history = [mean_reversion_portfolio_value]
@@ -1388,7 +1397,7 @@ def _run_portfolio_backtest_walk_forward(
 
     # Reset global transaction cost tracking variables for this backtest
     global ai_transaction_costs, static_bh_transaction_costs, static_bh_3m_transaction_costs, dynamic_bh_1y_transaction_costs
-    global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, ai_portfolio_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs, multitask_transaction_costs
+    global dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, ai_portfolio_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs, multitask_transaction_costs, ratio_3m_1y_transaction_costs
     ai_transaction_costs = 0.0
     static_bh_transaction_costs = 0.0  # Static BH has no transaction costs (buy once, hold)
     static_bh_3m_transaction_costs = 0.0
@@ -1405,6 +1414,7 @@ def _run_portfolio_backtest_walk_forward(
     momentum_ai_hybrid_transaction_costs = 0.0
     volatility_adj_mom_transaction_costs = 0.0
     multitask_transaction_costs = 0.0
+    ratio_3m_1y_transaction_costs = 0.0
 
     all_processed_tickers = []
     all_performance_metrics = []
@@ -2217,6 +2227,51 @@ def _run_portfolio_backtest_walk_forward(
                     
             except Exception as e:
                 print(f"   ⚠️ Multi-Task Learning strategy error: {e}")
+
+        # 3M/1Y RATIO: Rebalance to highest 3M/1Y ratio stocks DAILY
+        if ENABLE_3M_1Y_RATIO:
+            try:
+                from shared_strategies import select_3m_1y_ratio_stocks
+                
+                print(f"   📊 3M/1Y Ratio Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+                
+                # Use shared strategy for consistent selection
+                new_ratio_3m_1y_stocks = select_3m_1y_ratio_stocks(
+                    initial_top_tickers, 
+                    ticker_data_grouped, 
+                    current_date,
+                    top_n=PORTFOLIO_SIZE
+                )
+
+                if new_ratio_3m_1y_stocks:
+                    # Apply transaction cost guard (same as Dynamic BH)
+                    should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
+                        current_ratio_3m_1y_stocks,
+                        new_ratio_3m_1y_stocks,
+                        ticker_data_grouped,
+                        current_date,
+                        ratio_3m_1y_positions,
+                        ratio_3m_1y_cash,
+                        TRANSACTION_COST,
+                        ratio_3m_1y_last_rebalance_value
+                    )
+                    if should_rebal:
+                        # Rebalance 3M/1Y ratio portfolio (capture returned cash)
+                        ratio_3m_1y_cash = _rebalance_ratio_3m_1y_portfolio(
+                            new_ratio_3m_1y_stocks, current_date, ticker_data_grouped,
+                            ratio_3m_1y_positions, ratio_3m_1y_cash, capital_per_stock
+                        )
+                        current_ratio_3m_1y_stocks = new_ratio_3m_1y_stocks
+                        ratio_3m_1y_last_rebalance_value = _mark_to_market_value(
+                            ratio_3m_1y_positions, ratio_3m_1y_cash, ticker_data_grouped, current_date
+                        )
+                    else:
+                        print(f"   ⏭️ Skip 3M/1Y Ratio rebalance: {reason}")
+                else:
+                    print(f"   ⚠️ 3M/1Y Ratio: No stocks selected")
+                    
+            except Exception as e:
+                print(f"   ⚠️ 3M/1Y Ratio strategy error: {e}")
 
         # === MEAN REVERSION, QUALITY+MOM, VOL-ADJ MOM STRATEGIES ===
         # These strategies run independently of Dynamic BH performance data
@@ -3088,6 +3143,54 @@ def _run_portfolio_backtest_walk_forward(
         multitask_portfolio_value = multitask_invested_value + multitask_cash
         multitask_portfolio_history.append(multitask_portfolio_value)
 
+        # Update 3M/1Y RATIO portfolio value daily (skip if disabled)
+        ratio_3m_1y_invested_value = 0.0
+        if ENABLE_3M_1Y_RATIO:
+            for ticker in current_ratio_3m_1y_stocks:
+                if ticker in ratio_3m_1y_positions:
+                    try:
+                        # Use ticker_data_grouped for consistent data access like other strategies
+                        if ticker in ticker_data_grouped:
+                            ticker_data = ticker_data_grouped[ticker]
+                            price_data = ticker_data.loc[:current_date]
+                            if not price_data.empty:
+                                current_price = price_data['Close'].dropna().iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    shares = ratio_3m_1y_positions[ticker]['shares']
+                                    position_value = shares * current_price
+                                    ratio_3m_1y_positions[ticker]['value'] = position_value
+                                    ratio_3m_1y_invested_value += position_value
+                                else:
+                                    # Use previous value if current price is invalid
+                                    ratio_3m_1y_invested_value += ratio_3m_1y_positions[ticker].get('value', 0.0)
+                            else:
+                                # Use previous value if no price data available
+                                ratio_3m_1y_invested_value += ratio_3m_1y_positions[ticker].get('value', 0.0)
+                        else:
+                            # Fallback to all_tickers_data if ticker not in grouped data
+                            current_price = all_tickers_data[
+                                (all_tickers_data['ticker'] == ticker) &
+                                (all_tickers_data['date'] == current_date)
+                            ]['Close'].iloc[0] if not all_tickers_data[
+                                (all_tickers_data['ticker'] == ticker) &
+                                (all_tickers_data['date'] == current_date)
+                            ].empty else None
+                            
+                            if current_price is not None and not pd.isna(current_price):
+                                shares = ratio_3m_1y_positions[ticker]['shares']
+                                position_value = shares * current_price
+                                ratio_3m_1y_positions[ticker]['value'] = position_value
+                                ratio_3m_1y_invested_value += position_value
+                            else:
+                                ratio_3m_1y_invested_value += ratio_3m_1y_positions[ticker].get('value', 0.0)
+                    except Exception as e:
+                        print(f"   ⚠️ Error updating 3M/1Y ratio position for {ticker}: {e}")
+                        # Use previous value as fallback
+                        ratio_3m_1y_invested_value += ratio_3m_1y_positions[ticker].get('value', 0.0)
+
+        ratio_3m_1y_portfolio_value = ratio_3m_1y_invested_value + ratio_3m_1y_cash
+        ratio_3m_1y_portfolio_history.append(ratio_3m_1y_portfolio_value)
+
         # Update MEAN REVERSION portfolio value daily (skip if disabled)
         mean_reversion_invested_value = 0.0
         if ENABLE_MEAN_REVERSION:
@@ -3581,8 +3684,12 @@ def _run_portfolio_backtest_walk_forward(
     if dynamic_bh_1y_vol_filter_portfolio_value == 0.0:
         dynamic_bh_1y_vol_filter_portfolio_value = initial_capital_needed
         print(f"⚠️ Dynamic BH 1Y+Vol: Never rebalanced, using initial capital (${dynamic_bh_1y_vol_filter_portfolio_value:,.0f})")
+    
+    if ratio_3m_1y_portfolio_value == 0.0:
+        ratio_3m_1y_portfolio_value = initial_capital_needed
+        print(f"⚠️ 3M/1Y Ratio: Never rebalanced, using initial capital (${ratio_3m_1y_portfolio_value:,.0f})")
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, bh_3m_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, ai_portfolio_value, ai_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, multitask_portfolio_value, multitask_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, dynamic_bh_1y_vol_filter_portfolio_value, dynamic_bh_1y_vol_filter_portfolio_history, dynamic_bh_1y_trailing_stop_portfolio_value, dynamic_bh_1y_trailing_stop_portfolio_history, sector_rotation_portfolio_value, sector_rotation_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, static_bh_3m_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, ai_portfolio_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, multitask_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs, sector_rotation_transaction_costs, day_count
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, bh_3m_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, ai_portfolio_value, ai_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, multitask_portfolio_value, multitask_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, dynamic_bh_1y_vol_filter_portfolio_value, dynamic_bh_1y_vol_filter_portfolio_history, dynamic_bh_1y_trailing_stop_portfolio_value, dynamic_bh_1y_trailing_stop_portfolio_history, sector_rotation_portfolio_value, sector_rotation_portfolio_history, ratio_3m_1y_portfolio_value, ratio_3m_1y_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, static_bh_3m_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_3m_transaction_costs, ai_portfolio_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, multitask_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs, sector_rotation_transaction_costs, ratio_3m_1y_transaction_costs, day_count
 
 
 def _get_current_risk_adj_mom_selections(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
@@ -5894,6 +6001,90 @@ def _rebalance_volatility_adj_mom_portfolio(new_stocks, current_date, all_ticker
                 print(f"   ⚠️ Error buying {ticker}: {e}")
     
     return volatility_adj_mom_cash
+
+
+def _rebalance_ratio_3m_1y_portfolio(new_stocks, current_date, ticker_data_grouped,
+                                     ratio_3m_1y_positions, ratio_3m_1y_cash, capital_per_stock):
+    """
+    Rebalance 3M/1Y ratio portfolio to hold the new top N stocks.
+    Uses the same logic as other rebalance functions.
+    """
+    global ratio_3m_1y_transaction_costs
+    
+    # Sell all current positions that are not in the new stock list
+    stocks_to_sell = [ticker for ticker in ratio_3m_1y_positions if ticker not in new_stocks]
+    
+    for ticker in stocks_to_sell:
+        try:
+            if ticker in ticker_data_grouped:
+                ticker_data = ticker_data_grouped[ticker]
+                price_data = ticker_data.loc[:current_date]
+                if not price_data.empty:
+                    valid_prices = price_data['Close'].dropna()
+                    if not valid_prices.empty:
+                        current_price = valid_prices.iloc[-1]
+                        if current_price > 0:
+                            shares = ratio_3m_1y_positions[ticker]['shares']
+                            gross_sale = shares * current_price
+                            sell_cost = gross_sale * TRANSACTION_COST
+                            ratio_3m_1y_transaction_costs += sell_cost
+                            ratio_3m_1y_cash += gross_sale - sell_cost
+                            del ratio_3m_1y_positions[ticker]
+                        else:
+                            print(f"   ⚠️ 3M/1Y Ratio: Invalid price {current_price} for {ticker}, skipping sell")
+                    else:
+                        print(f"   ⚠️ 3M/1Y Ratio: No valid price data for {ticker}, skipping sell")
+                else:
+                    print(f"   ⚠️ 3M/1Y Ratio: No price data available for {ticker}, skipping sell")
+            else:
+                print(f"   ⚠️ 3M/1Y Ratio: {ticker} not found in ticker_data_grouped, skipping sell")
+        except Exception as e:
+            print(f"   ⚠️ 3M/1Y Ratio: Error selling {ticker}: {e}")
+            continue
+    
+    # Buy new positions
+    for ticker in new_stocks:
+        if ticker in ticker_data_grouped:
+            try:
+                ticker_data = ticker_data_grouped[ticker]
+                price_data = ticker_data.loc[:current_date]
+                if not price_data.empty:
+                    valid_prices = price_data['Close'].dropna()
+                    if not valid_prices.empty:
+                        current_price = valid_prices.iloc[-1]
+                        if current_price > 0:
+                            # Calculate affordable shares
+                            max_affordable_shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
+                            if max_affordable_shares > 0:
+                                cost = max_affordable_shares * current_price
+                                fee = cost * TRANSACTION_COST
+                                total_cost = cost + fee
+                                
+                                if total_cost <= ratio_3m_1y_cash:
+                                    ratio_3m_1y_cash -= total_cost
+                                    ratio_3m_1y_transaction_costs += fee
+                                    ratio_3m_1y_positions[ticker] = {
+                                        'shares': max_affordable_shares,
+                                        'entry_price': current_price,
+                                        'value': cost
+                                    }
+                                else:
+                                    print(f"   ⚠️ 3M/1Y Ratio: Insufficient cash for {ticker}, need ${total_cost:.2f}, have ${ratio_3m_1y_cash:.2f}")
+                            else:
+                                print(f"   ⚠️ 3M/1Y Ratio: Cannot afford even 1 share of {ticker} at ${current_price:.2f}")
+                        else:
+                            print(f"   ⚠️ 3M/1Y Ratio: Invalid price {current_price} for {ticker}, skipping buy")
+                    else:
+                        print(f"   ⚠️ 3M/1Y Ratio: No valid price data for {ticker}, skipping buy")
+                else:
+                    print(f"   ⚠️ 3M/1Y Ratio: No price data available for {ticker}, skipping buy")
+            except Exception as e:
+                print(f"   ⚠️ 3M/1Y Ratio: Error buying {ticker}: {e}")
+                continue
+        else:
+            print(f"   ⚠️ 3M/1Y Ratio: {ticker} not found in ticker_data_grouped, skipping buy")
+    
+    return ratio_3m_1y_cash
 
 
 # Module for backtesting functions - not meant to be run directly
