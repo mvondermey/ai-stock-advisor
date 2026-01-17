@@ -416,19 +416,57 @@ def _get_comparison_return(ticker: str, end_date: datetime, lookback_days: int =
 def _get_current_1y_return_from_cache(ticker: str, all_tickers_data: dict, today: datetime, lookback_days: int = 365) -> Optional[float]:
     """
     Calculate current 1-year return from cached data (ending today).
+    If cached data doesn't have recent data, fetch fresh data.
     This shows the actual 1Y performance as of today, matching what Yahoo Finance shows.
     """
     try:
-        if ticker not in all_tickers_data or all_tickers_data[ticker].empty:
+        # First try to use cached data
+        if ticker in all_tickers_data and not all_tickers_data[ticker].empty:
+            df = all_tickers_data[ticker]
+            
+            # Check if we have recent data (within last 7 days)
+            latest_date = df.index.max()
+            if latest_date >= (today - timedelta(days=7)):
+                # We have recent cached data, use it
+                return _calculate_1y_return_from_dataframe(df, today, lookback_days)
+        
+        # If no recent cached data, fetch fresh data
+        print(f"   🔄 {ticker}: Fetching fresh data for current 1Y calculation...")
+        from data_utils import load_prices_robust
+        
+        start_date = today - timedelta(days=lookback_days + 30)  # Extra buffer
+        fresh_data = load_prices_robust(ticker, start_date, today)
+        
+        if fresh_data is not None and not fresh_data.empty:
+            # Ensure fresh data is timezone-aware like today parameter
+            if fresh_data.index.tzinfo is None:
+                fresh_data.index = fresh_data.index.tz_localize('UTC')
+            else:
+                fresh_data.index = fresh_data.index.tz_convert('UTC')
+            
+            return _calculate_1y_return_from_dataframe(fresh_data, today, lookback_days)
+        else:
             return None
-        
-        df = all_tickers_data[ticker]
-        
+            
+    except Exception as e:
+        print(f"   ⚠️ {ticker}: Error calculating current 1Y return: {e}")
+        return None
+
+
+def _calculate_1y_return_from_dataframe(df: pd.DataFrame, today: datetime, lookback_days: int = 365) -> Optional[float]:
+    """Helper function to calculate 1Y return from a DataFrame."""
+    try:
         # Find price column
         candidates = ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']
         price_col = next((c for c in candidates if c in df.columns), None)
         if price_col is None:
             return None
+        
+        # Ensure DataFrame index is timezone-aware like today parameter
+        if df.index.tzinfo is None:
+            df.index = df.index.tz_localize('UTC')
+        else:
+            df.index = df.index.tz_convert('UTC')
         
         # Get data for last lookback_days ending today
         start_date = today - timedelta(days=lookback_days)

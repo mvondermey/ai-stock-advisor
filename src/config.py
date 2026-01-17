@@ -19,6 +19,7 @@ TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
 VALID_TICKERS_CACHE_PATH = Path("logs/valid_tickers.json")
 CACHE_DAYS              = 7
 
+# --- Cache Configuration ---
 # Master switch: enable price caching to reduce downloads (uses `data_cache/` CSVs)
 ENABLE_PRICE_CACHE       = True
 
@@ -83,7 +84,7 @@ ALPACA_STOCKS_LIMIT = 20000  # High limit = train models for ALL tradable stocks
 
 # Exchange filter for Alpaca asset list. Use ["NASDAQ"] to restrict to NASDAQ only.
 ALPACA_STOCKS_EXCHANGES = []  # NASDAQ only
-N_TOP_TICKERS           = 199     # Reduced from 2000 - balance quality and quantity
+N_TOP_TICKERS           = 2000     # Reduced from 2000 - balance quality and quantity
 TOP_TICKER_SELECTION_LOOKBACK = "1Y"     # Try 1-month for more responsive selection
 BATCH_DOWNLOAD_SIZE     = 10000     # Download in batches of 1000
 PAUSE_BETWEEN_BATCHES   = 5.0       # Pause between batches for stability
@@ -140,6 +141,7 @@ GPU_CLEAR_CACHE_AFTER_EACH_TICKER = False
 # Only applies when PYTORCH_USE_GPU = True (PyTorch uses GPU)
 # Does NOT apply to XGBoost GPU (XGBoost manages its own GPU memory)
 GPU_MAX_CONCURRENT_TRAINING_WORKERS = GPU_MODEL_SLOTS['LSTM'] # Use dynamic calculation
+GPU_MAX_CONCURRENT_TRAINING_WORKERS = 10
 
 # Multiprocessing stability: recycle worker processes periodically to avoid RAM creep / leaked semaphores
 # when training many tickers under WSL + spawn.
@@ -180,15 +182,27 @@ else:
 USE_UNIFIED_PARALLEL_TRAINING = True
 
 # --- Backtest & training windows
-BACKTEST_DAYS           = 500         # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr)
+BACKTEST_DAYS           = 30        # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr, ~365=1.5yr)
+# Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 TRAIN_LOOKBACK_DAYS     = 365        # Train on ~1 year of history (user request)
 VALIDATION_DAYS         = 90         # FIX 4: Validation period for threshold optimization
+
+# --- Backtest End Date Control ---
+# Set to True to run backtest until today - prediction horizon (ensures future data for validation)
+# Set to False to subtract prediction horizon from end date (ensures future data for validation)
+RUN_BACKTEST_UNTIL_TODAY = True   # Run backtest until today - horizon
+
+# --- Walk-Forward Backtesting with Validation ---
+# Train models until validation_end_date (ensures 63 days future data for validation)
+# Then run walk-forward backtest until today - horizon
+TWO_PHASE_TRAINING_BACKTEST = True   # Enable validation-based training
+VALIDATION_END_DATE_OFFSET = 63      # Days before today for training end (prediction horizon)
 
 # --- Live Trading
 LIVE_TRADING_ENABLED     = False       # ⚠️ Set to True to execute real orders (start with False for dry-run)
 MODEL_MAX_AGE_DAYS        = 1           # Only use models trained in last X days
 USE_PAPER_TRADING        = True        # True = paper trading (fake money), False = REAL MONEY ⚠️
-TOP_N_STOCKS             = N_TOP_TICKERS  # Number of stocks to hold (from config)
+TOP_N_STOCKS             = 10         # Number of stocks to hold in portfolio (should be much smaller than N_TOP_TICKERS)
 
 # --- Walk-Forward Retraining Frequency ---
 # How often to retrain models during walk-forward backtest
@@ -197,7 +211,7 @@ TOP_N_STOCKS             = N_TOP_TICKERS  # Number of stocks to hold (from confi
 #   10 = Bi-weekly retraining (balanced, recommended for volatile stocks)
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
-RETRAIN_FREQUENCY_DAYS = 300  # Train only once per year (effectively once for 1-year backtest)
+RETRAIN_FREQUENCY_DAYS = 10  # Train on Day 1, then every 30 days, plus final training at end
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
@@ -209,7 +223,7 @@ ENABLE_1YEAR_TRAINING   = True  # ENABLED - Train models for AI Strategy and ind
 # Set to False to disable specific portfolios in the backtest
 # AI Portfolio + traditional strategies (no AI Strategy or AI Hybrid)
 ENABLE_AI_STRATEGY      = True   # ENABLED - Use existing saved models (no new training)
-ENABLE_AI_PORTFOLIO     = False   # ENABLED - AI Portfolio meta-learning
+ENABLE_AI_PORTFOLIO     = True    # ENABLED - AI Portfolio meta-learning
 ENABLE_STATIC_BH        = True   # ENABLED - Static Buy & Hold benchmark
 ENABLE_DYNAMIC_BH_1Y    = True   # ENABLED - Dynamic BH 1-year
 ENABLE_DYNAMIC_BH_3M    = True   # ENABLED - Dynamic BH 3-month
@@ -225,6 +239,7 @@ ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP = True   # ENABLED - Dynamic BH 1Y with trail
 ENABLE_SECTOR_ROTATION = True   # NEW - Sector Rotation Strategy
 ENABLE_MULTITASK_LEARNING = False   # NEW - Multi-Task Learning Strategy
 ENABLE_3M_1Y_RATIO = True   # NEW - 3M/1Y Ratio Strategy
+ENABLE_ADAPTIVE_STRATEGY = False   # NEW - Adaptive Strategy (rotates based on conditions)
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -245,12 +260,12 @@ DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY = 120.0  # Maximum 120% annualized volat
 # --- Dynamic BH 1Y + Trailing Stop Parameters ---
 # Trailing stop to protect gains and limit downside
 DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT = 20.0  # Sell if price drops 20% from peak
-DYNAMIC_BH_1Y_TRAILING_STOP_REBALANCE_DAYS = 1  # Check daily for stop triggers
+# Note: Uses AI_REBALANCE_FREQUENCY_DAYS for rebalancing frequency
 
 # --- Sector Rotation Strategy Parameters ---
 # PROPOSAL 2: Rotate between sector ETFs based on momentum
 SECTOR_ROTATION_TOP_N = 5  # Number of top sectors to hold
-SECTOR_ROTATION_REBALANCE_DAYS = 21  # Monthly rebalancing (21 trading days)
+# Note: Uses AI_REBALANCE_FREQUENCY_DAYS for rebalancing frequency
 SECTOR_ROTATION_MOMENTUM_WINDOW = 60  # 60-day momentum for sector selection
 SECTOR_ROTATION_MIN_MOMENTUM = 0.0  # TEMPORARILY reduced to 0% for debugging - was 5.0%
 
@@ -276,14 +291,15 @@ RISK_ADJ_MOM_VOLUME_MULTIPLIER = 1.2  # Recent volume must be 20% above average
 
 # --- Risk-Adjusted Momentum Minimum Score ---
 # PROPOSAL 1: Lower minimum score to allow more high-potential stocks
-RISK_ADJ_MOM_MIN_SCORE = 30.0  # REVERTED - too low was hurting performance
+RISK_ADJ_MOM_MIN_SCORE = 10.0  # FIXED: Lowered from 30.0 to allow more candidates
 
 # --- Static Buy & Hold (BH) rebalancing period ---
-# How often to rebalance Static BH portfolios (in trading days)
-# Set to 0 or None to disable rebalancing (buy once at start, hold until end)
-# Recommended values: 20 (monthly), 60 (quarterly), 0 (no rebalancing)
-STATIC_BH_1Y_REBALANCE_DAYS = 0   # Static BH 1Y: rebalance every N days (0 = no rebalancing)
-STATIC_BH_3M_REBALANCE_DAYS = 0   # Static BH 3M: rebalance every N days (0 = no rebalancing)
+# DEPRECATED: These are now controlled by AI_REBALANCE_FREQUENCY_DAYS
+# Kept for backwards compatibility but not used
+# Set to 0 to maintain true buy & hold behavior (no rebalancing)
+STATIC_BH_1Y_REBALANCE_DAYS = 0   # DEPRECATED: Use AI_REBALANCE_FREQUENCY_DAYS instead
+STATIC_BH_3M_REBALANCE_DAYS = 0   # DEPRECATED: Use AI_REBALANCE_FREQUENCY_DAYS instead
+STATIC_BH_1M_REBALANCE_DAYS = 0   # DEPRECATED: Use AI_REBALANCE_FREQUENCY_DAYS instead
 
 # --- Dynamic Buy & Hold (BH) rebalancing guard ---
 # Dynamic BH checks candidates daily, but only trades if:
@@ -302,10 +318,18 @@ FEAT_VOL_WINDOW         = 10
 # Recommended: 180-250 days to ensure sufficient valid rows after feature engineering
 PREDICTION_LOOKBACK_DAYS = 252
 
-# --- AI Portfolio Rebalancing Strategy knobs ---
-# Check portfolio daily but only rebalance when stocks actually change (cost-effective).
-# Set to 1 for daily checking, higher values for less frequent monitoring.
-AI_REBALANCE_FREQUENCY_DAYS = 1  # Daily rebalancing
+# --- UNIFIED REBALANCING FREQUENCY FOR ALL DYNAMIC STRATEGIES ---
+# This controls rebalancing frequency for ALL dynamic strategies:
+#   - Dynamic BH (1Y/3M/1M)
+#   - AI Strategy, AI Portfolio
+#   - Risk-Adj Mom, Mean Reversion, Quality+Mom, Vol-Adj Mom
+#   - Momentum+AI Hybrid, Sector Rotation, 3M/1Y Ratio
+# Note: Static BH strategies remain static (no rebalancing) as intended
+# Set to:
+#   1 = Daily rebalancing
+#   7 = Weekly rebalancing
+#   30 = Monthly rebalancing
+AI_REBALANCE_FREQUENCY_DAYS = 1  # Rebalancing frequency for all dynamic strategies
 
 # AI Portfolio Rebalancing Threshold
 AI_PORTFOLIO_MIN_IMPROVEMENT_THRESHOLD_ANNUAL = 0.05  # 5% annualized improvement required
@@ -332,7 +356,7 @@ MOMENTUM_AI_HYBRID_TOP_N = 20  # Select top N stocks by momentum
 MOMENTUM_AI_HYBRID_PORTFOLIO_SIZE = 5  # Hold 5 stocks at a time (diversification)
 MOMENTUM_AI_HYBRID_BUY_THRESHOLD = 0.02  # Buy if AI predicts >2% return
 MOMENTUM_AI_HYBRID_SELL_THRESHOLD = -0.01  # Sell if AI predicts <-1% return
-MOMENTUM_AI_HYBRID_REBALANCE_DAYS = 7  # Check weekly (not daily = less transaction costs)
+# Note: Uses AI_REBALANCE_FREQUENCY_DAYS for rebalancing frequency
 MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK = 90  # 3-month momentum for stock ranking
 MOMENTUM_AI_HYBRID_STOP_LOSS = 0.10  # 10% stop loss from entry
 MOMENTUM_AI_HYBRID_TRAILING_STOP = 0.08  # 8% trailing stop once in profit

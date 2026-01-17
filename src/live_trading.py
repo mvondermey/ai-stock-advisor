@@ -361,6 +361,10 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
         # Risk-Adjusted Momentum Strategy
         return get_risk_adj_mom_tickers(all_tickers, all_tickers_data)
 
+    elif strategy == '3m_1y_ratio':
+        # 3M/1Y Ratio Strategy
+        return get_3m_1y_ratio_tickers(all_tickers, all_tickers_data)
+
     elif strategy == 'mean_reversion':
         # Mean Reversion Strategy
         return get_mean_reversion_tickers(all_tickers, all_tickers_data)
@@ -384,9 +388,144 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
 
 
 def get_ai_strategy_tickers(all_tickers: List[str]) -> List[str]:
-    """AI Strategy: Use model predictions to select top tickers."""
-    # This would use the AI models - for now return a placeholder
-    return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
+    """AI Strategy: Use the EXACT same logic as backtesting for consistency."""
+    try:
+        from prediction import load_models_for_tickers
+        from data_utils import load_prices_robust, fetch_training_data
+        from datetime import datetime, timedelta
+        import numpy as np
+        import pandas as pd
+        
+        print(f"   🤖 AI Strategy: Loading models for {len(all_tickers)} tickers...")
+        models, scalers, y_scalers = load_models_for_tickers(all_tickers)
+        
+        if not models:
+            print(f"   ⚠️ AI Strategy: No models available, falling back to top {TOP_N_STOCKS} tickers")
+            return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
+        
+        print(f"   🤖 AI Strategy: Making predictions using {len(models)} models...")
+        predictions = []
+        
+        # Load SPY data for Market_Momentum_SPY feature (same as backtesting)
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=365)
+        spy_df = load_prices_robust('SPY', start_date, end_date)
+        
+        if not spy_df.empty:
+            spy_df['SPY_Returns'] = spy_df['Close'].pct_change(fill_method=None)
+            spy_df['Market_Momentum_SPY'] = spy_df['SPY_Returns'].rolling(window=20).mean()  # Same window as backtesting
+            spy_df = spy_df[['Market_Momentum_SPY']].reset_index()
+            spy_df.columns = ['date', 'Market_Momentum_SPY']
+            spy_df['date'] = pd.to_datetime(spy_df['date'])
+        else:
+            print("   ⚠️ Could not fetch SPY data. Market Momentum feature will be 0.")
+            # Create dummy SPY data
+            spy_df = pd.DataFrame({'date': pd.date_range(start_date, end_date), 'Market_Momentum_SPY': 0.0})
+        
+        # Use the EXACT same logic as backtesting (lines 2675-2695 in backtesting.py)
+        for ticker in all_tickers:
+            if ticker in models and models[ticker] is not None:
+                try:
+                    # Load recent data (same as backtesting approach)
+                    ticker_data = load_prices_robust(ticker, start_date, end_date)
+                    
+                    if ticker_data is not None and not ticker_data.empty:
+                        # Reset index to have 'date' column for merging
+                        ticker_data = ticker_data.reset_index()
+                        
+                        # Debug: Print columns to see what we have
+                        print(f"   🔍 {ticker}: Columns after reset_index: {list(ticker_data.columns)}")
+                        
+                        # Handle different index name possibilities
+                        if 'date' not in ticker_data.columns:
+                            print(f"   🔍 {ticker}: 'date' not in columns, attempting to fix...")
+                            # Index might be named differently, rename it to 'date'
+                            if len(ticker_data.columns) > 0 and ticker_data.columns[0] in ['index', 'Date', 'datetime']:
+                                ticker_data = ticker_data.rename(columns={ticker_data.columns[0]: 'date'})
+                                print(f"   🔍 {ticker}: Renamed '{ticker_data.columns[0]}' to 'date'")
+                            else:
+                                # Index is unnamed, first column should be the date
+                                old_cols = list(ticker_data.columns)
+                                ticker_data.columns = ['date'] + list(ticker_data.columns[1:])
+                                print(f"   🔍 {ticker}: Renamed first column from '{old_cols[0]}' to 'date'")
+                        
+                        print(f"   🔍 {ticker}: Columns after fix: {list(ticker_data.columns)}")
+                        ticker_data['date'] = pd.to_datetime(ticker_data['date'])
+                        
+                        # Merge SPY data (same as backtesting)
+                        ticker_data = ticker_data.merge(spy_df, on='date', how='left')
+                        ticker_data['Market_Momentum_SPY'] = ticker_data['Market_Momentum_SPY'].ffill().bfill().fillna(0.0)
+                        
+                        # Set date back as index for feature engineering
+                        ticker_data = ticker_data.set_index('date')
+                        
+                        # Remove 'date' column if it still exists (prevents KeyError: 'date')
+                        if 'date' in ticker_data.columns:
+                            ticker_data = ticker_data.drop(columns=['date'])
+                        
+                        # Ensure index name is not 'date' (prevents conflicts in calculations)
+                        ticker_data.index.name = None
+                        
+                        # Ensure index is timezone-aware for prediction
+                        if ticker_data.index.tzinfo is None:
+                            ticker_data.index = ticker_data.index.tz_localize('UTC')
+                        else:
+                            ticker_data.index = ticker_data.index.tz_convert('UTC')
+                        
+                        # Use the same prediction logic as backtesting
+                        from backtesting import _quick_predict_return
+                        
+                        # Need minimum lookback days for features (same as backtesting)
+                        PREDICTION_LOOKBACK_DAYS = 120
+                        if len(ticker_data) >= PREDICTION_LOOKBACK_DAYS:
+                            try:
+                                pred = _quick_predict_return(
+                                    ticker, 
+                                    ticker_data.tail(PREDICTION_LOOKBACK_DAYS),
+                                    models[ticker],
+                                    scalers.get(ticker),
+                                    y_scalers.get(ticker),
+                                    horizon_days=10
+                                )
+                                
+                                if pred != -np.inf:
+                                    predictions.append((ticker, pred))
+                                    print(f"   📊 {ticker}: Prediction = {pred:.4f}")
+                                    
+                            except Exception as e:
+                                print(f"   ⚠️ Error predicting {ticker}: {e}")
+                                # Print full traceback to identify exact error location
+                                import traceback
+                                print(f"   🔍 Full traceback:")
+                                traceback.print_exc()
+                                continue
+                        
+                except Exception as e:
+                    print(f"   ⚠️ Error predicting {ticker}: {e}")
+                    # Print full traceback for outer exception too
+                    import traceback
+                    print(f"   🔍 Outer exception traceback:")
+                    traceback.print_exc()
+                    continue
+        
+        # Select top N by predicted return (same as backtesting line 2750-2754)
+        if predictions:
+            predictions.sort(key=lambda x: x[1], reverse=True)
+            num_to_select = min(TOP_N_STOCKS, len(predictions))
+            selected_stocks = [ticker for ticker, _ in predictions[:num_to_select]]
+            
+            print(f"   ✅ AI Strategy: Selected {len(selected_stocks)} tickers: {selected_stocks}")
+            for ticker, pred in predictions[:num_to_select]:
+                print(f"      {ticker}: {pred:.4f}")
+            
+            return selected_stocks
+        else:
+            print(f"   ⚠️ AI Strategy: No valid predictions, falling back to top {TOP_N_STOCKS} tickers")
+            return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
+            
+    except Exception as e:
+        print(f"   ❌ AI Strategy failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
+        return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
 def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
