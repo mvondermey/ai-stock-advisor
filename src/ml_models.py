@@ -761,7 +761,6 @@ def train_and_evaluate_models(
     loaded_gru_hyperparams: Optional[Dict] = None,
     models_and_params_global: Optional[Dict] = None,
     perform_gru_hp_optimization: bool = True,
-    default_target_percentage: float = None,  # Will be set from config if None
     default_class_horizon: int = None  # Will be set from config if None
 ):
     # --- Alpha-aware weights (optional) ---
@@ -777,9 +776,6 @@ def train_and_evaluate_models(
     models_and_params = models_and_params_global if models_and_params_global is not None else initialize_ml_libraries()
     
     # Use default values from config if not provided
-    if default_target_percentage is None:
-        from config import TARGET_PERCENTAGE
-        default_target_percentage = TARGET_PERCENTAGE
     if default_class_horizon is None:
         from config import PERIOD_HORIZONS
         default_class_horizon = PERIOD_HORIZONS.get("1-Year", 20)
@@ -1761,7 +1757,7 @@ def train_and_evaluate_models(
 
 def train_worker(params: Tuple) -> Dict:
     """Worker function for parallel model training."""
-    ticker, df_train_period, target_percentage, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell = params
+    ticker, df_train_period, feature_set, loaded_gru_hyperparams_buy, loaded_gru_hyperparams_sell = params
     
     models_dir = Path("logs/models")
     _ensure_dir(models_dir)
@@ -1816,7 +1812,7 @@ def train_worker(params: Tuple) -> Dict:
     print(f"  ⚙️ Training models for {ticker} (FORCE_TRAINING is {FORCE_TRAINING}, CONTINUE_TRAINING_FROM_EXISTING is {CONTINUE_TRAINING_FROM_EXISTING})...")
     print(f"  [DEBUG] {current_process().name} - {ticker}: Initiating feature extraction for training.")
     
-    df_train, actual_feature_set = fetch_training_data(ticker, df_train_period, target_percentage)
+    df_train, actual_feature_set = fetch_training_data(ticker, df_train_period)
 
     if df_train.empty:
         print(f"  ❌ Skipping {ticker}: Insufficient training data.")

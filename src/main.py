@@ -28,7 +28,6 @@ sys.path.insert(1, str(project_root))
 
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
-    TARGET_PERCENTAGE,
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, VALIDATION_DAYS,
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, PARALLEL_THRESHOLD, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
@@ -186,12 +185,12 @@ from io import StringIO
 from multiprocessing import Pool, cpu_count, current_process
 import joblib # Added for model saving/loading
 import warnings # Added for warning suppression
-from data_utils import load_prices, fetch_training_data, load_prices_robust, _ensure_dir
-from data_fetcher import (
-    _normalize_symbol, _fetch_from_stooq, _fetch_from_alpaca, _fetch_from_twelvedata,
+from data_utils import (
+    load_prices, fetch_training_data, load_prices_robust, _ensure_dir, 
     _download_batch_robust, _fetch_financial_data, _fetch_financial_data_from_alpaca,
-    _fetch_intermarket_data, _to_utc
+    _fetch_from_stooq, _fetch_from_alpaca, _fetch_from_twelvedata, _fetch_intermarket_data
 )
+from utils import _normalize_symbol, _to_utc
 from ticker_selection import get_all_tickers, find_top_performers
 from summary_phase import (
     print_final_summary, print_prediction_vs_actual_comparison,
@@ -422,9 +421,8 @@ def get_internet_time():
     return local_time
 
 def main(
-    fcf_threshold: float = 0.0,
-    ebitda_threshold: float = 0.0,
-    target_percentage: float = TARGET_PERCENTAGE,
+    fcf_threshold: float = None,
+    ebitda_threshold: float = None,
     class_horizon: int = PERIOD_HORIZONS.get("1-Year", 20),
     top_performers_data=None,
     feature_set: Optional[List[str]] = None,
@@ -505,22 +503,21 @@ def main(
     # --- Step 1: Get all tickers and perform a single, comprehensive data download ---
     all_available_tickers = get_all_tickers()
     if not all_available_tickers:
-        print("❌ No tickers found from market selection. Aborting.")
+        print(" No tickers found from market selection. Aborting.")
         return (None,) * 15
 
-    # Determine the absolute earliest date needed for any calculation
-    # Need extra 365 days BEFORE the training period for 1-year performance measurement
-    train_start_1y = end_date - timedelta(days=BACKTEST_DAYS + TRAIN_LOOKBACK_DAYS + 1)
-    earliest_date_needed = train_start_1y - timedelta(days=365)  # Add 1 year buffer for performance calculation
-
-    # Use the actual earliest date needed instead of hardcoded 730 days
-    # This prevents cache misses when cache has sufficient data for analysis
-    cache_start_date = earliest_date_needed  # Use calculated date
-    actual_start_date = earliest_date_needed
+    # Determine cache start date - ALWAYS use maximum range regardless of backtest settings
+    # This ensures consistent data availability and eliminates backtest parameter dependency
+    MAX_LOOKBACK_DAYS = 730  # 2 years of historical data for all possible analysis needs
+    MAX_BUFFER_DAYS = 365    # Additional buffer for performance calculations
+    
+    # Fixed cache range that covers all possible scenarios
+    cache_start_date = today_for_data_fetch - timedelta(days=MAX_LOOKBACK_DAYS + MAX_BUFFER_DAYS)
+    actual_start_date = cache_start_date
 
     days_back = (today_for_data_fetch - cache_start_date).days
     print(f"🚀 Step 1: Batch downloading data for {len(all_available_tickers)} tickers from {cache_start_date.date()} to {today_for_data_fetch.date()}...")
-    print(f"  (Requesting {days_back} days of data based on BACKTEST_DAYS={BACKTEST_DAYS} + TRAIN_LOOKBACK_DAYS={TRAIN_LOOKBACK_DAYS})")
+    print(f"  (Requesting {days_back} days of data - fixed maximum range for consistency)")
 
     all_tickers_data_list = []
     for i in range(0, len(all_available_tickers), BATCH_DOWNLOAD_SIZE):
@@ -633,6 +630,7 @@ def main(
         bt_end = last_available
     
     # Calculate initial backtest dates (needed for all conditional blocks)
+    # Note: BACKTEST_DAYS only affects the backtest period, NOT data fetching range
     bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)  # When stocks will be bought
     
     # Import RETRAIN_FREQUENCY_DAYS to ensure it's available
@@ -682,7 +680,7 @@ def main(
 
     # --- Fetch SPY data for Market Momentum feature ---
     print("🔍 Fetching SPY data for Market Momentum feature...")
-    spy_df = load_prices_robust('SPY', earliest_date_needed, today_for_data_fetch)
+    spy_df = load_prices_robust('SPY', cache_start_date, today_for_data_fetch)
     if not spy_df.empty:
         spy_df['SPY_Returns'] = spy_df['Close'].pct_change()
         spy_df['Market_Momentum_SPY'] = spy_df['SPY_Returns'].rolling(window=FEAT_VOL_WINDOW).mean()
@@ -704,7 +702,7 @@ def main(
 
     # --- Fetch and merge intermarket data ---
     print("🔍 Fetching intermarket data...")
-    intermarket_df = _fetch_intermarket_data(earliest_date_needed, today_for_data_fetch)
+    intermarket_df = _fetch_intermarket_data(cache_start_date, today_for_data_fetch)
     if not intermarket_df.empty:
         # ✅ FIX 3: Ensure intermarket_df index is timezone-aware before merge
         if intermarket_df.index.tzinfo is None:
@@ -864,10 +862,20 @@ def main(
         today_for_end = get_internet_time()  # Get current time
         training_cutoff_date = today_for_end - timedelta(days=prediction_horizon)
         
-        # Backtest runs until today
+        # Backtest runs until today OR last available data (whichever is earlier)
         bt_end = today_for_end
         
-        # Recalculate backtest start date based on new end date
+        # ✅ IMPORTANT: Respect data availability even in override mode
+        if 'date' in all_tickers_data.columns:
+            last_available = pd.to_datetime(all_tickers_data['date'].max())
+        else:
+            last_available = all_tickers_data.index.max()
+        
+        if last_available < bt_end:
+            print(f"ℹ️ Override: Capping backtest end date from {bt_end.date()} to last available data {last_available.date()}")
+            bt_end = last_available
+        
+        # Recalculate backtest start date based on final end date
         bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)
         
         print(f"🔄 Backtest & Training Override:")
@@ -883,18 +891,17 @@ def main(
         print(title + "\n" + "="*50 + "\n")
 
         print("🔍 Step 2: Identifying stocks outperforming market benchmarks...")
-        print(f"  📅 Using performance data up to {bt_start_1y.date()} (purchase date) to avoid look-ahead bias")
+        print(f"  📅 Using latest available performance data for ticker selection")
 
         # Get top performers from market selection using the pre-fetched data
-        # Use bt_start_1y as performance_end_date to avoid look-ahead bias
+        # Use latest available data to select best current performers
         market_selected_performers = find_top_performers(
             all_available_tickers=all_available_tickers,
             all_tickers_data=all_tickers_data,
             return_tickers=True,
             n_top=N_TOP_TICKERS,
             fcf_min_threshold=fcf_threshold,
-            ebitda_min_threshold=ebitda_threshold,
-            performance_end_date=bt_start_1y
+            ebitda_min_threshold=ebitda_threshold
         )
         
 
@@ -931,12 +938,13 @@ def main(
         ticker_data_dict = all_tickers_data
     
     # Run the comparison
+    # Use 20 tickers per strategy for meaningful comparison between strategies
     selection_comparison_results = run_selection_strategy_comparison(
         all_tickers_data=ticker_data_dict,
         all_available_tickers=all_available_tickers,
         selection_date=bt_start_1y,
         evaluation_date=bt_end,
-        n_top=N_TOP_TICKERS,
+        n_top=20,
         benchmark_ticker='SPY'
     )
     
@@ -1164,7 +1172,6 @@ def main(
     optimized_params_per_ticker = {}
     for ticker in top_tickers_1y_filtered:
         optimized_params_per_ticker[ticker] = {
-            'target_percentage': target_percentage,
             'optimization_status': "Using defaults (no optimization)"
         }
 
@@ -1238,7 +1245,7 @@ def main(
         initial_capital_1y = capital_per_stock_1y * n_top_rebal
         
         # Use walk-forward backtest with periodic retraining and rebalancing
-        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, bh_1m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ratio_3m_1y_portfolio_value_1y, ratio_3m_1y_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, static_bh_1m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, ratio_3m_1y_transaction_costs_1y, actual_backtest_day_count = _run_portfolio_backtest_walk_forward(
+        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, bh_1m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ratio_3m_1y_portfolio_value_1y, ratio_3m_1y_portfolio_history_1y, ratio_1y_3m_portfolio_value_1y, ratio_1y_3m_portfolio_history_1y, turnaround_portfolio_value_1y, turnaround_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, static_bh_1m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, ratio_3m_1y_transaction_costs_1y, ratio_1y_3m_transaction_costs_1y, turnaround_transaction_costs_1y, actual_backtest_day_count, ai_cash_deployed_1y, static_bh_cash_deployed_1y, static_bh_3m_cash_deployed_1y, static_bh_1m_cash_deployed_1y, dynamic_bh_1y_cash_deployed_1y, dynamic_bh_3m_cash_deployed_1y, ai_portfolio_cash_deployed_1y, dynamic_bh_1m_cash_deployed_1y, risk_adj_mom_cash_deployed_1y, mean_reversion_cash_deployed_1y, quality_momentum_cash_deployed_1y, volatility_adj_mom_cash_deployed_1y, momentum_ai_hybrid_cash_deployed_1y, dynamic_bh_1y_vol_filter_cash_deployed_1y, dynamic_bh_1y_trailing_stop_cash_deployed_1y, multitask_cash_deployed_1y, sector_rotation_cash_deployed_1y, ratio_3m_1y_cash_deployed_1y, ratio_1y_3m_cash_deployed_1y, turnaround_cash_deployed_1y = _run_portfolio_backtest_walk_forward(
             all_tickers_data=all_tickers_data,
             train_start_date=train_start_1y_calc,
             backtest_start_date=bt_start_1y,
@@ -1248,7 +1255,6 @@ def main(
             initial_scalers=scalers,
             initial_y_scalers=y_scalers,
             capital_per_stock=capital_per_stock_1y,
-            target_percentage=TARGET_PERCENTAGE,
             period_name=actual_period_name,
             top_performers_data=top_performers_data,
             horizon_days=PERIOD_HORIZONS.get("1-Year", 60),
@@ -1493,6 +1499,10 @@ def main(
         sector_rotation_1y_return=((sector_rotation_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_ratio_3m_1y_value_1y=ratio_3m_1y_portfolio_value_1y,
         ratio_3m_1y_1y_return=((ratio_3m_1y_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_ratio_1y_3m_value_1y=ratio_1y_3m_portfolio_value_1y,
+        ratio_1y_3m_1y_return=((ratio_1y_3m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_turnaround_value_1y=turnaround_portfolio_value_1y,
+        turnaround_1y_return=((turnaround_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         ai_transaction_costs=ai_transaction_costs_1y,
         static_bh_transaction_costs=static_bh_transaction_costs_1y,
         static_bh_3m_transaction_costs=static_bh_3m_transaction_costs_1y,
@@ -1502,6 +1512,8 @@ def main(
         dynamic_bh_1y_trailing_stop_transaction_costs=dynamic_bh_1y_trailing_stop_transaction_costs_1y,
         sector_rotation_transaction_costs=sector_rotation_transaction_costs_1y,
         ratio_3m_1y_transaction_costs=ratio_3m_1y_transaction_costs_1y,
+        ratio_1y_3m_transaction_costs=ratio_1y_3m_transaction_costs_1y,
+        turnaround_transaction_costs=turnaround_transaction_costs_1y,
         dynamic_bh_3m_transaction_costs=dynamic_bh_3m_transaction_costs_1y,
         ai_portfolio_transaction_costs=ai_portfolio_transaction_costs_1y,
         dynamic_bh_1m_transaction_costs=dynamic_bh_1m_transaction_costs_1y,
@@ -1524,6 +1536,27 @@ def main(
         prediction_vs_bh_1month=None,
         final_rule_value_1y=None,
         rule_1y_return=None,
+        # Cash utilization tracking parameters
+        ai_cash_deployed=ai_cash_deployed_1y,
+        static_bh_cash_deployed=static_bh_cash_deployed_1y,
+        static_bh_3m_cash_deployed=static_bh_3m_cash_deployed_1y,
+        static_bh_1m_cash_deployed=static_bh_1m_cash_deployed_1y,
+        dynamic_bh_1y_cash_deployed=dynamic_bh_1y_cash_deployed_1y,
+        dynamic_bh_3m_cash_deployed=dynamic_bh_3m_cash_deployed_1y,
+        ai_portfolio_cash_deployed=ai_portfolio_cash_deployed_1y,
+        dynamic_bh_1m_cash_deployed=dynamic_bh_1m_cash_deployed_1y,
+        risk_adj_mom_cash_deployed=risk_adj_mom_cash_deployed_1y,
+        mean_reversion_cash_deployed=mean_reversion_cash_deployed_1y,
+        quality_momentum_cash_deployed=quality_momentum_cash_deployed_1y,
+        volatility_adj_mom_cash_deployed=volatility_adj_mom_cash_deployed_1y,
+        momentum_ai_hybrid_cash_deployed=momentum_ai_hybrid_cash_deployed_1y,
+        dynamic_bh_1y_vol_filter_cash_deployed=dynamic_bh_1y_vol_filter_cash_deployed_1y,
+        dynamic_bh_1y_trailing_stop_cash_deployed=dynamic_bh_1y_trailing_stop_cash_deployed_1y,
+        multitask_cash_deployed=multitask_cash_deployed_1y,
+        sector_rotation_cash_deployed=sector_rotation_cash_deployed_1y,
+        ratio_3m_1y_cash_deployed=ratio_3m_1y_cash_deployed_1y,
+        ratio_1y_3m_cash_deployed=ratio_1y_3m_cash_deployed_1y,
+        turnaround_cash_deployed=turnaround_cash_deployed_1y,
         final_rule_value_ytd=None,
         rule_ytd_return=None,
         final_rule_value_3month=None,
@@ -1619,7 +1652,7 @@ if __name__ == "__main__":
         import src.config as config
         config.LIVE_TRADING_STRATEGY = args.strategy
         print(f"🚀 Starting Live Trading with Strategy: {args.strategy}")
-        print(f"📋 Available strategies: ai_individual, ai_portfolio, multitask, risk_adj_mom, dynamic_bh_1y, dynamic_bh_3m, dynamic_bh_1m")
+        print(f"📋 Available strategies: ai_individual, ai_portfolio, multitask, risk_adj_mom, dynamic_bh_1y, dynamic_bh_3m, dynamic_bh_1m, static_bh_1y, static_bh_3m, static_bh_1m, turnaround, ratio_3m_1y, ratio_1y_3m")
         print(f"💡 Example: python src/main.py --live-trading --strategy risk_adj_mom")
         print("=" * 80)
         
@@ -1627,7 +1660,7 @@ if __name__ == "__main__":
         print("\n🔍 Step 1: Fetching and filtering tickers (same as backtest)...")
         try:
             from ticker_selection import get_all_tickers, find_top_performers
-            from data_fetcher import _download_batch_robust
+            from data_utils import _download_batch_robust
             from datetime import datetime, timezone, timedelta
             from config import N_TOP_TICKERS
             
@@ -1655,12 +1688,13 @@ if __name__ == "__main__":
                 all_tickers_data = pd.concat(all_data_list, ignore_index=False)
                 print(f"   ✅ Downloaded data for {len(all_tickers_data.columns.levels[1] if isinstance(all_tickers_data.columns, pd.MultiIndex) else all_tickers_data.columns)} tickers")
                 
-                # Convert to long format for find_top_performers (same as backtest)
-                if isinstance(all_tickers_data.columns, pd.MultiIndex):
-                    all_tickers_data_long = all_tickers_data.stack(level=1)
-                    all_tickers_data_long = all_tickers_data_long.reset_index()
-                    all_tickers_data_long.columns = ['date', 'ticker'] + list(all_tickers_data_long.columns[2:])
-                    all_tickers_data = all_tickers_data_long
+                # For live trading, keep wide format with MultiIndex columns
+                # Only convert to long format for find_top_performers
+                all_tickers_data_for_filtering = all_tickers_data.copy()
+                if isinstance(all_tickers_data_for_filtering.columns, pd.MultiIndex):
+                    all_tickers_data_for_filtering = all_tickers_data_for_filtering.stack(level=1)
+                    all_tickers_data_for_filtering = all_tickers_data_for_filtering.reset_index()
+                    all_tickers_data_for_filtering.columns = ['date', 'ticker'] + list(all_tickers_data_for_filtering.columns[2:])
                 
                 # Filter to top performers (same as backtest)
                 print(f"   🔍 Filtering to top {N_TOP_TICKERS} performers...")
@@ -1668,7 +1702,7 @@ if __name__ == "__main__":
                 naive_end_date = end_date.replace(tzinfo=None)
                 market_selected_performers = find_top_performers(
                     all_available_tickers=all_available_tickers,
-                    all_tickers_data=all_tickers_data,
+                    all_tickers_data=all_tickers_data_for_filtering,
                     return_tickers=True,
                     n_top=N_TOP_TICKERS,
                     performance_end_date=naive_end_date
@@ -1744,3 +1778,85 @@ if __name__ == "__main__":
     else:
         # Run normal backtesting
         main()
+    
+    # Add 3M performance table at the end (runs in both live trading and backtesting modes)
+    try:
+        print("\n" + "=" * 100)
+        print("📊 UNIFIED TICKER PERFORMANCE TABLE (Sorted by 3M Performance)")
+        print("=" * 100)
+        
+        from datetime import datetime, timezone, timedelta
+        from ticker_selection import _get_current_1y_return_from_cache, _calculate_1y_return_from_dataframe
+        
+        today = datetime.now(timezone.utc)
+        
+        # Get all available tickers (use same logic as live trading)
+        try:
+            from ticker_selection import get_all_tickers
+            all_available_tickers = get_all_tickers()
+        except Exception as e:
+            print(f"⚠️ Could not fetch tickers: {e}")
+            all_available_tickers = []
+        
+        # Calculate 3M and 1Y performance for all available tickers
+        performance_data = []
+        
+        print(f"🔍 Calculating performance metrics for {len(all_available_tickers)} tickers...")
+        
+        for ticker in all_available_tickers:
+            try:
+                # Get 1Y performance
+                perf_1y = _get_current_1y_return_from_cache(ticker, {}, today, 365)
+                
+                # Get 3M performance (reuse the same function with 90 days)
+                perf_3m = _get_current_1y_return_from_cache(ticker, {}, today, 90)
+                
+                if perf_1y is not None and perf_3m is not None:
+                    performance_data.append({
+                        'Ticker': ticker,
+                        '3M_Perf': perf_3m,
+                        '1Y_Perf': perf_1y
+                    })
+                    
+            except Exception as e:
+                # Skip tickers with errors
+                continue
+        
+        # Sort by 3M performance (descending)
+        performance_data.sort(key=lambda x: x['3M_Perf'], reverse=True)
+        
+        # Print table
+        print(f"{'Ticker':<10} {'3M_Perf':>12} {'1Y_Perf':>12}")
+        print("-" * 38)
+        
+        for data in performance_data:  # Show ALL tickers
+            ticker = data['Ticker']
+            perf_3m = data['3M_Perf']
+            perf_1y = data['1Y_Perf']
+            
+            # Color coding for performance
+            if perf_3m >= 20:
+                color_3m = "🟢"  # Strong positive
+            elif perf_3m >= 10:
+                color_3m = "🔵"  # Moderate positive
+            elif perf_3m >= 0:
+                color_3m = "⚪"  # Neutral
+            else:
+                color_3m = "🔴"  # Negative
+            
+            print(f"{ticker:<10} {color_3m} {perf_3m:+10.2f}% {perf_1y:+10.2f}%")
+        
+        print(f"\n📈 Summary:")
+        print(f"   Total tickers analyzed: {len(performance_data)}")
+        if performance_data:
+            avg_3m = sum(d['3M_Perf'] for d in performance_data) / len(performance_data)
+            avg_1y = sum(d['1Y_Perf'] for d in performance_data) / len(performance_data)
+            print(f"   Average 3M performance: {avg_3m:+.2f}%")
+            print(f"   Average 1Y performance: {avg_1y:+.2f}%")
+            print(f"   Best 3M performer: {performance_data[0]['Ticker']} ({performance_data[0]['3M_Perf']:+.2f}%)")
+            print(f"   Worst 3M performer: {performance_data[-1]['Ticker']} ({performance_data[-1]['3M_Perf']:+.2f}%)")
+        
+        print("=" * 100)
+        
+    except Exception as e:
+        print(f"⚠️ Error generating performance table: {e}")

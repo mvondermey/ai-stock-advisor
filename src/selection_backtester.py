@@ -25,8 +25,14 @@ def calculate_momentum(prices: pd.Series, days: int) -> Optional[float]:
     
     # Get prices from 'days' ago to now
     try:
-        start_price = prices.iloc[0]
-        end_price = prices.iloc[-1]
+        # Use the exact lookback period, not just first/last prices
+        if len(prices) >= days:
+            start_price = prices.iloc[-days]  # Price 'days' ago
+            end_price = prices.iloc[-1]       # Current price
+        else:
+            # If not enough data, use first available price
+            start_price = prices.iloc[0]
+            end_price = prices.iloc[-1]
         
         if start_price <= 0 or pd.isna(start_price) or pd.isna(end_price):
             return None

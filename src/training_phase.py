@@ -119,7 +119,7 @@ except ImportError:
 
 def train_worker(params: Tuple) -> Dict:
     """Worker function for parallel model training."""
-    ticker, df_train_period, target_percentage, class_horizon, feature_set = params
+    ticker, df_train_period, class_horizon, feature_set = params
     
     import sys
     import os
@@ -264,7 +264,7 @@ def train_worker(params: Tuple) -> Dict:
     print(f"  ⚙️ Training models for {ticker} (FORCE_TRAINING is {FORCE_TRAINING}, CONTINUE_TRAINING_FROM_EXISTING is {CONTINUE_TRAINING_FROM_EXISTING})...")
     print(f"  [DEBUG] {current_process().name} - {ticker}: Initiating feature extraction for training.")
     
-    df_train, actual_feature_set = fetch_training_data(ticker, df_train_period, target_percentage, class_horizon)
+    df_train, actual_feature_set = fetch_training_data(ticker, df_train_period, class_horizon)
 
     if df_train.empty:
         print(f"  ❌ Skipping {ticker}: Insufficient training data")
@@ -291,7 +291,6 @@ def train_worker(params: Tuple) -> Dict:
             loaded_gru_hyperparams=loaded_gru_hyperparams,  # Reuse hyperparams
             models_and_params_global=global_models_and_params,
             perform_gru_hp_optimization=True,  # enable HP search
-            default_target_percentage=target_percentage, # Pass current target_percentage
             default_class_horizon=class_horizon # Pass current class_horizon
         )
     finally:
@@ -499,7 +498,6 @@ def train_models_for_period(
             all_tickers_data=all_tickers_data,
             train_start=train_start,
             train_end=train_end,
-            target_percentage=period_target_pct,
             class_horizon=period_horizon,
             feature_set=feature_set,
             include_ai_portfolio=False,  # AI Portfolio trained separately

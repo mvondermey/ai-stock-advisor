@@ -7,7 +7,6 @@ from typing import List, Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
 from config import (
-    TARGET_PERCENTAGE,
     INVESTMENT_PER_STOCK, PERIOD_HORIZONS
 )
 
@@ -82,6 +81,10 @@ def print_final_summary(
     sector_rotation_1y_return: float = None,
     final_ratio_3m_1y_value_1y: float = None,
     ratio_3m_1y_1y_return: float = None,
+    final_ratio_1y_3m_value_1y: float = None,
+    ratio_1y_3m_1y_return: float = None,
+    final_turnaround_value_1y: float = None,
+    turnaround_1y_return: float = None,
     final_multitask_value_1y: float = None,
     multitask_1y_return: float = None,
     mean_reversion_transaction_costs: float = None,
@@ -92,8 +95,31 @@ def print_final_summary(
     dynamic_bh_1y_trailing_stop_transaction_costs: float = None,
     sector_rotation_transaction_costs: float = None,
     ratio_3m_1y_transaction_costs: float = None,
+    ratio_1y_3m_transaction_costs: float = None,
+    turnaround_transaction_costs: float = None,
     multitask_transaction_costs: float = None,
-    backtest_days: int = None  # ✅ NEW: Number of days in backtest for annualization
+    backtest_days: int = None,  # ✅ NEW: Number of days in backtest for annualization
+    # Cash utilization tracking parameters
+    ai_cash_deployed: float = None,
+    static_bh_cash_deployed: float = None,
+    static_bh_3m_cash_deployed: float = None,
+    static_bh_1m_cash_deployed: float = None,
+    dynamic_bh_1y_cash_deployed: float = None,
+    dynamic_bh_3m_cash_deployed: float = None,
+    ai_portfolio_cash_deployed: float = None,
+    dynamic_bh_1m_cash_deployed: float = None,
+    risk_adj_mom_cash_deployed: float = None,
+    mean_reversion_cash_deployed: float = None,
+    quality_momentum_cash_deployed: float = None,
+    volatility_adj_mom_cash_deployed: float = None,
+    momentum_ai_hybrid_cash_deployed: float = None,
+    dynamic_bh_1y_vol_filter_cash_deployed: float = None,
+    dynamic_bh_1y_trailing_stop_cash_deployed: float = None,
+    multitask_cash_deployed: float = None,
+    sector_rotation_cash_deployed: float = None,
+    ratio_3m_1y_cash_deployed: float = None,
+    ratio_1y_3m_cash_deployed: float = None,
+    turnaround_cash_deployed: float = None
 ) -> None:
     """Prints the final summary of the backtest results."""
     
@@ -270,35 +296,42 @@ def print_final_summary(
     print(f"{'Txn Costs':<12} | {ai_costs:<17} | {static_bh_costs:<17} | {static_bh_3m_costs:<17} | {static_bh_1m_costs:<17} | {dynamic_bh_1y_costs:<17} | {dynamic_bh_3m_costs:<17} | {ai_portfolio_costs:<17} | {dynamic_bh_1m_costs:<17} | {risk_adj_mom_costs:<17} | {mean_reversion_costs:<17} | {quality_momentum_costs:<17} | {volatility_adj_mom_costs:<17} | {momentum_ai_hybrid_costs:<17} | {dynamic_bh_1y_vol_filter_costs:<17} | {dynamic_bh_1y_trailing_stop_costs:<17} | {multitask_costs:<17} | {sector_rotation_costs:<17} | {ratio_3m_1y_costs:<17}")
     
     # Cash Utilization row - shows how much capital was actually invested
-    def calculate_cash_utilization(final_value: float, initial_capital: float) -> str:
-        """Calculate cash utilization as percentage of capital invested."""
+    def calculate_cash_utilization(final_value: float, initial_capital: float, cash_deployed: float = None) -> str:
+        """Calculate cash utilization as percentage of capital actually deployed."""
         if final_value is None or initial_capital == 0:
             return "N/A"
         # For buy & hold strategies, utilization should be 100% (fully invested)
-        # For active strategies, calculate based on final value vs initial capital
+        # For active strategies, use actual cash deployed if provided
         if final_value <= 0:
             return "0.0%"
-        utilization = min((final_value / initial_capital) * 100, 999.9)  # Cap at 999.9% for display
+        
+        # Use actual cash deployed if available, otherwise estimate from final value
+        if cash_deployed is not None and cash_deployed > 0:
+            utilization = min((cash_deployed / initial_capital) * 100, 999.9)
+        else:
+            # Fallback: estimate based on final value (less accurate)
+            utilization = min((final_value / initial_capital) * 100, 999.9)
+        
         return f"{utilization:.1f}%"
     
-    ai_cash_util = calculate_cash_utilization(final_strategy_value_1y, initial_balance_used)
-    static_bh_cash_util = calculate_cash_utilization(final_buy_hold_value_1y, initial_balance_used) if ENABLE_STATIC_BH else "N/A"
-    static_bh_3m_cash_util = calculate_cash_utilization(final_buy_hold_value_3m, initial_balance_used) if (ENABLE_STATIC_BH and final_buy_hold_value_3m is not None) else "N/A"
-    static_bh_1m_cash_util = calculate_cash_utilization(final_static_bh_1m_value_1y, initial_balance_used) if (ENABLE_STATIC_BH and final_static_bh_1m_value_1y is not None) else "N/A"
-    dynamic_bh_1y_cash_util = calculate_cash_utilization(final_dynamic_bh_value_1y, initial_balance_used)
-    dynamic_bh_3m_cash_util = calculate_cash_utilization(final_dynamic_bh_3m_value_1y, initial_balance_used)
-    ai_portfolio_cash_util = calculate_cash_utilization(final_ai_portfolio_value_1y, initial_balance_used)
-    dynamic_bh_1m_cash_util = calculate_cash_utilization(final_dynamic_bh_1m_value_1y, initial_balance_used)
-    risk_adj_mom_cash_util = calculate_cash_utilization(final_risk_adj_mom_value_1y, initial_balance_used)
-    mean_reversion_cash_util = calculate_cash_utilization(final_mean_reversion_value_1y, initial_balance_used)
-    quality_momentum_cash_util = calculate_cash_utilization(final_quality_momentum_value_1y, initial_balance_used)
-    volatility_adj_mom_cash_util = calculate_cash_utilization(final_volatility_adj_mom_value_1y, initial_balance_used)
-    momentum_ai_hybrid_cash_util = calculate_cash_utilization(final_momentum_ai_hybrid_value_1y, initial_balance_used)
-    dynamic_bh_1y_vol_filter_cash_util = calculate_cash_utilization(final_dynamic_bh_1y_vol_filter_value_1y, initial_balance_used)
-    dynamic_bh_1y_trailing_stop_cash_util = calculate_cash_utilization(final_dynamic_bh_1y_trailing_stop_value_1y, initial_balance_used)
-    sector_rotation_cash_util = calculate_cash_utilization(final_sector_rotation_value_1y, initial_balance_used)
-    ratio_3m_1y_cash_util = calculate_cash_utilization(final_ratio_3m_1y_value_1y, initial_balance_used)
-    multitask_cash_util = calculate_cash_utilization(final_multitask_value_1y, initial_balance_used)
+    ai_cash_util = calculate_cash_utilization(final_strategy_value_1y, initial_balance_used, ai_cash_deployed)
+    static_bh_cash_util = calculate_cash_utilization(final_buy_hold_value_1y, initial_balance_used, static_bh_cash_deployed) if ENABLE_STATIC_BH else "N/A"
+    static_bh_3m_cash_util = calculate_cash_utilization(final_buy_hold_value_3m, initial_balance_used, static_bh_3m_cash_deployed) if (ENABLE_STATIC_BH and final_buy_hold_value_3m is not None) else "N/A"
+    static_bh_1m_cash_util = calculate_cash_utilization(final_static_bh_1m_value_1y, initial_balance_used, static_bh_1m_cash_deployed) if (ENABLE_STATIC_BH and final_static_bh_1m_value_1y is not None) else "N/A"
+    dynamic_bh_1y_cash_util = calculate_cash_utilization(final_dynamic_bh_value_1y, initial_balance_used, dynamic_bh_1y_cash_deployed)
+    dynamic_bh_3m_cash_util = calculate_cash_utilization(final_dynamic_bh_3m_value_1y, initial_balance_used, dynamic_bh_3m_cash_deployed)
+    ai_portfolio_cash_util = calculate_cash_utilization(final_ai_portfolio_value_1y, initial_balance_used, ai_portfolio_cash_deployed)
+    dynamic_bh_1m_cash_util = calculate_cash_utilization(final_dynamic_bh_1m_value_1y, initial_balance_used, dynamic_bh_1m_cash_deployed)
+    risk_adj_mom_cash_util = calculate_cash_utilization(final_risk_adj_mom_value_1y, initial_balance_used, risk_adj_mom_cash_deployed)
+    mean_reversion_cash_util = calculate_cash_utilization(final_mean_reversion_value_1y, initial_balance_used, mean_reversion_cash_deployed)
+    quality_momentum_cash_util = calculate_cash_utilization(final_quality_momentum_value_1y, initial_balance_used, quality_momentum_cash_deployed)
+    volatility_adj_mom_cash_util = calculate_cash_utilization(final_volatility_adj_mom_value_1y, initial_balance_used, volatility_adj_mom_cash_deployed)
+    momentum_ai_hybrid_cash_util = calculate_cash_utilization(final_momentum_ai_hybrid_value_1y, initial_balance_used, momentum_ai_hybrid_cash_deployed)
+    dynamic_bh_1y_vol_filter_cash_util = calculate_cash_utilization(final_dynamic_bh_1y_vol_filter_value_1y, initial_balance_used, dynamic_bh_1y_vol_filter_cash_deployed)
+    dynamic_bh_1y_trailing_stop_cash_util = calculate_cash_utilization(final_dynamic_bh_1y_trailing_stop_value_1y, initial_balance_used, dynamic_bh_1y_trailing_stop_cash_deployed)
+    sector_rotation_cash_util = calculate_cash_utilization(final_sector_rotation_value_1y, initial_balance_used, sector_rotation_cash_deployed)
+    ratio_3m_1y_cash_util = calculate_cash_utilization(final_ratio_3m_1y_value_1y, initial_balance_used, ratio_3m_1y_cash_deployed)
+    multitask_cash_util = calculate_cash_utilization(final_multitask_value_1y, initial_balance_used, multitask_cash_deployed)
     
     print(f"{'Cash Util':<12} | {ai_cash_util:<17} | {static_bh_cash_util:<17} | {static_bh_3m_cash_util:<17} | {static_bh_1m_cash_util:<17} | {dynamic_bh_1y_cash_util:<17} | {dynamic_bh_3m_cash_util:<17} | {ai_portfolio_cash_util:<17} | {dynamic_bh_1m_cash_util:<17} | {risk_adj_mom_cash_util:<17} | {mean_reversion_cash_util:<17} | {quality_momentum_cash_util:<17} | {volatility_adj_mom_cash_util:<17} | {momentum_ai_hybrid_cash_util:<17} | {dynamic_bh_1y_vol_filter_cash_util:<17} | {dynamic_bh_1y_trailing_stop_cash_util:<17} | {multitask_cash_util:<17} | {sector_rotation_cash_util:<17} | {ratio_3m_1y_cash_util:<17}")
     
@@ -543,7 +576,7 @@ def print_final_summary(
     print("\n💡 Next Steps:")
     print("  - Review individual ticker performance and trade logs for deeper insights.")
     print("  - Experiment with different `MARKET_SELECTION` options and `N_TOP_TICKERS`.")
-    print("  - Adjust `TARGET_PERCENTAGE` and `RISK_PER_TRADE` for different risk appetites.")
+    print("  - Adjust model parameters and risk management for different risk appetites.")
     print("  - Consider enabling `USE_MARKET_FILTER` and `USE_PERFORMANCE_BENCHMARK` for additional filtering.")
     print("  - Explore advanced ML models or feature engineering for further improvements.")
     print("="*80)

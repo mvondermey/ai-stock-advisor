@@ -153,7 +153,7 @@ TRAINING_POOL_MAXTASKSPERCHILD = 1  # Enable recycling for maximum stability
 # - Set to 600 (10 min) for normal use (handles slow XGBoost GridSearchCV)
 # - Set to 1800 (30 min) for very large datasets or complex models
 # - Set to None to disable timeout (not recommended - can hang forever)
-PER_TICKER_TIMEOUT = 30  # 30 seconds max per ticker (very aggressive for stuck tickers)
+PER_TICKER_TIMEOUT = 60  # 60 seconds max per ticker
 
 # Training worker process count (separate from global NUM_PROCESSES).
 # For 5000 tickers, use parallel training. Models are saved to disk and loaded back (no pickling overhead).
@@ -182,7 +182,7 @@ else:
 USE_UNIFIED_PARALLEL_TRAINING = True
 
 # --- Backtest & training windows
-BACKTEST_DAYS           = 30        # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr, ~365=1.5yr)
+BACKTEST_DAYS           = 60       # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr, ~365=1.5yr)
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 TRAIN_LOOKBACK_DAYS     = 365        # Train on ~1 year of history (user request)
 VALIDATION_DAYS         = 90         # FIX 4: Validation period for threshold optimization
@@ -196,7 +196,7 @@ RUN_BACKTEST_UNTIL_TODAY = True   # Run backtest until today - horizon
 # Train models until validation_end_date (ensures 63 days future data for validation)
 # Then run walk-forward backtest until today - horizon
 TWO_PHASE_TRAINING_BACKTEST = True   # Enable validation-based training
-VALIDATION_END_DATE_OFFSET = 63      # Days before today for training end (prediction horizon)
+VALIDATION_END_DATE_OFFSET = 30      # Days before today for training end (reduced from 63 for 60-day backtests)
 
 # --- Live Trading
 LIVE_TRADING_ENABLED     = False       # ⚠️ Set to True to execute real orders (start with False for dry-run)
@@ -217,7 +217,7 @@ RETRAIN_FREQUENCY_DAYS = 10  # Train on Day 1, then every 30 days, plus final tr
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = True  # ENABLED - Train models for AI Strategy and individual ticker predictions
+ENABLE_1YEAR_TRAINING   = False   # ENABLED - Train models for AI Strategy and individual ticker predictions
 
 # --- Portfolio Stratebgy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
@@ -297,9 +297,9 @@ RISK_ADJ_MOM_MIN_SCORE = 10.0  # FIXED: Lowered from 30.0 to allow more candidat
 # DEPRECATED: These are now controlled by AI_REBALANCE_FREQUENCY_DAYS
 # Kept for backwards compatibility but not used
 # Set to 0 to maintain true buy & hold behavior (no rebalancing)
-STATIC_BH_1Y_REBALANCE_DAYS = 0   # DEPRECATED: Use AI_REBALANCE_FREQUENCY_DAYS instead
-STATIC_BH_3M_REBALANCE_DAYS = 0   # DEPRECATED: Use AI_REBALANCE_FREQUENCY_DAYS instead
-STATIC_BH_1M_REBALANCE_DAYS = 0   # DEPRECATED: Use AI_REBALANCE_FREQUENCY_DAYS instead
+STATIC_BH_1Y_REBALANCE_DAYS = 90   # DEPRECATED: Use AI_REBALANCE_FREQUENCY_DAYS instead
+STATIC_BH_3M_REBALANCE_DAYS = 60   # DEPRECATED: Use AI_REBALANCE_FREQUENCY_DAYS instead
+STATIC_BH_1M_REBALANCE_DAYS = 60   # Rebalance every 30 days (1 month)
 
 # --- Dynamic Buy & Hold (BH) rebalancing guard ---
 # Dynamic BH checks candidates daily, but only trades if:
@@ -315,8 +315,8 @@ FEAT_VOL_WINDOW         = 10
 # How many days of historical data to use when making predictions
 # Must be >= 120 to have enough data after feature calculation (indicators need 50+ days lookback)
 # Higher = more stable predictions, Lower = more reactive to recent changes
-# Recommended: 180-250 days to ensure sufficient valid rows after feature engineering
-PREDICTION_LOOKBACK_DAYS = 252
+# Recommended: 120-180 days to ensure sufficient valid rows after feature engineering
+PREDICTION_LOOKBACK_DAYS = 120
 
 # --- UNIFIED REBALANCING FREQUENCY FOR ALL DYNAMIC STRATEGIES ---
 # This controls rebalancing frequency for ALL dynamic strategies:
@@ -331,24 +331,20 @@ PREDICTION_LOOKBACK_DAYS = 252
 #   30 = Monthly rebalancing
 AI_REBALANCE_FREQUENCY_DAYS = 1  # Rebalancing frequency for all dynamic strategies
 
-# AI Portfolio Rebalancing Threshold
-AI_PORTFOLIO_MIN_IMPROVEMENT_THRESHOLD_ANNUAL = 0.05  # 5% annualized improvement required
-# Only rebalance if new portfolio is expected to outperform current by 5% annually
-# This prevents excessive trading on marginal improvements
+# AI Portfolio Rebalancing Threshold (REMOVED - now uses transaction cost guard like other strategies)
+# Threshold logic removed - AI Portfolio now uses same portfolio value comparison as Dynamic BH
 
-# --- AI Strategy (3-stock daily selection) Rebalancing Threshold ---
-# Only rebalance the 3-stock AI Strategy portfolio if (expected improvement - estimated transaction costs)
-# clears this annualized threshold (converted to the model horizon in days).
-AI_STRATEGY_MIN_IMPROVEMENT_THRESHOLD_ANNUAL = 0.05  # 5% annualized improvement required
-# Formula: Converts to probability score difference based on evaluation window
+# --- AI Strategy (3-stock daily selection) Rebalancing Threshold (REMOVED)
+# AI Strategy now uses transaction cost guard like other strategies (Dynamic BH, Risk-Adj Mom, etc.)
+# No arbitrary annual thresholds - rebalances based on portfolio value growth since last rebalance
 
 # AI Portfolio Training Parameters
-AI_PORTFOLIO_EVALUATION_WINDOW = 60  # Days to evaluate portfolio performance during training (more stable)
-AI_PORTFOLIO_STEP_SIZE = 7  # Days between training samples (weekly = more training data)
-AI_PORTFOLIO_PERFORMANCE_THRESHOLD_ANNUAL = 0.50  # ANNUALIZED return threshold (0.50 = 50% per year AFTER costs)
+AI_PORTFOLIO_EVALUATION_WINDOW = 30  # Days to evaluate portfolio performance during training (more responsive)
+AI_PORTFOLIO_STEP_SIZE = 3  # Days between training samples (more frequent = more training data)
+AI_PORTFOLIO_PERFORMANCE_THRESHOLD_ANNUAL = 0.30  # ANNUALIZED return threshold (0.30 = 30% per year AFTER costs)
 # The code automatically converts this to the evaluation window:
 #    Formula: period_threshold = (1 + annual)^(days/365) - 1
-#    Example: 50% annual → (1.50)^(30/365) - 1 = 3.39% for 30-day window
+#    Example: 30% annual → (1.30)^(30/365) - 1 = 2.31% for 30-day window
 #    Higher values = more selective (fewer "good" portfolios), lower = more examples
 
 # --- Momentum + AI Hybrid Strategy Parameters ---
@@ -366,8 +362,8 @@ VOLATILITY_ADJ_MOM_LOOKBACK = 90  # 90-day momentum lookback
 VOLATILITY_ADJ_MOM_VOL_WINDOW = 20  # 20-day volatility window
 VOLATILITY_ADJ_MOM_MIN_SCORE = 0.5  # Minimum volatility-adjusted score threshold
 
-# REGRESSION MODE: Probability thresholds removed - using simplified trading logic
-TARGET_PERCENTAGE       = 0.006       # 0.6% target for buy/sell classification (balanced for 3-day moves)
+# REGRESSION MODE: Using regression models that predict actual returns
+# TARGET_PERCENTAGE removed - not used in regression mode (models predict exact returns)
 # USE_MODEL_GATE removed - using simplified buy-and-hold logic
 USE_MARKET_FILTER       = False      # market filter removed as per user request
 MARKET_FILTER_TICKER    = 'SPY'
@@ -393,13 +389,13 @@ USE_ALPHA_WEIGHTS       = True       # Use alpha-based sample weights for traini
 # Simple Rule-Based Strategy removed - using AI strategy only
 
 # --- Deep Learning specific hyperparameters
-SEQUENCE_LENGTH         = 60         # 60 days lookback for longer horizon predictions
-LSTM_HIDDEN_SIZE        = 64
-LSTM_NUM_LAYERS         = 2
-LSTM_DROPOUT            = 0.2
-LSTM_EPOCHS             = 50
-LSTM_BATCH_SIZE         = 64
-LSTM_LEARNING_RATE      = 0.001
+SEQUENCE_LENGTH         = 120         # 120 days lookback for better pattern recognition
+LSTM_HIDDEN_SIZE        = 128        # Increased for better pattern recognition
+LSTM_NUM_LAYERS         = 3          # Deeper network for complex patterns
+LSTM_DROPOUT            = 0.3        # Higher dropout to prevent overfitting
+LSTM_EPOCHS             = 100        # More epochs for better training
+LSTM_BATCH_SIZE         = 32         # Smaller batch size for better convergence
+LSTM_LEARNING_RATE      = 0.0005     # Lower learning rate for stable training
 
 # --- GRU Hyperparameter Search Ranges ---
 GRU_HIDDEN_SIZE_OPTIONS = [32, 64]         # Simplified for small datasets
@@ -430,7 +426,7 @@ LIVE_TRADING_MODEL_PERIOD = "Best"
 # Period-specific horizons (trading days) - matched to period scale
 PERIOD_HORIZONS = {
     # Prediction horizon in trading days
-    "1-Year": 63     # Predict 63 trading days ahead (~3 months)
+    "1-Year": 30      # 30-day prediction horizon should work with 252-day lookback for features
 }
 
 USE_SINGLE_REGRESSION_MODEL = True  # Use single regression model instead of buy/sell pair

@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 # Import financial data fetching function
 try:
-    from data_fetcher import _fetch_financial_data
+    from data_utils import _fetch_financial_data
 except ImportError:
     _fetch_financial_data = None
 
@@ -30,8 +30,8 @@ from config import (
     ALPACA_STOCKS_LIMIT, ALPACA_STOCKS_EXCHANGES, NUM_PROCESSES, PARALLEL_THRESHOLD,
     TOP_TICKER_SELECTION_LOOKBACK
 )
-from data_fetcher import load_prices_robust, _download_batch_robust
-from utils import _ensure_dir, _normalize_symbol, _to_utc
+from data_utils import load_prices_robust, _ensure_dir, _to_utc
+from utils import _normalize_symbol
 
 # Optional Alpaca provider for asset listing
 try:
@@ -212,7 +212,7 @@ def get_all_tickers() -> List[str]:
         # Add custom ETF list including leveraged and popular ETFs
         custom_etfs = [
             # Leveraged ETFs
-            'QQQ3', 'TQQQ', 'SQQQ',  # 3x NASDAQ-100 (long/short)
+            'QQQ3', 'TQQQ', 'SQQQ',  # 3x NASDAQ-100 (QQQ3 is European ETF, TQQQ/SQQQ are US)
             'UPRO', 'SPXU',           # 3x S&P 500 (long/short)
             'TNA', 'TZA',             # 3x Russell 2000 (long/short)
             'TECL', 'TECS',           # 3x Technology (long/short)
@@ -233,7 +233,7 @@ def get_all_tickers() -> List[str]:
             'EFA', 'EEM', 'FXI', 'EWJ',
         ]
         all_tickers.update(custom_etfs)
-        print(f" Added {len(custom_etfs)} custom ETFs (including leveraged ETFs like QQQ3, TQQQ)")
+        print(f" Added {len(custom_etfs)} custom ETFs (including leveraged ETFs like QQQ3, TQQQ, SQQQ)")
 
     if MARKET_SELECTION.get("CRYPTO"):
         try:
@@ -393,7 +393,7 @@ def _get_comparison_return(ticker: str, end_date: datetime, lookback_days: int =
         # Use unified data fetcher (Alpaca -> TwelveData -> Yahoo)
         hist = load_prices_robust(ticker, start_date, end_date + timedelta(days=1))
         
-        if hist.empty or len(hist) < 10:
+        if hist is None or (isinstance(hist, pd.DataFrame) and hist.empty) or len(hist) < 10:
             return None
         
         # Find price column
@@ -424,6 +424,12 @@ def _get_current_1y_return_from_cache(ticker: str, all_tickers_data: dict, today
         if ticker in all_tickers_data and not all_tickers_data[ticker].empty:
             df = all_tickers_data[ticker]
             
+            # Ensure DataFrame index is timezone-aware like today parameter
+            if df.index.tzinfo is None:
+                df.index = df.index.tz_localize('UTC')
+            else:
+                df.index = df.index.tz_convert('UTC')
+            
             # Check if we have recent data (within last 7 days)
             latest_date = df.index.max()
             if latest_date >= (today - timedelta(days=7)):
@@ -432,7 +438,6 @@ def _get_current_1y_return_from_cache(ticker: str, all_tickers_data: dict, today
         
         # If no recent cached data, fetch fresh data
         print(f"   🔄 {ticker}: Fetching fresh data for current 1Y calculation...")
-        from data_utils import load_prices_robust
         
         start_date = today - timedelta(days=lookback_days + 30)  # Extra buffer
         fresh_data = load_prices_robust(ticker, start_date, today)
@@ -462,17 +467,26 @@ def _calculate_1y_return_from_dataframe(df: pd.DataFrame, today: datetime, lookb
         if price_col is None:
             return None
         
+        # Make a copy to avoid modifying the original
+        df = df.copy()
+        
         # Ensure DataFrame index is timezone-aware like today parameter
         if df.index.tzinfo is None:
             df.index = df.index.tz_localize('UTC')
         else:
             df.index = df.index.tz_convert('UTC')
         
-        # Get data for last lookback_days ending today
-        start_date = today - timedelta(days=lookback_days)
+        # Ensure today is also timezone-aware UTC for consistent comparison
+        if today.tzinfo is None:
+            today_utc = today.replace(tzinfo=timezone.utc)
+        else:
+            today_utc = today.astimezone(timezone.utc)
         
-        # Filter to date range
-        mask = (df.index >= start_date) & (df.index <= today)
+        # Get data for last lookback_days ending today
+        start_date = today_utc - timedelta(days=lookback_days)
+        
+        # Filter to date range - both are now UTC timezone-aware
+        mask = (df.index >= start_date) & (df.index <= today_utc)
         df_1y = df.loc[mask]
         
         if df_1y.empty or len(df_1y) < 10:
@@ -576,8 +590,8 @@ def find_top_performers(
     all_tickers_data: pd.DataFrame,
     return_tickers: bool = False,
     n_top: int = N_TOP_TICKERS,
-    fcf_min_threshold: float = 0.0,
-    ebitda_min_threshold: float = 0.0,
+    fcf_min_threshold: float = None,
+    ebitda_min_threshold: float = None,
     performance_end_date: datetime = None
 ):
     """
@@ -607,6 +621,10 @@ def find_top_performers(
         lookback_days = 365
         lookback_label = "1-Year"
 
+    # Ensure end_date is timezone-aware for proper comparison
+    if end_date.tzinfo is None:
+        end_date = end_date.replace(tzinfo=timezone.utc)
+    
     start_date = end_date - timedelta(days=lookback_days)
     ytd_start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
 
@@ -695,8 +713,9 @@ def find_top_performers(
         print(f"   Checking data quality on full dataset...", flush=True)
         full_grouped = all_tickers_data.groupby('ticker')
         
-        # Filter tickers that have at least 252 data points in the FULL dataset
-        min_points_quality = 252  # Require 1 year of data for quality
+        # Filter tickers that have at least 120 data points in the FULL dataset
+        # AI strategy needs 120 days for prediction, not 252 for training
+        min_points_quality = 120  # Require 120 days for AI prediction (was 252 for training)
         quality_tickers = []
         for ticker in full_grouped.groups.keys():
             ticker_data = full_grouped.get_group(ticker)
@@ -750,7 +769,7 @@ def find_top_performers(
             params = [r for r in prep_results if r is not None]
 
         # min_points for performance calculation - just need enough points in the lookback window
-        # Since we already filtered for quality (252 points in full data), use a lower threshold here
+        # Since we already filtered for quality (120 points in full data), use a lower threshold here
         min_points = 10  # Just need some data points in the lookback window
         params = [(ticker, ticker_df, min_points) for ticker, ticker_df in params]
     else:
@@ -759,7 +778,7 @@ def find_top_performers(
         # Step 1: Check data quality on FULL dataset
         print(f"   Checking data quality on full dataset...", flush=True)
         all_tickers_in_data = list(all_tickers_data.columns.get_level_values(1).unique())
-        min_points_quality = 252  # Require 1 year of data for quality
+        min_points_quality = 120  # Require 120 days for AI prediction (was 252 for training)
         
         def check_single_ticker_quality(ticker):
             try:
@@ -838,7 +857,7 @@ def find_top_performers(
             params = [r for r in prep_results if r is not None]
 
         # min_points for performance calculation - just need enough points in the lookback window
-        # Since we already filtered for quality (252 points in full data), use a lower threshold here
+        # Since we already filtered for quality (120 points in full data), use a lower threshold here
         min_points = 10  # Just need some data points in the lookback window
         params = [(ticker, ticker_df, min_points) for ticker, ticker_df in params]
     
@@ -876,8 +895,7 @@ def find_top_performers(
 
     sorted_all_tickers_performance_with_df = sorted(all_tickers_performance_with_df, key=lambda item: item[1], reverse=True)
     
-    # Filter out extreme positive returns (>1000%) - negative performers will be filtered by benchmark
-    sorted_all_tickers_performance_with_df = [item for item in sorted_all_tickers_performance_with_df if item[1] < 1000]
+    # Note: Removed filter for extreme positive returns (>1000%) as it was excluding high performers like SNDK
 
     if n_top > 0:
         final_performers_for_selection = sorted_all_tickers_performance_with_df[:n_top]
@@ -951,33 +969,18 @@ def find_top_performers(
         final_performers = screened_performers
 
     # Fetch actual Yahoo Finance 1-year returns for comparison (parallel)
-    print(f"\n  Fetching actual {lookback_label} returns for comparison (top {min(N_TOP_TICKERS, len(final_performers))} tickers)...")
+    # ✅ FIX: Use cached data instead of fetching fresh - much faster and already available
+    print(f"\n  Calculating {lookback_label} returns from cached data...")
     yahoo_returns = {}
     
-    # Fetch for top N_TOP_TICKERS (uses unified Alpaca -> TwelveData -> Yahoo fetcher)
+    # Fetch for top N_TOP_TICKERS
     comparison_limit = min(N_TOP_TICKERS, len(final_performers))
     tickers_to_check = [ticker for ticker, _ in final_performers[:comparison_limit]]
     
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_ticker = {
-            executor.submit(_get_comparison_return, ticker, end_date, lookback_days): ticker 
-            for ticker in tickers_to_check
-        }
-        
-        for future in tqdm(as_completed(future_to_ticker), total=len(tickers_to_check), desc="Fetching comparison returns", ncols=100):
-            ticker = future_to_ticker[future]
-            try:
-                yahoo_return = future.result()
-                if yahoo_return is not None:
-                    yahoo_returns[ticker] = yahoo_return
-            except Exception:
-                pass
-    
-    # Calculate "Current" returns from cached data (ending today, not at backtest start)
+    # Use today's date for current comparison
     today = datetime.now(timezone.utc)
-    current_1y_returns = {}
     
-    # Build a dict lookup for ticker data
+    # Build a dict lookup for ticker data FIRST (needed for both Yahoo and Current calculations)
     ticker_data_dict = {}
     if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
         # Long format
@@ -990,11 +993,17 @@ def find_top_performers(
         # Wide format - data is already in dict-like structure
         ticker_data_dict = all_tickers_data if isinstance(all_tickers_data, dict) else {}
     
-    # Calculate current return for each ticker
+    # Calculate Yahoo returns from cached data (same as "Current" - both use today's date)
     for ticker in tickers_to_check:
-        current_1y = _get_current_1y_return_from_cache(ticker, ticker_data_dict, today, lookback_days)
-        if current_1y is not None:
-            current_1y_returns[ticker] = current_1y
+        yahoo_return = _get_current_1y_return_from_cache(ticker, ticker_data_dict, today, lookback_days)
+        if yahoo_return is not None:
+            yahoo_returns[ticker] = yahoo_return
+    
+    print(f"  ✅ Calculated returns for {len(yahoo_returns)}/{len(tickers_to_check)} tickers from cache")
+    
+    # Calculate "Current" returns from cached data (ending today, not at backtest start)
+    # These are the same as Yahoo returns since both use today's date
+    current_1y_returns = yahoo_returns.copy()
     
     # ALWAYS display comparison table (even when return_tickers=True)
     print(f"\n\n Top Performers with Yahoo Finance Comparison ")
@@ -1112,7 +1121,8 @@ def _apply_fundamental_screen_worker(params: Tuple) -> Optional[Tuple[str, float
         except Exception as e:
             pass  # Silently continue if this fails
 
-        # Apply thresholds (fcf_min_threshold and ebitda_min_threshold are 0.0 by default)
+        # Apply thresholds - only exclude if data EXISTS and is below threshold
+        # If no data available, include the stock (fail-open approach)
         should_exclude = False
 
         if 'EBITDA' in financial_data and ebitda_min_threshold is not None:

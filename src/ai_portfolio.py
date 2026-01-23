@@ -844,69 +844,18 @@ def get_ai_portfolio_rebalancing_stocks(
                     print(f"   ✔️ AI Portfolio: No changes needed (same portfolio)")
                     return current_portfolio[:3]
                 
-                # Get transaction cost from config
-                try:
-                    from config import TRANSACTION_COST, AI_PORTFOLIO_MIN_IMPROVEMENT_THRESHOLD_ANNUAL
-                    annual_improvement_threshold = AI_PORTFOLIO_MIN_IMPROVEMENT_THRESHOLD_ANNUAL
-                except ImportError:
-                    TRANSACTION_COST = 0.01
-                    annual_improvement_threshold = 0.05
+                # ✅ REMOVED THRESHOLD LOGIC - Now uses same approach as other strategies
+                # Rebalance if a better portfolio is found (no arbitrary thresholds)
+                # Transaction costs are handled by the calling function (backtesting.py)
                 
-                # Calculate transaction costs
-                # Each stock change = 1 sell + 1 buy = 2 transactions
-                total_transaction_cost_pct = stocks_to_change * 2 * TRANSACTION_COST
-                
-                # Calculate expected improvement (probability to return %)
-                # The model outputs probability of "good portfolio" (>50% annual return)
-                # Score improvement roughly correlates to expected return difference
-                # Conservative estimate: probability_improvement × target_return
-                score_improvement = best_score - current_score
-                
-                # Get evaluation window from config
-                try:
-                    from config import AI_PORTFOLIO_EVALUATION_WINDOW
-                    eval_window = AI_PORTFOLIO_EVALUATION_WINDOW
-                except ImportError:
-                    eval_window = 30
-                
-                # Convert annual threshold to evaluation window
-                period_threshold = (1 + annual_improvement_threshold) ** (eval_window / 365.0) - 1
-                
-                # Expected improvement = score_improvement × period_threshold
-                # This estimates: if score improves by X, expected return improves by ~X × threshold
-                expected_improvement_pct = score_improvement * period_threshold
-                
-                # ✅ TWO-STAGE THRESHOLD CHECK
-                
-                # THRESHOLD 1: Minimum improvement (quality gate)
-                # The new portfolio must be meaningfully better, not just marginally better
-                min_score_improvement = annual_improvement_threshold * 0.1  # Convert to probability scale
-                
-                if score_improvement < min_score_improvement:
-                    print(f"   💤 AI Portfolio: Keeping current portfolio")
-                    print(f"      Score improvement: +{score_improvement:.4f} < threshold {min_score_improvement:.4f}")
-                    print(f"      Reason: New portfolio not significantly better")
-                    return current_portfolio[:3]
-                
-                # THRESHOLD 2: Cost-benefit analysis
-                # The expected improvement must exceed transaction costs
-                net_benefit = expected_improvement_pct - total_transaction_cost_pct
-                
-                if net_benefit > 0:
-                    # Both thresholds passed - rebalance!
-                    print(f"   ✅ AI Portfolio: Rebalancing justified (passed both thresholds)")
-                    print(f"      Score: {current_score:.4f} → {best_score:.4f} (+{score_improvement:.4f})")
-                    print(f"      Expected improvement: {expected_improvement_pct:.2%}")
-                    print(f"      Transaction costs: {total_transaction_cost_pct:.2%} ({stocks_to_change} stocks × 2 trades)")
-                    print(f"      Net benefit: {net_benefit:.2%} ✓")
+                if best_score > current_score:
+                    # Better portfolio found - rebalance!
+                    print(f"   ✅ AI Portfolio: Rebalancing to better portfolio")
+                    print(f"      Score: {current_score:.4f} → {best_score:.4f} (+{best_score - current_score:.4f})")
                     return best_combo
                 else:
-                    # Quality gate passed, but costs too high
-                    print(f"   💤 AI Portfolio: Keeping current portfolio")
-                    print(f"      Score improvement: +{score_improvement:.4f} ✓ (passes quality threshold)")
-                    print(f"      Expected improvement: {expected_improvement_pct:.2%}")
-                    print(f"      Transaction costs: {total_transaction_cost_pct:.2%} ({stocks_to_change} stocks)")
-                    print(f"      Net benefit: {net_benefit:.2%} ✗ (NEGATIVE - costs exceed benefit)")
+                    # Current portfolio is still the best
+                    print(f"   💤 AI Portfolio: Keeping current portfolio (score: {current_score:.4f})")
                     return current_portfolio[:3]
             else:
                 # No current portfolio, use best combo

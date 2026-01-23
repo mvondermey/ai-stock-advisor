@@ -46,7 +46,6 @@ def generate_training_tasks(
     all_tickers_data: pd.DataFrame,
     train_start: datetime,
     train_end: datetime,
-    target_percentage: float,
     class_horizon: int,
     feature_set: Optional[List[str]] = None,
     include_ai_portfolio: bool = False,
@@ -213,7 +212,6 @@ def generate_training_tasks(
                 'ticker': ticker,
                 'model_type': model_type,
                 'df_train_period': df_train_period,
-                'target_percentage': target_percentage,
                 'class_horizon': class_horizon,
                 'feature_set': feature_set
             }
@@ -333,7 +331,7 @@ def universal_model_worker(task: Dict) -> Dict:
             
             # Prepare training data
             df_train, actual_feature_set = fetch_training_data(
-                ticker, df_train_period, target_percentage, class_horizon
+                ticker, df_train_period, class_horizon
             )
             
             if df_train.empty or len(df_train) < 50:
@@ -786,7 +784,6 @@ def train_all_models_parallel(
     all_tickers_data: pd.DataFrame,
     train_start: datetime,
     train_end: datetime,
-    target_percentage: float,
     class_horizon: int,
     feature_set: Optional[List[str]] = None,
     include_ai_portfolio: bool = False,
@@ -801,7 +798,6 @@ def train_all_models_parallel(
         all_tickers_data: DataFrame with historical data for all tickers
         train_start: Training period start date
         train_end: Training period end date
-        target_percentage: Target return percentage for classification
         class_horizon: Horizon in days for classification
         feature_set: Optional list of features to use
         include_ai_portfolio: Whether to train AI Portfolio models
@@ -827,7 +823,6 @@ def train_all_models_parallel(
         all_tickers_data=all_tickers_data,
         train_start=train_start,
         train_end=train_end,
-        target_percentage=target_percentage,
         class_horizon=class_horizon,
         feature_set=feature_set,
         include_ai_portfolio=include_ai_portfolio,

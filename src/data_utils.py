@@ -8,6 +8,12 @@ from utils import _to_utc
 import yfinance as yf
 import time
 
+# Import pandas_datareader for Stooq
+try:
+    from pandas_datareader import data as pdr
+except Exception:
+    pdr = None
+
 # Import config values
 try:
     from config import (
@@ -174,7 +180,7 @@ def _fetch_financial_data_from_alpaca(ticker: str) -> pd.DataFrame:
 
 # Assuming these are defined in config.py or passed as arguments
 # For now, hardcode or import from a config if available
-# from config import DATA_CACHE_DIR, DATA_PROVIDER, USE_YAHOO_FALLBACK, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD, INVESTMENT_PER_STOCK, TRANSACTION_COST, TARGET_PERCENTAGE, CLASS_HORIZON, SEQUENCE_LENGTH, PYTORCH_AVAILABLE, CUDA_AVAILABLE, SHAP_AVAILABLE, SAVE_PLOTS, SEED
+# from config import DATA_CACHE_DIR, DATA_PROVIDER, USE_YAHOO_FALLBACK, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD, INVESTMENT_PER_STOCK, TRANSACTION_COST, CLASS_HORIZON, SEQUENCE_LENGTH, PYTORCH_AVAILABLE, CUDA_AVAILABLE, SHAP_AVAILABLE, SAVE_PLOTS, SEED
 
 # Placeholder for config values if not imported
 DATA_CACHE_DIR = Path("data_cache")
@@ -371,6 +377,33 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
 
 
+def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -> pd.DataFrame:
+    """
+    Download multiple tickers with incremental caching.
+    Returns DataFrame with MultiIndex columns (Field, Ticker) like the original implementation.
+    """
+    all_data_frames = []
+    
+    print(f"  📂 Processing {len(tickers)} tickers with incremental caching...")
+    
+    for ticker in tickers:
+        try:
+            df = load_prices(ticker, start, end)
+            if not df.empty:
+                # Convert to MultiIndex format (Field, Ticker)
+                df.columns = pd.MultiIndex.from_product([df.columns, [ticker]])
+                all_data_frames.append(df)
+        except Exception as e:
+            print(f"  ⚠️ Failed to download {ticker}: {e}")
+    
+    if all_data_frames:
+        # Concatenate all tickers into wide format with MultiIndex columns
+        combined_df = pd.concat(all_data_frames, axis=1)
+        return combined_df
+    else:
+        return pd.DataFrame()
+
+
 def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """A wrapper for load_prices that handles rate limiting with retries and other common API errors."""
     import time
@@ -402,7 +435,7 @@ def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFr
     return pd.DataFrame()
 
 
-def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: float = TARGET_PERCENTAGE, class_horizon: int = CLASS_HORIZON) -> Tuple[pd.DataFrame, List[str]]:
+def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CLASS_HORIZON) -> Tuple[pd.DataFrame, List[str]]:
     """Compute ML features from a given DataFrame."""
     print(f"  [DIAGNOSTIC] {ticker}: fetch_training_data - Initial data rows: {len(data)}")
     if data.empty or len(data) < FEAT_SMA_LONG + 10:
@@ -657,3 +690,140 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, target_percentage: floa
 
     print(f"   ↳ {ticker}: rows after features available: {len(ready)}")
     return ready, final_training_features
+
+
+# Data provider functions
+def _fetch_from_stooq(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
+    """Fetch OHLCV from Stooq. Try both 'TICKER' and 'TICKER.US'."""
+    if pdr is None:
+        return pd.DataFrame()
+    
+    try:
+        df = pdr.DataReader(ticker, "stooq", start, end)
+        if (df is None or df.empty) and not ticker.upper().endswith('.US'):
+            try:
+                df = pdr.DataReader(f"{ticker}.US", "stooq", start, end)
+            except Exception:
+                pass
+        
+        if df is None or df.empty:
+            return pd.DataFrame()
+        
+        df = df.sort_index()
+        df = df.rename(columns={c: c.capitalize() for c in df.columns})
+        df.index.name = "Date"
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def _fetch_from_alpaca(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
+    """Fetch OHLCV from Alpaca."""
+    if not ALPACA_AVAILABLE or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+        return pd.DataFrame()
+    
+    try:
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+        
+        client = StockHistoricalDataClient(ALPACA_API_KEY, ALPACA_SECRET_KEY)
+        request_params = StockBarsRequest(
+            symbol_or_symbols=ticker,
+            timeframe=TimeFrame.Day,
+            start=_to_utc(start),
+            end=_to_utc(end)
+        )
+        
+        bars = client.get_stock_bars(request_params)
+        df = bars.df
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Reset index to get date as column
+        df = df.reset_index()
+        df['Date'] = df['timestamp']
+        df = df.set_index('Date')
+        df = df.rename(columns={
+            'open': 'Open', 'high': 'High', 'low': 'Low', 
+            'close': 'Close', 'volume': 'Volume'
+        })
+        return df[['Open', 'High', 'Low', 'Close', 'Volume']]
+    except Exception:
+        return pd.DataFrame()
+
+
+def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime, api_key: Optional[str] = None) -> pd.DataFrame:
+    """Fetch OHLCV from TwelveData using the SDK."""
+    if not TWELVEDATA_SDK_AVAILABLE or not (TWELVEDATA_API_KEY or api_key):
+        return pd.DataFrame()
+    
+    try:
+        from twelvedata import TDClient
+        client = TDClient(apikey=api_key or TWELVEDATA_API_KEY)
+        
+        # Convert to required format
+        start_str = start.strftime('%Y-%m-%d')
+        end_str = end.strftime('%Y-%m-%d')
+        
+        # Get time series data
+        ts = client.time_series(
+            symbol=ticker,
+            interval='1day',
+            start_date=start_str,
+            end_date=end_str,
+            outputsize=5000
+        )
+        
+        df = ts.as_pandas()
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Ensure proper column names
+        df.columns = [col.capitalize() for col in df.columns]
+        if 'Datetime' in df.columns:
+            df = df.rename(columns={'Datetime': 'Date'})
+            df = df.set_index('Date')
+        
+        return df[['Open', 'High', 'Low', 'Close', 'Volume']]
+    except Exception:
+        return pd.DataFrame()
+
+
+def _fetch_intermarket_data(start: datetime = None, end: datetime = None) -> pd.DataFrame:
+    """Fetch intermarket data for analysis."""
+    try:
+        # Define intermarket symbols
+        intermarket_symbols = {
+            'SPY': 'S&P 500 ETF',
+            'QQQ': 'NASDAQ ETF', 
+            'VXX': 'VIX ETF',
+            'UUP': 'US Dollar ETF',
+            'GLD': 'Gold ETF',
+            'USO': 'Oil ETF',
+            'TNX': '10Y Treasury ETF'
+        }
+        
+        all_data = []
+        today = datetime.now(timezone.utc)
+        start_date = start or (today - timedelta(days=365))
+        end_date = end or today
+        
+        for symbol, name in intermarket_symbols.items():
+            try:
+                df = load_prices(symbol, start_date, end_date)
+                if not df.empty:
+                    df_renamed = df[['Close']].copy()
+                    df_renamed.columns = [f'{symbol}_Close']
+                    all_data.append(df_renamed)
+            except Exception as e:
+                print(f"  ⚠️ Failed to fetch {symbol}: {e}")
+        
+        if all_data:
+            return pd.concat(all_data, axis=1)
+        else:
+            return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()

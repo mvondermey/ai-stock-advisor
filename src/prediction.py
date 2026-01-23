@@ -53,8 +53,7 @@ def predict_return_for_ticker(
         # Engineer features from raw OHLCV data
         processed_data, actual_features = fetch_training_data(
             ticker, 
-            data, 
-            target_percentage=0.006  # Not used for prediction, just for feature engineering
+            data
         )
         
         if processed_data.empty or len(processed_data) < 1:

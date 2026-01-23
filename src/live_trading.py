@@ -39,7 +39,7 @@ import os
 ALPACA_API_KEY = os.environ.get('ALPACA_API_KEY') or CONFIG_ALPACA_API_KEY
 ALPACA_SECRET_KEY = os.environ.get('ALPACA_SECRET_KEY') or CONFIG_ALPACA_SECRET_KEY
 from src.ticker_selection import get_all_tickers
-from src.data_fetcher import load_prices_robust
+from src.data_utils import load_prices_robust
 from src.prediction import (
     rank_tickers_by_predicted_return,
     load_models_for_tickers,
@@ -381,6 +381,18 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
         # Static BH Strategy: Select based on performance period but hold static
         period = strategy.replace('static_bh_', '')  # '1y', '3m', or '1m'
         return get_static_bh_tickers(all_tickers, period, all_tickers_data)
+    
+    elif strategy == 'turnaround':
+        # Turnaround Strategy: Low 3Y but high 1Y performance
+        return get_turnaround_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'ratio_3m_1y':
+        # 3M/1Y Ratio Strategy: Strong 3M momentum vs 1Y performance
+        return get_ratio_3m_1y_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'ratio_1y_3m':
+        # 1Y/3M Ratio Strategy: Strong 1Y performance but weak 3M (buy on dip)
+        return get_ratio_1y_3m_tickers(all_tickers, all_tickers_data)
 
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
@@ -644,6 +656,39 @@ def get_multitask_tickers(all_tickers: List[str]) -> List[str]:
     return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
+def get_turnaround_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Turnaround Strategy: Select stocks with low 3Y but high 1Y performance."""
+    from shared_strategies import select_turnaround_stocks
+    
+    print(f"   🔍 Turnaround: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Turnaround")
+    
+    current_date = datetime.now()
+    return select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_ratio_3m_1y_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """3M/1Y Ratio Strategy: Select stocks with strong 3M momentum vs 1Y performance."""
+    from shared_strategies import select_3m_1y_ratio_stocks
+    
+    print(f"   🔍 3M/1Y Ratio: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "3M/1Y Ratio")
+    
+    current_date = datetime.now()
+    return select_3m_1y_ratio_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_ratio_1y_3m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """1Y/3M Ratio Strategy: Select stocks with strong 1Y performance but weak 3M (buy on dip)."""
+    from shared_strategies import select_1y_3m_ratio_stocks
+    
+    print(f"   🔍 1Y/3M Ratio: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "1Y/3M Ratio")
+    
+    current_date = datetime.now()
+    return select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
 def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tickers_data: pd.DataFrame = None):
     """Live trading function that receives pre-filtered tickers from main.py."""
     # Use the filtered tickers instead of fetching all tickers
@@ -669,7 +714,13 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
         'quality_momentum': 'Quality + Momentum',
         'dynamic_bh_1y': 'Dynamic Buy & Hold (1 Year)',
         'dynamic_bh_3m': 'Dynamic Buy & Hold (3 Months)',
-        'dynamic_bh_1m': 'Dynamic Buy & Hold (1 Month)'
+        'dynamic_bh_1m': 'Dynamic Buy & Hold (1 Month)',
+        'static_bh_1y': 'Static Buy & Hold (1 Year)',
+        'static_bh_3m': 'Static Buy & Hold (3 Months)',
+        'static_bh_1m': 'Static Buy & Hold (1 Month, 30-day rebalance)',
+        'turnaround': 'Turnaround (Low 3Y, High 1Y)',
+        'ratio_3m_1y': '3M/1Y Ratio (Momentum Acceleration)',
+        'ratio_1y_3m': '1Y/3M Ratio (Buy on Dip)'
     }
 
     strategy_name = strategy_names.get(LIVE_TRADING_STRATEGY, LIVE_TRADING_STRATEGY)
@@ -704,8 +755,8 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
     print(f"    Available tickers: {len(valid_tickers)}")
     
     # Pass downloaded data if available for strategies that need it
-    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_3m', 'dynamic_bh_1m'] and all_tickers_data_for_strategy is not None else None
-    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_3m', 'dynamic_bh_1m']:
+    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround'] and all_tickers_data_for_strategy is not None else None
+    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround']:
         print(f"    Data available: {all_tickers_data_for_strategy is not None}")
     
     target_tickers = get_strategy_tickers(LIVE_TRADING_STRATEGY, valid_tickers, all_tickers_data_for_strategy)
