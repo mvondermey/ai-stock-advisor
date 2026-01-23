@@ -38,7 +38,9 @@ try:
         # Set start method to 'spawn' for CUDA safety
         try:
             mp.set_start_method('spawn', force=True)
-            print("🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility")
+            # Only print in main process
+            if mp.current_process().name == 'MainProcess':
+                print("🔧 Using torch.multiprocessing with 'spawn' for CUDA compatibility")
         except RuntimeError:
             pass  # Already set
         Pool = mp.Pool

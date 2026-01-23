@@ -208,9 +208,121 @@ def rank_tickers_by_predicted_return(
     return predictions[:top_n]
 
 
+def _load_single_model(args):
+    """
+    Helper function to load a single model (for parallel loading).
+    
+    Args:
+        args: Tuple of (ticker, models_dir)
+    
+    Returns:
+        Tuple of (ticker, model, scaler, y_scaler) or (ticker, None, None, None) on failure
+    """
+    ticker, models_dir = args
+    try:
+        # Try multiple naming patterns (in order of preference)
+        # 1. {ticker}_model.joblib (original format)
+        # 2. {ticker}_LSTM_model.joblib (LSTM specific)
+        # 3. {ticker}_TargetReturn_model.joblib (newer format)
+        # 4. {ticker}_TCN_model.joblib (TCN specific)
+        naming_patterns = [
+            (f"{ticker}_model", f"{ticker}_scaler", f"{ticker}_y_scaler"),
+            (f"{ticker}_LSTM_model", f"{ticker}_LSTM_scaler", f"{ticker}_LSTM_y_scaler"),
+            (f"{ticker}_TargetReturn_model", f"{ticker}_TargetReturn_scaler", f"{ticker}_TargetReturn_y_scaler"),
+            (f"{ticker}_TCN_model", f"{ticker}_TCN_scaler", f"{ticker}_TCN_y_scaler"),
+        ]
+        
+        model_path = None
+        scaler_path = None
+        y_scaler_path = None
+        
+        # Find first matching pattern
+        for model_name, scaler_name, y_scaler_name in naming_patterns:
+            candidate_model = models_dir / f"{model_name}.joblib"
+            if candidate_model.exists():
+                model_path = candidate_model
+                scaler_path = models_dir / f"{scaler_name}.joblib"
+                y_scaler_path = models_dir / f"{y_scaler_name}.joblib"
+                break
+        
+        model = None
+        scaler = None
+        y_scaler = None
+        model_class_name = None
+        
+        if model_path and model_path.exists():
+            if PYTORCH_AVAILABLE and model_path.with_suffix('.info').exists():
+                try:
+                    model_info = joblib.load(model_path.with_suffix('.info'))
+                    if model_info.get('model_class'):
+                        import torch
+                        from ml_models import TCNRegressor, GRURegressor, LSTMRegressor, LSTMClassifier, GRUClassifier
+
+                        model_class_name = model_info['model_class']
+                        if model_class_name == 'TCNRegressor':
+                            model = TCNRegressor(
+                                input_size=model_info.get('input_size', 35),
+                                num_filters=32, kernel_size=3, num_levels=2, dropout=0.1
+                            )
+                        elif model_class_name == 'GRURegressor':
+                            model = GRURegressor(
+                                input_size=model_info.get('input_size', 35),
+                                hidden_size=model_info.get('hidden_size', 64),
+                                num_layers=model_info.get('num_layers', 2),
+                                output_size=1, dropout_rate=0.5
+                            )
+                        elif model_class_name == 'LSTMRegressor':
+                            model = LSTMRegressor(
+                                input_size=model_info.get('input_size', 35),
+                                hidden_size=model_info.get('hidden_size', 64),
+                                num_layers=model_info.get('num_layers', 2),
+                                output_size=1, dropout_rate=0.5
+                            )
+                        elif model_class_name == 'LSTMClassifier':
+                            model = LSTMClassifier(
+                                input_size=model_info.get('input_size', 35),
+                                hidden_size=model_info.get('hidden_size', 64),
+                                num_layers=model_info.get('num_layers', 2),
+                                output_size=2, dropout_rate=0.5
+                            )
+                        elif model_class_name == 'GRUClassifier':
+                            model = GRUClassifier(
+                                input_size=model_info.get('input_size', 35),
+                                hidden_size=model_info.get('hidden_size', 64),
+                                num_layers=model_info.get('num_layers', 2),
+                                output_size=2, dropout_rate=0.5
+                            )
+
+                        if model:
+                            state_dict = torch.load(model_path, map_location='cpu', weights_only=True)
+                            model.load_state_dict(state_dict)
+                            model.eval()
+                        else:
+                            model = joblib.load(model_path)
+                    else:
+                        model = joblib.load(model_path)
+                except Exception:
+                    model = joblib.load(model_path)
+            else:
+                model = joblib.load(model_path)
+        
+        if scaler_path.exists():
+            scaler = joblib.load(scaler_path)
+        
+        if y_scaler_path.exists():
+            y_scaler = joblib.load(y_scaler_path)
+        
+        return (ticker, model, scaler, y_scaler, model_class_name)
+    
+    except Exception as e:
+        return (ticker, None, None, None, None)
+
+
 def load_models_for_tickers(
     tickers: List[str],
-    models_dir: Path = Path("logs/models")
+    models_dir: Path = Path("logs/models"),
+    parallel: bool = True,
+    n_workers: int = 8
 ) -> Tuple[Dict, Dict, Dict]:
     """
     Load trained models, scalers, and y_scalers for a list of tickers.
@@ -218,94 +330,64 @@ def load_models_for_tickers(
     Args:
         tickers: List of ticker symbols
         models_dir: Directory containing saved models
+        parallel: Use parallel loading (default True)
+        n_workers: Number of parallel workers (default 8)
     
     Returns:
         Tuple of (models_buy, scalers, y_scalers) dictionaries
     """
+    from concurrent.futures import ThreadPoolExecutor
+    import sys
+    
     models_buy = {}
     scalers = {}
     y_scalers = {}
     
-    for ticker in tickers:
-        try:
-            # ✅ FIX: Use correct filename pattern (models saved as {ticker}_model.joblib, not {ticker}_model_buy.joblib)
-            model_path = models_dir / f"{ticker}_model.joblib"
-            scaler_path = models_dir / f"{ticker}_scaler.joblib"
-            y_scaler_path = models_dir / f"{ticker}_y_scaler.joblib"
-            
-            if model_path.exists():
-                # Handle PyTorch models specially
-                if PYTORCH_AVAILABLE and model_path.with_suffix('.info').exists():
-                    try:
-                        model_info = joblib.load(model_path.with_suffix('.info'))
-                        if model_info.get('model_class'):
-                            # Reconstruct PyTorch model
-                            import torch
-                            from ml_models import TCNRegressor, GRURegressor, LSTMRegressor, LSTMClassifier, GRUClassifier
-
-                            model_class_name = model_info['model_class']
-                            if model_class_name == 'TCNRegressor':
-                                model = TCNRegressor(
-                                    input_size=model_info.get('input_size', 35),
-                                    num_filters=32, kernel_size=3, num_levels=2, dropout=0.1
-                                )
-                            elif model_class_name == 'GRURegressor':
-                                model = GRURegressor(
-                                    input_size=model_info.get('input_size', 35),
-                                    hidden_size=model_info.get('hidden_size', 64),
-                                    num_layers=model_info.get('num_layers', 2),
-                                    output_size=1, dropout_rate=0.5
-                                )
-                            elif model_class_name == 'LSTMRegressor':
-                                model = LSTMRegressor(
-                                    input_size=model_info.get('input_size', 35),
-                                    hidden_size=model_info.get('hidden_size', 64),
-                                    num_layers=model_info.get('num_layers', 2),
-                                    output_size=1, dropout_rate=0.5
-                                )
-                            elif model_class_name == 'LSTMClassifier':
-                                model = LSTMClassifier(
-                                    input_size=model_info.get('input_size', 35),
-                                    hidden_size=model_info.get('hidden_size', 64),
-                                    num_layers=model_info.get('num_layers', 2),
-                                    output_size=2, dropout_rate=0.5
-                                )
-                            elif model_class_name == 'GRUClassifier':
-                                model = GRUClassifier(
-                                    input_size=model_info.get('input_size', 35),
-                                    hidden_size=model_info.get('hidden_size', 64),
-                                    num_layers=model_info.get('num_layers', 2),
-                                    output_size=2, dropout_rate=0.5
-                                )
-                            else:
-                                print(f"  ⚠️ Unknown PyTorch model class: {model_class_name}")
-                                model = None
-
-                            if model:
-                                state_dict = torch.load(model_path, map_location='cpu')
-                                model.load_state_dict(state_dict)
-                                model.eval()  # Set to evaluation mode
-                                models_buy[ticker] = model
-                                print(f"  ✅ Loaded PyTorch model {model_class_name} for {ticker} from {model_path}")
-                            else:
-                                models_buy[ticker] = joblib.load(model_path)
-                        else:
-                            models_buy[ticker] = joblib.load(model_path)
-                    except Exception as e:
-                        print(f"  ⚠️ Error loading PyTorch model for {ticker}: {e}. Falling back to joblib.")
-                        models_buy[ticker] = joblib.load(model_path)
-                else:
-                    models_buy[ticker] = joblib.load(model_path)
-            
-            if scaler_path.exists():
-                scalers[ticker] = joblib.load(scaler_path)
-            
-            if y_scaler_path.exists():
-                y_scalers[ticker] = joblib.load(y_scaler_path)
+    total = len(tickers)
+    print(f"  📦 Loading {total} models...")
+    
+    if parallel and total > 10:
+        # Parallel loading with progress
+        args_list = [(ticker, models_dir) for ticker in tickers]
+        loaded = 0
         
-        except Exception as e:
-            print(f"  ⚠️ Error loading model for {ticker}: {e}")
-            continue
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            for result in executor.map(_load_single_model, args_list):
+                ticker, model, scaler, y_scaler, model_class_name = result
+                loaded += 1
+                
+                if model is not None:
+                    models_buy[ticker] = model
+                if scaler is not None:
+                    scalers[ticker] = scaler
+                if y_scaler is not None:
+                    y_scalers[ticker] = y_scaler
+                
+                # Progress every 50 models or at end
+                if loaded % 50 == 0 or loaded == total:
+                    pct = (loaded / total) * 100
+                    print(f"  📊 Progress: {loaded}/{total} ({pct:.0f}%) - {len(models_buy)} models loaded")
+                    sys.stdout.flush()
+        
+        return models_buy, scalers, y_scalers
+    
+    # Sequential loading with progress (fallback)
+    for i, ticker in enumerate(tickers, 1):
+        result = _load_single_model((ticker, models_dir))
+        ticker, model, scaler, y_scaler, model_class_name = result
+        
+        if model is not None:
+            models_buy[ticker] = model
+        if scaler is not None:
+            scalers[ticker] = scaler
+        if y_scaler is not None:
+            y_scalers[ticker] = y_scaler
+        
+        # Progress every 50 models or at end
+        if i % 50 == 0 or i == total:
+            pct = (i / total) * 100
+            print(f"  📊 Progress: {i}/{total} ({pct:.0f}%) - {len(models_buy)} models loaded")
+            sys.stdout.flush()
     
     return models_buy, scalers, y_scalers
 

@@ -38,6 +38,10 @@ from config import (
     ENABLE_MEAN_REVERSION,
     ENABLE_QUALITY_MOM,
     ENABLE_MOMENTUM_AI_HYBRID,
+    ENABLE_STATIC_BH,
+    OPTIMIZE_REBALANCE_HORIZON,
+    REBALANCE_HORIZON_MIN,
+    REBALANCE_HORIZON_MAX,
     FEAT_SMA_SHORT, FEAT_SMA_LONG, FEAT_VOL_WINDOW, ATR_PERIOD,
     GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS,
     GRU_HIDDEN_SIZE_OPTIONS, GRU_NUM_LAYERS_OPTIONS, GRU_DROPOUT_OPTIONS,
@@ -117,7 +121,9 @@ def _gpu_diag():
     if USE_LSTM or USE_GRU:
         try:
             import torch
-            print(f"[GPU] torch.cuda.is_available(): {torch.cuda.is_available()}")
+            import multiprocessing as _mp
+            if _mp.current_process().name == 'MainProcess':
+                print(f"[GPU] torch.cuda.is_available(): {torch.cuda.is_available()}")
         except Exception as e:
             print("[GPU] torch check failed:", e)
     
@@ -125,7 +131,9 @@ def _gpu_diag():
     if USE_XGBOOST:
         try:
             import xgboost as xgb
-            print("[GPU] XGBoost version:", getattr(xgb, "__version__", "?"))
+            import multiprocessing as _mp2
+            if _mp2.current_process().name == 'MainProcess':
+                print("[GPU] XGBoost version:", getattr(xgb, "__version__", "?"))
         except Exception as e:
             print("[GPU] XGBoost check failed:", e)
     
@@ -133,7 +141,9 @@ def _gpu_diag():
     if USE_LIGHTGBM:
         try:
             import lightgbm as lgb
-            print("[GPU] LightGBM version:", getattr(lgb, "__version__", "?"))
+            import multiprocessing as _mp3
+            if _mp3.current_process().name == 'MainProcess':
+                print("[GPU] LightGBM version:", getattr(lgb, "__version__", "?"))
         except Exception as e:
             print("[GPU] LightGBM check failed:", e)
 
@@ -153,7 +163,7 @@ def setup_logging(verbose: bool = False) -> None:
     root.setLevel(level)
 
 _script_initialized = False
-if not _script_initialized:
+if not _script_initialized and __name__ == '__main__':
     print("DEBUG: Script execution initiated.")
     _script_initialized = True
 
@@ -1058,8 +1068,9 @@ def main(
         from prediction import load_models_for_tickers
         
         # Try to load models for all top tickers
+        print(f"   🔄 Starting model loading...", flush=True)
         models, scalers, y_scalers = load_models_for_tickers(top_tickers)
-        print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers")
+        print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers", flush=True)
         
         if not models:
             print(f"   ⚠️ No existing models found. AI Strategy will not be available.")
@@ -1079,12 +1090,12 @@ def main(
     else:
         top_tickers_1y_filtered = top_tickers
     
-    print(f"  ℹ️ {len(failed_training_tickers_1y)} tickers failed 1-Year model training and will be skipped: {', '.join(failed_training_tickers_1y.keys())}")
-    print(f"  ✅ {len(top_tickers_1y_filtered)} tickers available for AI Portfolio training: {', '.join(top_tickers_1y_filtered)}")
+    print(f"  ℹ️ {len(failed_training_tickers_1y)} tickers failed 1-Year model training and will be skipped: {', '.join(failed_training_tickers_1y.keys())}", flush=True)
+    print(f"  ✅ {len(top_tickers_1y_filtered)} tickers available for AI Portfolio training: {', '.join(top_tickers_1y_filtered)}", flush=True)
 
     # --- Train AI Portfolio Rebalancing Model ---
     # ✅ CRITICAL: Force memory cleanup before AI Portfolio training (prevents OOM)
-    print(f"\n🧹 Cleaning up memory before AI Portfolio training...")
+    print(f"\n🧹 Cleaning up memory before AI Portfolio training...", flush=True)
     import gc
     gc.collect()
     if CUDA_AVAILABLE and PYTORCH_AVAILABLE:
@@ -1097,14 +1108,14 @@ def main(
             print(f"   ⚠️ Could not clear GPU cache: {e}")
     print(f"   ✅ Memory cleanup complete")
     
-    print(f"DEBUG: About to check ENABLE_AI_PORTFOLIO = {ENABLE_AI_PORTFOLIO}")
+    print(f"DEBUG: About to check ENABLE_AI_PORTFOLIO = {ENABLE_AI_PORTFOLIO}", flush=True)
     if ENABLE_AI_PORTFOLIO:
-        print(f"DEBUG: ENABLE_AI_PORTFOLIO is True, starting training...")
-        print(f"\n🧠 Training AI Portfolio Rebalancing Model...")
+        print(f"DEBUG: ENABLE_AI_PORTFOLIO is True, starting training...", flush=True)
+        print(f"\n🧠 Training AI Portfolio Rebalancing Model...", flush=True)
         try:
-            print(f"DEBUG: Importing ai_portfolio module...")
+            print(f"DEBUG: Importing ai_portfolio module...", flush=True)
             from ai_portfolio import train_ai_portfolio_model
-            print(f"DEBUG: Import successful, calling train_ai_portfolio_model...")
+            print(f"DEBUG: Import successful, calling train_ai_portfolio_model...", flush=True)
 
             # ✅ CRITICAL: Ensure complete data separation between training and backtest
             # Training must use ONLY historical data BEFORE backtest starts
@@ -1132,6 +1143,9 @@ def main(
             # Import config flag for unified training
             from config import USE_UNIFIED_PARALLEL_TRAINING
             
+            ai_portfolio_start_time = time.time()
+            print(f"🚀 AI Portfolio training STARTED at {time.strftime('%H:%M:%S')}", flush=True)
+            
             ai_portfolio_trained = train_ai_portfolio_model(
                 all_tickers_data=all_tickers_data,
                 top_tickers=top_tickers_1y_filtered,
@@ -1139,8 +1153,10 @@ def main(
                 train_end_date=ai_portfolio_train_end,
                 use_unified_training=USE_UNIFIED_PARALLEL_TRAINING
             )
-
-            print(f"DEBUG: train_ai_portfolio_model returned: {ai_portfolio_trained}")
+            
+            ai_portfolio_elapsed = time.time() - ai_portfolio_start_time
+            print(f"🏁 AI Portfolio training FINISHED at {time.strftime('%H:%M:%S')} (took {ai_portfolio_elapsed:.1f}s)", flush=True)
+            print(f"DEBUG: train_ai_portfolio_model returned: {ai_portfolio_trained}", flush=True)
 
             if ai_portfolio_trained:
                 print("✅ AI Portfolio Rebalancing Model trained successfully")
@@ -1231,6 +1247,26 @@ def main(
     if ENABLE_1YEAR_BACKTEST:
         backtest_start_time = time.time()
         print("\n🔍 Step 8: Running 1-Year Backtest...")
+        
+        # --- Rebalance Horizon Optimization (if enabled) ---
+        rebalance_optimization_results = None
+        if OPTIMIZE_REBALANCE_HORIZON and ENABLE_STATIC_BH:
+            print("\n🔄 Running Rebalance Horizon Optimization (30-90 days)...", flush=True)
+            try:
+                from rebalance_optimizer import optimize_rebalance_horizons
+                rebalance_optimization_results = optimize_rebalance_horizons(
+                    all_tickers_data=all_tickers_data,
+                    backtest_start=bt_start_1y,
+                    backtest_end=bt_end,
+                    initial_capital=capital_per_stock_1y * 3,  # Same as n_top_rebal
+                    portfolio_size=3,
+                    strategy_types=['1Y', '3M', '1M']
+                )
+            except Exception as e:
+                print(f"   ⚠️ Rebalance optimization failed: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+        
         # DEBUG: Check what's in models dictionaries
         print(f"\n[DEBUG MAIN] 1-Year models keys: {list(models.keys())}")
         print(f"[DEBUG MAIN] 1-Year models values types: {[type(v).__name__ if v else 'None' for v in models.values()]}")
@@ -1565,6 +1601,75 @@ def main(
         rule_1month_return=None
     )
     print("\n✅ Final summary prepared and printed.")
+    
+    # --- Print Rebalance Horizon Optimization Results ---
+    if rebalance_optimization_results:
+        print("\n" + "=" * 80)
+        print("              🔄 REBALANCE HORIZON OPTIMIZATION RESULTS 🔄")
+        print("=" * 80)
+        print(f"   Tested horizons: {REBALANCE_HORIZON_MIN} to {REBALANCE_HORIZON_MAX} days (daily)")
+        print("-" * 80)
+        for strategy_type in ['1Y', '3M', '1M']:
+            if strategy_type in rebalance_optimization_results:
+                r = rebalance_optimization_results[strategy_type]
+                print(f"   Static BH {strategy_type}:")
+                print(f"      🏆 Best horizon: {r['best_horizon']} days")
+                print(f"      📈 Best return: {r['best_return']:+.1f}%")
+                print(f"      💰 Transaction costs: ${r['best_txn_cost']:.0f}")
+        print("=" * 80)
+        print("   💡 Use these optimal horizons in config.py for best performance:")
+        for strategy_type in ['1Y', '3M', '1M']:
+            if strategy_type in rebalance_optimization_results:
+                r = rebalance_optimization_results[strategy_type]
+                config_var = f"STATIC_BH_{strategy_type}_REBALANCE_DAYS"
+                print(f"      {config_var} = {r['best_horizon']}")
+        print("=" * 80)
+        
+        # --- Print detailed table with all horizons and returns ---
+        print("\n" + "=" * 100)
+        print("              📊 DETAILED HORIZON vs RETURN TABLE 📊")
+        print("=" * 100)
+        
+        # Build sorted results for each strategy
+        strategy_results = {}
+        for strategy_type in ['1Y', '3M', '1M']:
+            if strategy_type in rebalance_optimization_results:
+                results = rebalance_optimization_results[strategy_type]['all_results']
+                # Sort by horizon
+                strategy_results[strategy_type] = sorted(results, key=lambda x: x[0])
+        
+        # Print header
+        header = f"{'Horizon':<10}"
+        for st in ['1Y', '3M', '1M']:
+            if st in strategy_results:
+                header += f" | {'Static BH ' + st:>15}"
+        print(header)
+        print("-" * 100)
+        
+        # Print each horizon row
+        horizons = list(range(REBALANCE_HORIZON_MIN, REBALANCE_HORIZON_MAX + 1))
+        for horizon in horizons:
+            row = f"{horizon:>3} days   "
+            for st in ['1Y', '3M', '1M']:
+                if st in strategy_results:
+                    # Find return for this horizon
+                    ret = None
+                    for h, r, _ in strategy_results[st]:
+                        if h == horizon:
+                            ret = r
+                            break
+                    if ret is not None:
+                        # Mark best with star
+                        best_h = rebalance_optimization_results[st]['best_horizon']
+                        marker = " 🏆" if horizon == best_h else "   "
+                        row += f" | {ret:>+12.1f}%{marker}"
+                    else:
+                        row += f" | {'N/A':>15}"
+            print(row)
+        
+        print("-" * 100)
+        print("   🏆 = Best performing horizon for each strategy")
+        print("=" * 100)
 
     # Send backtesting completion notification
     if backtest_start_time:

@@ -113,29 +113,89 @@ def generate_ai_portfolio_training_data(
         training_samples = []
         training_labels = []
         
-        # Sliding window approach
+        # Calculate total windows for progress tracking
+        total_windows = 0
+        temp_start = train_start_date
+        while temp_start + timedelta(days=evaluation_window) <= train_end_date:
+            total_windows += 1
+            temp_start += timedelta(days=step_size)
+        
+        print(f"   📊 Processing {total_windows} evaluation windows...", flush=True)
+        
+        # Filter tickers to only those with sufficient data for the training period
+        # Need at least 50 days of data before train_start_date for lookback
+        min_data_date = train_start_date - timedelta(days=60)
+        valid_tickers = []
+        for ticker in top_tickers[:100]:
+            ticker_data = train_data[train_data['ticker'] == ticker]
+            if len(ticker_data) >= 50:
+                ticker_min_date = ticker_data['date'].min()
+                if ticker_min_date <= min_data_date:
+                    valid_tickers.append(ticker)
+        
+        print(f"   📊 Found {len(valid_tickers)} tickers with sufficient data (need data before {min_data_date.date()})", flush=True)
+        
+        if len(valid_tickers) < 3:
+            print(f"   ⚠️ AI Portfolio: Not enough valid tickers ({len(valid_tickers)}), need at least 3")
+            return None
+        
+        # Generate all window tasks for parallel processing
+        from itertools import combinations
+        all_combos = list(combinations(valid_tickers[:50], 3))[:500]  # Use top 50 valid tickers, 500 combos
+        print(f"   📊 Using {len(all_combos)} stock combinations from {len(valid_tickers)} valid tickers", flush=True)
+        
+        # Build list of all (window, combo) tasks - store as serializable data
+        tasks = []
         current_eval_start = train_start_date
         while current_eval_start + timedelta(days=evaluation_window) <= train_end_date:
             eval_end = current_eval_start + timedelta(days=evaluation_window)
-            
-            # Generate combinations and evaluate
-            from itertools import combinations
-            sample_size = min(50, len(list(combinations(top_tickers, 3))))  # Limit samples
-            
-            for combo in list(combinations(top_tickers, 3))[:sample_size]:
-                # Extract features and calculate performance
-                features = _extract_portfolio_features(train_data, combo, current_eval_start, eval_end)
-                if features is None:
-                    continue
-                
-                perf = _calculate_portfolio_performance(train_data, combo, current_eval_start, eval_end)
-                if perf is None:
-                    continue
-                
-                training_samples.append(features)
-                training_labels.append(1 if perf > performance_threshold else 0)
-            
+            for combo in all_combos:
+                # Store combo as tuple, dates as timestamps for serialization
+                tasks.append((list(combo), current_eval_start, eval_end, performance_threshold))
             current_eval_start += timedelta(days=step_size)
+        
+        print(f"   🚀 Processing {len(tasks)} tasks in parallel...", flush=True)
+        
+        # Use all available CPU cores for data generation (not GPU-limited)
+        from multiprocessing import cpu_count
+        import multiprocessing as mp
+        
+        n_workers = cpu_count()  # Use ALL cores for maximum CPU utilization
+        print(f"   🔧 Using {n_workers} parallel workers (all CPU cores)", flush=True)
+        
+        completed = 0
+        failed_features = 0
+        failed_perf = 0
+        total_tasks = len(tasks)
+        
+        # Process using multiprocessing Pool with initializer
+        # Use smaller chunksize for better load balancing across all cores
+        chunksize = max(1, total_tasks // (n_workers * 10))
+        print(f"   📊 Chunksize: {chunksize} (for {total_tasks} tasks)", flush=True)
+        
+        with mp.Pool(processes=n_workers, initializer=_init_portfolio_worker, initargs=(train_data,)) as pool:
+            # Use imap_unordered for progress tracking
+            for result in pool.imap_unordered(_portfolio_worker, tasks, chunksize=chunksize):
+                completed += 1
+                status, data = result
+                
+                if status == 'success':
+                    features, label = data
+                    training_samples.append(features)
+                    training_labels.append(label)
+                elif status == 'feature_fail':
+                    failed_features += 1
+                elif status == 'perf_fail':
+                    failed_perf += 1
+                
+                # Progress every 500 tasks
+                if completed % 500 == 0 or completed == total_tasks:
+                    pct = completed * 100 // total_tasks
+                    print(f"   📊 Progress: {completed}/{total_tasks} ({pct}%) - {len(training_samples)} samples", flush=True)
+        
+        print(f"   ✅ Parallel data generation complete: {len(training_samples)} samples from {len(tasks)} tasks", flush=True)
+        if failed_features > 0 or failed_perf > 0:
+            print(f"   📊 Skipped: {failed_features} feature fails, {failed_perf} perf fails", flush=True)
         
         if len(training_samples) < 10:
             print(f"   ⚠️ AI Portfolio: Too few training samples ({len(training_samples)})")
@@ -197,12 +257,13 @@ def train_ai_portfolio_model(
     # ============================================
     # NEW: Use Unified Parallel Training if enabled
     # ============================================
+    print(f"   DEBUG: use_unified_training = {use_unified_training}", flush=True)
     if use_unified_training:
         try:
             from config import USE_UNIFIED_PARALLEL_TRAINING
             from parallel_training import train_all_models_parallel
             
-            print(f"   🚀 Using Unified Parallel Training for AI Portfolio models")
+            print(f"   🚀 Using Unified Parallel Training for AI Portfolio models", flush=True)
             
             # Generate training data
             ai_portfolio_data = generate_ai_portfolio_training_data(
@@ -500,6 +561,47 @@ def train_ai_portfolio_model(
     
     except Exception as e:
         print(f"   ❌ AI Portfolio training error: {e}")
+        return None
+
+
+# Global variable for multiprocessing workers
+_WORKER_TRAIN_DATA = None
+
+def _init_portfolio_worker(train_data):
+    """Initialize worker process with training data."""
+    global _WORKER_TRAIN_DATA
+    _WORKER_TRAIN_DATA = train_data
+
+def _portfolio_worker(args):
+    """Worker function for multiprocessing - processes a single portfolio task."""
+    global _WORKER_TRAIN_DATA
+    combo, start, end, threshold = args
+    try:
+        features = _extract_portfolio_features(_WORKER_TRAIN_DATA, list(combo), start)
+        if features is None:
+            return ('feature_fail', None)
+        perf = _calculate_portfolio_performance(_WORKER_TRAIN_DATA, list(combo), start, end)
+        if perf is None:
+            return ('perf_fail', None)
+        label = 1 if perf > threshold else 0
+        return ('success', (features, label))
+    except Exception:
+        return ('error', None)
+
+def _process_portfolio_task_wrapper(train_data, combo, start, end, threshold):
+    """
+    Wrapper function for multiprocessing - must be at module level to be picklable.
+    """
+    try:
+        features = _extract_portfolio_features(train_data, list(combo), start)
+        if features is None:
+            return None
+        perf = _calculate_portfolio_performance(train_data, list(combo), start, end)
+        if perf is None:
+            return None
+        label = 1 if perf > threshold else 0
+        return (features, label)
+    except Exception:
         return None
 
 

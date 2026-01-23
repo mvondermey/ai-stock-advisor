@@ -116,7 +116,10 @@ def auto_configure_gpu_slots():
         import torch
         if torch.cuda.is_available():
             total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # in GB
-            print(f" Detected {total_vram:.1f}GB VRAM - configuring slots dynamically")
+            # Only print in main process, not in spawned workers
+            import multiprocessing as _mp
+            if _mp.current_process().name == 'MainProcess':
+                print(f" Detected {total_vram:.1f}GB VRAM - configuring slots dynamically")
             
             # Calculate max slots for each model type (leave 20% VRAM headroom)
             lstm_slots = max(1, int(total_vram * 0.8 / GPU_MEMORY_PER_MODEL['LSTM']))
@@ -240,6 +243,15 @@ ENABLE_SECTOR_ROTATION = True   # NEW - Sector Rotation Strategy
 ENABLE_MULTITASK_LEARNING = False   # NEW - Multi-Task Learning Strategy
 ENABLE_3M_1Y_RATIO = True   # NEW - 3M/1Y Ratio Strategy
 ENABLE_ADAPTIVE_STRATEGY = False   # NEW - Adaptive Strategy (rotates based on conditions)
+ENABLE_LLM_STRATEGY = True   # NEW - LLM Strategy (DeepSeek via Ollama)
+
+# --- LLM Strategy Parameters (via Ollama) ---
+LLM_OLLAMA_BASE_URL = "http://localhost:11434"
+LLM_OLLAMA_MODEL = "llama3:latest"  # LLM model via Ollama (llama3, mistral, deepseek-coder, etc.)
+LLM_OLLAMA_TIMEOUT = 60  # seconds per request
+LLM_PARALLEL_WORKERS = 4  # Number of parallel LLM requests
+LLM_MIN_SCORE = 0.0  # Minimum score threshold for stock selection
+LLM_REBALANCE_FREQUENCY_DAYS = 20  # Rebalance every N days (LLM calls are slow)
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -294,12 +306,20 @@ RISK_ADJ_MOM_VOLUME_MULTIPLIER = 1.2  # Recent volume must be 20% above average
 RISK_ADJ_MOM_MIN_SCORE = 10.0  # FIXED: Lowered from 30.0 to allow more candidates
 
 # --- Static Buy & Hold (BH) rebalancing period ---
-# DEPRECATED: These are now controlled by AI_REBALANCE_FREQUENCY_DAYS
-# Kept for backwards compatibility but not used
 # Set to 0 to maintain true buy & hold behavior (no rebalancing)
-STATIC_BH_1Y_REBALANCE_DAYS = 90   # DEPRECATED: Use AI_REBALANCE_FREQUENCY_DAYS instead
-STATIC_BH_3M_REBALANCE_DAYS = 60   # DEPRECATED: Use AI_REBALANCE_FREQUENCY_DAYS instead
-STATIC_BH_1M_REBALANCE_DAYS = 60   # Rebalance every 30 days (1 month)
+# These are default values - if OPTIMIZE_REBALANCE_HORIZON is True, the system will
+# test multiple horizons (30-90 days) and pick the best one
+STATIC_BH_1Y_REBALANCE_DAYS = 60   # Default rebalance period for 1Y selection
+STATIC_BH_3M_REBALANCE_DAYS = 60   # Default rebalance period for 3M selection
+STATIC_BH_1M_REBALANCE_DAYS = 60   # Default rebalance period for 1M selection
+
+# --- Rebalance Horizon Optimization ---
+# If True, test all rebalance horizons from 30 to 90 days for static strategies
+# and report the best performing horizon in the final summary
+OPTIMIZE_REBALANCE_HORIZON = True
+REBALANCE_HORIZON_MIN = 30  # Minimum rebalance period to test
+REBALANCE_HORIZON_MAX = 90  # Maximum rebalance period to test
+# All horizons from MIN to MAX will be tested in parallel
 
 # --- Dynamic Buy & Hold (BH) rebalancing guard ---
 # Dynamic BH checks candidates daily, but only trades if:

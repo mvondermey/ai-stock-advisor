@@ -39,8 +39,10 @@ from config import (
     ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT,
     ENABLE_SECTOR_ROTATION, SECTOR_ROTATION_TOP_N, AI_REBALANCE_FREQUENCY_DAYS,
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_ADAPTIVE_STRATEGY,
+    ENABLE_LLM_STRATEGY, LLM_REBALANCE_FREQUENCY_DAYS, LLM_MIN_SCORE,
     RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION, RISK_ADJ_MOM_CONFIRM_SHORT, RISK_ADJ_MOM_CONFIRM_MEDIUM, RISK_ADJ_MOM_CONFIRM_LONG, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
-    RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER
+    RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER,
+    OPTIMIZE_REBALANCE_HORIZON
 )
 from alpha_training import AlphaThresholdConfig, select_threshold_by_alpha
 from scipy.stats import uniform, beta
@@ -62,6 +64,7 @@ volatility_adj_mom_transaction_costs = None
 sector_rotation_transaction_costs = None
 multitask_transaction_costs = None
 ratio_3m_1y_transaction_costs = None
+llm_strategy_transaction_costs = None
 ratio_1y_3m_transaction_costs = None
 turnaround_transaction_costs = None
 adaptive_strategy_transaction_costs = None
@@ -1387,6 +1390,15 @@ def _run_portfolio_backtest_walk_forward(
     current_turnaround_stocks = []  # Current top stocks held by turnaround strategy
     turnaround_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
+    # LLM STRATEGY (DeepSeek via Ollama): Initialize portfolio tracking
+    llm_strategy_portfolio_value = 0.0
+    llm_strategy_portfolio_history = [llm_strategy_portfolio_value]
+    llm_strategy_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    llm_strategy_cash = initial_capital_needed  # Start with same capital as AI
+    current_llm_strategy_stocks = []  # Current top stocks held by LLM strategy
+    llm_strategy_last_rebalance_value = initial_capital_needed  # Transaction cost guard
+    llm_strategy_last_rebalance_day = 0  # Track last rebalance day
+    llm_available = False  # Will be set to True if Ollama is available
     
     # MEAN REVERSION: Initialize portfolio tracking
     mean_reversion_portfolio_value = 0.0
@@ -2084,6 +2096,91 @@ def _run_portfolio_backtest_walk_forward(
                             )
                         else:
                             print(f"   ⏭️ Skip Dynamic BH 1Y+TS rebalance: {reason}")
+
+                # LLM STRATEGY (DeepSeek via Ollama): Rebalance based on LLM predictions
+                if ENABLE_LLM_STRATEGY:
+                    # Check Ollama availability on first run
+                    if not llm_available and day_count == 1:
+                        try:
+                            from llm_strategy import check_ollama_available
+                            llm_available = check_ollama_available()
+                            if llm_available:
+                                print(f"   🤖 LLM Strategy: Ollama available, DeepSeek model ready")
+                            else:
+                                print(f"   ⚠️ LLM Strategy: Ollama not available, strategy disabled")
+                        except Exception as e:
+                            print(f"   ⚠️ LLM Strategy: Failed to check Ollama: {e}")
+                            llm_available = False
+                    
+                    if llm_available:
+                        # Check if it's time to rebalance (LLM calls are slow, so less frequent)
+                        days_since_llm_rebalance = day_count - llm_strategy_last_rebalance_day
+                        
+                        if days_since_llm_rebalance >= LLM_REBALANCE_FREQUENCY_DAYS:
+                            print(f"   🤖 LLM Strategy rebalancing (every {LLM_REBALANCE_FREQUENCY_DAYS} days)...", flush=True)
+                            print(f"   📊 LLM analyzing {len(initial_top_tickers)} tickers via Ollama...", flush=True)
+                            
+                            try:
+                                from llm_strategy import get_llm_predictions
+                                
+                                # Get LLM predictions for top tickers
+                                llm_predictions = get_llm_predictions(
+                                    initial_top_tickers, all_tickers_data, current_date,
+                                    top_n=PORTFOLIO_SIZE * 2,
+                                    verbose=True
+                                )
+                                
+                                if llm_predictions:
+                                    # Select stocks with positive scores
+                                    new_llm_stocks = [
+                                        ticker for ticker, score, _ in llm_predictions
+                                        if score >= LLM_MIN_SCORE
+                                    ][:PORTFOLIO_SIZE]
+                                    
+                                    # DEBUG: Show actual 1Y performance for LLM selected stocks
+                                    print(f"   📊 LLM Selection Debug - Actual 1Y Performance:")
+                                    for ticker, score, reasoning in llm_predictions[:PORTFOLIO_SIZE]:
+                                        try:
+                                            if ticker in ticker_data_grouped:
+                                                td = ticker_data_grouped[ticker]
+                                                perf_start = current_date - timedelta(days=365)
+                                                perf_data = td.loc[perf_start:current_date]
+                                                if len(perf_data) >= 30:
+                                                    valid_close = perf_data['Close'].dropna()
+                                                    if len(valid_close) >= 2:
+                                                        start_px = valid_close.iloc[0]
+                                                        end_px = valid_close.iloc[-1]
+                                                        if start_px > 0:
+                                                            actual_1y_perf = ((end_px / start_px) - 1) * 100
+                                                            print(f"      {ticker}: LLM score={score:.2f}, Actual 1Y={actual_1y_perf:+.1f}% | {reasoning[:50]}...")
+                                        except Exception:
+                                            pass
+                                    
+                                    if new_llm_stocks and set(new_llm_stocks) != set(current_llm_strategy_stocks):
+                                        print(f"   🤖 LLM selected: {new_llm_stocks}")
+                                        
+                                        # Calculate capital per stock
+                                        capital_per_llm_stock = llm_strategy_cash / len(new_llm_stocks) if new_llm_stocks else 0
+                                        
+                                        # Rebalance LLM strategy portfolio
+                                        llm_strategy_cash = _rebalance_generic_portfolio(
+                                            new_llm_stocks, current_date, all_tickers_data,
+                                            llm_strategy_positions, llm_strategy_cash, capital_per_llm_stock,
+                                            'llm_strategy'
+                                        )
+                                        current_llm_strategy_stocks = new_llm_stocks
+                                        llm_strategy_last_rebalance_day = day_count
+                                        llm_strategy_last_rebalance_value = _mark_to_market_value(
+                                            llm_strategy_positions, llm_strategy_cash, ticker_data_grouped, current_date
+                                        )
+                                    else:
+                                        print(f"   ⏭️ LLM Strategy: No change in selection")
+                                else:
+                                    print(f"   ⚠️ LLM Strategy: No predictions returned")
+                            except Exception as e:
+                                print(f"   ⚠️ LLM Strategy rebalance failed: {e}")
+                                import traceback
+                                traceback.print_exc()
 
                 # SECTOR ROTATION: Rebalance to top performing sector ETFs
                 if ENABLE_SECTOR_ROTATION:
@@ -3002,7 +3099,7 @@ def _run_portfolio_backtest_walk_forward(
                     try:
                         executed_trades = _execute_portfolio_rebalance(
                             old_portfolio, selected_stocks, current_date, all_tickers_data,
-                            positions, cash_balance, capital_per_stock, target_percentage,
+                            positions, cash_balance, capital_per_stock, 0.0,  # target_percentage not used in regression mode
                             predictions=selected_predictions,  # Pass predictions for weighted buying
                             stock_performance_tracking=stock_performance_tracking  # ✅ NEW: Pass tracking dict
                         )
@@ -3213,6 +3310,33 @@ def _run_portfolio_backtest_walk_forward(
 
         sector_rotation_portfolio_value = sector_rotation_invested_value + sector_rotation_cash
         sector_rotation_portfolio_history.append(sector_rotation_portfolio_value)
+
+        # Update LLM STRATEGY portfolio value daily (skip if disabled or unavailable)
+        llm_strategy_invested_value = 0.0
+        if ENABLE_LLM_STRATEGY and llm_available:
+            for ticker in list(llm_strategy_positions.keys()):
+                try:
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    position_value = llm_strategy_positions[ticker]['shares'] * current_price
+                                    llm_strategy_positions[ticker]['value'] = position_value
+                                    llm_strategy_invested_value += position_value
+                                else:
+                                    llm_strategy_invested_value += llm_strategy_positions[ticker].get('value', 0.0)
+                            else:
+                                llm_strategy_invested_value += llm_strategy_positions[ticker].get('value', 0.0)
+                except Exception:
+                    llm_strategy_invested_value += llm_strategy_positions[ticker].get('value', 0.0)
+
+        llm_strategy_portfolio_value = llm_strategy_invested_value + llm_strategy_cash
+        llm_strategy_portfolio_history.append(llm_strategy_portfolio_value)
 
         # Update DYNAMIC BH 3-MONTH portfolio value daily (skip if disabled)
         dynamic_bh_3m_invested_value = 0.0
@@ -4190,6 +4314,7 @@ def _run_portfolio_backtest_walk_forward(
         ('Dynamic BH 1Y+Vol', dynamic_bh_1y_vol_filter_portfolio_history if ENABLE_DYNAMIC_BH_1Y_VOL_FILTER else None),
         ('Dynamic BH 1Y+TS', dynamic_bh_1y_trailing_stop_portfolio_history if ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP else None),
         ('Sector Rotation', sector_rotation_portfolio_history if ENABLE_SECTOR_ROTATION else None),
+        ('LLM Strategy', llm_strategy_portfolio_history if ENABLE_LLM_STRATEGY and llm_available else None),
         ('Multi-Task', multitask_portfolio_history if ENABLE_MULTITASK_LEARNING else None),
         ('3M/1Y Ratio', ratio_3m_1y_portfolio_history if ENABLE_3M_1Y_RATIO else None),
         ('1Y/3M Ratio', ratio_1y_3m_portfolio_history),
@@ -4537,6 +4662,91 @@ def _rebalance_dynamic_bh_1y_trailing_stop_portfolio(new_stocks, current_date, a
         print(f"   ⚠️ Dynamic BH 1Y+TS rebalancing failed: {e}")
 
     return dynamic_bh_1y_trailing_stop_cash  # Return updated cash (float passed by value)
+
+
+def _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data,
+                                 positions, cash, capital_per_stock, strategy_name='generic'):
+    """
+    Generic rebalance function for any portfolio strategy.
+    Sells stocks no longer in selection and buys new ones.
+    
+    Args:
+        new_stocks: List of tickers to hold
+        current_date: Current backtest date
+        all_tickers_data: DataFrame with all ticker data
+        positions: Dict of current positions (modified in place)
+        cash: Current cash balance
+        capital_per_stock: Target allocation per stock
+        strategy_name: Name of strategy for transaction cost tracking
+    
+    Returns:
+        Updated cash balance
+    """
+    global llm_strategy_transaction_costs
+    
+    transaction_costs_local = 0.0
+    
+    try:
+        # Sell stocks no longer in selection
+        for ticker in list(positions.keys()):
+            if ticker not in new_stocks:
+                pos = positions[ticker]
+                shares = pos.get('shares', 0)
+                if shares > 0:
+                    try:
+                        ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                        if not ticker_data.empty:
+                            ticker_data = ticker_data.set_index('date')
+                            price_data = ticker_data.loc[:current_date]
+                            if not price_data.empty:
+                                valid_prices = price_data['Close'].dropna()
+                                if len(valid_prices) > 0:
+                                    current_price = valid_prices.iloc[-1]
+                                    if not pd.isna(current_price) and current_price > 0:
+                                        sell_value = shares * current_price
+                                        sell_cost = sell_value * TRANSACTION_COST
+                                        cash += sell_value - sell_cost
+                                        transaction_costs_local += sell_cost
+                                        del positions[ticker]
+                    except Exception:
+                        continue
+
+        # Execute buys
+        for ticker in new_stocks:
+            if ticker not in positions:
+                try:
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        price_data = ticker_data.loc[:current_date]
+                        if not price_data.empty:
+                            valid_prices = price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    shares_to_buy = int(capital_per_stock / current_price)
+                                    if shares_to_buy > 0:
+                                        buy_cost = shares_to_buy * current_price * TRANSACTION_COST
+                                        total_cost = shares_to_buy * current_price + buy_cost
+                                        if cash >= total_cost:
+                                            cash -= total_cost
+                                            transaction_costs_local += buy_cost
+                                            positions[ticker] = {
+                                                'shares': shares_to_buy,
+                                                'entry_price': current_price,
+                                                'value': shares_to_buy * current_price
+                                            }
+                except Exception:
+                    continue
+        
+        # Update global transaction costs based on strategy
+        if strategy_name == 'llm_strategy':
+            llm_strategy_transaction_costs += transaction_costs_local
+
+    except Exception as e:
+        print(f"   ⚠️ {strategy_name} rebalancing failed: {e}")
+
+    return cash
 
 
 def _rebalance_sector_rotation_portfolio(new_etfs, current_date, all_tickers_data,
