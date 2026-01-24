@@ -22,11 +22,40 @@ from config import (
     N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
     DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
     FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD, NUM_PROCESSES, SEQUENCE_LENGTH,
-    RETRAIN_FREQUENCY_DAYS, PREDICTION_LOOKBACK_DAYS,
+    RETRAIN_FREQUENCY_DAYS, PREDICTION_LOOKBACK_DAYS, PREDICTION_TIMEOUT,
     ENABLE_RISK_ADJ_MOM, ENABLE_MEAN_REVERSION, ENABLE_QUALITY_MOM, ENABLE_MOMENTUM_AI_HYBRID,
     ENABLE_VOLATILITY_ADJ_MOM, VOLATILITY_ADJ_MOM_LOOKBACK, VOLATILITY_ADJ_MOM_VOL_WINDOW, VOLATILITY_ADJ_MOM_MIN_SCORE,
     ENABLE_1YEAR_TRAINING
 )
+import signal
+from contextlib import contextmanager
+
+class PredictionTimeoutError(Exception):
+    """Raised when a prediction takes too long."""
+    pass
+
+@contextmanager
+def prediction_timeout(seconds: int, ticker: str):
+    """Context manager for prediction timeout using SIGALRM (Unix only)."""
+    def timeout_handler(signum, frame):
+        raise PredictionTimeoutError(f"Prediction for {ticker} timed out after {seconds}s")
+    
+    if seconds is None or seconds <= 0:
+        yield
+        return
+    
+    # Only use signal-based timeout on Unix systems
+    try:
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(seconds)
+        try:
+            yield
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+    except (AttributeError, ValueError):
+        # SIGALRM not available (Windows), just run without timeout
+        yield
 from config import (
     ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE, PERIOD_HORIZONS,
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, USE_LSTM, USE_GRU, # Moved from ml_models
@@ -2118,14 +2147,39 @@ def _run_portfolio_backtest_walk_forward(
                         
                         if days_since_llm_rebalance >= LLM_REBALANCE_FREQUENCY_DAYS:
                             print(f"   🤖 LLM Strategy rebalancing (every {LLM_REBALANCE_FREQUENCY_DAYS} days)...", flush=True)
-                            print(f"   📊 LLM analyzing {len(initial_top_tickers)} tickers via Ollama...", flush=True)
                             
                             try:
                                 from llm_strategy import get_llm_predictions
                                 
-                                # Get LLM predictions for top tickers
+                                # Pre-filter to top 50 by 1Y momentum (LLM calls are slow)
+                                LLM_PREFILTER_SIZE = 50
+                                prefilter_perfs = []
+                                for ticker in initial_top_tickers:
+                                    try:
+                                        if ticker not in ticker_data_grouped:
+                                            continue
+                                        td = ticker_data_grouped[ticker]
+                                        perf_start = current_date - timedelta(days=365)
+                                        perf_data = td.loc[perf_start:current_date]
+                                        if len(perf_data) >= 30:
+                                            valid_close = perf_data['Close'].dropna()
+                                            if len(valid_close) >= 2:
+                                                start_px = valid_close.iloc[0]
+                                                end_px = valid_close.iloc[-1]
+                                                if start_px > 0:
+                                                    perf = (end_px / start_px) - 1
+                                                    prefilter_perfs.append((ticker, perf))
+                                    except Exception:
+                                        continue
+                                
+                                prefilter_perfs.sort(key=lambda x: x[1], reverse=True)
+                                llm_candidate_tickers = [t for t, _ in prefilter_perfs[:LLM_PREFILTER_SIZE]]
+                                
+                                print(f"   📊 LLM analyzing {len(llm_candidate_tickers)} pre-filtered tickers via Ollama...", flush=True)
+                                
+                                # Get LLM predictions for pre-filtered top tickers
                                 llm_predictions = get_llm_predictions(
-                                    initial_top_tickers, all_tickers_data, current_date,
+                                    llm_candidate_tickers, all_tickers_data, current_date,
                                     top_n=PORTFOLIO_SIZE * 2,
                                     verbose=True
                                 )
@@ -5977,186 +6031,191 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
         from ml_models import TCNRegressor, GRURegressor, LSTMRegressor, LSTMClassifier, GRUClassifier
     
     try:
-        if model is None:
-            print(f"   ⚠️ {ticker}: model is None")
-            return -np.inf
-        if scaler is None:
-            print(f"   ⚠️ {ticker}: scaler is None")
-            return -np.inf
-        if df_recent.empty:
-            print(f"   ⚠️ {ticker}: df_recent is empty")
-            return -np.inf
+        # Wrap entire prediction in timeout
+        with prediction_timeout(PREDICTION_TIMEOUT, ticker):
+            if model is None:
+                print(f"   ⚠️ {ticker}: model is None")
+                return -np.inf
+            if scaler is None:
+                print(f"   ⚠️ {ticker}: scaler is None")
+                return -np.inf
+            if df_recent.empty:
+                print(f"   ⚠️ {ticker}: df_recent is empty")
+                return -np.inf
 
-        # ✅ VALIDATION: Check if we have enough data for prediction
-        try:
-            validate_prediction_data(df_recent, ticker)
-        except InsufficientDataError as e:
-            print(f"   {str(e)}")
-            return -np.inf
-
-        print(f"   🔍 {ticker}: Starting prediction with {len(df_recent)} rows, model type: {type(model).__name__}")
-
-        # Engineer features - same as training
-        df_with_features = df_recent.copy()
-
-        print(f"   🔧 {ticker}: Initial features: {list(df_with_features.columns)}")
-
-        # Add financial features that might be in the data (fill with 0 if missing)
-        financial_features = [col for col in df_with_features.columns if col.startswith('Fin_')]
-        for col in financial_features:
-            df_with_features[col] = pd.to_numeric(df_with_features[col], errors='coerce').fillna(0)
-
-        df_with_features = _calculate_technical_indicators(df_with_features)
-        print(f"   🔧 {ticker}: After technical indicators: {len(df_with_features)} rows, {len(df_with_features.columns)} features")
-
-        # Add annualized BH return feature (same as in training)
-        if len(df_with_features) > 1:
-            start_price = df_with_features["Close"].iloc[0]
-            end_price = df_with_features["Close"].iloc[-1]
-            
-            # Fix: Handle date calculation properly when index is named 'date'
+            # ✅ VALIDATION: Check if we have enough data for prediction
             try:
-                total_days = (df_with_features.index[-1] - df_with_features.index[0]).days
-            except Exception:
-                # Fallback: convert to datetime if needed
-                total_days = (pd.to_datetime(df_with_features.index[-1]) - pd.to_datetime(df_with_features.index[0])).days
+                validate_prediction_data(df_recent, ticker)
+            except InsufficientDataError as e:
+                print(f"   {str(e)}")
+                return -np.inf
 
-            if total_days > 0 and start_price > 0:
-                total_return = (end_price / start_price) - 1.0
-                annualized_return = (1 + total_return) ** (365.0 / total_days) - 1
-                df_with_features["Annualized_BH_Return"] = annualized_return
+            print(f"   🔍 {ticker}: Starting prediction with {len(df_recent)} rows, model type: {type(model).__name__}")
+
+            # Engineer features - same as training
+            df_with_features = df_recent.copy()
+
+            print(f"   🔧 {ticker}: Initial features: {list(df_with_features.columns)}")
+
+            # Add financial features that might be in the data (fill with 0 if missing)
+            financial_features = [col for col in df_with_features.columns if col.startswith('Fin_')]
+            for col in financial_features:
+                df_with_features[col] = pd.to_numeric(df_with_features[col], errors='coerce').fillna(0)
+
+            df_with_features = _calculate_technical_indicators(df_with_features)
+            print(f"   🔧 {ticker}: After technical indicators: {len(df_with_features)} rows, {len(df_with_features.columns)} features")
+
+            # Add annualized BH return feature (same as in training)
+            if len(df_with_features) > 1:
+                start_price = df_with_features["Close"].iloc[0]
+                end_price = df_with_features["Close"].iloc[-1]
+                
+                # Fix: Handle date calculation properly when index is named 'date'
+                try:
+                    total_days = (df_with_features.index[-1] - df_with_features.index[0]).days
+                except Exception:
+                    # Fallback: convert to datetime if needed
+                    total_days = (pd.to_datetime(df_with_features.index[-1]) - pd.to_datetime(df_with_features.index[0])).days
+
+                if total_days > 0 and start_price > 0:
+                    total_return = (end_price / start_price) - 1.0
+                    annualized_return = (1 + total_return) ** (365.0 / total_days) - 1
+                    df_with_features["Annualized_BH_Return"] = annualized_return
+                else:
+                    df_with_features["Annualized_BH_Return"] = 0.0
             else:
                 df_with_features["Annualized_BH_Return"] = 0.0
-        else:
-            df_with_features["Annualized_BH_Return"] = 0.0
 
-        # Only drop rows with NaN if we have enough rows to spare
-        rows_before_dropna = len(df_with_features)
-        df_with_features = df_with_features.dropna()
-        rows_after_dropna = len(df_with_features)
-        print(f"   🔧 {ticker}: After dropna: {rows_after_dropna} rows (dropped {rows_before_dropna - rows_after_dropna})")
+            # Only drop rows with NaN if we have enough rows to spare
+            rows_before_dropna = len(df_with_features)
+            df_with_features = df_with_features.dropna()
+            rows_after_dropna = len(df_with_features)
+            print(f"   🔧 {ticker}: After dropna: {rows_after_dropna} rows (dropped {rows_before_dropna - rows_after_dropna})")
 
-        # ✅ VALIDATION: Check if enough rows remain after feature engineering
-        if rows_after_dropna == 0:
-            print(f"   ❌ {ticker}: All rows dropped during prediction feature engineering!")
-            print(f"   💡 This usually means:")
-            print(f"      - Not enough historical data for technical indicators")
-            print(f"      - Too many NaN/missing values in source data")
-            print(f"      - Feature calculation window is too large for available data")
-            return -np.inf
-        
-        try:
-            validate_features_after_engineering(df_with_features, ticker, min_rows=1, context="prediction")
-        except InsufficientDataError as e:
-            print(f"   {str(e)}")
-            return -np.inf
-
-        # Get latest data point
-        latest_data = df_with_features.iloc[-1:]
-        print(f"   📊 {ticker}: Latest data shape: {latest_data.shape}, features: {list(latest_data.columns)}")
-
-        # Align features to match scaler's expectations
-        scaler_features = list(scaler.feature_names_in_) if hasattr(scaler, 'feature_names_in_') else []
-        print(f"   🔧 {ticker}: Scaler expects {len(scaler_features)} features: {scaler_features[:5]}...")
-        if scaler_features:
-            # Ensure we have all expected features, fill missing ones with 0
-            for feature in scaler_features:
-                if feature not in latest_data.columns:
-                    latest_data[feature] = 0.0
-            # Reorder columns to match scaler expectations
-            latest_data = latest_data[scaler_features]
-            print(f"   🔧 {ticker}: After alignment: {latest_data.shape}")
-
-        # Scale features
-        try:
-            # Pass DataFrame directly to preserve feature names and avoid sklearn warning
-            features_scaled = scaler.transform(latest_data)
-            print(f"   🔧 {ticker}: Features scaled successfully, shape: {features_scaled.shape}")
-        except Exception as e:
-            print(f"   ❌ {ticker}: Scaling failed: {e}")
-            return -np.inf
-
-        # Predict return
-        try:
-            # Check if model is a PyTorch sequence model (TCN, GRU, LSTM)
-            if PYTORCH_AVAILABLE and isinstance(model, (TCNRegressor, GRURegressor, LSTMRegressor, LSTMClassifier, GRUClassifier)):
-                import torch
-                
-                # For sequence models, we need a sequence of data, not just the latest point
-                # Use the last SEQUENCE_LENGTH rows from df_with_features
-                sequence_length = SEQUENCE_LENGTH  # Default is 60
-                
-                if len(df_with_features) < sequence_length:
-                    # If not enough data, pad with zeros
-                    sequence_data = df_with_features[scaler_features].copy()
-                    padding_needed = sequence_length - len(sequence_data)
-                    padding_df = pd.DataFrame(
-                        np.zeros((padding_needed, len(scaler_features))),
-                        columns=scaler_features
-                    )
-                    sequence_data = pd.concat([padding_df, sequence_data], ignore_index=True)
-                else:
-                    # Get the last sequence_length rows
-                    sequence_data = df_with_features[scaler_features].tail(sequence_length)
-                
-                # Scale the entire sequence (pass DataFrame to preserve feature names)
-                sequence_scaled = scaler.transform(sequence_data)
-                print(f"   🔧 {ticker}: Sequence scaled, shape: {sequence_scaled.shape}")
-                
-                # Convert to PyTorch tensor with shape (batch_size=1, sequence_length, num_features)
-                X_tensor = torch.tensor(sequence_scaled, dtype=torch.float32).unsqueeze(0)
-                
-                # Move to appropriate device
-                from config import FORCE_CPU
-                device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
-                X_tensor = X_tensor.to(device)
-                model.to(device)
-                
-                # Make prediction
-                model.eval()
-                with torch.no_grad():
-                    output_tensor = model(X_tensor)
-                    # Handle different output shapes - check tensor dim before converting to numpy
-                    if output_tensor.dim() > 1:
-                        prediction = float(output_tensor.cpu().numpy()[0][0])
-                    else:
-                        prediction = float(output_tensor.cpu().numpy()[0])
-                    print(f"   🤖 {ticker}: PyTorch model prediction successful: {prediction:.4f}")
+            # ✅ VALIDATION: Check if enough rows remain after feature engineering
+            if rows_after_dropna == 0:
+                print(f"   ❌ {ticker}: All rows dropped during prediction feature engineering!")
+                print(f"   💡 This usually means:")
+                print(f"      - Not enough historical data for technical indicators")
+                print(f"      - Too many NaN/missing values in source data")
+                print(f"      - Feature calculation window is too large for available data")
+                return -np.inf
             
-            elif hasattr(model, 'predict'):
-                # Scikit-learn style models
-                prediction = model.predict(features_scaled)[0]
-                print(f"   🤖 {ticker}: Model.predict() successful: {float(prediction):.4f}")
-            else:
-                # Fallback for other model types
-                prediction = model(features_scaled)[0]
-                print(f"   🤖 {ticker}: Model call successful: {float(prediction):.4f}")
+            try:
+                validate_features_after_engineering(df_with_features, ticker, min_rows=1, context="prediction")
+            except InsufficientDataError as e:
+                print(f"   {str(e)}")
+                return -np.inf
 
-            # ✅ FIX: Clip prediction BEFORE inverse transform to prevent extrapolation
-            # For models outputting scaled values, clip to [-1, 1] range
-            if y_scaler and hasattr(y_scaler, 'inverse_transform'):
-                # Clip to valid scaled range before inverse transform
-                prediction_clipped = np.clip(float(prediction), -1.0, 1.0)
-                if abs(prediction_clipped - float(prediction)) > 0.01:
-                    print(f"   ⚠️ {ticker}: Clipped prediction from {float(prediction):.4f} to {prediction_clipped:.4f}")
-                prediction_pct = y_scaler.inverse_transform(np.array([[prediction_clipped]]))[0][0]
-                # ✅ Convert from percentage to decimal (y_scaler returns percentage like 50.0 for 50%)
-                prediction = prediction_pct / 100.0
-                print(f"   🔄 {ticker}: Y-scaler applied: {prediction_pct:.4f}% → {float(prediction):.4f} decimal")
+            # Get latest data point
+            latest_data = df_with_features.iloc[-1:]
+            print(f"   📊 {ticker}: Latest data shape: {latest_data.shape}, features: {list(latest_data.columns)}")
 
-            # ✅ FIX: Final validation - clip to reasonable return range (-100% to +200%)
-            # No stock can lose more than 100%, and >200% returns are rare outliers
-            final_prediction = np.clip(float(prediction), -1.0, 2.0)
-            if abs(final_prediction - float(prediction)) > 0.01:
-                print(f"   ⚠️ {ticker}: Clipped final prediction from {float(prediction)*100:.2f}% to {final_prediction*100:.2f}%")
+            # Align features to match scaler's expectations
+            scaler_features = list(scaler.feature_names_in_) if hasattr(scaler, 'feature_names_in_') else []
+            print(f"   🔧 {ticker}: Scaler expects {len(scaler_features)} features: {scaler_features[:5]}...")
+            if scaler_features:
+                # Ensure we have all expected features, fill missing ones with 0
+                for feature in scaler_features:
+                    if feature not in latest_data.columns:
+                        latest_data[feature] = 0.0
+                # Reorder columns to match scaler expectations
+                latest_data = latest_data[scaler_features]
+                print(f"   🔧 {ticker}: After alignment: {latest_data.shape}")
 
-            print(f"   ✅ {ticker}: Final prediction = {final_prediction*100:.2f}%")
-            return float(final_prediction)
+            # Scale features
+            try:
+                # Pass DataFrame directly to preserve feature names and avoid sklearn warning
+                features_scaled = scaler.transform(latest_data)
+                print(f"   🔧 {ticker}: Features scaled successfully, shape: {features_scaled.shape}")
+            except Exception as e:
+                print(f"   ❌ {ticker}: Scaling failed: {e}")
+                return -np.inf
 
-        except Exception as e:
-            print(f"   ❌ {ticker}: Prediction failed: {e}")
-            return -np.inf
+            # Predict return
+            try:
+                # Check if model is a PyTorch sequence model (TCN, GRU, LSTM)
+                if PYTORCH_AVAILABLE and isinstance(model, (TCNRegressor, GRURegressor, LSTMRegressor, LSTMClassifier, GRUClassifier)):
+                    import torch
+                    
+                    # For sequence models, we need a sequence of data, not just the latest point
+                    # Use the last SEQUENCE_LENGTH rows from df_with_features
+                    sequence_length = SEQUENCE_LENGTH  # Default is 60
+                    
+                    if len(df_with_features) < sequence_length:
+                        # If not enough data, pad with zeros
+                        sequence_data = df_with_features[scaler_features].copy()
+                        padding_needed = sequence_length - len(sequence_data)
+                        padding_df = pd.DataFrame(
+                            np.zeros((padding_needed, len(scaler_features))),
+                            columns=scaler_features
+                        )
+                        sequence_data = pd.concat([padding_df, sequence_data], ignore_index=True)
+                    else:
+                        # Get the last sequence_length rows
+                        sequence_data = df_with_features[scaler_features].tail(sequence_length)
+                    
+                    # Scale the entire sequence (pass DataFrame to preserve feature names)
+                    sequence_scaled = scaler.transform(sequence_data)
+                    print(f"   🔧 {ticker}: Sequence scaled, shape: {sequence_scaled.shape}")
+                    
+                    # Convert to PyTorch tensor with shape (batch_size=1, sequence_length, num_features)
+                    X_tensor = torch.tensor(sequence_scaled, dtype=torch.float32).unsqueeze(0)
+                    
+                    # Move to appropriate device
+                    from config import FORCE_CPU
+                    device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
+                    X_tensor = X_tensor.to(device)
+                    model.to(device)
+                    
+                    # Make prediction
+                    model.eval()
+                    with torch.no_grad():
+                        output_tensor = model(X_tensor)
+                        # Handle different output shapes - check tensor dim before converting to numpy
+                        if output_tensor.dim() > 1:
+                            prediction = float(output_tensor.cpu().numpy()[0][0])
+                        else:
+                            prediction = float(output_tensor.cpu().numpy()[0])
+                        print(f"   🤖 {ticker}: PyTorch model prediction successful: {prediction:.4f}")
+                
+                elif hasattr(model, 'predict'):
+                    # Scikit-learn style models
+                    prediction = model.predict(features_scaled)[0]
+                    print(f"   🤖 {ticker}: Model.predict() successful: {float(prediction):.4f}")
+                else:
+                    # Fallback for other model types
+                    prediction = model(features_scaled)[0]
+                    print(f"   🤖 {ticker}: Model call successful: {float(prediction):.4f}")
 
+                # ✅ FIX: Clip prediction BEFORE inverse transform to prevent extrapolation
+                # For models outputting scaled values, clip to [-1, 1] range
+                if y_scaler and hasattr(y_scaler, 'inverse_transform'):
+                    # Clip to valid scaled range before inverse transform
+                    prediction_clipped = np.clip(float(prediction), -1.0, 1.0)
+                    if abs(prediction_clipped - float(prediction)) > 0.01:
+                        print(f"   ⚠️ {ticker}: Clipped prediction from {float(prediction):.4f} to {prediction_clipped:.4f}")
+                    prediction_pct = y_scaler.inverse_transform(np.array([[prediction_clipped]]))[0][0]
+                    # ✅ Convert from percentage to decimal (y_scaler returns percentage like 50.0 for 50%)
+                    prediction = prediction_pct / 100.0
+                    print(f"   🔄 {ticker}: Y-scaler applied: {prediction_pct:.4f}% → {float(prediction):.4f} decimal")
+
+                # ✅ FIX: Final validation - clip to reasonable return range (-100% to +200%)
+                # No stock can lose more than 100%, and >200% returns are rare outliers
+                final_prediction = np.clip(float(prediction), -1.0, 2.0)
+                if abs(final_prediction - float(prediction)) > 0.01:
+                    print(f"   ⚠️ {ticker}: Clipped final prediction from {float(prediction)*100:.2f}% to {final_prediction*100:.2f}%")
+
+                print(f"   ✅ {ticker}: Final prediction = {final_prediction*100:.2f}%")
+                return float(final_prediction)
+
+            except Exception as e:
+                print(f"   ❌ {ticker}: Prediction failed: {e}")
+                return -np.inf
+
+    except PredictionTimeoutError as e:
+        print(f"   ⏰ {ticker}: {e}")
+        return -np.inf
     except Exception as e:
         print(f"   ⚠️ Prediction failed for {ticker}: {type(e).__name__}: {str(e)[:100]}")
         return -np.inf

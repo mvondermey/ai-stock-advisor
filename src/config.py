@@ -158,6 +158,11 @@ TRAINING_POOL_MAXTASKSPERCHILD = 1  # Enable recycling for maximum stability
 # - Set to None to disable timeout (not recommended - can hang forever)
 PER_TICKER_TIMEOUT = 60  # 60 seconds max per ticker
 
+# Per-ticker prediction timeout (seconds). If a prediction takes longer, it will be skipped.
+# - Set to 30 for normal use (predictions should be fast)
+# - Set to None to disable timeout (not recommended - can hang forever)
+PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
+
 # Training worker process count (separate from global NUM_PROCESSES).
 # For 5000 tickers, use parallel training. Models are saved to disk and loaded back (no pickling overhead).
 #
@@ -243,13 +248,13 @@ ENABLE_SECTOR_ROTATION = True   # NEW - Sector Rotation Strategy
 ENABLE_MULTITASK_LEARNING = False   # NEW - Multi-Task Learning Strategy
 ENABLE_3M_1Y_RATIO = True   # NEW - 3M/1Y Ratio Strategy
 ENABLE_ADAPTIVE_STRATEGY = False   # NEW - Adaptive Strategy (rotates based on conditions)
-ENABLE_LLM_STRATEGY = True   # NEW - LLM Strategy (DeepSeek via Ollama)
+ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (slow, uncertain benefit)
 
 # --- LLM Strategy Parameters (via Ollama) ---
 LLM_OLLAMA_BASE_URL = "http://localhost:11434"
 LLM_OLLAMA_MODEL = "llama3:latest"  # LLM model via Ollama (llama3, mistral, deepseek-coder, etc.)
 LLM_OLLAMA_TIMEOUT = 60  # seconds per request
-LLM_PARALLEL_WORKERS = 4  # Number of parallel LLM requests
+LLM_PARALLEL_WORKERS = 8  # Number of parallel LLM requests (GPU is bottleneck, but helps with IO overlap)
 LLM_MIN_SCORE = 0.0  # Minimum score threshold for stock selection
 LLM_REBALANCE_FREQUENCY_DAYS = 20  # Rebalance every N days (LLM calls are slow)
 
