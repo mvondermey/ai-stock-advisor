@@ -71,11 +71,14 @@ MARKET_SELECTION = {
     "SP500": True,             # ~500 stocks  
     "DOW_JONES": True,         # ~30 stocks
     "POPULAR_ETFS": True,      # ENABLED - Include popular ETFs (includes sector ETFs)
-    "CRYPTO": False,
+    "CRYPTO": True,            # ENABLED - Bitcoin, Ethereum, and crypto stocks
     "DAX": True,
     "MDAX": True,
     "SMI": True,
-    "FTSE_MIB": False,        # DISABLED - focus on core markets
+    "FTSE_MIB": True,         # ENABLED - Italian market
+    "CAC_40": True,           # ENABLED - French market
+    "IBEX_35": True,          # ENABLED - Spanish market
+    "SWISS_MTI": True,        # ENABLED - Swiss market
 }
 
 # If ALPACA_STOCKS is enabled, Alpaca can return thousands of symbols.
@@ -190,21 +193,21 @@ else:
 USE_UNIFIED_PARALLEL_TRAINING = True
 
 # --- Backtest & training windows
-BACKTEST_DAYS           = 60       # Backtest period in trading days (~60=2mo, ~125=6mo, ~250=1yr, ~365=1.5yr)
+BACKTEST_DAYS           = 60       # Backtest period in calendar days (~60=2mo, ~180=6mo, ~365=1yr, ~540=1.5yr)
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
-TRAIN_LOOKBACK_DAYS     = 365        # Train on ~1 year of history (user request)
+TRAIN_LOOKBACK_DAYS     = 365        # Training period in calendar days (~1 year, ~252 trading days)
 VALIDATION_DAYS         = 90         # FIX 4: Validation period for threshold optimization
+
+# --- Calendar days ---
+CALENDAR_DAYS_PER_YEAR = 365
 
 # --- Backtest End Date Control ---
 # Set to True to run backtest until today - prediction horizon (ensures future data for validation)
 # Set to False to subtract prediction horizon from end date (ensures future data for validation)
 RUN_BACKTEST_UNTIL_TODAY = True   # Run backtest until today - horizon
 
-# --- Walk-Forward Backtesting with Validation ---
-# Train models until validation_end_date (ensures 63 days future data for validation)
-# Then run walk-forward backtest until today - horizon
-TWO_PHASE_TRAINING_BACKTEST = True   # Enable validation-based training
-VALIDATION_END_DATE_OFFSET = 30      # Days before today for training end (reduced from 63 for 60-day backtests)
+# --- Walk-Forward Backtesting ---
+# Models are trained during walk-forward backtest with periodic retraining
 
 # --- Live Trading
 LIVE_TRADING_ENABLED     = False       # ⚠️ Set to True to execute real orders (start with False for dry-run)
@@ -233,12 +236,13 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
 RETRAIN_FREQUENCY_DAYS = 10  # Retrain every 10 days - aligned with prediction horizon
+ENABLE_WALK_FORWARD_RETRAINING = True   # Set to False to use only saved models, no retraining
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = True   # ENABLED - Train models for AI Strategy and individual ticker predictions
+# ENABLE_1YEAR_TRAINING removed - models are now trained during walk-forward backtest
 
 # --- Portfolio Stratebgy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
@@ -465,9 +469,9 @@ LIVE_TRADING_MODEL_PERIOD = "Best"
 # --- Regression-Based Return Prediction ---
 # Regression is now the default and only approach - removed USE_REGRESSION_MODEL flag
 
-# Period-specific horizons (trading days) - matched to period scale
+# Period-specific horizons (calendar days) - matched to period scale
 PERIOD_HORIZONS = {
-    # Prediction horizon in trading days
+    # Prediction horizon in calendar days
     "1-Year": 10      # 10-day prediction horizon - aligned with retraining frequency
 }
 

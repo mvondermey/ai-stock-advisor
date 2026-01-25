@@ -31,8 +31,7 @@ from config import (
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, VALIDATION_DAYS,
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, PARALLEL_THRESHOLD, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
-    ENABLE_1YEAR_TRAINING,
-    ENABLE_1YEAR_BACKTEST,
+        ENABLE_1YEAR_BACKTEST,
     ENABLE_AI_STRATEGY,
     ENABLE_AI_PORTFOLIO,
     ENABLE_MEAN_REVERSION,
@@ -56,8 +55,8 @@ from config import (
     LSTM_LEARNING_RATE, LSTM_BATCH_SIZE, LSTM_EPOCHS,
     ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION,
     PERIOD_HORIZONS, POSITION_SCALING_BY_CONFIDENCE,
-    ENABLE_1YEAR_TRAINING, RUN_BACKTEST_UNTIL_TODAY, TWO_PHASE_TRAINING_BACKTEST, VALIDATION_END_DATE_OFFSET,
-    RETRAIN_FREQUENCY_DAYS
+     RUN_BACKTEST_UNTIL_TODAY,
+    RETRAIN_FREQUENCY_DAYS, ENABLE_WALK_FORWARD_RETRAINING
 )
 
 from alpha_training import select_threshold_by_alpha, AlphaThresholdConfig
@@ -176,6 +175,7 @@ from training_phase import train_worker, train_models_for_period
 from backtesting_phase import _run_portfolio_backtest_walk_forward
 from data_validation import get_data_summary, print_data_diagnostics, InsufficientDataError
 from selection_backtester import run_selection_strategy_comparison, print_strategy_stock_overlap
+from rebalance_optimizer import optimize_rebalance_horizons
 import json
 import time
 import re
@@ -307,10 +307,7 @@ except ImportError:
 # ENABLE_1MONTH_BACKTEST  = True # Moved to config.py
 
 # --- Training Period Enable/Disable Flags ---
-# ENABLE_1YEAR_TRAINING   = True # Moved to config.py
-# ENABLE_YTD_TRAINING     = True # Moved to config.py
-# ENABLE_3MONTH_TRAINING  = True # Moved to config.py
-# ENABLE_1MONTH_TRAINING  = True # Moved to config.py
+# Initial training removed - models are now trained during walk-forward backtest
 
 # --- Strategy (separate from feature windows)
 # STRAT_SMA_SHORT         = 10 # Moved to config.py
@@ -433,7 +430,7 @@ def get_internet_time():
 def main(
     fcf_threshold: float = None,
     ebitda_threshold: float = None,
-    class_horizon: int = PERIOD_HORIZONS.get("1-Year", 20),
+    class_horizon: int = PERIOD_HORIZONS.get("1-Year", 10),  # 10 calendar days from config
     top_performers_data=None,
     feature_set: Optional[List[str]] = None,
     run_parallel: bool = True,
@@ -518,11 +515,13 @@ def main(
 
     # Determine cache start date - ALWAYS use maximum range regardless of backtest settings
     # This ensures consistent data availability and eliminates backtest parameter dependency
-    MAX_LOOKBACK_DAYS = 730  # 2 years of historical data for all possible analysis needs
-    MAX_BUFFER_DAYS = 365    # Additional buffer for performance calculations
+    MAX_LOOKBACK_DAYS = 730  # 2 years of historical data for all possible analysis needs (calendar days)
+    # Use calendar days directly - Yahoo Finance will handle market holidays automatically
+    # This ensures we get at least the required trading days
+    MAX_LOOKBACK_CALENDAR_DAYS = MAX_LOOKBACK_DAYS + 60  # Add buffer for weekends/holidays
     
     # Fixed cache range that covers all possible scenarios
-    cache_start_date = today_for_data_fetch - timedelta(days=MAX_LOOKBACK_DAYS + MAX_BUFFER_DAYS)
+    cache_start_date = today_for_data_fetch - timedelta(days=MAX_LOOKBACK_CALENDAR_DAYS)
     actual_start_date = cache_start_date
 
     days_back = (today_for_data_fetch - cache_start_date).days
@@ -647,27 +646,7 @@ def main(
     from config import RETRAIN_FREQUENCY_DAYS
     
     # Control backtest end date based on config
-    if RUN_BACKTEST_UNTIL_TODAY and TWO_PHASE_TRAINING_BACKTEST:
-        # Walk-forward approach: backtest runs until today, training stops at today - horizon
-        prediction_horizon = PERIOD_HORIZONS.get("1-Year", 63)
-        training_cutoff_date = get_internet_time() - timedelta(days=prediction_horizon)
-        
-        # Calculate backtest dates for print statements
-        print(f"📅 Data available until: {bt_end.date()}")
-        print(f"📅 AI Training starts: {bt_start_1y.date()} (same day as backtest)")
-        print(f"📅 Walk-forward backtesting from {bt_start_1y.date()} to {bt_end.date()}")
-        print(f"📅 Walk-Forward Retraining Schedule:")
-        print(f"      Day 1: Train on data up to {bt_start_1y.date()}, predict for {bt_start_1y.date()} + {prediction_horizon} days")
-        print(f"      Day 6: Train on data up to Day 5, predict for Day 5 + {prediction_horizon} days")
-        print(f"      Day 11: Train on data up to Day 10, predict for Day 10 + {prediction_horizon} days")
-        print(f"      ...and so on until {training_cutoff_date.date()} (training stops)")
-        print(f"      After {training_cutoff_date.date()}: Use last trained models, no more training")
-        print(f"📅 Training cycles: ~{((training_cutoff_date - bt_start_1y).days // RETRAIN_FREQUENCY_DAYS)} times")
-        print(f"📅 Backtest continues until {bt_end.date()}")
-        
-        # Training starts with backtest start date (will be updated during walk-forward)
-        training_end_date = bt_start_1y
-    elif RUN_BACKTEST_UNTIL_TODAY:
+    if RUN_BACKTEST_UNTIL_TODAY:
         # Run backtest until today (ignoring prediction horizon constraint)
         print(f"📅 Data available until: {bt_end.date()}")
         print(f"📅 Running backtest until today: {bt_end.date()} (prediction horizon constraint disabled)")
@@ -675,9 +654,9 @@ def main(
         training_end_date = bt_end
     else:
         # ✅ FIX: Subtract prediction horizon from backtest end to ensure future data availability
-        # If prediction horizon is 63 days and last data is Dec 26, backtest should end ~Oct 24
+        # If prediction horizon is 10 days and last data is Jan 23, backtest should end Jan 13
         # This ensures we have enough future data to validate all predictions made during backtest
-        prediction_horizon = PERIOD_HORIZONS.get("1-Year", 63)
+        prediction_horizon = PERIOD_HORIZONS.get("1-Year", 10)  # 10 calendar days from config
         bt_end_with_horizon = bt_end - timedelta(days=prediction_horizon)
         
         print(f"📅 Data available until: {bt_end.date()}")
@@ -863,37 +842,9 @@ def main(
         print_data_diagnostics(data_summaries)
     
     # --- Calculate backtest dates first (needed for ticker selection) ---
-    bt_end = end_date  # Use the provided end_date
+    # bt_end and last_available are already calculated above (lines 634-643)
+    # No need to recalculate - use the existing values
     
-    # === BACKTEST END DATE OVERRIDE FOR VALIDATION ===
-    if TWO_PHASE_TRAINING_BACKTEST and RUN_BACKTEST_UNTIL_TODAY:
-        # Backtest runs until today, but training stops at today - horizon
-        prediction_horizon = PERIOD_HORIZONS.get("1-Year", 63)
-        today_for_end = get_internet_time()  # Get current time
-        training_cutoff_date = today_for_end - timedelta(days=prediction_horizon)
-        
-        # Backtest runs until today OR last available data (whichever is earlier)
-        bt_end = today_for_end
-        
-        # ✅ IMPORTANT: Respect data availability even in override mode
-        if 'date' in all_tickers_data.columns:
-            last_available = pd.to_datetime(all_tickers_data['date'].max())
-        else:
-            last_available = all_tickers_data.index.max()
-        
-        if last_available < bt_end:
-            print(f"ℹ️ Override: Capping backtest end date from {bt_end.date()} to last available data {last_available.date()}")
-            bt_end = last_available
-        
-        # Recalculate backtest start date based on final end date
-        bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)
-        
-        print(f"🔄 Backtest & Training Override:")
-        print(f"   - Backtest runs from {bt_start_1y.date()} to {bt_end.date()}")
-        print(f"   - AI training stops at {training_cutoff_date.date()} ({bt_end.date()} - {prediction_horizon} days)")
-        print(f"   - After {training_cutoff_date.date()}: no more training, use last trained models")
-        print(f"   - Total backtest period: {(bt_end - bt_start_1y).days} days")
-
     # --- Identify top performers if not provided ---
     if top_performers_data is None:
         title = "🚀 AI-Powered Momentum & Trend Strategy"
@@ -972,15 +923,10 @@ def main(
                 f.write(f"{ticker}\n")
 
     # --- Define training date variables (needed for backtest even when training disabled) ---
-    if TWO_PHASE_TRAINING_BACKTEST and RUN_BACKTEST_UNTIL_TODAY:
-        # Use training_end_date (validation end date) for two-phase approach
-        train_end_1y = training_end_date
-        train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
-        print(f"📅 Two-Phase Training: Training from {train_start_1y_calc.date()} to {train_end_1y.date()}")
-    else:
-        # Use regular backtest start date minus 1 day
-        train_end_1y = bt_start_1y - timedelta(days=1)
-        train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
+    # Train on data before backtest starts (clean temporal separation)
+    train_end_1y = bt_start_1y - timedelta(days=1)
+    train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
+    print(f"📅 Training period: {train_start_1y_calc.date()} to {train_end_1y.date()}")
 
     # ✅ FIX: Calculate actual period name based on backtest length
     if BACKTEST_DAYS >= 250:  # ~1 year
@@ -1001,51 +947,44 @@ def main(
     # Initialize variables that are used outside the if-block
     failed_training_tickers_1y = {}
     
-    # Train individual stock models if enabled
-    if ENABLE_1YEAR_TRAINING:
-        training_start_time = time.time()
-        print(f"📅 Backtest configured for {BACKTEST_DAYS} days (~{actual_period_name})")
-
-        # Exclude benchmark ETFs from training (they are used for comparison, not AI trading)
-        BENCHMARK_ETFS = {'QQQ', 'SPY', 'GLD'}
-        tickers_for_training = [t for t in top_tickers if t not in BENCHMARK_ETFS]
-        print(f"   📋 Training {len(tickers_for_training)} tickers (excluding {len(BENCHMARK_ETFS)} benchmark ETFs: {', '.join(BENCHMARK_ETFS)})")
-        
-        training_results = train_models_for_period(
-            period_name=actual_period_name,
-            tickers=tickers_for_training,
-            all_tickers_data=all_tickers_data,
-            train_start=train_start_1y_calc,
-            train_end=train_end_1y,
-            top_performers_data=top_performers_data,
-            feature_set=feature_set,
-            run_parallel=run_parallel
-        )
-
-        print(f"🐛 DEBUG: train_models_for_period returned, processing {len(training_results)} results...", flush=True)
-        import sys
-        sys.stdout.flush()
-
-        # ✅ Load models from disk (training returns None to avoid GPU/CPU memory issues)
-        from prediction import load_models_for_tickers
-        
-        # Get list of successfully trained tickers and track failed ones
-        trained_tickers = []
-        for r in training_results:
-            if r and r.get('status') in ['trained', 'loaded']:
-                trained_tickers.append(r['ticker'])
-            elif r and r.get('status') == 'failed':
-                failed_training_tickers_1y[r['ticker']] = r.get('reason', 'Unknown failure')
-        
-        if trained_tickers:
-            print(f"\n📦 Loading {len(trained_tickers)} trained models from disk...")
-            models, scalers, y_scalers = load_models_for_tickers(trained_tickers)
-            print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers")
-            ai_strategy_available = True
+    # --- Clean up old models before fresh training ---
+    if FORCE_TRAINING:
+        print(f"\n🧹 Step 2: Cleaning up old models before fresh training...")
+        models_dir = Path("logs/models")
+        if models_dir.exists():
+            # Count old models
+            old_model_files = list(models_dir.glob("*.joblib"))
+            old_scaler_files = list(models_dir.glob("*_scaler.joblib"))
+            old_y_scaler_files = list(models_dir.glob("*_y_scaler.joblib"))
+            old_json_files = list(models_dir.glob("*.json"))
+            total_old_files = len(old_model_files) + len(old_scaler_files) + len(old_y_scaler_files) + len(old_json_files)
+            
+            if total_old_files > 0:
+                print(f"   🗑️  Found {total_old_files} old model files:")
+                print(f"      - {len(old_model_files)} model files")
+                print(f"      - {len(old_scaler_files)} scaler files")
+                print(f"      - {len(old_y_scaler_files)} y-scaler files")
+                print(f"      - {len(old_json_files)} hyperparameter files")
+                
+                # Remove all old model files
+                import shutil
+                shutil.rmtree(models_dir)
+                models_dir.mkdir(exist_ok=True)
+                print(f"   ✅ Deleted all old models. Fresh training will start.")
+            else:
+                print(f"   ℹ️  No old models found. Ready for fresh training.")
         else:
-            print(f"\n⚠️ No models were successfully trained")
-            models, scalers, y_scalers = {}, {}, {}
-            ai_strategy_available = False
+            print(f"   ℹ️  Models directory doesn't exist. Will create during training.")
+    
+    # --- Step 3: Skip initial training - models will be trained during walk-forward backtest ---
+    print(f"\n⏭️ Skipping initial training - models will be trained during walk-forward backtest")
+    training_results = []
+    models, scalers, y_scalers = {}, {}, {}
+    # ✅ FIX: Enable AI Strategy - models will be trained on Day 1 of walk-forward backtest
+    from config import ENABLE_AI_STRATEGY, ENABLE_WALK_FORWARD_RETRAINING
+    ai_strategy_available = ENABLE_AI_STRATEGY and ENABLE_WALK_FORWARD_RETRAINING
+    failed_training_tickers_1y = {}
+    top_tickers_ai_filtered = top_tickers  # All tickers available for AI when trained
     
     # Send training completion notification
     if training_start_time:
@@ -1059,125 +998,23 @@ def main(
             training_time_minutes=training_time_minutes,
             failed_models=failed_training_tickers_1y if 'failed_training_tickers_1y' in locals() else None
         )
-    else:
-        training_results = []
-        print(f"\n⏭️ Skipping individual stock model training (ENABLE_1YEAR_TRAINING = False)")
         
-        # Load existing models from disk for AI Strategy
-        print(f"\n📦 Loading existing models from disk for AI Strategy...")
-        from prediction import load_models_for_tickers
-        
-        # Try to load models for all top tickers
-        print(f"   🔄 Starting model loading...", flush=True)
-        models, scalers, y_scalers = load_models_for_tickers(top_tickers)
-        print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers", flush=True)
-        
-        if not models:
-            print(f"   ⚠️ No existing models found. AI Strategy will not be available.")
-            print(f"   💡 To use AI Strategy, either:")
-            print(f"      - Set ENABLE_1YEAR_TRAINING = True to train new models")
-            print(f"      - Or ensure models exist in logs/models/ directory")
-            
-            # Set flag to disable AI Strategy in backtest
-            ai_strategy_available = False
-        else:
-            ai_strategy_available = True
+    # All tickers available for both AI and non-AI strategies
+    # Models will be trained during walk-forward backtest
+    top_tickers_ai_filtered = top_tickers
+    top_tickers_1y_filtered = top_tickers
     
-    # ✅ FIX: Filter tickers BEFORE AI Portfolio training
-    # When training is disabled, use all top_tickers
-    if ENABLE_1YEAR_TRAINING:
-        top_tickers_1y_filtered = [t for t in top_tickers if t not in failed_training_tickers_1y]
-    else:
-        top_tickers_1y_filtered = top_tickers
-    
-    print(f"  ℹ️ {len(failed_training_tickers_1y)} tickers failed 1-Year model training and will be skipped: {', '.join(failed_training_tickers_1y.keys())}", flush=True)
-    print(f"  ✅ {len(top_tickers_1y_filtered)} tickers available for AI Portfolio training: {', '.join(top_tickers_1y_filtered)}", flush=True)
+    print(f"  ✅ {len(top_tickers)} tickers available for all strategies: {', '.join(top_tickers[:10])}{'...' if len(top_tickers) > 10 else ''}", flush=True)
 
-    # --- Train AI Portfolio Rebalancing Model ---
-    # ✅ CRITICAL: Force memory cleanup before AI Portfolio training (prevents OOM)
-    print(f"\n🧹 Cleaning up memory before AI Portfolio training...", flush=True)
-    import gc
-    gc.collect()
-    if CUDA_AVAILABLE and PYTORCH_AVAILABLE:
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                print(f"   ✅ GPU cache cleared")
-        except Exception as e:
-            print(f"   ⚠️ Could not clear GPU cache: {e}")
-    print(f"   ✅ Memory cleanup complete")
-    
-    print(f"DEBUG: About to check ENABLE_AI_PORTFOLIO = {ENABLE_AI_PORTFOLIO}", flush=True)
-    if ENABLE_AI_PORTFOLIO:
-        print(f"DEBUG: ENABLE_AI_PORTFOLIO is True, starting training...", flush=True)
-        print(f"\n🧠 Training AI Portfolio Rebalancing Model...", flush=True)
-        try:
-            print(f"DEBUG: Importing ai_portfolio module...", flush=True)
-            from ai_portfolio import train_ai_portfolio_model
-            print(f"DEBUG: Import successful, calling train_ai_portfolio_model...", flush=True)
-
-            # ✅ CRITICAL: Ensure complete data separation between training and backtest
-            # Training must use ONLY historical data BEFORE backtest starts
-            # This prevents look-ahead bias and ensures realistic results
-            
-            # Training dates depend on two-phase approach
-            if TWO_PHASE_TRAINING_BACKTEST and RUN_BACKTEST_UNTIL_TODAY:
-                # Use training_end_date (validation end date) for two-phase approach
-                ai_portfolio_train_end = training_end_date
-                ai_portfolio_train_start = ai_portfolio_train_end - timedelta(days=min(365, (training_end_date - all_tickers_data['date'].min()).days))
-                
-                print(f"DEBUG: AI portfolio training dates (Two-Phase): {ai_portfolio_train_start.date()} to {ai_portfolio_train_end.date()}")
-                print(f"   🔒 Data Separation: Training ends {(bt_start_1y - ai_portfolio_train_end).days} day(s) before backtest starts")
-                print(f"   ✅ Using validation end date for training, backtest runs until today")
-            else:
-                # Training ends 1 day BEFORE backtest starts
-                ai_portfolio_train_end = bt_start_1y - timedelta(days=1)
-                # Training period: up to 1 year of historical data before backtest
-                ai_portfolio_train_start = ai_portfolio_train_end - timedelta(days=min(365, (bt_start_1y - all_tickers_data['date'].min()).days))
-
-                print(f"DEBUG: AI portfolio training dates: {ai_portfolio_train_start.date()} to {ai_portfolio_train_end.date()}")
-                print(f"   🔒 Data Separation: Training ends {(bt_start_1y - ai_portfolio_train_end).days} day(s) before backtest starts")
-                print(f"   ✅ No overlap between training and backtest data (preventing look-ahead bias)")
-
-            # Import config flag for unified training
-            from config import USE_UNIFIED_PARALLEL_TRAINING
-            
-            ai_portfolio_start_time = time.time()
-            print(f"🚀 AI Portfolio training STARTED at {time.strftime('%H:%M:%S')}", flush=True)
-            
-            ai_portfolio_trained = train_ai_portfolio_model(
-                all_tickers_data=all_tickers_data,
-                top_tickers=top_tickers_1y_filtered,
-                train_start_date=ai_portfolio_train_start,
-                train_end_date=ai_portfolio_train_end,
-                use_unified_training=USE_UNIFIED_PARALLEL_TRAINING
-            )
-            
-            ai_portfolio_elapsed = time.time() - ai_portfolio_start_time
-            print(f"🏁 AI Portfolio training FINISHED at {time.strftime('%H:%M:%S')} (took {ai_portfolio_elapsed:.1f}s)", flush=True)
-            print(f"DEBUG: train_ai_portfolio_model returned: {ai_portfolio_trained}", flush=True)
-
-            if ai_portfolio_trained:
-                print("✅ AI Portfolio Rebalancing Model trained successfully")
-                # Set the model globally for use during backtesting
-                from ai_portfolio import set_ai_portfolio_model
-                set_ai_portfolio_model(ai_portfolio_trained)
-            else:
-                print("⚠️ AI Portfolio Rebalancing Model training failed")
-
-        except Exception as e:
-            print(f"❌ Exception during AI portfolio training: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
-        print(f"DEBUG: ENABLE_AI_PORTFOLIO is False, skipping training")
+    # --- Skip initial AI Portfolio training - will be trained during walk-forward backtest ---
+    print(f"\n⏭️ Skipping initial AI Portfolio training - will be trained during walk-forward backtest")
 
     # 🧠 Initialize dictionaries for model training data before threshold optimization
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
     prices_dict, signals_dict = {}, {}
     
-    # Update top_performers_data to reflect only successfully trained tickers
+    # Update top_performers_data to reflect only successfully trained tickers (for AI strategies only)
+    # Non-AI strategies use the full top_performers_data
     top_performers_data_1y_filtered = [item for item in top_performers_data if item[0] in top_tickers_1y_filtered]
     
     # Set capital_per_stock to the fixed investment amount
@@ -1195,22 +1032,6 @@ def main(
     all_tested_combinations = {}
 
     print(f"\n✅ Using default parameters for all tickers (threshold optimization removed).")
-
-    # === WALK-FORWARD BACKTESTING SUMMARY ===
-    if TWO_PHASE_TRAINING_BACKTEST and RUN_BACKTEST_UNTIL_TODAY:
-        print("\n" + "="*80)
-        print("                     🔄 WALK-FORWARD BACKTESTING 🔄")
-        print("="*80)
-        prediction_horizon = PERIOD_HORIZONS.get("1-Year", 63)
-        training_cutoff_date = get_internet_time() - timedelta(days=prediction_horizon)
-        
-        print(f"✅ AI training starts: {training_end_date.date()} (same day as backtest)")
-        print(f"🚀 Walk-forward backtesting from {bt_start_1y.date()} to {bt_end.date()}")
-        print(f"   - AI training stops at {training_cutoff_date.date()} ({bt_end.date()} - {prediction_horizon} days)")
-        print(f"   - After {training_cutoff_date.date()}: Use last trained models, no more training")
-        print(f"   - Training cycles: ~{((training_cutoff_date - bt_start_1y).days // RETRAIN_FREQUENCY_DAYS)} times")
-        print(f"   - Backtest continues until {bt_end.date()} with last trained models")
-        print("="*80)
 
     # Initialize all backtest related variables to default values
     final_strategy_value_1y = initial_balance_used
@@ -1238,155 +1059,153 @@ def main(
     # ========================================================================
     
     # Initialize optimized_params dictionaries (only 1-year period supported)
-    
     # ========================================================================
     # PHASE 3: RUN ALL BACKTESTS
     # ========================================================================
     
-    # --- Run 1-Year Backtest ---
-    if ENABLE_1YEAR_BACKTEST:
-        backtest_start_time = time.time()
-        print("\n🔍 Step 8: Running 1-Year Backtest...")
-        
-        # --- Rebalance Horizon Optimization (if enabled) ---
-        rebalance_optimization_results = None
-        if OPTIMIZE_REBALANCE_HORIZON and ENABLE_STATIC_BH:
-            print("\n🔄 Running Rebalance Horizon Optimization (30-90 days)...", flush=True)
-            try:
-                from rebalance_optimizer import optimize_rebalance_horizons
-                rebalance_optimization_results = optimize_rebalance_horizons(
-                    all_tickers_data=all_tickers_data,
-                    backtest_start=bt_start_1y,
-                    backtest_end=bt_end,
-                    initial_capital=capital_per_stock_1y * 3,  # Same as n_top_rebal
-                    portfolio_size=3,
-                    strategy_types=['1Y', '3M', '1M']
-                )
-            except Exception as e:
-                print(f"   ⚠️ Rebalance optimization failed: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
-        
-        # DEBUG: Check what's in models dictionaries
-        print(f"\n[DEBUG MAIN] 1-Year models keys: {list(models.keys())}")
-        print(f"[DEBUG MAIN] 1-Year models values types: {[type(v).__name__ if v else 'None' for v in models.values()]}")
-
-        if ENABLE_AI_STRATEGY:
-            # --- Run Backtest (AI Strategy) ---
-            print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (AI Strategy)...")
-        else:
-            # --- Skip AI Strategy, run comparison strategies only ---
-            print(f"\n🔍 Step 8: Skipping AI Strategy (ENABLE_AI_STRATEGY = False), running comparison strategies only...")
-        n_top_rebal = 3
-        initial_capital_1y = capital_per_stock_1y * n_top_rebal
-        
-        # Use walk-forward backtest with periodic retraining and rebalancing
-        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, bh_1m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ratio_3m_1y_portfolio_value_1y, ratio_3m_1y_portfolio_history_1y, ratio_1y_3m_portfolio_value_1y, ratio_1y_3m_portfolio_history_1y, turnaround_portfolio_value_1y, turnaround_portfolio_history_1y, adaptive_ensemble_portfolio_value_1y, adaptive_ensemble_portfolio_history_1y, volatility_ensemble_portfolio_value_1y, volatility_ensemble_portfolio_history_1y, correlation_ensemble_portfolio_value_1y, correlation_ensemble_portfolio_history_1y, dynamic_pool_portfolio_value_1y, dynamic_pool_portfolio_history_1y, sentiment_ensemble_portfolio_value_1y, sentiment_ensemble_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, static_bh_1m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, ratio_3m_1y_transaction_costs_1y, ratio_1y_3m_transaction_costs_1y, turnaround_transaction_costs_1y, adaptive_ensemble_transaction_costs_1y, volatility_ensemble_transaction_costs_1y, correlation_ensemble_transaction_costs_1y, dynamic_pool_transaction_costs_1y, sentiment_ensemble_transaction_costs_1y, actual_backtest_day_count, ai_cash_deployed_1y, static_bh_cash_deployed_1y, static_bh_3m_cash_deployed_1y, static_bh_1m_cash_deployed_1y, dynamic_bh_1y_cash_deployed_1y, dynamic_bh_3m_cash_deployed_1y, ai_portfolio_cash_deployed_1y, dynamic_bh_1m_cash_deployed_1y, risk_adj_mom_cash_deployed_1y, mean_reversion_cash_deployed_1y, quality_momentum_cash_deployed_1y, volatility_adj_mom_cash_deployed_1y, momentum_ai_hybrid_cash_deployed_1y, dynamic_bh_1y_vol_filter_cash_deployed_1y, dynamic_bh_1y_trailing_stop_cash_deployed_1y, multitask_cash_deployed_1y, sector_rotation_cash_deployed_1y, ratio_3m_1y_cash_deployed_1y, ratio_1y_3m_cash_deployed_1y, turnaround_cash_deployed_1y, adaptive_ensemble_cash_deployed_1y, volatility_ensemble_cash_deployed_1y, correlation_ensemble_cash_deployed_1y, dynamic_pool_cash_deployed_1y, sentiment_ensemble_cash_deployed_1y = _run_portfolio_backtest_walk_forward(
+    # Optional: Run rebalance optimization
+    try:
+        rebalance_optimization_results = optimize_rebalance_horizons(
             all_tickers_data=all_tickers_data,
-            train_start_date=train_start_1y_calc,
-            backtest_start_date=bt_start_1y,
-            backtest_end_date=bt_end,
-            initial_top_tickers=top_tickers_1y_filtered,
-            initial_models=models,  # Single model per stock
-            initial_scalers=scalers,
-            initial_y_scalers=y_scalers,
-            capital_per_stock=capital_per_stock_1y,
-            period_name=actual_period_name,
-            top_performers_data=top_performers_data,
-            horizon_days=PERIOD_HORIZONS.get("1-Year", 60),
-            enable_ai_strategy=ENABLE_AI_STRATEGY and ai_strategy_available
+            backtest_start=bt_start_1y,
+            backtest_end=bt_end,
+            initial_capital=capital_per_stock_1y * 3,  # Same as n_top_rebal
+            portfolio_size=3,
+            strategy_types=['1Y', '3M', '1M']
         )
-        
-        ai_1y_return = ((final_strategy_value_1y - initial_capital_1y) / initial_capital_1y) * 100
-        prediction_stats_1y = {}  # Not provided by this function
-        strategy_results_1y = []  # Per-ticker results in performance_metrics_1y
-        
-        # 🔍 DEBUG: Check backtest results
-        print(f"\n[DEBUG] 1-Year Backtest Results:")
-        print(f"  - top_tickers_1y_filtered: {top_tickers_1y_filtered}")
-        print(f"  - final_strategy_value_1y: ${final_strategy_value_1y:,.2f}")
-        print(f"  - processed_tickers_1y: {processed_tickers_1y}")
-        print(f"  - strategy_results_1y count: {len(strategy_results_1y)}")
-        print(f"  - ai_1y_return: {ai_1y_return:.2f}%\n")
+    except Exception as e:
+        print(f"   ⚠️ Rebalance optimization failed: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+    
+    # DEBUG: Check what's in models dictionaries
+    print(f"\n[DEBUG MAIN] 1-Year models keys: {list(models.keys())}")
+    print(f"[DEBUG MAIN] 1-Year models values types: {[type(v).__name__ if v else 'None' for v in models.values()]}")
 
-        # --- Rule-Based Strategy for 1-Year ---
-        # Rule-based strategy disabled (removed during refactoring)
-        rule_results_1y = {}  # Placeholder - rule-based strategy disabled
-        final_rule_value_1y = rule_results_1y.get('final_value', initial_capital_1y)
-        rule_1y_return = rule_results_1y.get('total_return', 0) * 100
-        
-        # Simple Rule Strategy removed - using AI strategy only
-        final_simple_rule_value_1y = None
-        simple_rule_results_1y = []
-        performance_metrics_simple_rule_1y = []
-        simple_rule_1y_return = None
+    if ENABLE_AI_STRATEGY:
+        # --- Run Backtest (AI Strategy) ---
+        print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (AI Strategy)...")
+    else:
+        # --- Skip AI Strategy, run comparison strategies only ---
+        print(f"\n🔍 Step 8: Skipping AI Strategy (ENABLE_AI_STRATEGY = False), running comparison strategies only...")
+    
+    n_top_rebal = 3
+    initial_capital_1y = capital_per_stock_1y * n_top_rebal
+    
+    # Use walk-forward backtest with periodic retraining and rebalancing
+    final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, bh_1m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ratio_3m_1y_portfolio_value_1y, ratio_3m_1y_portfolio_history_1y, ratio_1y_3m_portfolio_value_1y, ratio_1y_3m_portfolio_history_1y, turnaround_portfolio_value_1y, turnaround_portfolio_history_1y, adaptive_ensemble_portfolio_value_1y, adaptive_ensemble_portfolio_history_1y, volatility_ensemble_portfolio_value_1y, volatility_ensemble_portfolio_history_1y, correlation_ensemble_portfolio_value_1y, correlation_ensemble_portfolio_history_1y, dynamic_pool_portfolio_value_1y, dynamic_pool_portfolio_history_1y, sentiment_ensemble_portfolio_value_1y, sentiment_ensemble_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, static_bh_1m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, ratio_3m_1y_transaction_costs_1y, ratio_1y_3m_transaction_costs_1y, turnaround_transaction_costs_1y, adaptive_ensemble_transaction_costs_1y, volatility_ensemble_transaction_costs_1y, correlation_ensemble_transaction_costs_1y, dynamic_pool_transaction_costs_1y, sentiment_ensemble_transaction_costs_1y, actual_backtest_day_count = _run_portfolio_backtest_walk_forward(
+        all_tickers_data=all_tickers_data,
+        train_start_date=train_start_1y_calc,
+        backtest_start_date=bt_start_1y,
+        backtest_end_date=bt_end,
+        initial_top_tickers=top_tickers,
+        initial_models=models,
+        initial_scalers=scalers,
+        initial_y_scalers=y_scalers,
+        capital_per_stock=capital_per_stock_1y,
+        period_name=actual_period_name,
+        top_performers_data=top_performers_data,
+        horizon_days=PERIOD_HORIZONS.get("1-Year", 10),  # 10 calendar days from config
+        enable_ai_strategy=ENABLE_AI_STRATEGY and ai_strategy_available
+    )
+    
+    ai_1y_return = ((final_strategy_value_1y - initial_capital_1y) / initial_capital_1y) * 100
+    prediction_stats_1y = {}  # Not provided by this function
+    strategy_results_1y = []  # Per-ticker results in performance_metrics_1y
+    
+    # 🔍 DEBUG: Check backtest results
+    print(f"\n[DEBUG] 1-Year Backtest Results:")
+    print(f"  - top_tickers_1y_filtered: {top_tickers_1y_filtered}")
+    print(f"  - final_strategy_value_1y: ${final_strategy_value_1y:,.2f}")
+    print(f"  - processed_tickers_1y: {processed_tickers_1y}")
+    print(f"  - strategy_results_1y count: {len(strategy_results_1y)}")
+    print(f"  - ai_1y_return: {ai_1y_return:.2f}%\n")
 
-        # --- Calculate Buy & Hold ---
-        print(f"\n📊 Calculating Buy & Hold performance for {actual_period_name} period...")
-        print(f"   Processing {len(top_tickers_1y_filtered)} tickers (using cached data)...")
-        buy_hold_results_1y = []
-        performance_metrics_buy_hold_1y_actual = []
-        for idx, ticker in enumerate(top_tickers_1y_filtered):
-            if (idx + 1) % 50 == 0:
-                print(f"   [{idx+1}/{len(top_tickers_1y_filtered)}] Processed...")
-            # Use cached data instead of re-fetching
+    # --- Rule-Based Strategy for 1-Year ---
+    # Rule-based strategy disabled (removed during refactoring)
+    rule_results_1y = {}  # Placeholder - rule-based strategy disabled
+    final_rule_value_1y = rule_results_1y.get('final_value', initial_capital_1y)
+    rule_1y_return = rule_results_1y.get('total_return', 0) * 100
+    
+    # Simple Rule Strategy removed - using AI strategy only
+    final_simple_rule_value_1y = None
+    simple_rule_results_1y = []
+    performance_metrics_simple_rule_1y = []
+    simple_rule_1y_return = None
+
+    # --- Calculate Buy & Hold ---
+    print(f"\n📊 Calculating Buy & Hold performance for {actual_period_name} period...")
+    print(f"   Processing {len(top_tickers)} tickers (using cached data)...")
+    buy_hold_results_1y = []
+    performance_metrics_buy_hold_1y_actual = []
+    for idx, ticker in enumerate(top_tickers):
+        if (idx + 1) % 50 == 0:
+            print(f"   [{idx+1}/{len(top_tickers)}] Processed...")
+        # Use cached data instead of re-fetching
+        # ✅ FIX: Handle both dict and DataFrame (long format) data structures
+        if isinstance(all_tickers_data, dict):
             if ticker in all_tickers_data and not all_tickers_data[ticker].empty:
                 df_full = all_tickers_data[ticker]
-                # Filter to backtest period
                 df_bh = df_full[(df_full.index >= bt_start_1y) & (df_full.index <= bt_end)].copy()
             else:
                 df_bh = pd.DataFrame()
-            if not df_bh.empty:
-                start_price = float(df_bh["Close"].iloc[0])
-                shares_bh = int(capital_per_stock_1y / start_price) if start_price > 0 else 0
-                cash_bh = capital_per_stock_1y - shares_bh * start_price
-                
-                bh_history_for_ticker = []
-                for price_day in df_bh["Close"].tolist():
-                    bh_history_for_ticker.append(cash_bh + shares_bh * price_day)
-                
-                final_bh_val_ticker = bh_history_for_ticker[-1] if bh_history_for_ticker else capital_per_stock_1y
-                buy_hold_results_1y.append(final_bh_val_ticker)
-                
-                perf_data_bh = calculate_buy_hold_performance_metrics(bh_history_for_ticker, ticker)
-                performance_metrics_buy_hold_1y_actual.append({
-                    'ticker': ticker,
-                    'final_val': final_bh_val_ticker,
-                    'perf_data': perf_data_bh,
-                    'individual_bh_return': ((final_bh_val_ticker - capital_per_stock_1y) / abs(capital_per_stock_1y)) * 100 if capital_per_stock_1y != 0 else 0.0,
-                    'final_shares': shares_bh
-                })
+        else:
+            # DataFrame in long format - filter by ticker
+            ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+            if not ticker_data.empty:
+                ticker_data = ticker_data.set_index('date')
+                df_bh = ticker_data[(ticker_data.index >= bt_start_1y) & (ticker_data.index <= bt_end)].copy()
             else:
-                buy_hold_results_1y.append(capital_per_stock_1y)
-                performance_metrics_buy_hold_1y_actual.append({
-                    'ticker': ticker,
-                    'final_val': capital_per_stock_1y,
-                    'perf_data': {'sharpe_ratio': np.nan, 'max_drawdown': np.nan},
-                    'individual_bh_return': 0.0,
-                    'final_shares': 0.0
-                })
-        
-        # Build prediction vs B&H rows for all candidate tickers (whether AI held them or not)
-        bh_returns_lookup = {d['ticker']: d.get('individual_bh_return') for d in performance_metrics_buy_hold_1y_actual}
-        prediction_vs_bh_1y = []
-        for ticker in top_tickers_1y_filtered:
-            stats = prediction_stats_1y.get(ticker, {}) if 'prediction_stats_1y' in locals() else {}
-            prediction_vs_bh_1y.append({
+                df_bh = pd.DataFrame()
+        if not df_bh.empty:
+            start_price = float(df_bh["Close"].iloc[0])
+            shares_bh = int(capital_per_stock_1y / start_price) if start_price > 0 else 0
+            cash_bh = capital_per_stock_1y - shares_bh * start_price
+            
+            bh_history_for_ticker = []
+            for price_day in df_bh["Close"].tolist():
+                bh_history_for_ticker.append(cash_bh + shares_bh * price_day)
+            
+            final_bh_val_ticker = bh_history_for_ticker[-1] if bh_history_for_ticker else capital_per_stock_1y
+            buy_hold_results_1y.append(final_bh_val_ticker)
+            
+            perf_data_bh = calculate_buy_hold_performance_metrics(bh_history_for_ticker, ticker)
+            performance_metrics_buy_hold_1y_actual.append({
                 'ticker': ticker,
-                'pred_mean_pct': stats.get('pred_mean_pct'),
-                'pred_min_pct': stats.get('pred_min_pct'),
-                'pred_max_pct': stats.get('pred_max_pct'),
-                'bh_horizon_return_pct': stats.get('bh_horizon_return_pct'),
-                'individual_bh_return': bh_returns_lookup.get(ticker)
+                'final_val': final_bh_val_ticker,
+                'perf_data': perf_data_bh,
+                'individual_bh_return': ((final_bh_val_ticker - capital_per_stock_1y) / abs(capital_per_stock_1y)) * 100 if capital_per_stock_1y != 0 else 0.0,
+                'final_shares': shares_bh
             })
-        # BH portfolio value is now calculated in the walk-forward backtest
-        # It invests only in the top 3 highest performing stocks
-        final_buy_hold_value_1y = bh_portfolio_value_1y
-        final_buy_hold_value_3m = bh_3m_portfolio_value_1y
-        print(f"✅ BH Portfolio (Top 3 Performers): ${final_buy_hold_value_1y:,.0f}")
-        print(f"✅ {actual_period_name} Buy & Hold calculation complete.")
-    else:
-        print("\nℹ️ 1-Year Backtest is disabled by ENABLE_1YEAR_BACKTEST flag.")
+        else:
+            buy_hold_results_1y.append(capital_per_stock_1y)
+            performance_metrics_buy_hold_1y_actual.append({
+                'ticker': ticker,
+                'final_val': capital_per_stock_1y,
+                'perf_data': {'sharpe_ratio': np.nan, 'max_drawdown': np.nan},
+                'individual_bh_return': 0.0,
+                'final_shares': 0.0
+            })
+    
+    # Build prediction vs B&H rows for all candidate tickers (whether AI held them or not)
+    bh_returns_lookup = {d['ticker']: d.get('individual_bh_return') for d in performance_metrics_buy_hold_1y_actual}
+    prediction_vs_bh_1y = []
+    for ticker in top_tickers_1y_filtered:
+        stats = prediction_stats_1y.get(ticker, {}) if 'prediction_stats_1y' in locals() else {}
+        prediction_vs_bh_1y.append({
+            'ticker': ticker,
+            'pred_mean_pct': stats.get('pred_mean_pct'),
+            'pred_min_pct': stats.get('pred_min_pct'),
+            'pred_max_pct': stats.get('pred_max_pct'),
+            'bh_horizon_return_pct': stats.get('bh_horizon_return_pct'),
+            'individual_bh_return': bh_returns_lookup.get(ticker)
+        })
+    # BH portfolio value is now calculated in the walk-forward backtest
+    # It invests only in the top 3 highest performing stocks
+    final_buy_hold_value_1y = bh_portfolio_value_1y
+    final_buy_hold_value_3m = bh_3m_portfolio_value_1y
+    print(f"✅ BH Portfolio (Top 3 Performers): ${final_buy_hold_value_1y:,.0f}")
+    print(f"✅ {actual_period_name} Buy & Hold calculation complete.")
 
 
 
@@ -1488,10 +1307,15 @@ def main(
     print(f"  - final_buy_hold_value_1y: ${final_buy_hold_value_1y:,.2f}")
     print(f"  - performance_metrics_buy_hold_1y_actual type: {type(performance_metrics_buy_hold_1y_actual)}")
     print(f"  - performance_metrics_buy_hold_1y_actual length: {len(performance_metrics_buy_hold_1y_actual) if isinstance(performance_metrics_buy_hold_1y_actual, list) else 'N/A'}")
+    print(f"  - top_tickers count: {len(top_tickers)}")
+    print(f"  - processed_tickers_1y count: {len(processed_tickers_1y)}")
+    print(f"  - top_tickers sample: {top_tickers[:5]}")
+    print(f"  - processed_tickers_1y sample: {processed_tickers_1y[:5] if processed_tickers_1y else 'None'}")
 
     # ✅ FIX: Use the same initial capital that was allocated to the portfolio backtest
     actual_initial_capital_1y = initial_capital_1y
-    actual_tickers_analyzed = len(processed_tickers_1y)
+    # ✅ FIX: Use ALL top tickers for the summary, not just AI-processed ones
+    actual_tickers_analyzed = len(top_tickers)
     
     # ✅ Calculate actual backtest days for annualization (use actual day count from backtest)
     actual_backtest_days = actual_backtest_day_count if actual_backtest_day_count else (bt_end - bt_start_1y).days

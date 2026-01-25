@@ -778,7 +778,7 @@ def train_and_evaluate_models(
     # Use default values from config if not provided
     if default_class_horizon is None:
         from config import PERIOD_HORIZONS
-        default_class_horizon = PERIOD_HORIZONS.get("1-Year", 20)
+        default_class_horizon = PERIOD_HORIZONS.get("1-Year", 10)  # 10 calendar days
     d = df.copy()
     
     if target_col not in d.columns:

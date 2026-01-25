@@ -25,7 +25,7 @@ from config import (
     RETRAIN_FREQUENCY_DAYS, PREDICTION_LOOKBACK_DAYS, PREDICTION_TIMEOUT,
     ENABLE_RISK_ADJ_MOM, ENABLE_MEAN_REVERSION, ENABLE_QUALITY_MOM, ENABLE_MOMENTUM_AI_HYBRID,
     ENABLE_VOLATILITY_ADJ_MOM, VOLATILITY_ADJ_MOM_LOOKBACK, VOLATILITY_ADJ_MOM_VOL_WINDOW, VOLATILITY_ADJ_MOM_MIN_SCORE,
-    ENABLE_1YEAR_TRAINING
+        CALENDAR_DAYS_PER_YEAR
 )
 import signal
 from contextlib import contextmanager
@@ -595,7 +595,7 @@ def optimize_single_ticker_worker(params):
                     X = np.column_stack([np.ones_like(bh_returns_aligned), bh_returns_aligned])
                     beta_coeffs = np.linalg.lstsq(X, strategy_returns_aligned, rcond=None)[0]
                     alpha_per_day = float(beta_coeffs[0])
-                    alpha_annualized = alpha_per_day * 252  # Annualize (252 trading days)
+                    alpha_annualized = alpha_per_day * CALENDAR_DAYS_PER_YEAR  # Annualize using calendar days per year
                 except Exception as e:
                     alpha_annualized = 0.0
             else:
@@ -948,9 +948,9 @@ def analyze_performance(
     strat_returns = pd.Series(strategy_history).pct_change(fill_method=None).dropna()
     bh_returns = pd.Series(buy_hold_history).pct_change(fill_method=None).dropna()
 
-    # Sharpe Ratio (annualized, assuming 252 trading days)
-    sharpe_strat = (strat_returns.mean() / strat_returns.std()) * np.sqrt(252) if strat_returns.std() > 0 else 0
-    sharpe_bh = (bh_returns.mean() / bh_returns.std()) * np.sqrt(252) if bh_returns.std() > 0 else 0
+    # Sharpe Ratio (annualized, using calendar days per year)
+    sharpe_strat = (strat_returns.mean() / strat_returns.std()) * np.sqrt(CALENDAR_DAYS_PER_YEAR) if strat_returns.std() > 0 else 0
+    sharpe_bh = (bh_returns.mean() / bh_returns.std()) * np.sqrt(CALENDAR_DAYS_PER_YEAR) if bh_returns.std() > 0 else 0
 
     # Max Drawdown
     strat_series = pd.Series(strategy_history)
@@ -1582,14 +1582,20 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   🔧 Pre-grouping data by ticker for fast lookups...", flush=True)
     ticker_data_grouped = {}
     grouped = all_tickers_data.groupby('ticker')
+    available_tickers_in_data = set(all_tickers_data['ticker'].unique())
+    missing_tickers = []
     for ticker in initial_top_tickers:
         try:
             ticker_df = grouped.get_group(ticker).copy()
             ticker_df = ticker_df.set_index('date')
             ticker_data_grouped[ticker] = ticker_df
         except KeyError:
-            pass
+            missing_tickers.append(ticker)
     print(f"   ✅ Pre-grouped {len(ticker_data_grouped)} tickers", flush=True)
+    if missing_tickers:
+        print(f"   ⚠️ {len(missing_tickers)} tickers NOT found in data: {missing_tickers[:10]}{'...' if len(missing_tickers) > 10 else ''}")
+        print(f"   🔍 DEBUG: initial_top_tickers sample: {initial_top_tickers[:5]}")
+        print(f"   🔍 DEBUG: available_tickers_in_data sample: {list(available_tickers_in_data)[:5]}")
 
     day_count = 0
     retrain_count = 0
@@ -1610,26 +1616,32 @@ def _run_portfolio_backtest_walk_forward(
         should_retrain = (day_count % RETRAIN_FREQUENCY_DAYS == 1)  # Retrain on day 1, 6, 11, 16, etc.
 
         # ✅ FIX: Train models on Day 1 if initial_models is empty, OR on regular retrain schedule
-        # Only train individual stock prediction models when main AI strategy is enabled AND training is enabled
-        needs_training = enable_ai_strategy and ENABLE_1YEAR_TRAINING and ((day_count == 1 and not current_models) or (should_retrain and day_count > 1))
-        
-        # Additional check: Don't train if ENABLE_1YEAR_TRAINING is False, even if models are empty
-        if not ENABLE_1YEAR_TRAINING:
-            needs_training = False
+        # Only train individual stock prediction models when main AI strategy is enabled
+        needs_training = enable_ai_strategy and ((day_count == 1 and not current_models) or (should_retrain and day_count > 1))
         
         if needs_training:
+            # Check if walk-forward retraining is disabled
+            from config import ENABLE_WALK_FORWARD_RETRAINING
+            if not ENABLE_WALK_FORWARD_RETRAINING:
+                print(f"\n⏭️ Day {day_count} ({current_date.strftime('%Y-%m-%d')}): Walk-forward retraining disabled - using existing models")
+                # Keep using existing models, don't retrain
+                continue
+            
             retrain_count += 1
             print(f"\n🧠 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): {'Initial training' if day_count == 1 else 'Retraining'} models...")
 
             try:
-                # Retrain models using data up to previous day
-                train_end_date = current_date - timedelta(days=1)
-
+                # Retrain models using rolling window ending at current day
+                # For walk-forward, we train AFTER market close, so we can include current day's data
+                train_end_date = current_date
+                # ✅ FIX: Use rolling window - always use last 365 days from current point
+                train_start_date_rolling = train_end_date - timedelta(days=TRAIN_LOOKBACK_DAYS)
+                
                 retraining_results = train_models_for_period(
                     period_name=f"{period_name}_retrain_{retrain_count}",
                     tickers=initial_top_tickers,  # Retrain on all 40 tickers
                     all_tickers_data=all_tickers_data,
-                    train_start=train_start_date,
+                    train_start=train_start_date_rolling,  # Use rolling start date
                     train_end=train_end_date,
                     top_performers_data=top_performers_data,
                     feature_set=None
@@ -1682,6 +1694,25 @@ def _run_portfolio_backtest_walk_forward(
                 if consecutive_training_failures >= MAX_CONSECUTIVE_FAILURES:
                     print(f"\n❌ ABORT: Training has failed {consecutive_training_failures} times in a row!")
                     raise InsufficientDataError(f"Training consistently failing: {e}")
+            
+            # ✅ Also retrain AI Portfolio model during walk-forward
+            try:
+                from config import ENABLE_AI_PORTFOLIO
+                if ENABLE_AI_PORTFOLIO:
+                    from ai_portfolio import train_ai_portfolio_model
+                    print(f"   🧠 Retraining AI Portfolio model...")
+                    ai_portfolio_result = train_ai_portfolio_model(
+                        top_tickers=initial_top_tickers,
+                        all_tickers_data=all_tickers_data,
+                        train_start_date=train_start_date_rolling,
+                        train_end_date=train_end_date
+                    )
+                    if ai_portfolio_result is not None:
+                        print(f"   ✅ AI Portfolio model retrained successfully")
+                    else:
+                        print(f"   ⚠️ AI Portfolio retraining skipped (insufficient data)")
+            except Exception as e:
+                print(f"   ⚠️ AI Portfolio retraining failed: {e}")
 
         # STATIC BH PORTFOLIOS: Initialize on day 1 and optional periodic rebalancing
         # Static BH 1Y, 3M, and 1M are always initialized, then rebalance every N days if configured
@@ -4434,17 +4465,19 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   💰 Transaction costs minimized - daily monitoring, trading only when portfolio changes")
     
     # ✅ NEW: Final training at the end of backtesting for live trading preparation
-    if enable_ai_strategy and ENABLE_1YEAR_TRAINING and day_count > 0:
+    if enable_ai_strategy and ENABLE_WALK_FORWARD_RETRAINING and day_count > 0:
         print(f"\n🧠 Final training at end of backtesting (Day {day_count}) for live trading preparation...")
         try:
             # Use the last day of backtest for final training
             final_train_end_date = business_days[-1]  # Last trading day
+            # ✅ FIX: Use rolling window for final training too
+            final_train_start_date = final_train_end_date - timedelta(days=TRAIN_LOOKBACK_DAYS)
             
             retraining_results = train_models_for_period(
                 period_name=f"{period_name}_final_training",
                 tickers=initial_top_tickers,
                 all_tickers_data=all_tickers_data,
-                train_start=train_start_date,
+                train_start=final_train_start_date,  # Use rolling start
                 train_end=final_train_end_date,
                 top_performers_data=top_performers_data,
                 feature_set=None
@@ -7061,7 +7094,7 @@ def print_final_summary(
         buy_thresh = 0.0  # Disabled
         sell_thresh = 1.0  # Disabled
         target_perc = optimized_params.get('target_percentage', TARGET_PERCENTAGE)
-        class_horiz = optimized_params.get('class_horizon', PERIOD_HORIZONS.get("1-Year", 20))
+        class_horiz = optimized_params.get('class_horizon', PERIOD_HORIZONS.get("1-Year", 10))  # 10 calendar days
         opt_status = optimized_params.get('optimization_status', 'N/A')
 
         allocated_capital = INVESTMENT_PER_STOCK

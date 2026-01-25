@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import joblib
 from tqdm import tqdm
 
@@ -107,8 +107,8 @@ def generate_training_tasks(
     
     # ✅ Normalize dates for comparison (handle timezone-aware vs timezone-naive)
     # Convert to pandas Timestamps for proper comparison with DataFrame dates
-    train_start_normalized = pd.Timestamp(train_start)
-    train_end_normalized = pd.Timestamp(train_end)
+    train_start = pd.Timestamp(train_start)
+    train_end = pd.Timestamp(train_end)
     
     if 'date' in all_tickers_data.columns:
         # Check if dates in DataFrame are timezone-aware
@@ -118,33 +118,33 @@ def generate_training_tasks(
             
             if sample_tz is not None:
                 # DataFrame has timezone-aware dates - localize train dates to same timezone
-                if train_start_normalized.tzinfo is None:
-                    train_start_normalized = train_start_normalized.tz_localize(sample_tz)
+                if train_start.tzinfo is None:
+                    train_start = train_start.tz_localize(sample_tz)
                 else:
-                    train_start_normalized = train_start_normalized.tz_convert(sample_tz)
-                if train_end_normalized.tzinfo is None:
-                    train_end_normalized = train_end_normalized.tz_localize(sample_tz)
+                    train_start = train_start.tz_convert(sample_tz)
+                if train_end.tzinfo is None:
+                    train_end = train_end.tz_localize(sample_tz)
                 else:
-                    train_end_normalized = train_end_normalized.tz_convert(sample_tz)
+                    train_end = train_end.tz_convert(sample_tz)
             else:
                 # DataFrame has timezone-naive dates - ensure train dates are also naive
-                if train_start_normalized.tzinfo is not None:
-                    train_start_normalized = train_start_normalized.tz_localize(None)
-                if train_end_normalized.tzinfo is not None:
-                    train_end_normalized = train_end_normalized.tz_localize(None)
+                if train_start.tzinfo is not None:
+                    train_start = train_start.tz_localize(None)
+                if train_end.tzinfo is not None:
+                    train_end = train_end.tz_localize(None)
         
         print(f"   📅 Normalized date range for comparison:")
-        print(f"      - Train start: {train_start_normalized} (tz: {train_start_normalized.tzinfo})")
-        print(f"      - Train end: {train_end_normalized} (tz: {train_end_normalized.tzinfo})")
+        print(f"      - Train start: {train_start} (tz: {train_start.tzinfo})")
+        print(f"      - Train end: {train_end} (tz: {train_end.tzinfo})")
         if sample_date is not None:
             print(f"      - Sample data date: {sample_date} (tz: {getattr(sample_date, 'tzinfo', None)})")
             print(f"      - Data date range: {all_tickers_data['date'].min()} to {all_tickers_data['date'].max()}")
             # Debug: Check if dates overlap
             data_min = pd.Timestamp(all_tickers_data['date'].min())
             data_max = pd.Timestamp(all_tickers_data['date'].max())
-            if train_end_normalized < data_min or train_start_normalized > data_max:
+            if train_end < data_min or train_start > data_max:
                 print(f"      ⚠️ WARNING: Train period does NOT overlap with data range!")
-                print(f"         Train: {train_start_normalized} to {train_end_normalized}")
+                print(f"         Train: {train_start} to {train_end}")
                 print(f"         Data:  {data_min} to {data_max}")
     
     # Debug: Track first few tickers for detailed diagnostics
@@ -170,34 +170,31 @@ def generate_training_tasks(
                         print(f"   🔍 DEBUG {ticker}: 0 rows in data")
                     debug_ticker_count += 1
                 
-                df_train_period = all_tickers_data[
-                    ticker_mask &
-                    (all_tickers_data['date'] >= train_start_normalized) &
-                    (all_tickers_data['date'] <= train_end_normalized)
-                ].copy()
+                # DEBUG: Check date overlap before filtering
+                if debug_ticker_count <= max_debug_tickers:
+                    print(f"   🔍 DEBUG {ticker}: Filtering from {train_start} to {train_end}")
+                    print(f"   🔍 DEBUG {ticker}: Data dates {ticker_data_all['date'].min()} to {ticker_data_all['date'].max()}")
+                
+                # Get all available data for this ticker (no date filtering)
+                # TargetReturn calculation needs access to future data
+                df_train_period = all_tickers_data[ticker_mask].copy()
+                
+                if debug_ticker_count <= max_debug_tickers:
+                    print(f"   🔍 DEBUG {ticker}: After date filter: {len(df_train_period)} rows")
             else:
-                # Wide format: filter by ticker and index
+                # Wide format: get all available data for ticker
                 ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
                 if ticker_data.empty:
                     print(f"  ⚠️ No data for {ticker}, skipping")
                     continue
                 
-                # Filter by index if it's a DatetimeIndex
-                if hasattr(ticker_data.index, 'tz_localize'):
-                    df_train_period = ticker_data[
-                        (ticker_data.index >= train_start_normalized) & (ticker_data.index <= train_end_normalized)
-                    ].copy()
-                else:
-                    # Fallback: no date filtering
-                    df_train_period = ticker_data.copy()
+                # Get all available data (no date filtering)
+                # TargetReturn calculation needs access to future data
+                df_train_period = ticker_data.copy()
             
-            if df_train_period.empty:
+            if df_train_period.empty or len(df_train_period) < 50:
                 if debug_ticker_count <= max_debug_tickers:
-                    print(f"  ⚠️ No training data found for {ticker} in period {train_start_normalized} to {train_end_normalized}. Skipping.")
-                continue
-            
-            if len(df_train_period) < 50:
-                print(f"  ⚠️ Insufficient data for {ticker} ({len(df_train_period)} rows), skipping")
+                    print(f"  ⚠️ Insufficient data for {ticker} ({len(df_train_period)} rows), skipping")
                 continue
         except Exception as e:
             print(f"  ⚠️ Error processing {ticker}: {e}")
@@ -213,6 +210,8 @@ def generate_training_tasks(
                 'model_type': model_type,
                 'df_train_period': df_train_period,
                 'class_horizon': class_horizon,
+                'train_start': train_start,
+                'train_end': train_end,
                 'feature_set': feature_set
             }
             ticker_tasks.append(task)
@@ -319,6 +318,8 @@ def universal_model_worker(task: Dict) -> Dict:
         df_train_period = task.get('df_train_period')
         target_percentage = task.get('target_percentage')
         class_horizon = task.get('class_horizon')
+        train_start = task.get('train_start')
+        train_end = task.get('train_end')
         feature_set = task.get('feature_set')
         
         try:
@@ -331,7 +332,7 @@ def universal_model_worker(task: Dict) -> Dict:
             
             # Prepare training data
             df_train, actual_feature_set = fetch_training_data(
-                ticker, df_train_period, class_horizon
+                ticker, df_train_period, class_horizon, train_start, train_end
             )
             
             if df_train.empty or len(df_train) < 50:

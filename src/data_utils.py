@@ -224,7 +224,9 @@ TRANSACTION_COST = 0.001
 # USE_MODEL_GATE removed - simplified buy-and-hold logic
 # Probability thresholds removed - using simplified trading logic
 TARGET_PERCENTAGE = 0.008
-CLASS_HORIZON = 5
+# Import from config
+from config import PERIOD_HORIZONS
+CLASS_HORIZON = PERIOD_HORIZONS.get("1-Year", 10)  # Default to 10 days
 SEQUENCE_LENGTH = 32
 PYTORCH_AVAILABLE = False
 CUDA_AVAILABLE = False
@@ -236,7 +238,7 @@ SEED = 42
 # _ensure_dir moved to utils.py to avoid duplication
 from utils import _ensure_dir
 
-def _is_market_day_complete(date: datetime) -> bool:
+def _is_market_day_complete(date):
     """
     Check if we should expect data for a given date.
     Markets close at 4pm ET (9pm UTC), data available ~6pm ET (11pm UTC).
@@ -263,7 +265,46 @@ def _is_market_day_complete(date: datetime) -> bool:
     # For past dates (including yesterday), data should be available
     return True
 
-CLASS_HORIZON           = 5          # days ahead for classification target
+
+def _get_last_trading_day():
+    """
+    Get the last trading day (excludes weekends).
+    For US markets: Mon-Fri are trading days.
+    """
+    now_utc = datetime.now(timezone.utc)
+    today = now_utc.date()
+    weekday = today.weekday()
+    
+    # If today is Saturday (5), last trading day was Friday (1 day ago)
+    # If today is Sunday (6), last trading day was Friday (2 days ago)
+    # If today is Monday-Friday before market close, last trading day was previous weekday
+    
+    if weekday == 5:  # Saturday
+        return today - timedelta(days=1)  # Friday
+    elif weekday == 6:  # Sunday
+        return today - timedelta(days=2)  # Friday
+    elif weekday == 0:  # Monday
+        # Check if market data for today is available yet
+        if now_utc.hour < 23:  # Before 11pm UTC
+            return today - timedelta(days=3)  # Friday
+        else:
+            return today
+    else:  # Tuesday-Friday
+        if now_utc.hour < 23:  # Before 11pm UTC
+            return today - timedelta(days=1)  # Yesterday
+        else:
+            return today
+
+
+def _is_cache_current(last_cached_date):
+    """
+    Check if cache is current (has data up to the last trading day).
+    """
+    last_trading_day = _get_last_trading_day()
+    cached_date = last_cached_date.date() if isinstance(last_cached_date, datetime) else last_cached_date
+    return cached_date >= last_trading_day
+
+# CLASS_HORIZON is now imported from config above
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """
     Download and clean data with INCREMENTAL local caching.
@@ -294,23 +335,14 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             
             if not cached_df.empty:
                 last_cached_date = cached_df.index[-1]
-                today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
                 
-                # Check if we should expect new data (considering market hours/weekends)
-                if _is_market_day_complete(today):
-                    # Market data should be available - check if cache is current
-                    if last_cached_date < today:
-                        fetch_start = last_cached_date + timedelta(days=1)
-                    else:
-                        needs_fetch = False
+                # ✅ FIX: Use proper trading day check to avoid fetching on weekends
+                if _is_cache_current(last_cached_date):
+                    # Cache already has data up to the last trading day
+                    needs_fetch = False
                 else:
-                    # Market data not available yet - check against yesterday
-                    yesterday = today - timedelta(days=1)
-                    if last_cached_date < yesterday:
-                        fetch_start = last_cached_date + timedelta(days=1)
-                    else:
-                        needs_fetch = False
-                        print(f"  ℹ️  {ticker}: Cache is current (today's market data not available yet)")
+                    # Need to fetch data from last cached date + 1
+                    fetch_start = last_cached_date + timedelta(days=1)
                     
         except Exception as e:
             print(f"  Warning: Could not read cache for {ticker}: {e}. Will refetch all.")
@@ -331,24 +363,17 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         elif days_to_fetch > 0:
             print(f"  Updating {ticker} (+{days_to_fetch} days)...")
         
-        provider = DATA_PROVIDER.lower()
-        
-        # Try Alpaca first
-        if provider == 'alpaca' and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
+        # ✅ FIX: Try providers in order: Alpaca → TwelveData → Yahoo (cascade fallback)
+        # Try Alpaca first (if available)
+        if new_df.empty and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
             new_df = _fetch_from_alpaca(ticker, start_utc, end_utc)
         
-        # Try TwelveData second
-        if new_df.empty and provider == 'twelvedata' and TWELVEDATA_API_KEY:
+        # Try TwelveData second (if available)
+        if new_df.empty and TWELVEDATA_SDK_AVAILABLE and TWELVEDATA_API_KEY:
             new_df = _fetch_from_twelvedata(ticker, start_utc, end_utc)
         
-        # Try Stooq
-        if new_df.empty and provider == 'stooq':
-            new_df = _fetch_from_stooq(ticker, start_utc, end_utc)
-            if new_df.empty and not ticker.upper().endswith('.US'):
-                new_df = _fetch_from_stooq(f"{ticker}.US", start_utc, end_utc)
-        
-        # Yahoo as final fallback
-        if new_df.empty and USE_YAHOO_FALLBACK:
+        # Yahoo as final fallback (always try if others fail)
+        if new_df.empty:
             try:
                 downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, 
                                            interval=DATA_INTERVAL, auto_adjust=True, progress=False)
@@ -457,14 +482,33 @@ def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFr
     return pd.DataFrame()
 
 
-def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CLASS_HORIZON) -> Tuple[pd.DataFrame, List[str]]:
-    """Compute ML features from a given DataFrame."""
+def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CLASS_HORIZON, train_start: pd.Timestamp = None, train_end: pd.Timestamp = None) -> Tuple[pd.DataFrame, List[str]]:
+    """Compute ML features from a given DataFrame.
+    
+    Args:
+        ticker: Stock ticker symbol
+        data: DataFrame with OHLCV data (includes all available data for TargetReturn calculation)
+        class_horizon: Number of calendar days for forward return calculation
+        train_start: Optional start date - only rows from this date onwards will be kept for training
+        train_end: Optional cutoff date - only rows up to this date will be kept for training
+                   (after TargetReturn is calculated using all available data)
+    """
     print(f"  [DIAGNOSTIC] {ticker}: fetch_training_data - Initial data rows: {len(data)}")
+    if ticker in ['AAPL', 'WDC', 'SNDK']:
+        print(f"  [DEBUG] {ticker}: Input columns: {list(data.columns)[:10]}")
     if data.empty or len(data) < FEAT_SMA_LONG + 10:
         print(f"  [DIAGNOSTIC] {ticker}: Skipping feature prep. Initial data has {len(data)} rows, required > {FEAT_SMA_LONG + 10}.")
         return pd.DataFrame(), []
 
     df = data.copy()
+    
+    # ✅ FIX: Handle long format data (with 'date' and 'ticker' columns)
+    if 'date' in df.columns and 'ticker' in df.columns:
+        # Convert from long format to wide format
+        df = df.set_index('date')
+        # Remove ticker column since we know which ticker this is
+        if 'ticker' in df.columns:
+            df = df.drop('ticker', axis=1)
     if "Close" not in df.columns and "Adj Close" in df.columns:
         df = df.rename(columns={"Adj Close": "Close"})
 
@@ -657,10 +701,29 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CL
     df['OBV_SMA'] = df['OBV'].rolling(window=10).mean()
     df['OBV_SMA'] = df['OBV_SMA'].fillna(0)
 
-    # Historical Volatility (e.g., 20-day rolling standard deviation of log returns)
+    # Log Returns
     df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
-    df['Historical_Volatility'] = df['Log_Returns'].rolling(window=20).std() * np.sqrt(252)
+    df['Log_Returns'] = df['Log_Returns'].fillna(0)
+
+    # Historical Volatility (rolling standard deviation of returns)
+    df['Historical_Volatility'] = df['Returns'].rolling(window=FEAT_VOL_WINDOW).std()
     df['Historical_Volatility'] = df['Historical_Volatility'].fillna(0)
+    
+    # Volatility-Adjusted Momentum: momentum normalized by volatility (Sharpe-like)
+    mom_20 = df['Close'].pct_change(20).fillna(0)
+    vol_20 = df['Returns'].rolling(20, min_periods=5).std().fillna(0.01)
+    df['Vol_Adjusted_Momentum'] = (mom_20 / vol_20.replace(0, 0.01)).clip(-10, 10).fillna(0)
+    
+    # Mean Reversion Signal: distance from 20-day mean in std devs (z-score)
+    sma_20 = df['Close'].rolling(20, min_periods=5).mean()
+    std_20 = df['Close'].rolling(20, min_periods=5).std().replace(0, 1)
+    df['Mean_Reversion_Signal'] = ((df['Close'] - sma_20) / std_20).clip(-3, 3).fillna(0)
+    
+    # Trend Strength: ADX-like measure using price vs moving averages
+    sma_10 = df['Close'].rolling(10, min_periods=5).mean()
+    sma_50 = df['Close'].rolling(50, min_periods=10).mean()
+    trend_alignment = ((df['Close'] > sma_10) & (sma_10 > df['SMA_F_S']) & (df['SMA_F_S'] > sma_50)).astype(float)
+    df['Trend_Strength'] = trend_alignment.rolling(5, min_periods=1).mean().fillna(0)
 
     # --- Additional Financial Features (from _fetch_financial_data) ---
     financial_features = [col for col in df.columns if col.startswith('Fin_')]
@@ -671,27 +734,73 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CL
 
     df["Target"]     = df["Close"].shift(-1)
 
-    # Create forward-looking data for regression target
-    fwd = df["Close"].shift(-class_horizon)
-
-    # Regression target: X-day forward return percentage
-    df["TargetReturn"] = (fwd / df["Close"] - 1.0) * 100
+    # ✅ FIX: Sort by date index before calculating forward returns
+    if hasattr(df, 'index') and hasattr(df.index, 'sort_values'):
+        df = df.sort_index()
+    
+    # ✅ NEW: Date-based forward return calculation (replaces shift-based approach)
+    # Calculate TargetReturn using actual calendar days instead of row-based shift
+    df["TargetReturn"] = np.nan
+    
+    for idx in df.index:
+        # Calculate target date: current date + class_horizon calendar days
+        target_date = idx + pd.Timedelta(days=class_horizon)
+        
+        # Find the closest available price on or after target_date
+        future_prices = df[df.index >= target_date]["Close"]
+        
+        if len(future_prices) > 0:
+            future_price = future_prices.iloc[0]
+            current_price = df.loc[idx, "Close"]
+            df.loc[idx, "TargetReturn"] = (future_price / current_price - 1.0) * 100
+    
+    # Filter to only keep rows within training period (if specified)
+    # This removes rows outside the training window
+    if train_start is not None:
+        df = df[df.index >= train_start]
+        if ticker in ['SNDK', 'WDC', 'MU']:
+            print(f"  🔍 DEBUG {ticker}: Filtered to train_start {train_start.date()}, now {len(df)} rows")
+    
+    if train_end is not None:
+        df = df[df.index <= train_end]
+        if ticker in ['SNDK', 'WDC', 'MU']:
+            print(f"  🔍 DEBUG {ticker}: Filtered to train_end {train_end.date()}, now {len(df)} rows")
+    
+    # DEBUG: Check TargetReturn calculation
+    if ticker in ['SNDK', 'WDC', 'MU']:
+        print(f"  🔍 DEBUG {ticker}: df shape after TargetReturn calc: {df.shape}")
+        if hasattr(df, 'index') and len(df.index) > 0:
+            print(f"  🔍 DEBUG {ticker}: Date range: {df.index.min()} to {df.index.max()}")
+        print(f"  🔍 DEBUG {ticker}: TargetReturn non-NaN count: {df['TargetReturn'].notna().sum()}")
+        print(f"  🔍 DEBUG {ticker}: Total rows: {len(df)}")
+        print(f"  🔍 DEBUG {ticker}: Last 10 dates: {df.index[-10:].tolist()}")
+        print(f"  🔍 DEBUG {ticker}: Close tail: {df['Close'].tail(10).tolist()}")
+        print(f"  🔍 DEBUG {ticker}: TargetReturn tail: {df['TargetReturn'].tail(10).tolist()}")
+        print(f"  🔍 DEBUG {ticker}: Is index sorted: {df.index.is_monotonic_increasing}")
 
     # Dynamically build the list of features that are actually present in the DataFrame
     # This is the most critical part to ensure consistency
 
     # Define a base set of expected technical features
-    expected_technical_features = [
+    # Core technical features that are ALWAYS calculated in this function
+    core_technical_features = [
         "Close", "Volume", "High", "Low", "Open", "Returns", "SMA_F_S", "SMA_F_L", "Volatility",
         "ATR", "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
         "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
         "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Log_Returns",
-        "Historical_Volatility", "Market_Momentum_SPY",
-        "Sentiment_Score",
-        "VIX_Index_Returns", "DXY_Index_Returns", "Gold_Futures_Returns", "Oil_Futures_Returns", "US10Y_Yield_Returns",
-        "Oil_Price_Returns", "Gold_Price_Returns",
-        "Relative_Strength_vs_SPY", "Vol_Adjusted_Momentum", "Mean_Reversion_Signal", "Trend_Strength"
+        "Historical_Volatility",
+        "Vol_Adjusted_Momentum", "Mean_Reversion_Signal", "Trend_Strength"
     ]
+    
+    # Optional features that may or may not be present (merged from external sources)
+    optional_features = [
+        "Market_Momentum_SPY", "Sentiment_Score",
+        "VIX_Index_Returns", "DXY_Index_Returns", "Gold_Futures_Returns", "Oil_Futures_Returns", "US10Y_Yield_Returns",
+        "Oil_Price_Returns", "Gold_Price_Returns", "Relative_Strength_vs_SPY"
+    ]
+    
+    # Combine: core features + optional features that are actually present
+    expected_technical_features = core_technical_features + [f for f in optional_features if f in df.columns]
 
     # Filter to only include technical features that are actually in df.columns
     present_technical_features = [col for col in expected_technical_features if col in df.columns]
@@ -706,7 +815,34 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CL
     # Filter cols_for_ready to ensure all are actually in df.columns (redundant but safe)
     cols_for_ready_final = [col for col in cols_for_ready if col in df.columns]
 
-    ready = df[cols_for_ready_final].dropna()
+    # DEBUG: Print which features are missing
+    missing_features = [col for col in expected_technical_features if col not in df.columns]
+    if missing_features and ticker in ['TTD', 'SOXS']:  # Debug for first few tickers
+        print(f"   ↳ {ticker}: Missing features: {missing_features[:5]}...")  # Limit output
+
+    # ✅ FIX: Fill NaN values before dropping to preserve more rows
+    # First, forward-fill and back-fill numeric columns
+    ready = df[cols_for_ready_final].copy()
+    for col in ready.columns:
+        if col not in target_cols:  # Don't fill target columns
+            ready[col] = ready[col].ffill().bfill().fillna(0)
+    
+    # ✅ FIX: Only drop rows where the ACTIVE target is NaN
+    # In regression mode (default): only TargetReturn matters
+    # In classification mode: only Target matters
+    # We use TargetReturn for regression, so only require that column
+    active_target_col = "TargetReturn" if "TargetReturn" in ready.columns else "Target"
+    
+    # DEBUG: Check TargetReturn before dropna
+    if ticker in ['SNDK', 'WDC', 'AAPL']:
+        print(f"   🔍 DEBUG {ticker}: cols_for_ready_final has {len(cols_for_ready_final)} cols")
+        print(f"   🔍 DEBUG {ticker}: 'TargetReturn' in cols_for_ready_final: {'TargetReturn' in cols_for_ready_final}")
+        print(f"   🔍 DEBUG {ticker}: 'TargetReturn' in df.columns: {'TargetReturn' in df.columns}")
+        if active_target_col in ready.columns:
+            non_nan_count = ready[active_target_col].notna().sum()
+            print(f"   🔍 DEBUG {ticker}: {active_target_col} has {non_nan_count} non-NaN values out of {len(ready)}")
+    
+    ready = ready.dropna(subset=[active_target_col])
 
     # The actual features used for training will be all columns in 'ready' except the target columns
     final_training_features = [col for col in ready.columns if col not in target_cols]

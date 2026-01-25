@@ -80,9 +80,11 @@ def generate_ai_portfolio_training_data(
         print(f"   🧠 AI Portfolio: Generating training data from {len(top_tickers)} candidates...")
         print(f"   📊 Period: {train_start_date.date()} to {train_end_date.date()}")
         
-        # Filter data to training period only
+        # Filter data to training period plus lookback for feature calculation
+        # Need 60 days before train_start for lookback features
+        lookback_start = train_start_date - timedelta(days=60)
         train_data = all_tickers_data[
-            (all_tickers_data['date'] >= train_start_date) & 
+            (all_tickers_data['date'] >= lookback_start) & 
             (all_tickers_data['date'] <= train_end_date)
         ].copy()
         
@@ -123,17 +125,16 @@ def generate_ai_portfolio_training_data(
         print(f"   📊 Processing {total_windows} evaluation windows...", flush=True)
         
         # Filter tickers to only those with sufficient data for the training period
-        # Need at least 50 days of data before train_start_date for lookback
-        min_data_date = train_start_date - timedelta(days=60)
+        # Need at least 50 days of data including lookback period
+        min_data_date = lookback_start  # Use the lookback start date we already calculated
         valid_tickers = []
+        
         for ticker in top_tickers[:100]:
             ticker_data = train_data[train_data['ticker'] == ticker]
             if len(ticker_data) >= 50:
-                ticker_min_date = ticker_data['date'].min()
-                if ticker_min_date <= min_data_date:
-                    valid_tickers.append(ticker)
+                valid_tickers.append(ticker)
         
-        print(f"   📊 Found {len(valid_tickers)} tickers with sufficient data (need data before {min_data_date.date()})", flush=True)
+        print(f"   📊 Found {len(valid_tickers)} tickers with sufficient data (>= 50 rows)", flush=True)
         
         if len(valid_tickers) < 3:
             print(f"   ⚠️ AI Portfolio: Not enough valid tickers ({len(valid_tickers)}), need at least 3")
@@ -625,6 +626,11 @@ def _extract_portfolio_features(
     try:
         lookback_start = current_date - timedelta(days=lookback_days + 30)
         
+        # ✅ FIX: Normalize dates for comparison (handle timezone-aware vs timezone-naive)
+        import pandas as pd
+        lookback_start = pd.Timestamp(lookback_start)
+        current_date_ts = pd.Timestamp(current_date)
+        
         stock_features = []
         returns_data = []
         volume_data = []
@@ -634,8 +640,23 @@ def _extract_portfolio_features(
             if ticker_data.empty:
                 return None
             
-            ticker_data = ticker_data.set_index('date')
-            recent_data = ticker_data.loc[lookback_start:current_date]
+            # ✅ FIX: Filter by date column instead of index to handle timezone issues
+            if 'date' in ticker_data.columns:
+                # Normalize timezone if needed
+                sample_date = ticker_data['date'].iloc[0]
+                if hasattr(sample_date, 'tzinfo') and sample_date.tzinfo is not None:
+                    if lookback_start.tzinfo is None:
+                        lookback_start = lookback_start.tz_localize(sample_date.tzinfo)
+                    if current_date_ts.tzinfo is None:
+                        current_date_ts = current_date_ts.tz_localize(sample_date.tzinfo)
+                
+                recent_data = ticker_data[
+                    (ticker_data['date'] >= lookback_start) & 
+                    (ticker_data['date'] <= current_date_ts)
+                ].copy()
+            else:
+                ticker_data = ticker_data.set_index('date')
+                recent_data = ticker_data.loc[lookback_start:current_date_ts]
             
             if len(recent_data) < lookback_days:
                 return None
@@ -816,6 +837,11 @@ def _calculate_portfolio_performance(
         except ImportError:
             TRANSACTION_COST = 0.01  # Default 1%
         
+        # ✅ FIX: Normalize dates for comparison (handle timezone-aware vs timezone-naive)
+        import pandas as pd
+        start_date_ts = pd.Timestamp(start_date)
+        end_date_ts = pd.Timestamp(end_date)
+        
         portfolio_returns = []
         
         for ticker in tickers:
@@ -823,8 +849,23 @@ def _calculate_portfolio_performance(
             if ticker_data.empty:
                 return np.nan
             
-            ticker_data = ticker_data.set_index('date')
-            period_data = ticker_data.loc[start_date:end_date]
+            # ✅ FIX: Filter by date column instead of index to handle timezone issues
+            if 'date' in ticker_data.columns:
+                # Normalize timezone if needed
+                sample_date = ticker_data['date'].iloc[0]
+                if hasattr(sample_date, 'tzinfo') and sample_date.tzinfo is not None:
+                    if start_date_ts.tzinfo is None:
+                        start_date_ts = start_date_ts.tz_localize(sample_date.tzinfo)
+                    if end_date_ts.tzinfo is None:
+                        end_date_ts = end_date_ts.tz_localize(sample_date.tzinfo)
+                
+                period_data = ticker_data[
+                    (ticker_data['date'] >= start_date_ts) & 
+                    (ticker_data['date'] <= end_date_ts)
+                ].copy()
+            else:
+                ticker_data = ticker_data.set_index('date')
+                period_data = ticker_data.loc[start_date_ts:end_date_ts]
             
             if len(period_data) < 2:
                 return np.nan

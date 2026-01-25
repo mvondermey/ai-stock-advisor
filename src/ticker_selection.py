@@ -338,6 +338,66 @@ def get_all_tickers() -> List[str]:
         except Exception as e:
             print(f" Could not fetch FTSE MIB list ({e}).")
 
+    if MARKET_SELECTION.get("CAC_40"):
+        try:
+            url_cac = "https://en.wikipedia.org/wiki/CAC_40"
+            response_cac = requests.get(url_cac, headers=headers)
+            response_cac.raise_for_status()
+            tables_cac = pd.read_html(StringIO(response_cac.text))
+            table_cac = None
+            for table in tables_cac:
+                if 'Ticker' in table.columns:
+                    table_cac = table
+                    break
+            if table_cac is None:
+                raise ValueError("Could not find the ticker table on the CAC 40 Wikipedia page.")
+            ticker_col = 'Ticker'
+            cac_tickers = [s if '.' in s else f"{s}.PA" for s in table_cac[ticker_col].tolist()]
+            all_tickers.update(cac_tickers)
+            print(f" Fetched {len(cac_tickers)} tickers from CAC 40.")
+        except Exception as e:
+            print(f" Could not fetch CAC 40 list ({e}).")
+
+    if MARKET_SELECTION.get("IBEX_35"):
+        try:
+            url_ibex = "https://en.wikipedia.org/wiki/IBEX_35"
+            response_ibex = requests.get(url_ibex, headers=headers)
+            response_ibex.raise_for_status()
+            tables_ibex = pd.read_html(StringIO(response_ibex.text))
+            table_ibex = None
+            for table in tables_ibex:
+                if 'Ticker' in table.columns:
+                    table_ibex = table
+                    break
+            if table_ibex is None:
+                raise ValueError("Could not find the ticker table on the IBEX 35 Wikipedia page.")
+            ticker_col = 'Ticker'
+            ibex_tickers = [s if '.' in s else f"{s}.MC" for s in table_ibex[ticker_col].tolist()]
+            all_tickers.update(ibex_tickers)
+            print(f" Fetched {len(ibex_tickers)} tickers from IBEX 35.")
+        except Exception as e:
+            print(f" Could not fetch IBEX 35 list ({e}).")
+
+    if MARKET_SELECTION.get("SWISS_MTI"):
+        try:
+            url_swiss = "https://en.wikipedia.org/wiki/Swiss_Market_Index"
+            response_swiss = requests.get(url_swiss, headers=headers)
+            response_swiss.raise_for_status()
+            tables_swiss = pd.read_html(StringIO(response_swiss.text))
+            table_swiss = None
+            for table in tables_swiss:
+                if 'Ticker' in table.columns:
+                    table_swiss = table
+                    break
+            if table_swiss is None:
+                raise ValueError("Could not find the ticker table on the Swiss Market Index Wikipedia page.")
+            ticker_col = 'Ticker'
+            swiss_tickers = [s if '.' in s else f"{s}.SW" for s in table_swiss[ticker_col].tolist()]
+            all_tickers.update(swiss_tickers)
+            print(f" Fetched {len(swiss_tickers)} tickers from Swiss Market Index.")
+        except Exception as e:
+            print(f" Could not fetch Swiss Market Index list ({e}).")
+
     if not all_tickers:
         print(" No tickers fetched. Returning empty list.")
         return []
@@ -430,9 +490,10 @@ def _get_current_1y_return_from_cache(ticker: str, all_tickers_data: dict, today
             else:
                 df.index = df.index.tz_convert('UTC')
             
-            # Check if we have recent data (within last 7 days)
+            # Check if we have recent data (within last 30 days or from last trading day)
             latest_date = df.index.max()
-            if latest_date >= (today - timedelta(days=7)):
+            # If latest data is from yesterday or today, it's recent enough
+            if latest_date >= (today - timedelta(days=2)):
                 # We have recent cached data, use it
                 return _calculate_1y_return_from_dataframe(df, today, lookback_days)
         
@@ -994,8 +1055,25 @@ def find_top_performers(
         ticker_data_dict = all_tickers_data if isinstance(all_tickers_data, dict) else {}
     
     # Calculate Yahoo returns from cached data (same as "Current" - both use today's date)
+    # ✅ FIX: Use cached data directly WITH freshness check, but data was already updated at startup
+    # The initial batch download already ensures data is fresh, so no need to re-fetch here
     for ticker in tickers_to_check:
-        yahoo_return = _get_current_1y_return_from_cache(ticker, ticker_data_dict, today, lookback_days)
+        if ticker in ticker_data_dict and not ticker_data_dict[ticker].empty:
+            df = ticker_data_dict[ticker]
+            # Ensure timezone-aware
+            if df.index.tzinfo is None:
+                df.index = df.index.tz_localize('UTC')
+            # Check freshness - data should be recent since we just downloaded it
+            latest_date = df.index.max()
+            if latest_date >= (today - timedelta(days=7)):  # Allow up to 7 days (weekends + holidays)
+                yahoo_return = _calculate_1y_return_from_dataframe(df, today, lookback_days)
+            else:
+                # Data is stale - this shouldn't happen after initial download
+                print(f"   ⚠️ {ticker}: Cached data is stale (latest: {latest_date.date()}), skipping fresh fetch")
+                yahoo_return = _calculate_1y_return_from_dataframe(df, today, lookback_days)  # Use anyway
+        else:
+            # Ticker not in cache - use fallback
+            yahoo_return = _get_current_1y_return_from_cache(ticker, ticker_data_dict, today, lookback_days)
         if yahoo_return is not None:
             yahoo_returns[ticker] = yahoo_return
     

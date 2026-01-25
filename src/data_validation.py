@@ -5,8 +5,9 @@ import pandas as pd
 from datetime import datetime
 from typing import Tuple, Optional
 
-# Minimum data requirements
-MIN_DAYS_FOR_TRAINING = 250  # Need at least 250 days (1 year) for training
+
+# Minimum data requirements (in calendar days)
+MIN_DAYS_FOR_TRAINING = 365  # Need at least 1 year of calendar days for training
 MIN_DAYS_FOR_PREDICTION = 120  # Need at least 120 days for prediction with features
 MIN_ROWS_AFTER_FEATURES = 50  # Minimum rows after feature engineering
 
@@ -44,10 +45,11 @@ def validate_training_data(
     num_rows = len(df)
     date_range = (end_date - start_date).days
     
-    if num_rows < min_days * 0.7:  # Allow for weekends/holidays (70% of calendar days)
+    # Allow for some data gaps (weekends/holidays)
+    if num_rows < min_days * 0.5:  # Expect at least 50% of calendar days (accounting for weekends)
         raise InsufficientDataError(
             f"❌ {ticker}: Insufficient training data. "
-            f"Got {num_rows} rows, need at least {int(min_days * 0.7)} trading days "
+            f"Got {num_rows} rows, need at least {int(min_days * 0.5)} rows "
             f"(~{min_days} calendar days) for reliable model training.\n"
             f"   📅 Period: {start_date.date()} to {end_date.date()} ({date_range} days)\n"
             f"   💡 Suggestion: Increase training period or check data quality"
@@ -96,10 +98,11 @@ def validate_prediction_data(
     
     num_rows = len(df)
     
-    if num_rows < min_days * 0.7:  # Allow for weekends/holidays
+    # Allow for some data gaps (weekends/holidays)
+    if num_rows < min_days * 0.5:  # Expect at least 50% of calendar days
         raise InsufficientDataError(
             f"❌ {ticker}: Insufficient prediction data. "
-            f"Got {num_rows} rows, need at least {int(min_days * 0.7)} trading days "
+            f"Got {num_rows} rows, need at least {int(min_days * 0.5)} rows "
             f"(~{min_days} calendar days) for feature engineering.\n"
             f"   💡 Feature calculation (RSI, MACD, SMA50, etc.) requires historical data"
         )

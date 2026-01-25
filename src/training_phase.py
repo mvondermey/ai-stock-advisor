@@ -23,8 +23,9 @@ from config import (
     GPU_CLEAR_CACHE_AFTER_EACH_TICKER,
     TRAINING_POOL_MAXTASKSPERCHILD,
     TRAINING_NUM_PROCESSES,
-    USE_UNIFIED_PARALLEL_TRAINING
-)
+    USE_UNIFIED_PARALLEL_TRAINING,
+    TRAIN_LOOKBACK_DAYS,
+    )
 from data_utils import fetch_training_data, _ensure_dir
 from ml_models import initialize_ml_libraries, train_and_evaluate_models, LSTMRegressor, GRURegressor
 from data_validation import validate_training_data, validate_features_after_engineering, InsufficientDataError
@@ -473,8 +474,9 @@ def train_models_for_period(
             # Fallback for different import contexts
             from src.parallel_training import train_all_models_parallel
         
-        # Use TRAIN_LOOKBACK_DAYS for training horizon (not PERIOD_HORIZONS which is for prediction)
-        period_horizon = TRAIN_LOOKBACK_DAYS
+        # Use PERIOD_HORIZONS for prediction horizon (10 days for 1-Year)
+        from config import PERIOD_HORIZONS
+        period_horizon = PERIOD_HORIZONS.get("1-Year", 10)  # 10-day prediction horizon
         
         # Get Buy & Hold returns for target percentage calculation
         ticker_bh_returns = {}
@@ -492,7 +494,7 @@ def train_models_for_period(
         else:
             period_target_pct = 0.01
         
-        print(f"   📊 Training Horizon: {period_horizon} days, Target: {period_target_pct:.2%}")
+        print(f"   📊 Training Horizon: {period_horizon} calendar days, Target: {period_target_pct:.2%}")
         
         # Train all models in parallel (ticker models only, no AI Portfolio here)
         ticker_models, _ = train_all_models_parallel(
