@@ -119,7 +119,32 @@ def print_final_summary(
     sector_rotation_cash_deployed: float = None,
     ratio_3m_1y_cash_deployed: float = None,
     ratio_1y_3m_cash_deployed: float = None,
-    turnaround_cash_deployed: float = None
+    turnaround_cash_deployed: float = None,
+    # Additional live trading strategies
+    final_adaptive_ensemble_value_1y: float = None,
+    adaptive_ensemble_1y_return: float = None,
+    final_volatility_ensemble_value_1y: float = None,
+    volatility_ensemble_1y_return: float = None,
+    final_correlation_ensemble_value_1y: float = None,
+    correlation_ensemble_1y_return: float = None,
+    final_dynamic_pool_value_1y: float = None,
+    dynamic_pool_1y_return: float = None,
+    final_sentiment_ensemble_value_1y: float = None,
+    sentiment_ensemble_1y_return: float = None,
+    adaptive_ensemble_transaction_costs: float = None,
+    volatility_ensemble_transaction_costs: float = None,
+    correlation_ensemble_transaction_costs: float = None,
+    dynamic_pool_transaction_costs: float = None,
+    sentiment_ensemble_transaction_costs: float = None,
+    adaptive_ensemble_cash_deployed: float = None,
+    volatility_ensemble_cash_deployed: float = None,
+    correlation_ensemble_cash_deployed: float = None,
+    dynamic_pool_cash_deployed: float = None,
+    sentiment_ensemble_cash_deployed: float = None,
+    # Rebalance horizon optimization results
+    static_bh_1y_best_horizon: int = None,
+    static_bh_3m_best_horizon: int = None,
+    static_bh_1m_best_horizon: int = None
 ) -> None:
     """Prints the final summary of the backtest results."""
     
@@ -176,83 +201,46 @@ def print_final_summary(
     print("\n Overall Portfolio Performance:")
     print(f"  Initial Capital: ${initial_balance_used:,.2f}")
     print(f"  Number of Tickers Analyzed: {num_tickers_analyzed}")
-    print("-" * 150)
-    print(f"{'Period':<12} | {'AI Strategy':<17} | {'Static BH':<17} | {'Static BH 3M':<17} | {'Static BH 1M':<17} | {'Dyn BH 1Y':<17} | {'Dyn BH 3M':<17} | {'AI Portfolio':<17} | {'Dyn BH 1M':<17} | {'Risk-Adj Mom':<17} | {'Mean Reversion':<17} | {'Quality+Mom':<17} | {'Vol-Adj Mom':<17} | {'Mom+AI Hybrid':<17} | {'Dyn BH 1Y+Vol':<17} | {'Dyn BH 1Y+TS':<17} | {'Multi-Task':<17} | {'Sector Rotation':<17} | {'3M/1Y Ratio':<17}")
-    print("-" * 283)
-
-    # Format each result
-    ai_result = f"${final_strategy_value_1y:,.0f} ({ai_1y_return:+.1f}%)"
-    # Check if Static BH strategy is enabled
+    
+    # Import config for ENABLE_STATIC_BH
     from config import ENABLE_STATIC_BH
-    if ENABLE_STATIC_BH:
-        static_bh_result = f"${final_buy_hold_value_1y:,.0f} ({((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.1f}%)"
-    else:
-        static_bh_result = "N/A (Disabled)"
 
-    static_bh_3m_result = "N/A"
-    if ENABLE_STATIC_BH and final_buy_hold_value_3m is not None:
-        static_bh_3m_result = f"${final_buy_hold_value_3m:,.0f} ({((final_buy_hold_value_3m - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0:+.1f}%)"
-
-    static_bh_1m_result = "N/A"
-    if ENABLE_STATIC_BH and final_static_bh_1m_value_1y is not None:
-        static_bh_1m_result = f"${final_static_bh_1m_value_1y:,.0f} ({static_bh_1m_1y_return:+.1f}%)"
-
-    dynamic_bh_1y_result = "N/A"
-    if final_dynamic_bh_value_1y is not None:
-        dynamic_bh_1y_result = f"${final_dynamic_bh_value_1y:,.0f} ({dynamic_bh_1y_return:+.1f}%)"
-
-    dynamic_bh_3m_result = "N/A"
-    if final_dynamic_bh_3m_value_1y is not None:
-        dynamic_bh_3m_result = f"${final_dynamic_bh_3m_value_1y:,.0f} ({dynamic_bh_3m_1y_return:+.1f}%)"
-
-    ai_portfolio_result = "N/A"
-    if final_ai_portfolio_value_1y is not None:
-        ai_portfolio_result = f"${final_ai_portfolio_value_1y:,.0f} ({ai_portfolio_1y_return:+.1f}%)"
-
-    dynamic_bh_1m_result = "N/A"
-    if final_dynamic_bh_1m_value_1y is not None:
-        dynamic_bh_1m_result = f"${final_dynamic_bh_1m_value_1y:,.0f} ({dynamic_bh_1m_1y_return:+.1f}%)"
-
-    risk_adj_mom_result = "N/A"
-    if final_risk_adj_mom_value_1y is not None and risk_adj_mom_1y_return is not None:
-        risk_adj_mom_result = f"${final_risk_adj_mom_value_1y:,.0f} ({risk_adj_mom_1y_return:+.1f}%)"
-
-    mean_reversion_result = "N/A"
-    if final_mean_reversion_value_1y is not None and mean_reversion_1y_return is not None:
-        mean_reversion_result = f"${final_mean_reversion_value_1y:,.0f} ({mean_reversion_1y_return:+.1f}%)"
-
-    quality_momentum_result = "N/A"
-    if final_quality_momentum_value_1y is not None and quality_momentum_1y_return is not None:
-        quality_momentum_result = f"${final_quality_momentum_value_1y:,.0f} ({quality_momentum_1y_return:+.1f}%)"
-
-    volatility_adj_mom_result = "N/A"
-    if final_volatility_adj_mom_value_1y is not None and volatility_adj_mom_1y_return is not None:
-        volatility_adj_mom_result = f"${final_volatility_adj_mom_value_1y:,.0f} ({volatility_adj_mom_1y_return:+.1f}%)"
-
-    momentum_ai_hybrid_result = "N/A"
-    if final_momentum_ai_hybrid_value_1y is not None and momentum_ai_hybrid_1y_return is not None:
-        momentum_ai_hybrid_result = f"${final_momentum_ai_hybrid_value_1y:,.0f} ({momentum_ai_hybrid_1y_return:+.1f}%)"
-
-    dynamic_bh_1y_vol_filter_result = "N/A"
-    if final_dynamic_bh_1y_vol_filter_value_1y is not None and dynamic_bh_1y_vol_filter_1y_return is not None:
-        dynamic_bh_1y_vol_filter_result = f"${final_dynamic_bh_1y_vol_filter_value_1y:,.0f} ({dynamic_bh_1y_vol_filter_1y_return:+.1f}%)"
-
-    dynamic_bh_1y_trailing_stop_result = "N/A"
-    if final_dynamic_bh_1y_trailing_stop_value_1y is not None and dynamic_bh_1y_trailing_stop_1y_return is not None:
-        dynamic_bh_1y_trailing_stop_result = f"${final_dynamic_bh_1y_trailing_stop_value_1y:,.0f} ({dynamic_bh_1y_trailing_stop_1y_return:+.1f}%)"
-
-    sector_rotation_result = "N/A"
-    if final_sector_rotation_value_1y is not None and sector_rotation_1y_return is not None:
-        sector_rotation_result = f"${final_sector_rotation_value_1y:,.0f} ({sector_rotation_1y_return:+.1f}%)"
-
-    ratio_3m_1y_result = "N/A"
-    if final_ratio_3m_1y_value_1y is not None and ratio_3m_1y_1y_return is not None:
-        ratio_3m_1y_result = f"${final_ratio_3m_1y_value_1y:,.0f} ({ratio_3m_1y_1y_return:+.1f}%)"
-
-    multitask_result = "N/A"
-    if final_multitask_value_1y is not None and multitask_1y_return is not None:
-        multitask_result = f"${final_multitask_value_1y:,.0f} ({multitask_1y_return:+.1f}%)"
-
+    # Build list of all strategies with their data for sorting
+    strategies_data = []
+    
+    # Helper to safely get return value
+    def safe_return(ret):
+        return ret if ret is not None else -999999
+    
+    # Add all strategies to the list
+    strategies_data.append(('AI Strategy', final_strategy_value_1y, ai_1y_return, ai_transaction_costs, ai_cash_deployed))
+    strategies_data.append(('Static BH 1Y', final_buy_hold_value_1y, ((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else None, static_bh_transaction_costs, static_bh_cash_deployed))
+    strategies_data.append(('Static BH 3M', final_buy_hold_value_3m, ((final_buy_hold_value_3m - initial_balance_used) / abs(initial_balance_used)) * 100 if (final_buy_hold_value_3m and initial_balance_used != 0) else None, static_bh_3m_transaction_costs, static_bh_3m_cash_deployed))
+    strategies_data.append(('Static BH 1M', final_static_bh_1m_value_1y, static_bh_1m_1y_return, static_bh_1m_transaction_costs, static_bh_1m_cash_deployed))
+    strategies_data.append(('Dyn BH 1Y', final_dynamic_bh_value_1y, dynamic_bh_1y_return, dynamic_bh_1y_transaction_costs, dynamic_bh_1y_cash_deployed))
+    strategies_data.append(('Dyn BH 3M', final_dynamic_bh_3m_value_1y, dynamic_bh_3m_1y_return, dynamic_bh_3m_transaction_costs, dynamic_bh_3m_cash_deployed))
+    strategies_data.append(('AI Portfolio', final_ai_portfolio_value_1y, ai_portfolio_1y_return, ai_portfolio_transaction_costs, ai_portfolio_cash_deployed))
+    strategies_data.append(('Dyn BH 1M', final_dynamic_bh_1m_value_1y, dynamic_bh_1m_1y_return, dynamic_bh_1m_transaction_costs, dynamic_bh_1m_cash_deployed))
+    strategies_data.append(('Risk-Adj Mom', final_risk_adj_mom_value_1y, risk_adj_mom_1y_return, risk_adj_mom_transaction_costs, risk_adj_mom_cash_deployed))
+    strategies_data.append(('Mean Reversion', final_mean_reversion_value_1y, mean_reversion_1y_return, mean_reversion_transaction_costs, mean_reversion_cash_deployed))
+    strategies_data.append(('Quality+Mom', final_quality_momentum_value_1y, quality_momentum_1y_return, quality_momentum_transaction_costs, quality_momentum_cash_deployed))
+    strategies_data.append(('Vol-Adj Mom', final_volatility_adj_mom_value_1y, volatility_adj_mom_1y_return, volatility_adj_mom_transaction_costs, volatility_adj_mom_cash_deployed))
+    strategies_data.append(('Mom+AI Hybrid', final_momentum_ai_hybrid_value_1y, momentum_ai_hybrid_1y_return, momentum_ai_hybrid_transaction_costs, momentum_ai_hybrid_cash_deployed))
+    strategies_data.append(('Dyn BH 1Y+Vol', final_dynamic_bh_1y_vol_filter_value_1y, dynamic_bh_1y_vol_filter_1y_return, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_vol_filter_cash_deployed))
+    strategies_data.append(('Dyn BH 1Y+TS', final_dynamic_bh_1y_trailing_stop_value_1y, dynamic_bh_1y_trailing_stop_1y_return, dynamic_bh_1y_trailing_stop_transaction_costs, dynamic_bh_1y_trailing_stop_cash_deployed))
+    strategies_data.append(('Multi-Task', final_multitask_value_1y, multitask_1y_return, multitask_transaction_costs, multitask_cash_deployed))
+    strategies_data.append(('Sector Rotation', final_sector_rotation_value_1y, sector_rotation_1y_return, sector_rotation_transaction_costs, sector_rotation_cash_deployed))
+    strategies_data.append(('3M/1Y Ratio', final_ratio_3m_1y_value_1y, ratio_3m_1y_1y_return, ratio_3m_1y_transaction_costs, ratio_3m_1y_cash_deployed))
+    strategies_data.append(('1Y/3M Ratio', final_ratio_1y_3m_value_1y, ratio_1y_3m_1y_return, ratio_1y_3m_transaction_costs, ratio_1y_3m_cash_deployed))
+    strategies_data.append(('Adaptive Ens', final_adaptive_ensemble_value_1y, adaptive_ensemble_1y_return, adaptive_ensemble_transaction_costs, adaptive_ensemble_cash_deployed))
+    strategies_data.append(('Vol Ens', final_volatility_ensemble_value_1y, volatility_ensemble_1y_return, volatility_ensemble_transaction_costs, volatility_ensemble_cash_deployed))
+    strategies_data.append(('Corr Ens', final_correlation_ensemble_value_1y, correlation_ensemble_1y_return, correlation_ensemble_transaction_costs, correlation_ensemble_cash_deployed))
+    strategies_data.append(('Dyn Pool', final_dynamic_pool_value_1y, dynamic_pool_1y_return, dynamic_pool_transaction_costs, dynamic_pool_cash_deployed))
+    strategies_data.append(('Sent Ens', final_sentiment_ensemble_value_1y, sentiment_ensemble_1y_return, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash_deployed))
+    
+    # Sort by return (best first)
+    strategies_data.sort(key=lambda x: safe_return(x[2]), reverse=True)
+    
     # Fix period name to show actual backtest duration
     if backtest_days is not None:
         if backtest_days <= 31:
@@ -266,139 +254,55 @@ def print_final_summary(
     else:
         display_period = period_name
     
-    print(f"{display_period:<12} | {ai_result:<17} | {static_bh_result:<17} | {static_bh_3m_result:<17} | {static_bh_1m_result:<17} | {dynamic_bh_1y_result:<17} | {dynamic_bh_3m_result:<17} | {ai_portfolio_result:<17} | {dynamic_bh_1m_result:<17} | {risk_adj_mom_result:<17} | {mean_reversion_result:<17} | {quality_momentum_result:<17} | {volatility_adj_mom_result:<17} | {momentum_ai_hybrid_result:<17} | {dynamic_bh_1y_vol_filter_result:<17} | {dynamic_bh_1y_trailing_stop_result:<17} | {multitask_result:<17} | {sector_rotation_result:<17} | {ratio_3m_1y_result:<17}")
-
-    # Transaction costs row
-    ai_costs = f"${ai_transaction_costs:,.0f}" if ai_transaction_costs is not None else "N/A"
-    # Check if Static BH strategy is enabled for costs
-    from config import ENABLE_STATIC_BH
-    if ENABLE_STATIC_BH:
-        static_bh_costs = f"${static_bh_transaction_costs:,.0f}" if static_bh_transaction_costs is not None else "N/A"
-    else:
-        static_bh_costs = "N/A"
-    static_bh_3m_costs = f"${static_bh_3m_transaction_costs:,.0f}" if (ENABLE_STATIC_BH and static_bh_3m_transaction_costs is not None) else "N/A"
-    static_bh_1m_costs = f"${static_bh_1m_transaction_costs:,.0f}" if (ENABLE_STATIC_BH and static_bh_1m_transaction_costs is not None) else "N/A"
-    dynamic_bh_1y_costs = f"${dynamic_bh_1y_transaction_costs:,.0f}" if dynamic_bh_1y_transaction_costs is not None else "N/A"
-    dynamic_bh_3m_costs = f"${dynamic_bh_3m_transaction_costs:,.0f}" if dynamic_bh_3m_transaction_costs is not None else "N/A"
-    ai_portfolio_costs = f"${ai_portfolio_transaction_costs:,.0f}" if ai_portfolio_transaction_costs is not None else "N/A"
-    dynamic_bh_1m_costs = f"${dynamic_bh_1m_transaction_costs:,.0f}" if dynamic_bh_1m_transaction_costs is not None else "N/A"
-    risk_adj_mom_costs = f"${risk_adj_mom_transaction_costs:,.0f}" if risk_adj_mom_transaction_costs is not None else "N/A"
-    mean_reversion_costs = f"${mean_reversion_transaction_costs:,.0f}" if mean_reversion_transaction_costs is not None else "N/A"
-    quality_momentum_costs = f"${quality_momentum_transaction_costs:,.0f}" if quality_momentum_transaction_costs is not None else "N/A"
-    volatility_adj_mom_costs = f"${volatility_adj_mom_transaction_costs:,.0f}" if volatility_adj_mom_transaction_costs is not None else "N/A"
-    momentum_ai_hybrid_costs = f"${momentum_ai_hybrid_transaction_costs:,.0f}" if momentum_ai_hybrid_transaction_costs is not None else "N/A"
-    dynamic_bh_1y_vol_filter_costs = f"${dynamic_bh_1y_vol_filter_transaction_costs:,.0f}" if dynamic_bh_1y_vol_filter_transaction_costs is not None else "N/A"
-    dynamic_bh_1y_trailing_stop_costs = f"${dynamic_bh_1y_trailing_stop_transaction_costs:,.0f}" if dynamic_bh_1y_trailing_stop_transaction_costs is not None else "N/A"
-    sector_rotation_costs = f"${sector_rotation_transaction_costs:,.0f}" if sector_rotation_transaction_costs is not None else "N/A"
-    ratio_3m_1y_costs = f"${ratio_3m_1y_transaction_costs:,.0f}" if ratio_3m_1y_transaction_costs is not None else "N/A"
-    multitask_costs = f"${multitask_transaction_costs:,.0f}" if multitask_transaction_costs is not None else "N/A"
-
-    print(f"{'Txn Costs':<12} | {ai_costs:<17} | {static_bh_costs:<17} | {static_bh_3m_costs:<17} | {static_bh_1m_costs:<17} | {dynamic_bh_1y_costs:<17} | {dynamic_bh_3m_costs:<17} | {ai_portfolio_costs:<17} | {dynamic_bh_1m_costs:<17} | {risk_adj_mom_costs:<17} | {mean_reversion_costs:<17} | {quality_momentum_costs:<17} | {volatility_adj_mom_costs:<17} | {momentum_ai_hybrid_costs:<17} | {dynamic_bh_1y_vol_filter_costs:<17} | {dynamic_bh_1y_trailing_stop_costs:<17} | {multitask_costs:<17} | {sector_rotation_costs:<17} | {ratio_3m_1y_costs:<17}")
+    # Helper to annualize return based on backtest days
+    def annualize_return(ret, days):
+        if ret is None or days is None or days <= 0:
+            return None
+        decimal_ret = ret / 100.0
+        if decimal_ret <= -1:
+            return None
+        annualized = ((1 + decimal_ret) ** (365.0 / days) - 1) * 100
+        return annualized
     
-    # Cash Utilization row - shows how much capital was actually invested
-    def calculate_cash_utilization(final_value: float, initial_capital: float, cash_deployed: float = None) -> str:
-        """Calculate cash utilization as percentage of capital actually deployed."""
-        if final_value is None or initial_capital == 0:
+    # Helper for cash utilization
+    def calc_cash_util(final_val, cash_dep):
+        if final_val is None or initial_balance_used == 0:
             return "N/A"
-        # For buy & hold strategies, utilization should be 100% (fully invested)
-        # For active strategies, use actual cash deployed if provided
-        if final_value <= 0:
-            return "0.0%"
-        
-        # Use actual cash deployed if available, otherwise estimate from final value
-        if cash_deployed is not None and cash_deployed > 0:
-            utilization = min((cash_deployed / initial_capital) * 100, 999.9)
+        if cash_dep is not None and cash_dep > 0:
+            return f"{min((cash_dep / initial_balance_used) * 100, 999.9):.1f}%"
+        return f"{min((final_val / initial_balance_used) * 100, 999.9):.1f}%"
+    
+    # Print vertical table header
+    print(f"\n📊 STRATEGY PERFORMANCE RANKING ({display_period} Backtest)")
+    print("=" * 90)
+    print(f"{'Rank':<5} {'Strategy':<18} {'Final Value':>14} {'Return':>10} {'Annualized':>12} {'Cash Util':>12}")
+    print("-" * 90)
+    
+    # Print each strategy row
+    for rank, (name, final_val, ret, txn_cost, cash_dep) in enumerate(strategies_data, 1):
+        # Format values
+        if final_val is not None and ret is not None:
+            val_str = f"${final_val:,.0f}"
+            ret_str = f"{ret:+.1f}%"
+            ann_ret = annualize_return(ret, backtest_days)
+            ann_str = f"{ann_ret:+.1f}%" if ann_ret is not None else "N/A"
+            # Add medal for top 3
+            if rank == 1:
+                name = f"🥇 {name}"
+            elif rank == 2:
+                name = f"🥈 {name}"
+            elif rank == 3:
+                name = f"🥉 {name}"
         else:
-            # Fallback: estimate based on final value (less accurate)
-            utilization = min((final_value / initial_capital) * 100, 999.9)
+            val_str = "N/A"
+            ret_str = "N/A"
+            ann_str = "N/A"
         
-        return f"{utilization:.1f}%"
+        util_str = calc_cash_util(final_val, cash_dep)
+        
+        print(f"{rank:<5} {name:<18} {val_str:>14} {ret_str:>10} {ann_str:>12} {util_str:>12}")
     
-    ai_cash_util = calculate_cash_utilization(final_strategy_value_1y, initial_balance_used, ai_cash_deployed)
-    static_bh_cash_util = calculate_cash_utilization(final_buy_hold_value_1y, initial_balance_used, static_bh_cash_deployed) if ENABLE_STATIC_BH else "N/A"
-    static_bh_3m_cash_util = calculate_cash_utilization(final_buy_hold_value_3m, initial_balance_used, static_bh_3m_cash_deployed) if (ENABLE_STATIC_BH and final_buy_hold_value_3m is not None) else "N/A"
-    static_bh_1m_cash_util = calculate_cash_utilization(final_static_bh_1m_value_1y, initial_balance_used, static_bh_1m_cash_deployed) if (ENABLE_STATIC_BH and final_static_bh_1m_value_1y is not None) else "N/A"
-    dynamic_bh_1y_cash_util = calculate_cash_utilization(final_dynamic_bh_value_1y, initial_balance_used, dynamic_bh_1y_cash_deployed)
-    dynamic_bh_3m_cash_util = calculate_cash_utilization(final_dynamic_bh_3m_value_1y, initial_balance_used, dynamic_bh_3m_cash_deployed)
-    ai_portfolio_cash_util = calculate_cash_utilization(final_ai_portfolio_value_1y, initial_balance_used, ai_portfolio_cash_deployed)
-    dynamic_bh_1m_cash_util = calculate_cash_utilization(final_dynamic_bh_1m_value_1y, initial_balance_used, dynamic_bh_1m_cash_deployed)
-    risk_adj_mom_cash_util = calculate_cash_utilization(final_risk_adj_mom_value_1y, initial_balance_used, risk_adj_mom_cash_deployed)
-    mean_reversion_cash_util = calculate_cash_utilization(final_mean_reversion_value_1y, initial_balance_used, mean_reversion_cash_deployed)
-    quality_momentum_cash_util = calculate_cash_utilization(final_quality_momentum_value_1y, initial_balance_used, quality_momentum_cash_deployed)
-    volatility_adj_mom_cash_util = calculate_cash_utilization(final_volatility_adj_mom_value_1y, initial_balance_used, volatility_adj_mom_cash_deployed)
-    momentum_ai_hybrid_cash_util = calculate_cash_utilization(final_momentum_ai_hybrid_value_1y, initial_balance_used, momentum_ai_hybrid_cash_deployed)
-    dynamic_bh_1y_vol_filter_cash_util = calculate_cash_utilization(final_dynamic_bh_1y_vol_filter_value_1y, initial_balance_used, dynamic_bh_1y_vol_filter_cash_deployed)
-    dynamic_bh_1y_trailing_stop_cash_util = calculate_cash_utilization(final_dynamic_bh_1y_trailing_stop_value_1y, initial_balance_used, dynamic_bh_1y_trailing_stop_cash_deployed)
-    sector_rotation_cash_util = calculate_cash_utilization(final_sector_rotation_value_1y, initial_balance_used, sector_rotation_cash_deployed)
-    ratio_3m_1y_cash_util = calculate_cash_utilization(final_ratio_3m_1y_value_1y, initial_balance_used, ratio_3m_1y_cash_deployed)
-    multitask_cash_util = calculate_cash_utilization(final_multitask_value_1y, initial_balance_used, multitask_cash_deployed)
-    
-    print(f"{'Cash Util':<12} | {ai_cash_util:<17} | {static_bh_cash_util:<17} | {static_bh_3m_cash_util:<17} | {static_bh_1m_cash_util:<17} | {dynamic_bh_1y_cash_util:<17} | {dynamic_bh_3m_cash_util:<17} | {ai_portfolio_cash_util:<17} | {dynamic_bh_1m_cash_util:<17} | {risk_adj_mom_cash_util:<17} | {mean_reversion_cash_util:<17} | {quality_momentum_cash_util:<17} | {volatility_adj_mom_cash_util:<17} | {momentum_ai_hybrid_cash_util:<17} | {dynamic_bh_1y_vol_filter_cash_util:<17} | {dynamic_bh_1y_trailing_stop_cash_util:<17} | {multitask_cash_util:<17} | {sector_rotation_cash_util:<17} | {ratio_3m_1y_cash_util:<17}")
-    
-    # ✅ NEW: Add annualized return row for comparison
-    if backtest_days is not None and backtest_days > 0:
-        def annualize_return(return_pct: float, days: int) -> float:
-            """Convert a return percentage to annualized return (365 days)."""
-            if days == 0:
-                return 0.0
-            if return_pct == 0:
-                return 0.0
-            
-            decimal_return = return_pct / 100.0
-            
-            # Handle edge cases for extreme returns
-            if decimal_return < -0.99:  # Prevent negative base issues
-                return -99999.0  # Cap extreme negative returns
-            
-            annualized = ((1 + decimal_return) ** (365.0 / days) - 1) * 100
-            
-            # Cap extreme values for display
-            if annualized > 99999.0:
-                return 99999.0
-            elif annualized < -99999.0:
-                return -99999.0
-            
-            return annualized
-        
-        def format_annualized(return_pct: float, days: int) -> str:
-            """Format annualized return with reasonable limits."""
-            ann = annualize_return(return_pct, days)
-            if abs(ann) >= 99999.0:
-                return ">+99999%" if ann > 0 else "<-99999%"
-            elif abs(ann) >= 1000.0:
-                return f"{ann:+.0f}%"
-            else:
-                return f"{ann:+.1f}%"
-        
-        # Calculate annualized returns for each strategy
-        ai_ann = format_annualized(ai_1y_return, backtest_days) if ai_1y_return != 0 else "0.0%"
-        
-        static_bh_return_pct = ((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else 0.0
-        static_bh_ann = format_annualized(static_bh_return_pct, backtest_days) if ENABLE_STATIC_BH else "N/A"
-
-        static_bh_3m_return_pct = ((final_buy_hold_value_3m - initial_balance_used) / abs(initial_balance_used)) * 100 if (final_buy_hold_value_3m is not None and initial_balance_used != 0) else 0.0
-        static_bh_3m_ann = format_annualized(static_bh_3m_return_pct, backtest_days) if (ENABLE_STATIC_BH and final_buy_hold_value_3m is not None) else "N/A"
-        
-        static_bh_1m_ann = format_annualized(static_bh_1m_1y_return, backtest_days) if (ENABLE_STATIC_BH and static_bh_1m_1y_return is not None) else "N/A"
-        
-        dyn_bh_1y_ann = format_annualized(dynamic_bh_1y_return, backtest_days) if dynamic_bh_1y_return is not None else "N/A"
-        dyn_bh_3m_ann = format_annualized(dynamic_bh_3m_1y_return, backtest_days) if dynamic_bh_3m_1y_return is not None else "N/A"
-        ai_portfolio_ann = format_annualized(ai_portfolio_1y_return, backtest_days) if ai_portfolio_1y_return is not None else "N/A"
-        dyn_bh_1m_ann = format_annualized(dynamic_bh_1m_1y_return, backtest_days) if dynamic_bh_1m_1y_return is not None else "N/A"
-        risk_adj_mom_ann = format_annualized(risk_adj_mom_1y_return, backtest_days) if risk_adj_mom_1y_return is not None else "N/A"
-        mean_reversion_ann = format_annualized(mean_reversion_1y_return, backtest_days) if mean_reversion_1y_return is not None else "N/A"
-        quality_momentum_ann = format_annualized(quality_momentum_1y_return, backtest_days) if quality_momentum_1y_return is not None else "N/A"
-        volatility_adj_mom_ann = format_annualized(volatility_adj_mom_1y_return, backtest_days) if volatility_adj_mom_1y_return is not None else "N/A"
-        momentum_ai_hybrid_ann = format_annualized(momentum_ai_hybrid_1y_return, backtest_days) if momentum_ai_hybrid_1y_return is not None else "N/A"
-        dynamic_bh_1y_vol_filter_ann = format_annualized(dynamic_bh_1y_vol_filter_1y_return, backtest_days) if dynamic_bh_1y_vol_filter_1y_return is not None else "N/A"
-        dynamic_bh_1y_trailing_stop_ann = format_annualized(dynamic_bh_1y_trailing_stop_1y_return, backtest_days) if dynamic_bh_1y_trailing_stop_1y_return is not None else "N/A"
-        sector_rotation_ann = format_annualized(sector_rotation_1y_return, backtest_days) if sector_rotation_1y_return is not None else "N/A"
-        ratio_3m_1y_ann = format_annualized(ratio_3m_1y_1y_return, backtest_days) if ratio_3m_1y_1y_return is not None else "N/A"
-        multitask_ann = format_annualized(multitask_1y_return, backtest_days) if multitask_1y_return is not None else "N/A"
-        
-        print(f"{'Annualized':<12} | {ai_ann:<17} | {static_bh_ann:<17} | {static_bh_3m_ann:<17} | {static_bh_1m_ann:<17} | {dyn_bh_1y_ann:<17} | {dyn_bh_3m_ann:<17} | {ai_portfolio_ann:<17} | {dyn_bh_1m_ann:<17} | {risk_adj_mom_ann:<17} | {mean_reversion_ann:<17} | {quality_momentum_ann:<17} | {volatility_adj_mom_ann:<17} | {momentum_ai_hybrid_ann:<17} | {dynamic_bh_1y_vol_filter_ann:<17} | {dynamic_bh_1y_trailing_stop_ann:<17} | {multitask_ann:<17} | {sector_rotation_ann:<17} | {ratio_3m_1y_ann:<17}")
-    
-    print("="*170)
+    print("=" * 90)
 
     # ============================================
     # UNIFIED TABLE: All Strategies Side by Side

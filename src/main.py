@@ -1281,7 +1281,7 @@ def main(
         initial_capital_1y = capital_per_stock_1y * n_top_rebal
         
         # Use walk-forward backtest with periodic retraining and rebalancing
-        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, bh_1m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ratio_3m_1y_portfolio_value_1y, ratio_3m_1y_portfolio_history_1y, ratio_1y_3m_portfolio_value_1y, ratio_1y_3m_portfolio_history_1y, turnaround_portfolio_value_1y, turnaround_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, static_bh_1m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, ratio_3m_1y_transaction_costs_1y, ratio_1y_3m_transaction_costs_1y, turnaround_transaction_costs_1y, actual_backtest_day_count, ai_cash_deployed_1y, static_bh_cash_deployed_1y, static_bh_3m_cash_deployed_1y, static_bh_1m_cash_deployed_1y, dynamic_bh_1y_cash_deployed_1y, dynamic_bh_3m_cash_deployed_1y, ai_portfolio_cash_deployed_1y, dynamic_bh_1m_cash_deployed_1y, risk_adj_mom_cash_deployed_1y, mean_reversion_cash_deployed_1y, quality_momentum_cash_deployed_1y, volatility_adj_mom_cash_deployed_1y, momentum_ai_hybrid_cash_deployed_1y, dynamic_bh_1y_vol_filter_cash_deployed_1y, dynamic_bh_1y_trailing_stop_cash_deployed_1y, multitask_cash_deployed_1y, sector_rotation_cash_deployed_1y, ratio_3m_1y_cash_deployed_1y, ratio_1y_3m_cash_deployed_1y, turnaround_cash_deployed_1y = _run_portfolio_backtest_walk_forward(
+        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, bh_1m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ratio_3m_1y_portfolio_value_1y, ratio_3m_1y_portfolio_history_1y, ratio_1y_3m_portfolio_value_1y, ratio_1y_3m_portfolio_history_1y, turnaround_portfolio_value_1y, turnaround_portfolio_history_1y, adaptive_ensemble_portfolio_value_1y, adaptive_ensemble_portfolio_history_1y, volatility_ensemble_portfolio_value_1y, volatility_ensemble_portfolio_history_1y, correlation_ensemble_portfolio_value_1y, correlation_ensemble_portfolio_history_1y, dynamic_pool_portfolio_value_1y, dynamic_pool_portfolio_history_1y, sentiment_ensemble_portfolio_value_1y, sentiment_ensemble_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, static_bh_1m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, ratio_3m_1y_transaction_costs_1y, ratio_1y_3m_transaction_costs_1y, turnaround_transaction_costs_1y, adaptive_ensemble_transaction_costs_1y, volatility_ensemble_transaction_costs_1y, correlation_ensemble_transaction_costs_1y, dynamic_pool_transaction_costs_1y, sentiment_ensemble_transaction_costs_1y, actual_backtest_day_count, ai_cash_deployed_1y, static_bh_cash_deployed_1y, static_bh_3m_cash_deployed_1y, static_bh_1m_cash_deployed_1y, dynamic_bh_1y_cash_deployed_1y, dynamic_bh_3m_cash_deployed_1y, ai_portfolio_cash_deployed_1y, dynamic_bh_1m_cash_deployed_1y, risk_adj_mom_cash_deployed_1y, mean_reversion_cash_deployed_1y, quality_momentum_cash_deployed_1y, volatility_adj_mom_cash_deployed_1y, momentum_ai_hybrid_cash_deployed_1y, dynamic_bh_1y_vol_filter_cash_deployed_1y, dynamic_bh_1y_trailing_stop_cash_deployed_1y, multitask_cash_deployed_1y, sector_rotation_cash_deployed_1y, ratio_3m_1y_cash_deployed_1y, ratio_1y_3m_cash_deployed_1y, turnaround_cash_deployed_1y, adaptive_ensemble_cash_deployed_1y, volatility_ensemble_cash_deployed_1y, correlation_ensemble_cash_deployed_1y, dynamic_pool_cash_deployed_1y, sentiment_ensemble_cash_deployed_1y = _run_portfolio_backtest_walk_forward(
             all_tickers_data=all_tickers_data,
             train_start_date=train_start_1y_calc,
             backtest_start_date=bt_start_1y,
@@ -1593,6 +1593,33 @@ def main(
         ratio_3m_1y_cash_deployed=ratio_3m_1y_cash_deployed_1y,
         ratio_1y_3m_cash_deployed=ratio_1y_3m_cash_deployed_1y,
         turnaround_cash_deployed=turnaround_cash_deployed_1y,
+        # Ensemble strategy values
+        final_adaptive_ensemble_value_1y=adaptive_ensemble_portfolio_value_1y,
+        adaptive_ensemble_1y_return=((adaptive_ensemble_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_volatility_ensemble_value_1y=volatility_ensemble_portfolio_value_1y,
+        volatility_ensemble_1y_return=((volatility_ensemble_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_correlation_ensemble_value_1y=correlation_ensemble_portfolio_value_1y,
+        correlation_ensemble_1y_return=((correlation_ensemble_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_dynamic_pool_value_1y=dynamic_pool_portfolio_value_1y,
+        dynamic_pool_1y_return=((dynamic_pool_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_sentiment_ensemble_value_1y=sentiment_ensemble_portfolio_value_1y,
+        sentiment_ensemble_1y_return=((sentiment_ensemble_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        # Ensemble transaction costs
+        adaptive_ensemble_transaction_costs=adaptive_ensemble_transaction_costs_1y,
+        volatility_ensemble_transaction_costs=volatility_ensemble_transaction_costs_1y,
+        correlation_ensemble_transaction_costs=correlation_ensemble_transaction_costs_1y,
+        dynamic_pool_transaction_costs=dynamic_pool_transaction_costs_1y,
+        sentiment_ensemble_transaction_costs=sentiment_ensemble_transaction_costs_1y,
+        # Ensemble cash deployed
+        adaptive_ensemble_cash_deployed=adaptive_ensemble_cash_deployed_1y,
+        volatility_ensemble_cash_deployed=volatility_ensemble_cash_deployed_1y,
+        correlation_ensemble_cash_deployed=correlation_ensemble_cash_deployed_1y,
+        dynamic_pool_cash_deployed=dynamic_pool_cash_deployed_1y,
+        sentiment_ensemble_cash_deployed=sentiment_ensemble_cash_deployed_1y,
+        # Rebalance horizon optimization results
+        static_bh_1y_best_horizon=rebalance_optimization_results['1Y']['best_horizon'] if rebalance_optimization_results and '1Y' in rebalance_optimization_results else None,
+        static_bh_3m_best_horizon=rebalance_optimization_results['3M']['best_horizon'] if rebalance_optimization_results and '3M' in rebalance_optimization_results else None,
+        static_bh_1m_best_horizon=rebalance_optimization_results['1M']['best_horizon'] if rebalance_optimization_results and '1M' in rebalance_optimization_results else None,
         final_rule_value_ytd=None,
         rule_ytd_return=None,
         final_rule_value_3month=None,
@@ -1747,8 +1774,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AI Stock Advisor - Backtesting and Live Trading")
     parser.add_argument("--live-trading", action="store_true", 
                        help="Run in live trading mode instead of backtesting")
-    parser.add_argument("--strategy", type=str, default="risk_adj_mom",
-                       help="Strategy(s) for live trading. Comma-separated for multiple (e.g., 'risk_adj_mom,dynamic_bh_1y'). Available: ai_individual, ai_portfolio, multitask, risk_adj_mom, dynamic_bh_1y, dynamic_bh_3m, dynamic_bh_1m, mean_reversion, volatility_adj_mom, quality_momentum")
+    parser.add_argument("--strategy", type=str, default="volatility_ensemble",
+                       help="Strategy for live trading. Available: volatility_ensemble, correlation_ensemble, momentum_breakout, factor_rotation, pairs_trading, earnings_momentum, insider_trading, options_sentiment, ml_ensemble, risk_adj_mom, dynamic_bh_1y, quality_momentum")
     
     args = parser.parse_args()
     
@@ -1757,8 +1784,18 @@ if __name__ == "__main__":
         import src.config as config
         config.LIVE_TRADING_STRATEGY = args.strategy
         print(f"🚀 Starting Live Trading with Strategy: {args.strategy}")
-        print(f"📋 Available strategies: ai_individual, ai_portfolio, multitask, risk_adj_mom, dynamic_bh_1y, dynamic_bh_3m, dynamic_bh_1m, static_bh_1y, static_bh_3m, static_bh_1m, turnaround, ratio_3m_1y, ratio_1y_3m")
-        print(f"💡 Example: python src/main.py --live-trading --strategy risk_adj_mom")
+        print(f"📋 Available strategies:")
+        print(f"   🏆 volatility_ensemble  - Vol Ens (+106% in backtest)")
+        print(f"   🏆 correlation_ensemble - Corr Ens (+106% in backtest)")
+        print(f"   🆕 momentum_breakout    - 52-week high breakouts")
+        print(f"   🆕 factor_rotation      - Value/Growth/Mom/Quality rotation")
+        print(f"   🆕 pairs_trading        - Statistical arbitrage")
+        print(f"   🆕 earnings_momentum    - Post-earnings drift (PEAD)")
+        print(f"   🆕 insider_trading      - Follow insider buying")
+        print(f"   🆕 options_sentiment    - Put/call ratio signals")
+        print(f"   🆕 ml_ensemble          - Multi-model voting")
+        print(f"   risk_adj_mom, dynamic_bh_1y, quality_momentum")
+        print(f"💡 Example: python src/main.py --live-trading --strategy volatility_ensemble")
         print("=" * 80)
         
         # Do the same filtering as backtesting

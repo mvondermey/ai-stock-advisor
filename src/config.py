@@ -212,6 +212,19 @@ MODEL_MAX_AGE_DAYS        = 1           # Only use models trained in last X days
 USE_PAPER_TRADING        = True        # True = paper trading (fake money), False = REAL MONEY ⚠️
 TOP_N_STOCKS             = 10         # Number of stocks to hold in portfolio (should be much smaller than N_TOP_TICKERS)
 
+# --- Live Trading Strategy Selection ---
+# Choose which strategy to use for live trading:
+# 'volatility_ensemble'    = 🏆 Vol Ens - Volatility-adjusted position sizing (+106% in backtest)
+# 'correlation_ensemble'   = 🏆 Corr Ens - Correlation-filtered diversification (+106% in backtest)
+# 'dynamic_bh_1y'          = Dynamic BH 1Y - Annual rebalancing
+# 'dynamic_bh_3m'          = Dynamic BH 3M - Quarterly rebalancing
+# 'risk_adj_mom'           = Risk-Adjusted Momentum
+# 'quality_momentum'       = Quality + Momentum
+# 'adaptive_ensemble'      = Adaptive Meta-Ensemble
+# 'dynamic_pool'           = Dynamic Strategy Pool
+# 'sentiment_ensemble'     = Sentiment-Enhanced Ensemble
+LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from backtest
+
 # --- Walk-Forward Retraining Frequency ---
 # How often to retrain models during walk-forward backtest
 # Options:
@@ -219,13 +232,13 @@ TOP_N_STOCKS             = 10         # Number of stocks to hold in portfolio (s
 #   10 = Bi-weekly retraining (balanced, recommended for volatile stocks)
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
-RETRAIN_FREQUENCY_DAYS = 10  # Train on Day 1, then every 30 days, plus final training at end
+RETRAIN_FREQUENCY_DAYS = 10  # Retrain every 10 days - aligned with prediction horizon
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
 
 # --- Training Period Enable/Disable Flags ---
-ENABLE_1YEAR_TRAINING   = False   # ENABLED - Train models for AI Strategy and individual ticker predictions
+ENABLE_1YEAR_TRAINING   = True   # ENABLED - Train models for AI Strategy and individual ticker predictions
 
 # --- Portfolio Stratebgy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
@@ -247,7 +260,11 @@ ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP = True   # ENABLED - Dynamic BH 1Y with trail
 ENABLE_SECTOR_ROTATION = True   # NEW - Sector Rotation Strategy
 ENABLE_MULTITASK_LEARNING = False   # NEW - Multi-Task Learning Strategy
 ENABLE_3M_1Y_RATIO = True   # NEW - 3M/1Y Ratio Strategy
-ENABLE_ADAPTIVE_STRATEGY = False   # NEW - Adaptive Strategy (rotates based on conditions)
+ENABLE_ADAPTIVE_STRATEGY = True   # NEW - Adaptive Meta-Ensemble Strategy (combines multiple strategies dynamically)
+ENABLE_VOLATILITY_ENSEMBLE = True   # NEW - Volatility-Adjusted Ensemble Strategy (risk-managed position sizing)
+ENABLE_CORRELATION_ENSEMBLE = True   # NEW - Correlation-Filtered Ensemble Strategy (diversification-focused)
+ENABLE_DYNAMIC_POOL = True   # NEW - Dynamic Strategy Pool Strategy (rotates strategies based on performance)
+ENABLE_SENTIMENT_ENSEMBLE = True   # NEW - Sentiment-Enhanced Ensemble Strategy (incorporates news sentiment)
 ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (slow, uncertain benefit)
 
 # --- LLM Strategy Parameters (via Ollama) ---
@@ -402,7 +419,7 @@ USE_MLP_CLASSIFIER      = False      # Less effective than LSTM/TCN for time ser
 USE_LIGHTGBM            = True       # ENABLED - Best for AI Portfolio meta-learning
 USE_XGBOOST             = True       # KEEP - Best traditional ML
 USE_LSTM                = True       # KEEP - Best deep learning for sequences
-USE_GRU                 = False      # Redundant - LSTM is enough
+USE_GRU                 = True        # Enabled - GRU is faster and sometimes better than LSTM
 USE_RANDOM_FOREST       = True       # KEEP - Good ensemble baseline
 USE_TCN                 = True       # KEEP - Fast temporal model
 USE_ELASTIC_NET         = False      # Too simple - linear models don't capture patterns
@@ -414,13 +431,13 @@ USE_ALPHA_WEIGHTS       = True       # Use alpha-based sample weights for traini
 # Simple Rule-Based Strategy removed - using AI strategy only
 
 # --- Deep Learning specific hyperparameters
-SEQUENCE_LENGTH         = 120         # 120 days lookback for better pattern recognition
-LSTM_HIDDEN_SIZE        = 128        # Increased for better pattern recognition
-LSTM_NUM_LAYERS         = 3          # Deeper network for complex patterns
-LSTM_DROPOUT            = 0.3        # Higher dropout to prevent overfitting
-LSTM_EPOCHS             = 100        # More epochs for better training
-LSTM_BATCH_SIZE         = 32         # Smaller batch size for better convergence
-LSTM_LEARNING_RATE      = 0.0005     # Lower learning rate for stable training
+SEQUENCE_LENGTH         = 60          # Reduced from 120 - less noise, faster training
+LSTM_HIDDEN_SIZE        = 64          # Reduced from 128 - prevent overfitting
+LSTM_NUM_LAYERS         = 2           # Reduced from 3 - simpler model generalizes better
+LSTM_DROPOUT            = 0.3         # Keep dropout for regularization
+LSTM_EPOCHS             = 50          # Reduced from 100 - faster, less overfit
+LSTM_BATCH_SIZE         = 32          # Keep batch size
+LSTM_LEARNING_RATE      = 0.001       # Increased from 0.0005 - faster convergence
 
 # --- GRU Hyperparameter Search Ranges ---
 GRU_HIDDEN_SIZE_OPTIONS = [32, 64]         # Simplified for small datasets
@@ -451,7 +468,7 @@ LIVE_TRADING_MODEL_PERIOD = "Best"
 # Period-specific horizons (trading days) - matched to period scale
 PERIOD_HORIZONS = {
     # Prediction horizon in trading days
-    "1-Year": 30      # 30-day prediction horizon should work with 252-day lookback for features
+    "1-Year": 10      # 10-day prediction horizon - aligned with retraining frequency
 }
 
 USE_SINGLE_REGRESSION_MODEL = True  # Use single regression model instead of buy/sell pair

@@ -63,7 +63,8 @@ def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         "Momentum_3d", "Momentum_5d", "Momentum_10d", "Momentum_20d", "Momentum_40d", "Dist_From_SMA10",
         "Dist_From_SMA20", "Dist_From_SMA50", "SMA20_Slope", "SMA50_Slope", "Price_Accel_5d", "Price_Accel_20d",
         "Vol_Regime", "Vol_Spike", "Volume_Ratio_5d", "Volume_Ratio_20d", "Volume_Trend", "Range_Expansion",
-        "Range_vs_Avg", "Daily_Direction", "Streak"
+        "Range_vs_Avg", "Daily_Direction", "Streak",
+        "Relative_Strength_vs_SPY", "Vol_Adjusted_Momentum", "Mean_Reversion_Signal", "Trend_Strength"
     ]
     for col in new_columns:
         if col not in df.columns:
@@ -108,6 +109,27 @@ def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         bb_std = close.rolling(window=20, min_periods=5).std().fillna(0)
         df['BB_upper'] = (bb_mid + (bb_std * 2)).fillna(0)
         df['BB_lower'] = (bb_mid - (bb_std * 2)).fillna(0)
+        
+        # --- NEW FEATURES FOR AI IMPROVEMENT ---
+        # Volatility-Adjusted Momentum: momentum normalized by volatility (Sharpe-like)
+        mom_20 = close.pct_change(20).fillna(0)
+        vol_20 = df["Returns"].rolling(20, min_periods=5).std().fillna(0.01)
+        df['Vol_Adjusted_Momentum'] = (mom_20 / vol_20.replace(0, 0.01)).clip(-10, 10).fillna(0)
+        
+        # Mean Reversion Signal: distance from 20-day mean in std devs (z-score)
+        sma_20 = close.rolling(20, min_periods=5).mean()
+        std_20 = close.rolling(20, min_periods=5).std().replace(0, 1)
+        df['Mean_Reversion_Signal'] = ((close - sma_20) / std_20).clip(-3, 3).fillna(0)
+        
+        # Trend Strength: ADX-like measure using price vs moving averages
+        sma_10 = close.rolling(10, min_periods=5).mean()
+        sma_50 = close.rolling(50, min_periods=10).mean()
+        trend_alignment = ((close > sma_10) & (sma_10 > sma_20) & (sma_20 > sma_50)).astype(float)
+        df['Trend_Strength'] = trend_alignment.rolling(5, min_periods=1).mean().fillna(0)
+        
+        # Relative Strength vs SPY: stock momentum minus market momentum
+        # This will be calculated later when SPY data is available, initialize to 0
+        df['Relative_Strength_vs_SPY'] = 0.0
     
     # Fill any remaining NaNs at the end
     df = df.fillna(0)
@@ -667,7 +689,8 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CL
         "Historical_Volatility", "Market_Momentum_SPY",
         "Sentiment_Score",
         "VIX_Index_Returns", "DXY_Index_Returns", "Gold_Futures_Returns", "Oil_Futures_Returns", "US10Y_Yield_Returns",
-        "Oil_Price_Returns", "Gold_Price_Returns"
+        "Oil_Price_Returns", "Gold_Price_Returns",
+        "Relative_Strength_vs_SPY", "Vol_Adjusted_Momentum", "Mean_Reversion_Signal", "Trend_Strength"
     ]
 
     # Filter to only include technical features that are actually in df.columns

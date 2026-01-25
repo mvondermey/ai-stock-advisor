@@ -473,8 +473,8 @@ def train_models_for_period(
             # Fallback for different import contexts
             from src.parallel_training import train_all_models_parallel
         
-        # Calculate period-specific horizon
-        period_horizon = PERIOD_HORIZONS.get(period_name, 60)
+        # Use TRAIN_LOOKBACK_DAYS for training horizon (not PERIOD_HORIZONS which is for prediction)
+        period_horizon = TRAIN_LOOKBACK_DAYS
         
         # Get Buy & Hold returns for target percentage calculation
         ticker_bh_returns = {}

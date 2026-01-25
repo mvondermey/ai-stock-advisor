@@ -393,6 +393,54 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
     elif strategy == 'ratio_1y_3m':
         # 1Y/3M Ratio Strategy: Strong 1Y performance but weak 3M (buy on dip)
         return get_ratio_1y_3m_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'adaptive_ensemble':
+        # Adaptive Ensemble Strategy: Meta-ensemble combining multiple strategies
+        return get_adaptive_ensemble_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'volatility_ensemble':
+        # Volatility-Adjusted Ensemble Strategy: Risk-managed position sizing
+        return get_volatility_ensemble_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'correlation_ensemble':
+        # Correlation-Filtered Ensemble Strategy: Diversification-focused
+        return get_correlation_ensemble_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'dynamic_pool':
+        # Dynamic Strategy Pool Strategy: Rotates strategies based on performance
+        return get_dynamic_pool_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'sentiment_ensemble':
+        # Sentiment-Enhanced Ensemble Strategy: Incorporates news sentiment
+        return get_sentiment_ensemble_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'momentum_breakout':
+        # Momentum Breakout Strategy: 52-week high breakouts with volume
+        return get_momentum_breakout_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'factor_rotation':
+        # Factor Rotation Strategy: Rotates between Value/Growth/Momentum/Quality
+        return get_factor_rotation_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'pairs_trading':
+        # Pairs Trading Strategy: Statistical arbitrage on correlated pairs
+        return get_pairs_trading_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'earnings_momentum':
+        # Earnings Momentum (PEAD) Strategy: Post-earnings drift capture
+        return get_earnings_momentum_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'insider_trading':
+        # Insider Trading Signal Strategy: Follow insider buying patterns
+        return get_insider_trading_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'options_sentiment':
+        # Options-Based Sentiment Strategy: Put/call ratios and unusual activity
+        return get_options_sentiment_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'ml_ensemble':
+        # ML Ensemble Strategy: Weighted voting from multiple ML models
+        return get_ml_ensemble_tickers(all_tickers, all_tickers_data)
 
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
@@ -689,6 +737,138 @@ def get_ratio_1y_3m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFra
     return select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
+def get_adaptive_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Adaptive Ensemble Strategy: Meta-ensemble combining multiple strategies dynamically."""
+    from adaptive_ensemble import select_adaptive_ensemble_stocks
+    
+    print(f"   🔍 Adaptive Ensemble: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Adaptive Ensemble")
+    
+    current_date = datetime.now()
+    return select_adaptive_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_volatility_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Volatility-Adjusted Ensemble Strategy: Risk-managed position sizing."""
+    from volatility_ensemble import select_volatility_ensemble_stocks
+    
+    print(f"   🔍 Volatility Ensemble: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Volatility Ensemble")
+    
+    current_date = datetime.now()
+    return select_volatility_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_correlation_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Correlation-Filtered Ensemble Strategy: Diversification-focused."""
+    from correlation_ensemble import select_correlation_ensemble_stocks
+    
+    print(f"   🔍 Correlation Ensemble: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Correlation Ensemble")
+    
+    current_date = datetime.now()
+    return select_correlation_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_dynamic_pool_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Dynamic Strategy Pool Strategy: Rotates strategies based on performance."""
+    from dynamic_pool import select_dynamic_pool_stocks
+    
+    print(f"   🔍 Dynamic Pool: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Dynamic Pool")
+    
+    current_date = datetime.now()
+    return select_dynamic_pool_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_sentiment_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Sentiment-Enhanced Ensemble Strategy: Incorporates news sentiment."""
+    from sentiment_ensemble import select_sentiment_ensemble_stocks
+    
+    print(f"   🔍 Sentiment Ensemble: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Sentiment Ensemble")
+    
+    current_date = datetime.now()
+    return select_sentiment_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_momentum_breakout_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Momentum Breakout Strategy: 52-week high breakouts with volume confirmation."""
+    from momentum_breakout import select_momentum_breakout_stocks
+    
+    print(f"   🔍 Momentum Breakout: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Momentum Breakout")
+    
+    current_date = datetime.now()
+    return select_momentum_breakout_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_factor_rotation_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Factor Rotation Strategy: Rotates between Value/Growth/Momentum/Quality based on regime."""
+    from factor_rotation import select_factor_rotation_stocks
+    
+    print(f"   🔍 Factor Rotation: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Factor Rotation")
+    
+    current_date = datetime.now()
+    return select_factor_rotation_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_pairs_trading_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Pairs Trading Strategy: Statistical arbitrage on correlated pairs."""
+    from pairs_trading import select_pairs_trading_stocks
+    
+    print(f"   🔍 Pairs Trading: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Pairs Trading")
+    
+    current_date = datetime.now()
+    return select_pairs_trading_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_earnings_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Earnings Momentum (PEAD) Strategy: Post-earnings announcement drift."""
+    from earnings_momentum import select_earnings_momentum_stocks
+    
+    print(f"   🔍 Earnings Momentum: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Earnings Momentum")
+    
+    current_date = datetime.now()
+    return select_earnings_momentum_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_insider_trading_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Insider Trading Signal Strategy: Follow insider buying patterns."""
+    from insider_trading import select_insider_trading_stocks
+    
+    print(f"   🔍 Insider Trading: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Insider Trading")
+    
+    current_date = datetime.now()
+    return select_insider_trading_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_options_sentiment_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Options-Based Sentiment Strategy: Put/call ratios and unusual activity."""
+    from options_sentiment import select_options_sentiment_stocks
+    
+    print(f"   🔍 Options Sentiment: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Options Sentiment")
+    
+    current_date = datetime.now()
+    return select_options_sentiment_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_ml_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """ML Ensemble Strategy: Weighted voting from multiple ML models."""
+    from ml_ensemble import select_ml_ensemble_stocks
+    
+    print(f"   🔍 ML Ensemble: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "ML Ensemble")
+    
+    current_date = datetime.now()
+    return select_ml_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
 def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tickers_data: pd.DataFrame = None):
     """Live trading function that receives pre-filtered tickers from main.py."""
     # Use the filtered tickers instead of fetching all tickers
@@ -720,7 +900,19 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
         'static_bh_1m': 'Static Buy & Hold (1 Month, 30-day rebalance)',
         'turnaround': 'Turnaround (Low 3Y, High 1Y)',
         'ratio_3m_1y': '3M/1Y Ratio (Momentum Acceleration)',
-        'ratio_1y_3m': '1Y/3M Ratio (Buy on Dip)'
+        'ratio_1y_3m': '1Y/3M Ratio (Buy on Dip)',
+        'adaptive_ensemble': 'Adaptive Ensemble (Meta-Strategy)',
+        'volatility_ensemble': 'Volatility Ensemble (Risk-Managed)',
+        'correlation_ensemble': 'Correlation Ensemble (Diversified)',
+        'dynamic_pool': 'Dynamic Pool (Adaptive)',
+        'sentiment_ensemble': 'Sentiment Ensemble (News-Enhanced)',
+        'momentum_breakout': 'Momentum Breakout (52-Week High)',
+        'factor_rotation': 'Factor Rotation (Value/Growth/Mom/Quality)',
+        'pairs_trading': 'Pairs Trading (Statistical Arbitrage)',
+        'earnings_momentum': 'Earnings Momentum (PEAD)',
+        'insider_trading': 'Insider Trading Signal',
+        'options_sentiment': 'Options Sentiment (Put/Call)',
+        'ml_ensemble': 'ML Ensemble (Multi-Model Voting)'
     }
 
     strategy_name = strategy_names.get(LIVE_TRADING_STRATEGY, LIVE_TRADING_STRATEGY)
