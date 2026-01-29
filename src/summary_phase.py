@@ -13,8 +13,7 @@ from config import (
 
 def print_final_summary(
     sorted_final_results: List[Dict],
-    models_buy: Dict,
-    models_sell: Dict,
+    models: Dict,  # Changed from models_buy and models_sell to single models dict
     scalers: Dict,
     optimized_params_per_ticker: Dict[str, Dict[str, float]],
     final_strategy_value_1y: float,
@@ -25,8 +24,11 @@ def print_final_summary(
     performance_metrics_buy_hold_1y: List[Dict],
     top_performers_data: List[Tuple],
     final_buy_hold_value_3m: float = None,
+    final_buy_hold_value_6m: float = None,
     final_static_bh_1m_value_1y: float = None,
+    final_static_bh_6m_value_1y: float = None,
     static_bh_1m_1y_return: float = None,
+    static_bh_6m_1y_return: float = None,
     period_name: str = "1-Year",  # ✅ NEW: Dynamic period name
     strategy_results_ytd: List[Dict] = None,
     strategy_results_3month: List[Dict] = None,
@@ -48,21 +50,22 @@ def print_final_summary(
     rule_1month_return: float = None,
     final_dynamic_bh_value_1y: float = None,
     dynamic_bh_1y_return: float = None,
+    final_dynamic_bh_6m_value_1y: float = None,
+    dynamic_bh_6m_1y_return: float = None,
     final_dynamic_bh_3m_value_1y: float = None,
     dynamic_bh_3m_1y_return: float = None,
-    final_ai_portfolio_value_1y: float = None,
-    ai_portfolio_1y_return: float = None,
     final_dynamic_bh_1m_value_1y: float = None,
     dynamic_bh_1m_1y_return: float = None,
     final_risk_adj_mom_value_1y: float = None,
     risk_adj_mom_1y_return: float = None,
     ai_transaction_costs: float = None,
     static_bh_transaction_costs: float = None,
+    static_bh_6m_transaction_costs: float = None,
     static_bh_3m_transaction_costs: float = None,
     static_bh_1m_transaction_costs: float = None,
     dynamic_bh_1y_transaction_costs: float = None,
+    dynamic_bh_6m_transaction_costs: float = None,
     dynamic_bh_3m_transaction_costs: float = None,
-    ai_portfolio_transaction_costs: float = None,
     dynamic_bh_1m_transaction_costs: float = None,
     risk_adj_mom_transaction_costs: float = None,
     final_mean_reversion_value_1y: float = None,
@@ -83,6 +86,8 @@ def print_final_summary(
     ratio_3m_1y_1y_return: float = None,
     final_ratio_1y_3m_value_1y: float = None,
     ratio_1y_3m_1y_return: float = None,
+    final_momentum_volatility_hybrid_value_1y: float = None,
+    momentum_volatility_hybrid_1y_return: float = None,
     final_turnaround_value_1y: float = None,
     turnaround_1y_return: float = None,
     final_multitask_value_1y: float = None,
@@ -96,17 +101,19 @@ def print_final_summary(
     sector_rotation_transaction_costs: float = None,
     ratio_3m_1y_transaction_costs: float = None,
     ratio_1y_3m_transaction_costs: float = None,
+    momentum_volatility_hybrid_transaction_costs: float = None,
     turnaround_transaction_costs: float = None,
     multitask_transaction_costs: float = None,
     backtest_days: int = None,  # ✅ NEW: Number of days in backtest for annualization
     # Cash utilization tracking parameters
     ai_cash_deployed: float = None,
     static_bh_cash_deployed: float = None,
+    static_bh_6m_cash_deployed: float = None,
     static_bh_3m_cash_deployed: float = None,
     static_bh_1m_cash_deployed: float = None,
     dynamic_bh_1y_cash_deployed: float = None,
+    dynamic_bh_6m_cash_deployed: float = None,
     dynamic_bh_3m_cash_deployed: float = None,
-    ai_portfolio_cash_deployed: float = None,
     dynamic_bh_1m_cash_deployed: float = None,
     risk_adj_mom_cash_deployed: float = None,
     mean_reversion_cash_deployed: float = None,
@@ -119,12 +126,17 @@ def print_final_summary(
     sector_rotation_cash_deployed: float = None,
     ratio_3m_1y_cash_deployed: float = None,
     ratio_1y_3m_cash_deployed: float = None,
+    momentum_volatility_hybrid_cash_deployed: float = None,
     turnaround_cash_deployed: float = None,
     # Additional live trading strategies
     final_adaptive_ensemble_value_1y: float = None,
     adaptive_ensemble_1y_return: float = None,
     final_volatility_ensemble_value_1y: float = None,
     volatility_ensemble_1y_return: float = None,
+    final_ai_volatility_ensemble_value_1y: float = None,
+    ai_volatility_ensemble_1y_return: float = None,
+    final_multi_tf_ensemble_value_1y: float = None,
+    multi_tf_ensemble_1y_return: float = None,
     final_correlation_ensemble_value_1y: float = None,
     correlation_ensemble_1y_return: float = None,
     final_dynamic_pool_value_1y: float = None,
@@ -133,11 +145,15 @@ def print_final_summary(
     sentiment_ensemble_1y_return: float = None,
     adaptive_ensemble_transaction_costs: float = None,
     volatility_ensemble_transaction_costs: float = None,
+    ai_volatility_ensemble_transaction_costs: float = None,
+    multi_tf_ensemble_transaction_costs: float = None,
     correlation_ensemble_transaction_costs: float = None,
     dynamic_pool_transaction_costs: float = None,
     sentiment_ensemble_transaction_costs: float = None,
     adaptive_ensemble_cash_deployed: float = None,
     volatility_ensemble_cash_deployed: float = None,
+    ai_volatility_ensemble_cash_deployed: float = None,
+    multi_tf_ensemble_cash_deployed: float = None,
     correlation_ensemble_cash_deployed: float = None,
     dynamic_pool_cash_deployed: float = None,
     sentiment_ensemble_cash_deployed: float = None,
@@ -215,11 +231,12 @@ def print_final_summary(
     # Add all strategies to the list
     strategies_data.append(('AI Strategy', final_strategy_value_1y, ai_1y_return, ai_transaction_costs, ai_cash_deployed))
     strategies_data.append(('Static BH 1Y', final_buy_hold_value_1y, ((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else None, static_bh_transaction_costs, static_bh_cash_deployed))
+    strategies_data.append(('Static BH 6M', final_buy_hold_value_6m, ((final_buy_hold_value_6m - initial_balance_used) / abs(initial_balance_used)) * 100 if (final_buy_hold_value_6m and initial_balance_used != 0) else None, static_bh_6m_transaction_costs, static_bh_6m_cash_deployed))
     strategies_data.append(('Static BH 3M', final_buy_hold_value_3m, ((final_buy_hold_value_3m - initial_balance_used) / abs(initial_balance_used)) * 100 if (final_buy_hold_value_3m and initial_balance_used != 0) else None, static_bh_3m_transaction_costs, static_bh_3m_cash_deployed))
     strategies_data.append(('Static BH 1M', final_static_bh_1m_value_1y, static_bh_1m_1y_return, static_bh_1m_transaction_costs, static_bh_1m_cash_deployed))
     strategies_data.append(('Dyn BH 1Y', final_dynamic_bh_value_1y, dynamic_bh_1y_return, dynamic_bh_1y_transaction_costs, dynamic_bh_1y_cash_deployed))
+    strategies_data.append(('Dyn BH 6M', final_dynamic_bh_6m_value_1y, dynamic_bh_6m_1y_return, dynamic_bh_6m_transaction_costs, dynamic_bh_6m_cash_deployed))
     strategies_data.append(('Dyn BH 3M', final_dynamic_bh_3m_value_1y, dynamic_bh_3m_1y_return, dynamic_bh_3m_transaction_costs, dynamic_bh_3m_cash_deployed))
-    strategies_data.append(('AI Portfolio', final_ai_portfolio_value_1y, ai_portfolio_1y_return, ai_portfolio_transaction_costs, ai_portfolio_cash_deployed))
     strategies_data.append(('Dyn BH 1M', final_dynamic_bh_1m_value_1y, dynamic_bh_1m_1y_return, dynamic_bh_1m_transaction_costs, dynamic_bh_1m_cash_deployed))
     strategies_data.append(('Risk-Adj Mom', final_risk_adj_mom_value_1y, risk_adj_mom_1y_return, risk_adj_mom_transaction_costs, risk_adj_mom_cash_deployed))
     strategies_data.append(('Mean Reversion', final_mean_reversion_value_1y, mean_reversion_1y_return, mean_reversion_transaction_costs, mean_reversion_cash_deployed))
@@ -232,8 +249,12 @@ def print_final_summary(
     strategies_data.append(('Sector Rotation', final_sector_rotation_value_1y, sector_rotation_1y_return, sector_rotation_transaction_costs, sector_rotation_cash_deployed))
     strategies_data.append(('3M/1Y Ratio', final_ratio_3m_1y_value_1y, ratio_3m_1y_1y_return, ratio_3m_1y_transaction_costs, ratio_3m_1y_cash_deployed))
     strategies_data.append(('1Y/3M Ratio', final_ratio_1y_3m_value_1y, ratio_1y_3m_1y_return, ratio_1y_3m_transaction_costs, ratio_1y_3m_cash_deployed))
+    strategies_data.append(('Mom-Vol Hybrid', final_momentum_volatility_hybrid_value_1y, momentum_volatility_hybrid_1y_return, momentum_volatility_hybrid_transaction_costs, momentum_volatility_hybrid_cash_deployed))
+    strategies_data.append(('Turnaround', final_turnaround_value_1y, turnaround_1y_return, turnaround_transaction_costs, turnaround_cash_deployed))
     strategies_data.append(('Adaptive Ens', final_adaptive_ensemble_value_1y, adaptive_ensemble_1y_return, adaptive_ensemble_transaction_costs, adaptive_ensemble_cash_deployed))
     strategies_data.append(('Vol Ens', final_volatility_ensemble_value_1y, volatility_ensemble_1y_return, volatility_ensemble_transaction_costs, volatility_ensemble_cash_deployed))
+    strategies_data.append(('AI Vol Ens', final_ai_volatility_ensemble_value_1y, ai_volatility_ensemble_1y_return, ai_volatility_ensemble_transaction_costs, ai_volatility_ensemble_cash_deployed))
+    strategies_data.append(('Multi-TF Ens', final_multi_tf_ensemble_value_1y, multi_tf_ensemble_1y_return, multi_tf_ensemble_transaction_costs, multi_tf_ensemble_cash_deployed))
     strategies_data.append(('Corr Ens', final_correlation_ensemble_value_1y, correlation_ensemble_1y_return, correlation_ensemble_transaction_costs, correlation_ensemble_cash_deployed))
     strategies_data.append(('Dyn Pool', final_dynamic_pool_value_1y, dynamic_pool_1y_return, dynamic_pool_transaction_costs, dynamic_pool_cash_deployed))
     strategies_data.append(('Sent Ens', final_sentiment_ensemble_value_1y, sentiment_ensemble_1y_return, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash_deployed))
@@ -372,7 +393,11 @@ def print_final_summary(
         if ai_res and ai_res.get('status') != 'failed':
             ai_gain = ai_res.get('strategy_gain', 0.0)
             ai_gain_str = f"${ai_gain:>10,.0f}"
-            ai_status = "✅ Trained"
+            # Check if TargetReturn model exists for this ticker
+            if models.get(ticker):
+                ai_status = "✅ Trained"
+            else:
+                ai_status = "❌ Not Trained"
             ai_sharpe = ai_res.get('sharpe', np.nan)
             ai_sharpe_str = f"{ai_sharpe:>9.2f}" if pd.notna(ai_sharpe) else "N/A".rjust(10)
             last_action = str(ai_res.get('last_ai_action', 'HOLD'))[:12]
@@ -472,9 +497,8 @@ def print_final_summary(
         t = ticker['ticker']
         if t not in seen_tickers:
             seen_tickers.add(t)
-            buy_model_status = "✅ Trained" if models_buy.get(t) else "❌ Not Trained"
-            sell_model_status = "✅ Trained" if models_sell.get(t) else "❌ Not Trained"
-            print(f"  - {t}: Buy Model: {buy_model_status}, Sell Model: {sell_model_status}")
+            model_status = "✅ Trained" if models.get(t) else "❌ Not Trained"
+            print(f"  - {t}: TargetReturn Model: {model_status}")
     print("="*80)
 
     print("\n💡 Next Steps:")
@@ -639,8 +663,7 @@ def print_horizon_validation_summary(
 
 
 def print_training_phase_summary(
-    models_buy: Dict,
-    models_sell: Dict,
+    models: Dict,  # Changed from models_buy and models_sell
     scalers: Dict,
     failed_tickers: Dict[str, str] = None
 ) -> None:
@@ -648,8 +671,7 @@ def print_training_phase_summary(
     Print summary of the training phase.
     
     Args:
-        models_buy: Dict of trained buy models
-        models_sell: Dict of trained sell models
+        models: Dict of trained TargetReturn models
         scalers: Dict of trained scalers
         failed_tickers: Dict mapping ticker to failure reason
     """
@@ -657,8 +679,8 @@ def print_training_phase_summary(
     print(f"🤖 TRAINING PHASE SUMMARY")
     print(f"{'='*80}")
     
-    total_tickers = len(models_buy) + len(failed_tickers) if failed_tickers else len(models_buy)
-    successful = len(models_buy)
+    total_tickers = len(models) + len(failed_tickers) if failed_tickers else len(models)
+    successful = len(models)
     failed = len(failed_tickers) if failed_tickers else 0
     success_rate = (successful / total_tickers * 100) if total_tickers > 0 else 0.0
     
@@ -672,12 +694,10 @@ def print_training_phase_summary(
             print(f"    - {ticker}: {reason}")
     
     print(f"\n  Model Types:")
-    if len(models_buy) > 0:
-        sample_ticker = next(iter(models_buy))
-        buy_model_type = type(models_buy[sample_ticker]).__name__
-        sell_model_type = type(models_sell[sample_ticker]).__name__
-        print(f"    - Buy Model: {buy_model_type}")
-        print(f"    - Sell Model: {sell_model_type}")
+    if len(models) > 0:
+        sample_ticker = next(iter(models))
+        model_type = type(models[sample_ticker]).__name__
+        print(f"    - TargetReturn Model: {model_type}")
     else:
         print(f"    - No models trained")
     

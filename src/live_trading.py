@@ -64,13 +64,12 @@ except ImportError:
 # --- Strategy Selection ---
 # Choose which strategy to use for live trading:
 # 'ai' = AI predictions (requires trained models)
-# 'ai_portfolio' = AI-driven portfolio rebalancing (intelligent rebalancing)
 # 'static_bh' = Static Buy & Hold (top performers from backtest)
 # 'dynamic_bh_1y' = Dynamic BH rebalancing annually  ← Best for long-term (less trading costs)
+# 'dynamic_bh_6m' = Dynamic BH rebalancing semi-annually ← Good balance
 # 'dynamic_bh_3m' = Dynamic BH rebalancing quarterly ← Good balance
 # 'dynamic_bh_1m' = Dynamic BH rebalancing monthly   ← More aggressive
 # 'ai_individual' = AI Strategy (individual models per stock)
-# 'ai_portfolio' = AI Portfolio (meta-learning approach)
 # 'multitask' = Multi-Task Learning (unified models)
 # 'risk_adj_mom' = Risk-Adjusted Momentum
 # 'mean_reversion' = Mean Reversion
@@ -344,17 +343,13 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
         # AI Strategy: Use model predictions (existing logic)
         return get_ai_strategy_tickers(all_tickers)
 
-    elif strategy == 'ai_portfolio':
-        # AI Portfolio Strategy: Use AI Portfolio model
-        return get_ai_portfolio_tickers(all_tickers)
-
     elif strategy == 'multitask':
         # Multi-Task Learning Strategy: Use Multi-Task model
         return get_multitask_tickers(all_tickers)
 
     elif strategy.startswith('dynamic_bh_'):
         # Dynamic BH Strategy: Select based on performance period
-        period = strategy.replace('dynamic_bh_', '')  # '1y', '3m', or '1m'
+        period = strategy.replace('dynamic_bh_', '')  # '1y', '6m', '3m', or '1m'
         return get_dynamic_bh_tickers(all_tickers, period, all_tickers_data)
 
     elif strategy == 'risk_adj_mom':
@@ -379,7 +374,7 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
 
     elif strategy.startswith('static_bh_'):
         # Static BH Strategy: Select based on performance period but hold static
-        period = strategy.replace('static_bh_', '')  # '1y', '3m', or '1m'
+        period = strategy.replace('static_bh_', '')  # '1y', '6m', '3m', or '1m'
         return get_static_bh_tickers(all_tickers, period, all_tickers_data)
     
     elif strategy == 'turnaround':
@@ -388,11 +383,15 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
     
     elif strategy == 'ratio_3m_1y':
         # 3M/1Y Ratio Strategy: Strong 3M momentum vs 1Y performance
-        return get_ratio_3m_1y_tickers(all_tickers, all_tickers_data)
+        return get_3m_1y_ratio_tickers(all_tickers, all_tickers_data)
     
     elif strategy == 'ratio_1y_3m':
         # 1Y/3M Ratio Strategy: Strong 1Y performance but weak 3M (buy on dip)
         return get_ratio_1y_3m_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'momentum_volatility_hybrid':
+        # Momentum-Volatility Hybrid Strategy: Combines strong momentum with controlled volatility
+        return get_momentum_volatility_hybrid_tickers(all_tickers, all_tickers_data)
     
     elif strategy == 'adaptive_ensemble':
         # Adaptive Ensemble Strategy: Meta-ensemble combining multiple strategies
@@ -401,6 +400,10 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
     elif strategy == 'volatility_ensemble':
         # Volatility-Adjusted Ensemble Strategy: Risk-managed position sizing
         return get_volatility_ensemble_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'ai_volatility_ensemble':
+        # AI-Enhanced Volatility Ensemble Strategy: AI-optimized weights and volatility caps
+        return get_ai_volatility_ensemble_tickers(all_tickers, all_tickers_data)
     
     elif strategy == 'correlation_ensemble':
         # Correlation-Filtered Ensemble Strategy: Diversification-focused
@@ -588,6 +591,17 @@ def get_ai_strategy_tickers(all_tickers: List[str]) -> List[str]:
         return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
+def get_3m_1y_ratio_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """3M/1Y Ratio Strategy: Select stocks with strong 3M momentum vs 1Y performance."""
+    from shared_strategies import select_3m_1y_ratio_stocks
+    
+    print(f"   🔍 3M/1Y Ratio: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "3M/1Y Ratio")
+    
+    current_date = datetime.now()
+    return select_3m_1y_ratio_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
 def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Risk-Adjusted Momentum Strategy: Use shared strategy logic."""
     from shared_strategies import select_risk_adj_mom_stocks
@@ -690,18 +704,39 @@ def get_quality_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.Da
     return select_quality_momentum_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_ai_portfolio_tickers(all_tickers: List[str]) -> List[str]:
-    """AI Portfolio Strategy: Use AI Portfolio model for selection."""
-    # This would use the AI Portfolio model
-    # For now, return top N tickers as placeholder
-    return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
-
-
-def get_multitask_tickers(all_tickers: List[str]) -> List[str]:
+def get_multitask_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Multi-Task Learning Strategy: Use Multi-Task model for selection."""
-    # This would use the Multi-Task Learning model
-    # For now, return top N tickers as placeholder
-    return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
+    try:
+        from multitask_strategy import select_multitask_stocks
+        from datetime import datetime, timedelta
+        
+        print(f"   🤖 Multi-Task: Processing {len(all_tickers)} tickers")
+        
+        # Prepare data
+        ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Multi-Task")
+        
+        # Set dates
+        current_date = datetime.now()
+        train_start_date = current_date - timedelta(days=365)
+        train_end_date = current_date - timedelta(days=30)
+        
+        # Get Multi-Task selection
+        selected = select_multitask_stocks(all_tickers, ticker_data_grouped, 
+                                          current_date=current_date,
+                                          train_start_date=train_start_date,
+                                          train_end_date=train_end_date,
+                                          top_n=PORTFOLIO_SIZE)
+        
+        if selected:
+            print(f"   ✅ Multi-Task: Selected {len(selected)} stocks: {selected}")
+            return selected
+        else:
+            print(f"   ⚠️ Multi-Task: No stocks selected, falling back to top {TOP_N_STOCKS} tickers")
+            return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
+            
+    except Exception as e:
+        print(f"   ❌ Multi-Task failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
+        return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
 def get_turnaround_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
@@ -715,15 +750,6 @@ def get_turnaround_tickers(all_tickers: List[str], all_tickers_data: pd.DataFram
     return select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_ratio_3m_1y_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
-    """3M/1Y Ratio Strategy: Select stocks with strong 3M momentum vs 1Y performance."""
-    from shared_strategies import select_3m_1y_ratio_stocks
-    
-    print(f"   🔍 3M/1Y Ratio: Processing {len(all_tickers)} tickers")
-    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "3M/1Y Ratio")
-    
-    current_date = datetime.now()
-    return select_3m_1y_ratio_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 def get_ratio_1y_3m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
@@ -735,6 +761,17 @@ def get_ratio_1y_3m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFra
     
     current_date = datetime.now()
     return select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_momentum_volatility_hybrid_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Hybrid Momentum-Volatility Strategy: Combines strong momentum with controlled volatility."""
+    from shared_strategies import select_momentum_volatility_hybrid_stocks
+    
+    print(f"   🎯 Momentum-Volatility Hybrid: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Momentum-Volatility Hybrid")
+    
+    current_date = datetime.now()
+    return select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 def get_adaptive_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
@@ -757,6 +794,17 @@ def get_volatility_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd
     
     current_date = datetime.now()
     return select_volatility_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_ai_volatility_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """AI-Enhanced Volatility Ensemble Strategy: AI-optimized weights and volatility caps."""
+    from ai_volatility_ensemble import select_ai_volatility_ensemble_stocks
+    
+    print(f"   🤖 AI Volatility Ensemble: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "AI Volatility Ensemble")
+    
+    current_date = datetime.now()
+    return select_ai_volatility_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=TOP_N_STOCKS)
 
 
 def get_correlation_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
@@ -887,22 +935,25 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
     # Display selected strategy
     strategy_names = {
         'ai_individual': 'AI Strategy (Individual Models)',
-        'ai_portfolio': 'AI Portfolio (Meta-Learning)',
         'multitask': 'Multi-Task Learning',
         'risk_adj_mom': 'Risk-Adjusted Momentum',
         'mean_reversion': 'Mean Reversion',
         'quality_momentum': 'Quality + Momentum',
         'dynamic_bh_1y': 'Dynamic Buy & Hold (1 Year)',
+        'dynamic_bh_6m': 'Dynamic Buy & Hold (6 Months)',
         'dynamic_bh_3m': 'Dynamic Buy & Hold (3 Months)',
         'dynamic_bh_1m': 'Dynamic Buy & Hold (1 Month)',
         'static_bh_1y': 'Static Buy & Hold (1 Year)',
+        'static_bh_6m': 'Static Buy & Hold (6 Months)',
         'static_bh_3m': 'Static Buy & Hold (3 Months)',
         'static_bh_1m': 'Static Buy & Hold (1 Month, 30-day rebalance)',
         'turnaround': 'Turnaround (Low 3Y, High 1Y)',
         'ratio_3m_1y': '3M/1Y Ratio (Momentum Acceleration)',
         'ratio_1y_3m': '1Y/3M Ratio (Buy on Dip)',
+        'momentum_volatility_hybrid': 'Momentum-Volatility Hybrid (Controlled Momentum)',
         'adaptive_ensemble': 'Adaptive Ensemble (Meta-Strategy)',
         'volatility_ensemble': 'Volatility Ensemble (Risk-Managed)',
+        'ai_volatility_ensemble': 'AI Volatility Ensemble (AI-Enhanced)',
         'correlation_ensemble': 'Correlation Ensemble (Diversified)',
         'dynamic_pool': 'Dynamic Pool (Adaptive)',
         'sentiment_ensemble': 'Sentiment Ensemble (News-Enhanced)',
@@ -947,8 +998,8 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
     print(f"    Available tickers: {len(valid_tickers)}")
     
     # Pass downloaded data if available for strategies that need it
-    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround'] and all_tickers_data_for_strategy is not None else None
-    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround']:
+    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid'] and all_tickers_data_for_strategy is not None else None
+    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid']:
         print(f"    Data available: {all_tickers_data_for_strategy is not None}")
     
     target_tickers = get_strategy_tickers(LIVE_TRADING_STRATEGY, valid_tickers, all_tickers_data_for_strategy)

@@ -10,20 +10,12 @@ from datetime import datetime, timedelta, timezone
 
 # Import config for strategy parameters
 from config import (
-    RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION,
-    RISK_ADJ_MOM_CONFIRM_SHORT,
-    RISK_ADJ_MOM_CONFIRM_MEDIUM,
-    RISK_ADJ_MOM_CONFIRM_LONG,
-    RISK_ADJ_MOM_MIN_CONFIRMATIONS,
-    RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION,
-    RISK_ADJ_MOM_VOLUME_WINDOW,
-    RISK_ADJ_MOM_VOLUME_MULTIPLIER,
-    RISK_ADJ_MOM_VOLATILITY_WINDOW,
-    RISK_ADJ_MOM_PERFORMANCE_WINDOW,
-    RISK_ADJ_MOM_MIN_SCORE,
-    VOLATILITY_ADJ_MOM_LOOKBACK,
-    VOLATILITY_ADJ_MOM_VOL_WINDOW,
-    VOLATILITY_ADJ_MOM_MIN_SCORE,
+    RISK_ADJ_MOM_PERFORMANCE_WINDOW, RISK_ADJ_MOM_VOLATILITY_WINDOW,
+    RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION, RISK_ADJ_MOM_CONFIRM_SHORT,
+    RISK_ADJ_MOM_CONFIRM_MEDIUM, RISK_ADJ_MOM_CONFIRM_LONG, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
+    RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER,
+    RISK_ADJ_MOM_MIN_SCORE, VOLATILITY_ADJ_MOM_LOOKBACK, VOLATILITY_ADJ_MOM_VOL_WINDOW,
+    VOLATILITY_ADJ_MOM_MIN_SCORE, PARALLEL_THRESHOLD, DATA_FRESHNESS_MAX_DAYS,
     ENABLE_MULTITASK_LEARNING
 )
 
@@ -48,14 +40,46 @@ def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_da
     if len(ticker_data) < 100:
         return 0.0, 0.0, 0.0
     
-    # Use current date or last available date
-    end_date = current_date or ticker_data.index.max()
+    # ✅ BETTER FIX: Use data's max date and convert current_date to pandas Timestamp
+    end_date = ticker_data.index.max()
+    
+    # If current_date is provided, try to use it (must convert to pandas Timestamp first)
+    if current_date is not None:
+        try:
+            # Convert to pandas Timestamp (handles both datetime and Timestamp)
+            current_ts = pd.Timestamp(current_date)
+            
+            # If data has timezone, ensure current_ts matches
+            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                if current_ts.tz is None:
+                    # current_ts is naive, localize to data's timezone
+                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
+                else:
+                    # current_ts has timezone, convert to data's timezone
+                    current_ts = current_ts.tz_convert(ticker_data.index.tz)
+            
+            # Use the minimum of current_ts and data's max (can't use future data)
+            end_date = min(current_ts, end_date)
+            
+            # Check data freshness - warn if data is older than configured limit
+            data_age_days = (current_ts - end_date).total_seconds() / 86400
+            if data_age_days > DATA_FRESHNESS_MAX_DAYS:
+                # Data is stale - raise error to be caught by caller
+                raise ValueError(f"Data too old: {data_age_days:.1f} days (max {DATA_FRESHNESS_MAX_DAYS} days)")
+        except ValueError:
+            # Re-raise ValueError (stale data error) so caller can handle it
+            raise
+        except Exception:
+            # For other errors (timezone conversion, etc), stick with data's max date
+            pass
     
     # Calculate 1-year performance with train_start_date constraint
     start_date = end_date - timedelta(days=RISK_ADJ_MOM_PERFORMANCE_WINDOW)
     if train_start_date:
         start_date = max(train_start_date, start_date)
-    perf_data = ticker_data.loc[start_date:end_date]
+    
+    # ✅ Use boolean indexing instead of .loc[] to avoid KeyError with timezone mismatches
+    perf_data = ticker_data[(ticker_data.index >= start_date) & (ticker_data.index <= end_date)]
     
     if len(perf_data) < 50:
         return 0.0, 0.0, 0.0
@@ -100,14 +124,48 @@ def check_momentum_confirmation(ticker_data: pd.DataFrame, current_date: datetim
         return 1  # No confirmation required
     
     momentum_confirmations = 0
-    end_date = current_date or ticker_data.index.max()
+    
+    # ✅ BETTER FIX: Use data's max date and convert current_date to pandas Timestamp
+    end_date = ticker_data.index.max()
+    
+    # If current_date is provided, try to use it (must convert to pandas Timestamp first)
+    if current_date is not None:
+        try:
+            # Convert to pandas Timestamp (handles both datetime and Timestamp)
+            current_ts = pd.Timestamp(current_date)
+            
+            # If data has timezone, ensure current_ts matches
+            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                if current_ts.tz is None:
+                    # current_ts is naive, localize to data's timezone
+                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
+                else:
+                    # current_ts has timezone, convert to data's timezone
+                    current_ts = current_ts.tz_convert(ticker_data.index.tz)
+            
+            # Check data freshness - warn if data is older than configured limit
+            data_age_days = (current_ts - end_date).total_seconds() / 86400
+            if data_age_days > DATA_FRESHNESS_MAX_DAYS:
+                # Data is stale - raise error to be caught by caller
+                raise ValueError(f"Data too old: {data_age_days:.1f} days (max {DATA_FRESHNESS_MAX_DAYS} days)")
+            
+            # Use the minimum of current_ts and data's max (can't use future data)
+            end_date = min(current_ts, end_date)
+        except ValueError:
+            # Re-raise ValueError (stale data error) so caller can handle it
+            raise
+        except Exception:
+            # For other errors (timezone conversion, etc), stick with data's max date
+            pass
     
     # 3-month momentum check
     if RISK_ADJ_MOM_CONFIRM_SHORT:
         start_3m = end_date - timedelta(days=90)
         if train_start_date:
             start_3m = max(train_start_date, start_3m)
-        data_3m = ticker_data.loc[start_3m:end_date]
+        
+        # ✅ Use boolean indexing instead of .loc[] to avoid KeyError
+        data_3m = ticker_data[(ticker_data.index >= start_3m) & (ticker_data.index <= end_date)]
         if len(data_3m) >= 30:
             valid_close = data_3m['Close'].dropna()
             if len(valid_close) >= 2:
@@ -123,7 +181,7 @@ def check_momentum_confirmation(ticker_data: pd.DataFrame, current_date: datetim
         start_6m = end_date - timedelta(days=180)
         if train_start_date:
             start_6m = max(train_start_date, start_6m)
-        data_6m = ticker_data.loc[start_6m:end_date]
+        data_6m = ticker_data[(ticker_data.index >= start_6m) & (ticker_data.index <= end_date)]
         if len(data_6m) >= 60:
             valid_close = data_6m['Close'].dropna()
             if len(valid_close) >= 2:
@@ -139,7 +197,7 @@ def check_momentum_confirmation(ticker_data: pd.DataFrame, current_date: datetim
         start_1y = end_date - timedelta(days=365)
         if train_start_date:
             start_1y = max(train_start_date, start_1y)
-        data_1y = ticker_data.loc[start_1y:end_date]
+        data_1y = ticker_data[(ticker_data.index >= start_1y) & (ticker_data.index <= end_date)]
         if len(data_1y) >= 100:
             valid_close = data_1y['Close'].dropna()
             if len(valid_close) >= 2:
@@ -284,6 +342,7 @@ def select_risk_adj_mom_stocks_sequential(all_tickers: List[str], ticker_data_gr
     momentum_filtered = 0
     volume_filtered = 0
     data_issues = 0
+    stale_data_count = 0
     
     # Debug: Show first few tickers and keys
     if len(all_tickers) > 0 and len(ticker_data_grouped) > 0:
@@ -334,9 +393,16 @@ def select_risk_adj_mom_stocks_sequential(all_tickers: List[str], ticker_data_gr
                 current_top_performers.append((ticker, score, return_pct, volatility_pct))
         
         except Exception as e:
-            data_issues += 1
-            if analyzed_count <= 3:
-                print(f"   🔍 DEBUG: {ticker} exception: {e}")
+            # Check if it's a stale data error
+            error_str = str(e)
+            if "Data too old" in error_str:
+                stale_data_count += 1
+                if stale_data_count <= 3:
+                    print(f"   🔍 DEBUG: {ticker} {error_str}")
+            else:
+                data_issues += 1
+                if data_issues <= 3:
+                    print(f"   🔍 DEBUG: {ticker} exception: {type(e).__name__}: {error_str}")
             continue
     
     # Sort by risk-adjusted score and get top N
@@ -353,15 +419,30 @@ def select_risk_adj_mom_stocks_sequential(all_tickers: List[str], ticker_data_gr
             confirm_parts.append("volume")
         confirm_text = f" (with {' + '.join(confirm_parts)} confirmation)" if confirm_parts else ""
         
-        print(f"   📊 Analysis: {analyzed_count} processed (SEQUENTIAL) in {elapsed:.2f}s, {momentum_filtered} momentum filtered, {volume_filtered} volume filtered, {data_issues} data issues")
+        # Build summary message
+        summary_parts = [f"{analyzed_count} processed (SEQUENTIAL) in {elapsed:.2f}s"]
+        summary_parts.append(f"{momentum_filtered} momentum filtered")
+        summary_parts.append(f"{volume_filtered} volume filtered")
+        if stale_data_count > 0:
+            summary_parts.append(f"⚠️ {stale_data_count} stale data (>{DATA_FRESHNESS_MAX_DAYS} days old)")
+        if data_issues > 0:
+            summary_parts.append(f"{data_issues} other data issues")
+        
+        print(f"   📊 Analysis: {', '.join(summary_parts)}")
         print(f"   🎯 Selected {len(selected_tickers)} stocks{confirm_text}:")
         for ticker, score, ret, vol in current_top_performers[:top_n]:
             print(f"      {ticker}: score={score:.2f}, return={ret:.1f}%, vol={vol:.1f}%")
         
         return selected_tickers
     else:
-        print(f"   ❌ No stocks passed filtering criteria (analyzed: {analyzed_count}) in {elapsed:.2f}s")
-        print(f"   📊 Filter breakdown: {momentum_filtered} momentum filtered, {volume_filtered} volume filtered, {data_issues} data issues")
+        # Build failure summary
+        summary_parts = [f"analyzed: {analyzed_count}"]
+        if stale_data_count > 0:
+            summary_parts.append(f"⚠️ {stale_data_count} rejected due to stale data (>{DATA_FRESHNESS_MAX_DAYS} days old)")
+        if data_issues > 0:
+            summary_parts.append(f"{data_issues} data issues")
+        
+        print(f"   ❌ No stocks passed filtering criteria ({', '.join(summary_parts)})")
         return []
 
 
@@ -371,17 +452,13 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
     """
     performances = []
     
-    print(f"   🔍 DEBUG: select_dynamic_bh_stocks called with {len(all_tickers)} tickers, {len(ticker_data_grouped)} data groups")
-    
     # Use current date or last available date
     if current_date is None:
         # Find the latest date across all tickers
         latest_dates = [ticker_data_grouped[t].index.max() for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
         if latest_dates:
             current_date = max(latest_dates)
-            print(f"   🔍 DEBUG: Using current_date = {current_date}")
         else:
-            print(f"   🔍 DEBUG: No latest dates found, returning empty")
             return []
     
     # Ensure current_date is timezone-aware for comparison
@@ -391,6 +468,8 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
     # Determine lookback period
     if period == '1y':
         lookback_days = 365
+    elif period == '6m':
+        lookback_days = 180
     elif period == '3m':
         lookback_days = 90
     elif period == '1m':
@@ -398,20 +477,35 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
     else:
         lookback_days = 365
     
-    print(f"   🔍 DEBUG: Using {lookback_days} day lookback period")
+    stale_data_count = 0
+    analyzed_count = 0
     
     for ticker in all_tickers:  # Process all tickers
         try:
             if ticker not in ticker_data_grouped:
-                print(f"   🔍 DEBUG: {ticker} not in ticker_data_grouped")
                 continue
             
+            analyzed_count += 1
             ticker_data = ticker_data_grouped[ticker]
-            print(f"   🔍 DEBUG: {ticker} data shape: {ticker_data.shape}, date range: {ticker_data.index.min()} to {ticker_data.index.max()}")
+            
+            # ✅ Check data freshness before processing
+            data_max_date = ticker_data.index.max()
+            current_ts = pd.Timestamp(current_date)
+            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                if current_ts.tz is None:
+                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
+                else:
+                    current_ts = current_ts.tz_convert(ticker_data.index.tz)
+            
+            data_age_days = (current_ts - data_max_date).total_seconds() / 86400
+            if data_age_days > DATA_FRESHNESS_MAX_DAYS:
+                stale_data_count += 1
+                if stale_data_count <= 3:  # Only print first 3
+                    print(f"   🔍 DEBUG: {ticker} data too old: {data_age_days:.1f} days (max {DATA_FRESHNESS_MAX_DAYS} days)")
+                continue  # Skip stale data instead of raising exception
             
             # Calculate start date based on lookback period
             start_date = current_date - timedelta(days=lookback_days)
-            print(f"   🔍 DEBUG: {ticker} lookback period: {start_date} to {current_date}")
             
             # Filter data to the exact period - be more flexible with date range
             available_start = ticker_data.index.min()
@@ -421,40 +515,29 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
             if available_start > start_date:
                 days_short = (available_start - start_date).days
                 if days_short > 30:  # If we're missing more than 30 days, skip
-                    print(f"   🔍 DEBUG: {ticker} insufficient history: missing {days_short} days")
                     continue
                 else:
-                    print(f"   🔍 DEBUG: {ticker} using available data (missing {days_short} days)")
                     start_date = available_start
             
-            period_data = ticker_data[(ticker_data.index >= start_date) & (ticker_data.index <= current_date)]
-            print(f"   🔍 DEBUG: {ticker} period_data shape: {period_data.shape}")
+            period_data = ticker_data[(ticker_data.index >= start_date) & (ticker_data.index <= current_ts)]
             
             # Reduce minimum data requirement for live trading
             min_data_points = max(5, lookback_days // 30)  # At least 5 points or 1 per month
             if len(period_data) < min_data_points:
-                print(f"   🔍 DEBUG: {ticker} insufficient data points: {len(period_data)} < {min_data_points}")
                 continue
             
             valid_close = period_data['Close'].dropna()
             if len(valid_close) < 2:
-                print(f"   🔍 DEBUG: {ticker} insufficient valid close prices: {len(valid_close)} < 2")
                 continue
             
             start_price = valid_close.iloc[0]
             end_price = valid_close.iloc[-1]
-            print(f"   🔍 DEBUG: {ticker} price range: ${start_price:.2f} to ${end_price:.2f}")
             
             if start_price > 0:
                 performance = ((end_price - start_price) / start_price) * 100
                 # Only include stocks with positive performance
                 if performance > 0:
                     performances.append((ticker, performance))
-                    print(f"   🔍 DEBUG: {ticker} performance: {performance:.2f}%")
-                else:
-                    print(f"   🔍 DEBUG: {ticker} performance: {performance:.2f}% (filtered out - negative)")
-            else:
-                print(f"   🔍 DEBUG: {ticker} invalid start price: {start_price}")
         
         except Exception as e:
             print(f"   🔍 DEBUG: {ticker} error: {e}")
@@ -462,7 +545,10 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
             traceback.print_exc()
             continue
     
-    print(f"   🔍 DEBUG: Found {len(performances)} valid performances")
+    # Check if all data was stale
+    if stale_data_count > 0 and stale_data_count == analyzed_count:
+        print(f"   ❌ No stocks passed filtering (⚠️ {stale_data_count} rejected due to stale data (>{DATA_FRESHNESS_MAX_DAYS} days old))")
+        return []
     
     # Sort by performance and get top N
     if performances:
@@ -475,7 +561,10 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
         
         return selected_tickers
     else:
-        print(f"   ❌ No valid performance data found for {period}")
+        if stale_data_count > 0:
+            print(f"   ❌ No valid performance data found for {period} (⚠️ {stale_data_count} stale data)")
+        else:
+            print(f"   ❌ No valid performance data found for {period}")
         return []
 
 
@@ -557,6 +646,10 @@ def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Di
         else:
             return []
     
+    # Ensure current_date is timezone-aware for comparison
+    if current_date.tzinfo is None:
+        current_date = current_date.replace(tzinfo=timezone.utc)
+    
     for ticker in all_tickers:
         try:
             if ticker not in ticker_data_grouped:
@@ -567,17 +660,25 @@ def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Di
             if len(ticker_data) < 50:  # Need at least 50 days of data
                 continue
             
+            # Convert current_date to pandas Timestamp with timezone
+            current_date_tz = pd.Timestamp(current_date)
+            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                if current_date_tz.tz is None:
+                    current_date_tz = current_date_tz.tz_localize(ticker_data.index.tz)
+                else:
+                    current_date_tz = current_date_tz.tz_convert(ticker_data.index.tz)
+            
             # Calculate recent performance (last 20 days) using date filtering
-            recent_start = current_date - timedelta(days=20)
-            recent_data = ticker_data[(ticker_data.index >= recent_start) & (ticker_data.index <= current_date)]
+            recent_start = current_date_tz - timedelta(days=20)
+            recent_data = ticker_data[(ticker_data.index >= recent_start) & (ticker_data.index <= current_date_tz)]
             if len(recent_data) >= 2:
                 recent_return = (recent_data['Close'].iloc[-1] / recent_data['Close'].iloc[0] - 1) * 100
             else:
                 recent_return = 0.0
             
             # Calculate longer-term performance (last 100 days) using date filtering
-            longer_start = current_date - timedelta(days=100)
-            longer_data = ticker_data[(ticker_data.index >= longer_start) & (ticker_data.index <= current_date)]
+            longer_start = current_date_tz - timedelta(days=100)
+            longer_data = ticker_data[(ticker_data.index >= longer_start) & (ticker_data.index <= current_date_tz)]
             if len(longer_data) >= 2:
                 longer_return = (longer_data['Close'].iloc[-1] / longer_data['Close'].iloc[0] - 1) * 100
             else:
@@ -634,16 +735,74 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
             if len(ticker_data) < 200:  # Need enough data for quality assessment
                 continue
             
+            # ✅ BETTER FIX: Use data's max date and convert current_date to pandas Timestamp
+            current_date_tz = ticker_data.index.max()
+            
+            # If current_date is provided, try to use it (must convert to pandas Timestamp first)
+            if current_date is not None:
+                try:
+                    # Convert to pandas Timestamp (handles both datetime and Timestamp)
+                    current_ts = pd.Timestamp(current_date)
+                    
+                    # If data has timezone, ensure current_ts matches
+                    if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                        if current_ts.tz is None:
+                            # current_ts is naive, localize to data's timezone
+                            current_ts = current_ts.tz_localize(ticker_data.index.tz)
+                        else:
+                            # current_ts has timezone, convert to data's timezone
+                            current_ts = current_ts.tz_convert(ticker_data.index.tz)
+                    
+                    # Check data freshness - warn if data is older than configured limit
+                    data_age_days = (current_ts - current_date_tz).total_seconds() / 86400
+                    if data_age_days > DATA_FRESHNESS_MAX_DAYS:
+                        # Data is stale - raise error
+                        raise ValueError(f"Data too old: {data_age_days:.1f} days (max {DATA_FRESHNESS_MAX_DAYS} days)")
+                    
+                    # Use the minimum of current_ts and data's max (can't use future data)
+                    current_date_tz = min(current_ts, current_date_tz)
+                except ValueError:
+                    # Re-raise ValueError (stale data error) so it gets caught in outer exception handler
+                    raise
+                except Exception:
+                    # For other errors (timezone conversion, etc), stick with data's max date
+                    pass
+            
             # Momentum calculation (6-month) using date filtering
-            momentum_start = current_date - timedelta(days=180)  # ~6 months
-            momentum_data = ticker_data[(ticker_data.index >= momentum_start) & (ticker_data.index <= current_date)]
+            momentum_start = current_date_tz - timedelta(days=180)  # ~6 months
+            momentum_data = ticker_data[(ticker_data.index >= momentum_start) & (ticker_data.index <= current_date_tz)]
+            
+            if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
+                print(f"   🔍 DEBUG: {ticker} data range: {ticker_data.index.min()} to {ticker_data.index.max()}")
+                print(f"   🔍 DEBUG: {ticker} momentum range: {momentum_start} to {current_date_tz}")
+                print(f"   🔍 DEBUG: {ticker} momentum_data points: {len(momentum_data)}")
             if len(momentum_data) >= 2:
-                momentum_return = (momentum_data['Close'].iloc[-1] / momentum_data['Close'].iloc[0] - 1) * 100
+                # Drop NaN values from Close prices
+                valid_prices = momentum_data['Close'].dropna()
+                if len(valid_prices) < 2:
+                    momentum_return = 0.0
+                else:
+                    start_price = valid_prices.iloc[0]
+                    end_price = valid_prices.iloc[-1]
+                    if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
+                        print(f"   🔍 DEBUG: {ticker} start_price={start_price}, end_price={end_price}")
+                    if start_price <= 0 or pd.isna(start_price) or pd.isna(end_price):
+                        momentum_return = 0.0
+                    else:
+                        momentum_return = (end_price / start_price - 1) * 100
             else:
                 momentum_return = 0.0
             
+            # Check for NaN values
+            if pd.isna(momentum_return):
+                if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
+                    print(f"   🔍 DEBUG: {ticker} momentum=nan% (NaN value, filtered)")
+                continue
+            
             # Only include stocks with positive momentum
             if momentum_return <= 0:
+                if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
+                    print(f"   🔍 DEBUG: {ticker} momentum={momentum_return:.1f}% (<=0, filtered)")
                 continue
             
             # Quality indicators (simplified)
@@ -652,8 +811,8 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
             volatility = daily_returns.std() * 100
             
             # 2. Trend consistency (positive recent performance) using date filtering
-            short_start = current_date - timedelta(days=30)
-            short_data = ticker_data[(ticker_data.index >= short_start) & (ticker_data.index <= current_date)]
+            short_start = current_date_tz - timedelta(days=30)
+            short_data = ticker_data[(ticker_data.index >= short_start) & (ticker_data.index <= current_date_tz)]
             if len(short_data) >= 2:
                 short_trend = (short_data['Close'].iloc[-1] / short_data['Close'].iloc[0] - 1) * 100
             else:
@@ -667,8 +826,13 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
             
             if momentum_return > 5:  # Only consider positive momentum
                 quality_momentum_candidates.append((ticker, quality_score, momentum_return, volatility))
+            else:
+                if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
+                    print(f"   🔍 DEBUG: {ticker} momentum={momentum_return:.1f}% (<=5%, filtered)")
         
-        except Exception:
+        except Exception as e:
+            if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
+                print(f"   🔍 DEBUG: {ticker} exception: {type(e).__name__}: {e}")
             continue
     
     # Sort by quality score and get top N
@@ -719,11 +883,19 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
             try:
                 etf_data = ticker_data_grouped[etf]
                 
+                # Convert current_date to pandas Timestamp with timezone
+                current_date_tz = pd.Timestamp(current_date)
+                if hasattr(etf_data.index, 'tz') and etf_data.index.tz is not None:
+                    if current_date_tz.tz is None:
+                        current_date_tz = current_date_tz.tz_localize(etf_data.index.tz)
+                    else:
+                        current_date_tz = current_date_tz.tz_convert(etf_data.index.tz)
+                
                 # Filter data for momentum calculation
-                start_date = current_date - timedelta(days=SECTOR_ROTATION_MOMENTUM_WINDOW + 30)
+                start_date = current_date_tz - timedelta(days=SECTOR_ROTATION_MOMENTUM_WINDOW + 30)
                 
                 # Use index-based filtering since date is the index
-                etf_filtered = etf_data[(etf_data.index >= start_date) & (etf_data.index <= current_date)]
+                etf_filtered = etf_data[(etf_data.index >= start_date) & (etf_data.index <= current_date_tz)]
                 
                 print(f"   🔍 {etf}: {len(etf_filtered)} data points available")
                 
@@ -792,6 +964,10 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
         else:
             return []
     
+    # Ensure current_date is timezone-aware for comparison
+    if current_date.tzinfo is None:
+        current_date = current_date.replace(tzinfo=timezone.utc)
+    
     print(f"   📊 3M/1Y Ratio Strategy analyzing {len(all_tickers)} tickers")
     
     analysis_count = 0
@@ -816,10 +992,18 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
                 data_insufficient += 1
                 continue
             
+            # Convert current_date to pandas Timestamp with timezone
+            current_date_tz = pd.Timestamp(current_date)
+            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                if current_date_tz.tz is None:
+                    current_date_tz = current_date_tz.tz_localize(ticker_data.index.tz)
+                else:
+                    current_date_tz = current_date_tz.tz_convert(ticker_data.index.tz)
+            
             # Calculate 3-month performance
-            three_month_start = current_date - timedelta(days=90)
+            three_month_start = current_date_tz - timedelta(days=90)
             three_month_data = ticker_data[(ticker_data.index >= three_month_start) & 
-                                         (ticker_data.index <= current_date)]
+                                         (ticker_data.index <= current_date_tz)]
             
             if len(three_month_data) < 10:  # Need at least 10 data points
                 data_insufficient += 1
@@ -841,9 +1025,9 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
                                      three_month_start_price) * 100
             
             # Calculate 1-year performance
-            one_year_start = current_date - timedelta(days=365)
+            one_year_start = current_date_tz - timedelta(days=365)
             one_year_data = ticker_data[(ticker_data.index >= one_year_start) & 
-                                      (ticker_data.index <= current_date)]
+                                      (ticker_data.index <= current_date_tz)]
             
             if len(one_year_data) < 50:  # Need at least 50 data points
                 data_insufficient += 1
@@ -888,13 +1072,13 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
                 continue
             
             # Better approach: Strong base + annualized acceleration
-            # Require minimum 1Y performance AND positive annualized acceleration
-            if (one_year_performance > 10 and  # Minimum 10% 1Y performance
-                momentum_acceleration > 10):  # At least 10% annualized acceleration
+            # Require minimum 1Y performance AND positive annualized acceleration - RELAXED
+            if (one_year_performance > 5 and  # Reduced: Minimum 5% 1Y performance vs 10%
+                momentum_acceleration > 5):  # Reduced: At least 5% annualized acceleration vs 10%
                 ratio_candidates.append((ticker, momentum_acceleration, annualized_3m, one_year_performance))
             else:
                 # Track why filtered
-                if momentum_acceleration <= 10 or one_year_performance <= 10:
+                if momentum_acceleration <= 5 or one_year_performance <= 5:
                     filtered_ratio_negative += 1  # Reuse this counter for low acceleration/weak 1Y
         
         except Exception as e:
@@ -986,8 +1170,10 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
         latest_dates = [ticker_data_grouped[t].index.max() for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
         if latest_dates:
             current_date = max(latest_dates)
+        else:
+            return []
     
-    # Ensure current_date is timezone-aware
+    # Ensure current_date is timezone-aware for comparison
     if current_date.tzinfo is None:
         current_date = current_date.replace(tzinfo=timezone.utc)
     
@@ -998,20 +1184,28 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
             
             ticker_data = ticker_data_grouped[ticker]
             
+            # Convert current_date to pandas Timestamp with timezone
+            current_date_tz = pd.Timestamp(current_date)
+            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                if current_date_tz.tz is None:
+                    current_date_tz = current_date_tz.tz_localize(ticker_data.index.tz)
+                else:
+                    current_date_tz = current_date_tz.tz_convert(ticker_data.index.tz)
+            
             # Calculate 1-year and 3-year start dates
-            one_year_start = current_date - timedelta(days=365)
-            three_year_start = current_date - timedelta(days=1095)  # 3 years
+            one_year_start = current_date_tz - timedelta(days=365)
+            three_year_start = current_date_tz - timedelta(days=1095)  # 3 years
             
             # Get 1-year data
-            one_year_data = ticker_data[(ticker_data.index >= one_year_start) & (ticker_data.index <= current_date)]
+            one_year_data = ticker_data[(ticker_data.index >= one_year_start) & (ticker_data.index <= current_date_tz)]
             one_year_valid = one_year_data['Close'].dropna()
             
             # Get 3-year data
-            three_year_data = ticker_data[(ticker_data.index >= three_year_start) & (ticker_data.index <= current_date)]
+            three_year_data = ticker_data[(ticker_data.index >= three_year_start) & (ticker_data.index <= current_date_tz)]
             three_year_valid = three_year_data['Close'].dropna()
             
-            # Check data sufficiency
-            if len(one_year_valid) < 200 or len(three_year_valid) < 600:  # Need sufficient history
+            # Check data sufficiency (reduced requirements for available data)
+            if len(one_year_valid) < 100 or len(three_year_valid) < 100:  # Reduced requirements
                 data_insufficient += 1
                 continue
             
@@ -1103,17 +1297,25 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
             
             ticker_data = ticker_data_grouped[ticker]
             
+            # Convert current_date to pandas Timestamp with timezone
+            current_date_tz = pd.Timestamp(current_date)
+            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                if current_date_tz.tz is None:
+                    current_date_tz = current_date_tz.tz_localize(ticker_data.index.tz)
+                else:
+                    current_date_tz = current_date_tz.tz_convert(ticker_data.index.tz)
+            
             # Calculate 3-month and 1-year start dates
-            three_month_start = current_date - timedelta(days=90)
-            one_year_start = current_date - timedelta(days=365)
+            three_month_start = current_date_tz - timedelta(days=90)
+            one_year_start = current_date_tz - timedelta(days=365)
             
             # Get 3-month data
             three_month_data = ticker_data[(ticker_data.index >= three_month_start) & 
-                                         (ticker_data.index <= current_date)]
+                                         (ticker_data.index <= current_date_tz)]
             
             # Get 1-year data
             one_year_data = ticker_data[(ticker_data.index >= one_year_start) & 
-                                      (ticker_data.index <= current_date)]
+                                      (ticker_data.index <= current_date_tz)]
             
             # Check data sufficiency
             if len(three_month_data) < 10 or len(one_year_data) < 200:
@@ -1146,15 +1348,15 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
             if len(ratio_candidates) < 5:
                 print(f"   🔍 DEBUG {ticker}: 3M={three_month_performance:+.1f}%, 1Y={one_year_performance:+.1f}%")
             
-            # Buy on dip criteria:
+            # Buy on dip criteria - RELAXED:
             # 1. Strong 1Y performance (positive and significant)
             # 2. Weak or negative 3M performance (pullback)
             # 3. Dip ratio: 1Y performance should be much better than 3M
-            if three_month_performance > 20:  # 3M should be weak or negative (relaxed)
+            if three_month_performance > 30:  # Relaxed: 3M should be weak or negative (30% vs 20%)
                 filtered_3m_positive += 1
                 continue
             
-            if one_year_performance < 15:  # Need strong 1Y performance (relaxed to 15%)
+            if one_year_performance < 10:  # Relaxed: Need strong 1Y performance (10% vs 15%)
                 filtered_1y_low += 1
                 continue
             
@@ -1162,8 +1364,8 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
             # Higher score means stronger 1Y trend with bigger recent pullback
             dip_score = one_year_performance - three_month_performance
             
-            # Add to candidates if dip opportunity is strong
-            if dip_score > 20:  # 1Y should be at least 20% better than 3M (relaxed)
+            # Add to candidates if dip opportunity is strong - RELAXED
+            if dip_score > 15:  # Relaxed: 1Y should be at least 15% better than 3M (15% vs 20%)
                 ratio_candidates.append((ticker, dip_score, one_year_performance, three_month_performance))
         
         except Exception as e:
@@ -1185,3 +1387,99 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
         print(f"   ❌ No buy-on-dip candidates found")
         print(f"   📊 Filter breakdown: {filtered_3m_positive} filtered (3M positive), {filtered_1y_low} filtered (1Y low), {data_insufficient} insufficient data")
         return []
+
+
+def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+    """
+    Hybrid Momentum-Volatility Strategy: Combines strong momentum with controlled volatility.
+    Selects stocks with:
+    1) Strong 3M momentum (annualized > 50%)
+    2) Moderate 1Y performance (> 10%)
+    3) Volatility not too high (< 100% annualized)
+    4) Volume above minimum threshold
+    """
+    if current_date is None:
+        current_date = datetime.now()
+    
+    candidates = []
+    
+    for ticker in all_tickers:
+        try:
+            # Get ticker data
+            ticker_data = ticker_data_grouped.get_group(ticker) if ticker in ticker_data_grouped.groups else None
+            if ticker_data is None or ticker_data.empty:
+                continue
+            
+            # Sort by date (index is already date)
+            # ticker_data = ticker_data.sort_values('Date')  # Removed - using index
+            
+            # Skip if insufficient data
+            if len(ticker_data) < 60:  # Need at least 3 months of data
+                continue
+            
+            # Get latest price
+            latest_price = ticker_data['Close'].iloc[-1]
+            
+            # Calculate 3M performance
+            three_months_ago = current_date - timedelta(days=90)
+            three_month_data = ticker_data[ticker_data.index >= three_months_ago]  # Fixed: use index
+            if len(three_month_data) < 10:
+                continue
+            price_3m_ago = three_month_data['Close'].iloc[0]
+            performance_3m = (latest_price - price_3m_ago) / price_3m_ago
+            annualized_3m = (1 + performance_3m) ** (365 / 90) - 1
+            
+            # Calculate 1Y performance
+            one_year_ago = current_date - timedelta(days=365)
+            one_year_data = ticker_data[ticker_data.index >= one_year_ago]  # Fixed: use index
+            if len(one_year_data) < 30:
+                continue
+            price_1y_ago = one_year_data['Close'].iloc[0]
+            performance_1y = (latest_price - price_1y_ago) / price_1y_ago
+            
+            # Calculate volatility (using daily returns)
+            daily_returns = ticker_data['Close'].pct_change().dropna()
+            if len(daily_returns) < 30:
+                continue
+            volatility = daily_returns.std() * (365 ** 0.5)  # Annualized volatility
+            
+            # Calculate average volume
+            avg_volume = ticker_data['Volume'].mean() if 'Volume' in ticker_data.columns else 0
+            
+            # Apply filters - RELAXED criteria to allow more candidates
+            if (annualized_3m > 0.2 and  # Reduced: Strong 3M momentum (> 20% annualized vs 50%)
+                performance_1y > 0.05 and  # Reduced: Positive 1Y performance (> 5% vs 10%)
+                volatility < 2.0 and  # Relaxed: Volatility not too high (< 200% vs 100%)
+                avg_volume > 50000):  # Reduced: Minimum volume (50k vs 100k)
+                
+                # Calculate composite score (momentum weighted, volatility penalty)
+                momentum_score = annualized_3m * 0.6 + performance_1y * 0.4
+                volatility_penalty = min(volatility, 1.0)  # Cap penalty at 100%
+                composite_score = momentum_score * (1 - volatility_penalty * 0.3)
+                
+                candidates.append({
+                    'ticker': ticker,
+                    'score': composite_score,
+                    'momentum_score': momentum_score,
+                    'volatility': volatility,
+                    'performance_3m': performance_3m,
+                    'performance_1y': performance_1y,
+                    'annualized_3m': annualized_3m
+                })
+                
+        except Exception as e:
+            continue
+    
+    # Sort by composite score
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Debug output
+    if candidates:
+        print(f"   🎯 Momentum-Volatility Hybrid: Found {len(candidates)} candidates")
+        print(f"   Top 3: {candidates[0]['ticker']} (score: {candidates[0]['score']:.3f}), "
+              f"{candidates[1]['ticker']} (score: {candidates[1]['score']:.3f}), "
+              f"{candidates[2]['ticker']} (score: {candidates[2]['score']:.3f})")
+    else:
+        print(f"   ⚠️ Momentum-Volatility Hybrid: No candidates found")
+    
+    return [c['ticker'] for c in candidates[:top_n]]

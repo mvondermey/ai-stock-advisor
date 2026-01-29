@@ -33,7 +33,6 @@ from config import (
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, PARALLEL_THRESHOLD, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
         ENABLE_1YEAR_BACKTEST,
     ENABLE_AI_STRATEGY,
-    ENABLE_AI_PORTFOLIO,
     ENABLE_MEAN_REVERSION,
     ENABLE_QUALITY_MOM,
     ENABLE_MOMENTUM_AI_HYBRID,
@@ -976,13 +975,44 @@ def main(
         else:
             print(f"   ℹ️  Models directory doesn't exist. Will create during training.")
     
-    # --- Step 3: Skip initial training - models will be trained during walk-forward backtest ---
-    print(f"\n⏭️ Skipping initial training - models will be trained during walk-forward backtest")
+    # --- Step 3: Load existing models or prepare for training ---
+    print(f"\n🔄 Loading existing models...")
     training_results = []
-    models, scalers, y_scalers = {}, {}, {}
+    
+    # Try to load existing models
+    from prediction import load_models_for_tickers
+    
+    # Get all available tickers with models
+    import os
+    
+    models_dir = Path("logs/models")
+    available_model_files = []
+    
+    if models_dir.exists():
+        for file in models_dir.glob("*_TargetReturn_model.joblib"):
+            ticker = file.stem.replace("_TargetReturn_model", "")
+            available_model_files.append(ticker)
+    
+    print(f"   📁 Found {len(available_model_files)} existing models")
+    
+    if available_model_files:
+        print(f"   🔄 Loading models for {len(available_model_files)} tickers...")
+        try:
+            models, scalers, y_scalers = load_models_for_tickers(available_model_files)
+            print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers")
+        except Exception as e:
+            print(f"   ⚠️ Error loading models: {e}")
+            models, scalers, y_scalers = {}, {}, {}
+    else:
+        print(f"   ⚠️ No existing models found - will train during walk-forward")
+        models, scalers, y_scalers = {}, {}, {}
+    
     # ✅ FIX: Enable AI Strategy - models will be trained on Day 1 of walk-forward backtest
     from config import ENABLE_AI_STRATEGY, ENABLE_WALK_FORWARD_RETRAINING
-    ai_strategy_available = ENABLE_AI_STRATEGY and ENABLE_WALK_FORWARD_RETRAINING
+    # AI Strategy is available if:
+    # 1. ENABLE_AI_STRATEGY is True, AND
+    # 2. Either (walk-forward retraining enabled) OR (we have existing models)
+    ai_strategy_available = ENABLE_AI_STRATEGY and (ENABLE_WALK_FORWARD_RETRAINING or len(models) > 0)
     failed_training_tickers_1y = {}
     top_tickers_ai_filtered = top_tickers  # All tickers available for AI when trained
     
@@ -1006,8 +1036,8 @@ def main(
     
     print(f"  ✅ {len(top_tickers)} tickers available for all strategies: {', '.join(top_tickers[:10])}{'...' if len(top_tickers) > 10 else ''}", flush=True)
 
-    # --- Skip initial AI Portfolio training - will be trained during walk-forward backtest ---
-    print(f"\n⏭️ Skipping initial AI Portfolio training - will be trained during walk-forward backtest")
+    # --- Skip initial AI training - will be trained during walk-forward backtest ---
+    print(f"\n⏭️ Skipping initial AI training - will be trained during walk-forward backtest")
 
     # 🧠 Initialize dictionaries for model training data before threshold optimization
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
@@ -1071,7 +1101,7 @@ def main(
             backtest_end=bt_end,
             initial_capital=capital_per_stock_1y * 3,  # Same as n_top_rebal
             portfolio_size=3,
-            strategy_types=['1Y', '3M', '1M']
+            strategy_types=['1Y', '6M', '3M', '1M']
         )
     except Exception as e:
         print(f"   ⚠️ Rebalance optimization failed: {e}", flush=True)
@@ -1093,7 +1123,7 @@ def main(
     initial_capital_1y = capital_per_stock_1y * n_top_rebal
     
     # Use walk-forward backtest with periodic retraining and rebalancing
-    final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, bh_1m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, ai_portfolio_value_1y, ai_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ratio_3m_1y_portfolio_value_1y, ratio_3m_1y_portfolio_history_1y, ratio_1y_3m_portfolio_value_1y, ratio_1y_3m_portfolio_history_1y, turnaround_portfolio_value_1y, turnaround_portfolio_history_1y, adaptive_ensemble_portfolio_value_1y, adaptive_ensemble_portfolio_history_1y, volatility_ensemble_portfolio_value_1y, volatility_ensemble_portfolio_history_1y, correlation_ensemble_portfolio_value_1y, correlation_ensemble_portfolio_history_1y, dynamic_pool_portfolio_value_1y, dynamic_pool_portfolio_history_1y, sentiment_ensemble_portfolio_value_1y, sentiment_ensemble_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_3m_transaction_costs_1y, static_bh_1m_transaction_costs_1y, dynamic_bh_1y_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, ai_portfolio_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, ratio_3m_1y_transaction_costs_1y, ratio_1y_3m_transaction_costs_1y, turnaround_transaction_costs_1y, adaptive_ensemble_transaction_costs_1y, volatility_ensemble_transaction_costs_1y, correlation_ensemble_transaction_costs_1y, dynamic_pool_transaction_costs_1y, sentiment_ensemble_transaction_costs_1y, actual_backtest_day_count = _run_portfolio_backtest_walk_forward(
+    final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, bh_6m_portfolio_value_1y, bh_1m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, dynamic_bh_6m_portfolio_value_1y, dynamic_bh_6m_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ratio_3m_1y_portfolio_value_1y, ratio_3m_1y_portfolio_history_1y, ratio_1y_3m_portfolio_value_1y, ratio_1y_3m_portfolio_history_1y, turnaround_portfolio_value_1y, turnaround_portfolio_history_1y, adaptive_ensemble_portfolio_value_1y, adaptive_ensemble_portfolio_history_1y, volatility_ensemble_portfolio_value_1y, volatility_ensemble_portfolio_history_1y, ai_volatility_ensemble_portfolio_value_1y, ai_volatility_ensemble_portfolio_history_1y, multi_tf_ensemble_portfolio_value_1y, multi_tf_ensemble_portfolio_history_1y, correlation_ensemble_portfolio_value_1y, correlation_ensemble_portfolio_history_1y, dynamic_pool_portfolio_value_1y, dynamic_pool_portfolio_history_1y, sentiment_ensemble_portfolio_value_1y, sentiment_ensemble_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_6m_transaction_costs_1y, static_bh_3m_transaction_costs_1y, static_bh_1m_transaction_costs_1y, dynamic_bh_transaction_costs_1y, dynamic_bh_6m_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, ratio_3m_1y_transaction_costs_1y, ratio_1y_3m_transaction_costs_1y, momentum_volatility_hybrid_transaction_costs_1y, turnaround_transaction_costs_1y, adaptive_ensemble_transaction_costs_1y, volatility_ensemble_transaction_costs_1y, ai_volatility_ensemble_transaction_costs_1y, multi_tf_ensemble_transaction_costs_1y, correlation_ensemble_transaction_costs_1y, dynamic_pool_transaction_costs_1y, sentiment_ensemble_transaction_costs_1y, actual_backtest_day_count, ai_cash_deployed_1y, static_bh_cash_deployed_1y, static_bh_6m_cash_deployed_1y, static_bh_3m_cash_deployed_1y, static_bh_1m_cash_deployed_1y, dynamic_bh_cash_deployed_1y, dynamic_bh_6m_cash_deployed_1y, dynamic_bh_3m_cash_deployed_1y, dynamic_bh_1m_cash_deployed_1y, risk_adj_mom_cash_deployed_1y, mean_reversion_cash_deployed_1y, quality_momentum_cash_deployed_1y, volatility_adj_mom_cash_deployed_1y, momentum_ai_hybrid_cash_deployed_1y, dynamic_bh_1y_vol_filter_cash_deployed_1y, dynamic_bh_1y_trailing_stop_cash_deployed_1y, multitask_cash_deployed_1y, sector_rotation_cash_deployed_1y, ratio_3m_1y_cash_deployed_1y, ratio_1y_3m_cash_deployed_1y, turnaround_cash_deployed_1y, adaptive_ensemble_cash_deployed_1y, volatility_ensemble_cash_deployed_1y, ai_volatility_ensemble_cash_deployed_1y, multi_tf_ensemble_cash_deployed_1y, correlation_ensemble_cash_deployed_1y, dynamic_pool_cash_deployed_1y, sentiment_ensemble_cash_deployed_1y = _run_portfolio_backtest_walk_forward(
         all_tickers_data=all_tickers_data,
         train_start_date=train_start_1y_calc,
         backtest_start_date=bt_start_1y,
@@ -1322,7 +1352,7 @@ def main(
     print(f"   📅 Actual backtest days: {actual_backtest_days} (config BACKTEST_DAYS={BACKTEST_DAYS})")
     
     print_final_summary(
-        sorted_final_results, models, models, scalers, optimized_params_per_ticker,
+        sorted_final_results, models, scalers, optimized_params_per_ticker,
         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
         actual_initial_capital_1y,  # initial_balance_used
         actual_tickers_analyzed,  # num_tickers_analyzed
@@ -1331,12 +1361,14 @@ def main(
         final_buy_hold_value_3m=final_buy_hold_value_3m,
         final_static_bh_1m_value_1y=bh_1m_portfolio_value_1y,
         static_bh_1m_1y_return=((bh_1m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_static_bh_6m_value_1y=bh_6m_portfolio_value_1y,
+        static_bh_6m_1y_return=((bh_6m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_dynamic_bh_value_1y=dynamic_bh_portfolio_value_1y,
         dynamic_bh_1y_return=((dynamic_bh_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_dynamic_bh_3m_value_1y=dynamic_bh_3m_portfolio_value_1y,
         dynamic_bh_3m_1y_return=((dynamic_bh_3m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
-        final_ai_portfolio_value_1y=ai_portfolio_value_1y,
-        ai_portfolio_1y_return=((ai_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_dynamic_bh_6m_value_1y=dynamic_bh_6m_portfolio_value_1y,
+        dynamic_bh_6m_1y_return=((dynamic_bh_6m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_dynamic_bh_1m_value_1y=dynamic_bh_1m_portfolio_value_1y,
         dynamic_bh_1m_1y_return=((dynamic_bh_1m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_risk_adj_mom_value_1y=risk_adj_mom_portfolio_value_1y,
@@ -1361,21 +1393,25 @@ def main(
         ratio_3m_1y_1y_return=((ratio_3m_1y_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_ratio_1y_3m_value_1y=ratio_1y_3m_portfolio_value_1y,
         ratio_1y_3m_1y_return=((ratio_1y_3m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_momentum_volatility_hybrid_value_1y=momentum_ai_hybrid_portfolio_value_1y,
+        momentum_volatility_hybrid_1y_return=((momentum_ai_hybrid_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_turnaround_value_1y=turnaround_portfolio_value_1y,
         turnaround_1y_return=((turnaround_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         ai_transaction_costs=ai_transaction_costs_1y,
         static_bh_transaction_costs=static_bh_transaction_costs_1y,
+        static_bh_6m_transaction_costs=static_bh_transaction_costs_1y,
         static_bh_3m_transaction_costs=static_bh_3m_transaction_costs_1y,
         static_bh_1m_transaction_costs=static_bh_1m_transaction_costs_1y,
-        dynamic_bh_1y_transaction_costs=dynamic_bh_1y_transaction_costs_1y,
+        dynamic_bh_1y_transaction_costs=dynamic_bh_transaction_costs_1y,
+        dynamic_bh_6m_transaction_costs=dynamic_bh_6m_transaction_costs_1y,
         dynamic_bh_1y_vol_filter_transaction_costs=dynamic_bh_1y_vol_filter_transaction_costs_1y,
         dynamic_bh_1y_trailing_stop_transaction_costs=dynamic_bh_1y_trailing_stop_transaction_costs_1y,
         sector_rotation_transaction_costs=sector_rotation_transaction_costs_1y,
         ratio_3m_1y_transaction_costs=ratio_3m_1y_transaction_costs_1y,
         ratio_1y_3m_transaction_costs=ratio_1y_3m_transaction_costs_1y,
+        momentum_volatility_hybrid_transaction_costs=momentum_ai_hybrid_transaction_costs_1y,
         turnaround_transaction_costs=turnaround_transaction_costs_1y,
         dynamic_bh_3m_transaction_costs=dynamic_bh_3m_transaction_costs_1y,
-        ai_portfolio_transaction_costs=ai_portfolio_transaction_costs_1y,
         dynamic_bh_1m_transaction_costs=dynamic_bh_1m_transaction_costs_1y,
         risk_adj_mom_transaction_costs=risk_adj_mom_transaction_costs_1y,
         mean_reversion_transaction_costs=mean_reversion_transaction_costs_1y,
@@ -1399,11 +1435,12 @@ def main(
         # Cash utilization tracking parameters
         ai_cash_deployed=ai_cash_deployed_1y,
         static_bh_cash_deployed=static_bh_cash_deployed_1y,
+        static_bh_6m_cash_deployed=static_bh_6m_cash_deployed_1y,
         static_bh_3m_cash_deployed=static_bh_3m_cash_deployed_1y,
         static_bh_1m_cash_deployed=static_bh_1m_cash_deployed_1y,
         dynamic_bh_1y_cash_deployed=dynamic_bh_1y_cash_deployed_1y,
+        dynamic_bh_6m_cash_deployed=dynamic_bh_6m_cash_deployed_1y,
         dynamic_bh_3m_cash_deployed=dynamic_bh_3m_cash_deployed_1y,
-        ai_portfolio_cash_deployed=ai_portfolio_cash_deployed_1y,
         dynamic_bh_1m_cash_deployed=dynamic_bh_1m_cash_deployed_1y,
         risk_adj_mom_cash_deployed=risk_adj_mom_cash_deployed_1y,
         mean_reversion_cash_deployed=mean_reversion_cash_deployed_1y,
@@ -1416,12 +1453,17 @@ def main(
         sector_rotation_cash_deployed=sector_rotation_cash_deployed_1y,
         ratio_3m_1y_cash_deployed=ratio_3m_1y_cash_deployed_1y,
         ratio_1y_3m_cash_deployed=ratio_1y_3m_cash_deployed_1y,
+        momentum_volatility_hybrid_cash_deployed=momentum_ai_hybrid_cash_deployed_1y,
         turnaround_cash_deployed=turnaround_cash_deployed_1y,
         # Ensemble strategy values
         final_adaptive_ensemble_value_1y=adaptive_ensemble_portfolio_value_1y,
         adaptive_ensemble_1y_return=((adaptive_ensemble_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_volatility_ensemble_value_1y=volatility_ensemble_portfolio_value_1y,
         volatility_ensemble_1y_return=((volatility_ensemble_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_ai_volatility_ensemble_value_1y=ai_volatility_ensemble_portfolio_value_1y,
+        ai_volatility_ensemble_1y_return=((ai_volatility_ensemble_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_multi_tf_ensemble_value_1y=multi_tf_ensemble_portfolio_value_1y,
+        multi_tf_ensemble_1y_return=((multi_tf_ensemble_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_correlation_ensemble_value_1y=correlation_ensemble_portfolio_value_1y,
         correlation_ensemble_1y_return=((correlation_ensemble_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_dynamic_pool_value_1y=dynamic_pool_portfolio_value_1y,
@@ -1431,12 +1473,16 @@ def main(
         # Ensemble transaction costs
         adaptive_ensemble_transaction_costs=adaptive_ensemble_transaction_costs_1y,
         volatility_ensemble_transaction_costs=volatility_ensemble_transaction_costs_1y,
+        ai_volatility_ensemble_transaction_costs=ai_volatility_ensemble_transaction_costs_1y,
+        multi_tf_ensemble_transaction_costs=multi_tf_ensemble_transaction_costs_1y,
         correlation_ensemble_transaction_costs=correlation_ensemble_transaction_costs_1y,
         dynamic_pool_transaction_costs=dynamic_pool_transaction_costs_1y,
         sentiment_ensemble_transaction_costs=sentiment_ensemble_transaction_costs_1y,
         # Ensemble cash deployed
         adaptive_ensemble_cash_deployed=adaptive_ensemble_cash_deployed_1y,
         volatility_ensemble_cash_deployed=volatility_ensemble_cash_deployed_1y,
+        ai_volatility_ensemble_cash_deployed=ai_volatility_ensemble_cash_deployed_1y,
+        multi_tf_ensemble_cash_deployed=multi_tf_ensemble_cash_deployed_1y,
         correlation_ensemble_cash_deployed=correlation_ensemble_cash_deployed_1y,
         dynamic_pool_cash_deployed=dynamic_pool_cash_deployed_1y,
         sentiment_ensemble_cash_deployed=sentiment_ensemble_cash_deployed_1y,
@@ -1588,6 +1634,9 @@ def main(
             
         except Exception as e:
             print(f"  ⚠️ Error processing model for {ticker} from {best_period_name} period: {e}")
+    
+    # Return all_tickers_data for performance table
+    return all_tickers_data
 
 # ============================
 # Main
@@ -1610,6 +1659,7 @@ if __name__ == "__main__":
         print(f"🚀 Starting Live Trading with Strategy: {args.strategy}")
         print(f"📋 Available strategies:")
         print(f"   🏆 volatility_ensemble  - Vol Ens (+106% in backtest)")
+        print(f"   🤖 ai_volatility_ensemble - AI Vol Ens (NEW - AI-enhanced)")
         print(f"   🏆 correlation_ensemble - Corr Ens (+106% in backtest)")
         print(f"   🆕 momentum_breakout    - 52-week high breakouts")
         print(f"   🆕 factor_rotation      - Value/Growth/Mom/Quality rotation")
@@ -1627,8 +1677,6 @@ if __name__ == "__main__":
         try:
             from ticker_selection import get_all_tickers, find_top_performers
             from data_utils import _download_batch_robust
-            from datetime import datetime, timezone, timedelta
-            from config import N_TOP_TICKERS
             
             # Get all tickers from market selection (same as backtest)
             all_available_tickers = get_all_tickers()
@@ -1742,8 +1790,8 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"❌ Live trading failed: {e}")
     else:
-        # Run normal backtesting
-        main()
+        # Run normal backtesting and get the data
+        all_tickers_data = main()
     
     # Add 3M performance table at the end (runs in both live trading and backtesting modes)
     try:
@@ -1751,42 +1799,116 @@ if __name__ == "__main__":
         print("📊 UNIFIED TICKER PERFORMANCE TABLE (Sorted by 3M Performance)")
         print("=" * 100)
         
-        from datetime import datetime, timezone, timedelta
-        from ticker_selection import _get_current_1y_return_from_cache, _calculate_1y_return_from_dataframe
+        from ticker_selection import _calculate_1y_return_from_dataframe
         
         today = datetime.now(timezone.utc)
         
-        # Get all available tickers (use same logic as live trading)
-        try:
-            from ticker_selection import get_all_tickers
-            all_available_tickers = get_all_tickers()
-        except Exception as e:
-            print(f"⚠️ Could not fetch tickers: {e}")
-            all_available_tickers = []
-        
-        # Calculate 3M and 1Y performance for all available tickers
-        performance_data = []
-        
-        print(f"🔍 Calculating performance metrics for {len(all_available_tickers)} tickers...")
-        
-        for ticker in all_available_tickers:
-            try:
-                # Get 1Y performance
-                perf_1y = _get_current_1y_return_from_cache(ticker, {}, today, 365)
-                
-                # Get 3M performance (reuse the same function with 90 days)
-                perf_3m = _get_current_1y_return_from_cache(ticker, {}, today, 90)
-                
-                if perf_1y is not None and perf_3m is not None:
-                    performance_data.append({
-                        'Ticker': ticker,
-                        '3M_Perf': perf_3m,
-                        '1Y_Perf': perf_1y
-                    })
+        # Use the already loaded all_tickers_data from backtest instead of fetching fresh data
+        if all_tickers_data is not None and not all_tickers_data.empty:
+            print(f"🔍 Using backtest data for performance calculation...")
+            print(f"   Data shape: {all_tickers_data.shape}")
+            print(f"   Columns: {list(all_tickers_data.columns)[:5]}...")  # Show first 5 columns
+            
+            # Check if data is in wide format (MultiIndex columns) or long format
+            if isinstance(all_tickers_data.columns, pd.MultiIndex):
+                print("   Data is in wide format (MultiIndex columns)")
+                # Convert to long format for performance calculation
+                all_tickers_data_long = all_tickers_data.stack(level=1, future_stack=True)
+                all_tickers_data_long.index.names = ['date', 'ticker']
+                all_tickers_data_long = all_tickers_data_long.reset_index()
+                all_tickers_data_long = all_tickers_data_long.dropna(subset=['Close'])
+                all_tickers_data = all_tickers_data_long
+                print(f"   Converted to long format: {len(all_tickers_data)} rows")
+            else:
+                print("   Data is in long format")
+                # Ensure we have a 'ticker' column in long format
+                if 'ticker' not in all_tickers_data.columns:
+                    print("   ⚠️ No 'ticker' column found in long format data")
+                    # Try to infer ticker from other columns or raise a clear error
+                    possible_cols = [col for col in all_tickers_data.columns if 'ticker' in col.lower() or 'symbol' in col.lower()]
+                    if possible_cols:
+                        ticker_col = possible_cols[0]
+                        print(f"   Using column '{ticker_col}' as ticker")
+                        all_tickers_data = all_tickers_data.rename(columns={ticker_col: 'ticker'})
+                    else:
+                        raise ValueError("Data is in long format but missing 'ticker' column and cannot infer it")
+            
+            # Get unique tickers from the backtest data
+            if 'ticker' in all_tickers_data.columns:
+                all_available_tickers = all_tickers_data['ticker'].unique().tolist()
+            else:
+                print("   ⚠️ No 'ticker' column found in data")
+                # Fallback to fetching fresh data
+                raise ValueError("Ticker column not found")
+            print(f"   Found {len(all_available_tickers)} tickers in backtest data")
+            
+            # Group data by ticker for easier processing
+            ticker_data_dict = {}
+            for ticker in all_available_tickers:
+                ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                if not ticker_df.empty:
+                    ticker_df = ticker_df.set_index('date')
+                    ticker_data_dict[ticker] = ticker_df
+            
+            # Calculate 3M and 1Y performance for all tickers in backtest data
+            performance_data = []
+            
+            print(f"🔍 Calculating performance metrics for {len(all_available_tickers)} tickers...")
+            
+            for ticker in all_available_tickers:
+                try:
+                    ticker_df = ticker_data_dict[ticker]
                     
+                    # Calculate 1Y performance
+                    perf_1y = _calculate_1y_return_from_dataframe(ticker_df, today, 365)
+                    
+                    # Calculate 3M performance
+                    perf_3m = _calculate_1y_return_from_dataframe(ticker_df, today, 90)
+                    
+                    if perf_1y is not None and perf_3m is not None:
+                        performance_data.append({
+                            'Ticker': ticker,
+                            '3M_Perf': perf_3m,
+                            '1Y_Perf': perf_1y
+                        })
+                        
+                except Exception as e:
+                    # Skip tickers with errors
+                    continue
+        else:
+            print("⚠️ No backtest data available, fetching fresh data...")
+            # Fallback to original behavior if no backtest data
+            from ticker_selection import get_all_tickers, _get_current_1y_return_from_cache
+            
+            try:
+                all_available_tickers = get_all_tickers()
             except Exception as e:
-                # Skip tickers with errors
-                continue
+                print(f"⚠️ Could not fetch tickers: {e}")
+                all_available_tickers = []
+            
+            # Calculate 3M and 1Y performance for all available tickers
+            performance_data = []
+            
+            print(f"🔍 Calculating performance metrics for {len(all_available_tickers)} tickers...")
+            
+            for ticker in all_available_tickers:
+                try:
+                    # Get 1Y performance
+                    perf_1y = _get_current_1y_return_from_cache(ticker, {}, today, 365)
+                    
+                    # Get 3M performance (reuse the same function with 90 days)
+                    perf_3m = _get_current_1y_return_from_cache(ticker, {}, today, 90)
+                    
+                    if perf_1y is not None and perf_3m is not None:
+                        performance_data.append({
+                            'Ticker': ticker,
+                            '3M_Perf': perf_3m,
+                            '1Y_Perf': perf_1y
+                        })
+                        
+                except Exception as e:
+                    # Skip tickers with errors
+                    continue
         
         # Sort by 3M performance (descending)
         performance_data.sort(key=lambda x: x['3M_Perf'], reverse=True)

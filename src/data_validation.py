@@ -7,7 +7,7 @@ from typing import Tuple, Optional
 
 
 # Minimum data requirements (in calendar days)
-MIN_DAYS_FOR_TRAINING = 365  # Need at least 1 year of calendar days for training
+MIN_DAYS_FOR_TRAINING = 329  # Reduced from 365 - Need ~329 days for training (329 * 70% = 230)
 MIN_DAYS_FOR_PREDICTION = 120  # Need at least 120 days for prediction with features
 MIN_ROWS_AFTER_FEATURES = 50  # Minimum rows after feature engineering
 

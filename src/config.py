@@ -11,7 +11,7 @@ from unittest.runner import TextTestRunner
 SEED                    = 42
 
 # --- Provider & caching
-DATA_PROVIDER           = 'alpaca'    # 'stooq', 'yahoo', 'alpaca', or 'twelvedata'
+DATA_PROVIDER           = 'twelvedata' # 'stooq', 'yahoo', 'alpaca', or 'twelvedata'
 USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin
 DATA_INTERVAL           = '1d'       # '1m', '5m', '15m', '30m', '1h', '1d', '1wk', '1mo'
 DATA_CACHE_DIR          = Path("data_cache")
@@ -30,6 +30,10 @@ ALPACA_SECRET_KEY       = "8By7ituNTmspLsWc191hQfviD3xaNNdd2opB8tJAfmK6"
 # TwelveData API credentials
 TWELVEDATA_API_KEY      = "aed912386d7c47939ebc28a86a96a021"
 TWELVEDATA_MAX_WORKERS  = 5  # Max parallel API requests (free tier: 800 credits/day)
+
+# Alpha Vantage API credentials (FREE tier - 500 calls/day, 25 calls/minute)
+ALPHA_VANTAGE_API_KEY   = "6WMZFFL86AE6QK2R"  # Get free key from https://www.alphavantage.co/support/#api-key
+ALPHA_VANTAGE_MAX_CALLS_PER_MINUTE = 25  # Free tier limit
 
 # --- ML Library Availability Flags (initialized to False, updated in main.py) ---
 ALPACA_AVAILABLE = False
@@ -97,12 +101,16 @@ PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls f
 from multiprocessing import cpu_count
 # Limit to 10 processes when using GPU to avoid GPU memory exhaustion
 # PyTorch models (LSTM/GRU/TCN) load on GPU, and too many parallel processes cause OOM kills
-# Use all but 5 CPU cores (keep some headroom for OS, data fetch, and GPU driver overhead)
-NUM_PROCESSES           = max(1, cpu_count() - 5)
+# Use all but 2 CPU cores (more aggressive CPU usage)
+NUM_PROCESSES           = max(1, cpu_count() - 2)
 
 # Parallel processing threshold - only use parallel processing for ticker lists larger than this
 # Below this threshold, sequential processing is faster due to lower overhead
 PARALLEL_THRESHOLD     = 200      # Use parallel only for >200 tickers
+
+# Enable parallel strategy execution within each day (experimental)
+# This runs strategy selections in parallel to improve CPU usage
+ENABLE_PARALLEL_STRATEGIES = True   # Run strategies in parallel within each day
 
 # Training batch size for parallel processing (how many tasks per batch)
 TRAINING_BATCH_SIZE     = 10000      # Smaller batches for better timeout handling
@@ -201,7 +209,12 @@ VALIDATION_DAYS         = 90         # FIX 4: Validation period for threshold op
 # --- Calendar days ---
 CALENDAR_DAYS_PER_YEAR = 365
 
-# --- Backtest End Date Control ---
+# --- Data Granularity ---
+# Use daily data by default (recommended for momentum strategies)
+# Set to True to enhance with intraday features (experimental)
+ENABLE_INTRADAY_ENHANCEMENT = False   # Add 5m/15m data for enhanced features
+INTRADAY_INTERVAL = "15m"             # Use 15-minute intervals for balance
+INTRADAY_LOOKBACK_DAYS = 30            # Only use recent intraday data
 # Set to True to run backtest until today - prediction horizon (ensures future data for validation)
 # Set to False to subtract prediction horizon from end date (ensures future data for validation)
 RUN_BACKTEST_UNTIL_TODAY = True   # Run backtest until today - horizon
@@ -218,6 +231,7 @@ TOP_N_STOCKS             = 10         # Number of stocks to hold in portfolio (s
 # --- Live Trading Strategy Selection ---
 # Choose which strategy to use for live trading:
 # 'volatility_ensemble'    = 🏆 Vol Ens - Volatility-adjusted position sizing (+106% in backtest)
+# 'ai_volatility_ensemble' = 🤖 AI Vol Ens - AI-enhanced volatility ensemble (NEW)
 # 'correlation_ensemble'   = 🏆 Corr Ens - Correlation-filtered diversification (+106% in backtest)
 # 'dynamic_bh_1y'          = Dynamic BH 1Y - Annual rebalancing
 # 'dynamic_bh_3m'          = Dynamic BH 3M - Quarterly rebalancing
@@ -236,7 +250,7 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
 RETRAIN_FREQUENCY_DAYS = 10  # Retrain every 10 days - aligned with prediction horizon
-ENABLE_WALK_FORWARD_RETRAINING = True   # Set to False to use only saved models, no retraining
+ENABLE_WALK_FORWARD_RETRAINING = False   # Set to False to use only saved models, no retraining
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
@@ -246,13 +260,14 @@ ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validat
 
 # --- Portfolio Stratebgy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
-# AI Portfolio + traditional strategies (no AI Strategy or AI Hybrid)
+# AI Strategy + traditional strategies
 ENABLE_AI_STRATEGY      = True   # ENABLED - Use existing saved models (no new training)
-ENABLE_AI_PORTFOLIO     = True    # ENABLED - AI Portfolio meta-learning
 ENABLE_STATIC_BH        = True   # ENABLED - Static Buy & Hold benchmark
 ENABLE_DYNAMIC_BH_1Y    = True   # ENABLED - Dynamic BH 1-year
 ENABLE_DYNAMIC_BH_3M    = True   # ENABLED - Dynamic BH 3-month
 ENABLE_DYNAMIC_BH_1M    = True   # ENABLED - Dynamic BH 1-month
+ENABLE_DYNAMIC_BH_6M    = True   # ENABLED - Dynamic BH 6-month
+ENABLE_STATIC_BH_6M     = True   # ENABLED - Static BH 6-month
 ENABLE_RISK_ADJ_MOM     = True   # ENABLED - Risk-Adjusted Momentum
 ENABLE_MEAN_REVERSION   = True   # ENABLED - Mean Reversion
 ENABLE_SEASONAL         = True   # ENABLED - Seasonal strategy
@@ -261,14 +276,32 @@ ENABLE_MOMENTUM_AI_HYBRID = True   # ENABLED - Use existing saved models
 ENABLE_VOLATILITY_ADJ_MOM = True  # ENABLED - Volatility-Adjusted Momentum strategy
 ENABLE_DYNAMIC_BH_1Y_VOL_FILTER = True  # NEW - Dynamic BH 1Y with Volatility Filter
 ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP = True   # ENABLED - Dynamic BH 1Y with trailing stop
-ENABLE_SECTOR_ROTATION = True   # NEW - Sector Rotation Strategy
-ENABLE_MULTITASK_LEARNING = False   # NEW - Multi-Task Learning Strategy
-ENABLE_3M_1Y_RATIO = True   # NEW - 3M/1Y Ratio Strategy
-ENABLE_ADAPTIVE_STRATEGY = True   # NEW - Adaptive Meta-Ensemble Strategy (combines multiple strategies dynamically)
-ENABLE_VOLATILITY_ENSEMBLE = True   # NEW - Volatility-Adjusted Ensemble Strategy (risk-managed position sizing)
-ENABLE_CORRELATION_ENSEMBLE = True   # NEW - Correlation-Filtered Ensemble Strategy (diversification-focused)
-ENABLE_DYNAMIC_POOL = True   # NEW - Dynamic Strategy Pool Strategy (rotates strategies based on performance)
-ENABLE_SENTIMENT_ENSEMBLE = True   # NEW - Sentiment-Enhanced Ensemble Strategy (incorporates news sentiment)
+ENABLE_SECTOR_ROTATION = False   # DISABLED - Sector Rotation Strategy (CPU intensive)
+ENABLE_MULTITASK_LEARNING = False    # DISABLED - Multi-Task Learning Strategy (CPU intensive)
+ENABLE_3M_1Y_RATIO = False   # DISABLED - 3M/1Y Ratio Strategy
+ENABLE_MOMENTUM_VOLATILITY_HYBRID = False   # DISABLED - Momentum-Volatility Hybrid Strategy
+ENABLE_ADAPTIVE_STRATEGY = False   # DISABLED - Adaptive Meta-Ensemble Strategy (CPU intensive)
+ENABLE_VOLATILITY_ENSEMBLE = True   # ENABLED - Volatility-Adjusted Ensemble Strategy (risk-managed position sizing)
+ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble Strategy (diversification-focused)
+ENABLE_AI_VOLATILITY_ENSEMBLE = True   # ENABLED - AI-Enhanced Volatility Ensemble Strategy (AI-optimized weights and volatility caps)
+ENABLE_SENTIMENT_ENSEMBLE = False   # DISABLED - Sentiment-Enhanced Ensemble Strategy (news/social sentiment analysis)
+ENABLE_DYNAMIC_POOL = False   # DISABLED - Dynamic Strategy Pool Strategy (CPU intensive)
+# --- Multi-Timeframe Ensemble Strategy ---
+# Combines signals from different timeframes for better entry/exit timing
+ENABLE_MULTI_TIMEFRAME_ENSEMBLE = True   # NEW - Multi-Timeframe Ensemble Strategy
+MULTI_TIMEFRAMES = ["1d", "4h", "1h"]    # Timeframes to analyze
+MULTI_TIMEFRAME_LOOKBACK = {
+    "1d": 365,    # Daily: 1 year lookback
+    "4h": 30,     # 4-hour: 30 days lookback  
+    "1h": 7       # 1-hour: 7 days lookback
+}
+MULTI_TIMEFRAME_WEIGHTS = {
+    "1d": 0.6,    # Daily gets 60% weight (trend direction)
+    "4h": 0.3,    # 4-hour gets 30% weight (momentum confirmation)
+    "1h": 0.1     # 1-hour gets 10% weight (timing)
+}
+# Require consensus from at least this many timeframes
+MULTI_TIMEFRAME_MIN_CONSENSUS = 2  # At least 2 timeframes must agree
 ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (slow, uncertain benefit)
 
 # --- LLM Strategy Parameters (via Ollama) ---
@@ -307,6 +340,11 @@ SECTOR_ROTATION_TOP_N = 5  # Number of top sectors to hold
 SECTOR_ROTATION_MOMENTUM_WINDOW = 60  # 60-day momentum for sector selection
 SECTOR_ROTATION_MIN_MOMENTUM = 0.0  # TEMPORARILY reduced to 0% for debugging - was 5.0%
 
+# --- Data Freshness Check ---
+# Maximum age of price data before rejecting it as stale (in days)
+# Set to 5 to allow for weekends (Fri close -> Mon open = 3 days) + 1 holiday
+DATA_FRESHNESS_MAX_DAYS = 5  # Maximum data age in days (allows weekends + holidays)
+
 # --- Risk-Adjusted Momentum Improvements ---
 # The existing Risk-Adjusted Momentum already uses return/volatility scoring
 # PROPOSAL 1: Enhanced parameters for better performance
@@ -335,9 +373,10 @@ RISK_ADJ_MOM_MIN_SCORE = 10.0  # FIXED: Lowered from 30.0 to allow more candidat
 # Set to 0 to maintain true buy & hold behavior (no rebalancing)
 # These are default values - if OPTIMIZE_REBALANCE_HORIZON is True, the system will
 # test multiple horizons (30-90 days) and pick the best one
-STATIC_BH_1Y_REBALANCE_DAYS = 60   # Default rebalance period for 1Y selection
-STATIC_BH_3M_REBALANCE_DAYS = 60   # Default rebalance period for 3M selection
-STATIC_BH_1M_REBALANCE_DAYS = 60   # Default rebalance period for 1M selection
+STATIC_BH_1Y_REBALANCE_DAYS = 0   # Default rebalance period for 1Y selection
+STATIC_BH_3M_REBALANCE_DAYS = 0   # Default rebalance period for 3M selection
+STATIC_BH_1M_REBALANCE_DAYS = 0   # Default rebalance period for 1M selection
+STATIC_BH_6M_REBALANCE_DAYS = 0   # Default rebalance period for 6M selection
 
 # --- Rebalance Horizon Optimization ---
 # If True, test all rebalance horizons from 30 to 90 days for static strategies
@@ -367,7 +406,7 @@ PREDICTION_LOOKBACK_DAYS = 120
 # --- UNIFIED REBALANCING FREQUENCY FOR ALL DYNAMIC STRATEGIES ---
 # This controls rebalancing frequency for ALL dynamic strategies:
 #   - Dynamic BH (1Y/3M/1M)
-#   - AI Strategy, AI Portfolio
+#   - AI Strategy
 #   - Risk-Adj Mom, Mean Reversion, Quality+Mom, Vol-Adj Mom
 #   - Momentum+AI Hybrid, Sector Rotation, 3M/1Y Ratio
 # Note: Static BH strategies remain static (no rebalancing) as intended
@@ -377,25 +416,13 @@ PREDICTION_LOOKBACK_DAYS = 120
 #   30 = Monthly rebalancing
 AI_REBALANCE_FREQUENCY_DAYS = 1  # Rebalancing frequency for all dynamic strategies
 
-# AI Portfolio Rebalancing Threshold (REMOVED - now uses transaction cost guard like other strategies)
-# Threshold logic removed - AI Portfolio now uses same portfolio value comparison as Dynamic BH
-
 # --- AI Strategy (3-stock daily selection) Rebalancing Threshold (REMOVED)
 # AI Strategy now uses transaction cost guard like other strategies (Dynamic BH, Risk-Adj Mom, etc.)
 # No arbitrary annual thresholds - rebalances based on portfolio value growth since last rebalance
 
-# AI Portfolio Training Parameters
-AI_PORTFOLIO_EVALUATION_WINDOW = 30  # Days to evaluate portfolio performance during training (more responsive)
-AI_PORTFOLIO_STEP_SIZE = 3  # Days between training samples (more frequent = more training data)
-AI_PORTFOLIO_PERFORMANCE_THRESHOLD_ANNUAL = 0.30  # ANNUALIZED return threshold (0.30 = 30% per year AFTER costs)
-# The code automatically converts this to the evaluation window:
-#    Formula: period_threshold = (1 + annual)^(days/365) - 1
-#    Example: 30% annual → (1.30)^(30/365) - 1 = 2.31% for 30-day window
-#    Higher values = more selective (fewer "good" portfolios), lower = more examples
-
 # --- Momentum + AI Hybrid Strategy Parameters ---
 MOMENTUM_AI_HYBRID_TOP_N = 20  # Select top N stocks by momentum
-MOMENTUM_AI_HYBRID_PORTFOLIO_SIZE = 5  # Hold 5 stocks at a time (diversification)
+MOMENTUM_AI_HYBRID_PORTFOLIO_SIZE = PORTFOLIO_SIZE  # Use same portfolio size as other strategies
 MOMENTUM_AI_HYBRID_BUY_THRESHOLD = 0.02  # Buy if AI predicts >2% return
 MOMENTUM_AI_HYBRID_SELL_THRESHOLD = -0.01  # Sell if AI predicts <-1% return
 # Note: Uses AI_REBALANCE_FREQUENCY_DAYS for rebalancing frequency
@@ -420,7 +447,7 @@ USE_PERFORMANCE_BENCHMARK = False  # Disable strict benchmark filtering for smal
 USE_LOGISTIC_REGRESSION = False      # Not needed - too simple
 USE_SVM                 = False      # SVR slower than XGBoost, usually worse
 USE_MLP_CLASSIFIER      = False      # Less effective than LSTM/TCN for time series
-USE_LIGHTGBM            = True       # ENABLED - Best for AI Portfolio meta-learning
+USE_LIGHTGBM            = True       # ENABLED - Best gradient boosting
 USE_XGBOOST             = True       # KEEP - Best traditional ML
 USE_LSTM                = True       # KEEP - Best deep learning for sequences
 USE_GRU                 = True        # Enabled - GRU is faster and sometimes better than LSTM
@@ -457,7 +484,7 @@ ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION = False  # Enable hyperparameter search f
 # --- Misc
 INITIAL_BALANCE         = 100_000.0
 SAVE_PLOTS              = False     # Disable SHAP (causes errors with XGBoost Regressor)
-FORCE_TRAINING          = True
+FORCE_TRAINING          = False
 CONTINUE_TRAINING_FROM_EXISTING = False  # Force fresh training to avoid loading corrupted PyTorch models
 # Threshold optimization removed - system uses simplified buy-and-hold
 

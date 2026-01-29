@@ -700,9 +700,11 @@ def aggregate_results(
                 
                 # Save with standard naming
                 models_dir = Path("logs/models")
+                _ensure_dir(models_dir)  # Ensure directory exists before saving
                 final_model_path = models_dir / f"{ticker}_TargetReturn_model.joblib"
                 final_scaler_path = models_dir / f"{ticker}_TargetReturn_scaler.joblib"
                 
+                print(f"   💾 Saving model for {ticker} to {final_model_path.absolute()}")
                 joblib.dump(model, final_model_path)
                 joblib.dump(scaler, final_scaler_path)
                 
@@ -721,10 +723,20 @@ def aggregate_results(
                         pass
             
             except Exception as e:
-                print(f"  ⚠️ Error loading model for {ticker}: {e}")
+                print(f"  ⚠️ Error loading/saving model for {ticker}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
         
         print(f"   ✅ Successfully aggregated {len(ticker_models)} ticker models")
+        
+        # Verify models were saved
+        saved_count = 0
+        for ticker in ticker_models.keys():
+            model_file = models_dir / f"{ticker}_TargetReturn_model.joblib"
+            if model_file.exists():
+                saved_count += 1
+        print(f"   💾 Verified {saved_count}/{len(ticker_models)} models saved to disk at {models_dir.absolute()}")
     
     # ============================================
     # AGGREGATE AI PORTFOLIO MODELS
