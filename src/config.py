@@ -256,7 +256,7 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
 RETRAIN_FREQUENCY_DAYS = 10  # Retrain every 10 days - aligned with prediction horizon
-ENABLE_WALK_FORWARD_RETRAINING = False   # Set to False to use only saved models, no retraining
+ENABLE_WALK_FORWARD_RETRAINING = True   # Set to False to use only saved models, no retraining
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
@@ -297,6 +297,11 @@ ENABLE_DYNAMIC_POOL = False   # DISABLED - Dynamic Strategy Pool Strategy (CPU i
 # --- Multi-Timeframe Ensemble Strategy ---
 # Combines signals from different timeframes for better entry/exit timing
 ENABLE_MULTI_TIMEFRAME_ENSEMBLE = True   # NEW - Multi-Timeframe Ensemble Strategy
+
+# Additional strategy enable flags
+ENABLE_TURNAROUND = True   # ENABLED - Turnaround Strategy (buy depressed stocks)
+ENABLE_MOMENTUM_VOLATILITY_HYBRID = False   # DISABLED - Momentum-Volatility Hybrid Strategy
+ENABLE_3M_1Y_RATIO = False   # DISABLED - 3M/1Y Ratio Strategy
 MULTI_TIMEFRAMES = ["1d", "4h", "1h"]    # Timeframes to analyze
 MULTI_TIMEFRAME_LOOKBACK = {
     "1d": 365,    # Daily: 1 year lookback
@@ -329,7 +334,7 @@ ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
 PORTFOLIO_SIZE          = 10        # Number of stocks to hold in portfolio
 TOTAL_CAPITAL           = 100000     # Total capital to invest ($100,000)
 INVESTMENT_PER_STOCK    = TOTAL_CAPITAL / PORTFOLIO_SIZE  # Automatically calculated
-TRANSACTION_COST        = 0.01       # 1% per trade leg (buy or sell)
+TRANSACTION_COST        = 0.011      # 1.1% per trade leg (buy or sell)
 
 # --- Dynamic BH 1Y + Volatility Filter Parameters ---
 # Maximum allowed annualized volatility for stock selection (as percentage)

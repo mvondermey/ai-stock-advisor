@@ -186,7 +186,7 @@ import pandas as pd
 # Import torch if available
 if PYTORCH_AVAILABLE:
     import torch
-import gymnasium as gym
+# import gymnasium as gym  # Not used, causing import error
 import codecs
 import random
 import requests  # Added for internet time fetching
@@ -763,7 +763,6 @@ def main(
         if len(all_available_tickers) > PARALLEL_THRESHOLD:
             print(f"   Using parallel validation for {len(all_available_tickers)} tickers...")
             from multiprocessing import Pool
-            from tqdm import tqdm
             import functools
             
             # Partial function to pass ticker_counts
@@ -824,7 +823,6 @@ def main(
         if len(all_available_tickers) > PARALLEL_THRESHOLD:
             print(f"   Using parallel detailed validation for {len(all_available_tickers)} tickers...")
             from concurrent.futures import ThreadPoolExecutor
-            from tqdm import tqdm
             
             num_workers = min(NUM_PROCESSES, len(all_available_tickers))
             with ThreadPoolExecutor(max_workers=num_workers) as executor:

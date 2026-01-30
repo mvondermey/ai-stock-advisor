@@ -231,7 +231,7 @@ def print_final_summary(
     # Add all strategies to the list
     strategies_data.append(('AI Strategy', final_strategy_value_1y, ai_1y_return, ai_transaction_costs, ai_cash_deployed))
     strategies_data.append(('Static BH 1Y', final_buy_hold_value_1y, ((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else None, static_bh_transaction_costs, static_bh_cash_deployed))
-    strategies_data.append(('Static BH 6M', final_buy_hold_value_6m, ((final_buy_hold_value_6m - initial_balance_used) / abs(initial_balance_used)) * 100 if (final_buy_hold_value_6m and initial_balance_used != 0) else None, static_bh_6m_transaction_costs, static_bh_6m_cash_deployed))
+    strategies_data.append(('Static BH 6M', final_static_bh_6m_value_1y, static_bh_6m_1y_return, static_bh_6m_transaction_costs, static_bh_6m_cash_deployed))
     strategies_data.append(('Static BH 3M', final_buy_hold_value_3m, ((final_buy_hold_value_3m - initial_balance_used) / abs(initial_balance_used)) * 100 if (final_buy_hold_value_3m and initial_balance_used != 0) else None, static_bh_3m_transaction_costs, static_bh_3m_cash_deployed))
     strategies_data.append(('Static BH 1M', final_static_bh_1m_value_1y, static_bh_1m_1y_return, static_bh_1m_transaction_costs, static_bh_1m_cash_deployed))
     strategies_data.append(('Dyn BH 1Y', final_dynamic_bh_value_1y, dynamic_bh_1y_return, dynamic_bh_1y_transaction_costs, dynamic_bh_1y_cash_deployed))
@@ -285,28 +285,40 @@ def print_final_summary(
         annualized = ((1 + decimal_ret) ** (365.0 / days) - 1) * 100
         return annualized
     
-    # Helper for cash utilization
-    def calc_cash_util(final_val, cash_dep):
-        if final_val is None or initial_balance_used == 0:
-            return "N/A"
-        if cash_dep is not None and cash_dep > 0:
-            return f"{min((cash_dep / initial_balance_used) * 100, 999.9):.1f}%"
-        return f"{min((final_val / initial_balance_used) * 100, 999.9):.1f}%"
-    
-    # Print vertical table header
+    # Print vertical table header (same format as daily summary + annualized)
     print(f"\n📊 STRATEGY PERFORMANCE RANKING ({display_period} Backtest)")
-    print("=" * 90)
-    print(f"{'Rank':<5} {'Strategy':<18} {'Final Value':>14} {'Return':>10} {'Annualized':>12} {'Cash Util':>12}")
-    print("-" * 90)
+    print("=" * 95)
+    print(f"{'Rank':<5} {'Strategy':<20} {'Value':<12} {'Return':<10} {'Annualized':<12} {'Cash':<12} {'Invested':<10}")
+    print("-" * 95)
     
-    # Print each strategy row
+    # Print each strategy row (same format as daily summary + annualized)
     for rank, (name, final_val, ret, txn_cost, cash_dep) in enumerate(strategies_data, 1):
         # Format values
         if final_val is not None and ret is not None:
             val_str = f"${final_val:,.0f}"
             ret_str = f"{ret:+.1f}%"
+            
+            # Calculate annualized return
             ann_ret = annualize_return(ret, backtest_days)
             ann_str = f"{ann_ret:+.1f}%" if ann_ret is not None else "N/A"
+            
+            # Calculate cash and invested (similar to daily summary)
+            # For strategies that traded (return != 0), assume fully invested
+            # For strategies that didn't trade (return == 0), show all as cash
+            if ret is not None and abs(ret) > 0.01:
+                # Strategy traded - assume fully invested (cash near 0)
+                invested = final_val
+                strat_cash = 0
+                allocation_pct = 100
+            else:
+                # Strategy didn't trade - all cash, no investment
+                invested = 0
+                strat_cash = final_val
+                allocation_pct = 0
+            
+            cash_str = f"${strat_cash:,.0f}"
+            invested_str = f"({allocation_pct:.0f}%)"
+            
             # Add medal for top 3
             if rank == 1:
                 name = f"🥇 {name}"
@@ -318,12 +330,12 @@ def print_final_summary(
             val_str = "N/A"
             ret_str = "N/A"
             ann_str = "N/A"
+            cash_str = "N/A"
+            invested_str = "N/A"
         
-        util_str = calc_cash_util(final_val, cash_dep)
-        
-        print(f"{rank:<5} {name:<18} {val_str:>14} {ret_str:>10} {ann_str:>12} {util_str:>12}")
+        print(f"{rank:<5} {name:<20} {val_str:<12} {ret_str:<10} {ann_str:<12} {cash_str:<12} {invested_str:<10}")
     
-    print("=" * 90)
+    print("=" * 95)
 
     # ============================================
     # UNIFIED TABLE: All Strategies Side by Side

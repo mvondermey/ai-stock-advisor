@@ -461,9 +461,19 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
         else:
             return []
     
+    # Ensure current_date is a datetime object
+    if isinstance(current_date, str):
+        try:
+            current_date = pd.to_datetime(current_date)
+        except Exception:
+            pass
+
     # Ensure current_date is timezone-aware for comparison
-    if current_date.tzinfo is None:
+    if hasattr(current_date, 'tzinfo') and current_date.tzinfo is None:
         current_date = current_date.replace(tzinfo=timezone.utc)
+    elif not hasattr(current_date, 'tzinfo'):
+        # Fallback if it's not a datetime-like object
+        return []
     
     # Determine lookback period
     if period == '1y':
@@ -535,9 +545,8 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
             
             if start_price > 0:
                 performance = ((end_price - start_price) / start_price) * 100
-                # Only include stocks with positive performance
-                if performance > 0:
-                    performances.append((ticker, performance))
+                # Include all stocks (not just positive performance) to ensure we have picks
+                performances.append((ticker, performance))
         
         except Exception as e:
             print(f"   🔍 DEBUG: {ticker} error: {e}")
@@ -646,9 +655,19 @@ def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Di
         else:
             return []
     
+    # Ensure current_date is a datetime object
+    if isinstance(current_date, str):
+        try:
+            current_date = pd.to_datetime(current_date)
+        except Exception:
+            pass
+
     # Ensure current_date is timezone-aware for comparison
-    if current_date.tzinfo is None:
+    if hasattr(current_date, 'tzinfo') and current_date.tzinfo is None:
         current_date = current_date.replace(tzinfo=timezone.utc)
+    elif not hasattr(current_date, 'tzinfo'):
+        # Fallback if it's not a datetime-like object
+        return []
     
     for ticker in all_tickers:
         try:
@@ -966,9 +985,19 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
         else:
             return []
     
+    # Ensure current_date is a datetime object
+    if isinstance(current_date, str):
+        try:
+            current_date = pd.to_datetime(current_date)
+        except Exception:
+            pass
+
     # Ensure current_date is timezone-aware for comparison
-    if current_date.tzinfo is None:
+    if hasattr(current_date, 'tzinfo') and current_date.tzinfo is None:
         current_date = current_date.replace(tzinfo=timezone.utc)
+    elif not hasattr(current_date, 'tzinfo'):
+        # Fallback if it's not a datetime-like object
+        return []
     
     print(f"   📊 3M/1Y Ratio Strategy analyzing {len(all_tickers)} tickers")
     
@@ -1175,9 +1204,19 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
         else:
             return []
     
+    # Ensure current_date is a datetime object
+    if isinstance(current_date, str):
+        try:
+            current_date = pd.to_datetime(current_date)
+        except Exception:
+            pass
+
     # Ensure current_date is timezone-aware for comparison
-    if current_date.tzinfo is None:
+    if hasattr(current_date, 'tzinfo') and current_date.tzinfo is None:
         current_date = current_date.replace(tzinfo=timezone.utc)
+    elif not hasattr(current_date, 'tzinfo'):
+        # Fallback if it's not a datetime-like object
+        return []
     
     for ticker in all_tickers:
         try:
@@ -1228,15 +1267,15 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
             if len(turnaround_candidates) < 5:
                 print(f"   🔍 DEBUG {ticker}: 3Y={three_year_performance:+.1f}%, 1Y={one_year_performance:+.1f}%")
             
-            # Turnaround criteria:
-            # 1. Poor 3Y performance (negative or very low)
-            # 2. Strong 1Y performance (positive and significant)
-            # 3. Recovery ratio: 1Y performance should be much better than 3Y annualized
-            if three_year_performance > 0:  # 3Y should be negative or poor
+            # Turnaround criteria (relaxed for more candidates):
+            # 1. Poor 3Y performance (negative or low - below 30%)
+            # 2. Strong 1Y performance (positive - minimum 10%)
+            # 3. Recovery ratio: 1Y performance should be better than 3Y annualized
+            if three_year_performance > 30:  # 3Y should be below 30% (relaxed from 0%)
                 filtered_3y_positive += 1
                 continue
             
-            if one_year_performance < 20:  # Need strong 1Y performance (minimum 20%)
+            if one_year_performance < 10:  # Need positive 1Y performance (relaxed from 20%)
                 filtered_1y_low += 1
                 continue
             
@@ -1245,8 +1284,8 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
             three_year_annual = three_year_performance / 3
             recovery_score = one_year_performance - three_year_annual
             
-            # Add to candidates if recovery is strong
-            if recovery_score > 30:  # 1Y should be at least 30% better than 3Y annual average
+            # Add to candidates if recovery is positive (relaxed from 30%)
+            if recovery_score > 10:  # 1Y should be at least 10% better than 3Y annual average
                 turnaround_candidates.append((ticker, recovery_score, one_year_performance, three_year_performance))
         
         except Exception as e:

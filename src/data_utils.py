@@ -7,6 +7,36 @@ from pathlib import Path # Import Path for _ensure_dir
 from utils import _to_utc
 import yfinance as yf
 import time
+import warnings
+import logging
+
+# Suppress yfinance warnings for delisted tickers
+warnings.filterwarnings('ignore', message='.*possibly delisted.*')
+warnings.filterwarnings('ignore', message='.*no timezone found.*')
+warnings.filterwarnings('ignore', message='.*Failed download.*')
+logging.getLogger('yfinance').setLevel(logging.ERROR)
+
+# Suppress pandas FutureWarnings that yfinance might trigger
+warnings.filterwarnings('ignore', category=FutureWarning)
+
+# Context manager to suppress yfinance stderr output
+import contextlib
+import os
+import sys
+
+@contextlib.contextmanager
+def suppress_yfinance_output():
+    """Context manager to suppress yfinance stderr output for delisted tickers."""
+    # Save original stderr
+    original_stderr = sys.stderr
+    try:
+        # Create a null file descriptor
+        with open(os.devnull, 'w') as devnull:
+            sys.stderr = devnull
+            yield
+    finally:
+        # Restore original stderr
+        sys.stderr = original_stderr
 
 # Import pandas_datareader for Stooq
 try:
@@ -394,8 +424,10 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         # Yahoo as final fallback (always try if others fail)
         if new_df.empty:
             try:
-                downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, 
-                                           interval=DATA_INTERVAL, auto_adjust=True, progress=False)
+                # Suppress yfinance stderr output for delisted tickers
+                with suppress_yfinance_output():
+                    downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, 
+                                               interval=DATA_INTERVAL, auto_adjust=True, progress=False)
                 if downloaded_df is not None and not downloaded_df.empty:
                     new_df = downloaded_df.dropna()
             except Exception:
