@@ -28,7 +28,7 @@ from config import (
     ENABLE_STATIC_BH_6M, ENABLE_STATIC_BH, ENABLE_DYNAMIC_BH_1Y, ENABLE_DYNAMIC_BH_6M, ENABLE_DYNAMIC_BH_3M, ENABLE_DYNAMIC_BH_1M,
     ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, ENABLE_SECTOR_ROTATION, ENABLE_LLM_STRATEGY,
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_ADAPTIVE_STRATEGY,
-    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE, ENABLE_AI_VOLATILITY_ENSEMBLE,
+    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE, ENABLE_AI_VOLATILITY_ENSEMBLE,
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
     CALENDAR_DAYS_PER_YEAR
 )
@@ -73,7 +73,7 @@ from config import (
     ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT,
     ENABLE_SECTOR_ROTATION, SECTOR_ROTATION_TOP_N, AI_REBALANCE_FREQUENCY_DAYS,
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_ADAPTIVE_STRATEGY,
-    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE,
+    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE,
     ENABLE_LLM_STRATEGY, LLM_REBALANCE_FREQUENCY_DAYS, LLM_MIN_SCORE,
     RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION, RISK_ADJ_MOM_CONFIRM_SHORT, RISK_ADJ_MOM_CONFIRM_MEDIUM, RISK_ADJ_MOM_CONFIRM_LONG, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
     RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER,
@@ -104,6 +104,7 @@ turnaround_transaction_costs = None
 adaptive_strategy_transaction_costs = None
 adaptive_strategy_portfolio_value = None
 volatility_ensemble_transaction_costs = None
+enhanced_volatility_transaction_costs = None
 correlation_ensemble_transaction_costs = None
 dynamic_pool_transaction_costs = None
 sentiment_ensemble_transaction_costs = None
@@ -1458,6 +1459,14 @@ def _run_portfolio_backtest_walk_forward(
     current_volatility_ensemble_stocks = []  # Current top stocks held by volatility ensemble
     volatility_ensemble_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
+    # ENHANCED VOLATILITY TRADER: Initialize portfolio tracking
+    enhanced_volatility_portfolio_value = initial_capital_needed  # Start with full capital
+    enhanced_volatility_portfolio_history = [enhanced_volatility_portfolio_value]
+    enhanced_volatility_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float, 'stop_loss': float, 'take_profit': float}
+    enhanced_volatility_cash = initial_capital_needed  # Start with same capital as AI
+    current_enhanced_volatility_stocks = []  # Current top stocks held by enhanced volatility trader
+    enhanced_volatility_last_rebalance_value = initial_capital_needed  # Transaction cost guard
+
     # AI VOLATILITY ENSEMBLE: Initialize portfolio tracking
     ai_volatility_ensemble_portfolio_value = 0.0
     ai_volatility_ensemble_portfolio_history = [ai_volatility_ensemble_portfolio_value]
@@ -1567,6 +1576,7 @@ def _run_portfolio_backtest_walk_forward(
     turnaround_transaction_costs = 0.0
     adaptive_ensemble_transaction_costs = 0.0
     volatility_ensemble_transaction_costs = 0.0
+    enhanced_volatility_transaction_costs = 0.0
     ai_volatility_ensemble_transaction_costs = 0.0
     multi_tf_ensemble_transaction_costs = 0.0
     correlation_ensemble_transaction_costs = 0.0
@@ -2977,6 +2987,67 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Volatility Ensemble strategy error: {e}")
 
+        # ENHANCED VOLATILITY TRADER: Rebalance using enhanced strategy with ATR stops DAILY
+        if ENABLE_ENHANCED_VOLATILITY:
+            try:
+                from enhanced_volatility_trader import select_enhanced_volatility_stocks
+                
+                print(f"   Enhanced Volatility Trader: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+                
+                new_enhanced_volatility_stocks = select_enhanced_volatility_stocks(
+                    initial_top_tickers, 
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    train_start_date=train_start_date,
+                    top_n=PORTFOLIO_SIZE
+                )
+                
+                if new_enhanced_volatility_stocks:
+                    total_portfolio_value = _mark_to_market_value(
+                        enhanced_volatility_positions, enhanced_volatility_cash, ticker_data_grouped, current_date
+                    )
+                    capital_per_stock = total_portfolio_value / len(new_enhanced_volatility_stocks) if new_enhanced_volatility_stocks else 0
+                    
+                    # Force rebalance on Day 1 (when no positions exist)
+                    if not enhanced_volatility_positions:
+                        should_rebal = True
+                        reason = "Initial portfolio setup (Day 1)"
+                    else:
+                        should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
+                            current_enhanced_volatility_stocks,
+                            new_enhanced_volatility_stocks,
+                            ticker_data_grouped,
+                            current_date,
+                            enhanced_volatility_positions,
+                            enhanced_volatility_cash,
+                            TRANSACTION_COST,
+                            enhanced_volatility_last_rebalance_value
+                        )
+                    
+                    if should_rebal:
+                        print(f"   Enhanced Volatility Trader rebalancing: {current_enhanced_volatility_stocks} → {new_enhanced_volatility_stocks}")
+                        
+                        enhanced_volatility_cash = _rebalance_enhanced_volatility_portfolio(
+                            new_enhanced_volatility_stocks, current_date, ticker_data_grouped,
+                            enhanced_volatility_positions, enhanced_volatility_cash, capital_per_stock
+                        )
+                        current_enhanced_volatility_stocks = new_enhanced_volatility_stocks
+                        enhanced_volatility_last_rebalance_value = _mark_to_market_value(
+                            enhanced_volatility_positions, enhanced_volatility_cash, ticker_data_grouped, current_date
+                        )
+                    else:
+                        print(f"   Enhanced Volatility Trader: Skipping rebalance ({reason})")
+                    
+                    # Check stop-loss and take-profit orders daily
+                    enhanced_volatility_cash = _check_enhanced_volatility_stops(
+                        current_date, ticker_data_grouped, enhanced_volatility_positions, enhanced_volatility_cash
+                    )
+                else:
+                    print(f"   No Enhanced Volatility Trader stocks selected")
+                    
+            except Exception as e:
+                print(f"   Enhanced Volatility Trader strategy error: {e}")
+
         # AI VOLATILITY ENSEMBLE: Rebalance using AI-enhanced volatility-adjusted strategy DAILY
         if ENABLE_AI_VOLATILITY_ENSEMBLE:
             try:
@@ -4286,6 +4357,30 @@ def _run_portfolio_backtest_walk_forward(
         volatility_ensemble_portfolio_value = volatility_ensemble_invested_value + volatility_ensemble_cash
         volatility_ensemble_portfolio_history.append(volatility_ensemble_portfolio_value)
 
+        # Update ENHANCED VOLATILITY TRADER portfolio value daily (skip if disabled)
+        enhanced_volatility_invested_value = 0.0
+        if ENABLE_ENHANCED_VOLATILITY:
+            for ticker in list(enhanced_volatility_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None and current_date in ticker_df.index:
+                        current_price = ticker_df.loc[current_date, 'Close']
+                        if current_price is not None:
+                            shares = enhanced_volatility_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            enhanced_volatility_positions[ticker]['value'] = position_value
+                            enhanced_volatility_invested_value += position_value
+                        else:
+                            enhanced_volatility_invested_value += enhanced_volatility_positions[ticker].get('value', 0.0)
+                    else:
+                        enhanced_volatility_invested_value += enhanced_volatility_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating enhanced volatility position for {ticker}: {e}")
+                    enhanced_volatility_invested_value += enhanced_volatility_positions[ticker].get('value', 0.0)
+
+        enhanced_volatility_portfolio_value = enhanced_volatility_invested_value + enhanced_volatility_cash
+        enhanced_volatility_portfolio_history.append(enhanced_volatility_portfolio_value)
+
         # Update AI VOLATILITY ENSEMBLE portfolio value daily (skip if disabled)
         ai_volatility_ensemble_invested_value = 0.0
         if ENABLE_AI_VOLATILITY_ENSEMBLE:
@@ -4813,6 +4908,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("Turnaround", turnaround_portfolio_value),
                 ("Adaptive Ensemble", adaptive_ensemble_portfolio_value if ENABLE_ADAPTIVE_STRATEGY else None),
                 ("Volatility Ensemble", volatility_ensemble_portfolio_value if ENABLE_VOLATILITY_ENSEMBLE else None),
+                ("Enhanced Volatility", enhanced_volatility_portfolio_value if ENABLE_ENHANCED_VOLATILITY else None),
                 ("AI Volatility Ensemble", ai_volatility_ensemble_portfolio_value if ENABLE_AI_VOLATILITY_ENSEMBLE else None),
                 ("Correlation Ensemble", correlation_ensemble_portfolio_value if ENABLE_CORRELATION_ENSEMBLE else None),
                 ("Dynamic Pool", dynamic_pool_portfolio_value if ENABLE_DYNAMIC_POOL else None),
@@ -4823,10 +4919,10 @@ def _run_portfolio_backtest_walk_forward(
             active_strategies = [(name, value) for name, value in strategy_values if value is not None]
             active_strategies.sort(key=lambda x: x[1], reverse=True)
             
-            # Show top 10 strategies
+            # Show ALL strategies (not just top 10)
             print(f"{'Rank':<5} {'Strategy':<20} {'Value':<12} {'Return':<10}")
             print("-" * 50)
-            for i, (name, value) in enumerate(active_strategies[:10], 1):
+            for i, (name, value) in enumerate(active_strategies, 1):
                 return_pct = ((value - initial_capital_needed) / initial_capital_needed) * 100
                 print(f"{i:<5} {name:<20} ${value:<11,.0f} {return_pct:+.1f}%")
             
@@ -8309,6 +8405,116 @@ def _rebalance_volatility_ensemble_portfolio(new_stocks, current_date, ticker_da
                 continue
     
     return volatility_ensemble_cash
+
+
+def _rebalance_enhanced_volatility_portfolio(new_stocks, current_date, ticker_data_grouped,
+                                           enhanced_volatility_positions, enhanced_volatility_cash, capital_per_stock):
+    """Rebalance enhanced volatility trader portfolio with ATR-based stops."""
+    global enhanced_volatility_transaction_costs
+    
+    stocks_to_sell = [ticker for ticker in enhanced_volatility_positions if ticker not in new_stocks]
+    
+    # Sell positions not in new selection
+    for ticker in stocks_to_sell:
+        try:
+            ticker_data = ticker_data_grouped.get(ticker)
+            if ticker_data is not None and current_date in ticker_data.index:
+                current_price = ticker_data.loc[current_date, 'Close']
+                if current_price > 0 and ticker in enhanced_volatility_positions:
+                    shares = enhanced_volatility_positions[ticker]['shares']
+                    gross_sale = shares * current_price
+                    sell_cost = gross_sale * TRANSACTION_COST
+                    enhanced_volatility_transaction_costs += sell_cost
+                    enhanced_volatility_cash += gross_sale - sell_cost
+                    del enhanced_volatility_positions[ticker]
+        except Exception:
+            continue
+    
+    # Buy new positions with ATR-based stops
+    for ticker in new_stocks:
+        if ticker not in enhanced_volatility_positions:
+            try:
+                ticker_data = ticker_data_grouped.get(ticker)
+                if ticker_data is not None and current_date in ticker_data.index:
+                    current_price = ticker_data.loc[current_date, 'Close']
+                    if current_price > 0:
+                        max_affordable_shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
+                        if max_affordable_shares > 0:
+                            cost = max_affordable_shares * current_price
+                            fee = cost * TRANSACTION_COST
+                            total_cost = cost + fee
+                            
+                            if total_cost <= enhanced_volatility_cash:
+                                enhanced_volatility_cash -= total_cost
+                                enhanced_volatility_transaction_costs += fee
+                                
+                                # Calculate ATR for stop loss and take profit
+                                from enhanced_volatility_trader import EnhancedVolatilityTrader
+                                trader = EnhancedVolatilityTrader()
+                                atr = trader.calculate_atr(ticker, ticker_data_grouped, current_date)
+                                
+                                # Safeguard: ensure ATR is reasonable (at least 1% of price)
+                                min_atr = current_price * 0.01  # 1% minimum ATR
+                                atr = max(atr, min_atr)
+                                
+                                stop_loss = current_price - (atr * 2.0)  # 2x ATR stop loss
+                                take_profit = current_price + min(atr * 3.0, current_price * 0.15)  # 3x ATR or 15% cap
+                                
+                                enhanced_volatility_positions[ticker] = {
+                                    'shares': max_affordable_shares,
+                                    'entry_price': current_price,
+                                    'value': cost,
+                                    'stop_loss': stop_loss,
+                                    'take_profit': take_profit
+                                }
+            except Exception:
+                continue
+    
+    return enhanced_volatility_cash
+
+
+def _check_enhanced_volatility_stops(current_date, ticker_data_grouped, enhanced_volatility_positions, 
+                                    enhanced_volatility_cash):
+    """Check and execute stop-loss and take-profit orders for enhanced volatility positions."""
+    global enhanced_volatility_transaction_costs
+    
+    positions_to_close = []
+    
+    for ticker, position in list(enhanced_volatility_positions.items()):
+        try:
+            ticker_data = ticker_data_grouped.get(ticker)
+            if ticker_data is not None and current_date in ticker_data.index:
+                current_price = ticker_data.loc[current_date, 'Close']
+                stop_loss = position['stop_loss']
+                take_profit = position['take_profit']
+                
+                # Check stop loss
+                if current_price <= stop_loss:
+                    positions_to_close.append((ticker, current_price, 'STOP_LOSS'))
+                # Check take profit
+                elif current_price >= take_profit:
+                    positions_to_close.append((ticker, current_price, 'TAKE_PROFIT'))
+        except Exception:
+            continue
+    
+    # Execute stops and take profits
+    for ticker, exit_price, reason in positions_to_close:
+        if ticker in enhanced_volatility_positions:
+            try:
+                shares = enhanced_volatility_positions[ticker]['shares']
+                gross_sale = shares * exit_price
+                sell_cost = gross_sale * TRANSACTION_COST
+                enhanced_volatility_transaction_costs += sell_cost
+                enhanced_volatility_cash += gross_sale - sell_cost
+                del enhanced_volatility_positions[ticker]
+                
+                # Optional: Print stop/take notifications (commented out for cleaner output)
+                # print(f"   {reason}: {ticker} at ${exit_price:.2f}")
+                
+            except Exception:
+                continue
+    
+    return enhanced_volatility_cash
 
 
 def _rebalance_multi_tf_ensemble_portfolio(

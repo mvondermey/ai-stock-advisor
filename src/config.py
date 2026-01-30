@@ -118,7 +118,7 @@ PARALLEL_THRESHOLD     = 200      # Use parallel only for >200 tickers
 ENABLE_PARALLEL_STRATEGIES = True   # Run strategies in parallel within each day
 
 # Training batch size for parallel processing (how many tasks per batch)
-TRAINING_BATCH_SIZE     = 2000      # Balanced: better utilization without memory exhaustion
+TRAINING_BATCH_SIZE     = 1000      # Balanced: better utilization without memory exhaustion
 
 # --- Dynamic GPU Slot Allocation ---
 # Estimated VRAM requirements per model (in GB)
@@ -256,7 +256,7 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
 RETRAIN_FREQUENCY_DAYS = 10  # Retrain every 10 days - aligned with prediction horizon
-ENABLE_WALK_FORWARD_RETRAINING = True   # Set to False to use only saved models, no retraining
+ENABLE_WALK_FORWARD_RETRAINING = False   # Set to False to use only saved models, no retraining
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
@@ -288,6 +288,7 @@ ENABLE_3M_1Y_RATIO = False   # DISABLED - 3M/1Y Ratio Strategy
 ENABLE_MOMENTUM_VOLATILITY_HYBRID = False   # DISABLED - Momentum-Volatility Hybrid Strategy
 ENABLE_ADAPTIVE_STRATEGY = False   # DISABLED - Adaptive Meta-Ensemble Strategy (CPU intensive)
 ENABLE_VOLATILITY_ENSEMBLE = True   # ENABLED - Volatility-Adjusted Ensemble Strategy (risk-managed position sizing)
+ENABLE_ENHANCED_VOLATILITY = True   # ENABLED - Enhanced Volatility Trader (ATR stops + take profits)
 ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble Strategy (diversification-focused)
 ENABLE_AI_VOLATILITY_ENSEMBLE = True   # ENABLED - AI-Enhanced Volatility Ensemble Strategy (AI-optimized weights and volatility caps)
 ENABLE_SENTIMENT_ENSEMBLE = False   # DISABLED - Sentiment-Enhanced Ensemble Strategy (news/social sentiment analysis)

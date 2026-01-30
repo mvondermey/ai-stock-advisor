@@ -419,6 +419,10 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
         # Volatility-Adjusted Ensemble Strategy: Risk-managed position sizing
         return get_volatility_ensemble_tickers(all_tickers, all_tickers_data)
     
+    elif strategy == 'enhanced_volatility':
+        # Enhanced Volatility Trader: ATR-based stops + take profits
+        return get_enhanced_volatility_tickers(all_tickers, all_tickers_data)
+    
     elif strategy == 'ai_volatility_ensemble':
         # AI-Enhanced Volatility Ensemble Strategy: AI-optimized weights and volatility caps
         return get_ai_volatility_ensemble_tickers(all_tickers, all_tickers_data)
@@ -867,6 +871,18 @@ def get_momentum_breakout_tickers(all_tickers: List[str], all_tickers_data: pd.D
     
     current_date = datetime.now()
     return select_momentum_breakout_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_enhanced_volatility_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Enhanced Volatility Trader: Combines volatility_ensemble + static_bh_3m with ATR stops."""
+    from enhanced_volatility_trader import select_enhanced_volatility_stocks
+    
+    print(f"   Enhanced Volatility Trader: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Enhanced Volatility Trader")
+    
+    current_date = datetime.now()
+    return select_enhanced_volatility_stocks(all_tickers, ticker_data_grouped, 
+                                           current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 def get_factor_rotation_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:

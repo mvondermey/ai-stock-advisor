@@ -1457,7 +1457,7 @@ def main(
         static_bh_6m_cash_deployed=static_bh_6m_cash_deployed_1y,
         static_bh_3m_cash_deployed=static_bh_3m_cash_deployed_1y,
         static_bh_1m_cash_deployed=static_bh_1m_cash_deployed_1y,
-        dynamic_bh_1y_cash_deployed=dynamic_bh_1y_cash_deployed_1y,
+        dynamic_bh_1y_cash_deployed=dynamic_bh_cash_deployed_1y,
         dynamic_bh_6m_cash_deployed=dynamic_bh_6m_cash_deployed_1y,
         dynamic_bh_3m_cash_deployed=dynamic_bh_3m_cash_deployed_1y,
         dynamic_bh_1m_cash_deployed=dynamic_bh_1m_cash_deployed_1y,
@@ -1667,7 +1667,7 @@ if __name__ == "__main__":
     parser.add_argument("--live-trading", action="store_true", 
                        help="Run in live trading mode instead of backtesting")
     parser.add_argument("--strategy", type=str, default="volatility_ensemble",
-                       help="Strategy for live trading. Available: volatility_ensemble, correlation_ensemble, momentum_breakout, factor_rotation, pairs_trading, earnings_momentum, insider_trading, options_sentiment, ml_ensemble, risk_adj_mom, dynamic_bh_1y, quality_momentum")
+                       help="Strategy for live trading. Available: volatility_ensemble, enhanced_volatility, correlation_ensemble, momentum_breakout, factor_rotation, pairs_trading, earnings_momentum, insider_trading, options_sentiment, ml_ensemble, risk_adj_mom, dynamic_bh_1y, quality_momentum")
     
     args = parser.parse_args()
     
@@ -1678,6 +1678,7 @@ if __name__ == "__main__":
         print(f"🚀 Starting Live Trading with Strategy: {args.strategy}")
         print(f"📋 Available strategies:")
         print(f"   🏆 volatility_ensemble  - Vol Ens (+106% in backtest)")
+        print(f"   🚀 enhanced_volatility  - Enhanced Vol Trader (ATR stops + take profits)")
         print(f"   🤖 ai_volatility_ensemble - AI Vol Ens (NEW - AI-enhanced)")
         print(f"   🏆 correlation_ensemble - Corr Ens (+106% in backtest)")
         print(f"   🆕 momentum_breakout    - 52-week high breakouts")
