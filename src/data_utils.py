@@ -308,11 +308,18 @@ def _is_cache_current(last_cached_date):
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """
     Download and clean data with INCREMENTAL local caching.
+    Thread-safe for parallel downloads.
     
     - If cache exists, only fetches NEW data since the last cached date
     - Appends new data to existing cache file
     - Much faster on subsequent runs
     """
+    import threading
+    
+    # Global cache lock for thread safety
+    if not hasattr(load_prices, '_cache_lock'):
+        load_prices._cache_lock = threading.Lock()
+    
     _ensure_dir(DATA_CACHE_DIR)
     cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
     
@@ -323,33 +330,37 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     needs_fetch = True
     
     # --- Step 1: Check existing cache and determine what to fetch ---
-    if cache_file.exists():
-        try:
-            cached_df = pd.read_csv(cache_file, index_col='Date', parse_dates=True)
-            if cached_df.index.tzinfo is None:
-                cached_df.index = cached_df.index.tz_localize('UTC')
-            else:
-                cached_df.index = cached_df.index.tz_convert('UTC')
-            
-            cached_df = cached_df.sort_index()
-            
-            if not cached_df.empty:
-                last_cached_date = cached_df.index[-1]
-                # Debug: Show cache file info for specific tickers
-                if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
-                    print(f"  🗂️ Cache {ticker}: shape={cached_df.shape}, Close[0]={cached_df['Close'].iloc[0]:.2f}, Close[-1]={cached_df['Close'].iloc[-1]:.2f}")
-                
-                # ✅ FIX: Use proper trading day check to avoid fetching on weekends
-                if _is_cache_current(last_cached_date):
-                    # Cache already has data up to the last trading day
-                    needs_fetch = False
+    with load_prices._cache_lock:
+        if cache_file.exists():
+            try:
+                # Check if cache has 'Date' or 'Datetime' column
+                temp_df = pd.read_csv(cache_file, nrows=1)
+                index_col = 'Date' if 'Date' in temp_df.columns else 'Datetime'
+                cached_df = pd.read_csv(cache_file, index_col=index_col, parse_dates=True)
+                if cached_df.index.tzinfo is None:
+                    cached_df.index = cached_df.index.tz_localize('UTC')
                 else:
-                    # Need to fetch data from last cached date + 1
-                    fetch_start = last_cached_date + timedelta(days=1)
+                    cached_df.index = cached_df.index.tz_convert('UTC')
+                
+                cached_df = cached_df.sort_index()
+                
+                if not cached_df.empty:
+                    last_cached_date = cached_df.index[-1]
+                    # Debug: Show cache file info for specific tickers
+                    if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
+                        print(f"  🗂️ Cache {ticker}: shape={cached_df.shape}, Close[0]={cached_df['Close'].iloc[0]:.2f}, Close[-1]={cached_df['Close'].iloc[-1]:.2f}")
                     
-        except Exception as e:
-            print(f"  Warning: Could not read cache for {ticker}: {e}. Will refetch all.")
-            cached_df = pd.DataFrame()
+                    # ✅ FIX: Use proper trading day check to avoid fetching on weekends
+                    if _is_cache_current(last_cached_date):
+                        # Cache already has data up to the last trading day
+                        needs_fetch = False
+                    else:
+                        # Need to fetch data from last cached date + 1
+                        fetch_start = last_cached_date + timedelta(days=1)
+                        
+            except Exception as e:
+                print(f"  Warning: Could not read cache for {ticker}: {e}. Will refetch all.")
+                cached_df = pd.DataFrame()
     
     # If no cache exists, fetch historical data
     if cached_df.empty:
@@ -421,13 +432,14 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     
     # --- Step 4: Save updated cache ---
     if needs_fetch and not new_df.empty:
-        try:
-            # Debug: Show cache save info for specific tickers
-            if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
-                print(f"  💾 Saving {ticker}: shape={price_df.shape}, Close[0]={price_df['Close'].iloc[0]:.2f}, Close[-1]={price_df['Close'].iloc[-1]:.2f}")
-            price_df.to_csv(cache_file)
-        except Exception as e:
-            print(f"  Warning: Could not save cache for {ticker}: {e}")
+        with load_prices._cache_lock:
+            try:
+                # Debug: Show cache save info for specific tickers
+                if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
+                    print(f"  💾 Saving {ticker}: shape={price_df.shape}, Close[0]={price_df['Close'].iloc[0]:.2f}, Close[-1]={price_df['Close'].iloc[-1]:.2f}")
+                price_df.to_csv(cache_file)
+            except Exception as e:
+                print(f"  Warning: Could not save cache for {ticker}: {e}")
     
     # --- Step 5: Return filtered data for requested range ---
     result = price_df.loc[(price_df.index >= _to_utc(start)) & (price_df.index <= _to_utc(end))].copy()
