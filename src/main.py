@@ -49,7 +49,7 @@ from config import (
     FORCE_TRAINING, CONTINUE_TRAINING_FROM_EXISTING,
     USE_PERFORMANCE_BENCHMARK, DATA_PROVIDER, USE_YAHOO_FALLBACK,
     DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
-    SEED, SAVE_PLOTS, MARKET_SELECTION,
+    SEED, SAVE_PLOTS, MARKET_SELECTION, DATA_INTERVAL,
     SEQUENCE_LENGTH, LSTM_HIDDEN_SIZE, LSTM_NUM_LAYERS, LSTM_DROPOUT,
     LSTM_LEARNING_RATE, LSTM_BATCH_SIZE, LSTM_EPOCHS,
     ENABLE_GRU_HYPERPARAMETER_OPTIMIZATION,
@@ -515,9 +515,15 @@ def main(
     # Determine cache start date - ALWAYS use maximum range regardless of backtest settings
     # This ensures consistent data availability and eliminates backtest parameter dependency
     MAX_LOOKBACK_DAYS = 730  # 2 years of historical data for all possible analysis needs (calendar days)
-    # Use calendar days directly - Yahoo Finance will handle market holidays automatically
-    # This ensures we get at least the required trading days
-    MAX_LOOKBACK_CALENDAR_DAYS = MAX_LOOKBACK_DAYS + 60  # Add buffer for weekends/holidays
+    
+    # For intraday data, Yahoo Finance only allows the last 730 days from today
+    # No buffer allowed - must stay within 730 days
+    if DATA_INTERVAL in ['1h', '30m', '15m', '5m', '1m']:
+        print(f"🕰️ Intraday data detected ({DATA_INTERVAL}): Limited to 729 days due to Yahoo Finance API restriction")
+        MAX_LOOKBACK_CALENDAR_DAYS = 729  # Stay within Yahoo's 730-day limit
+    else:
+        # Use calendar days directly - Yahoo Finance will handle market holidays automatically
+        MAX_LOOKBACK_CALENDAR_DAYS = MAX_LOOKBACK_DAYS + 60  # Add buffer for weekends/holidays
     
     # Fixed cache range that covers all possible scenarios
     cache_start_date = today_for_data_fetch - timedelta(days=MAX_LOOKBACK_CALENDAR_DAYS)
@@ -892,8 +898,21 @@ def main(
                     ticker_df = ticker_df.set_index('date')
                     ticker_data_dict[ticker] = ticker_df
         else:
-            # Already wide format with ticker columns
-            ticker_data_dict = all_tickers_data
+            # Wide format with MultiIndex columns - extract individual ticker DataFrames
+            if isinstance(all_tickers_data.columns, pd.MultiIndex):
+                # Get unique tickers from level 1 of MultiIndex
+                unique_tickers = all_tickers_data.columns.get_level_values(1).unique()
+                for ticker in unique_tickers:
+                    # Use xs to extract all columns for this ticker
+                    try:
+                        ticker_df = all_tickers_data.xs(ticker, level=1, axis=1).copy()
+                        if not ticker_df.empty:
+                            ticker_data_dict[ticker] = ticker_df
+                    except Exception as e:
+                        print(f"  ⚠️ Error extracting {ticker} for performance calc: {e}")
+            else:
+                # Fallback - assume ticker columns
+                ticker_data_dict = all_tickers_data
     elif isinstance(all_tickers_data, dict):
         ticker_data_dict = all_tickers_data
     

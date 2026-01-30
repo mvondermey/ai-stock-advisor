@@ -100,14 +100,32 @@ def _prepare_ticker_data_grouped(all_tickers: List[str], all_tickers_data: pd.Da
         print(f"   🔍 {strategy_name}: First 5 requested tickers in data: {matching}")
     
     if isinstance(all_tickers_data.columns, pd.MultiIndex):
-        # Wide format: columns are (field, ticker)
+        # Wide format: columns are (field, ticker) e.g. ('Close', 'AAPL')
         print(f"   🔍 {strategy_name}: Using MultiIndex format")
-        for ticker in all_tickers_data.columns.levels[1]:
-            ticker_cols = [col for col in all_tickers_data.columns if col[1] == ticker]
-            if ticker_cols:
-                ticker_data = all_tickers_data[ticker_cols].copy()
-                ticker_data.columns = [col[0] for col in ticker_cols]
-                ticker_data_grouped[ticker] = ticker_data
+        
+        # Get unique tickers from level 1 (ticker level)
+        unique_tickers = all_tickers_data.columns.get_level_values(1).unique()
+        print(f"   🔍 {strategy_name}: Found {len(unique_tickers)} unique tickers")
+        
+        for ticker in unique_tickers:
+            # Use xs (cross-section) to get all columns for this ticker
+            try:
+                ticker_data = all_tickers_data.xs(ticker, level=1, axis=1).copy()
+                if not ticker_data.empty:
+                    # Debug for specific tickers
+                    if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
+                        # Check if Close column exists and has valid data
+                        if 'Close' in ticker_data.columns:
+                            close_values = ticker_data['Close'].dropna()
+                            if len(close_values) > 0:
+                                print(f"   🔍 DEBUG {ticker}: shape={ticker_data.shape}, Close[0]={close_values.iloc[0]:.2f}, Close[-1]={close_values.iloc[-1]:.2f}")
+                            else:
+                                print(f"   🔍 DEBUG {ticker}: shape={ticker_data.shape}, Close column is all NaN")
+                        else:
+                            print(f"   🔍 DEBUG {ticker}: shape={ticker_data.shape}, No Close column")
+                    ticker_data_grouped[ticker] = ticker_data
+            except Exception as e:
+                print(f"   ⚠️ Error extracting {ticker}: {e}")
     elif 'ticker' in all_tickers_data.columns:
         # Long format: group by ticker, set date as index
         print(f"   🔍 {strategy_name}: Using long format (ticker in columns)")

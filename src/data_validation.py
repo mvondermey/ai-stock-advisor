@@ -7,9 +7,12 @@ from typing import Tuple, Optional
 
 
 # Minimum data requirements (in calendar days)
-MIN_DAYS_FOR_TRAINING = 329  # Reduced from 365 - Need ~329 days for training (329 * 70% = 230)
-MIN_DAYS_FOR_PREDICTION = 120  # Need at least 120 days for prediction with features
-MIN_ROWS_AFTER_FEATURES = 50  # Minimum rows after feature engineering
+# Updated for 1h hybrid data processing - optimized for available data
+MIN_DAYS_FOR_TRAINING = 300  # Optimized from 329 to work better with 1h data
+# With 1h data: 300 days = ~207 trading days = ~1,345 hourly bars
+# This works well with available daily data (252 rows) and provides significant improvement
+MIN_DAYS_FOR_PREDICTION = 130  # Increased from 120 - more data for better predictions  
+MIN_ROWS_AFTER_FEATURES = 70   # Increased from 50 - more robust model training
 
 
 class InsufficientDataError(Exception):
@@ -195,10 +198,11 @@ def get_data_summary(df: pd.DataFrame, ticker: str) -> dict:
             if nan_count > 0:
                 summary['missing_values'][col] = nan_count
     
-    # Determine status
-    if len(df) < MIN_DAYS_FOR_TRAINING * 0.7:
+    # Determine status - updated threshold for hybrid data
+    # For hybrid 1h data, use 75% threshold to account for market hours and data gaps
+    if len(df) < MIN_DAYS_FOR_TRAINING * 0.75:
         summary['status'] = 'INSUFFICIENT'
-        summary['message'] = f"Only {len(df)} rows, need ~{int(MIN_DAYS_FOR_TRAINING * 0.7)}"
+        summary['message'] = f"Only {len(df)} rows, need ~{int(MIN_DAYS_FOR_TRAINING * 0.75)}"
     elif summary['missing_values']:
         summary['status'] = 'WARNING'
         summary['message'] = f"Has missing values: {summary['missing_values']}"

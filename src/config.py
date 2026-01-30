@@ -11,13 +11,19 @@ from unittest.runner import TextTestRunner
 SEED                    = 42
 
 # --- Provider & caching
-DATA_PROVIDER           = 'twelvedata' # 'stooq', 'yahoo', 'alpaca', or 'twelvedata'
-USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Stooq thin
-DATA_INTERVAL           = '1d'       # '1m', '5m', '15m', '30m', '1h', '1d', '1wk', '1mo'
+DATA_PROVIDER           = 'yahoo' # 'stooq', 'yahoo', 'alpaca', or 'twelvedata'
+USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Twelvedata thin
+DATA_INTERVAL           = '1h'       # '1m', '5m', '15m', '30m', '1h', '1d', '1wk', '1mo'
 DATA_CACHE_DIR          = Path("data_cache")
 TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
 VALID_TICKERS_CACHE_PATH = Path("logs/valid_tickers.json")
 CACHE_DAYS              = 7
+
+# --- Hybrid Data Configuration ---
+AGGREGATE_TO_DAILY      = True       # Aggregate hourly data to create perfect daily data
+USE_INTRADAY_FEATURES   = True       # Enable intraday features for AI models
+USE_DAILY_FEATURES       = True       # Keep existing daily features
+FEATURE_COMBINATION      = 'merged'    # 'merged' or 'separate'
 
 # --- Cache Configuration ---
 # Master switch: enable price caching to reduce downloads (uses `data_cache/` CSVs)
@@ -250,7 +256,7 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
 RETRAIN_FREQUENCY_DAYS = 10  # Retrain every 10 days - aligned with prediction horizon
-ENABLE_WALK_FORWARD_RETRAINING = False   # Set to False to use only saved models, no retraining
+ENABLE_WALK_FORWARD_RETRAINING = True   # Set to False to use only saved models, no retraining
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
@@ -286,6 +292,7 @@ ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble S
 ENABLE_AI_VOLATILITY_ENSEMBLE = True   # ENABLED - AI-Enhanced Volatility Ensemble Strategy (AI-optimized weights and volatility caps)
 ENABLE_SENTIMENT_ENSEMBLE = False   # DISABLED - Sentiment-Enhanced Ensemble Strategy (news/social sentiment analysis)
 ENABLE_DYNAMIC_POOL = False   # DISABLED - Dynamic Strategy Pool Strategy (CPU intensive)
+
 # --- Multi-Timeframe Ensemble Strategy ---
 # Combines signals from different timeframes for better entry/exit timing
 ENABLE_MULTI_TIMEFRAME_ENSEMBLE = True   # NEW - Multi-Timeframe Ensemble Strategy

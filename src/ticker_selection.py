@@ -778,12 +778,32 @@ def find_top_performers(
         # AI strategy needs 120 days for prediction, not 252 for training
         min_points_quality = 120  # Require 120 days for AI prediction (was 252 for training)
         quality_tickers = []
+        failed_tickers = []
+        
         for ticker in full_grouped.groups.keys():
             ticker_data = full_grouped.get_group(ticker)
             if len(ticker_data) >= min_points_quality:
                 quality_tickers.append(ticker)
+            else:
+                failed_tickers.append((ticker, len(ticker_data)))
         
         print(f"   Found {len(quality_tickers)} tickers with {min_points_quality}+ data points", flush=True)
+        
+        # Debug: Show some failed tickers
+        if failed_tickers and len(failed_tickers) <= 10:
+            print(f"   Failed tickers: {failed_tickers}", flush=True)
+        elif failed_tickers:
+            print(f"   Failed tickers: {failed_tickers[:5]} ... ({len(failed_tickers)} total)", flush=True)
+        
+        # Check for specific tickers
+        debug_tickers = ['SNDK', 'STX', 'WDC', 'MU']
+        for ticker in debug_tickers:
+            if ticker in full_grouped.groups.keys():
+                ticker_data = full_grouped.get_group(ticker)
+                status = "✅ PASS" if len(ticker_data) >= min_points_quality else "❌ FAIL"
+                print(f"   {ticker}: {len(ticker_data)} points {status}", flush=True)
+            else:
+                print(f"   {ticker}: ❌ NOT FOUND in dataset", flush=True)
         
         # Step 2: Now filter to lookback period for performance calculation
         print(f"   Filtering data for period {start_date.date()} to {end_date.date()}...", flush=True)
@@ -877,7 +897,25 @@ def find_top_performers(
         # Step 2: Now filter to lookback period for performance calculation
         print(f"   Filtering data for period {start_date.date()} to {end_date.date()}...", flush=True)
         all_data = all_tickers_data.loc[start_date:end_date]
-        valid_tickers = [t for t in quality_tickers if t in all_data.columns.get_level_values(1)]
+        
+        # Extract individual ticker DataFrames to avoid data mixing
+        ticker_data_dict = {}
+        if isinstance(all_data.columns, pd.MultiIndex):
+            # Get unique tickers from level 1 of MultiIndex
+            unique_tickers = all_data.columns.get_level_values(1).unique()
+            for ticker in unique_tickers:
+                # Use xs to extract all columns for this ticker
+                try:
+                    ticker_df = all_data.xs(ticker, level=1, axis=1).copy()
+                    if not ticker_df.empty:
+                        ticker_data_dict[ticker] = ticker_df
+                except Exception as e:
+                    print(f"  ⚠️ Error extracting {ticker}: {e}")
+        else:
+            # Fallback - assume ticker columns
+            ticker_data_dict = all_data
+        
+        valid_tickers = [t for t in quality_tickers if t in ticker_data_dict]
 
         print(f"   Building parameters for {len(valid_tickers)} tickers...", flush=True)
         
@@ -885,17 +923,20 @@ def find_top_performers(
         prep_args = []
         for ticker in tqdm(valid_tickers, desc="Building params", ncols=100):
             try:
-                # Extract close column
-                close_key = None
+                # Get ticker data from the dictionary
+                ticker_data = ticker_data_dict[ticker]
+                
+                # Find Close column
+                close_col = None
                 for attr in ['Close', 'Adj Close', 'Adj close', 'close', 'adj close']:
-                    if (attr, ticker) in all_data.columns:
-                        close_key = (attr, ticker)
+                    if attr in ticker_data.columns:
+                        close_col = attr
                         break
                 
-                if close_key is not None:
-                    s = all_data.loc[:, close_key]
+                if close_col is not None:
+                    s = ticker_data[close_col]
                     ticker_df = pd.DataFrame({'Close': s})
-                    ticker_df.index = all_data.index
+                    ticker_df.index = ticker_data.index
                     prep_args.append((ticker, ticker_df))
             except KeyError:
                 pass

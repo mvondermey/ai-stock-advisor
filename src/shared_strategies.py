@@ -768,8 +768,8 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
                     # For other errors (timezone conversion, etc), stick with data's max date
                     pass
             
-            # Momentum calculation (6-month) using date filtering
-            momentum_start = current_date_tz - timedelta(days=180)  # ~6 months
+            # Momentum calculation (1-year) using date filtering
+            momentum_start = current_date_tz - timedelta(days=365)  # 1 year for better performance measurement
             momentum_data = ticker_data[(ticker_data.index >= momentum_start) & (ticker_data.index <= current_date_tz)]
             
             if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
@@ -785,7 +785,9 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
                     start_price = valid_prices.iloc[0]
                     end_price = valid_prices.iloc[-1]
                     if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
+                        momentum_calc = (end_price / start_price - 1) * 100
                         print(f"   🔍 DEBUG: {ticker} start_price={start_price}, end_price={end_price}")
+                        print(f"   🔍 DEBUG: {ticker} momentum={momentum_calc:.1f}%")
                     if start_price <= 0 or pd.isna(start_price) or pd.isna(end_price):
                         momentum_return = 0.0
                     else:
@@ -824,11 +826,11 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
             
             quality_score = momentum_return * (1 + stability_bonus + trend_bonus)
             
-            if momentum_return > 5:  # Only consider positive momentum
+            if momentum_return > 0:  # Only consider positive momentum (lowered from 5%)
                 quality_momentum_candidates.append((ticker, quality_score, momentum_return, volatility))
             else:
                 if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
-                    print(f"   🔍 DEBUG: {ticker} momentum={momentum_return:.1f}% (<=5%, filtered)")
+                    print(f"   🔍 DEBUG: {ticker} momentum={momentum_return:.1f}% (<=0%, filtered)")
         
         except Exception as e:
             if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
