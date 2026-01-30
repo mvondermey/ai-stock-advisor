@@ -897,6 +897,11 @@ def train_all_models_parallel(
                         batch_start_time = time.time()
                         last_progress_time = time.time()
                         
+                        # Force initial display of progress bar
+                        pbar.refresh()
+                        import sys
+                        sys.stdout.flush()
+                        
                         while completed_tasks < len(batch_tasks):
                             try:
                                 # ✅ TIMEOUT CHECK for stuck batch
@@ -926,6 +931,8 @@ def train_all_models_parallel(
                                     batch_results.append(result)
                                     completed_tasks += 1
                                     pbar.update(1)
+                                    pbar.refresh()  # Force refresh
+                                    sys.stdout.flush()  # Force output flush
                                     last_progress_time = current_time  # Reset timeout on progress
                                     
                                 except TimeoutError:

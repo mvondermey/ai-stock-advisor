@@ -105,10 +105,9 @@ PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls f
 
 # --- Parallel Processing
 from multiprocessing import cpu_count
-# Limit to 10 processes when using GPU to avoid GPU memory exhaustion
-# PyTorch models (LSTM/GRU/TCN) load on GPU, and too many parallel processes cause OOM kills
-# Use all but 2 CPU cores (more aggressive CPU usage)
-NUM_PROCESSES           = max(1, cpu_count() - 2)
+# Conservative CPU utilization to prevent system overload and process termination
+# Use only half of CPU cores to avoid memory exhaustion with large datasets
+NUM_PROCESSES           = max(1, cpu_count() // 2)
 
 # Parallel processing threshold - only use parallel processing for ticker lists larger than this
 # Below this threshold, sequential processing is faster due to lower overhead
@@ -119,7 +118,7 @@ PARALLEL_THRESHOLD     = 200      # Use parallel only for >200 tickers
 ENABLE_PARALLEL_STRATEGIES = True   # Run strategies in parallel within each day
 
 # Training batch size for parallel processing (how many tasks per batch)
-TRAINING_BATCH_SIZE     = 10000      # Smaller batches for better timeout handling
+TRAINING_BATCH_SIZE     = 2000      # Balanced: better utilization without memory exhaustion
 
 # --- Dynamic GPU Slot Allocation ---
 # Estimated VRAM requirements per model (in GB)
@@ -161,13 +160,13 @@ GPU_CLEAR_CACHE_AFTER_EACH_TICKER = False
 # Only applies when PYTORCH_USE_GPU = True (PyTorch uses GPU)
 # Does NOT apply to XGBoost GPU (XGBoost manages its own GPU memory)
 GPU_MAX_CONCURRENT_TRAINING_WORKERS = GPU_MODEL_SLOTS['LSTM'] # Use dynamic calculation
-GPU_MAX_CONCURRENT_TRAINING_WORKERS = 10
+GPU_MAX_CONCURRENT_TRAINING_WORKERS = 12  # Increased from 10 for better GPU utilization
 
 # Multiprocessing stability: recycle worker processes periodically to avoid RAM creep / leaked semaphores
 # when training many tickers under WSL + spawn.
 # - Set to 1 for max stability (one ticker per worker process).
 # - Set to None to disable recycling (faster, but may accumulate memory/semaphores).
-TRAINING_POOL_MAXTASKSPERCHILD = 1  # Enable recycling for maximum stability
+TRAINING_POOL_MAXTASKSPERCHILD = 5  # Moderate recycling for better memory utilization
 
 # Per-ticker training timeout (seconds). If a ticker takes longer, it will be skipped.
 # - Set to 600 (10 min) for normal use (handles slow XGBoost GridSearchCV)
@@ -184,17 +183,18 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 # For 5000 tickers, use parallel training. Models are saved to disk and loaded back (no pickling overhead).
 #
 # Worker count strategy:
-# - All CPU (PYTORCH_USE_GPU=False, XGBOOST_USE_GPU=False): 15 workers
-# - PyTorch CPU + XGBoost GPU (PYTORCH_USE_GPU=False, XGBOOST_USE_GPU=True): 15 workers ← YOUR CURRENT SETUP
-# - PyTorch GPU + XGBoost CPU (PYTORCH_USE_GPU=True, XGBOOST_USE_GPU=False): 3 workers
-# - PyTorch GPU + XGBoost GPU (PYTORCH_USE_GPU=True, XGBOOST_USE_GPU=True): 3 workers (may cause OOM)
+# - CPU only: Use half of CPU cores (conservative to prevent memory exhaustion)
+# - PyTorch CPU + XGBoost GPU: Use half CPU cores (GPU handles XGBoost, CPU handles PyTorch)
+# - PyTorch GPU + XGBoost GPU: Very limited (GPU bottleneck)
+# - PyTorch GPU + XGBoost CPU: Use quarter CPU for XGBoost while GPU handles PyTorch
 #
 if not PYTORCH_USE_GPU and not XGBOOST_USE_GPU:
-    TRAINING_NUM_PROCESSES = NUM_PROCESSES  # Full CPU, no GPU bottleneck
+    TRAINING_NUM_PROCESSES = max(1, cpu_count() // 2)  # Conservative CPU usage
 elif not PYTORCH_USE_GPU and XGBOOST_USE_GPU:
-    TRAINING_NUM_PROCESSES = NUM_PROCESSES  # PyTorch on CPU, XGBoost on GPU (current setup)
+    TRAINING_NUM_PROCESSES = max(1, cpu_count() // 2)  # PyTorch on CPU, XGBoost on GPU
 else:
-    TRAINING_NUM_PROCESSES = GPU_MODEL_SLOTS['LSTM']  # PyTorch on GPU (limited by VRAM)
+    # PyTorch on GPU: Very conservative to avoid timeout during model training
+    TRAINING_NUM_PROCESSES = max(1, cpu_count() // 3)  # Conservative for GPU training
 
 # --- Unified Parallel Training System ---
 # Enable the new parallel training system that trains models by model-type instead of by ticker.
