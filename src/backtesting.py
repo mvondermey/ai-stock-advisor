@@ -1659,13 +1659,15 @@ def _run_portfolio_backtest_walk_forward(
         # Check if it's time to retrain (every RETRAIN_FREQUENCY_DAYS)
         should_retrain = (day_count % RETRAIN_FREQUENCY_DAYS == 1)  # Retrain on day 1, 6, 11, 16, etc.
 
+        # Import config variables needed for training logic
+        from config import ENABLE_WALK_FORWARD_RETRAINING
+
         # ✅ FIX: Train models if ENABLE_WALK_FORWARD_RETRAINING is True
         # Only train individual stock prediction models when main AI strategy is enabled
         needs_training = enable_ai_strategy and ENABLE_WALK_FORWARD_RETRAINING and (day_count == 1 or (should_retrain and day_count > 1))
         
         if needs_training:
             # Check if walk-forward retraining is disabled
-            from config import ENABLE_WALK_FORWARD_RETRAINING
             if not ENABLE_WALK_FORWARD_RETRAINING:
                 print(f"\n⏭️ Day {day_count} ({current_date.strftime('%Y-%m-%d')}): Walk-forward retraining disabled - using existing models")
                 # Keep using existing models, don't retrain

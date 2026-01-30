@@ -409,9 +409,9 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             if "Close" not in new_df.columns and "Adj close" in new_df.columns:
                 new_df = new_df.rename(columns={"Adj close": "Close"})
             if "Volume" in new_df.columns:
-                new_df["Volume"] = new_df["Volume"].fillna(0).astype(int)
+                new_df.loc[:, "Volume"] = new_df["Volume"].fillna(0).astype(int)
             else:
-                new_df["Volume"] = 0
+                new_df.loc[:, "Volume"] = 0
             
             if new_df.index.tzinfo is None:
                 new_df.index = new_df.index.tz_localize('UTC')
@@ -430,7 +430,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     else:
         return pd.DataFrame()
     
-    # --- Step 4: Save updated cache ---
+    # --- Step 4: Save updated cache (always save original 1h data) ---
     if needs_fetch and not new_df.empty:
         with load_prices._cache_lock:
             try:
@@ -441,7 +441,92 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             except Exception as e:
                 print(f"  Warning: Could not save cache for {ticker}: {e}")
     
-    # --- Step 5: Return filtered data for requested range ---
+    # --- Step 5: Convert 1h data to daily data if DATA_INTERVAL is 1h ---
+    if DATA_INTERVAL == '1h' and not price_df.empty:
+        try:
+            # --- Step 5.1: Calculate Core 1h Features before aggregation ---
+            # Calculate intraday returns
+            price_df['Hourly_Return'] = price_df['Close'].pct_change()
+            
+            # Intraday volatility patterns
+            price_df['Intraday_Range_Pct'] = (price_df['High'] - price_df['Low']) / price_df['Open'] * 100
+            price_df['Hourly_Volatility'] = price_df['Hourly_Return'].rolling(5).std()
+            price_df['Intraday_Vol_Ratio'] = price_df['Hourly_Volatility'] / price_df['Hourly_Return'].rolling(20).std()
+            
+            # Volume distribution analysis
+            price_df['Volume_Weighted_Price'] = (price_df['Volume'] * price_df['Close']).cumsum() / price_df['Volume'].cumsum()
+            price_df['Volume_Concentration'] = price_df['Volume'] / price_df['Volume'].rolling(8).sum()
+            price_df['Buying_Pressure'] = (price_df['Close'] > price_df['Open']).astype(int) * price_df['Volume']
+            price_df['Selling_Pressure'] = (price_df['Close'] < price_df['Open']).astype(int) * price_df['Volume']
+            
+            # Price discovery metrics
+            price_df['Price_Discovery_Efficiency'] = abs(price_df['Close'] - price_df['Volume_Weighted_Price']) / price_df['Volume_Weighted_Price'] * 100
+            price_df['Information_Shock'] = abs(price_df['Hourly_Return']).rolling(20).mean() * price_df['Volume_Concentration']
+            
+            # Intraday momentum cycles
+            price_df['Hourly_Direction'] = (price_df['Hourly_Return'] > 0).astype(int)
+            price_df['Momentum_Persistence'] = price_df['Hourly_Direction'].rolling(4).sum()
+            price_df['Intraday_Trend_Strength'] = price_df['Close'].rolling(8).apply(lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x) > 1 else 0)
+            
+            # Market microstructure features
+            price_df['Liquidity_Detection'] = price_df['Volume'] / price_df['Intraday_Range_Pct']
+            price_df['Net_Order_Flow'] = (price_df['Buying_Pressure'] - price_df['Selling_Pressure']) / price_df['Volume']
+            price_df['Market_Impact'] = abs(price_df['Hourly_Return']) / price_df['Volume']
+            
+            # Volatility clustering and regime detection
+            price_df['Vol_Clustering'] = (price_df['Hourly_Volatility'] > price_df['Hourly_Volatility'].rolling(20).mean()).astype(int)
+            price_df['Vol_Regime_Change'] = price_df['Hourly_Volatility'].rolling(8).std() / price_df['Hourly_Volatility'].rolling(20).std()
+            
+            # Resample 1h data to daily data with enhanced features
+            daily_df = price_df.resample('D').agg({
+                # Basic OHLCV
+                'Open': 'first',
+                'High': 'max', 
+                'Low': 'min',
+                'Close': 'last',
+                'Volume': 'sum',
+                # 1h Features - aggregated appropriately
+                'Intraday_Range_Pct': 'mean',
+                'Hourly_Volatility': 'mean',
+                'Intraday_Vol_Ratio': 'mean',
+                'Volume_Weighted_Price': 'last',
+                'Volume_Concentration': 'mean',
+                'Buying_Pressure': 'sum',
+                'Selling_Pressure': 'sum',
+                'Price_Discovery_Efficiency': 'mean',
+                'Information_Shock': 'sum',
+                'Momentum_Persistence': 'mean',
+                'Intraday_Trend_Strength': 'mean',
+                'Liquidity_Detection': 'mean',
+                'Net_Order_Flow': 'mean',
+                'Market_Impact': 'mean',
+                'Vol_Clustering': 'sum',
+                'Vol_Regime_Change': 'mean'
+            }).dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'])  # Only drop if core OHLCV is missing
+            
+            # Calculate additional daily features from 1h aggregates
+            daily_df['Net_Buying_Pressure'] = daily_df['Buying_Pressure'] - daily_df['Selling_Pressure']
+            daily_df['Buying_Pressure_Ratio'] = daily_df['Buying_Pressure'] / (daily_df['Buying_Pressure'] + daily_df['Selling_Pressure'])
+            daily_df['Total_Order_Flow'] = daily_df['Buying_Pressure'] + daily_df['Selling_Pressure']
+            
+            # Calculate technical indicators for AI training features
+            daily_df = _calculate_technical_indicators(daily_df)
+            
+            # Debug: Show conversion info for specific tickers
+            if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
+                original_features = len(price_df.columns)
+                daily_features = len(daily_df.columns)
+                start_date = daily_df.index[0].strftime('%Y-%m-%d')
+                end_date = daily_df.index[-1].strftime('%Y-%m-%d')
+                print(f"  🔄 Converted {ticker}: 1h ({price_df.shape[0]} rows, {original_features} features) → daily ({daily_df.shape[0]} rows, {daily_features} features)")
+                print(f"     📅 Date range: {start_date} to {end_date} ({daily_df.shape[0]} trading days)")
+            
+            price_df = daily_df
+        except Exception as e:
+            print(f"  Warning: Could not convert {ticker} from 1h to daily: {e}")
+            # Fall back to original 1h data if conversion fails
+    
+    # --- Step 6: Return filtered data for requested range ---
     result = price_df.loc[(price_df.index >= _to_utc(start)) & (price_df.index <= _to_utc(end))].copy()
     return result if not result.empty else pd.DataFrame()
 
