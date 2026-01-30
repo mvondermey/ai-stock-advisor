@@ -208,7 +208,7 @@ def _fetch_financial_data_from_alpaca(ticker: str) -> pd.DataFrame:
 DATA_CACHE_DIR = Path("data_cache")
 DATA_PROVIDER = 'yahoo'
 USE_YAHOO_FALLBACK = True
-DATA_INTERVAL = '1d'
+# DATA_INTERVAL is imported from config, not hardcoded here
 CACHE_DAYS = 7
 TWELVEDATA_API_KEY = "YOUR_DEFAULT_KEY_OR_EMPTY_STRING"
 ALPACA_API_KEY = None
@@ -335,6 +335,9 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             
             if not cached_df.empty:
                 last_cached_date = cached_df.index[-1]
+                # Debug: Show cache file info for specific tickers
+                if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
+                    print(f"  🗂️ Cache {ticker}: shape={cached_df.shape}, Close[0]={cached_df['Close'].iloc[0]:.2f}, Close[-1]={cached_df['Close'].iloc[-1]:.2f}")
                 
                 # ✅ FIX: Use proper trading day check to avoid fetching on weekends
                 if _is_cache_current(last_cached_date):
@@ -419,6 +422,9 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     # --- Step 4: Save updated cache ---
     if needs_fetch and not new_df.empty:
         try:
+            # Debug: Show cache save info for specific tickers
+            if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
+                print(f"  💾 Saving {ticker}: shape={price_df.shape}, Close[0]={price_df['Close'].iloc[0]:.2f}, Close[-1]={price_df['Close'].iloc[-1]:.2f}")
             price_df.to_csv(cache_file)
         except Exception as e:
             print(f"  Warning: Could not save cache for {ticker}: {e}")
