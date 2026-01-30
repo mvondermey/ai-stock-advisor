@@ -350,7 +350,9 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     
     # If no cache exists, fetch historical data
     if cached_df.empty:
-        fetch_start = datetime.now(timezone.utc) - timedelta(days=1000)
+        # Use the configured lookback period from config
+        from config import TRAIN_LOOKBACK_DAYS
+        fetch_start = datetime.now(timezone.utc) - timedelta(days=TRAIN_LOOKBACK_DAYS)
     
     # --- Step 2: Fetch new data if needed ---
     if needs_fetch and fetch_start is not None:
@@ -359,9 +361,12 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         
         days_to_fetch = (fetch_end - fetch_start).days
         if days_to_fetch > 5:
-            print(f"  Fetching {days_to_fetch} days of data for {ticker}...")
+            # Always show hours for 1h data - DATA_INTERVAL should be '1h' from config
+            hours_to_fetch = days_to_fetch * 24
+            print(f"  Fetching {hours_to_fetch} hours of data for {ticker}... (DATA_INTERVAL={DATA_INTERVAL})")
         elif days_to_fetch > 0:
-            print(f"  Updating {ticker} (+{days_to_fetch} days)...")
+            hours_to_fetch = days_to_fetch * 24
+            print(f"  Updating {ticker} (+{hours_to_fetch} hours)... (DATA_INTERVAL={DATA_INTERVAL})")
         
         # ✅ FIX: Try providers in order: Alpaca → TwelveData → Yahoo (cascade fallback)
         # Try Alpaca first (if available)
