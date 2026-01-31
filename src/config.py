@@ -255,7 +255,7 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 #   10 = Bi-weekly retraining (balanced, recommended for volatile stocks)
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
-RETRAIN_FREQUENCY_DAYS = 10  # Retrain every 10 days - aligned with prediction horizon
+RETRAIN_FREQUENCY_DAYS = 365  # Retrain every 10 days - aligned with prediction horizon
 ENABLE_WALK_FORWARD_RETRAINING = False   # Set to False to use only saved models, no retraining
 
 # --- Backtest Period Enable/Disable Flags ---

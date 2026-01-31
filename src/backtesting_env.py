@@ -53,6 +53,7 @@ class RuleTradingEnv:
             "RSI_feat", "MACD", "MACD_signal", "BB_upper", "BB_lower", "%K", "%D", "ADX",
             "OBV", "CMF", "ROC", "KC_Upper", "KC_Lower", "DC_Upper", "DC_Lower",
             "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Historical_Volatility",
+            "Momentum_3M", "Momentum_6M",
             'Fin_Revenue', 'Fin_NetIncome', 'Fin_TotalAssets', 'Fin_TotalLiabilities', 'Fin_FreeCashFlow', 'Fin_EBITDA',
             'Market_Momentum_SPY'
         ]
@@ -277,6 +278,12 @@ class RuleTradingEnv:
         self.df['Log_Returns'] = np.log(self.df['Close'] / self.df['Close'].shift(1))
         self.df['Historical_Volatility'] = self.df['Log_Returns'].rolling(window=20).std() * np.sqrt(252)
         self.df['Historical_Volatility'] = self.df['Historical_Volatility'].fillna(0)
+
+        # Momentum features: 3M (63 days) and 6M (126 days) returns
+        self.df['Momentum_3M'] = self.df['Close'].pct_change(periods=63) * 100
+        self.df['Momentum_3M'] = self.df['Momentum_3M'].fillna(0)
+        self.df['Momentum_6M'] = self.df['Close'].pct_change(periods=126) * 100
+        self.df['Momentum_6M'] = self.df['Momentum_6M'].fillna(0)
 
     def _date_at(self, i: int) -> str:
         if "Date" in self.df.columns:

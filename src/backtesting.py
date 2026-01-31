@@ -3328,6 +3328,17 @@ def _run_portfolio_backtest_walk_forward(
                 
                 print(f"   📊 Volatility Ensemble Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
                 
+                # DEBUG: Check data availability for volatility ensemble
+                print(f"\n   🔍 DEBUG: Checking data availability for Volatility Ensemble on {current_date.strftime('%Y-%m-%d')}")
+                for ticker in initial_top_tickers[:5]:  # Check first 5 tickers
+                    if ticker in ticker_data_grouped:
+                        ticker_data = ticker_data_grouped[ticker]
+                        lookback_start = current_date - timedelta(days=30)  # VOLATILITY_LOOKBACK_DAYS
+                        recent_data = ticker_data[(ticker_data.index >= lookback_start) & (ticker_data.index <= current_date)]
+                        print(f"      {ticker}: total rows={len(ticker_data)}, last 30d rows={len(recent_data)}, date range={ticker_data.index.min().date()} to {ticker_data.index.max().date()}")
+                    else:
+                        print(f"      {ticker}: NOT in ticker_data_grouped")
+                
                 new_volatility_ensemble_stocks = select_volatility_ensemble_stocks(
                     initial_top_tickers, 
                     ticker_data_grouped,
@@ -4444,6 +4455,37 @@ def _run_portfolio_backtest_walk_forward(
             # Select top N by predicted return
             if predictions:
                 predictions.sort(key=lambda x: x[1], reverse=True)
+                
+                # Apply momentum filter: only consider stocks with positive 3M or 6M momentum
+                filtered_predictions = []
+                for ticker, pred in predictions:
+                    try:
+                        if ticker in ticker_data_grouped:
+                            ticker_data = ticker_data_grouped[ticker]
+                            # Get momentum up to prediction date
+                            prediction_date = current_date - timedelta(days=1)
+                            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                                if prediction_date.tzinfo is None:
+                                    prediction_date = prediction_date.replace(tzinfo=ticker_data.index.tz)
+                            data_slice = ticker_data.loc[:prediction_date]
+                            if len(data_slice) >= 63:  # Need at least 63 days for 3M momentum
+                                close_3m_ago = data_slice['Close'].iloc[-63]
+                                close_now = data_slice['Close'].iloc[-1]
+                                momentum_3m = (close_now / close_3m_ago - 1) * 100
+                                # Only include if 3M momentum is positive
+                                if momentum_3m > 0:
+                                    filtered_predictions.append((ticker, pred, momentum_3m))
+                    except Exception:
+                        # If momentum calculation fails, include the stock anyway
+                        filtered_predictions.append((ticker, pred, 0))
+                
+                # Use filtered predictions if any remain, otherwise use original
+                if filtered_predictions:
+                    # Sort by prediction (already sorted) and select top N
+                    predictions = [(t, p) for t, p, _ in filtered_predictions]
+                    if day_count <= 3 or day_count % 10 == 0:
+                        print(f"   📊 AI Strategy: Filtered from {len(predictions)} to {len(filtered_predictions)} stocks with positive 3M momentum")
+                
                 # Select top N stocks (or all if fewer available)
                 num_to_select = min(PORTFOLIO_SIZE, len(predictions))
                 selected_stocks = [ticker for ticker, _ in predictions[:num_to_select]]

@@ -286,6 +286,9 @@ def print_final_summary(
     strategies_data.append(('Trend ATR', final_trend_atr_value_1y, trend_atr_1y_return, trend_atr_transaction_costs, trend_atr_cash_deployed))
     strategies_data.append(('Enh Vol', final_enhanced_volatility_value_1y, enhanced_volatility_1y_return, enhanced_volatility_transaction_costs, enhanced_volatility_cash_deployed))
     
+    # Filter out disabled strategies (where value is None)
+    strategies_data = [(name, value, ret, costs, cash) for (name, value, ret, costs, cash) in strategies_data if value is not None]
+    
     # Sort by return (best first)
     strategies_data.sort(key=lambda x: safe_return(x[2]), reverse=True)
     
