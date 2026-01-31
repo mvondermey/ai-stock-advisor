@@ -256,7 +256,7 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
 RETRAIN_FREQUENCY_DAYS = 10  # Retrain every 10 days - aligned with prediction horizon
-ENABLE_WALK_FORWARD_RETRAINING = True   # Set to False to use only saved models, no retraining
+ENABLE_WALK_FORWARD_RETRAINING = False   # Set to False to use only saved models, no retraining
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
@@ -302,6 +302,35 @@ ENABLE_MULTI_TIMEFRAME_ENSEMBLE = True   # NEW - Multi-Timeframe Ensemble Strate
 ENABLE_TURNAROUND = True   # ENABLED - Turnaround Strategy (buy depressed stocks)
 ENABLE_MOMENTUM_VOLATILITY_HYBRID = False   # DISABLED - Momentum-Volatility Hybrid Strategy
 ENABLE_3M_1Y_RATIO = False   # DISABLED - 3M/1Y Ratio Strategy
+
+# --- New Advanced Strategies ---
+ENABLE_MOMENTUM_ACCELERATION = True   # NEW - Momentum Acceleration (3M momentum + acceleration filter)
+ENABLE_CONCENTRATED_3M = True   # NEW - Concentrated 3M + Vol Filter (fewer positions, volatility filtered)
+ENABLE_DUAL_MOMENTUM = True   # NEW - Dual Momentum (absolute + relative momentum)
+ENABLE_TREND_FOLLOWING_ATR = True   # NEW - Trend Following with ATR Trailing Stop
+
+# Momentum Acceleration Parameters
+MOM_ACCEL_LOOKBACK_DAYS = 90  # 3-month momentum lookback
+MOM_ACCEL_SHORT_LOOKBACK = 21  # 1-month for acceleration calculation
+MOM_ACCEL_MIN_ACCELERATION = 0.0  # Minimum acceleration (current 1M > previous 1M)
+
+# Concentrated 3M Parameters
+CONCENTRATED_3M_POSITIONS = 5  # Fewer positions for concentration
+CONCENTRATED_3M_MAX_VOLATILITY = 0.40  # 40% max annualized volatility
+CONCENTRATED_3M_REBALANCE_DAYS = 21  # Monthly rebalancing
+
+# Dual Momentum Parameters
+DUAL_MOM_LOOKBACK_DAYS = 90  # 3-month momentum for relative comparison
+DUAL_MOM_ABSOLUTE_THRESHOLD = 0.0  # Must have positive absolute momentum
+DUAL_MOM_POSITIONS = 5  # Top 5 by relative momentum
+DUAL_MOM_RISK_OFF_TICKER = None  # Set to 'TLT' or 'SHY' for bonds, None for cash
+
+# Trend Following ATR Parameters
+TREND_ATR_LOOKBACK_DAYS = 90  # 3-month for trend detection
+TREND_ATR_PERIOD = 14  # ATR calculation period
+TREND_ATR_TRAILING_MULT = 2.0  # ATR multiplier for trailing stop
+TREND_ATR_ENTRY_BREAKOUT = 20  # Days for breakout detection
+
 MULTI_TIMEFRAMES = ["1d", "4h", "1h"]    # Timeframes to analyze
 MULTI_TIMEFRAME_LOOKBACK = {
     "1d": 365,    # Daily: 1 year lookback

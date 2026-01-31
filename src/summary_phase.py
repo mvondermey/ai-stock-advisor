@@ -160,7 +160,29 @@ def print_final_summary(
     # Rebalance horizon optimization results
     static_bh_1y_best_horizon: int = None,
     static_bh_3m_best_horizon: int = None,
-    static_bh_1m_best_horizon: int = None
+    static_bh_1m_best_horizon: int = None,
+    # New Advanced Strategies
+    final_mom_accel_value_1y: float = None,
+    mom_accel_1y_return: float = None,
+    mom_accel_transaction_costs: float = None,
+    mom_accel_cash_deployed: float = None,
+    final_concentrated_3m_value_1y: float = None,
+    concentrated_3m_1y_return: float = None,
+    concentrated_3m_transaction_costs: float = None,
+    concentrated_3m_cash_deployed: float = None,
+    final_dual_mom_value_1y: float = None,
+    dual_mom_1y_return: float = None,
+    dual_mom_transaction_costs: float = None,
+    dual_mom_cash_deployed: float = None,
+    final_trend_atr_value_1y: float = None,
+    trend_atr_1y_return: float = None,
+    trend_atr_transaction_costs: float = None,
+    trend_atr_cash_deployed: float = None,
+    # Enhanced Volatility
+    final_enhanced_volatility_value_1y: float = None,
+    enhanced_volatility_1y_return: float = None,
+    enhanced_volatility_transaction_costs: float = None,
+    enhanced_volatility_cash_deployed: float = None
 ) -> None:
     """Prints the final summary of the backtest results."""
     
@@ -258,6 +280,11 @@ def print_final_summary(
     strategies_data.append(('Corr Ens', final_correlation_ensemble_value_1y, correlation_ensemble_1y_return, correlation_ensemble_transaction_costs, correlation_ensemble_cash_deployed))
     strategies_data.append(('Dyn Pool', final_dynamic_pool_value_1y, dynamic_pool_1y_return, dynamic_pool_transaction_costs, dynamic_pool_cash_deployed))
     strategies_data.append(('Sent Ens', final_sentiment_ensemble_value_1y, sentiment_ensemble_1y_return, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash_deployed))
+    strategies_data.append(('Mom Accel', final_mom_accel_value_1y, mom_accel_1y_return, mom_accel_transaction_costs, mom_accel_cash_deployed))
+    strategies_data.append(('Conc 3M', final_concentrated_3m_value_1y, concentrated_3m_1y_return, concentrated_3m_transaction_costs, concentrated_3m_cash_deployed))
+    strategies_data.append(('Dual Mom', final_dual_mom_value_1y, dual_mom_1y_return, dual_mom_transaction_costs, dual_mom_cash_deployed))
+    strategies_data.append(('Trend ATR', final_trend_atr_value_1y, trend_atr_1y_return, trend_atr_transaction_costs, trend_atr_cash_deployed))
+    strategies_data.append(('Enh Vol', final_enhanced_volatility_value_1y, enhanced_volatility_1y_return, enhanced_volatility_transaction_costs, enhanced_volatility_cash_deployed))
     
     # Sort by return (best first)
     strategies_data.sort(key=lambda x: safe_return(x[2]), reverse=True)

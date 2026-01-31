@@ -30,7 +30,9 @@ from config import (
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_ADAPTIVE_STRATEGY,
     ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE, ENABLE_AI_VOLATILITY_ENSEMBLE,
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
-    CALENDAR_DAYS_PER_YEAR
+    CALENDAR_DAYS_PER_YEAR,
+    ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
+    CONCENTRATED_3M_POSITIONS, CONCENTRATED_3M_REBALANCE_DAYS, DUAL_MOM_POSITIONS
 )
 import signal
 from contextlib import contextmanager
@@ -1508,6 +1510,38 @@ def _run_portfolio_backtest_walk_forward(
     current_sentiment_ensemble_stocks = []  # Current top stocks held by sentiment ensemble
     sentiment_ensemble_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
+    # MOMENTUM ACCELERATION: Initialize portfolio tracking
+    mom_accel_portfolio_value = initial_capital_needed
+    mom_accel_portfolio_history = [mom_accel_portfolio_value]
+    mom_accel_positions = {}
+    mom_accel_cash = initial_capital_needed
+    current_mom_accel_stocks = []
+    mom_accel_last_rebalance_value = initial_capital_needed
+
+    # CONCENTRATED 3M: Initialize portfolio tracking
+    concentrated_3m_portfolio_value = initial_capital_needed
+    concentrated_3m_portfolio_history = [concentrated_3m_portfolio_value]
+    concentrated_3m_positions = {}
+    concentrated_3m_cash = initial_capital_needed
+    current_concentrated_3m_stocks = []
+    concentrated_3m_last_rebalance_value = initial_capital_needed
+    concentrated_3m_days_since_rebalance = 0
+
+    # DUAL MOMENTUM: Initialize portfolio tracking
+    dual_mom_portfolio_value = initial_capital_needed
+    dual_mom_portfolio_history = [dual_mom_portfolio_value]
+    dual_mom_positions = {}
+    dual_mom_cash = initial_capital_needed
+    current_dual_mom_stocks = []
+    dual_mom_is_risk_on = True
+
+    # TREND FOLLOWING ATR: Initialize portfolio tracking
+    trend_atr_portfolio_value = initial_capital_needed
+    trend_atr_portfolio_history = [trend_atr_portfolio_value]
+    trend_atr_positions = {}
+    trend_atr_cash = initial_capital_needed
+    current_trend_atr_stocks = []
+
     # LLM STRATEGY (DeepSeek via Ollama): Initialize portfolio tracking
     llm_strategy_portfolio_value = 0.0
     llm_strategy_portfolio_history = [llm_strategy_portfolio_value]
@@ -1583,6 +1617,10 @@ def _run_portfolio_backtest_walk_forward(
     correlation_ensemble_transaction_costs = 0.0
     dynamic_pool_transaction_costs = 0.0
     sentiment_ensemble_transaction_costs = 0.0
+    mom_accel_transaction_costs = 0.0
+    concentrated_3m_transaction_costs = 0.0
+    dual_mom_transaction_costs = 0.0
+    trend_atr_transaction_costs = 0.0
 
     # Cash utilization tracking - track actual capital deployed for each strategy
     ai_cash_deployed = 0.0
@@ -2001,7 +2039,9 @@ def _run_portfolio_backtest_walk_forward(
                             end_p = valid_close.iloc[-1]
                             if start_p > 0:
                                 perf_pct = ((end_p - start_p) / start_p) * 100
-                                perf_1m_list.append((ticker, perf_pct))
+                                # Only include stocks with positive momentum
+                                if perf_pct > 0:
+                                    perf_1m_list.append((ticker, perf_pct))
                 
                 if perf_1m_list:
                     perf_1m_list.sort(key=lambda x: x[1], reverse=True)
@@ -2316,7 +2356,9 @@ def _run_portfolio_backtest_walk_forward(
 
                             if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
                                 perf_pct = ((end_price - start_price) / start_price) * 100
-                                current_top_performers_1m.append((ticker, perf_pct))
+                                # Only include stocks with positive momentum
+                                if perf_pct > 0:
+                                    current_top_performers_1m.append((ticker, perf_pct))
 
                 except Exception as e:
                     print(f"   ⚠️ Error calculating 1M performance for {ticker}: {e}")
@@ -3369,7 +3411,8 @@ def _run_portfolio_backtest_walk_forward(
                                 # Calculate volatility
                                 volatility = returns.std() * np.sqrt(252)
                                 # Score: momentum adjusted by volatility
-                                if volatility > 0:
+                                # Only include stocks with positive momentum
+                                if volatility > 0 and momentum > 0:
                                     score = momentum / volatility
                                     correlation_scores.append((ticker, score, returns))
                     except Exception:
@@ -3773,7 +3816,7 @@ def _run_portfolio_backtest_walk_forward(
                                     atr = np.maximum(high_low, np.maximum(high_close, low_close)).mean()
                                     
                                     # Enhanced score: momentum adjusted by volatility (lower volatility = higher score)
-                                    if volatility > 0:
+                                    if volatility > 0 and momentum > 0:  # Only positive momentum
                                         enhanced_score = momentum / volatility
                                         enhanced_vol_scores.append((ticker, enhanced_score, volatility, atr))
                         
@@ -3932,7 +3975,9 @@ def _run_portfolio_backtest_walk_forward(
                                                    0.25 * momentum_score + 
                                                    0.2 * volume_score)
                                         
-                                        ai_vol_scores.append((ticker, ai_score, real_vol, price_momentum, vol_trend))
+                                        # Only include stocks with positive momentum
+                                        if price_momentum > 0:
+                                            ai_vol_scores.append((ticker, ai_score, real_vol, price_momentum, vol_trend))
                         
                         except Exception:
                             continue
@@ -4060,6 +4105,235 @@ def _run_portfolio_backtest_walk_forward(
                 print(f"   ⚠️ Momentum+AI hybrid failed: {e}")
                 import traceback
                 traceback.print_exc()
+
+        # === NEW ADVANCED STRATEGIES ===
+        
+        # MOMENTUM ACCELERATION STRATEGY
+        if ENABLE_MOMENTUM_ACCELERATION:
+            try:
+                from new_strategies import select_momentum_acceleration_stocks
+                
+                print(f"   📈 Momentum Acceleration: Analyzing {len(initial_top_tickers)} tickers...")
+                
+                new_mom_accel_stocks = select_momentum_acceleration_stocks(
+                    initial_top_tickers, ticker_data_grouped, current_date, top_n=PORTFOLIO_SIZE
+                )
+                
+                if new_mom_accel_stocks:
+                    total_value = mom_accel_cash + sum(pos.get('value', 0) for pos in mom_accel_positions.values())
+                    capital_per_stock = total_value / len(new_mom_accel_stocks)
+                    
+                    # Sell positions not in new selection
+                    for ticker in list(mom_accel_positions.keys()):
+                        if ticker not in new_mom_accel_stocks:
+                            if ticker in ticker_data_grouped:
+                                price_data = ticker_data_grouped[ticker].loc[:current_date]
+                                if not price_data.empty:
+                                    current_price = price_data['Close'].dropna().iloc[-1]
+                                    shares = mom_accel_positions[ticker]['shares']
+                                    gross_sale = shares * current_price
+                                    sell_cost = gross_sale * TRANSACTION_COST
+                                    mom_accel_transaction_costs += sell_cost
+                                    mom_accel_cash += gross_sale - sell_cost
+                            del mom_accel_positions[ticker]
+                    
+                    # Buy new positions
+                    for ticker in new_mom_accel_stocks:
+                        if ticker not in mom_accel_positions:
+                            if ticker in ticker_data_grouped:
+                                price_data = ticker_data_grouped[ticker].loc[:current_date]
+                                if not price_data.empty:
+                                    current_price = price_data['Close'].dropna().iloc[-1]
+                                    if current_price > 0:
+                                        shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
+                                        if shares > 0 and mom_accel_cash >= shares * current_price * (1 + TRANSACTION_COST):
+                                            buy_value = shares * current_price
+                                            buy_cost = buy_value * TRANSACTION_COST
+                                            mom_accel_transaction_costs += buy_cost
+                                            mom_accel_cash -= (buy_value + buy_cost)
+                                            mom_accel_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
+                    
+                    current_mom_accel_stocks = new_mom_accel_stocks
+                    
+            except Exception as e:
+                print(f"   ⚠️ Momentum Acceleration error: {e}")
+
+        # CONCENTRATED 3M STRATEGY
+        if ENABLE_CONCENTRATED_3M:
+            try:
+                concentrated_3m_days_since_rebalance += 1
+                
+                # Only rebalance monthly
+                if concentrated_3m_days_since_rebalance >= CONCENTRATED_3M_REBALANCE_DAYS or not current_concentrated_3m_stocks:
+                    from new_strategies import select_concentrated_3m_stocks
+                    
+                    print(f"   🎯 Concentrated 3M: Analyzing {len(initial_top_tickers)} tickers...")
+                    
+                    new_concentrated_3m_stocks = select_concentrated_3m_stocks(
+                        initial_top_tickers, ticker_data_grouped, current_date, top_n=CONCENTRATED_3M_POSITIONS
+                    )
+                    
+                    if new_concentrated_3m_stocks:
+                        total_value = concentrated_3m_cash + sum(pos.get('value', 0) for pos in concentrated_3m_positions.values())
+                        capital_per_stock = total_value / len(new_concentrated_3m_stocks)
+                        
+                        # Sell positions not in new selection
+                        for ticker in list(concentrated_3m_positions.keys()):
+                            if ticker not in new_concentrated_3m_stocks:
+                                if ticker in ticker_data_grouped:
+                                    price_data = ticker_data_grouped[ticker].loc[:current_date]
+                                    if not price_data.empty:
+                                        current_price = price_data['Close'].dropna().iloc[-1]
+                                        shares = concentrated_3m_positions[ticker]['shares']
+                                        gross_sale = shares * current_price
+                                        sell_cost = gross_sale * TRANSACTION_COST
+                                        concentrated_3m_transaction_costs += sell_cost
+                                        concentrated_3m_cash += gross_sale - sell_cost
+                                del concentrated_3m_positions[ticker]
+                        
+                        # Buy new positions
+                        for ticker in new_concentrated_3m_stocks:
+                            if ticker not in concentrated_3m_positions:
+                                if ticker in ticker_data_grouped:
+                                    price_data = ticker_data_grouped[ticker].loc[:current_date]
+                                    if not price_data.empty:
+                                        current_price = price_data['Close'].dropna().iloc[-1]
+                                        if current_price > 0:
+                                            shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
+                                            if shares > 0 and concentrated_3m_cash >= shares * current_price * (1 + TRANSACTION_COST):
+                                                buy_value = shares * current_price
+                                                buy_cost = buy_value * TRANSACTION_COST
+                                                concentrated_3m_transaction_costs += buy_cost
+                                                concentrated_3m_cash -= (buy_value + buy_cost)
+                                                concentrated_3m_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
+                        
+                        current_concentrated_3m_stocks = new_concentrated_3m_stocks
+                        concentrated_3m_days_since_rebalance = 0
+                        
+            except Exception as e:
+                print(f"   ⚠️ Concentrated 3M error: {e}")
+
+        # DUAL MOMENTUM STRATEGY
+        if ENABLE_DUAL_MOMENTUM:
+            try:
+                from new_strategies import select_dual_momentum_stocks
+                
+                print(f"   📊 Dual Momentum: Analyzing {len(initial_top_tickers)} tickers...")
+                
+                new_dual_mom_stocks, is_risk_on = select_dual_momentum_stocks(
+                    initial_top_tickers, ticker_data_grouped, current_date, top_n=DUAL_MOM_POSITIONS
+                )
+                
+                # If risk-off, sell all positions
+                if not is_risk_on:
+                    for ticker in list(dual_mom_positions.keys()):
+                        if ticker in ticker_data_grouped:
+                            price_data = ticker_data_grouped[ticker].loc[:current_date]
+                            if not price_data.empty:
+                                current_price = price_data['Close'].dropna().iloc[-1]
+                                shares = dual_mom_positions[ticker]['shares']
+                                gross_sale = shares * current_price
+                                sell_cost = gross_sale * TRANSACTION_COST
+                                dual_mom_transaction_costs += sell_cost
+                                dual_mom_cash += gross_sale - sell_cost
+                        del dual_mom_positions[ticker]
+                    current_dual_mom_stocks = []
+                    dual_mom_is_risk_on = False
+                elif new_dual_mom_stocks:
+                    dual_mom_is_risk_on = True
+                    total_value = dual_mom_cash + sum(pos.get('value', 0) for pos in dual_mom_positions.values())
+                    capital_per_stock = total_value / len(new_dual_mom_stocks)
+                    
+                    # Sell positions not in new selection
+                    for ticker in list(dual_mom_positions.keys()):
+                        if ticker not in new_dual_mom_stocks:
+                            if ticker in ticker_data_grouped:
+                                price_data = ticker_data_grouped[ticker].loc[:current_date]
+                                if not price_data.empty:
+                                    current_price = price_data['Close'].dropna().iloc[-1]
+                                    shares = dual_mom_positions[ticker]['shares']
+                                    gross_sale = shares * current_price
+                                    sell_cost = gross_sale * TRANSACTION_COST
+                                    dual_mom_transaction_costs += sell_cost
+                                    dual_mom_cash += gross_sale - sell_cost
+                            del dual_mom_positions[ticker]
+                    
+                    # Buy new positions
+                    for ticker in new_dual_mom_stocks:
+                        if ticker not in dual_mom_positions:
+                            if ticker in ticker_data_grouped:
+                                price_data = ticker_data_grouped[ticker].loc[:current_date]
+                                if not price_data.empty:
+                                    current_price = price_data['Close'].dropna().iloc[-1]
+                                    if current_price > 0:
+                                        shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
+                                        if shares > 0 and dual_mom_cash >= shares * current_price * (1 + TRANSACTION_COST):
+                                            buy_value = shares * current_price
+                                            buy_cost = buy_value * TRANSACTION_COST
+                                            dual_mom_transaction_costs += buy_cost
+                                            dual_mom_cash -= (buy_value + buy_cost)
+                                            dual_mom_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
+                    
+                    current_dual_mom_stocks = new_dual_mom_stocks
+                    
+            except Exception as e:
+                print(f"   ⚠️ Dual Momentum error: {e}")
+
+        # TREND FOLLOWING ATR STRATEGY
+        if ENABLE_TREND_FOLLOWING_ATR:
+            try:
+                from new_strategies import select_trend_following_atr_stocks, reset_trend_atr_state
+                
+                # Reset on first day
+                if day_count == 1:
+                    reset_trend_atr_state()
+                
+                print(f"   📈 Trend Following ATR: Analyzing {len(initial_top_tickers)} tickers...")
+                
+                stocks_to_buy, stocks_to_sell = select_trend_following_atr_stocks(
+                    initial_top_tickers, ticker_data_grouped, current_date, top_n=PORTFOLIO_SIZE
+                )
+                
+                # Process sells first
+                for ticker in stocks_to_sell:
+                    if ticker in trend_atr_positions:
+                        if ticker in ticker_data_grouped:
+                            price_data = ticker_data_grouped[ticker].loc[:current_date]
+                            if not price_data.empty:
+                                current_price = price_data['Close'].dropna().iloc[-1]
+                                shares = trend_atr_positions[ticker]['shares']
+                                gross_sale = shares * current_price
+                                sell_cost = gross_sale * TRANSACTION_COST
+                                trend_atr_transaction_costs += sell_cost
+                                trend_atr_cash += gross_sale - sell_cost
+                        del trend_atr_positions[ticker]
+                
+                # Process buys
+                if stocks_to_buy:
+                    total_value = trend_atr_cash + sum(pos.get('value', 0) for pos in trend_atr_positions.values())
+                    available_slots = PORTFOLIO_SIZE - len(trend_atr_positions)
+                    if available_slots > 0:
+                        capital_per_stock = total_value / PORTFOLIO_SIZE
+                        
+                        for ticker in stocks_to_buy[:available_slots]:
+                            if ticker not in trend_atr_positions:
+                                if ticker in ticker_data_grouped:
+                                    price_data = ticker_data_grouped[ticker].loc[:current_date]
+                                    if not price_data.empty:
+                                        current_price = price_data['Close'].dropna().iloc[-1]
+                                        if current_price > 0:
+                                            shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
+                                            if shares > 0 and trend_atr_cash >= shares * current_price * (1 + TRANSACTION_COST):
+                                                buy_value = shares * current_price
+                                                buy_cost = buy_value * TRANSACTION_COST
+                                                trend_atr_transaction_costs += buy_cost
+                                                trend_atr_cash -= (buy_value + buy_cost)
+                                                trend_atr_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
+                
+                current_trend_atr_stocks = list(trend_atr_positions.keys())
+                    
+            except Exception as e:
+                print(f"   ⚠️ Trend Following ATR error: {e}")
 
         # Daily stock selection: Use current models to pick best 3 from 40 stocks
         try:
@@ -4976,6 +5250,94 @@ def _run_portfolio_backtest_walk_forward(
         sentiment_ensemble_portfolio_value = sentiment_ensemble_invested_value + sentiment_ensemble_cash
         sentiment_ensemble_portfolio_history.append(sentiment_ensemble_portfolio_value)
 
+        # Update MOMENTUM ACCELERATION portfolio value daily
+        mom_accel_invested_value = 0.0
+        if ENABLE_MOMENTUM_ACCELERATION:
+            for ticker in list(mom_accel_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = mom_accel_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            mom_accel_positions[ticker]['value'] = position_value
+                            mom_accel_invested_value += position_value
+                        else:
+                            mom_accel_invested_value += mom_accel_positions[ticker].get('value', 0.0)
+                    else:
+                        mom_accel_invested_value += mom_accel_positions[ticker].get('value', 0.0)
+                except Exception:
+                    mom_accel_invested_value += mom_accel_positions[ticker].get('value', 0.0)
+        mom_accel_portfolio_value = mom_accel_invested_value + mom_accel_cash
+        mom_accel_portfolio_history.append(mom_accel_portfolio_value)
+
+        # Update CONCENTRATED 3M portfolio value daily
+        concentrated_3m_invested_value = 0.0
+        if ENABLE_CONCENTRATED_3M:
+            for ticker in list(concentrated_3m_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = concentrated_3m_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            concentrated_3m_positions[ticker]['value'] = position_value
+                            concentrated_3m_invested_value += position_value
+                        else:
+                            concentrated_3m_invested_value += concentrated_3m_positions[ticker].get('value', 0.0)
+                    else:
+                        concentrated_3m_invested_value += concentrated_3m_positions[ticker].get('value', 0.0)
+                except Exception:
+                    concentrated_3m_invested_value += concentrated_3m_positions[ticker].get('value', 0.0)
+        concentrated_3m_portfolio_value = concentrated_3m_invested_value + concentrated_3m_cash
+        concentrated_3m_portfolio_history.append(concentrated_3m_portfolio_value)
+
+        # Update DUAL MOMENTUM portfolio value daily
+        dual_mom_invested_value = 0.0
+        if ENABLE_DUAL_MOMENTUM:
+            for ticker in list(dual_mom_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = dual_mom_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            dual_mom_positions[ticker]['value'] = position_value
+                            dual_mom_invested_value += position_value
+                        else:
+                            dual_mom_invested_value += dual_mom_positions[ticker].get('value', 0.0)
+                    else:
+                        dual_mom_invested_value += dual_mom_positions[ticker].get('value', 0.0)
+                except Exception:
+                    dual_mom_invested_value += dual_mom_positions[ticker].get('value', 0.0)
+        dual_mom_portfolio_value = dual_mom_invested_value + dual_mom_cash
+        dual_mom_portfolio_history.append(dual_mom_portfolio_value)
+
+        # Update TREND FOLLOWING ATR portfolio value daily
+        trend_atr_invested_value = 0.0
+        if ENABLE_TREND_FOLLOWING_ATR:
+            for ticker in list(trend_atr_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = trend_atr_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            trend_atr_positions[ticker]['value'] = position_value
+                            trend_atr_invested_value += position_value
+                        else:
+                            trend_atr_invested_value += trend_atr_positions[ticker].get('value', 0.0)
+                    else:
+                        trend_atr_invested_value += trend_atr_positions[ticker].get('value', 0.0)
+                except Exception:
+                    trend_atr_invested_value += trend_atr_positions[ticker].get('value', 0.0)
+        trend_atr_portfolio_value = trend_atr_invested_value + trend_atr_cash
+        trend_atr_portfolio_history.append(trend_atr_portfolio_value)
+
         # Update MEAN REVERSION portfolio value daily (skip if disabled)
         mean_reversion_invested_value = 0.0
         if ENABLE_MEAN_REVERSION:
@@ -5382,6 +5744,10 @@ def _run_portfolio_backtest_walk_forward(
                 ("Correlation Ensemble", correlation_ensemble_portfolio_value if ENABLE_CORRELATION_ENSEMBLE else None),
                 ("Dynamic Pool", dynamic_pool_portfolio_value if ENABLE_DYNAMIC_POOL else None),
                 ("Sentiment Ensemble", sentiment_ensemble_portfolio_value if ENABLE_SENTIMENT_ENSEMBLE else None),
+                ("Mom Acceleration", mom_accel_portfolio_value if ENABLE_MOMENTUM_ACCELERATION else None),
+                ("Concentrated 3M", concentrated_3m_portfolio_value if ENABLE_CONCENTRATED_3M else None),
+                ("Dual Momentum", dual_mom_portfolio_value if ENABLE_DUAL_MOMENTUM else None),
+                ("Trend ATR", trend_atr_portfolio_value if ENABLE_TREND_FOLLOWING_ATR else None),
             ]
             
             # Filter out None values and sort by performance
@@ -5487,6 +5853,22 @@ def _run_portfolio_backtest_walk_forward(
                 elif name == "1Y/3M Ratio":
                     strat_cash = ratio_1y_3m_cash
                     num_positions = len(current_ratio_1y_3m_stocks) if 'current_ratio_1y_3m_stocks' in dir() else 0
+                    invested = value - strat_cash
+                elif name == "Mom Acceleration" and ENABLE_MOMENTUM_ACCELERATION:
+                    strat_cash = mom_accel_cash
+                    num_positions = len(mom_accel_positions)
+                    invested = value - strat_cash
+                elif name == "Concentrated 3M" and ENABLE_CONCENTRATED_3M:
+                    strat_cash = concentrated_3m_cash
+                    num_positions = len(concentrated_3m_positions)
+                    invested = value - strat_cash
+                elif name == "Dual Momentum" and ENABLE_DUAL_MOMENTUM:
+                    strat_cash = dual_mom_cash
+                    num_positions = len(dual_mom_positions)
+                    invested = value - strat_cash
+                elif name == "Trend ATR" and ENABLE_TREND_FOLLOWING_ATR:
+                    strat_cash = trend_atr_cash
+                    num_positions = len(trend_atr_positions)
                     invested = value - strat_cash
                     
                 strategy_details.append((name, value, strat_cash, num_positions, invested))
@@ -5955,6 +6337,10 @@ def _run_portfolio_backtest_walk_forward(
         ('Correlation Ensemble', correlation_ensemble_portfolio_history if ENABLE_CORRELATION_ENSEMBLE else None),
         ('Dynamic Pool', dynamic_pool_portfolio_history if ENABLE_DYNAMIC_POOL else None),
         ('Sentiment Ensemble', sentiment_ensemble_portfolio_history if ENABLE_SENTIMENT_ENSEMBLE else None),
+        ('Mom Acceleration', mom_accel_portfolio_history if ENABLE_MOMENTUM_ACCELERATION else None),
+        ('Concentrated 3M', concentrated_3m_portfolio_history if ENABLE_CONCENTRATED_3M else None),
+        ('Dual Momentum', dual_mom_portfolio_history if ENABLE_DUAL_MOMENTUM else None),
+        ('Trend ATR', trend_atr_portfolio_history if ENABLE_TREND_FOLLOWING_ATR else None),
     ]
     
     # Filter out disabled strategies
@@ -6059,8 +6445,14 @@ def _run_portfolio_backtest_walk_forward(
     dynamic_bh_vol_filter_cash_deployed = dynamic_bh_1y_vol_filter_cash_deployed
     dynamic_bh_trailing_stop_cash_deployed = dynamic_bh_1y_trailing_stop_cash_deployed
     ratio_3m_cash_deployed = ratio_3m_1y_cash_deployed
+    
+    # Alias new strategy cash variables for consistency with main.py expectations
+    mom_accel_cash_deployed = mom_accel_cash
+    concentrated_3m_cash_deployed = concentrated_3m_cash
+    dual_mom_cash_deployed = dual_mom_cash
+    trend_atr_cash_deployed = trend_atr_cash
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, bh_3m_portfolio_value, bh_6m_portfolio_value, bh_1m_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_6m_portfolio_value, dynamic_bh_6m_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, multitask_portfolio_value, multitask_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, dynamic_bh_vol_filter_portfolio_value, dynamic_bh_vol_filter_portfolio_history, dynamic_bh_trailing_stop_portfolio_value, dynamic_bh_trailing_stop_portfolio_history, sector_rotation_portfolio_value, sector_rotation_portfolio_history, ratio_3m_portfolio_value, ratio_3m_portfolio_history, ratio_1y_3m_portfolio_value, ratio_1y_3m_portfolio_history, turnaround_portfolio_value, turnaround_portfolio_history, adaptive_ensemble_portfolio_value, adaptive_ensemble_portfolio_history, volatility_ensemble_portfolio_value, volatility_ensemble_portfolio_history, ai_volatility_ensemble_portfolio_value, ai_volatility_ensemble_portfolio_history, multi_tf_ensemble_portfolio_value, multi_tf_ensemble_portfolio_history, correlation_ensemble_portfolio_value, correlation_ensemble_portfolio_history, dynamic_pool_portfolio_value, dynamic_pool_portfolio_history, sentiment_ensemble_portfolio_value, sentiment_ensemble_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, static_bh_6m_transaction_costs, static_bh_3m_transaction_costs, static_bh_1m_transaction_costs, dynamic_bh_transaction_costs, dynamic_bh_6m_transaction_costs, dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, multitask_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_vol_filter_transaction_costs, dynamic_bh_trailing_stop_transaction_costs, sector_rotation_transaction_costs, ratio_3m_transaction_costs, ratio_1y_3m_transaction_costs, ratio_3m_1y_transaction_costs_1y, turnaround_transaction_costs, adaptive_ensemble_transaction_costs, volatility_ensemble_transaction_costs, ai_volatility_ensemble_transaction_costs, multi_tf_ensemble_transaction_costs, correlation_ensemble_transaction_costs, dynamic_pool_transaction_costs, sentiment_ensemble_transaction_costs, day_count, ai_cash_deployed, static_bh_cash_deployed, static_bh_6m_cash_deployed, static_bh_3m_cash_deployed, static_bh_1m_cash_deployed, dynamic_bh_cash_deployed, dynamic_bh_6m_cash_deployed, dynamic_bh_3m_cash_deployed, dynamic_bh_1m_cash_deployed, risk_adj_mom_cash_deployed, mean_reversion_cash_deployed, quality_momentum_cash_deployed, volatility_adj_mom_cash_deployed, momentum_ai_hybrid_cash_deployed, dynamic_bh_vol_filter_cash_deployed, dynamic_bh_trailing_stop_cash_deployed, multitask_cash_deployed, sector_rotation_cash_deployed, ratio_3m_cash_deployed, ratio_1y_3m_cash_deployed, turnaround_cash_deployed, adaptive_ensemble_cash_deployed, volatility_ensemble_cash_deployed, ai_volatility_ensemble_cash_deployed, multi_tf_ensemble_cash_deployed, correlation_ensemble_cash_deployed, dynamic_pool_cash_deployed, sentiment_ensemble_cash_deployed
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, bh_3m_portfolio_value, bh_6m_portfolio_value, bh_1m_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_6m_portfolio_value, dynamic_bh_6m_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, multitask_portfolio_value, multitask_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, dynamic_bh_vol_filter_portfolio_value, dynamic_bh_vol_filter_portfolio_history, dynamic_bh_trailing_stop_portfolio_value, dynamic_bh_trailing_stop_portfolio_history, sector_rotation_portfolio_value, sector_rotation_portfolio_history, ratio_3m_portfolio_value, ratio_3m_portfolio_history, ratio_1y_3m_portfolio_value, ratio_1y_3m_portfolio_history, turnaround_portfolio_value, turnaround_portfolio_history, adaptive_ensemble_portfolio_value, adaptive_ensemble_portfolio_history, volatility_ensemble_portfolio_value, volatility_ensemble_portfolio_history, ai_volatility_ensemble_portfolio_value, ai_volatility_ensemble_portfolio_history, multi_tf_ensemble_portfolio_value, multi_tf_ensemble_portfolio_history, correlation_ensemble_portfolio_value, correlation_ensemble_portfolio_history, dynamic_pool_portfolio_value, dynamic_pool_portfolio_history, sentiment_ensemble_portfolio_value, sentiment_ensemble_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, static_bh_6m_transaction_costs, static_bh_3m_transaction_costs, static_bh_1m_transaction_costs, dynamic_bh_transaction_costs, dynamic_bh_6m_transaction_costs, dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, multitask_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_vol_filter_transaction_costs, dynamic_bh_trailing_stop_transaction_costs, sector_rotation_transaction_costs, ratio_3m_transaction_costs, ratio_1y_3m_transaction_costs, ratio_3m_1y_transaction_costs_1y, turnaround_transaction_costs, adaptive_ensemble_transaction_costs, volatility_ensemble_transaction_costs, ai_volatility_ensemble_transaction_costs, multi_tf_ensemble_transaction_costs, correlation_ensemble_transaction_costs, dynamic_pool_transaction_costs, sentiment_ensemble_transaction_costs, day_count, ai_cash_deployed, static_bh_cash_deployed, static_bh_6m_cash_deployed, static_bh_3m_cash_deployed, static_bh_1m_cash_deployed, dynamic_bh_cash_deployed, dynamic_bh_6m_cash_deployed, dynamic_bh_3m_cash_deployed, dynamic_bh_1m_cash_deployed, risk_adj_mom_cash_deployed, mean_reversion_cash_deployed, quality_momentum_cash_deployed, volatility_adj_mom_cash_deployed, momentum_ai_hybrid_cash_deployed, dynamic_bh_vol_filter_cash_deployed, dynamic_bh_trailing_stop_cash_deployed, multitask_cash_deployed, sector_rotation_cash_deployed, ratio_3m_cash_deployed, ratio_1y_3m_cash_deployed, turnaround_cash_deployed, adaptive_ensemble_cash_deployed, volatility_ensemble_cash_deployed, ai_volatility_ensemble_cash_deployed, multi_tf_ensemble_cash_deployed, correlation_ensemble_cash_deployed, dynamic_pool_cash_deployed, sentiment_ensemble_cash_deployed, mom_accel_portfolio_value, mom_accel_portfolio_history, concentrated_3m_portfolio_value, concentrated_3m_portfolio_history, dual_mom_portfolio_value, dual_mom_portfolio_history, trend_atr_portfolio_value, trend_atr_portfolio_history, mom_accel_transaction_costs, concentrated_3m_transaction_costs, dual_mom_transaction_costs, trend_atr_transaction_costs, mom_accel_cash_deployed, concentrated_3m_cash_deployed, dual_mom_cash_deployed, trend_atr_cash_deployed, enhanced_volatility_portfolio_value, enhanced_volatility_portfolio_history, enhanced_volatility_transaction_costs, enhanced_volatility_cash
 
 
 def _get_current_risk_adj_mom_selections(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
