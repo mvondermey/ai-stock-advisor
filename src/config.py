@@ -73,6 +73,11 @@ except ImportError:
 USE_LSTM = True
 USE_GRU = False
 
+# --- Volatility Ensemble Parameters ---
+MAX_PORTFOLIO_VOLATILITY = 0.30  # 30% annualized max portfolio volatility (more reasonable for 10 stocks)
+MAX_SINGLE_STOCK_VOLATILITY = 0.50  # 50% annualized max for any single stock
+VOLATILITY_LOOKBACK_DAYS = 30  # Days to calculate volatility
+
 # --- Universe / selection
 MARKET_SELECTION = {
     "ALPACA_STOCKS": False,    # DISABLED - Using curated indices instead

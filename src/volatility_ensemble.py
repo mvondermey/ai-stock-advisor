@@ -19,6 +19,9 @@ from collections import defaultdict
 from config import (
     TRANSACTION_COST,
     PORTFOLIO_SIZE,
+    MAX_PORTFOLIO_VOLATILITY,
+    MAX_SINGLE_STOCK_VOLATILITY,
+    VOLATILITY_LOOKBACK_DAYS,
 )
 
 # Import existing strategies
@@ -41,10 +44,6 @@ VOL_ENSEMBLE_STRATEGIES = [
     'quality_mom',
 ]
 
-# Volatility parameters
-MAX_PORTFOLIO_VOLATILITY = 0.20  # 20% annualized max portfolio volatility
-MAX_SINGLE_STOCK_VOLATILITY = 0.40  # 40% annualized max for any single stock
-VOLATILITY_LOOKBACK_DAYS = 30  # Days to calculate volatility
 
 # Position sizing
 MIN_POSITION_WEIGHT = 0.05  # 5% minimum position weight
@@ -150,7 +149,7 @@ class VolatilityAdjustedEnsemble:
                 for ticker in picks:
                     if ticker in ticker_data_grouped:
                         vol = self.calculate_stock_volatility(ticker, ticker_data_grouped, current_date)
-                        if vol <= 0.60:  # 60% annualized volatility max
+                        if vol <= MAX_SINGLE_STOCK_VOLATILITY:  # Use the configured max
                             filtered_picks.append(ticker)
                 return filtered_picks[:top_n]
             
@@ -194,24 +193,12 @@ class VolatilityAdjustedEnsemble:
     
     def calculate_portfolio_volatility(self, tickers: List[str], weights: Dict[str, float],
                                        ticker_data_grouped: Dict[str, pd.DataFrame],
-                                       current_date: datetime, debug: bool = False) -> float:
+                                       current_date: datetime) -> float:
         """Calculate portfolio-level volatility."""
         try:
             # Get returns data for all stocks
             returns_data = {}
             lookback_start = current_date - timedelta(days=VOLATILITY_LOOKBACK_DAYS)
-            
-            # Debug: Check date types on first call
-            if debug and tickers:
-                first_ticker = tickers[0]
-                if first_ticker in ticker_data_grouped:
-                    idx = ticker_data_grouped[first_ticker].index
-                    print(f"      🔍 DEBUG dates: current_date={current_date} (type={type(current_date).__name__})")
-                    print(f"      🔍 DEBUG dates: lookback_start={lookback_start}")
-                    print(f"      🔍 DEBUG dates: data index range={idx.min()} to {idx.max()} (type={type(idx[0]).__name__ if len(idx) > 0 else 'empty'})")
-            
-            missing_data_tickers = []
-            insufficient_data_tickers = []
             
             for ticker in tickers:
                 if ticker in ticker_data_grouped:
@@ -219,48 +206,40 @@ class VolatilityAdjustedEnsemble:
                     recent_data = ticker_data[(ticker_data.index >= lookback_start) & 
                                               (ticker_data.index <= current_date)]
                     
-                    if debug:
-                        print(f"      🔍 DEBUG slice: {ticker} lookback={lookback_start}, current={current_date}, found {len(recent_data)} rows")
-                        if len(recent_data) > 0:
-                            print(f"      🔍 DEBUG {ticker} sample dates: {recent_data.index[0]} to {recent_data.index[-1]}")
-                    
                     if len(recent_data) >= 10:
                         returns = recent_data['Close'].pct_change().dropna()
                         if len(returns) >= 5:
                             returns_data[ticker] = returns
-                        else:
-                            insufficient_data_tickers.append(f"{ticker}(returns={len(returns)})")
-                    else:
-                        insufficient_data_tickers.append(f"{ticker}(data={len(recent_data)})")
-                else:
-                    missing_data_tickers.append(ticker)
             
-            if debug and (missing_data_tickers or insufficient_data_tickers):
-                print(f"      🔍 DEBUG portfolio_vol: missing={missing_data_tickers}, insufficient={insufficient_data_tickers}")
-            
+            # Need at least 2 tickers with data for covariance
             if len(returns_data) < 2:
-                if debug:
-                    print(f"      🔍 DEBUG portfolio_vol: Only {len(returns_data)} tickers with data, returning default 0.20")
                 return 0.20  # Default 20% volatility
             
             # Create returns DataFrame - align on common dates
             returns_df = pd.DataFrame(returns_data)
             
+            # Debug: Check data availability
+            if len(tickers) == 2:  # Only debug for the first addition
+                print(f"      🔍 DEBUG returns_data: {len(returns_data)} tickers")
+                for t, ret in returns_data.items():
+                    print(f"      🔍 {t}: {len(ret)} returns, {ret.index[0]} to {ret.index[-1]}")
+                print(f"      🔍 returns_df shape before dropna: {returns_df.shape}")
+            
             # Drop rows with any NaN (only keep dates where ALL tickers have data)
             returns_df_aligned = returns_df.dropna()
             
-            if debug:
-                print(f"      🔍 DEBUG portfolio_vol: returns_data has {len(returns_data)} tickers")
-                print(f"      🔍 DEBUG portfolio_vol: returns_df shape={returns_df.shape}, aligned shape={returns_df_aligned.shape}")
+            # Debug: Check after alignment
+            if len(tickers) == 2:
+                print(f"      🔍 returns_df_aligned shape: {returns_df_aligned.shape}")
                 if len(returns_df_aligned) > 0:
-                    print(f"      🔍 DEBUG portfolio_vol: aligned date range: {returns_df_aligned.index[0]} to {returns_df_aligned.index[-1]}")
+                    print(f"      🔍 aligned date range: {returns_df_aligned.index[0]} to {returns_df_aligned.index[-1]}")
+            
+            # Need sufficient overlapping data points
+            if len(returns_df_aligned) < 5:
+                return 0.20  # Default 20% volatility
             
             # Calculate covariance matrix using aligned data
             cov_matrix = returns_df_aligned.cov() * 252  # Annualized
-            
-            if debug:
-                print(f"      🔍 DEBUG portfolio_vol: cov_matrix shape={cov_matrix.shape}")
-                print(f"      🔍 DEBUG portfolio_vol: cov_matrix diagonal: {np.diag(cov_matrix)}")
             
             # Calculate portfolio variance
             portfolio_variance = 0.0
@@ -286,21 +265,15 @@ class VolatilityAdjustedEnsemble:
         """Main entry point: Select stocks with volatility adjustment."""
         print(f"\n   🎯 Volatility-Adjusted Ensemble Strategy")
         print(f"   📅 Date: {current_date.date()}")
-        print(f"   🔍 DEBUG: Input all_tickers count: {len(all_tickers)}")
-        print(f"   🔍 DEBUG: Input ticker_data_grouped count: {len(ticker_data_grouped)}")
-        print(f"   🔍 DEBUG: top_n: {top_n}")
-        print(f"   🔍 DEBUG: MAX_PORTFOLIO_VOLATILITY: {MAX_PORTFOLIO_VOLATILITY}")
         
         # 1. Get picks from each strategy
         strategy_picks = {}
         for strategy in VOL_ENSEMBLE_STRATEGIES:
-            print(f"   🔍 Getting picks from {strategy}...")
             picks = self.get_strategy_picks(
                 strategy, all_tickers, ticker_data_grouped,
                 current_date, train_start_date, top_n=top_n * 2
             )
             strategy_picks[strategy] = picks
-            print(f"      → {len(picks)} picks: {picks[:5] if len(picks) > 5 else picks}")
         
         # ✅ SAFETY CHECK: If all strategies returned empty, likely due to stale data
         total_picks = sum(len(picks) for picks in strategy_picks.values())
@@ -315,10 +288,6 @@ class VolatilityAdjustedEnsemble:
         # 2. Calculate ensemble scores
         ensemble_scores = self.calculate_ensemble_scores(strategy_picks)
         
-        print(f"   🔍 DEBUG: Ensemble scores count: {len(ensemble_scores)}")
-        if ensemble_scores:
-            print(f"   🔍 DEBUG: Top 5 ensemble scores: {sorted(ensemble_scores.items(), key=lambda x: x[1], reverse=True)[:5]}")
-        
         if not ensemble_scores:
             print(f"   ⚠️ No consensus picks found (need at least 2 strategies to agree)")
             return []
@@ -326,7 +295,6 @@ class VolatilityAdjustedEnsemble:
         # 3. Sort by ensemble score
         sorted_candidates = sorted(ensemble_scores.items(), key=lambda x: x[1], reverse=True)
         top_candidates = [ticker for ticker, score in sorted_candidates[:top_n * 2]]
-        print(f"   🔍 DEBUG: Top candidates for volatility weighting: {len(top_candidates)}")
         
         # 4. Calculate inverse volatility weights
         vol_weights = self.calculate_inverse_volatility_weights(top_candidates, ticker_data_grouped, current_date)
@@ -336,8 +304,6 @@ class VolatilityAdjustedEnsemble:
         current_weights = {}
         
         # Greedy selection to maximize score while respecting volatility constraint
-        print(f"   🔍 DEBUG: Starting greedy selection with MAX_PORTFOLIO_VOLATILITY={MAX_PORTFOLIO_VOLATILITY}")
-        rejected_count = 0
         for ticker, score in sorted_candidates:
             if len(selected_stocks) >= top_n:
                 break
@@ -352,18 +318,12 @@ class VolatilityAdjustedEnsemble:
             
             # Check portfolio volatility
             portfolio_vol = self.calculate_portfolio_volatility(
-                list(test_weights.keys()), test_weights, ticker_data_grouped, current_date, debug=True
+                list(test_weights.keys()), test_weights, ticker_data_grouped, current_date
             )
             
             if portfolio_vol <= MAX_PORTFOLIO_VOLATILITY:
                 selected_stocks.append(ticker)
                 current_weights[ticker] = vol_weights.get(ticker, 0.1)
-                print(f"      ✅ {ticker}: portfolio_vol={portfolio_vol:.1%} <= {MAX_PORTFOLIO_VOLATILITY:.1%}")
-            else:
-                rejected_count += 1
-                print(f"      ❌ {ticker}: portfolio_vol={portfolio_vol:.1%} > {MAX_PORTFOLIO_VOLATILITY:.1%} (REJECTED)")
-        
-        print(f"   🔍 DEBUG: Selected {len(selected_stocks)} stocks, rejected {rejected_count} due to volatility constraint")
         
         # 6. Display results
         print(f"   ✅ Selected {len(selected_stocks)} stocks:")

@@ -3328,17 +3328,6 @@ def _run_portfolio_backtest_walk_forward(
                 
                 print(f"   📊 Volatility Ensemble Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
                 
-                # DEBUG: Check data availability for volatility ensemble
-                print(f"\n   🔍 DEBUG: Checking data availability for Volatility Ensemble on {current_date.strftime('%Y-%m-%d')}")
-                for ticker in initial_top_tickers[:5]:  # Check first 5 tickers
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        lookback_start = current_date - timedelta(days=30)  # VOLATILITY_LOOKBACK_DAYS
-                        recent_data = ticker_data[(ticker_data.index >= lookback_start) & (ticker_data.index <= current_date)]
-                        print(f"      {ticker}: total rows={len(ticker_data)}, last 30d rows={len(recent_data)}, date range={ticker_data.index.min().date()} to {ticker_data.index.max().date()}")
-                    else:
-                        print(f"      {ticker}: NOT in ticker_data_grouped")
-                
                 new_volatility_ensemble_stocks = select_volatility_ensemble_stocks(
                     initial_top_tickers, 
                     ticker_data_grouped,
