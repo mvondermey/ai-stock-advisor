@@ -2609,8 +2609,9 @@ def _run_portfolio_backtest_walk_forward(
                     if llm_available:
                         # Check if it's time to rebalance (LLM calls are slow, so less frequent)
                         days_since_llm_rebalance = day_count - llm_strategy_last_rebalance_day
+                        is_initial_allocation = not current_llm_strategy_stocks  # Force day 1 investment
                         
-                        if days_since_llm_rebalance >= LLM_REBALANCE_FREQUENCY_DAYS:
+                        if is_initial_allocation or days_since_llm_rebalance >= LLM_REBALANCE_FREQUENCY_DAYS:
                             print(f"   🤖 LLM Strategy rebalancing (every {LLM_REBALANCE_FREQUENCY_DAYS} days)...", flush=True)
                             
                             try:
@@ -3156,7 +3157,8 @@ def _run_portfolio_backtest_walk_forward(
                 # Use momentum-volatility hybrid for stock selection
                 new_momentum_volatility_hybrid_stocks = select_momentum_volatility_hybrid_stocks(
                     initial_top_tickers, 
-                    ticker_data_grouped, 
+                    ticker_data_grouped,
+                    current_date=current_date,
                     top_n=PORTFOLIO_SIZE  # Use configured portfolio size (default 10)
                 )
                 
@@ -4815,43 +4817,28 @@ def _run_portfolio_backtest_walk_forward(
             multitask_portfolio_history.append(multitask_portfolio_value)
 
         # Update 3M/1Y RATIO portfolio value daily (skip if disabled)
-        ratio_3m_1y_invested_value = 0.0
         if ENABLE_3M_1Y_RATIO:
-            # Iterate over actual positions, not just current stocks list
+            ratio_3m_1y_invested_value = 0.0
             for ticker in list(ratio_3m_1y_positions.keys()):
-                    try:
-                        ticker_df = ticker_data_grouped.get(ticker)
-                        if ticker_df is not None:
-                            current_price = _last_valid_close_up_to(ticker_df, current_date)
-                            if current_price is not None:
-                                    ratio_3m_1y_invested_value += ratio_3m_1y_positions[ticker].get('value', 0.0)
-                            else:
-                                # Use previous value if no price data available
-                                ratio_3m_1y_invested_value += ratio_3m_1y_positions[ticker].get('value', 0.0)
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = ratio_3m_1y_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            ratio_3m_1y_positions[ticker]['value'] = position_value
+                            ratio_3m_1y_invested_value += position_value
                         else:
-                            # Fallback to all_tickers_data if ticker not in grouped data
-                            current_price = all_tickers_data[
-                                (all_tickers_data['ticker'] == ticker) &
-                                (all_tickers_data['date'] == current_date)
-                            ]['Close'].iloc[0] if not all_tickers_data[
-                                (all_tickers_data['ticker'] == ticker) &
-                                (all_tickers_data['date'] == current_date)
-                            ].empty else None
-                            
-                            if current_price is not None and not pd.isna(current_price):
-                                shares = ratio_3m_1y_positions[ticker]['shares']
-                                position_value = shares * current_price
-                                ratio_3m_1y_positions[ticker]['value'] = position_value
-                                ratio_3m_1y_invested_value += position_value
-                            else:
-                                ratio_3m_1y_invested_value += ratio_3m_1y_positions[ticker].get('value', 0.0)
-                    except Exception as e:
-                        print(f"   ⚠️ Error updating 3M/1Y ratio position for {ticker}: {e}")
-                        # Use previous value as fallback
+                            ratio_3m_1y_invested_value += ratio_3m_1y_positions[ticker].get('value', 0.0)
+                    else:
                         ratio_3m_1y_invested_value += ratio_3m_1y_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating 3M/1Y ratio position for {ticker}: {e}")
+                    ratio_3m_1y_invested_value += ratio_3m_1y_positions[ticker].get('value', 0.0)
 
-        ratio_3m_1y_portfolio_value = ratio_3m_1y_invested_value + ratio_3m_1y_cash
-        ratio_3m_1y_portfolio_history.append(ratio_3m_1y_portfolio_value)
+            ratio_3m_1y_portfolio_value = ratio_3m_1y_invested_value + ratio_3m_1y_cash
+            ratio_3m_1y_portfolio_history.append(ratio_3m_1y_portfolio_value)
 
         # Update MOMENTUM-VOLATILITY HYBRID portfolio value daily
         momentum_volatility_hybrid_invested_value = 0.0
@@ -4903,25 +4890,14 @@ def _run_portfolio_backtest_walk_forward(
                 if ticker_df is not None:
                     current_price = _last_valid_close_up_to(ticker_df, current_date)
                     if current_price is not None:
-                        ratio_1y_3m_invested_value += ratio_1y_3m_positions[ticker].get('value', 0.0)
-                    else:
-                        ratio_1y_3m_invested_value += ratio_1y_3m_positions[ticker].get('value', 0.0)
-                else:
-                    current_price = all_tickers_data[
-                        (all_tickers_data['ticker'] == ticker) &
-                        (all_tickers_data['date'] == current_date)
-                    ]['Close'].iloc[0] if not all_tickers_data[
-                        (all_tickers_data['ticker'] == ticker) &
-                        (all_tickers_data['date'] == current_date)
-                    ].empty else None
-                    
-                    if current_price is not None and not pd.isna(current_price):
                         shares = ratio_1y_3m_positions[ticker]['shares']
                         position_value = shares * current_price
                         ratio_1y_3m_positions[ticker]['value'] = position_value
                         ratio_1y_3m_invested_value += position_value
                     else:
                         ratio_1y_3m_invested_value += ratio_1y_3m_positions[ticker].get('value', 0.0)
+                else:
+                    ratio_1y_3m_invested_value += ratio_1y_3m_positions[ticker].get('value', 0.0)
             except Exception as e:
                 print(f"   ⚠️ Error updating 1Y/3M ratio position for {ticker}: {e}")
                 ratio_1y_3m_invested_value += ratio_1y_3m_positions[ticker].get('value', 0.0)
@@ -4937,25 +4913,14 @@ def _run_portfolio_backtest_walk_forward(
                 if ticker_df is not None:
                     current_price = _last_valid_close_up_to(ticker_df, current_date)
                     if current_price is not None:
-                        turnaround_invested_value += turnaround_positions[ticker].get('value', 0.0)
-                    else:
-                        turnaround_invested_value += turnaround_positions[ticker].get('value', 0.0)
-                else:
-                    current_price = all_tickers_data[
-                        (all_tickers_data['ticker'] == ticker) &
-                        (all_tickers_data['date'] == current_date)
-                    ]['Close'].iloc[0] if not all_tickers_data[
-                        (all_tickers_data['ticker'] == ticker) &
-                        (all_tickers_data['date'] == current_date)
-                    ].empty else None
-                    
-                    if current_price is not None and not pd.isna(current_price):
                         shares = turnaround_positions[ticker]['shares']
                         position_value = shares * current_price
                         turnaround_positions[ticker]['value'] = position_value
                         turnaround_invested_value += position_value
                     else:
                         turnaround_invested_value += turnaround_positions[ticker].get('value', 0.0)
+                else:
+                    turnaround_invested_value += turnaround_positions[ticker].get('value', 0.0)
             except Exception as e:
                 print(f"   ⚠️ Error updating turnaround position for {ticker}: {e}")
                 turnaround_invested_value += turnaround_positions[ticker].get('value', 0.0)
@@ -5332,14 +5297,24 @@ def _run_portfolio_backtest_walk_forward(
         volatility_adj_mom_portfolio_history.append(volatility_adj_mom_portfolio_value)
 
         # === MOMENTUM + AI HYBRID: Update portfolio value ===
-        momentum_ai_hybrid_portfolio_value = 0.0
         if ENABLE_MOMENTUM_AI_HYBRID:
             momentum_ai_hybrid_invested_value = 0.0
-            for ticker in momentum_ai_hybrid_positions:
+            for ticker in list(momentum_ai_hybrid_positions.keys()):
                 try:
-                    momentum_ai_hybrid_invested_value += momentum_ai_hybrid_positions[ticker]['value']
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = momentum_ai_hybrid_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            momentum_ai_hybrid_positions[ticker]['value'] = position_value
+                            momentum_ai_hybrid_invested_value += position_value
+                        else:
+                            momentum_ai_hybrid_invested_value += momentum_ai_hybrid_positions[ticker].get('value', 0.0)
+                    else:
+                        momentum_ai_hybrid_invested_value += momentum_ai_hybrid_positions[ticker].get('value', 0.0)
                 except Exception:
-                    pass
+                    momentum_ai_hybrid_invested_value += momentum_ai_hybrid_positions[ticker].get('value', 0.0)
             
             momentum_ai_hybrid_portfolio_value = momentum_ai_hybrid_invested_value + momentum_ai_hybrid_cash
             momentum_ai_hybrid_portfolio_history.append(momentum_ai_hybrid_portfolio_value)
@@ -5784,6 +5759,42 @@ def _run_portfolio_backtest_walk_forward(
                 elif name == "Trend ATR" and ENABLE_TREND_FOLLOWING_ATR:
                     strat_cash = trend_atr_cash
                     num_positions = len(trend_atr_positions)
+                    invested = value - strat_cash
+                elif name == "Sentiment Ensemble" and ENABLE_SENTIMENT_ENSEMBLE:
+                    strat_cash = sentiment_ensemble_cash
+                    num_positions = len(sentiment_ensemble_positions)
+                    invested = value - strat_cash
+                elif name == "Adaptive Ensemble" and ENABLE_ADAPTIVE_STRATEGY:
+                    strat_cash = adaptive_ensemble_cash
+                    num_positions = len(adaptive_ensemble_positions)
+                    invested = value - strat_cash
+                elif name == "Dynamic Pool" and ENABLE_DYNAMIC_POOL:
+                    strat_cash = dynamic_pool_cash
+                    num_positions = len(dynamic_pool_positions)
+                    invested = value - strat_cash
+                elif name == "Multi-Task" and ENABLE_MULTITASK_LEARNING:
+                    strat_cash = multitask_cash
+                    num_positions = len(multitask_positions)
+                    invested = value - strat_cash
+                elif name == "Sector Rotation" and ENABLE_SECTOR_ROTATION:
+                    strat_cash = sector_rotation_cash
+                    num_positions = len(sector_rotation_positions)
+                    invested = value - strat_cash
+                elif name == "LLM Strategy" and ENABLE_LLM_STRATEGY:
+                    strat_cash = llm_strategy_cash
+                    num_positions = len(llm_strategy_positions)
+                    invested = value - strat_cash
+                elif name == "Mom-Vol Hybrid" and ENABLE_MOMENTUM_VOLATILITY_HYBRID:
+                    strat_cash = momentum_volatility_hybrid_cash
+                    num_positions = len(momentum_volatility_hybrid_positions)
+                    invested = value - strat_cash
+                elif name == "3M/1Y Ratio" and ENABLE_3M_1Y_RATIO:
+                    strat_cash = ratio_3m_1y_cash
+                    num_positions = len(ratio_3m_1y_positions)
+                    invested = value - strat_cash
+                elif name == "Multi-TF Ensemble" and ENABLE_MULTI_TIMEFRAME_ENSEMBLE:
+                    strat_cash = multi_tf_ensemble_cash
+                    num_positions = len(multi_tf_ensemble_positions)
                     invested = value - strat_cash
                     
                 strategy_details.append((name, value, strat_cash, num_positions, invested))
