@@ -66,6 +66,9 @@ def _simulate_static_strategy(args) -> Tuple[str, int, float, float]:
                 if strategy_type == '1Y':
                     # Use 1-year performance
                     lookback_days = 365
+                elif strategy_type == '6M':
+                    # Use 6-month performance
+                    lookback_days = 180
                 elif strategy_type == '3M':
                     # Use 3-month performance
                     lookback_days = 90
@@ -169,7 +172,7 @@ def optimize_rebalance_horizons(
     backtest_end: datetime,
     initial_capital: float,
     portfolio_size: int = 3,
-    strategy_types: List[str] = ['1Y', '3M', '1M']
+    strategy_types: List[str] = ['1Y', '6M', '3M', '1M']
 ) -> Dict[str, Dict]:
     """
     Test all rebalance horizons from REBALANCE_HORIZON_MIN to REBALANCE_HORIZON_MAX

@@ -1505,6 +1505,7 @@ def main(
         sentiment_ensemble_cash_deployed=sentiment_ensemble_cash_deployed_1y,
         # Rebalance horizon optimization results
         static_bh_1y_best_horizon=rebalance_optimization_results['1Y']['best_horizon'] if rebalance_optimization_results and '1Y' in rebalance_optimization_results else None,
+        static_bh_6m_best_horizon=rebalance_optimization_results['6M']['best_horizon'] if rebalance_optimization_results and '6M' in rebalance_optimization_results else None,
         static_bh_3m_best_horizon=rebalance_optimization_results['3M']['best_horizon'] if rebalance_optimization_results and '3M' in rebalance_optimization_results else None,
         static_bh_1m_best_horizon=rebalance_optimization_results['1M']['best_horizon'] if rebalance_optimization_results and '1M' in rebalance_optimization_results else None,
         final_rule_value_ytd=None,
@@ -1545,7 +1546,7 @@ def main(
         print("=" * 80)
         print(f"   Tested horizons: {REBALANCE_HORIZON_MIN} to {REBALANCE_HORIZON_MAX} days (daily)")
         print("-" * 80)
-        for strategy_type in ['1Y', '3M', '1M']:
+        for strategy_type in ['1Y', '6M', '3M', '1M']:
             if strategy_type in rebalance_optimization_results:
                 r = rebalance_optimization_results[strategy_type]
                 print(f"   Static BH {strategy_type}:")
@@ -1554,7 +1555,7 @@ def main(
                 print(f"      💰 Transaction costs: ${r['best_txn_cost']:.0f}")
         print("=" * 80)
         print("   💡 Use these optimal horizons in config.py for best performance:")
-        for strategy_type in ['1Y', '3M', '1M']:
+        for strategy_type in ['1Y', '6M', '3M', '1M']:
             if strategy_type in rebalance_optimization_results:
                 r = rebalance_optimization_results[strategy_type]
                 config_var = f"STATIC_BH_{strategy_type}_REBALANCE_DAYS"
@@ -1568,7 +1569,7 @@ def main(
         
         # Build sorted results for each strategy
         strategy_results = {}
-        for strategy_type in ['1Y', '3M', '1M']:
+        for strategy_type in ['1Y', '6M', '3M', '1M']:
             if strategy_type in rebalance_optimization_results:
                 results = rebalance_optimization_results[strategy_type]['all_results']
                 # Sort by horizon
@@ -1576,7 +1577,7 @@ def main(
         
         # Print header
         header = f"{'Horizon':<10}"
-        for st in ['1Y', '3M', '1M']:
+        for st in ['1Y', '6M', '3M', '1M']:
             if st in strategy_results:
                 header += f" | {'Static BH ' + st:>15}"
         print(header)
@@ -1586,7 +1587,7 @@ def main(
         horizons = list(range(REBALANCE_HORIZON_MIN, REBALANCE_HORIZON_MAX + 1))
         for horizon in horizons:
             row = f"{horizon:>3} days   "
-            for st in ['1Y', '3M', '1M']:
+            for st in ['1Y', '6M', '3M', '1M']:
                 if st in strategy_results:
                     # Find return for this horizon
                     ret = None

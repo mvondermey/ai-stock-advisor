@@ -287,17 +287,17 @@ ENABLE_MOMENTUM_AI_HYBRID = True   # ENABLED - Use existing saved models
 ENABLE_VOLATILITY_ADJ_MOM = True  # ENABLED - Volatility-Adjusted Momentum strategy
 ENABLE_DYNAMIC_BH_1Y_VOL_FILTER = True  # NEW - Dynamic BH 1Y with Volatility Filter
 ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP = True   # ENABLED - Dynamic BH 1Y with trailing stop
-ENABLE_SECTOR_ROTATION = False   # DISABLED - Sector Rotation Strategy (CPU intensive)
-ENABLE_MULTITASK_LEARNING = False    # DISABLED - Multi-Task Learning Strategy (CPU intensive)
-ENABLE_3M_1Y_RATIO = False   # DISABLED - 3M/1Y Ratio Strategy
-ENABLE_MOMENTUM_VOLATILITY_HYBRID = False   # DISABLED - Momentum-Volatility Hybrid Strategy
-ENABLE_ADAPTIVE_STRATEGY = False   # DISABLED - Adaptive Meta-Ensemble Strategy (CPU intensive)
+ENABLE_SECTOR_ROTATION = True   # ENABLED - Sector Rotation Strategy
+ENABLE_MULTITASK_LEARNING = True    # ENABLED - Multi-Task Learning Strategy
+ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
+ENABLE_MOMENTUM_VOLATILITY_HYBRID = True   # ENABLED - Momentum-Volatility Hybrid Strategy
+ENABLE_ADAPTIVE_STRATEGY = True   # ENABLED - Adaptive Meta-Ensemble Strategy
 ENABLE_VOLATILITY_ENSEMBLE = True   # ENABLED - Volatility-Adjusted Ensemble Strategy (risk-managed position sizing)
 ENABLE_ENHANCED_VOLATILITY = True   # ENABLED - Enhanced Volatility Trader (ATR stops + take profits)
 ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble Strategy (diversification-focused)
 ENABLE_AI_VOLATILITY_ENSEMBLE = True   # ENABLED - AI-Enhanced Volatility Ensemble Strategy (AI-optimized weights and volatility caps)
-ENABLE_SENTIMENT_ENSEMBLE = False   # DISABLED - Sentiment-Enhanced Ensemble Strategy (news/social sentiment analysis)
-ENABLE_DYNAMIC_POOL = False   # DISABLED - Dynamic Strategy Pool Strategy (CPU intensive)
+ENABLE_SENTIMENT_ENSEMBLE = True   # ENABLED - Sentiment-Enhanced Ensemble Strategy
+ENABLE_DYNAMIC_POOL = True   # ENABLED - Dynamic Strategy Pool Strategy
 
 # --- Multi-Timeframe Ensemble Strategy ---
 # Combines signals from different timeframes for better entry/exit timing
@@ -305,8 +305,8 @@ ENABLE_MULTI_TIMEFRAME_ENSEMBLE = True   # NEW - Multi-Timeframe Ensemble Strate
 
 # Additional strategy enable flags
 ENABLE_TURNAROUND = True   # ENABLED - Turnaround Strategy (buy depressed stocks)
-ENABLE_MOMENTUM_VOLATILITY_HYBRID = False   # DISABLED - Momentum-Volatility Hybrid Strategy
-ENABLE_3M_1Y_RATIO = False   # DISABLED - 3M/1Y Ratio Strategy
+ENABLE_MOMENTUM_VOLATILITY_HYBRID = True   # ENABLED - Momentum-Volatility Hybrid Strategy
+ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 
 # --- New Advanced Strategies ---
 ENABLE_MOMENTUM_ACCELERATION = True   # NEW - Momentum Acceleration (3M momentum + acceleration filter)
@@ -349,7 +349,7 @@ MULTI_TIMEFRAME_WEIGHTS = {
 }
 # Require consensus from at least this many timeframes
 MULTI_TIMEFRAME_MIN_CONSENSUS = 2  # At least 2 timeframes must agree
-ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (slow, uncertain benefit)
+ENABLE_LLM_STRATEGY = True   # ENABLED - LLM Strategy
 
 # --- LLM Strategy Parameters (via Ollama) ---
 LLM_OLLAMA_BASE_URL = "http://localhost:11434"
@@ -426,11 +426,11 @@ STATIC_BH_1M_REBALANCE_DAYS = 0   # Default rebalance period for 1M selection
 STATIC_BH_6M_REBALANCE_DAYS = 0   # Default rebalance period for 6M selection
 
 # --- Rebalance Horizon Optimization ---
-# If True, test all rebalance horizons from 30 to 90 days for static strategies
+# If True, test all rebalance horizons from 20 to 40 days for static strategies
 # and report the best performing horizon in the final summary
 OPTIMIZE_REBALANCE_HORIZON = True
-REBALANCE_HORIZON_MIN = 30  # Minimum rebalance period to test
-REBALANCE_HORIZON_MAX = 90  # Maximum rebalance period to test
+REBALANCE_HORIZON_MIN = 20  # Minimum rebalance period to test
+REBALANCE_HORIZON_MAX = 40  # Maximum rebalance period to test
 # All horizons from MIN to MAX will be tested in parallel
 
 # --- Dynamic Buy & Hold (BH) rebalancing guard ---

@@ -159,6 +159,7 @@ def print_final_summary(
     sentiment_ensemble_cash_deployed: float = None,
     # Rebalance horizon optimization results
     static_bh_1y_best_horizon: int = None,
+    static_bh_6m_best_horizon: int = None,
     static_bh_3m_best_horizon: int = None,
     static_bh_1m_best_horizon: int = None,
     # New Advanced Strategies

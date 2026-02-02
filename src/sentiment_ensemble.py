@@ -146,29 +146,47 @@ class SentimentEnhancedEnsemble:
         """Apply sentiment filtering to candidates."""
         filtered_candidates = []
         
-        print(f"   📰 Sentiment Analysis:")
+        print(f"   � Applying sentiment filter to {len(candidates)} candidates...")
+        
         for ticker, ensemble_score in candidates[:20]:  # Analyze top 20
-            sentiment_data = self.calculate_combined_sentiment(ticker, current_date)
-            
-            # Apply sentiment threshold
-            if sentiment_data['combined'] >= min_sentiment_threshold:
-                # Adjust score based on sentiment
-                sentiment_boost = sentiment_data['combined'] * SENTIMENT_WEIGHT
-                confidence_factor = sentiment_data['confidence']
+            try:
+                sentiment_data = self.calculate_combined_sentiment(ticker, current_date)
                 
-                # Final score = ensemble_score + sentiment_boost * confidence
-                final_score = ensemble_score + sentiment_boost * confidence_factor
-                filtered_candidates.append((ticker, final_score))
-                
-                print(f"      {ticker}: ensemble={ensemble_score:.3f}, sentiment={sentiment_data['combined']:.2f}, final={final_score:.3f}")
-            else:
-                print(f"      {ticker}: ensemble={ensemble_score:.3f}, sentiment={sentiment_data['combined']:.2f} (filtered)")
+                # Check if sentiment data is valid
+                if sentiment_data and 'combined' in sentiment_data and sentiment_data['combined'] is not None:
+                    # Apply sentiment threshold
+                    if sentiment_data['combined'] >= min_sentiment_threshold:
+                        # Adjust score based on sentiment
+                        sentiment_boost = sentiment_data['combined'] * SENTIMENT_WEIGHT
+                        confidence_factor = sentiment_data.get('confidence', 0.5)
+                        
+                        # Final score = ensemble_score + sentiment_boost * confidence
+                        final_score = ensemble_score + sentiment_boost * confidence_factor
+                        filtered_candidates.append((ticker, final_score))
+                        
+                        print(f"      {ticker}: ensemble={ensemble_score:.3f}, sentiment={sentiment_data['combined']:.2f}, final={final_score:.3f}")
+                    else:
+                        print(f"      {ticker}: ensemble={ensemble_score:.3f}, sentiment={sentiment_data['combined']:.2f} (filtered)")
+                else:
+                    # No sentiment data available, use ensemble score as-is
+                    print(f"      {ticker}: ensemble={ensemble_score:.3f}, sentiment=N/A (using ensemble)")
+                    filtered_candidates.append((ticker, ensemble_score))
+                    
+            except Exception as e:
+                # Error getting sentiment, use ensemble score as-is
+                print(f"      {ticker}: ensemble={ensemble_score:.3f}, sentiment=ERROR (using ensemble)")
+                filtered_candidates.append((ticker, ensemble_score))
+        
+        # If no candidates passed the filter but we have original candidates, use them
+        if not filtered_candidates and candidates:
+            print(f"   ⚠️ No candidates passed sentiment filter, using top {min(len(candidates), 10)} ensemble picks")
+            return candidates[:10]
         
         return filtered_candidates
     
     def select_stocks(self, all_tickers: List[str],
                      ticker_data_grouped: Dict[str, pd.DataFrame],
-                     current_date: datetime,
+                     current_date: datetime = None,
                      train_start_date: datetime = None,
                      top_n: int = PORTFOLIO_SIZE) -> List[str]:
         """Main entry point: Select stocks with sentiment enhancement."""
