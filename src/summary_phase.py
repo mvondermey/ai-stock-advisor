@@ -333,19 +333,22 @@ def print_final_summary(
             ann_ret = annualize_return(ret, backtest_days)
             ann_str = f"{ann_ret:+.1f}%" if ann_ret is not None else "N/A"
             
-            # Calculate cash and invested (similar to daily summary)
-            # For strategies that traded (return != 0), assume fully invested
-            # For strategies that didn't trade (return == 0), show all as cash
-            if ret is not None and abs(ret) > 0.01:
-                # Strategy traded - assume fully invested (cash near 0)
-                invested = final_val
-                strat_cash = 0
-                allocation_pct = 100
+            # Calculate cash and invested using ACTUAL cash_deployed values
+            # cash_dep is the actual CASH REMAINING (not invested), despite the variable name
+            if cash_dep is not None and final_val is not None:
+                strat_cash = cash_dep              # Cash remaining
+                invested = final_val - cash_dep    # Amount invested
+                allocation_pct = (invested / final_val * 100) if final_val > 0 else 0
             else:
-                # Strategy didn't trade - all cash, no investment
-                invested = 0
-                strat_cash = final_val
-                allocation_pct = 0
+                # Fallback: estimate based on return if no cash data available
+                if ret is not None and abs(ret) > 0.01:
+                    invested = final_val
+                    strat_cash = 0
+                    allocation_pct = 100
+                else:
+                    invested = 0
+                    strat_cash = final_val
+                    allocation_pct = 0
             
             cash_str = f"${strat_cash:,.0f}"
             invested_str = f"({allocation_pct:.0f}%)"
