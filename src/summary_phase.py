@@ -143,6 +143,8 @@ def print_final_summary(
     dynamic_pool_1y_return: float = None,
     final_sentiment_ensemble_value_1y: float = None,
     sentiment_ensemble_1y_return: float = None,
+    final_ai_classification_value_1y: float = None,
+    ai_classification_1y_return: float = None,
     adaptive_ensemble_transaction_costs: float = None,
     volatility_ensemble_transaction_costs: float = None,
     ai_volatility_ensemble_transaction_costs: float = None,
@@ -150,6 +152,7 @@ def print_final_summary(
     correlation_ensemble_transaction_costs: float = None,
     dynamic_pool_transaction_costs: float = None,
     sentiment_ensemble_transaction_costs: float = None,
+    ai_classification_transaction_costs: float = None,
     adaptive_ensemble_cash_deployed: float = None,
     volatility_ensemble_cash_deployed: float = None,
     ai_volatility_ensemble_cash_deployed: float = None,
@@ -157,6 +160,7 @@ def print_final_summary(
     correlation_ensemble_cash_deployed: float = None,
     dynamic_pool_cash_deployed: float = None,
     sentiment_ensemble_cash_deployed: float = None,
+    ai_classification_cash_deployed: float = None,
     # Rebalance horizon optimization results
     static_bh_1y_best_horizon: int = None,
     static_bh_6m_best_horizon: int = None,
@@ -281,6 +285,7 @@ def print_final_summary(
     strategies_data.append(('Corr Ens', final_correlation_ensemble_value_1y, correlation_ensemble_1y_return, correlation_ensemble_transaction_costs, correlation_ensemble_cash_deployed))
     strategies_data.append(('Dyn Pool', final_dynamic_pool_value_1y, dynamic_pool_1y_return, dynamic_pool_transaction_costs, dynamic_pool_cash_deployed))
     strategies_data.append(('Sent Ens', final_sentiment_ensemble_value_1y, sentiment_ensemble_1y_return, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash_deployed))
+    strategies_data.append(('AI Class', final_ai_classification_value_1y, ai_classification_1y_return, ai_classification_transaction_costs, ai_classification_cash_deployed))
     strategies_data.append(('Mom Accel', final_mom_accel_value_1y, mom_accel_1y_return, mom_accel_transaction_costs, mom_accel_cash_deployed))
     strategies_data.append(('Conc 3M', final_concentrated_3m_value_1y, concentrated_3m_1y_return, concentrated_3m_transaction_costs, concentrated_3m_cash_deployed))
     strategies_data.append(('Dual Mom', final_dual_mom_value_1y, dual_mom_1y_return, dual_mom_transaction_costs, dual_mom_cash_deployed))

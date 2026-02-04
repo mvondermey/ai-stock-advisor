@@ -392,11 +392,10 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 print(f"  Warning: Could not read cache for {ticker}: {e}. Will refetch all.")
                 cached_df = pd.DataFrame()
     
-    # If no cache exists, fetch historical data
+    # If no cache exists, fetch historical data from the requested start date
     if cached_df.empty:
-        # Use the configured lookback period from config
-        from config import TRAIN_LOOKBACK_DAYS
-        fetch_start = datetime.now(timezone.utc) - timedelta(days=TRAIN_LOOKBACK_DAYS)
+        # Use the start date passed to the function (respects the requested range)
+        fetch_start = start
     
     # --- Step 2: Fetch new data if needed ---
     if needs_fetch and fetch_start is not None:

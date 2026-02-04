@@ -452,6 +452,9 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
     """
     performances = []
     
+    # DEBUG: Print current_date and period
+    print(f"   🔍 DEBUG select_dynamic_bh_stocks: period={period}, current_date={current_date}")
+    
     # Use current date or last available date
     if current_date is None:
         # Find the latest date across all tickers
@@ -517,17 +520,28 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
             # Calculate start date based on lookback period
             start_date = current_date - timedelta(days=lookback_days)
             
+            # DEBUG: Show date calculation for first few tickers
+            if analyzed_count <= 3:
+                print(f"   🔍 DEBUG {ticker}: current_date={current_date.date()}, lookback_days={lookback_days}, start_date={start_date.date()}")
+            
             # Filter data to the exact period - be more flexible with date range
             available_start = ticker_data.index.min()
             available_end = ticker_data.index.max()
             
+            # DEBUG: Show available data range
+            if analyzed_count <= 3:
+                print(f"   🔍 DEBUG {ticker}: available_start={available_start.date()}, available_end={available_end.date()}")
+            
             # Use available data if it covers most of the period
             if available_start > start_date:
                 days_short = (available_start - start_date).days
-                if days_short > 30:  # If we're missing more than 30 days, skip
-                    continue
-                else:
-                    start_date = available_start
+                # DEBUG: Show days short calculation
+                if analyzed_count <= 3:
+                    print(f"   🔍 DEBUG {ticker}: available_start > start_date by {days_short} days")
+                # Use whatever data is available (no threshold)
+                start_date = available_start
+                if analyzed_count <= 3:
+                    print(f"   🔍 DEBUG {ticker}: ADJUSTING start_date to {start_date.date()}")
             
             period_data = ticker_data[(ticker_data.index >= start_date) & (ticker_data.index <= current_ts)]
             

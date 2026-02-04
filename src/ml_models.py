@@ -2127,3 +2127,204 @@ def train_single_model_type(
         import traceback
         traceback.print_exc()
         return None
+
+
+def train_classification_model(
+    X: pd.DataFrame,
+    y: pd.Series,
+    ticker: str,
+    model_type: str = 'XGBoost',
+    threshold: float = 0.0
+) -> Optional[Dict]:
+    """
+    Train a classification model to predict probability of positive returns.
+    
+    Args:
+        X: Feature DataFrame
+        y: Target Series (continuous returns)
+        ticker: Ticker symbol
+        model_type: 'XGBoost', 'RandomForest', 'LogisticRegression'
+        threshold: Return threshold for positive class (default 0.0 = any positive return)
+    
+    Returns:
+        Dictionary with trained classifier, scaler, and metrics
+    """
+    try:
+        from sklearn.model_selection import GridSearchCV, KFold, train_test_split
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.metrics import accuracy_score, roc_auc_score
+        import numpy as np
+        import warnings
+        
+        # Convert continuous returns to binary classification
+        # 1 = positive return (above threshold), 0 = negative or below threshold
+        y_binary = (y > threshold).astype(int)
+        
+        # Check class balance
+        pos_ratio = y_binary.mean()
+        if pos_ratio < 0.1 or pos_ratio > 0.9:
+            print(f"  ⚠️ {ticker}: Class imbalance ({pos_ratio:.1%} positive). Using class weights.")
+        
+        # Clean features: replace infinities and clip extreme values
+        X_clean = X.copy()
+        X_clean = X_clean.replace([np.inf, -np.inf], np.nan)
+        
+        # Fill NaN with column median
+        for col in X_clean.columns:
+            if X_clean[col].isna().any():
+                median_val = X_clean[col].median()
+                X_clean[col] = X_clean[col].fillna(median_val if np.isfinite(median_val) else 0)
+        
+        # Clip extreme values to prevent overflow
+        X_clean = X_clean.clip(-1e6, 1e6)
+        
+        # Scale features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X_clean)
+        
+        # Split for validation
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_scaled, y_binary.values, test_size=0.2, random_state=42, stratify=y_binary
+        )
+        
+        # Initialize classifier
+        model = None
+        params = {}
+        
+        if model_type == 'XGBoost':
+            try:
+                import xgboost as xgb
+                # Check if GPU is available
+                try:
+                    import torch
+                    gpu_available = torch.cuda.is_available()
+                except:
+                    gpu_available = False
+                
+                model = xgb.XGBClassifier(
+                    random_state=42,
+                    tree_method='hist',
+                    device='cuda' if gpu_available else 'cpu',
+                    nthread=4 if not gpu_available else 1,
+                    use_label_encoder=False,
+                    eval_metric='logloss',
+                    n_estimators=100,
+                    learning_rate=0.1,
+                    max_depth=5
+                )
+                # Reduced params for speed - single best config
+                params = {}  # No grid search, use defaults above
+            except ImportError:
+                print(f"  ⚠️ {ticker}: XGBoost not available for classification")
+                return None
+        
+        elif model_type == 'RandomForest':
+            from sklearn.ensemble import RandomForestClassifier
+            model = RandomForestClassifier(
+                random_state=42, 
+                n_jobs=1,
+                class_weight='balanced'
+            )
+            params = {
+                'n_estimators': [100, 200],
+                'max_depth': [5, 10, None]
+            }
+        
+        elif model_type == 'LogisticRegression':
+            from sklearn.linear_model import LogisticRegression
+            model = LogisticRegression(
+                random_state=42,
+                max_iter=1000,
+                class_weight='balanced'
+            )
+            params = {
+                'C': [0.1, 1.0, 10.0],
+                'penalty': ['l2']
+            }
+        
+        else:
+            print(f"  ⚠️ {ticker}: Unknown classifier type {model_type}")
+            return None
+        
+        # GridSearchCV with ROC-AUC scoring
+        cv = KFold(n_splits=min(3, len(X_train) // 20), shuffle=True, random_state=42)
+        grid_search = GridSearchCV(
+            model, params, cv=cv,
+            scoring='roc_auc',  # Use ROC-AUC for classification
+            n_jobs=1,
+            verbose=0
+        )
+        
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore")
+            grid_search.fit(X_train, y_train)
+        
+        best_model = grid_search.best_estimator_
+        
+        # Evaluate on validation set
+        y_pred_proba = best_model.predict_proba(X_val)[:, 1]  # Probability of positive class
+        y_pred = best_model.predict(X_val)
+        
+        accuracy = accuracy_score(y_val, y_pred)
+        roc_auc = roc_auc_score(y_val, y_pred_proba)
+        
+        print(f"  ✅ {ticker} {model_type} Classifier: Accuracy={accuracy:.2%}, ROC-AUC={roc_auc:.3f}")
+        
+        return {
+            'model': best_model,
+            'scaler': scaler,
+            'accuracy': float(accuracy),
+            'roc_auc': float(roc_auc),
+            'threshold': threshold
+        }
+    
+    except Exception as e:
+        print(f"  ❌ {ticker} {model_type} Classification: Training error - {str(e)[:100]}")
+        return None
+
+
+def predict_proba_with_classifier(
+    model_dict: Dict,
+    X: pd.DataFrame,
+    feature_names: List[str]
+) -> np.ndarray:
+    """
+    Predict probability of positive return using trained classifier.
+    
+    Args:
+        model_dict: Dictionary with 'model' and 'scaler' keys
+        X: Feature DataFrame
+        feature_names: List of feature names
+    
+    Returns:
+        Array of probabilities (0-1) for positive class
+    """
+    try:
+        import numpy as np
+        model = model_dict['model']
+        scaler = model_dict['scaler']
+        
+        # Ensure correct feature order and clean data
+        X_aligned = X[feature_names].copy()
+        
+        # Clean features: replace infinities and clip extreme values
+        X_aligned = X_aligned.replace([np.inf, -np.inf], np.nan)
+        
+        # Fill NaN with column median
+        for col in X_aligned.columns:
+            if X_aligned[col].isna().any():
+                median_val = X_aligned[col].median()
+                X_aligned[col] = X_aligned[col].fillna(median_val if np.isfinite(median_val) else 0)
+        
+        # Clip extreme values to prevent overflow
+        X_aligned = X_aligned.clip(-1e6, 1e6)
+        
+        X_scaled = scaler.transform(X_aligned)
+        
+        # Get probability of positive class (class 1)
+        proba = model.predict_proba(X_scaled)[:, 1]
+        return proba
+    
+    except Exception as e:
+        print(f"  ⚠️ Classification prediction error: {e}")
+        return np.full(len(X), 0.5)  # Return neutral probability on error

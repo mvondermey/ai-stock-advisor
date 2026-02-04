@@ -112,7 +112,7 @@ PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls f
 from multiprocessing import cpu_count
 # Conservative CPU utilization to prevent system overload and process termination
 # Use only half of CPU cores to avoid memory exhaustion with large datasets
-NUM_PROCESSES           = max(1, cpu_count() // 2)
+NUM_PROCESSES           = max(1, cpu_count() -4)
 
 # Parallel processing threshold - only use parallel processing for ticker lists larger than this
 # Below this threshold, sequential processing is faster due to lower overhead
@@ -298,6 +298,7 @@ ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble S
 ENABLE_AI_VOLATILITY_ENSEMBLE = True   # ENABLED - AI-Enhanced Volatility Ensemble Strategy (AI-optimized weights and volatility caps)
 ENABLE_SENTIMENT_ENSEMBLE = True   # ENABLED - Sentiment-Enhanced Ensemble Strategy
 ENABLE_DYNAMIC_POOL = True   # ENABLED - Dynamic Strategy Pool Strategy
+ENABLE_AI_CLASSIFICATION = False   # NEW - AI Classification Strategy (predicts direction vs regression)
 
 # --- Multi-Timeframe Ensemble Strategy ---
 # Combines signals from different timeframes for better entry/exit timing
