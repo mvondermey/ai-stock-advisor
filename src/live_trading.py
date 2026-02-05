@@ -357,7 +357,7 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
     """Get the tickers to hold based on the selected strategy."""
     print(f"   🎯 DEBUG: Strategy passed = '{strategy}'")
 
-    if strategy == 'ai_individual':
+    if strategy == 'ai_individual' or strategy == 'ai_strategy':
         # AI Strategy: Use model predictions (existing logic)
         return get_ai_strategy_tickers(all_tickers)
 
@@ -1006,6 +1006,7 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
     # Display selected strategy
     strategy_names = {
         'ai_individual': 'AI Strategy (Individual Models)',
+        'ai_strategy': 'AI Strategy (Individual Models)',
         'multitask': 'Multi-Task Learning',
         'risk_adj_mom': 'Risk-Adjusted Momentum',
         'mean_reversion': 'Mean Reversion',
