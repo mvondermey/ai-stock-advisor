@@ -3951,40 +3951,20 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     
                     if new_concentrated_3m_stocks:
-                        total_value = concentrated_3m_cash + sum(pos.get('value', 0) for pos in concentrated_3m_positions.values())
-                        capital_per_stock = total_value / len(new_concentrated_3m_stocks)
-                        
-                        # Sell positions not in new selection
-                        for ticker in list(concentrated_3m_positions.keys()):
-                            if ticker not in new_concentrated_3m_stocks:
-                                if ticker in ticker_data_grouped:
-                                    price_data = ticker_data_grouped[ticker].loc[:current_date]
-                                    if not price_data.empty:
-                                        current_price = price_data['Close'].dropna().iloc[-1]
-                                        shares = concentrated_3m_positions[ticker]['shares']
-                                        gross_sale = shares * current_price
-                                        sell_cost = gross_sale * TRANSACTION_COST
-                                        concentrated_3m_transaction_costs += sell_cost
-                                        concentrated_3m_cash += gross_sale - sell_cost
-                                del concentrated_3m_positions[ticker]
-                        
-                        # Buy new positions
-                        for ticker in new_concentrated_3m_stocks:
-                            if ticker not in concentrated_3m_positions:
-                                if ticker in ticker_data_grouped:
-                                    price_data = ticker_data_grouped[ticker].loc[:current_date]
-                                    if not price_data.empty:
-                                        current_price = price_data['Close'].dropna().iloc[-1]
-                                        if current_price > 0:
-                                            shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
-                                            if shares > 0 and concentrated_3m_cash >= shares * current_price * (1 + TRANSACTION_COST):
-                                                buy_value = shares * current_price
-                                                buy_cost = buy_value * TRANSACTION_COST
-                                                concentrated_3m_transaction_costs += buy_cost
-                                                concentrated_3m_cash -= (buy_value + buy_cost)
-                                                concentrated_3m_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
-                        
-                        current_concentrated_3m_stocks = new_concentrated_3m_stocks
+                        # Use universal smart rebalancing function
+                        concentrated_3m_positions, concentrated_3m_cash, current_concentrated_3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                            strategy_name="Concentrated 3M",
+                            current_stocks=current_concentrated_3m_stocks,
+                            new_stocks=new_concentrated_3m_stocks,
+                            positions=concentrated_3m_positions,
+                            cash=concentrated_3m_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not current_concentrated_3m_stocks  # Force initial allocation
+                        )
+                        concentrated_3m_transaction_costs += rebalance_costs
                         concentrated_3m_days_since_rebalance = 0
                         
             except Exception as e:
@@ -4018,40 +3998,20 @@ def _run_portfolio_backtest_walk_forward(
                     dual_mom_is_risk_on = False
                 elif new_dual_mom_stocks:
                     dual_mom_is_risk_on = True
-                    total_value = dual_mom_cash + sum(pos.get('value', 0) for pos in dual_mom_positions.values())
-                    capital_per_stock = total_value / len(new_dual_mom_stocks)
-                    
-                    # Sell positions not in new selection
-                    for ticker in list(dual_mom_positions.keys()):
-                        if ticker not in new_dual_mom_stocks:
-                            if ticker in ticker_data_grouped:
-                                price_data = ticker_data_grouped[ticker].loc[:current_date]
-                                if not price_data.empty:
-                                    current_price = price_data['Close'].dropna().iloc[-1]
-                                    shares = dual_mom_positions[ticker]['shares']
-                                    gross_sale = shares * current_price
-                                    sell_cost = gross_sale * TRANSACTION_COST
-                                    dual_mom_transaction_costs += sell_cost
-                                    dual_mom_cash += gross_sale - sell_cost
-                            del dual_mom_positions[ticker]
-                    
-                    # Buy new positions
-                    for ticker in new_dual_mom_stocks:
-                        if ticker not in dual_mom_positions:
-                            if ticker in ticker_data_grouped:
-                                price_data = ticker_data_grouped[ticker].loc[:current_date]
-                                if not price_data.empty:
-                                    current_price = price_data['Close'].dropna().iloc[-1]
-                                    if current_price > 0:
-                                        shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
-                                        if shares > 0 and dual_mom_cash >= shares * current_price * (1 + TRANSACTION_COST):
-                                            buy_value = shares * current_price
-                                            buy_cost = buy_value * TRANSACTION_COST
-                                            dual_mom_transaction_costs += buy_cost
-                                            dual_mom_cash -= (buy_value + buy_cost)
-                                            dual_mom_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
-                    
-                    current_dual_mom_stocks = new_dual_mom_stocks
+                    # Use universal smart rebalancing function
+                    dual_mom_positions, dual_mom_cash, current_dual_mom_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        strategy_name="Dual Momentum",
+                        current_stocks=current_dual_mom_stocks,
+                        new_stocks=new_dual_mom_stocks,
+                        positions=dual_mom_positions,
+                        cash=dual_mom_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_dual_mom_stocks  # Force initial allocation
+                    )
+                    dual_mom_transaction_costs += rebalance_costs
                     
             except Exception as e:
                 print(f"   ⚠️ Dual Momentum error: {e}")
@@ -4316,37 +4276,27 @@ def _run_portfolio_backtest_walk_forward(
                         rebalance_count += 1
                     print(f"📊 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): New portfolio: {selected_stocks}")
                     old_portfolio = current_portfolio_stocks.copy()
-                    current_portfolio_stocks = selected_stocks
 
-                    # Execute actual trades for rebalancing
-                    # Pass predictions for weighted allocation
-                    selected_predictions = {t: p for t, p in predictions[:num_to_select]}
+                    # Use universal smart rebalancing function
                     try:
-                        executed_trades = _execute_portfolio_rebalance(
-                            old_portfolio, selected_stocks, current_date, all_tickers_data,
-                            positions, cash_balance, capital_per_stock, 0.0,  # target_percentage not used in regression mode
-                            predictions=selected_predictions,  # Pass predictions for weighted buying
-                            stock_performance_tracking=stock_performance_tracking  # ✅ NEW: Pass tracking dict
+                        positions, cash_balance, current_portfolio_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                            strategy_name="AI Strategy",
+                            current_stocks=old_portfolio,
+                            new_stocks=selected_stocks,
+                            positions=positions,
+                            cash=cash_balance,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not old_portfolio  # Force initial allocation
                         )
-
-                        # Update cash balance after trades
-                        cash_balance = executed_trades['cash_balance']
-                        # ✅ Track total transaction costs for AI Strategy (used in final summary)
-                        # Note: _execute_portfolio_rebalance returns per-rebalance costs; accumulate here.
-                        ai_transaction_costs += float(executed_trades.get('transaction_costs', 0.0) or 0.0)
+                        ai_transaction_costs += rebalance_costs
 
                         if old_portfolio:
                             print(f"   🔄 Rebalanced from {old_portfolio} to {selected_stocks}")
-                            if executed_trades['sold_stocks']:
-                                print(f"      💰 Sold: {', '.join(executed_trades['sold_stocks'])}")
-                            if executed_trades['bought_stocks']:
-                                print(f"      🛒 Bought: {', '.join(executed_trades['bought_stocks'])}")
-                            print(f"      💸 Transaction costs: ${executed_trades['transaction_costs']:.2f}")
                         else:
                             print(f"   🆕 Initial portfolio: {selected_stocks}")
-                            if executed_trades['bought_stocks']:
-                                print(f"      🛒 Bought: {', '.join(executed_trades['bought_stocks'])}")
-                            print(f"      💸 Transaction costs: ${executed_trades['transaction_costs']:.2f}")
 
                         # Debug: Check if positions were updated
                         total_shares = sum(p.get('shares', 0) for p in positions.values())
@@ -4357,6 +4307,7 @@ def _run_portfolio_backtest_walk_forward(
                         print(f"   ⚠️ Rebalancing failed: {e}. Keeping current portfolio.")
                         import traceback
                         traceback.print_exc()
+                        current_portfolio_stocks = old_portfolio
             else:
                 # No stocks selected - this might happen on early days
                 if day_count == 1:
@@ -6738,202 +6689,6 @@ def _rebalance_adaptive_ensemble_portfolio(new_stocks, current_date, all_tickers
     except Exception as e:
         print(f"   ⚠️ Adaptive ensemble rebalancing failed: {e}")
         return adaptive_ensemble_cash, adaptive_ensemble_positions
-
-
-def _execute_portfolio_rebalance(old_portfolio, new_portfolio, current_date, all_tickers_data,
-                               positions, cash_balance, capital_per_stock, target_percentage,
-                               predictions=None, stock_performance_tracking=None):
-    """
-    Execute actual portfolio rebalancing by selling removed stocks and buying new ones.
-    
-    ✅ NEW: Uses prediction-weighted allocation for buying stocks.
-    Stocks with higher predicted returns get larger allocations.
-    ✅ NEW: Tracks per-stock contributions to portfolio performance.
-
-    Returns dict with trade execution details.
-    """
-    if stock_performance_tracking is None:
-        stock_performance_tracking = {}
-    transaction_costs = 0.0
-    ai_transaction_costs = 0.0  # Initialize AI-specific transaction costs
-    sold_stocks = []
-    bought_stocks = []
-
-    # Get current prices for all stocks involved
-    stocks_to_trade = set(old_portfolio + new_portfolio)
-    current_prices = {}
-
-    for ticker in stocks_to_trade:
-        try:
-            ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-            if not ticker_data.empty:
-                ticker_data = ticker_data.set_index('date')
-                # Get the most recent price available up to current_date
-                price_data = ticker_data.loc[:current_date]
-                if not price_data.empty:
-                    # Drop NaN values to get valid price
-                    valid_prices = price_data['Close'].dropna()
-                    if len(valid_prices) > 0:
-                        price = valid_prices.iloc[-1]
-                        if not pd.isna(price) and price > 0:
-                            current_prices[ticker] = price
-        except Exception as e:
-            print(f"   ⚠️ Could not get price for {ticker}: {e}")
-            continue
-
-    # Sell stocks that are no longer in portfolio
-    stocks_to_sell = set(old_portfolio) - set(new_portfolio)
-    for ticker in stocks_to_sell:
-        if ticker in positions and positions[ticker]['shares'] > 0:
-            if ticker in current_prices:
-                sell_price = current_prices[ticker]
-                shares_to_sell = positions[ticker]['shares']
-                sell_value = shares_to_sell * sell_price
-
-                # Apply transaction cost (simplified - percentage of trade value)
-                cost = sell_value * TRANSACTION_COST
-                net_sell_value = sell_value - cost
-                transaction_costs += cost
-                ai_transaction_costs += cost
-                
-                # ✅ NEW: Finalize contribution tracking for sold stock
-                if ticker in stock_performance_tracking:
-                    # total_invested already includes entry_value (+ transaction costs).
-                    # P&L for a completed round-trip should therefore be:
-                    #   net_sell_value - total_invested
-                    total_invested = stock_performance_tracking[ticker].get('total_invested', 0.0) or 0.0
-                    final_contribution = net_sell_value - total_invested
-                    stock_performance_tracking[ticker]['contribution'] += final_contribution
-                    stock_performance_tracking[ticker]['exit_value'] = net_sell_value
-
-                # Update cash and positions
-                cash_balance += net_sell_value
-                # ✅ IMPORTANT: Remove position entirely so we don't accumulate stale tickers
-                # Keeping zero-share entries causes portfolio value accounting drift and makes
-                # the strategy effectively hold >3 "positions" forever.
-                try:
-                    del positions[ticker]
-                except Exception:
-                    # Fallback: if dict deletion fails, at least zero it out
-                    positions[ticker]['shares'] = 0
-                    positions[ticker]['value'] = 0
-
-                sold_stocks.append(f"{ticker} ({shares_to_sell:.0f} shares @ ${sell_price:.2f})")
-                print(f"      💰 Sold {ticker}: {shares_to_sell:.0f} shares @ ${sell_price:.2f} = ${sell_value:.2f} (-${cost:.2f} cost)")
-
-    # Buy stocks that are newly added to portfolio
-    stocks_to_buy = set(new_portfolio) - set(old_portfolio)
-    if stocks_to_buy:
-        # ✅ Calculate capital available for buying (must be actual cash on hand)
-        # Never "assume" capital_per_stock here; that can push cash negative and distort results.
-        capital_for_new_stocks = max(0.0, float(cash_balance))
-
-        if capital_for_new_stocks > 0:
-            # ✅ NEW: Calculate prediction-weighted allocations
-            if predictions and len(predictions) > 0:
-                # Get predictions for stocks we're buying
-                buy_predictions = {t: predictions.get(t, 0) for t in stocks_to_buy}
-                
-                # Shift predictions to be positive (add offset if any are negative)
-                min_pred = min(buy_predictions.values())
-                if min_pred < 0:
-                    # Add offset so all weights are positive
-                    buy_predictions = {t: p - min_pred + 0.01 for t, p in buy_predictions.items()}
-                
-                # Calculate total for normalization
-                total_pred = sum(buy_predictions.values())
-                
-                if total_pred > 0:
-                    # Calculate weights (normalized to sum to 1)
-                    weights = {t: p / total_pred for t, p in buy_predictions.items()}
-                    print(f"      📊 Prediction-weighted allocation:")
-                    for t, w in sorted(weights.items(), key=lambda x: -x[1]):
-                        orig_pred = predictions.get(t, 0)
-                        print(f"         {t}: {w*100:.1f}% (predicted: {orig_pred*100:.2f}%)")
-                else:
-                    # Fall back to equal weight
-                    weights = {t: 1.0 / len(stocks_to_buy) for t in stocks_to_buy}
-            else:
-                # No predictions - use equal weight
-                weights = {t: 1.0 / len(stocks_to_buy) for t in stocks_to_buy}
-
-            # ✅ Normalize weights defensively (avoid any rounding / missing-key drift)
-            w_sum = float(sum(weights.values())) if weights else 0.0
-            if w_sum > 0:
-                weights = {t: float(w) / w_sum for t, w in weights.items()}
-            else:
-                weights = {t: 1.0 / len(stocks_to_buy) for t in stocks_to_buy}
-
-            for ticker in stocks_to_buy:
-                if ticker in current_prices:
-                    buy_price = current_prices[ticker]
-                    if buy_price > 0:
-                        # Calculate shares to buy based on weighted allocation, but cap to available cash.
-                        ticker_allocation = capital_for_new_stocks * float(weights.get(ticker, 0.0))
-                        if ticker_allocation <= 0:
-                            continue
-
-                        # Apply transaction cost
-                        # We cap the actual buy_value so total_buy_cost never exceeds cash_balance
-                        max_affordable_buy_value = float(cash_balance) / (1.0 + TRANSACTION_COST) if cash_balance > 0 else 0.0
-                        buy_value = min(float(ticker_allocation), max_affordable_buy_value)
-                        if buy_value <= 0:
-                            continue
-
-                        shares_to_buy = buy_value / buy_price
-
-                        # Apply transaction cost
-                        cost = buy_value * TRANSACTION_COST
-                        total_buy_cost = buy_value + cost
-                        transaction_costs += cost
-                        ai_transaction_costs += cost
-
-                        # Update cash and positions
-                        cash_balance -= total_buy_cost
-
-                        positions[ticker] = {
-                            'shares': shares_to_buy,
-                            'avg_price': buy_price,
-                            'value': buy_value
-                        }
-                        
-                        # ✅ NEW: Initialize tracking for newly bought stock
-                        if ticker not in stock_performance_tracking:
-                            stock_performance_tracking[ticker] = {
-                                'days_held': 0,
-                                'contribution': 0.0,
-                                'max_shares': shares_to_buy,
-                                'entry_value': buy_value,
-                                'total_invested': total_buy_cost,
-                                'exit_value': None
-                            }
-                        else:
-                            # Stock was held before, add to investment
-                            stock_performance_tracking[ticker]['total_invested'] += total_buy_cost
-                            stock_performance_tracking[ticker]['max_shares'] = max(
-                                stock_performance_tracking[ticker]['max_shares'],
-                                shares_to_buy
-                            )
-
-                        weight_pct = weights.get(ticker, 0) * 100
-                        bought_stocks.append(f"{ticker} ({shares_to_buy:.0f} shares @ ${buy_price:.2f})")
-                        print(f"      🛒 Bought {ticker}: {shares_to_buy:.0f} shares @ ${buy_price:.2f} = ${buy_value:.2f} ({weight_pct:.1f}% weight, +${cost:.2f} cost)")
-
-    # Handle stocks that remain in portfolio (no change needed)
-
-    # Ensure cash_balance is not NaN
-    if pd.isna(cash_balance):
-        print(f"   ⚠️ Warning: cash_balance became NaN, resetting to 0")
-        cash_balance = 0.0
-
-    return {
-        'cash_balance': cash_balance,
-        'transaction_costs': transaction_costs,
-        'ai_transaction_costs': ai_transaction_costs,  # Return AI-specific transaction costs
-        'sold_stocks': sold_stocks,
-        'bought_stocks': bought_stocks,
-        'positions': positions
-    }
 
 
 def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y_scaler, horizon_days: int) -> float:
