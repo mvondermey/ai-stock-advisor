@@ -2567,7 +2567,7 @@ def _run_portfolio_backtest_walk_forward(
                         # Select top sector ETFs based on momentum
                         from shared_strategies import select_sector_rotation_etfs
                         new_sector_rotation_etfs = select_sector_rotation_etfs(
-                            initial_top_tickers, ticker_data_grouped, current_date, SECTOR_ROTATION_TOP_N
+                            initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
                         )
                         
                         if new_sector_rotation_etfs:
@@ -2581,7 +2581,7 @@ def _run_portfolio_backtest_walk_forward(
                                 ticker_data_grouped=ticker_data_grouped,
                                 current_date=current_date,
                                 transaction_cost=TRANSACTION_COST,
-                                portfolio_size=SECTOR_ROTATION_TOP_N,
+                                portfolio_size=PORTFOLIO_SIZE,
                                 force_rebalance=not current_sector_rotation_etfs  # Force initial allocation
                             )
                             sector_rotation_transaction_costs += rebalance_costs
@@ -3849,9 +3849,9 @@ def _run_portfolio_backtest_walk_forward(
                     if momentum_scores:
                         # Sort by momentum (descending)
                         momentum_scores.sort(key=lambda x: x[1], reverse=True)
-                        top_momentum_stocks = [ticker for ticker, score in momentum_scores[:MOMENTUM_AI_HYBRID_TOP_N]]
+                        top_momentum_stocks = [ticker for ticker, score in momentum_scores[:PORTFOLIO_SIZE]]
                         
-                        print(f"   📈 Top {MOMENTUM_AI_HYBRID_TOP_N} momentum stocks: {[(t, f'{s*100:.1f}%') for t, s in momentum_scores[:MOMENTUM_AI_HYBRID_TOP_N]]}")
+                        print(f"   📈 Top {PORTFOLIO_SIZE} momentum stocks: {[(t, f'{s*100:.1f}%') for t, s in momentum_scores[:PORTFOLIO_SIZE]]}")
                         
                         # Rebalance using AI signals and universal smart rebalancing
                         momentum_ai_hybrid_positions, momentum_ai_hybrid_cash, current_momentum_ai_hybrid_stocks, rebalance_costs = _smart_rebalance_portfolio(
@@ -3863,7 +3863,7 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped=ticker_data_grouped,
                             current_date=current_date,
                             transaction_cost=TRANSACTION_COST,
-                            portfolio_size=MOMENTUM_AI_HYBRID_TOP_N,
+                            portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=last_momentum_ai_hybrid_rebalance_day == 0  # Force initial allocation
                         )
                         momentum_ai_hybrid_transaction_costs += rebalance_costs
