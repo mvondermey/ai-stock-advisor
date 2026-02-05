@@ -3947,7 +3947,7 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   🎯 Concentrated 3M: Analyzing {len(initial_top_tickers)} tickers...")
                     
                     new_concentrated_3m_stocks = select_concentrated_3m_stocks(
-                        initial_top_tickers, ticker_data_grouped, current_date, top_n=CONCENTRATED_3M_POSITIONS
+                        initial_top_tickers, ticker_data_grouped, current_date, top_n=PORTFOLIO_SIZE
                     )
                     
                     if new_concentrated_3m_stocks:
@@ -3998,7 +3998,7 @@ def _run_portfolio_backtest_walk_forward(
                 print(f"   📊 Dual Momentum: Analyzing {len(initial_top_tickers)} tickers...")
                 
                 new_dual_mom_stocks, is_risk_on = select_dual_momentum_stocks(
-                    initial_top_tickers, ticker_data_grouped, current_date, top_n=DUAL_MOM_POSITIONS
+                    initial_top_tickers, ticker_data_grouped, current_date, top_n=PORTFOLIO_SIZE
                 )
                 
                 # If risk-off, sell all positions
