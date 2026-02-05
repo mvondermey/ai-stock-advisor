@@ -466,6 +466,10 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
     elif strategy == 'ml_ensemble':
         # ML Ensemble Strategy: Weighted voting from multiple ML models
         return get_ml_ensemble_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'price_acceleration':
+        # Price Acceleration Strategy: Physics-based velocity and acceleration
+        return get_price_acceleration_tickers(all_tickers, all_tickers_data)
 
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
@@ -492,7 +496,7 @@ def get_ai_strategy_tickers(all_tickers: List[str]) -> List[str]:
         predictions = []
         
         # Load SPY data for Market_Momentum_SPY feature (same as backtesting)
-        end_date = datetime.now()
+        end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=365)
         spy_df = load_prices_robust('SPY', start_date, end_date)
         
@@ -620,7 +624,7 @@ def get_3m_1y_ratio_tickers(all_tickers: List[str], all_tickers_data: pd.DataFra
     print(f"   🔍 3M/1Y Ratio: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "3M/1Y Ratio")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_3m_1y_ratio_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -635,7 +639,7 @@ def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Risk-Adj Mom")
     
     # Pass required date parameters
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     train_start_date = current_date - timedelta(days=365)
     
     selected = select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, 
@@ -660,7 +664,7 @@ def get_mean_reversion_tickers(all_tickers: List[str], all_tickers_data: pd.Data
     print(f"   🔍 Mean Reversion: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Mean Reversion")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_mean_reversion_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -671,7 +675,7 @@ def get_volatility_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.
     print(f"   🔍 Vol-Adj Mom: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Vol-Adj Mom")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -686,7 +690,7 @@ def get_dynamic_bh_tickers(all_tickers: List[str], period: str, all_tickers_data
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, f"Dynamic BH ({period})")
     
     # Pass required date parameters
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     
     selected = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, 
                                       period=period, 
@@ -706,7 +710,7 @@ def get_static_bh_tickers(all_tickers: List[str], period: str, all_tickers_data:
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, f"Static BH ({period})")
     
     # Pass required date parameters
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     
     selected = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, 
                                       period=period, 
@@ -722,7 +726,7 @@ def get_quality_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.Da
     print(f"   🔍 Quality+Mom: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Quality+Mom")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_quality_momentum_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -738,7 +742,7 @@ def get_multitask_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame
         ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Multi-Task")
         
         # Set dates
-        current_date = datetime.now()
+        current_date = datetime.now(timezone.utc)
         train_start_date = current_date - timedelta(days=365)
         train_end_date = current_date - timedelta(days=30)
         
@@ -768,7 +772,7 @@ def get_turnaround_tickers(all_tickers: List[str], all_tickers_data: pd.DataFram
     print(f"   🔍 Turnaround: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Turnaround")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -781,7 +785,7 @@ def get_ratio_1y_3m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFra
     print(f"   🔍 1Y/3M Ratio: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "1Y/3M Ratio")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -792,7 +796,7 @@ def get_momentum_volatility_hybrid_tickers(all_tickers: List[str], all_tickers_d
     print(f"   🎯 Momentum-Volatility Hybrid: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Momentum-Volatility Hybrid")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -803,7 +807,7 @@ def get_adaptive_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.D
     print(f"   🔍 Adaptive Ensemble: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Adaptive Ensemble")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_adaptive_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -814,7 +818,7 @@ def get_volatility_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd
     print(f"   🔍 Volatility Ensemble: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Volatility Ensemble")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_volatility_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -825,7 +829,7 @@ def get_ai_volatility_ensemble_tickers(all_tickers: List[str], all_tickers_data:
     print(f"   🤖 AI Volatility Ensemble: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "AI Volatility Ensemble")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_ai_volatility_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=TOP_N_STOCKS)
 
 
@@ -836,7 +840,7 @@ def get_correlation_ensemble_tickers(all_tickers: List[str], all_tickers_data: p
     print(f"   🔍 Correlation Ensemble: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Correlation Ensemble")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_correlation_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -847,7 +851,7 @@ def get_dynamic_pool_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     print(f"   🔍 Dynamic Pool: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Dynamic Pool")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_dynamic_pool_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -858,7 +862,7 @@ def get_sentiment_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.
     print(f"   🔍 Sentiment Ensemble: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Sentiment Ensemble")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_sentiment_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -869,7 +873,7 @@ def get_momentum_breakout_tickers(all_tickers: List[str], all_tickers_data: pd.D
     print(f"   🔍 Momentum Breakout: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Momentum Breakout")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_momentum_breakout_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -880,7 +884,7 @@ def get_enhanced_volatility_tickers(all_tickers: List[str], all_tickers_data: pd
     print(f"   Enhanced Volatility Trader: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Enhanced Volatility Trader")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_enhanced_volatility_stocks(all_tickers, ticker_data_grouped, 
                                            current_date=current_date, top_n=PORTFOLIO_SIZE)
 
@@ -892,7 +896,7 @@ def get_factor_rotation_tickers(all_tickers: List[str], all_tickers_data: pd.Dat
     print(f"   🔍 Factor Rotation: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Factor Rotation")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_factor_rotation_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -903,7 +907,7 @@ def get_pairs_trading_tickers(all_tickers: List[str], all_tickers_data: pd.DataF
     print(f"   🔍 Pairs Trading: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Pairs Trading")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_pairs_trading_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -914,7 +918,7 @@ def get_earnings_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.D
     print(f"   🔍 Earnings Momentum: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Earnings Momentum")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_earnings_momentum_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -925,7 +929,7 @@ def get_insider_trading_tickers(all_tickers: List[str], all_tickers_data: pd.Dat
     print(f"   🔍 Insider Trading: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Insider Trading")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_insider_trading_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -936,7 +940,7 @@ def get_options_sentiment_tickers(all_tickers: List[str], all_tickers_data: pd.D
     print(f"   🔍 Options Sentiment: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Options Sentiment")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_options_sentiment_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -947,8 +951,19 @@ def get_ml_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFra
     print(f"   🔍 ML Ensemble: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "ML Ensemble")
     
-    current_date = datetime.now()
+    current_date = datetime.now(timezone.utc)
     return select_ml_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_price_acceleration_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Price Acceleration Strategy: Physics-based velocity (price change) and acceleration (velocity change)."""
+    from shared_strategies import select_price_acceleration_stocks
+    
+    print(f"   🚀 Price Acceleration: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Price Acceleration")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tickers_data: pd.DataFrame = None):
@@ -997,7 +1012,8 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
         'earnings_momentum': 'Earnings Momentum (PEAD)',
         'insider_trading': 'Insider Trading Signal',
         'options_sentiment': 'Options Sentiment (Put/Call)',
-        'ml_ensemble': 'ML Ensemble (Multi-Model Voting)'
+        'ml_ensemble': 'ML Ensemble (Multi-Model Voting)',
+        'price_acceleration': 'Price Acceleration (Physics-Based Momentum)'
     }
 
     strategy_name = strategy_names.get(LIVE_TRADING_STRATEGY, LIVE_TRADING_STRATEGY)
@@ -1032,8 +1048,8 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
     print(f"    Available tickers: {len(valid_tickers)}")
     
     # Pass downloaded data if available for strategies that need it
-    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid'] and all_tickers_data_for_strategy is not None else None
-    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid']:
+    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'price_acceleration'] and all_tickers_data_for_strategy is not None else None
+    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'price_acceleration']:
         print(f"    Data available: {all_tickers_data_for_strategy is not None}")
     
     target_tickers = get_strategy_tickers(LIVE_TRADING_STRATEGY, valid_tickers, all_tickers_data_for_strategy)
