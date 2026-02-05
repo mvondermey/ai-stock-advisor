@@ -470,6 +470,10 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
     elif strategy == 'price_acceleration':
         # Price Acceleration Strategy: Physics-based velocity and acceleration
         return get_price_acceleration_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'dual_momentum':
+        # Dual Momentum Strategy: Antonacci style absolute + relative momentum
+        return get_dual_momentum_tickers(all_tickers, all_tickers_data)
 
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
@@ -966,6 +970,24 @@ def get_price_acceleration_tickers(all_tickers: List[str], all_tickers_data: pd.
     return select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
+def get_dual_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Dual Momentum Strategy: Antonacci style absolute + relative momentum."""
+    from new_strategies import select_dual_momentum_stocks
+    
+    print(f"   📊 Dual Momentum: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Dual Momentum")
+    
+    current_date = datetime.now(timezone.utc)
+    selected, is_risk_on = select_dual_momentum_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+    
+    # If risk-off, return empty list (strategy will go to cash)
+    if not is_risk_on:
+        print(f"   ⚠️ Dual Momentum: RISK-OFF mode - holding cash")
+        return []
+    
+    return selected
+
+
 def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tickers_data: pd.DataFrame = None):
     """Live trading function that receives pre-filtered tickers from main.py."""
     # Use the filtered tickers instead of fetching all tickers
@@ -1013,7 +1035,8 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
         'insider_trading': 'Insider Trading Signal',
         'options_sentiment': 'Options Sentiment (Put/Call)',
         'ml_ensemble': 'ML Ensemble (Multi-Model Voting)',
-        'price_acceleration': 'Price Acceleration (Physics-Based Momentum)'
+        'price_acceleration': 'Price Acceleration (Physics-Based Momentum)',
+        'dual_momentum': 'Dual Momentum (Absolute + Relative)'
     }
 
     strategy_name = strategy_names.get(LIVE_TRADING_STRATEGY, LIVE_TRADING_STRATEGY)
