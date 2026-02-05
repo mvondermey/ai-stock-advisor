@@ -1166,11 +1166,11 @@ def main(
             print("="*100 + "\n")
             raise ValueError("Backtest function returned None instead of expected tuple")
         
-        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, bh_6m_portfolio_value_1y, bh_1m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, dynamic_bh_6m_portfolio_value_1y, dynamic_bh_6m_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ratio_3m_1y_portfolio_value_1y, ratio_3m_1y_portfolio_history_1y, ratio_1y_3m_portfolio_value_1y, ratio_1y_3m_portfolio_history_1y, turnaround_portfolio_value_1y, turnaround_portfolio_history_1y, adaptive_ensemble_portfolio_value_1y, adaptive_ensemble_portfolio_history_1y, volatility_ensemble_portfolio_value_1y, volatility_ensemble_portfolio_history_1y, ai_volatility_ensemble_portfolio_value_1y, ai_volatility_ensemble_portfolio_history_1y, multi_tf_ensemble_portfolio_value_1y, multi_tf_ensemble_portfolio_history_1y, correlation_ensemble_portfolio_value_1y, correlation_ensemble_portfolio_history_1y, dynamic_pool_portfolio_value_1y, dynamic_pool_portfolio_history_1y, sentiment_ensemble_portfolio_value_1y, sentiment_ensemble_portfolio_history_1y, ai_classification_portfolio_value_1y, ai_classification_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_6m_transaction_costs_1y, static_bh_3m_transaction_costs_1y, static_bh_1m_transaction_costs_1y, dynamic_bh_transaction_costs_1y, dynamic_bh_6m_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, ratio_3m_1y_transaction_costs_1y, ratio_1y_3m_transaction_costs_1y, momentum_volatility_hybrid_transaction_costs_1y, turnaround_transaction_costs_1y, adaptive_ensemble_transaction_costs_1y, volatility_ensemble_transaction_costs_1y, ai_volatility_ensemble_transaction_costs_1y, multi_tf_ensemble_transaction_costs_1y, correlation_ensemble_transaction_costs_1y, dynamic_pool_transaction_costs_1y, sentiment_ensemble_transaction_costs_1y, actual_backtest_day_count, ai_cash_deployed_1y, static_bh_cash_deployed_1y, static_bh_6m_cash_deployed_1y, static_bh_3m_cash_deployed_1y, static_bh_1m_cash_deployed_1y, dynamic_bh_cash_deployed_1y, dynamic_bh_6m_cash_deployed_1y, dynamic_bh_3m_cash_deployed_1y, dynamic_bh_1m_cash_deployed_1y, risk_adj_mom_cash_deployed_1y, mean_reversion_cash_deployed_1y, quality_momentum_cash_deployed_1y, volatility_adj_mom_cash_deployed_1y, momentum_ai_hybrid_cash_deployed_1y, dynamic_bh_1y_vol_filter_cash_deployed_1y, dynamic_bh_1y_trailing_stop_cash_deployed_1y, multitask_cash_deployed_1y, sector_rotation_cash_deployed_1y, ratio_3m_1y_cash_deployed_1y, ratio_1y_3m_cash_deployed_1y, turnaround_cash_deployed_1y, adaptive_ensemble_cash_deployed_1y, volatility_ensemble_cash_deployed_1y, ai_volatility_ensemble_cash_deployed_1y, multi_tf_ensemble_cash_deployed_1y, correlation_ensemble_cash_deployed_1y, dynamic_pool_cash_deployed_1y, sentiment_ensemble_cash_deployed_1y, mom_accel_portfolio_value_1y, mom_accel_portfolio_history_1y, concentrated_3m_portfolio_value_1y, concentrated_3m_portfolio_history_1y, dual_mom_portfolio_value_1y, dual_mom_portfolio_history_1y, trend_atr_portfolio_value_1y, trend_atr_portfolio_history_1y, mom_accel_transaction_costs_1y, concentrated_3m_transaction_costs_1y, dual_mom_transaction_costs_1y, trend_atr_transaction_costs_1y, mom_accel_cash_deployed_1y, concentrated_3m_cash_deployed_1y, dual_mom_cash_deployed_1y, trend_atr_cash_deployed_1y, enhanced_volatility_portfolio_value_1y, enhanced_volatility_portfolio_history_1y, enhanced_volatility_transaction_costs_1y, enhanced_volatility_cash_deployed_1y = result
+        final_strategy_value_1y, portfolio_values_1y, processed_tickers_1y, performance_metrics_1y, buy_hold_histories_1y, bh_portfolio_value_1y, bh_3m_portfolio_value_1y, bh_6m_portfolio_value_1y, bh_1m_portfolio_value_1y, dynamic_bh_portfolio_value_1y, dynamic_bh_portfolio_history_1y, dynamic_bh_3m_portfolio_value_1y, dynamic_bh_3m_portfolio_history_1y, dynamic_bh_6m_portfolio_value_1y, dynamic_bh_6m_portfolio_history_1y, dynamic_bh_1m_portfolio_value_1y, dynamic_bh_1m_portfolio_history_1y, risk_adj_mom_portfolio_value_1y, risk_adj_mom_portfolio_history_1y, multitask_portfolio_value_1y, multitask_portfolio_history_1y, mean_reversion_portfolio_value_1y, mean_reversion_portfolio_history_1y, quality_momentum_portfolio_value_1y, quality_momentum_portfolio_history_1y, momentum_ai_hybrid_portfolio_value_1y, momentum_ai_hybrid_portfolio_history_1y, volatility_adj_mom_portfolio_value_1y, volatility_adj_mom_portfolio_history_1y, dynamic_bh_1y_vol_filter_portfolio_value_1y, dynamic_bh_1y_vol_filter_portfolio_history_1y, dynamic_bh_1y_trailing_stop_portfolio_value_1y, dynamic_bh_1y_trailing_stop_portfolio_history_1y, sector_rotation_portfolio_value_1y, sector_rotation_portfolio_history_1y, ratio_3m_1y_portfolio_value_1y, ratio_3m_1y_portfolio_history_1y, ratio_1y_3m_portfolio_value_1y, ratio_1y_3m_portfolio_history_1y, momentum_volatility_hybrid_portfolio_value_1y, momentum_volatility_hybrid_portfolio_history_1y, price_acceleration_portfolio_value_1y, price_acceleration_portfolio_history_1y, turnaround_portfolio_value_1y, turnaround_portfolio_history_1y, adaptive_ensemble_portfolio_value_1y, adaptive_ensemble_portfolio_history_1y, volatility_ensemble_portfolio_value_1y, volatility_ensemble_portfolio_history_1y, ai_volatility_ensemble_portfolio_value_1y, ai_volatility_ensemble_portfolio_history_1y, multi_tf_ensemble_portfolio_value_1y, multi_tf_ensemble_portfolio_history_1y, correlation_ensemble_portfolio_value_1y, correlation_ensemble_portfolio_history_1y, dynamic_pool_portfolio_value_1y, dynamic_pool_portfolio_history_1y, sentiment_ensemble_portfolio_value_1y, sentiment_ensemble_portfolio_history_1y, ai_classification_portfolio_value_1y, ai_classification_portfolio_history_1y, ai_transaction_costs_1y, static_bh_transaction_costs_1y, static_bh_6m_transaction_costs_1y, static_bh_3m_transaction_costs_1y, static_bh_1m_transaction_costs_1y, dynamic_bh_transaction_costs_1y, dynamic_bh_6m_transaction_costs_1y, dynamic_bh_3m_transaction_costs_1y, dynamic_bh_1m_transaction_costs_1y, risk_adj_mom_transaction_costs_1y, multitask_transaction_costs_1y, mean_reversion_transaction_costs_1y, quality_momentum_transaction_costs_1y, momentum_ai_hybrid_transaction_costs_1y, volatility_adj_mom_transaction_costs_1y, dynamic_bh_1y_vol_filter_transaction_costs_1y, dynamic_bh_1y_trailing_stop_transaction_costs_1y, sector_rotation_transaction_costs_1y, ratio_3m_1y_transaction_costs_1y, ratio_1y_3m_transaction_costs_1y, momentum_volatility_hybrid_transaction_costs_1y, price_acceleration_transaction_costs_1y, turnaround_transaction_costs_1y, adaptive_ensemble_transaction_costs_1y, volatility_ensemble_transaction_costs_1y, ai_volatility_ensemble_transaction_costs_1y, multi_tf_ensemble_transaction_costs_1y, correlation_ensemble_transaction_costs_1y, dynamic_pool_transaction_costs_1y, sentiment_ensemble_transaction_costs_1y, day_count_1y, ai_cash_deployed_1y, static_bh_cash_deployed_1y, static_bh_6m_cash_deployed_1y, static_bh_3m_cash_deployed_1y, static_bh_1m_cash_deployed_1y, dynamic_bh_cash_deployed_1y, dynamic_bh_6m_cash_deployed_1y, dynamic_bh_3m_cash_deployed_1y, dynamic_bh_1m_cash_deployed_1y, risk_adj_mom_cash_deployed_1y, mean_reversion_cash_deployed_1y, quality_momentum_cash_deployed_1y, volatility_adj_mom_cash_deployed_1y, momentum_ai_hybrid_cash_deployed_1y, dynamic_bh_vol_filter_cash_deployed_1y, dynamic_bh_trailing_stop_cash_deployed_1y, multitask_cash_deployed_1y, sector_rotation_cash_deployed_1y, ratio_3m_cash_deployed_1y, ratio_1y_3m_cash_deployed_1y, turnaround_cash_deployed_1y, adaptive_ensemble_cash_deployed_1y, volatility_ensemble_cash_deployed_1y, ai_volatility_ensemble_cash_deployed_1y, multi_tf_ensemble_cash_deployed_1y, correlation_ensemble_cash_deployed_1y, dynamic_pool_cash_deployed_1y, sentiment_ensemble_cash_deployed_1y, price_acceleration_cash_deployed_1y, mom_accel_portfolio_value_1y, mom_accel_portfolio_history_1y, concentrated_3m_portfolio_value_1y, concentrated_3m_portfolio_history_1y, dual_mom_portfolio_value_1y, dual_mom_portfolio_history_1y, trend_atr_portfolio_value_1y, trend_atr_portfolio_history_1y, mom_accel_transaction_costs_1y, concentrated_3m_transaction_costs_1y, dual_mom_transaction_costs_1y, trend_atr_transaction_costs_1y, mom_accel_cash_deployed_1y, concentrated_3m_cash_deployed_1y, dual_mom_cash_deployed_1y, trend_atr_cash_deployed_1y, enhanced_volatility_portfolio_value_1y, enhanced_volatility_portfolio_history_1y, enhanced_volatility_transaction_costs_1y, enhanced_volatility_cash_deployed_1y = result
         
     except Exception as e:
         print("\n" + "="*100)
-        print("❌ EXCEPTION CAUGHT IN MAIN.PY:")
+        print("EXCEPTION CAUGHT IN MAIN.PY:")
         print("="*100)
         print(f"Exception type: {type(e).__name__}")
         print(f"Exception message: {str(e)}")
@@ -1436,6 +1436,8 @@ def main(
         ratio_1y_3m_1y_return=((ratio_1y_3m_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_momentum_volatility_hybrid_value_1y=momentum_volatility_hybrid_portfolio_value_1y,
         momentum_volatility_hybrid_1y_return=((momentum_volatility_hybrid_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
+        final_price_acceleration_value_1y=price_acceleration_portfolio_value_1y,
+        price_acceleration_1y_return=((price_acceleration_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         final_turnaround_value_1y=turnaround_portfolio_value_1y,
         turnaround_1y_return=((turnaround_portfolio_value_1y - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0,
         ai_transaction_costs=ai_transaction_costs_1y,
@@ -1451,6 +1453,7 @@ def main(
         ratio_3m_1y_transaction_costs=ratio_3m_1y_transaction_costs_1y,
         ratio_1y_3m_transaction_costs=ratio_1y_3m_transaction_costs_1y,
         momentum_volatility_hybrid_transaction_costs=momentum_volatility_hybrid_transaction_costs_1y,
+        price_acceleration_transaction_costs=price_acceleration_transaction_costs_1y,
         turnaround_transaction_costs=turnaround_transaction_costs_1y,
         dynamic_bh_3m_transaction_costs=dynamic_bh_3m_transaction_costs_1y,
         dynamic_bh_1m_transaction_costs=dynamic_bh_1m_transaction_costs_1y,
@@ -1495,6 +1498,7 @@ def main(
         ratio_3m_1y_cash_deployed=ratio_3m_1y_cash_deployed_1y,
         ratio_1y_3m_cash_deployed=ratio_1y_3m_cash_deployed_1y,
         momentum_volatility_hybrid_cash_deployed=momentum_volatility_hybrid_cash_deployed_1y,
+        price_acceleration_cash_deployed=price_acceleration_cash_deployed_1y,
         turnaround_cash_deployed=turnaround_cash_deployed_1y,
         # Ensemble strategy values
         final_adaptive_ensemble_value_1y=adaptive_ensemble_portfolio_value_1y,
@@ -1850,8 +1854,69 @@ if __name__ == "__main__":
                         else:
                             print(f"   {strategy}: None (all shared)")
                 
+                # === CONSENSUS TABLE ===
                 print("\n" + "=" * 80)
-                print("💡 To execute trades, run with a single strategy")
+                print("📊 CONSENSUS RANKING TABLE")
+                print("=" * 80)
+                print(f"Stocks ranked by number of strategy votes (out of {len(strategies)} strategies)\n")
+                
+                # Count votes for each ticker
+                from collections import Counter
+                ticker_votes = Counter()
+                ticker_strategies = {}  # Track which strategies voted for each ticker
+                
+                for strategy, tickers in all_selections.items():
+                    for ticker in tickers:
+                        ticker_votes[ticker] += 1
+                        if ticker not in ticker_strategies:
+                            ticker_strategies[ticker] = []
+                        ticker_strategies[ticker].append(strategy)
+                
+                # Sort by vote count (descending), then alphabetically
+                sorted_tickers = sorted(ticker_votes.items(), key=lambda x: (-x[1], x[0]))
+                
+                # Print header
+                print(f"{'Rank':<6} {'Ticker':<12} {'Votes':<8} {'Strategies':<40}")
+                print("-" * 80)
+                
+                # Print each ticker with vote info - show ALL with 2+ votes
+                from config import PORTFOLIO_SIZE
+                min_votes = 2  # Show only stocks with 2 or more votes
+                filtered_tickers = [(t, v) for t, v in sorted_tickers if v >= min_votes]
+                
+                for rank, (ticker, votes) in enumerate(filtered_tickers, 1):
+                    vote_bar = "█" * votes + "░" * (len(strategies) - votes)
+                    strategies_short = ", ".join([s[:8] for s in ticker_strategies[ticker]])
+                    print(f"{rank:<6} {ticker:<12} {votes}/{len(strategies)} {vote_bar:<8}  {strategies_short}")
+                
+                if not filtered_tickers:
+                    print(f"   ⚠️ No stocks with {min_votes}+ strategy votes found")
+                
+                # Summary statistics
+                print("\n" + "-" * 80)
+                print("📈 CONSENSUS SUMMARY:")
+                for vote_count in range(len(strategies), 0, -1):
+                    count = sum(1 for v in ticker_votes.values() if v == vote_count)
+                    tickers_with_votes = [t for t, v in ticker_votes.items() if v == vote_count]
+                    if count > 0:
+                        emoji = "🟢" if vote_count == len(strategies) else "🔵" if vote_count >= len(strategies)//2 + 1 else "⚪"
+                        print(f"   {emoji} {vote_count} vote{'s' if vote_count > 1 else ''}: {count} stocks {tickers_with_votes if count <= 5 else ''}")
+                
+                # Recommended portfolio (top 10 by consensus)
+                print("\n" + "=" * 80)
+                print("🎯 RECOMMENDED CONSENSUS PORTFOLIO (Top 10 by votes)")
+                print("=" * 80)
+                top_consensus = [t for t, v in sorted_tickers[:10]]
+                if top_consensus:
+                    print(f"   {top_consensus}")
+                    print(f"\n   💡 These stocks have the highest agreement across strategies")
+                    print(f"   💡 Consider running: python src/main.py --live-trading --strategy consensus")
+                else:
+                    print("   ⚠️ No consensus stocks found")
+                
+                print("\n" + "=" * 80)
+                print("💡 To execute trades with a single strategy, run:")
+                print(f"   python src/main.py --live-trading --strategy <strategy_name>")
                 print("=" * 80)
             else:
                 # Single strategy: run full live trading

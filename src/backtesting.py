@@ -27,7 +27,7 @@ from config import (
     ENABLE_VOLATILITY_ADJ_MOM, VOLATILITY_ADJ_MOM_LOOKBACK, VOLATILITY_ADJ_MOM_VOL_WINDOW, VOLATILITY_ADJ_MOM_MIN_SCORE,
     ENABLE_STATIC_BH_6M, ENABLE_STATIC_BH, ENABLE_DYNAMIC_BH_1Y, ENABLE_DYNAMIC_BH_6M, ENABLE_DYNAMIC_BH_3M, ENABLE_DYNAMIC_BH_1M,
     ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, ENABLE_SECTOR_ROTATION, ENABLE_LLM_STRATEGY,
-    ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_ADAPTIVE_STRATEGY,
+    ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_ADAPTIVE_STRATEGY, ENABLE_TURNAROUND, ENABLE_PRICE_ACCELERATION,
     ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE, ENABLE_AI_VOLATILITY_ENSEMBLE,
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE, ENABLE_AI_CLASSIFICATION,
     CALENDAR_DAYS_PER_YEAR,
@@ -116,6 +116,7 @@ correlation_ensemble_transaction_costs = 0
 dynamic_pool_transaction_costs = 0
 sentiment_ensemble_transaction_costs = 0
 momentum_volatility_hybrid_transaction_costs = 0
+price_acceleration_transaction_costs = 0
 dynamic_bh_1y_vol_filter_transaction_costs = 0
 dynamic_bh_1y_trailing_stop_transaction_costs = 0
 adaptive_ensemble_transaction_costs = 0
@@ -1398,6 +1399,14 @@ def _run_portfolio_backtest_walk_forward(
     current_momentum_volatility_hybrid_stocks = []  # Current top stocks held by momentum-volatility hybrid strategy
     momentum_volatility_hybrid_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
+    # PRICE ACCELERATION: Initialize portfolio tracking
+    price_acceleration_portfolio_value = initial_capital_needed
+    price_acceleration_portfolio_history = [price_acceleration_portfolio_value]
+    price_acceleration_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    price_acceleration_cash = initial_capital_needed  # Start with same capital as AI
+    current_price_acceleration_stocks = []  # Current top stocks held by price acceleration strategy
+    price_acceleration_last_rebalance_value = initial_capital_needed  # Transaction cost guard
+
     # TURNAROUND: Initialize portfolio tracking
     turnaround_portfolio_value = initial_capital_needed
     turnaround_portfolio_history = [turnaround_portfolio_value]
@@ -1619,6 +1628,8 @@ def _run_portfolio_backtest_walk_forward(
     ratio_1y_3m_transaction_costs = 0.0
     momentum_volatility_hybrid_cash_deployed = 0.0
     momentum_volatility_hybrid_transaction_costs = 0.0
+    price_acceleration_cash_deployed = 0.0
+    price_acceleration_transaction_costs = 0.0
     turnaround_cash_deployed = 0.0
     turnaround_transaction_costs = 0.0
     adaptive_ensemble_cash_deployed = 0.0
@@ -3028,6 +3039,45 @@ def _run_portfolio_backtest_walk_forward(
                     
             except Exception as e:
                 print(f"   ⚠️ Momentum-Volatility Hybrid strategy error: {e}")
+
+        # PRICE ACCELERATION: Rebalance using velocity/acceleration strategy DAILY
+        if ENABLE_PRICE_ACCELERATION:
+            try:
+                from shared_strategies import select_price_acceleration_stocks
+                
+                print(f"   🚀 Price Acceleration Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+                
+                # Use price acceleration for stock selection
+                new_price_acceleration_stocks = select_price_acceleration_stocks(
+                    initial_top_tickers, 
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE  # Use configured portfolio size (default 10)
+                )
+                
+                if new_price_acceleration_stocks:
+                    # Use universal smart rebalancing function
+                    price_acceleration_positions, price_acceleration_cash, current_price_acceleration_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        strategy_name="Price Acceleration",
+                        current_stocks=current_price_acceleration_stocks,
+                        new_stocks=new_price_acceleration_stocks,
+                        positions=price_acceleration_positions,
+                        cash=price_acceleration_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_price_acceleration_stocks  # Force initial allocation
+                    )
+                    price_acceleration_transaction_costs += rebalance_costs
+                    price_acceleration_last_rebalance_value = _mark_to_market_value(
+                        price_acceleration_positions, price_acceleration_cash, ticker_data_grouped, current_date
+                    )
+                else:
+                    print(f"   ❌ No Price Acceleration stocks selected")
+                    
+            except Exception as e:
+                print(f"   ⚠️ Price Acceleration strategy error: {e}")
 
         # ADAPTIVE ENSEMBLE: Rebalance using meta-ensemble strategy DAILY
         if ENABLE_ADAPTIVE_STRATEGY:
@@ -4789,6 +4839,30 @@ def _run_portfolio_backtest_walk_forward(
         momentum_volatility_hybrid_portfolio_value = momentum_volatility_hybrid_invested_value + momentum_volatility_hybrid_cash
         momentum_volatility_hybrid_portfolio_history.append(momentum_volatility_hybrid_portfolio_value)
 
+        # Update PRICE ACCELERATION portfolio value daily
+        price_acceleration_invested_value = 0.0
+        if ENABLE_PRICE_ACCELERATION:
+            for ticker in list(price_acceleration_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = price_acceleration_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            price_acceleration_positions[ticker]['value'] = position_value
+                            price_acceleration_invested_value += position_value
+                        else:
+                            price_acceleration_invested_value += price_acceleration_positions[ticker].get('value', 0.0)
+                    else:
+                        price_acceleration_invested_value += price_acceleration_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating Price Acceleration position for {ticker}: {e}")
+                    price_acceleration_invested_value += price_acceleration_positions[ticker].get('value', 0.0)
+
+        price_acceleration_portfolio_value = price_acceleration_invested_value + price_acceleration_cash
+        price_acceleration_portfolio_history.append(price_acceleration_portfolio_value)
+
         # Update 1Y/3M RATIO portfolio value daily
         ratio_1y_3m_invested_value = 0.0
         for ticker in list(ratio_1y_3m_positions.keys()):
@@ -5557,6 +5631,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("3M/1Y Ratio", ratio_3m_1y_portfolio_value if ENABLE_3M_1Y_RATIO else None),
                 ("1Y/3M Ratio", ratio_1y_3m_portfolio_value),
                 ("Mom-Vol Hybrid", momentum_volatility_hybrid_portfolio_value if ENABLE_MOMENTUM_VOLATILITY_HYBRID else None),
+                ("Price Acceleration", price_acceleration_portfolio_value if ENABLE_PRICE_ACCELERATION else None),
                 ("Turnaround", turnaround_portfolio_value if ENABLE_TURNAROUND else None),
                 ("Adaptive Ensemble", adaptive_ensemble_portfolio_value if ENABLE_ADAPTIVE_STRATEGY else None),
                 ("Volatility Ensemble", volatility_ensemble_portfolio_value if ENABLE_VOLATILITY_ENSEMBLE else None),
@@ -6316,7 +6391,7 @@ def _run_portfolio_backtest_walk_forward(
     trend_atr_cash_deployed = trend_atr_cash
     enhanced_volatility_cash_deployed = enhanced_volatility_cash
 
-    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, bh_3m_portfolio_value, bh_6m_portfolio_value, bh_1m_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_6m_portfolio_value, dynamic_bh_6m_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, multitask_portfolio_value, multitask_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, dynamic_bh_vol_filter_portfolio_value, dynamic_bh_vol_filter_portfolio_history, dynamic_bh_trailing_stop_portfolio_value, dynamic_bh_trailing_stop_portfolio_history, sector_rotation_portfolio_value, sector_rotation_portfolio_history, ratio_3m_portfolio_value, ratio_3m_portfolio_history, ratio_1y_3m_portfolio_value, ratio_1y_3m_portfolio_history, turnaround_portfolio_value, turnaround_portfolio_history, adaptive_ensemble_portfolio_value, adaptive_ensemble_portfolio_history, volatility_ensemble_portfolio_value, volatility_ensemble_portfolio_history, ai_volatility_ensemble_portfolio_value, ai_volatility_ensemble_portfolio_history, multi_tf_ensemble_portfolio_value, multi_tf_ensemble_portfolio_history, correlation_ensemble_portfolio_value, correlation_ensemble_portfolio_history, dynamic_pool_portfolio_value, dynamic_pool_portfolio_history, sentiment_ensemble_portfolio_value, sentiment_ensemble_portfolio_history, ai_classification_portfolio_value, ai_classification_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, static_bh_6m_transaction_costs, static_bh_3m_transaction_costs, static_bh_1m_transaction_costs, dynamic_bh_transaction_costs, dynamic_bh_6m_transaction_costs, dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, multitask_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_vol_filter_transaction_costs, dynamic_bh_trailing_stop_transaction_costs, sector_rotation_transaction_costs, ratio_3m_transaction_costs, ratio_1y_3m_transaction_costs, momentum_volatility_hybrid_transaction_costs, turnaround_transaction_costs, adaptive_ensemble_transaction_costs, volatility_ensemble_transaction_costs, ai_volatility_ensemble_transaction_costs, multi_tf_ensemble_transaction_costs, correlation_ensemble_transaction_costs, dynamic_pool_transaction_costs, sentiment_ensemble_transaction_costs, day_count, ai_cash_deployed, static_bh_cash_deployed, static_bh_6m_cash_deployed, static_bh_3m_cash_deployed, static_bh_1m_cash_deployed, dynamic_bh_cash_deployed, dynamic_bh_6m_cash_deployed, dynamic_bh_3m_cash_deployed, dynamic_bh_1m_cash_deployed, risk_adj_mom_cash_deployed, mean_reversion_cash_deployed, quality_momentum_cash_deployed, volatility_adj_mom_cash_deployed, momentum_ai_hybrid_cash_deployed, dynamic_bh_vol_filter_cash_deployed, dynamic_bh_trailing_stop_cash_deployed, multitask_cash_deployed, sector_rotation_cash_deployed, ratio_3m_cash_deployed, ratio_1y_3m_cash_deployed, turnaround_cash_deployed, adaptive_ensemble_cash_deployed, volatility_ensemble_cash_deployed, ai_volatility_ensemble_cash_deployed, multi_tf_ensemble_cash_deployed, correlation_ensemble_cash_deployed, dynamic_pool_cash_deployed, sentiment_ensemble_cash_deployed, mom_accel_portfolio_value, mom_accel_portfolio_history, concentrated_3m_portfolio_value, concentrated_3m_portfolio_history, dual_mom_portfolio_value, dual_mom_portfolio_history, trend_atr_portfolio_value, trend_atr_portfolio_history, mom_accel_transaction_costs, concentrated_3m_transaction_costs, dual_mom_transaction_costs, trend_atr_transaction_costs, mom_accel_cash_deployed, concentrated_3m_cash_deployed, dual_mom_cash_deployed, trend_atr_cash_deployed, enhanced_volatility_portfolio_value, enhanced_volatility_portfolio_history, enhanced_volatility_transaction_costs, enhanced_volatility_cash_deployed
+    return total_portfolio_value, portfolio_values_history, initial_top_tickers, performance_metrics, {}, bh_portfolio_value, bh_3m_portfolio_value, bh_6m_portfolio_value, bh_1m_portfolio_value, dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_6m_portfolio_value, dynamic_bh_6m_portfolio_history, dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, multitask_portfolio_value, multitask_portfolio_history, mean_reversion_portfolio_value, mean_reversion_portfolio_history, quality_momentum_portfolio_value, quality_momentum_portfolio_history, momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, dynamic_bh_vol_filter_portfolio_value, dynamic_bh_vol_filter_portfolio_history, dynamic_bh_trailing_stop_portfolio_value, dynamic_bh_trailing_stop_portfolio_history, sector_rotation_portfolio_value, sector_rotation_portfolio_history, ratio_3m_portfolio_value, ratio_3m_portfolio_history, ratio_1y_3m_portfolio_value, ratio_1y_3m_portfolio_history, momentum_volatility_hybrid_portfolio_value, momentum_volatility_hybrid_portfolio_history, price_acceleration_portfolio_value, price_acceleration_portfolio_history, turnaround_portfolio_value, turnaround_portfolio_history, adaptive_ensemble_portfolio_value, adaptive_ensemble_portfolio_history, volatility_ensemble_portfolio_value, volatility_ensemble_portfolio_history, ai_volatility_ensemble_portfolio_value, ai_volatility_ensemble_portfolio_history, multi_tf_ensemble_portfolio_value, multi_tf_ensemble_portfolio_history, correlation_ensemble_portfolio_value, correlation_ensemble_portfolio_history, dynamic_pool_portfolio_value, dynamic_pool_portfolio_history, sentiment_ensemble_portfolio_value, sentiment_ensemble_portfolio_history, ai_classification_portfolio_value, ai_classification_portfolio_history, ai_transaction_costs, static_bh_transaction_costs, static_bh_6m_transaction_costs, static_bh_3m_transaction_costs, static_bh_1m_transaction_costs, dynamic_bh_transaction_costs, dynamic_bh_6m_transaction_costs, dynamic_bh_3m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, multitask_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_vol_filter_transaction_costs, dynamic_bh_trailing_stop_transaction_costs, sector_rotation_transaction_costs, ratio_3m_transaction_costs, ratio_1y_3m_transaction_costs, momentum_volatility_hybrid_transaction_costs, price_acceleration_transaction_costs, turnaround_transaction_costs, adaptive_ensemble_transaction_costs, volatility_ensemble_transaction_costs, ai_volatility_ensemble_transaction_costs, multi_tf_ensemble_transaction_costs, correlation_ensemble_transaction_costs, dynamic_pool_transaction_costs, sentiment_ensemble_transaction_costs, day_count, ai_cash_deployed, static_bh_cash_deployed, static_bh_6m_cash_deployed, static_bh_3m_cash_deployed, static_bh_1m_cash_deployed, dynamic_bh_cash_deployed, dynamic_bh_6m_cash_deployed, dynamic_bh_3m_cash_deployed, dynamic_bh_1m_cash_deployed, risk_adj_mom_cash_deployed, mean_reversion_cash_deployed, quality_momentum_cash_deployed, volatility_adj_mom_cash_deployed, momentum_ai_hybrid_cash_deployed, dynamic_bh_vol_filter_cash_deployed, dynamic_bh_trailing_stop_cash_deployed, multitask_cash_deployed, sector_rotation_cash_deployed, ratio_3m_cash_deployed, ratio_1y_3m_cash_deployed, turnaround_cash_deployed, adaptive_ensemble_cash_deployed, volatility_ensemble_cash_deployed, ai_volatility_ensemble_cash_deployed, multi_tf_ensemble_cash_deployed, correlation_ensemble_cash_deployed, dynamic_pool_cash_deployed, sentiment_ensemble_cash_deployed, price_acceleration_cash_deployed, mom_accel_portfolio_value, mom_accel_portfolio_history, concentrated_3m_portfolio_value, concentrated_3m_portfolio_history, dual_mom_portfolio_value, dual_mom_portfolio_history, trend_atr_portfolio_value, trend_atr_portfolio_history, mom_accel_transaction_costs, concentrated_3m_transaction_costs, dual_mom_transaction_costs, trend_atr_transaction_costs, mom_accel_cash_deployed, concentrated_3m_cash_deployed, dual_mom_cash_deployed, trend_atr_cash_deployed, enhanced_volatility_portfolio_value, enhanced_volatility_portfolio_history, enhanced_volatility_transaction_costs, enhanced_volatility_cash_deployed
 
 
 def _get_current_risk_adj_mom_selections(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
