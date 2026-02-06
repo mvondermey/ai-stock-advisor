@@ -1389,7 +1389,7 @@ def main(
     actual_tickers_analyzed = len(top_tickers)
     
     # ✅ Calculate actual backtest days for annualization (use actual day count from backtest)
-    actual_backtest_days = actual_backtest_day_count if actual_backtest_day_count else (bt_end - bt_start_1y).days
+    actual_backtest_days = (bt_end - bt_start_1y).days
     print(f"   📅 Actual backtest days: {actual_backtest_days} (config BACKTEST_DAYS={BACKTEST_DAYS})")
     
     print_final_summary(
