@@ -51,6 +51,18 @@ def _simulate_static_strategy(args) -> Tuple[str, int, float, float]:
         if not trading_days:
             return (strategy_type, rebalance_days, initial_capital, 0.0)
         
+        # Pre-compute all closing prices in a single DataFrame for faster lookups
+        all_prices = {}
+        close_col = 'Close' if 'Close' in next(iter(ticker_data_dict.values())).columns else 'close'
+        
+        for ticker, data in ticker_data_dict.items():
+            if close_col in data.columns:
+                prices = data[close_col].dropna()
+                if isinstance(data.index, pd.DatetimeIndex):
+                    all_prices[ticker] = prices
+                else:
+                    all_prices[ticker] = prices.set_index('date')
+        
         # Simulate each trading day
         for current_date in trading_days:
             days_since_rebalance += 1
@@ -64,42 +76,31 @@ def _simulate_static_strategy(args) -> Tuple[str, int, float, float]:
             if should_rebalance:
                 # Get current top performers for this strategy type
                 if strategy_type == '1Y':
-                    # Use 1-year performance
                     lookback_days = 365
                 elif strategy_type == '6M':
-                    # Use 6-month performance
                     lookback_days = 180
                 elif strategy_type == '3M':
-                    # Use 3-month performance
                     lookback_days = 90
                 else:  # 1M
-                    # Use 1-month performance
                     lookback_days = 30
                 
-                # Calculate performance for each ticker
+                # Calculate performance for each ticker (optimized)
                 perf_list = []
                 lookback_start = current_date - timedelta(days=lookback_days)
                 
-                for ticker, data in ticker_data_dict.items():
+                for ticker, prices in all_prices.items():
                     try:
-                        if isinstance(data.index, pd.DatetimeIndex):
-                            period_data = data.loc[lookback_start:current_date]
+                        # Get price range efficiently
+                        if isinstance(prices.index, pd.DatetimeIndex):
+                            price_slice = prices.loc[lookback_start:current_date]
                         else:
-                            period_data = data[(data['date'] >= lookback_start) & (data['date'] <= current_date)]
+                            price_slice = prices[(prices.index >= lookback_start) & (prices.index <= current_date)]
                         
-                        if len(period_data) < 20:
+                        if len(price_slice) < 20:
                             continue
                         
-                        close_col = 'Close' if 'Close' in period_data.columns else 'close'
-                        if close_col not in period_data.columns:
-                            continue
-                        
-                        prices = period_data[close_col].dropna()
-                        if len(prices) < 2:
-                            continue
-                        
-                        perf = (prices.iloc[-1] / prices.iloc[0] - 1) * 100
-                        current_price = prices.iloc[-1]
+                        perf = (price_slice.iloc[-1] / price_slice.iloc[0] - 1) * 100
+                        current_price = price_slice.iloc[-1]
                         perf_list.append((ticker, perf, current_price))
                     except:
                         continue
@@ -234,29 +235,20 @@ def optimize_rebalance_horizons(
     for st in strategy_types:
         results[st] = {'all_results': [], 'best_horizon': None, 'best_return': -float('inf'), 'best_txn_cost': 0}
     
-    # Process in batches
-    batch_size = n_workers * 4
-    total_batches = (total_tasks + batch_size - 1) // batch_size
-    
+    # Use imap_unordered for streaming results (no blocking on slow tasks)
     completed = 0
     with mp.Pool(processes=n_workers) as pool:
-        for batch_idx in range(total_batches):
-            batch_start = batch_idx * batch_size
-            batch_end = min(batch_start + batch_size, total_tasks)
-            batch_tasks = tasks[batch_start:batch_end]
+        # Process all tasks with streaming results
+        for strategy_type, horizon, final_value, txn_cost in pool.imap_unordered(_simulate_static_strategy, tasks):
+            return_pct = ((final_value / initial_capital) - 1) * 100
+            results[strategy_type]['all_results'].append((horizon, return_pct, txn_cost))
             
-            batch_results = pool.map(_simulate_static_strategy, batch_tasks)
+            if return_pct > results[strategy_type]['best_return']:
+                results[strategy_type]['best_return'] = return_pct
+                results[strategy_type]['best_horizon'] = horizon
+                results[strategy_type]['best_txn_cost'] = txn_cost
             
-            for strategy_type, horizon, final_value, txn_cost in batch_results:
-                return_pct = ((final_value / initial_capital) - 1) * 100
-                results[strategy_type]['all_results'].append((horizon, return_pct, txn_cost))
-                
-                if return_pct > results[strategy_type]['best_return']:
-                    results[strategy_type]['best_return'] = return_pct
-                    results[strategy_type]['best_horizon'] = horizon
-                    results[strategy_type]['best_txn_cost'] = txn_cost
-            
-            completed += len(batch_tasks)
+            completed += 1
             print(f"   📊 Progress: {completed}/{total_tasks} ({completed*100//total_tasks}%)", flush=True)
     
     # Print summary

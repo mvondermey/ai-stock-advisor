@@ -88,6 +88,8 @@ def print_final_summary(
     ratio_1y_3m_1y_return: float = None,
     final_momentum_volatility_hybrid_value_1y: float = None,
     momentum_volatility_hybrid_1y_return: float = None,
+    final_price_acceleration_value_1y: float = None,
+    price_acceleration_1y_return: float = None,
     final_turnaround_value_1y: float = None,
     turnaround_1y_return: float = None,
     final_multitask_value_1y: float = None,
@@ -102,6 +104,7 @@ def print_final_summary(
     ratio_3m_1y_transaction_costs: float = None,
     ratio_1y_3m_transaction_costs: float = None,
     momentum_volatility_hybrid_transaction_costs: float = None,
+    price_acceleration_transaction_costs: float = None,
     turnaround_transaction_costs: float = None,
     multitask_transaction_costs: float = None,
     backtest_days: int = None,  # ✅ NEW: Number of days in backtest for annualization
@@ -127,6 +130,7 @@ def print_final_summary(
     ratio_3m_1y_cash_deployed: float = None,
     ratio_1y_3m_cash_deployed: float = None,
     momentum_volatility_hybrid_cash_deployed: float = None,
+    price_acceleration_cash_deployed: float = None,
     turnaround_cash_deployed: float = None,
     # Additional live trading strategies
     final_adaptive_ensemble_value_1y: float = None,
@@ -277,6 +281,7 @@ def print_final_summary(
     strategies_data.append(('3M/1Y Ratio', final_ratio_3m_1y_value_1y, ratio_3m_1y_1y_return, ratio_3m_1y_transaction_costs, ratio_3m_1y_cash_deployed))
     strategies_data.append(('1Y/3M Ratio', final_ratio_1y_3m_value_1y, ratio_1y_3m_1y_return, ratio_1y_3m_transaction_costs, ratio_1y_3m_cash_deployed))
     strategies_data.append(('Mom-Vol Hybrid', final_momentum_volatility_hybrid_value_1y, momentum_volatility_hybrid_1y_return, momentum_volatility_hybrid_transaction_costs, momentum_volatility_hybrid_cash_deployed))
+    strategies_data.append(('Price Accel', final_price_acceleration_value_1y, price_acceleration_1y_return, price_acceleration_transaction_costs, price_acceleration_cash_deployed))
     strategies_data.append(('Turnaround', final_turnaround_value_1y, turnaround_1y_return, turnaround_transaction_costs, turnaround_cash_deployed))
     strategies_data.append(('Adaptive Ens', final_adaptive_ensemble_value_1y, adaptive_ensemble_1y_return, adaptive_ensemble_transaction_costs, adaptive_ensemble_cash_deployed))
     strategies_data.append(('Vol Ens', final_volatility_ensemble_value_1y, volatility_ensemble_1y_return, volatility_ensemble_transaction_costs, volatility_ensemble_cash_deployed))

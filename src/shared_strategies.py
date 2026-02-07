@@ -1539,3 +1539,131 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
         print(f"   ⚠️ Momentum-Volatility Hybrid: No candidates found (checked {len(all_tickers)} tickers)")
     
     return [c['ticker'] for c in candidates[:top_n]]
+
+
+def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+    """
+    Price Acceleration Strategy: Uses velocity (price change) and acceleration (velocity change)
+    to identify stocks with increasing momentum.
+    
+    Physics-inspired approach:
+    - Velocity = price.pct_change() (daily return rate)
+    - Acceleration = velocity.diff() (change in velocity)
+    - Buy when acceleration is positive (momentum increasing)
+    """
+    if current_date is None:
+        current_date = datetime.now()
+    
+    candidates = []
+    data_insufficient = 0
+    low_velocity = 0
+    negative_acceleration = 0
+    
+    print(f"   🚀 Price Acceleration: Analyzing {len(all_tickers)} tickers")
+    print(f"   📐 Formula: velocity = price.pct_change(), acceleration = velocity.diff()")
+    
+    for ticker in all_tickers:
+        try:
+            # Get ticker data
+            if isinstance(ticker_data_grouped, dict):
+                ticker_data = ticker_data_grouped.get(ticker)
+            elif hasattr(ticker_data_grouped, 'get_group'):
+                ticker_data = ticker_data_grouped.get_group(ticker) if ticker in ticker_data_grouped.groups else None
+            else:
+                ticker_data = None
+                
+            if ticker_data is None or len(ticker_data) < 30:
+                data_insufficient += 1
+                continue
+            
+            # Calculate velocity (daily returns)
+            prices = ticker_data['Close'].dropna()
+            if len(prices) < 30:
+                data_insufficient += 1
+                continue
+            
+            velocity = prices.pct_change().dropna()
+            if len(velocity) < 20:
+                data_insufficient += 1
+                continue
+            
+            # Calculate acceleration (change in velocity)
+            acceleration = velocity.diff().dropna()
+            if len(acceleration) < 10:
+                data_insufficient += 1
+                continue
+            
+            # Get recent metrics (last 10 days)
+            recent_velocity = velocity.tail(10).mean()
+            recent_acceleration = acceleration.tail(5).mean()  # Last 5 days acceleration
+            latest_acceleration = acceleration.iloc[-1]  # Most recent day
+            
+            # Calculate trend consistency (how many recent days have positive acceleration)
+            recent_accel_series = acceleration.tail(5)
+            positive_accel_days = (recent_accel_series > 0).sum()
+            consistency_score = positive_accel_days / 5  # 0.0 to 1.0
+            
+            # Debug first few stocks
+            if len(candidates) < 3:
+                print(f"   🔍 DEBUG {ticker}: velocity={recent_velocity:.4f}, accel={recent_acceleration:.6f}, "
+                      f"latest={latest_acceleration:.6f}, consistency={consistency_score:.1%}")
+            
+            # Selection criteria:
+            # 1. Positive recent velocity (price going up)
+            # 2. Positive acceleration (momentum increasing)
+            # 3. Recent consistency (at least 3 of 5 days with positive acceleration)
+            # 4. Strong latest acceleration signal
+            
+            if recent_velocity <= 0.001:  # At least 0.1% average daily gain
+                low_velocity += 1
+                continue
+            
+            if recent_acceleration <= 0:  # Must have positive acceleration
+                negative_acceleration += 1
+                continue
+            
+            # Calculate composite acceleration score
+            # Weights: 40% avg acceleration, 40% latest acceleration, 20% consistency
+            accel_score = (recent_acceleration * 0.4 + 
+                          latest_acceleration * 0.4 + 
+                          consistency_score * recent_acceleration * 0.2)
+            
+            # Scale by velocity (stronger acceleration matters more with higher velocity)
+            final_score = accel_score * (1 + recent_velocity * 100)
+            
+            candidates.append({
+                'ticker': ticker,
+                'score': final_score,
+                'velocity': recent_velocity,
+                'acceleration': recent_acceleration,
+                'latest_accel': latest_acceleration,
+                'consistency': consistency_score
+            })
+            
+        except Exception as e:
+            data_insufficient += 1
+            continue
+    
+    # Sort by acceleration score (highest first)
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    print(f"   📊 Analysis Summary:")
+    print(f"      Total analyzed: {len(all_tickers)}")
+    print(f"      Data insufficient: {data_insufficient}")
+    print(f"      Low velocity: {low_velocity}")
+    print(f"      Negative acceleration: {negative_acceleration}")
+    print(f"      Valid candidates: {len(candidates)}")
+    
+    if candidates:
+        print(f"   📊 Top {min(len(candidates), top_n)} Price Acceleration candidates:")
+        for i, c in enumerate(candidates[:top_n], 1):
+            print(f"      {i}. {c['ticker']}: score={c['score']:.4f}, "
+                  f"velocity={c['velocity']:.4f}, accel={c['acceleration']:.6f}, "
+                  f"consistency={c['consistency']:.0%}")
+        
+        selected = [c['ticker'] for c in candidates[:top_n]]
+        print(f"   ✅ Price Acceleration selected {len(selected)} tickers: {selected}")
+        return selected
+    else:
+        print(f"   ❌ No Price Acceleration candidates found")
+        return []

@@ -19,6 +19,7 @@ import numpy as np
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 warnings.filterwarnings('ignore')
 
 # Import config for parallel training settings
@@ -383,7 +384,7 @@ class MultiTaskStrategy:
         print(f"   ✅ Pre-training validation passed")
         print(f"   📊 Training data: {X.shape[0]} samples, {X.shape[1]} timesteps, {X.shape[2]} features")
         
-        print(f"   🚀 Multi-Task: Training unified models...")
+        print(f"   🚀 Multi-Task: Training unified models in PARALLEL...")
         
         # Split data
         try:
@@ -397,48 +398,50 @@ class MultiTaskStrategy:
         num_tickers = len(self.ticker_to_id)
         sequence_length, num_features = X.shape[1], X.shape[2]
         
-        # 🔧 FIX: Add training error handling
-        try:
-            # Train LSTM if PyTorch available
-            if PYTORCH_AVAILABLE:
-                print(f"   🧠 Training Multi-Task LSTM...")
-                
-                # Device selection
+        # Prepare shared data for all models
+        X_train_flat = X_train.reshape(X_train.shape[0], -1)
+        X_val_flat = X_val.reshape(X_val.shape[0], -1)
+        
+        # One-hot encode ticker IDs for tree models
+        ticker_encoded_train = np.zeros((len(ticker_ids_train), num_tickers))
+        ticker_encoded_train[np.arange(len(ticker_ids_train)), ticker_ids_train] = 1
+        X_train_combined = np.hstack([X_train_flat, ticker_encoded_train])
+        
+        ticker_encoded_val = np.zeros((len(ticker_ids_val), num_tickers))
+        ticker_encoded_val[np.arange(len(ticker_ids_val)), ticker_ids_val] = 1
+        X_val_combined = np.hstack([X_val_flat, ticker_encoded_val])
+        
+        # Define training functions for parallel execution
+        def train_lstm_task():
+            """Train LSTM model in parallel."""
+            if not PYTORCH_AVAILABLE:
+                return None
+            try:
                 device = torch.device("cpu" if FORCE_CPU else ("cuda" if CUDA_AVAILABLE else "cpu"))
-                print(f"   🖥️ Using device: {device}")
+                print(f"   🧠 [LSTM] Training on {device}...")
                 
-                # Create model
                 lstm_model = MultiTaskLSTM(
-                    input_size=num_features,
-                    hidden_size=64,
-                    num_layers=2,
-                    num_tickers=num_tickers,
-                    dropout=0.2
-                )
-                lstm_model.to(device)
+                    input_size=num_features, hidden_size=64, num_layers=2,
+                    num_tickers=num_tickers, dropout=0.2
+                ).to(device)
                 
-                # Training setup
                 criterion = nn.MSELoss()
                 optimizer = optim.Adam(lstm_model.parameters(), lr=0.001)
                 
-                # Create datasets
                 train_dataset = TickerDataset(X_train, ticker_ids_train, y_train)
                 val_dataset = TickerDataset(X_val, ticker_ids_val, y_val)
-                
                 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
                 val_loader = DataLoader(val_dataset, batch_size=32)
                 
-                # Training loop
                 best_val_loss = float('inf')
-                patience = min(5, max_epochs // 2)  # Reduce patience for fast training
+                patience = min(5, max_epochs // 2)
                 patience_counter = 0
+                best_state = None
                 
                 for epoch in range(max_epochs):
                     lstm_model.train()
                     train_loss = 0
-                    
                     for batch_features, batch_ticker_ids, batch_targets in train_loader:
-                        # Move tensors to device
                         batch_features = batch_features.to(device)
                         batch_ticker_ids = batch_ticker_ids.to(device)
                         batch_targets = batch_targets.to(device)
@@ -450,16 +453,13 @@ class MultiTaskStrategy:
                         optimizer.step()
                         train_loss += loss.item()
                     
-                    # Validation
                     lstm_model.eval()
                     val_loss = 0
                     with torch.no_grad():
                         for batch_features, batch_ticker_ids, batch_targets in val_loader:
-                            # Move tensors to device
                             batch_features = batch_features.to(device)
                             batch_ticker_ids = batch_ticker_ids.to(device)
                             batch_targets = batch_targets.to(device)
-                            
                             predictions = lstm_model(batch_features, batch_ticker_ids)
                             val_loss += criterion(predictions, batch_targets).item()
                     
@@ -469,85 +469,90 @@ class MultiTaskStrategy:
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
                         patience_counter = 0
-                        # Save best model
-                        self.models['lstm'] = lstm_model.state_dict()
+                        best_state = lstm_model.state_dict().copy()
                     else:
                         patience_counter += 1
                     
                     if patience_counter >= patience:
                         break
-                    
-                    if epoch % 10 == 0:
-                        print(f"      Epoch {epoch}: Train Loss = {train_loss:.6f}, Val Loss = {val_loss:.6f}")
                 
-                print(f"   ✅ LSTM trained (Best Val Loss: {best_val_loss:.6f})")
-            
-            # Train XGBoost if available
-            if XGBOOST_AVAILABLE:
-                print(f"   🌳 Training Multi-Task XGBoost...")
-                
-                # Flatten sequences for XGBoost
-                X_train_flat = X_train.reshape(X_train.shape[0], -1)
-                X_val_flat = X_val.reshape(X_val.shape[0], -1)
-                
+                print(f"   ✅ [LSTM] Done (Val Loss: {best_val_loss:.6f})")
+                return ('lstm', best_state, best_val_loss)
+            except Exception as e:
+                print(f"   ❌ [LSTM] Failed: {e}")
+                return None
+        
+        def train_xgb_task():
+            """Train XGBoost model in parallel."""
+            if not XGBOOST_AVAILABLE:
+                return None
+            try:
+                print(f"   🌳 [XGBoost] Training...")
                 xgb_model = MultiTaskXGBoost(num_tickers)
                 xgb_model.fit(X_train_flat, ticker_ids_train, y_train)
                 
-                # Validate
                 val_predictions = xgb_model.predict(X_val_flat, ticker_ids_val)
                 val_mse = np.mean((val_predictions - y_val) ** 2)
                 
-                self.models['xgboost'] = xgb_model
-                print(f"   ✅ XGBoost trained (Val MSE: {val_mse:.6f})")
-            
-            # Train LightGBM if available
-            if LIGHTGBM_AVAILABLE:
-                print(f"   💡 Training Multi-Task LightGBM...")
-                
-                # Flatten sequences for LightGBM
-                X_train_flat = X_train.reshape(X_train.shape[0], -1)
-                X_val_flat = X_val.reshape(X_val.shape[0], -1)
-                
-                # One-hot encode ticker IDs
-                ticker_encoded_train = np.zeros((len(ticker_ids_train), num_tickers))
-                ticker_encoded_train[np.arange(len(ticker_ids_train)), ticker_ids_train] = 1
-                X_train_combined = np.hstack([X_train_flat, ticker_encoded_train])
-                
-                ticker_encoded_val = np.zeros((len(ticker_ids_val), num_tickers))
-                ticker_encoded_val[np.arange(len(ticker_ids_val)), ticker_ids_val] = 1
-                X_val_combined = np.hstack([X_val_flat, ticker_encoded_val])
-                
-                # Train LightGBM with parallel training (same as ml_models.py)
+                print(f"   ✅ [XGBoost] Done (Val MSE: {val_mse:.6f})")
+                return ('xgboost', xgb_model, val_mse)
+            except Exception as e:
+                print(f"   ❌ [XGBoost] Failed: {e}")
+                return None
+        
+        def train_lgb_task():
+            """Train LightGBM model in parallel."""
+            if not LIGHTGBM_AVAILABLE:
+                return None
+            try:
+                print(f"   💡 [LightGBM] Training...")
+                use_gpu_lgb = CUDA_AVAILABLE and not FORCE_CPU
                 lgb_model = lgb.LGBMRegressor(
-                    n_estimators=200,
-                    max_depth=6,
-                    learning_rate=0.1,
-                    random_state=42,
-                    verbosity=-1,
-                    device='cpu',  # LightGBM always uses CPU in this setup
-                    n_jobs=TRAINING_NUM_PROCESSES  # Use parallel training
+                    n_estimators=200, max_depth=6, learning_rate=0.1,
+                    random_state=42, verbosity=-1,
+                    device='gpu' if use_gpu_lgb else 'cpu',
+                    n_jobs=TRAINING_NUM_PROCESSES
                 )
                 
-                print(f"   💡 LightGBM: Using CPU (n_jobs={TRAINING_NUM_PROCESSES})")
+                if use_gpu_lgb:
+                    print(f"   💡 [LightGBM] Using GPU")
                 
                 lgb_model.fit(X_train_combined, y_train)
                 
-                # Validate
                 val_predictions = lgb_model.predict(X_val_combined)
                 val_mse = np.mean((val_predictions - y_val) ** 2)
                 
-                self.models['lightgbm'] = lgb_model
-                print(f"   ✅ LightGBM trained (Val MSE: {val_mse:.6f})")
-            
-            self.is_trained = True
+                print(f"   ✅ [LightGBM] Done (Val MSE: {val_mse:.6f})")
+                return ('lightgbm', lgb_model, val_mse)
+            except Exception as e:
+                print(f"   ❌ [LightGBM] Failed: {e}")
+                return None
+        
+        # Execute training tasks in parallel using ThreadPoolExecutor
+        training_tasks = []
+        if PYTORCH_AVAILABLE:
+            training_tasks.append(train_lstm_task)
+        if XGBOOST_AVAILABLE:
+            training_tasks.append(train_xgb_task)
+        if LIGHTGBM_AVAILABLE:
+            training_tasks.append(train_lgb_task)
+        
+        print(f"   🔄 Launching {len(training_tasks)} models in parallel...")
+        
+        with ThreadPoolExecutor(max_workers=len(training_tasks)) as executor:
+            futures = {executor.submit(task): task for task in training_tasks}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    model_name, model_obj, metric = result
+                    self.models[model_name] = model_obj
+                    print(f"   📊 {model_name.upper()}: Stored (metric={metric:.6f})")
+        
+        self.is_trained = bool(self.models)
+        if self.is_trained:
             print(f"   🎉 Multi-Task training complete! Models: {list(self.models.keys())}")
-            
-        except Exception as training_error:
-            print(f"   ❌ Multi-Task training failed: {training_error}")
-            print(f"   🔄 Falling back to simple strategy...")
-            # Set as trained with empty models to prevent repeated training attempts
-            self.is_trained = True
-            self.models = {}
+        else:
+            print(f"   ⚠️ No models trained successfully")
     
     def predict_returns_grouped(self, ticker_data_grouped: Dict[str, pd.DataFrame], 
                                 current_date: datetime, top_n: int = 3) -> List[str]:

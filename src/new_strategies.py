@@ -15,8 +15,8 @@ from datetime import datetime, timedelta
 from config import (
     PORTFOLIO_SIZE,
     MOM_ACCEL_LOOKBACK_DAYS, MOM_ACCEL_SHORT_LOOKBACK, MOM_ACCEL_MIN_ACCELERATION,
-    CONCENTRATED_3M_POSITIONS, CONCENTRATED_3M_MAX_VOLATILITY, CONCENTRATED_3M_REBALANCE_DAYS,
-    DUAL_MOM_LOOKBACK_DAYS, DUAL_MOM_ABSOLUTE_THRESHOLD, DUAL_MOM_POSITIONS, DUAL_MOM_RISK_OFF_TICKER,
+    CONCENTRATED_3M_MAX_VOLATILITY, CONCENTRATED_3M_REBALANCE_DAYS,
+    DUAL_MOM_LOOKBACK_DAYS, DUAL_MOM_ABSOLUTE_THRESHOLD, DUAL_MOM_RISK_OFF_TICKER,
     TREND_ATR_LOOKBACK_DAYS, TREND_ATR_PERIOD, TREND_ATR_TRAILING_MULT, TREND_ATR_ENTRY_BREAKOUT,
 )
 
@@ -160,7 +160,7 @@ def select_concentrated_3m_stocks(
         List of selected tickers
     """
     if top_n is None:
-        top_n = CONCENTRATED_3M_POSITIONS
+        top_n = PORTFOLIO_SIZE
     
     if current_date is None:
         latest_dates = [ticker_data_grouped[t].index.max() 
@@ -255,7 +255,7 @@ def select_dual_momentum_stocks(
         Tuple of (selected tickers, is_risk_on)
     """
     if top_n is None:
-        top_n = DUAL_MOM_POSITIONS
+        top_n = PORTFOLIO_SIZE
     
     if current_date is None:
         latest_dates = [ticker_data_grouped[t].index.max() 

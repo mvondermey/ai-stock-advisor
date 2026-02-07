@@ -6,6 +6,7 @@ Trains models at the model-type level instead of ticker level for better GPU uti
 import os
 import sys
 import time
+import tempfile
 import warnings
 import multiprocessing as mp
 from pathlib import Path
@@ -20,7 +21,7 @@ from tqdm import tqdm
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, FORCE_CPU, XGBOOST_USE_GPU,
     GPU_MAX_CONCURRENT_TRAINING_WORKERS, TRAINING_NUM_PROCESSES,
-    TRAINING_BATCH_SIZE,
+    TRAINING_BATCH_SIZE, PER_TICKER_TIMEOUT,
     USE_LSTM, USE_GRU, USE_TCN, USE_XGBOOST, USE_RANDOM_FOREST, 
     USE_LIGHTGBM, USE_RIDGE, USE_ELASTIC_NET, USE_SVM, USE_MLP_CLASSIFIER
 )
@@ -31,14 +32,28 @@ from ml_models import train_single_model_type
 
 # GPU semaphore for limiting concurrent GPU training
 _GPU_SEMAPHORE = None
+# Path to temp directory containing per-ticker data files
+_SHARED_DATA_DIR = None
 
-def _init_worker(gpu_semaphore):
-    """Initialize worker process with GPU semaphore."""
-    global _GPU_SEMAPHORE
+def _init_worker(gpu_semaphore, shared_data_dir=None):
+    """Initialize worker process with GPU semaphore and path to shared data directory."""
+    global _GPU_SEMAPHORE, _SHARED_DATA_DIR
     _GPU_SEMAPHORE = gpu_semaphore
+    _SHARED_DATA_DIR = shared_data_dir
     
     # Suppress warnings in worker processes
     warnings.filterwarnings("ignore")
+
+def _load_ticker_data(ticker):
+    """Load data for a specific ticker from its temp file (lightweight, ~125KB each)."""
+    if _SHARED_DATA_DIR is None:
+        return None
+    # Sanitize ticker name for filename (replace dots/slashes)
+    safe_name = ticker.replace('/', '_').replace('\\', '_').replace('.', '_')
+    ticker_file = os.path.join(_SHARED_DATA_DIR, f'{safe_name}.pkl')
+    if os.path.exists(ticker_file):
+        return joblib.load(ticker_file)
+    return None
 
 
 def generate_training_tasks(
@@ -50,12 +65,13 @@ def generate_training_tasks(
     feature_set: Optional[List[str]] = None,
     include_ai_portfolio: bool = False,
     ai_portfolio_features: Optional[Tuple[np.ndarray, np.ndarray]] = None
-) -> Tuple[List[Dict], List[Dict]]:
+) -> Tuple[List[Dict], List[Dict], Dict]:
     """
     Generate individual training tasks for each (ticker, model_type) combination.
     
     Returns:
-        Tuple of (ticker_tasks, ai_portfolio_tasks)
+        Tuple of (ticker_tasks, ai_portfolio_tasks, ticker_data_dict)
+        ticker_data_dict maps ticker -> DataFrame, shared with workers to avoid pickling.
     """
     
     # Get enabled model types from config
@@ -147,68 +163,55 @@ def generate_training_tasks(
                 print(f"         Train: {train_start} to {train_end}")
                 print(f"         Data:  {data_min} to {data_max}")
     
-    # Debug: Track first few tickers for detailed diagnostics
-    debug_ticker_count = 0
-    max_debug_tickers = 3
+    # Pre-split data by ticker into a dict for shared access (avoids pickling per task)
+    ticker_data_dict = {}
+    skipped_tickers = []
     
-    for ticker in tickers:
-        try:
-            # ✅ FIX: Handle both long-format and wide-format data
-            if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
-                # Long format: filter by ticker and date range
-                ticker_mask = all_tickers_data['ticker'] == ticker
-                ticker_rows_total = ticker_mask.sum()
-                
-                # Debug first few tickers
-                if debug_ticker_count < max_debug_tickers:
-                    ticker_data_all = all_tickers_data[ticker_mask]
-                    if len(ticker_data_all) > 0:
-                        ticker_date_min = ticker_data_all['date'].min()
-                        ticker_date_max = ticker_data_all['date'].max()
-                        print(f"   🔍 DEBUG {ticker}: {ticker_rows_total} total rows, dates: {ticker_date_min} to {ticker_date_max}")
-                    else:
-                        print(f"   🔍 DEBUG {ticker}: 0 rows in data")
-                    debug_ticker_count += 1
-                
-                # DEBUG: Check date overlap before filtering
-                if debug_ticker_count <= max_debug_tickers:
-                    print(f"   🔍 DEBUG {ticker}: Filtering from {train_start} to {train_end}")
-                    print(f"   🔍 DEBUG {ticker}: Data dates {ticker_data_all['date'].min()} to {ticker_data_all['date'].max()}")
-                
-                # Get all available data for this ticker (no date filtering)
-                # TargetReturn calculation needs access to future data
-                df_train_period = all_tickers_data[ticker_mask].copy()
-                
-                if debug_ticker_count <= max_debug_tickers:
-                    print(f"   🔍 DEBUG {ticker}: After date filter: {len(df_train_period)} rows")
-            else:
-                # Wide format: get all available data for ticker
-                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-                if ticker_data.empty:
-                    print(f"  ⚠️ No data for {ticker}, skipping")
+    if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
+        # Long format: group by ticker once
+        grouped = all_tickers_data.groupby('ticker')
+        for ticker in tickers:
+            try:
+                if ticker not in grouped.groups:
+                    skipped_tickers.append((ticker, 'not_in_data'))
                     continue
-                
-                # Get all available data (no date filtering)
-                # TargetReturn calculation needs access to future data
-                df_train_period = ticker_data.copy()
-            
-            if df_train_period.empty or len(df_train_period) < 50:
-                if debug_ticker_count <= max_debug_tickers:
-                    print(f"  ⚠️ Insufficient data for {ticker} ({len(df_train_period)} rows), skipping")
+                df_ticker = grouped.get_group(ticker).copy()
+                if len(df_ticker) < 50:
+                    skipped_tickers.append((ticker, f'insufficient_{len(df_ticker)}'))
+                    continue
+                ticker_data_dict[ticker] = df_ticker
+            except Exception as e:
+                skipped_tickers.append((ticker, str(e)[:50]))
                 continue
-        except Exception as e:
-            print(f"  ⚠️ Error processing {ticker}: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
-        
-        # Create one task per model type for this ticker
+    else:
+        for ticker in tickers:
+            try:
+                df_ticker = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                if df_ticker.empty or len(df_ticker) < 50:
+                    skipped_tickers.append((ticker, f'insufficient_{len(df_ticker)}'))
+                    continue
+                ticker_data_dict[ticker] = df_ticker
+            except Exception as e:
+                skipped_tickers.append((ticker, str(e)[:50]))
+                continue
+    
+    if skipped_tickers:
+        print(f"   ⚠️ Skipped {len(skipped_tickers)} tickers (insufficient data or missing)")
+    print(f"   ✅ {len(ticker_data_dict)} tickers have sufficient data")
+    
+    # Debug: Show first 3 tickers
+    for i, (ticker, df) in enumerate(ticker_data_dict.items()):
+        if i >= 3:
+            break
+        print(f"   🔍 DEBUG {ticker}: {len(df)} rows, dates: {df['date'].min()} to {df['date'].max()}")
+    
+    # Create lightweight tasks (NO DataFrame in task - workers use shared data)
+    for ticker in ticker_data_dict.keys():
         for model_type in enabled_models:
             task = {
                 'task_type': 'ticker',
                 'ticker': ticker,
                 'model_type': model_type,
-                'df_train_period': df_train_period,
                 'class_horizon': class_horizon,
                 'train_start': train_start,
                 'train_end': train_end,
@@ -241,7 +244,7 @@ def generate_training_tasks(
     
     print(f"✅ Total tasks generated: {len(ticker_tasks) + len(ai_portfolio_tasks)}")
     
-    return ticker_tasks, ai_portfolio_tasks
+    return ticker_tasks, ai_portfolio_tasks, ticker_data_dict
 
 
 def safe_universal_model_worker(task):
@@ -289,22 +292,10 @@ def universal_model_worker(task: Dict) -> Dict:
     """
     global _GPU_SEMAPHORE
     
-    # ✅ IMPLEMENT PER-TICKER TIMEOUT
-    import signal
+    # NOTE: signal.alarm() does NOT work in multiprocessing worker processes
+    # Timeout enforcement must happen at the pool level (imap_unordered with timeout)
+    # We just track timing here for logging
     import time
-    from config import PER_TICKER_TIMEOUT
-    
-    def per_ticker_timeout_handler(signum, frame):
-        raise TimeoutError(f"Per-ticker training timeout ({PER_TICKER_TIMEOUT}s)")
-    
-    # Set up per-ticker timeout if enabled
-    timeout_set = False
-    if PER_TICKER_TIMEOUT is not None and PER_TICKER_TIMEOUT > 0:
-        timeout_set = True
-        signal.signal(signal.SIGALRM, per_ticker_timeout_handler)
-        signal.alarm(PER_TICKER_TIMEOUT)
-    
-    # ✅ TRACK PER-TICKER TIMING
     task_start_time = time.time()
     
     task_type = task.get('task_type')
@@ -315,12 +306,24 @@ def universal_model_worker(task: Dict) -> Dict:
     # ============================================
     if task_type == 'ticker':
         ticker = task.get('ticker')
-        df_train_period = task.get('df_train_period')
-        target_percentage = task.get('target_percentage')
         class_horizon = task.get('class_horizon')
         train_start = task.get('train_start')
         train_end = task.get('train_end')
         feature_set = task.get('feature_set')
+        
+        # Load data for this specific ticker from temp file (~125KB, not 98MB)
+        df_train_period = _load_ticker_data(ticker)
+        if df_train_period is None:
+            df_train_period = task.get('df_train_period')
+        
+        if df_train_period is None or len(df_train_period) == 0:
+            return {
+                'task_type': 'ticker',
+                'ticker': ticker,
+                'model_type': model_type,
+                'status': 'skipped',
+                'reason': 'no_data_in_shared_dict'
+            }
         
         try:
             # Acquire GPU semaphore if this is a GPU model
@@ -425,10 +428,6 @@ def universal_model_worker(task: Dict) -> Dict:
             }
         
         finally:
-            # ✅ CLEANUP: Cancel per-ticker timeout
-            if timeout_set:
-                signal.alarm(0)  # Cancel the alarm
-            
             # Release GPU semaphore
             if gpu_acquired and _GPU_SEMAPHORE is not None:
                 _GPU_SEMAPHORE.release()
@@ -547,19 +546,12 @@ def universal_model_worker(task: Dict) -> Dict:
             }
         
         finally:
-            # ✅ CLEANUP: Cancel per-ticker timeout
-            if timeout_set:
-                signal.alarm(0)  # Cancel the alarm
-            
             # Release GPU semaphore
             if gpu_acquired and _GPU_SEMAPHORE is not None:
                 _GPU_SEMAPHORE.release()
     
     # ✅ HANDLE UNKNOWN TASK TYPE (outside try-except)
     if task_type not in ['ticker', 'ai_portfolio']:
-        # Ensure cleanup on early return
-        if timeout_set:
-            signal.alarm(0)
         return {
             'task_type': task_type,
             'status': 'error',
@@ -831,7 +823,7 @@ def train_all_models_parallel(
     print("=" * 42)
     
     # Generate training tasks
-    ticker_tasks, ai_portfolio_tasks = generate_training_tasks(
+    ticker_tasks, ai_portfolio_tasks, ticker_data_dict = generate_training_tasks(
         tickers=tickers,
         all_tickers_data=all_tickers_data,
         train_start=train_start,
@@ -849,6 +841,7 @@ def train_all_models_parallel(
         return {}, None
     
     print(f"\n🏃 Executing {len(all_tasks)} training tasks in parallel...")
+    print(f"   📦 Shared data: {len(ticker_data_dict)} tickers (pickled once, not per-task)")
     
     # ✅ IMPORT TIME AT FUNCTION LEVEL (fixes scope issue)
     import time
@@ -861,12 +854,27 @@ def train_all_models_parallel(
     # Execute tasks in parallel
     start_time = time.time()
     
+    # Write per-ticker data files (workers load only what they need - ~125KB each)
+    shared_data_dir = os.path.join(tempfile.gettempdir(), f'training_data_{os.getpid()}')
+    os.makedirs(shared_data_dir, exist_ok=True)
+    print(f"   💾 Writing {len(ticker_data_dict)} per-ticker data files...")
+    for ticker, df in ticker_data_dict.items():
+        safe_name = ticker.replace('/', '_').replace('\\', '_').replace('.', '_')
+        joblib.dump(df, os.path.join(shared_data_dir, f'{safe_name}.pkl'), compress=1)
+    total_size_mb = sum(os.path.getsize(os.path.join(shared_data_dir, f)) for f in os.listdir(shared_data_dir)) / (1024 * 1024)
+    print(f"   💾 Per-ticker files: {total_size_mb:.1f} MB total (~{total_size_mb/len(ticker_data_dict)*1024:.0f} KB each)")
+    
+    # Free the in-memory dict now that it's on disk
+    del ticker_data_dict
+    
     try:
-        # Use multiprocessing pool with enhanced error handling and timeout
+        # Use multiprocessing.Pool with initializer for proper worker setup
+        # Set maxtasksperchild to recycle workers after timeouts (prevents stuck workers)
         with mp.Pool(
             processes=TRAINING_NUM_PROCESSES,
             initializer=_init_worker,
-            initargs=(gpu_semaphore,)
+            initargs=(gpu_semaphore, shared_data_dir),
+            maxtasksperchild=1  # Recycle workers after EVERY task - ensures fresh workers after timeouts
         ) as pool:
             # ✅ REMOVE GLOBAL SIGNAL TIMEOUT (conflicts with per-ticker timeouts)
             # The per-ticker timeouts in workers should handle individual task timeouts
@@ -884,71 +892,50 @@ def train_all_models_parallel(
                 print(f"\n🔄 Processing batch {i//batch_size + 1}/{(len(all_tasks) + batch_size - 1)//batch_size} ({len(batch_tasks)} tasks)")
                 
                 try:
-                    # ✅ ADD PROCESS-LEVEL TIMEOUT for stuck workers
-                    # Use imap_unordered with timeout to handle completely stuck workers
+                    # ✅ Use apply_async with timeout for each task
                     batch_results = []
-                    completed_tasks = 0
-                    stuck_timeout = 60  # 60 seconds for entire batch if stuck
+                    per_task_timeout = PER_TICKER_TIMEOUT + 30  # Add 30s buffer for GPU models
                     
                     with tqdm(total=len(batch_tasks), desc=f"Batch {i//batch_size + 1}", position=0, leave=True) as pbar:
-                        # Use imap_unordered with timeout
-                        iterator = pool.imap_unordered(safe_universal_model_worker, batch_tasks)
+                        # Submit all tasks asynchronously
+                        async_results = []
+                        for task in batch_tasks:
+                            async_result = pool.apply_async(safe_universal_model_worker, (task,))
+                            async_results.append(async_result)
                         
-                        batch_start_time = time.time()
-                        last_progress_time = time.time()
-                        
-                        # Force initial display of progress bar
-                        pbar.refresh()
-                        import sys
-                        sys.stdout.flush()
-                        
-                        while completed_tasks < len(batch_tasks):
+                        # Collect results with timeout
+                        for idx, async_result in enumerate(async_results):
                             try:
-                                # ✅ TIMEOUT CHECK for stuck batch
-                                current_time = time.time()
-                                if current_time - last_progress_time > stuck_timeout:
-                                    print(f"  ⏰ BATCH TIMEOUT: No progress for {stuck_timeout}s - skipping remaining tasks")
-                                    break
-                                
-                                # ✅ ADD TIMEOUT TO NEXT() CALL
-                                # Use a timeout to prevent blocking when workers are stuck
-                                import signal
-                                
-                                def next_timeout_handler(signum, frame):
-                                    raise TimeoutError("next() timeout - worker may be stuck")
-                                
-                                # Set timeout for next() call
-                                signal.signal(signal.SIGALRM, next_timeout_handler)
-                                signal.alarm(30)  # 30 second timeout for next()
-                                
-                                try:
-                                    result = next(iterator, None)
-                                    signal.alarm(0)  # Cancel timeout if successful
-                                    
-                                    if result is None:
-                                        break  # No more results
-                                    
-                                    batch_results.append(result)
-                                    completed_tasks += 1
-                                    pbar.update(1)
-                                    pbar.refresh()  # Force refresh
-                                    sys.stdout.flush()  # Force output flush
-                                    last_progress_time = current_time  # Reset timeout on progress
-                                    
-                                except TimeoutError:
-                                    print(f"  ⏰ NEXT() TIMEOUT: Worker stuck - skipping to next task")
-                                    signal.alarm(0)  # Cancel timeout
-                                    # Skip this stuck task and continue
-                                    completed_tasks += 1  # Count as completed to avoid infinite loop
-                                    pbar.update(1)
-                                    last_progress_time = time.time()  # Reset timeout
-                                    continue
-                                
-                            except StopIteration:
-                                break  # Iterator exhausted
+                                # Wait for result with timeout
+                                result = async_result.get(timeout=per_task_timeout)
+                                batch_results.append(result)
+                            except mp.TimeoutError:
+                                # Task exceeded timeout
+                                task = batch_tasks[idx]
+                                print(f"  ⏰ TIMEOUT: {task.get('ticker', 'unknown')} {task.get('model_type', 'unknown')} exceeded {per_task_timeout}s")
+                                batch_results.append({
+                                    'task_type': task.get('task_type', 'unknown'),
+                                    'ticker': task.get('ticker', 'unknown'),
+                                    'model_type': task.get('model_type', 'unknown'),
+                                    'status': 'timeout',
+                                    'reason': f'exceeded_{per_task_timeout}s'
+                                })
                             except Exception as e:
-                                print(f"  ❌ Error getting result from iterator: {e}")
-                                break
+                                # Other error
+                                task = batch_tasks[idx]
+                                print(f"  ❌ ERROR: {task.get('ticker', 'unknown')} {task.get('model_type', 'unknown')}: {str(e)[:100]}")
+                                batch_results.append({
+                                    'task_type': task.get('task_type', 'unknown'),
+                                    'ticker': task.get('ticker', 'unknown'),
+                                    'model_type': task.get('model_type', 'unknown'),
+                                    'status': 'error',
+                                    'reason': str(e)[:200]
+                                })
+                            finally:
+                                pbar.update(1)
+                                pbar.refresh()
+                                import sys
+                                sys.stdout.flush()
                     
                     all_results.extend(batch_results)
                     
@@ -974,6 +961,11 @@ def train_all_models_parallel(
         import traceback
         traceback.print_exc()
         return {}, None
+    finally:
+        # Clean up temp directory
+        import shutil
+        if os.path.exists(shared_data_dir):
+            shutil.rmtree(shared_data_dir, ignore_errors=True)
     
     elapsed_time = time.time() - start_time
     

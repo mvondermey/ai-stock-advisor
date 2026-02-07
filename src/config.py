@@ -74,7 +74,7 @@ USE_LSTM = True
 USE_GRU = False
 
 # --- Volatility Ensemble Parameters ---
-MAX_PORTFOLIO_VOLATILITY = 0.30  # 30% annualized max portfolio volatility (more reasonable for 10 stocks)
+MAX_PORTFOLIO_VOLATILITY = 0.60  # 60% annualized max portfolio volatility (allows 10 positions with volatile stocks)
 MAX_SINGLE_STOCK_VOLATILITY = 0.50  # 50% annualized max for any single stock
 VOLATILITY_LOOKBACK_DAYS = 30  # Days to calculate volatility
 
@@ -123,7 +123,7 @@ PARALLEL_THRESHOLD     = 200      # Use parallel only for >200 tickers
 ENABLE_PARALLEL_STRATEGIES = True   # Run strategies in parallel within each day
 
 # Training batch size for parallel processing (how many tasks per batch)
-TRAINING_BATCH_SIZE     = 1000      # Balanced: better utilization without memory exhaustion
+TRAINING_BATCH_SIZE     = 100       # Smaller batches for better progress tracking
 
 # --- Dynamic GPU Slot Allocation ---
 # Estimated VRAM requirements per model (in GB)
@@ -164,8 +164,7 @@ GPU_CLEAR_CACHE_AFTER_EACH_TICKER = False
 # This limits how many worker processes can run PyTorch models on GPU simultaneously.
 # Only applies when PYTORCH_USE_GPU = True (PyTorch uses GPU)
 # Does NOT apply to XGBoost GPU (XGBoost manages its own GPU memory)
-GPU_MAX_CONCURRENT_TRAINING_WORKERS = GPU_MODEL_SLOTS['LSTM'] # Use dynamic calculation
-GPU_MAX_CONCURRENT_TRAINING_WORKERS = 12  # Increased from 10 for better GPU utilization
+GPU_MAX_CONCURRENT_TRAINING_WORKERS = max(4, GPU_MODEL_SLOTS['LSTM'])  # Dynamic: ~5 for 8GB VRAM RTX 5060
 
 # Multiprocessing stability: recycle worker processes periodically to avoid RAM creep / leaked semaphores
 # when training many tickers under WSL + spawn.
@@ -177,7 +176,7 @@ TRAINING_POOL_MAXTASKSPERCHILD = 5  # Moderate recycling for better memory utili
 # - Set to 600 (10 min) for normal use (handles slow XGBoost GridSearchCV)
 # - Set to 1800 (30 min) for very large datasets or complex models
 # - Set to None to disable timeout (not recommended - can hang forever)
-PER_TICKER_TIMEOUT = 60  # 60 seconds max per ticker
+PER_TICKER_TIMEOUT = 60  # 60 seconds per ticker training task
 
 # Per-ticker prediction timeout (seconds). If a prediction takes longer, it will be skipped.
 # - Set to 30 for normal use (predictions should be fast)
@@ -193,13 +192,8 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 # - PyTorch GPU + XGBoost GPU: Very limited (GPU bottleneck)
 # - PyTorch GPU + XGBoost CPU: Use quarter CPU for XGBoost while GPU handles PyTorch
 #
-if not PYTORCH_USE_GPU and not XGBOOST_USE_GPU:
-    TRAINING_NUM_PROCESSES = max(1, cpu_count() // 2)  # Conservative CPU usage
-elif not PYTORCH_USE_GPU and XGBOOST_USE_GPU:
-    TRAINING_NUM_PROCESSES = max(1, cpu_count() // 2)  # PyTorch on CPU, XGBoost on GPU
-else:
-    # PyTorch on GPU: Very conservative to avoid timeout during model training
-    TRAINING_NUM_PROCESSES = max(1, cpu_count() // 3)  # Conservative for GPU training
+
+TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
 
 # --- Unified Parallel Training System ---
 # Enable the new parallel training system that trains models by model-type instead of by ticker.
@@ -260,8 +254,8 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 #   10 = Bi-weekly retraining (balanced, recommended for volatile stocks)
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
-RETRAIN_FREQUENCY_DAYS = 365  # Retrain every 10 days - aligned with prediction horizon
-ENABLE_WALK_FORWARD_RETRAINING = False   # Set to False to use only saved models, no retraining
+RETRAIN_FREQUENCY_DAYS = 30  # Retrain every 10 days - aligned with prediction horizon
+ENABLE_WALK_FORWARD_RETRAINING = True   # Set to False to use only saved models, no retraining
 
 # --- Backtest Period Enable/Disable Flags ---
 ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validation
@@ -308,6 +302,7 @@ ENABLE_MULTI_TIMEFRAME_ENSEMBLE = True   # NEW - Multi-Timeframe Ensemble Strate
 ENABLE_TURNAROUND = True   # ENABLED - Turnaround Strategy (buy depressed stocks)
 ENABLE_MOMENTUM_VOLATILITY_HYBRID = True   # ENABLED - Momentum-Volatility Hybrid Strategy
 ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
+ENABLE_PRICE_ACCELERATION = True   # ENABLED - Price Acceleration Strategy (physics-based velocity/acceleration)
 
 # --- New Advanced Strategies ---
 ENABLE_MOMENTUM_ACCELERATION = True   # NEW - Momentum Acceleration (3M momentum + acceleration filter)
@@ -321,14 +316,14 @@ MOM_ACCEL_SHORT_LOOKBACK = 21  # 1-month for acceleration calculation
 MOM_ACCEL_MIN_ACCELERATION = 0.0  # Minimum acceleration (current 1M > previous 1M)
 
 # Concentrated 3M Parameters
-CONCENTRATED_3M_POSITIONS = 5  # Fewer positions for concentration
+# CONCENTRATED_3M_POSITIONS removed - now uses PORTFOLIO_SIZE
 CONCENTRATED_3M_MAX_VOLATILITY = 0.40  # 40% max annualized volatility
 CONCENTRATED_3M_REBALANCE_DAYS = 21  # Monthly rebalancing
 
 # Dual Momentum Parameters
 DUAL_MOM_LOOKBACK_DAYS = 90  # 3-month momentum for relative comparison
 DUAL_MOM_ABSOLUTE_THRESHOLD = 0.0  # Must have positive absolute momentum
-DUAL_MOM_POSITIONS = 5  # Top 5 by relative momentum
+# DUAL_MOM_POSITIONS removed - now uses PORTFOLIO_SIZE
 DUAL_MOM_RISK_OFF_TICKER = None  # Set to 'TLT' or 'SHY' for bonds, None for cash
 
 # Trend Following ATR Parameters
@@ -383,7 +378,7 @@ DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT = 20.0  # Sell if price drops 20% from peak
 
 # --- Sector Rotation Strategy Parameters ---
 # PROPOSAL 2: Rotate between sector ETFs based on momentum
-SECTOR_ROTATION_TOP_N = 5  # Number of top sectors to hold
+# SECTOR_ROTATION_TOP_N removed - now uses PORTFOLIO_SIZE
 # Note: Uses AI_REBALANCE_FREQUENCY_DAYS for rebalancing frequency
 SECTOR_ROTATION_MOMENTUM_WINDOW = 60  # 60-day momentum for sector selection
 SECTOR_ROTATION_MIN_MOMENTUM = 0.0  # TEMPORARILY reduced to 0% for debugging - was 5.0%
@@ -469,7 +464,7 @@ AI_REBALANCE_FREQUENCY_DAYS = 1  # Rebalancing frequency for all dynamic strateg
 # No arbitrary annual thresholds - rebalances based on portfolio value growth since last rebalance
 
 # --- Momentum + AI Hybrid Strategy Parameters ---
-MOMENTUM_AI_HYBRID_TOP_N = 20  # Select top N stocks by momentum
+# MOMENTUM_AI_HYBRID_TOP_N removed - now uses PORTFOLIO_SIZE
 MOMENTUM_AI_HYBRID_PORTFOLIO_SIZE = PORTFOLIO_SIZE  # Use same portfolio size as other strategies
 MOMENTUM_AI_HYBRID_BUY_THRESHOLD = 0.02  # Buy if AI predicts >2% return
 MOMENTUM_AI_HYBRID_SELL_THRESHOLD = -0.01  # Sell if AI predicts <-1% return

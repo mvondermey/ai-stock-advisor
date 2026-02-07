@@ -29,7 +29,7 @@ from shared_strategies import (
 )
 
 # Import prediction for AI enhancements
-from prediction import predict_target_return
+from prediction import predict_return_for_ticker as predict_target_return
 
 # ============================================
 # Configuration Parameters
