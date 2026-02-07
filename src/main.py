@@ -1497,7 +1497,7 @@ def main(
         sector_rotation_cash_deployed=sector_rotation_cash_deployed_1y,
         ratio_3m_1y_cash_deployed=ratio_3m_cash_deployed_1y,
         ratio_1y_3m_cash_deployed=ratio_1y_3m_cash_deployed_1y,
-        momentum_volatility_hybrid_cash_deployed=momentum_volatility_hybrid_cash_deployed_1y,
+        momentum_volatility_hybrid_cash_deployed=0.0,  # TODO: Fix missing cash deployed variable
         price_acceleration_cash_deployed=price_acceleration_cash_deployed_1y,
         turnaround_cash_deployed=turnaround_cash_deployed_1y,
         # Ensemble strategy values
