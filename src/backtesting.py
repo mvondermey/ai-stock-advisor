@@ -73,7 +73,7 @@ from config import (
     STATIC_BH_1Y_REBALANCE_DAYS, STATIC_BH_6M_REBALANCE_DAYS, STATIC_BH_3M_REBALANCE_DAYS, STATIC_BH_1M_REBALANCE_DAYS,
     ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY,
     ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT,
-    ENABLE_SECTOR_ROTATION, AI_REBALANCE_FREQUENCY_DAYS, ENABLE_PROFIT_GUARD,
+    ENABLE_SECTOR_ROTATION, AI_REBALANCE_FREQUENCY_DAYS, ENABLE_PROFIT_GUARD, STOP_LOSS_PCT,
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_ADAPTIVE_STRATEGY,
     ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE,
     ENABLE_LLM_STRATEGY, LLM_REBALANCE_FREQUENCY_DAYS, LLM_MIN_SCORE,
@@ -339,22 +339,41 @@ def _smart_rebalance_portfolio(
                 gain_loss = gross_sale - gross_cost
                 sell_cost = gross_sale * transaction_cost
                 net_gain = gain_loss - sell_cost
+                loss_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0
                 
                 # Decision logic based on ENABLE_PROFIT_GUARD flag
                 if ENABLE_PROFIT_GUARD:
-                    # NEW behavior: Only sell if net gain > 0 OR force rebalance OR need cash for new positions
-                    should_sell = force_rebalance or net_gain > 0 or (positions_to_buy and net_gain > -sell_cost * 0.5)
+                    # NEW behavior: Check stop loss first, then profit guard
+                    should_sell = False
+                    sell_reason = ""
+                    
+                    if STOP_LOSS_PCT > 0 and loss_pct <= -STOP_LOSS_PCT:
+                        # Stop loss triggered - always sell
+                        should_sell = True
+                        sell_reason = f"STOP LOSS {loss_pct:.1%}"
+                    elif net_gain > 0 or force_rebalance:
+                        # Profitable to sell (net gain after costs) OR forced rebalance
+                        should_sell = True
+                        sell_reason = f"Profitable: ${net_gain:,.0f} ({loss_pct:+.1%})"
+                    else:
+                        # Unprofitable to sell - keep position to avoid locking in loss + transaction cost
+                        should_sell = False
+                        sell_reason = f"Unprofitable: would lose ${-net_gain:,.0f} ({loss_pct:+.1%})"
                 else:
-                    # OLD behavior: Always sell stocks not in buy list (no profit guard)
+                    # OLD behavior: Always sell stocks not in buy list (no profit guard, no stop loss check)
                     should_sell = True
+                    sell_reason = f"Not in buy list: {loss_pct:+.1%}"
                 
                 if should_sell:
-                    print(f"   💰 {strategy_name} Selling {ticker}: Gain ${gain_loss:,.0f}, Net ${net_gain:,.0f}")
+                    if "STOP LOSS" in sell_reason:
+                        print(f"   🛑 {strategy_name} {ticker}: {sell_reason}, selling")
+                    else:
+                        print(f"   💰 {strategy_name} Selling {ticker}: {sell_reason}")
                     total_transaction_costs += sell_cost
                     updated_cash += gross_sale - sell_cost
                     del updated_positions[ticker]
                 else:
-                    print(f"   🚫 {strategy_name} Holding {ticker}: Net gain ${net_gain:,.0f} < transaction cost")
+                    print(f"   🚫 {strategy_name} Holding {ticker}: {sell_reason}")
                     # Keep this position in final list
                     final_stocks.append(ticker)
     
@@ -2537,16 +2556,20 @@ def _run_portfolio_backtest_walk_forward(
                                     if new_llm_stocks and set(new_llm_stocks) != set(current_llm_strategy_stocks):
                                         print(f"   🤖 LLM selected: {new_llm_stocks}")
                                         
-                                        # Calculate capital per stock
-                                        capital_per_llm_stock = llm_strategy_cash / len(new_llm_stocks) if new_llm_stocks else 0
-                                        
-                                        # Rebalance LLM strategy portfolio
-                                        llm_strategy_cash, llm_strategy_positions = _rebalance_generic_portfolio(
-                                            new_llm_stocks, current_date, all_tickers_data,
-                                            llm_strategy_positions, llm_strategy_cash, capital_per_llm_stock,
-                                            'llm_strategy'
+                                        # Use universal smart rebalancing function
+                                        llm_strategy_positions, llm_strategy_cash, current_llm_strategy_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                                            strategy_name="LLM Strategy",
+                                            current_stocks=current_llm_strategy_stocks,
+                                            new_stocks=new_llm_stocks,
+                                            positions=llm_strategy_positions,
+                                            cash=llm_strategy_cash,
+                                            ticker_data_grouped=ticker_data_grouped,
+                                            current_date=current_date,
+                                            capital_per_stock=INVESTMENT_PER_STOCK,
+                                            transaction_cost=TRANSACTION_COST,
+                                            force_rebalance=False
                                         )
-                                        current_llm_strategy_stocks = new_llm_stocks
+                                        llm_strategy_transaction_costs += rebalance_costs
                                         llm_strategy_last_rebalance_day = day_count
                                         llm_strategy_last_rebalance_value = _mark_to_market_value(
                                             llm_strategy_positions, llm_strategy_cash, ticker_data_grouped, current_date
@@ -2633,41 +2656,23 @@ def _run_portfolio_backtest_walk_forward(
                         current_top_performers_6m.sort(key=lambda x: x[1], reverse=True)
                         new_dynamic_bh_6m_stocks = [ticker for ticker, perf in current_top_performers_6m[:PORTFOLIO_SIZE]]
 
-                        # ✅ FIX: Always allow initial allocation without profit guard check
-                        if not current_dynamic_bh_6m_stocks:
-                            print(f"   🚀 Dynamic BH 6M: Initial allocation (no profit guard)")
-                            dynamic_bh_6m_cash, dynamic_bh_6m_positions = _rebalance_dynamic_bh_portfolio(
-                                new_dynamic_bh_6m_stocks, current_date, all_tickers_data,
-                                dynamic_bh_6m_positions, dynamic_bh_6m_cash, capital_per_stock
-                            )
-                            current_dynamic_bh_6m_stocks = new_dynamic_bh_6m_stocks
-                            dynamic_bh_6m_last_rebalance_value = _mark_to_market_value(
-                                dynamic_bh_6m_positions, dynamic_bh_6m_cash, ticker_data_grouped, current_date
-                            )
-                        else:
-                            # Rebalance only if current portfolio value since last rebalance is high enough to pay costs
-                            should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
-                                current_dynamic_bh_6m_stocks,
-                                new_dynamic_bh_6m_stocks,
-                                ticker_data_grouped,
-                                current_date,
-                                dynamic_bh_6m_positions,
-                                dynamic_bh_6m_cash,
-                                TRANSACTION_COST,
-                                dynamic_bh_6m_last_rebalance_value
-                            )
-                            if should_rebal:
-                                print(f"   ✅ Dynamic BH 6M: Rebalancing to top {len(new_dynamic_bh_6m_stocks)} stocks")
-                                dynamic_bh_6m_cash, dynamic_bh_6m_positions = _rebalance_dynamic_bh_portfolio(
-                                    new_dynamic_bh_6m_stocks, current_date, all_tickers_data,
-                                    dynamic_bh_6m_positions, dynamic_bh_6m_cash, capital_per_stock
-                                )
-                                current_dynamic_bh_6m_stocks = new_dynamic_bh_6m_stocks
-                                dynamic_bh_6m_last_rebalance_value = _mark_to_market_value(
-                                    dynamic_bh_6m_positions, dynamic_bh_6m_cash, ticker_data_grouped, current_date
-                                )
-                            else:
-                                print(f"   ⏭️ Skip Dynamic BH 6M rebalance: {reason}")
+                        # Use universal smart rebalancing function
+                        dynamic_bh_6m_positions, dynamic_bh_6m_cash, current_dynamic_bh_6m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                            strategy_name="Dynamic BH 6M",
+                            current_stocks=current_dynamic_bh_6m_stocks,
+                            new_stocks=new_dynamic_bh_6m_stocks,
+                            positions=dynamic_bh_6m_positions,
+                            cash=dynamic_bh_6m_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            capital_per_stock=INVESTMENT_PER_STOCK,
+                            transaction_cost=TRANSACTION_COST,
+                            force_rebalance=not current_dynamic_bh_6m_stocks
+                        )
+                        dynamic_bh_6m_transaction_costs += rebalance_costs
+                        dynamic_bh_6m_last_rebalance_value = _mark_to_market_value(
+                            dynamic_bh_6m_positions, dynamic_bh_6m_cash, ticker_data_grouped, current_date
+                        )
 
                 # DYNAMIC BH 3-MONTH: Rebalance to current top PORTFOLIO_SIZE based on 3-month performance
                 if ENABLE_DYNAMIC_BH_3M:
@@ -2706,40 +2711,23 @@ def _run_portfolio_backtest_walk_forward(
                         new_dynamic_bh_3m_stocks = [ticker for ticker, perf in current_top_performers_3m[:PORTFOLIO_SIZE]]
                         print(f"   🏆 Top {PORTFOLIO_SIZE} performers (3-month): {', '.join(new_dynamic_bh_3m_stocks)}")
                         
-                        # ✅ FIX: Always allow initial allocation without profit guard check
-                        if not current_dynamic_bh_3m_stocks:
-                            print(f"   🚀 Dynamic BH 3M: Initial allocation (no profit guard)")
-                            dynamic_bh_3m_cash, dynamic_bh_3m_positions = _rebalance_dynamic_bh_portfolio(
-                                new_dynamic_bh_3m_stocks, current_date, all_tickers_data,
-                                dynamic_bh_3m_positions, dynamic_bh_3m_cash, capital_per_stock
-                            )
-                            current_dynamic_bh_3m_stocks = new_dynamic_bh_3m_stocks
-                            dynamic_bh_3m_last_rebalance_value = _mark_to_market_value(
-                                dynamic_bh_3m_positions, dynamic_bh_3m_cash, ticker_data_grouped, current_date
-                            )
-                        else:
-                            # Rebalance only if current portfolio value since last rebalance is high enough to pay costs
-                            should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
-                                current_dynamic_bh_3m_stocks,
-                                new_dynamic_bh_3m_stocks,
-                                ticker_data_grouped,
-                                current_date,
-                                dynamic_bh_3m_positions,
-                                dynamic_bh_3m_cash,
-                                TRANSACTION_COST,
-                                dynamic_bh_3m_last_rebalance_value
-                            )
-                            if should_rebal:
-                                dynamic_bh_3m_cash, dynamic_bh_3m_positions = _rebalance_dynamic_bh_portfolio(
-                                    new_dynamic_bh_3m_stocks, current_date, all_tickers_data,
-                                    dynamic_bh_3m_positions, dynamic_bh_3m_cash, capital_per_stock
-                                )
-                                current_dynamic_bh_3m_stocks = new_dynamic_bh_3m_stocks
-                                dynamic_bh_3m_last_rebalance_value = _mark_to_market_value(
-                                    dynamic_bh_3m_positions, dynamic_bh_3m_cash, ticker_data_grouped, current_date
-                                )
-                            else:
-                                print(f"   ⏭️ Skip Dynamic BH 3M rebalance: {reason}")
+                        # Use universal smart rebalancing function
+                        dynamic_bh_3m_positions, dynamic_bh_3m_cash, current_dynamic_bh_3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                            strategy_name="Dynamic BH 3M",
+                            current_stocks=current_dynamic_bh_3m_stocks,
+                            new_stocks=new_dynamic_bh_3m_stocks,
+                            positions=dynamic_bh_3m_positions,
+                            cash=dynamic_bh_3m_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            capital_per_stock=INVESTMENT_PER_STOCK,
+                            transaction_cost=TRANSACTION_COST,
+                            force_rebalance=not current_dynamic_bh_3m_stocks
+                        )
+                        dynamic_bh_3m_transaction_costs += rebalance_costs
+                        dynamic_bh_3m_last_rebalance_value = _mark_to_market_value(
+                            dynamic_bh_3m_positions, dynamic_bh_3m_cash, ticker_data_grouped, current_date
+                        )
                     else:
                         print(f"   ❌ Dynamic BH 3M: No performers found with sufficient 3-month data!")
 
@@ -2779,40 +2767,23 @@ def _run_portfolio_backtest_walk_forward(
 
                         print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-month): {', '.join(new_dynamic_bh_1m_stocks)}")
 
-                        # ✅ FIX: Always allow initial allocation without profit guard check
-                        if not current_dynamic_bh_1m_stocks:
-                            print(f"   🚀 Dynamic BH 1M: Initial allocation (no profit guard)")
-                            dynamic_bh_1m_cash, dynamic_bh_1m_positions = _rebalance_dynamic_bh_portfolio(
-                                new_dynamic_bh_1m_stocks, current_date, all_tickers_data,
-                                dynamic_bh_1m_positions, dynamic_bh_1m_cash, capital_per_stock
-                            )
-                            current_dynamic_bh_1m_stocks = new_dynamic_bh_1m_stocks
-                            dynamic_bh_1m_last_rebalance_value = _mark_to_market_value(
-                                dynamic_bh_1m_positions, dynamic_bh_1m_cash, ticker_data_grouped, current_date
-                            )
-                        else:
-                            # Rebalance only if current portfolio value since last rebalance is high enough to pay costs
-                            should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
-                                current_dynamic_bh_1m_stocks,
-                                new_dynamic_bh_1m_stocks,
-                                ticker_data_grouped,
-                                current_date,
-                                dynamic_bh_1m_positions,
-                                dynamic_bh_1m_cash,
-                                TRANSACTION_COST,
-                                dynamic_bh_1m_last_rebalance_value
-                            )
-                            if should_rebal:
-                                dynamic_bh_1m_cash, dynamic_bh_1m_positions = _rebalance_dynamic_bh_portfolio(
-                                    new_dynamic_bh_1m_stocks, current_date, all_tickers_data,
-                                    dynamic_bh_1m_positions, dynamic_bh_1m_cash, capital_per_stock
-                                )
-                                current_dynamic_bh_1m_stocks = new_dynamic_bh_1m_stocks
-                                dynamic_bh_1m_last_rebalance_value = _mark_to_market_value(
-                                    dynamic_bh_1m_positions, dynamic_bh_1m_cash, ticker_data_grouped, current_date
-                                )
-                            else:
-                                print(f"   ⏭️ Skip Dynamic BH 1M rebalance: {reason}")
+                        # Use universal smart rebalancing function
+                        dynamic_bh_1m_positions, dynamic_bh_1m_cash, current_dynamic_bh_1m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                            strategy_name="Dynamic BH 1M",
+                            current_stocks=current_dynamic_bh_1m_stocks,
+                            new_stocks=new_dynamic_bh_1m_stocks,
+                            positions=dynamic_bh_1m_positions,
+                            cash=dynamic_bh_1m_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            capital_per_stock=INVESTMENT_PER_STOCK,
+                            transaction_cost=TRANSACTION_COST,
+                            force_rebalance=not current_dynamic_bh_1m_stocks
+                        )
+                        dynamic_bh_1m_transaction_costs += rebalance_costs
+                        dynamic_bh_1m_last_rebalance_value = _mark_to_market_value(
+                            dynamic_bh_1m_positions, dynamic_bh_1m_cash, ticker_data_grouped, current_date
+                        )
 
                 # RISK-ADJUSTED MOMENTUM: Rebalance to current top 3 using shared strategy
                 if ENABLE_RISK_ADJ_MOM:
@@ -3874,14 +3845,6 @@ def _run_portfolio_backtest_walk_forward(
                         momentum_ai_hybrid_transaction_costs += rebalance_costs
                         
                         last_momentum_ai_hybrid_rebalance_day = day_count
-                
-                # Even on non-rebalance days, check for stop losses
-                elif len(momentum_ai_hybrid_positions) > 0:
-                    momentum_ai_hybrid_cash, momentum_ai_hybrid_positions = _rebalance_momentum_ai_hybrid_portfolio(
-                        [], current_date, all_tickers_data,
-                        momentum_ai_hybrid_positions, momentum_ai_hybrid_cash,
-                        current_models, current_scalers, current_y_scalers, capital_per_stock
-                    )
             
             except Exception as e:
                 print(f"   ⚠️ Momentum+AI hybrid failed: {e}")
@@ -4222,6 +4185,7 @@ def _run_portfolio_backtest_walk_forward(
                 selected_stocks = [ticker for ticker, _ in predictions[:num_to_select]]
 
                 # Check if portfolio changed (only then incur transaction costs)
+                skip_rebalance = False  # Initialize before try-except
                 if set(selected_stocks) != set(current_portfolio_stocks):
                     # ✅ Transaction Cost Guard: Same logic as other strategies (Dynamic BH, Risk-Adj Mom, etc.)
                     # Only rebalance if portfolio has grown enough since last rebalance to cover transaction costs
@@ -4799,9 +4763,16 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_PRICE_ACCELERATION:
             for ticker in list(price_acceleration_positions.keys()):
                 try:
-                    ticker_df = ticker_data_grouped.get(ticker)
-                    if ticker_df is not None:
-                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                    # Get ticker data using the same method as other strategies
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None and hasattr(ticker_data_grouped, 'get_group'):
+                        try:
+                            ticker_data = ticker_data_grouped.get_group(ticker)
+                        except KeyError:
+                            ticker_data = None
+                    
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
                         if current_price is not None:
                             shares = price_acceleration_positions[ticker]['shares']
                             position_value = shares * current_price
@@ -5558,7 +5529,7 @@ def _run_portfolio_backtest_walk_forward(
             print(f"   📈 Processed {day_count}/{len(business_days)} days, portfolio: {current_portfolio_stocks}")
         
         # === DAILY SUMMARY ===
-        if day_count <= 10 or day_count % 5 == 0 or day_count == len(business_days):
+        if True:  # Print daily summary every day
             print(f"\n📊 DAILY SUMMARY - Day {day_count} ({current_date.strftime('%Y-%m-%d')})")
             print("=" * 80)
             
@@ -6382,110 +6353,6 @@ def _get_current_risk_adj_mom_selections(all_tickers: List[str], all_tickers_dat
     return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, top_n=PORTFOLIO_SIZE)
 
 
-def _rebalance_dynamic_bh_portfolio(new_stocks, current_date, all_tickers_data,
-                                  dynamic_bh_positions, dynamic_bh_cash, capital_per_stock):
-    """
-    Rebalance dynamic BH portfolio to hold the new top N stocks.
-    Happens DAILY - sells stocks no longer in top N and buys new ones.
-
-    Returns: Updated cash balance (since float is passed by value, not reference)
-    """
-    global dynamic_bh_1y_transaction_costs
-    try:
-        # Calculate target allocation per stock (based on PORTFOLIO_SIZE)
-        target_allocation = capital_per_stock
-        total_target = PORTFOLIO_SIZE * target_allocation
-
-        # Sell stocks no longer in top N
-        stocks_to_sell = []
-        for ticker in list(dynamic_bh_positions.keys()):
-            if ticker not in new_stocks:
-                stocks_to_sell.append(ticker)
-
-        for ticker in stocks_to_sell:
-            if ticker in dynamic_bh_positions:
-                try:
-                    # Get current price
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            # Drop NaN values to avoid NaN propagation
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    shares_to_sell = dynamic_bh_positions[ticker]['shares']
-                                    sale_value = shares_to_sell * current_price
-
-                                    # Apply transaction cost
-                                    sell_cost = sale_value * TRANSACTION_COST
-                                    net_sale_value = sale_value - sell_cost
-                                    dynamic_bh_1y_transaction_costs += sell_cost
-
-                                    # Add to cash
-                                    dynamic_bh_cash += net_sale_value
-                                    print(f"   💰 Dynamic BH sold {ticker}: {shares_to_sell:.0f} shares @ ${current_price:.2f} = ${sale_value:,.0f} (-${sell_cost:.2f} cost) = ${net_sale_value:,.0f}")
-
-                                    # Remove position
-                                    del dynamic_bh_positions[ticker]
-
-                except Exception as e:
-                    print(f"   ⚠️ Error selling {ticker} from dynamic BH: {e}")
-
-        # Buy new stocks (or add to existing positions)
-        stocks_to_buy = [ticker for ticker in new_stocks if ticker not in dynamic_bh_positions]
-
-        if stocks_to_buy:
-            # ✅ FIX: Account for transaction costs when splitting cash
-            # Each stock needs: target_value * (1 + TRANSACTION_COST)
-            # So: target_value = cash / (num_stocks * (1 + TRANSACTION_COST))
-            target_per_stock_including_fees = dynamic_bh_cash / (len(stocks_to_buy) * (1 + TRANSACTION_COST))
-
-            for ticker in stocks_to_buy:
-                try:
-                    # Get current price
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            # Drop NaN values to avoid NaN propagation
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-
-                                if not pd.isna(current_price) and current_price > 0:
-                                    shares_to_buy = int(target_per_stock_including_fees / current_price)
-                                    if shares_to_buy > 0:
-                                        buy_value = shares_to_buy * current_price
-
-                                        # Apply transaction cost
-                                        buy_cost = buy_value * TRANSACTION_COST
-                                        total_buy_cost = buy_value + buy_cost
-                                        dynamic_bh_1y_transaction_costs += buy_cost
-
-                                        # Update position
-                                        dynamic_bh_positions[ticker] = {
-                                            'shares': shares_to_buy,
-                                            'entry_price': current_price,
-                                            'value': buy_value
-                                        }
-
-                                        # Deduct from cash
-                                        dynamic_bh_cash -= total_buy_cost
-                                        print(f"   🛒 Dynamic BH bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} = ${buy_value:,.0f} (+${buy_cost:.2f} cost) = ${total_buy_cost:,.0f}")
-
-                except Exception as e:
-                    print(f"   ⚠️ Error buying {ticker} for dynamic BH: {e}")
-
-            print(f"   📊 Dynamic BH portfolio: ${sum(pos['value'] for pos in dynamic_bh_positions.values()):,.0f} invested + ${dynamic_bh_cash:,.0f} cash")
-
-    except Exception as e:
-        print(f"   ⚠️ Generic rebalance failed for {strategy_name}: {e}")
-        
-    return dynamic_bh_cash, dynamic_bh_positions
 
 
 def _rebalance_momentum_volatility_hybrid_portfolio(momentum_stocks, current_date, all_tickers_data,
@@ -8525,10 +8392,6 @@ def _rebalance_quality_momentum_portfolio(new_stocks, current_date, all_tickers_
     return _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock)
 
 
-def _rebalance_momentum_ai_hybrid_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, current_models, current_scalers, current_y_scalers, capital_per_stock):
-    """Momentum+AI Hybrid rebalancing function."""
-    # Ignore AI parameters for now and use generic rebalancing
-    return _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock)
 
 
 def _rebalance_risk_adj_mom_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock):

@@ -254,7 +254,7 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 #   10 = Bi-weekly retraining (balanced, recommended for volatile stocks)
 #   20 = Monthly retraining (conservative, recommended for S&P 500 / stable large-caps)
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
-RETRAIN_FREQUENCY_DAYS = 30  # Retrain every 10 days - aligned with prediction horizon
+RETRAIN_FREQUENCY_DAYS = 10  # Retrain every 10 days - aligned with prediction horizon
 ENABLE_WALK_FORWARD_RETRAINING = False   # Set to False to use only saved models, no retraining
 
 # --- Backtest Period Enable/Disable Flags ---
@@ -367,7 +367,7 @@ INVESTMENT_PER_STOCK    = TOTAL_CAPITAL / PORTFOLIO_SIZE  # Automatically calcul
 TRANSACTION_COST        = 0.011      # 1.1% per trade leg (buy or sell)
 STOP_LOSS_PCT           = 0.05       # 5% stop loss from entry price (sells if position drops 5%+)
 # To disable stop loss for comparison: STOP_LOSS_PCT = 0
-ENABLE_PROFIT_GUARD = True  # Set to False to test old behavior (sell everything not in buy list)
+ENABLE_PROFIT_GUARD = False  # Set to False to test old behavior (sell everything not in buy list)
 
 # --- Dynamic BH 1Y + Volatility Filter Parameters ---
 # Maximum allowed annualized volatility for stock selection (as percentage)
