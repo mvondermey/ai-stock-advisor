@@ -25,9 +25,11 @@ warnings.filterwarnings('ignore')
 # Import config for parallel training settings
 try:
     from config import FORCE_CPU, CUDA_AVAILABLE, TRAINING_NUM_PROCESSES, XGBOOST_USE_GPU
+    from ml_models import _lgbm_gpu_available
 except ImportError:
     FORCE_CPU = False
     CUDA_AVAILABLE = False
+    _lgbm_gpu_available = False
     TRAINING_NUM_PROCESSES = 1
     XGBOOST_USE_GPU = True
 
@@ -506,7 +508,7 @@ class MultiTaskStrategy:
                 return None
             try:
                 print(f"   💡 [LightGBM] Training...")
-                use_gpu_lgb = CUDA_AVAILABLE and not FORCE_CPU
+                use_gpu_lgb = CUDA_AVAILABLE and not FORCE_CPU and _lgbm_gpu_available
                 lgb_model = lgb.LGBMRegressor(
                     n_estimators=200, max_depth=6, learning_rate=0.1,
                     random_state=42, verbosity=-1,

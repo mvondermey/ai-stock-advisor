@@ -240,7 +240,7 @@ def get_all_tickers() -> List[str]:
             url_crypto = "https://en.wikipedia.org/wiki/List_of_cryptocurrencies"
             response_crypto = requests.get(url_crypto, headers=headers)
             response_crypto.raise_for_status()
-            tables_crypto = pd.read_html(StringIO(response_crypto.text))[0]
+            tables_crypto = pd.read_html(StringIO(response_crypto.text))
             table_crypto = None
             for table in tables_crypto:
                 if 'Symbol' in table.columns:

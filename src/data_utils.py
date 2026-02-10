@@ -90,7 +90,7 @@ def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         "PSAR", "ADL", "CCI", "VWAP", "ATR_Pct", "Chaikin_Oscillator", "MFI", "OBV_SMA", "Log_Returns",
         "Historical_Volatility", "Close_to_SMA20", "Close_to_SMA50", "Close_Position_in_Range",
         "Intraday_Range_Pct", "Open_to_Close_Ratio", "Close_to_20D_High", "Close_to_20D_Low", "Volume_Normalized",
-        "Momentum_3d", "Momentum_5d", "Momentum_10d", "Momentum_20d", "Momentum_40d", "Dist_From_SMA10",
+        "Momentum_3d", "Momentum_5d", "Momentum_10d", "Momentum_20d", "Momentum_40d", "Momentum_63d", "Momentum_126d", "Dist_From_SMA10",
         "Dist_From_SMA20", "Dist_From_SMA50", "SMA20_Slope", "SMA50_Slope", "Price_Accel_5d", "Price_Accel_20d",
         "Vol_Regime", "Vol_Spike", "Volume_Ratio_5d", "Volume_Ratio_20d", "Volume_Trend", "Range_Expansion",
         "Range_vs_Avg", "Daily_Direction", "Streak",
@@ -140,7 +140,16 @@ def _calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df['BB_upper'] = (bb_mid + (bb_std * 2)).fillna(0)
         df['BB_lower'] = (bb_mid - (bb_std * 2)).fillna(0)
         
-        # --- NEW FEATURES FOR AI IMPROVEMENT ---
+        # --- MOMENTUM FEATURES (CRITICAL FOR PERFORMANCE) ---
+        # Calculate momentum at different timeframes (percentage returns)
+        df['Momentum_3d'] = (close.pct_change(3) * 100).fillna(0)
+        df['Momentum_5d'] = (close.pct_change(5) * 100).fillna(0)
+        df['Momentum_10d'] = (close.pct_change(10) * 100).fillna(0)
+        df['Momentum_20d'] = (close.pct_change(20) * 100).fillna(0)
+        df['Momentum_40d'] = (close.pct_change(40) * 100).fillna(0)
+        df['Momentum_63d'] = (close.pct_change(63) * 100).fillna(0)  # 3-month momentum
+        df['Momentum_126d'] = (close.pct_change(126) * 100).fillna(0)  # 6-month momentum
+        
         # Volatility-Adjusted Momentum: momentum normalized by volatility (Sharpe-like)
         mom_20 = close.pct_change(20).fillna(0)
         vol_20 = df["Returns"].rolling(20, min_periods=5).std().fillna(0.01)

@@ -477,7 +477,7 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
 
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
-        return get_dynamic_bh_tickers(all_tickers, '3m')
+        return get_dynamic_bh_tickers(all_tickers, '3m', all_tickers_data)
 
 
 def get_ai_strategy_tickers(all_tickers: List[str]) -> List[str]:

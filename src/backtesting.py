@@ -73,7 +73,7 @@ from config import (
     STATIC_BH_1Y_REBALANCE_DAYS, STATIC_BH_6M_REBALANCE_DAYS, STATIC_BH_3M_REBALANCE_DAYS, STATIC_BH_1M_REBALANCE_DAYS,
     ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY,
     ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT,
-    ENABLE_SECTOR_ROTATION, AI_REBALANCE_FREQUENCY_DAYS,
+    ENABLE_SECTOR_ROTATION, AI_REBALANCE_FREQUENCY_DAYS, ENABLE_PROFIT_GUARD,
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_ADAPTIVE_STRATEGY,
     ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE,
     ENABLE_LLM_STRATEGY, LLM_REBALANCE_FREQUENCY_DAYS, LLM_MIN_SCORE,
@@ -340,8 +340,13 @@ def _smart_rebalance_portfolio(
                 sell_cost = gross_sale * transaction_cost
                 net_gain = gain_loss - sell_cost
                 
-                # Only sell if net gain > 0 OR force rebalance OR need cash for new positions
-                should_sell = force_rebalance or net_gain > 0 or (positions_to_buy and net_gain > -sell_cost * 0.5)
+                # Decision logic based on ENABLE_PROFIT_GUARD flag
+                if ENABLE_PROFIT_GUARD:
+                    # NEW behavior: Only sell if net gain > 0 OR force rebalance OR need cash for new positions
+                    should_sell = force_rebalance or net_gain > 0 or (positions_to_buy and net_gain > -sell_cost * 0.5)
+                else:
+                    # OLD behavior: Always sell stocks not in buy list (no profit guard)
+                    should_sell = True
                 
                 if should_sell:
                     print(f"   💰 {strategy_name} Selling {ticker}: Gain ${gain_loss:,.0f}, Net ${net_gain:,.0f}")
