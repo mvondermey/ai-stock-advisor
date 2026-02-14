@@ -411,6 +411,18 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
         # Momentum-Volatility Hybrid Strategy: Combines strong momentum with controlled volatility
         return get_momentum_volatility_hybrid_tickers(all_tickers, all_tickers_data)
     
+    elif strategy == 'momentum_volatility_hybrid_6m':
+        # Momentum-Volatility Hybrid 6M Strategy: 6-month lookback variant
+        return get_momentum_volatility_hybrid_6m_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'momentum_volatility_hybrid_1y':
+        # Momentum-Volatility Hybrid 1Y Strategy: 1-year lookback variant
+        return get_momentum_volatility_hybrid_1y_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'momentum_volatility_hybrid_1y3m':
+        # Momentum-Volatility Hybrid 1Y/3M Strategy: Strong 1Y, weak 3M (buy on dip)
+        return get_momentum_volatility_hybrid_1y3m_tickers(all_tickers, all_tickers_data)
+    
     elif strategy == 'adaptive_ensemble':
         # Adaptive Ensemble Strategy: Meta-ensemble combining multiple strategies
         return get_adaptive_ensemble_tickers(all_tickers, all_tickers_data)
@@ -470,6 +482,10 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
     elif strategy == 'price_acceleration':
         # Price Acceleration Strategy: Physics-based velocity and acceleration
         return get_price_acceleration_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'voting_ensemble':
+        # Voting Ensemble Strategy: Consensus picks from multiple strategies
+        return get_voting_ensemble_tickers(all_tickers, all_tickers_data)
     
     elif strategy == 'dual_momentum':
         # Dual Momentum Strategy: Antonacci style absolute + relative momentum
@@ -804,6 +820,39 @@ def get_momentum_volatility_hybrid_tickers(all_tickers: List[str], all_tickers_d
     return select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
+def get_momentum_volatility_hybrid_6m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Hybrid Momentum-Volatility Strategy (6M variant): Combines strong 6-month momentum with controlled volatility."""
+    from shared_strategies import select_momentum_volatility_hybrid_6m_stocks
+    
+    print(f"   🎯 Mom-Vol Hybrid 6M: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Mom-Vol Hybrid 6M")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_momentum_volatility_hybrid_1y_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Hybrid Momentum-Volatility Strategy (1Y variant): Combines strong 1-year momentum with controlled volatility."""
+    from shared_strategies import select_momentum_volatility_hybrid_1y_stocks
+    
+    print(f"   🎯 Mom-Vol Hybrid 1Y: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Mom-Vol Hybrid 1Y")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_momentum_volatility_hybrid_1y3m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Hybrid Momentum-Volatility Strategy (1Y/3M variant): Strong 1Y performance, weak 3M (buy on dip)."""
+    from shared_strategies import select_momentum_volatility_hybrid_1y3m_stocks
+    
+    print(f"   🎯 Mom-Vol Hybrid 1Y/3M: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Mom-Vol Hybrid 1Y/3M")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
 def get_adaptive_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Adaptive Ensemble Strategy: Meta-ensemble combining multiple strategies dynamically."""
     from adaptive_ensemble import select_adaptive_ensemble_stocks
@@ -970,6 +1019,17 @@ def get_price_acceleration_tickers(all_tickers: List[str], all_tickers_data: pd.
     return select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
+def get_voting_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Voting Ensemble Strategy: Consensus picks from multiple strategies."""
+    from shared_strategies import select_voting_ensemble_stocks
+    
+    print(f"   🗳️  Voting Ensemble: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Voting Ensemble")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_voting_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
 def get_dual_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Dual Momentum Strategy: Antonacci style absolute + relative momentum."""
     from new_strategies import select_dual_momentum_stocks
@@ -1023,6 +1083,9 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
         'ratio_3m_1y': '3M/1Y Ratio (Momentum Acceleration)',
         'ratio_1y_3m': '1Y/3M Ratio (Buy on Dip)',
         'momentum_volatility_hybrid': 'Momentum-Volatility Hybrid (Controlled Momentum)',
+        'momentum_volatility_hybrid_6m': 'Mom-Vol Hybrid 6M (6-Month Controlled Momentum)',
+        'momentum_volatility_hybrid_1y': 'Mom-Vol Hybrid 1Y (1-Year Controlled Momentum)',
+        'momentum_volatility_hybrid_1y3m': 'Mom-Vol Hybrid 1Y/3M (Strong 1Y, Weak 3M)',
         'adaptive_ensemble': 'Adaptive Ensemble (Meta-Strategy)',
         'volatility_ensemble': 'Volatility Ensemble (Risk-Managed)',
         'ai_volatility_ensemble': 'AI Volatility Ensemble (AI-Enhanced)',
@@ -1037,6 +1100,7 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
         'options_sentiment': 'Options Sentiment (Put/Call)',
         'ml_ensemble': 'ML Ensemble (Multi-Model Voting)',
         'price_acceleration': 'Price Acceleration (Physics-Based Momentum)',
+        'voting_ensemble': 'Voting Ensemble (Consensus from Multiple Strategies)',
         'dual_momentum': 'Dual Momentum (Absolute + Relative)'
     }
 
@@ -1072,8 +1136,8 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
     print(f"    Available tickers: {len(valid_tickers)}")
     
     # Pass downloaded data if available for strategies that need it
-    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'price_acceleration'] and all_tickers_data_for_strategy is not None else None
-    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'price_acceleration']:
+    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble'] and all_tickers_data_for_strategy is not None else None
+    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble']:
         print(f"    Data available: {all_tickers_data_for_strategy is not None}")
     
     target_tickers = get_strategy_tickers(LIVE_TRADING_STRATEGY, valid_tickers, all_tickers_data_for_strategy)

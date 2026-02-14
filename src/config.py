@@ -206,7 +206,7 @@ TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
 USE_UNIFIED_PARALLEL_TRAINING = True
 
 # --- Backtest & training windows
-BACKTEST_DAYS           = 60       # Backtest period in calendar days (~60=2mo, ~180=6mo, ~365=1yr, ~540=1.5yr)
+BACKTEST_DAYS           = 180      # Backtest period in calendar days (~60=2mo, ~180=6mo, ~365=1yr, ~540=1.5yr)
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 TRAIN_LOOKBACK_DAYS     = 365        # Training period in calendar days (~1 year, ~252 trading days)
 VALIDATION_DAYS         = 90         # FIX 4: Validation period for threshold optimization
@@ -282,17 +282,20 @@ ENABLE_VOLATILITY_ADJ_MOM = True  # ENABLED - Volatility-Adjusted Momentum strat
 ENABLE_DYNAMIC_BH_1Y_VOL_FILTER = True  # NEW - Dynamic BH 1Y with Volatility Filter
 ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP = True   # ENABLED - Dynamic BH 1Y with trailing stop
 ENABLE_SECTOR_ROTATION = True   # ENABLED - Sector Rotation Strategy
-ENABLE_MULTITASK_LEARNING = True    # ENABLED - Multi-Task Learning Strategy
+ENABLE_MULTITASK_LEARNING = False   # DISABLED - Multi-Task Learning Strategy (slow)
 ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 ENABLE_MOMENTUM_VOLATILITY_HYBRID = True   # ENABLED - Momentum-Volatility Hybrid Strategy
+ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M = True   # ENABLED - Momentum-Volatility Hybrid 6M Strategy (6-month lookback)
+ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y = True   # ENABLED - Momentum-Volatility Hybrid 1Y Strategy (1-year lookback)
+ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M = True   # ENABLED - Momentum-Volatility Hybrid 1Y/3M Ratio Strategy (strong 1Y, weak 3M)
 ENABLE_ADAPTIVE_STRATEGY = True   # ENABLED - Adaptive Meta-Ensemble Strategy
 ENABLE_VOLATILITY_ENSEMBLE = True   # ENABLED - Volatility-Adjusted Ensemble Strategy (risk-managed position sizing)
 ENABLE_ENHANCED_VOLATILITY = True   # ENABLED - Enhanced Volatility Trader (ATR stops + take profits)
 ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble Strategy (diversification-focused)
-ENABLE_AI_VOLATILITY_ENSEMBLE = True   # ENABLED - AI-Enhanced Volatility Ensemble Strategy (AI-optimized weights and volatility caps)
+ENABLE_AI_VOLATILITY_ENSEMBLE = False  # DISABLED - AI-Enhanced Volatility Ensemble Strategy (slow)
 ENABLE_SENTIMENT_ENSEMBLE = True   # ENABLED - Sentiment-Enhanced Ensemble Strategy
 ENABLE_DYNAMIC_POOL = True   # ENABLED - Dynamic Strategy Pool Strategy
-ENABLE_AI_CLASSIFICATION = False   # NEW - AI Classification Strategy (predicts direction vs regression)
+ENABLE_AI_CLASSIFICATION = True   # ENABLED - AI Classification Strategy (SIMPLIFIED: 12 features vs 98+)
 
 # --- Multi-Timeframe Ensemble Strategy ---
 # Combines signals from different timeframes for better entry/exit timing
@@ -303,6 +306,7 @@ ENABLE_TURNAROUND = True   # ENABLED - Turnaround Strategy (buy depressed stocks
 ENABLE_MOMENTUM_VOLATILITY_HYBRID = True   # ENABLED - Momentum-Volatility Hybrid Strategy
 ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 ENABLE_PRICE_ACCELERATION = True   # ENABLED - Price Acceleration Strategy (physics-based velocity/acceleration)
+ENABLE_VOTING_ENSEMBLE = False   # DISABLED - Voting Ensemble Strategy (not performing well)
 
 # --- New Advanced Strategies ---
 ENABLE_MOMENTUM_ACCELERATION = True   # NEW - Momentum Acceleration (3M momentum + acceleration filter)
@@ -345,7 +349,7 @@ MULTI_TIMEFRAME_WEIGHTS = {
 }
 # Require consensus from at least this many timeframes
 MULTI_TIMEFRAME_MIN_CONSENSUS = 2  # At least 2 timeframes must agree
-ENABLE_LLM_STRATEGY = True   # ENABLED - LLM Strategy
+ENABLE_LLM_STRATEGY = False  # DISABLED - LLM Strategy
 
 # --- LLM Strategy Parameters (via Ollama) ---
 LLM_OLLAMA_BASE_URL = "http://localhost:11434"
@@ -365,9 +369,52 @@ PORTFOLIO_SIZE          = 10        # Number of stocks to hold in portfolio
 TOTAL_CAPITAL           = 100000     # Total capital to invest ($100,000)
 INVESTMENT_PER_STOCK    = TOTAL_CAPITAL / PORTFOLIO_SIZE  # Automatically calculated
 TRANSACTION_COST        = 0.011      # 1.1% per trade leg (buy or sell)
-STOP_LOSS_PCT           = 0.05       # 5% stop loss from entry price (sells if position drops 5%+)
-# To disable stop loss for comparison: STOP_LOSS_PCT = 0
-ENABLE_PROFIT_GUARD = False  # Set to False to test old behavior (sell everything not in buy list)
+ENABLE_STOP_LOSS        = False      # Global enable/disable stop loss protection (overridden by per-strategy settings)
+STOP_LOSS_PCT           = 0.05       # Default stop loss percentage (5%)
+ENABLE_PROFIT_GUARD     = True       # Set to False to test old behavior (sell everything not in buy list)
+
+# Per-strategy stop loss configuration (overrides global ENABLE_STOP_LOSS)
+# Based on backtest analysis: AI Strategy benefits from stop loss, quality/momentum strategies don't
+STRATEGY_STOP_LOSS_PCT = {
+    # Strategies with 5% stop loss (show positive improvement with stop loss protection)
+    'AI Strategy': 0.05,           # +17.7% improvement (+31.9% vs +14.2%)
+    'Volatility Ensemble': 0.05,   # +6.8% improvement (-5.1% vs -11.9%)
+    'Mom-Vol Hybrid': 0.05,        # +5.5% improvement (+45.6% vs +40.1%)
+    '3M/1Y Ratio': 0.05,           # +4.0% improvement (+21.0% vs +17.0%)
+    'Static BH 6M': 0.05,          # +3.5% improvement (+30.5% vs +27.0%)
+    'Sentiment Ensemble': 0.05,    # +3.1% improvement (+20.2% vs +17.1%)
+    'Turnaround': 0.05,            # +2.5% improvement (+20.0% vs +17.5%)
+    'Price Acceleration': 0.05,    # +2.4% improvement (+2.1% vs -0.3%)
+    'Adaptive Ensemble': 0.05,     # +2.4% improvement (+18.0% vs +15.6%)
+    'Concentrated 3M': 0.05,       # +1.4% improvement (+5.6% vs +4.2%)
+    'Static BH 1M': 0.05,          # +1.2% improvement (+7.7% vs +6.5%)
+    'AI Volatility Ensemble': 0.05,# +1.0% improvement (-7.8% vs -8.8%)
+    'Static BH 3M': 0.05,          # +0.8% improvement (+30.1% vs +29.3%)
+    'Static BH 1Y': 0.05,          # +0.7% improvement (+17.1% vs +16.4%)
+    'Sector Rotation': 0.05,       # +0.7% improvement (+4.1% vs +3.4%)
+    'Mom Acceleration': 0.05,      # +0.4% improvement (-3.6% vs -4.0%)
+    
+    # Strategies without stop loss (perform better with profit guard only)
+    'Mean Reversion': 0.0,         # -10.2% worse with stop (+2.0% vs -8.2%)
+    'Enhanced Volatility': 0.0,    # -8.9% worse (-5.5% vs -14.4%)
+    'Vol-Adj Mom': 0.0,            # -8.1% worse (+26.6% vs +18.5%)
+    'Quality+Mom': 0.0,            # -7.8% worse (+29.3% vs +21.5%)
+    'Dynamic BH 6M': 0.0,          # -6.2% worse (+19.6% vs +13.4%)
+    'Dynamic BH 3M': 0.0,          # -3.5% worse (+20.4% vs +16.9%)
+    'Dual Momentum': 0.0,          # -3.5% worse (+20.4% vs +16.9%)
+    'LLM Strategy': 0.0,           # -2.7% worse (+8.6% vs +5.9%)
+    'Trend ATR': 0.0,              # -2.5% worse (+5.7% vs +3.2%)
+    'Dynamic Pool': 0.0,           # -2.4% worse (+17.7% vs +15.3%)
+    'Multi-Task': 0.0,             # -2.1% worse (+9.0% vs +6.9%)
+    'Momentum+AI': 0.0,            # -2.0% worse (+28.3% vs +26.3%)
+    'Dynamic BH 1M': 0.0,          # -2.0% worse (-0.3% vs -2.3%)
+    'Dynamic BH 1Y+Vol': 0.0,      # -1.5% worse (+15.9% vs +14.4%)
+    'Risk-Adj Mom': 0.0,           # -1.3% worse (+24.3% vs +23.0%)
+    'Correlation Ensemble': 0.0,   # -0.9% worse (-1.1% vs -2.0%)
+    'Dynamic BH 1Y+TS': 0.0,       # -0.4% worse (+15.1% vs +14.7%)
+    'Dynamic BH 1Y': 0.0,          # -0.2% worse (+15.1% vs +14.9%)
+    '1Y/3M Ratio': 0.0,            # -0.2% worse (+7.6% vs +7.4%)
+}
 
 # --- Dynamic BH 1Y + Volatility Filter Parameters ---
 # Maximum allowed annualized volatility for stock selection (as percentage)
@@ -423,6 +470,21 @@ STATIC_BH_1Y_REBALANCE_DAYS = 0   # Default rebalance period for 1Y selection
 STATIC_BH_3M_REBALANCE_DAYS = 0   # Default rebalance period for 3M selection
 STATIC_BH_1M_REBALANCE_DAYS = 0   # Default rebalance period for 1M selection
 STATIC_BH_6M_REBALANCE_DAYS = 0   # Default rebalance period for 6M selection
+
+# --- AI Meta-Strategy ---
+# Second-level AI that allocates capital across sub-strategies based on recent performance
+ENABLE_META_STRATEGY = True          # Enable AI Meta-Strategy
+META_STRATEGY_WARMUP_DAYS = 10       # Days to observe strategies before first ML allocation
+META_STRATEGY_LOOKBACK_DAYS = 10     # Rolling window for strategy performance features
+META_STRATEGY_FORWARD_DAYS = 10      # Forward return horizon for training labels
+META_STRATEGY_TOP_K = 3              # Concentrate allocation on top K strategies
+META_STRATEGY_RETRAIN_DAYS = 20      # Retrain model every N days
+
+# --- Static BH Monthly Rebalance Variants ---
+# These are separate strategies that rebalance on the first trading day of each month
+ENABLE_STATIC_BH_1Y_MONTHLY = True   # Static BH 1Y with monthly rebalance
+ENABLE_STATIC_BH_6M_MONTHLY = True   # Static BH 6M with monthly rebalance
+ENABLE_STATIC_BH_3M_MONTHLY = True   # Static BH 3M with monthly rebalance
 
 # --- Rebalance Horizon Optimization ---
 # If True, test all rebalance horizons from 20 to 40 days for static strategies

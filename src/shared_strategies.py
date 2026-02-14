@@ -605,21 +605,22 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
             
             ticker_data = ticker_data_grouped[ticker]
             
-            if len(ticker_data) < VOLATILITY_ADJ_MOM_LOOKBACK:
+            # Use dropna'd Close series for all calculations (handles NaN-padded DataFrames)
+            close_prices = ticker_data['Close'].dropna()
+            n_prices = len(close_prices)
+            
+            if n_prices < VOLATILITY_ADJ_MOM_LOOKBACK:
                 continue
             
             # Calculate momentum return over lookback period
-            if len(ticker_data) >= VOLATILITY_ADJ_MOM_LOOKBACK:
-                momentum_return = (ticker_data['Close'].iloc[-1] / ticker_data['Close'].iloc[-VOLATILITY_ADJ_MOM_LOOKBACK] - 1)
-            else:
-                momentum_return = 0.0
+            momentum_return = (close_prices.iloc[-1] / close_prices.iloc[-VOLATILITY_ADJ_MOM_LOOKBACK] - 1)
             
             # Only include stocks with positive momentum return
             if momentum_return <= 0:
                 continue
             
             # Calculate volatility
-            daily_returns = ticker_data['Close'].pct_change().dropna()
+            daily_returns = close_prices.pct_change().dropna()
             if len(daily_returns) >= VOLATILITY_ADJ_MOM_VOL_WINDOW:
                 volatility = daily_returns.iloc[-VOLATILITY_ADJ_MOM_VOL_WINDOW:].std()
             else:
@@ -1453,7 +1454,12 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
     
     candidates = []
     
-    for ticker in all_tickers:
+    # Use union of all_tickers and data keys to ensure we don't miss tickers in data
+    tickers_to_scan = set(all_tickers)
+    if isinstance(ticker_data_grouped, dict):
+        tickers_to_scan.update(ticker_data_grouped.keys())
+    
+    for ticker in tickers_to_scan:
         try:
             # Get ticker data - handle both dict and GroupBy objects
             if isinstance(ticker_data_grouped, dict):
@@ -1466,42 +1472,45 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
             if ticker_data is None or len(ticker_data) == 0:
                 continue
             
-            # Use simple iloc-based approach like other strategies
-            if len(ticker_data) < 60:
+            # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
+            close_prices = ticker_data['Close'].dropna()
+            n_prices = len(close_prices)
+            
+            if n_prices < 60:
                 continue
             
-            # Get latest price (last row)
-            latest_price = ticker_data['Close'].dropna().iloc[-1] if len(ticker_data['Close'].dropna()) > 0 else None
-            if latest_price is None or latest_price <= 0:
+            # Get latest price
+            latest_price = close_prices.iloc[-1]
+            if latest_price <= 0:
                 continue
             
             # Calculate 3M performance (approx 63 trading days)
-            lookback_3m = min(63, len(ticker_data) - 1)
+            lookback_3m = min(63, n_prices - 1)
             if lookback_3m < 20:
                 continue
-            price_3m_ago = ticker_data['Close'].dropna().iloc[-lookback_3m]
+            price_3m_ago = close_prices.iloc[-lookback_3m]
             if price_3m_ago <= 0:
                 continue
             performance_3m = (latest_price - price_3m_ago) / price_3m_ago
             annualized_3m = (1 + performance_3m) ** (252 / lookback_3m) - 1
             
             # Calculate 1Y performance (approx 252 trading days)
-            lookback_1y = min(252, len(ticker_data) - 1)
+            lookback_1y = min(252, n_prices - 1)
             if lookback_1y < 60:
                 continue
-            price_1y_ago = ticker_data['Close'].dropna().iloc[-lookback_1y]
+            price_1y_ago = close_prices.iloc[-lookback_1y]
             if price_1y_ago <= 0:
                 continue
             performance_1y = (latest_price - price_1y_ago) / price_1y_ago
             
             # Calculate volatility (using daily returns)
-            daily_returns = ticker_data['Close'].pct_change().dropna()
+            daily_returns = close_prices.pct_change().dropna()
             if len(daily_returns) < 30:
                 continue
             volatility = daily_returns.std() * (252 ** 0.5)  # Annualized volatility
             
             # Calculate average volume
-            avg_volume = ticker_data['Volume'].mean() if 'Volume' in ticker_data.columns else 100000
+            avg_volume = ticker_data['Volume'].dropna().mean() if 'Volume' in ticker_data.columns else 100000
             
             # Apply filters - RELAXED criteria
             if (annualized_3m > 0.0 and  # Any positive 3M momentum
@@ -1537,6 +1546,360 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
                   f"{candidates[2]['ticker']} ({candidates[2]['score']:.3f})")
     else:
         print(f"   ⚠️ Momentum-Volatility Hybrid: No candidates found (checked {len(all_tickers)} tickers)")
+    
+    return [c['ticker'] for c in candidates[:top_n]]
+
+
+def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+    """
+    Hybrid Momentum-Volatility Strategy (6M variant): Combines strong 6-month momentum with controlled volatility.
+    Same as 3M variant but uses 6-month lookback as primary momentum signal.
+    """
+    if current_date is None:
+        current_date = datetime.now()
+    
+    candidates = []
+    
+    # Use union of all_tickers and data keys to ensure we don't miss tickers in data
+    tickers_to_scan = set(all_tickers)
+    if isinstance(ticker_data_grouped, dict):
+        tickers_to_scan.update(ticker_data_grouped.keys())
+    
+    for ticker in tickers_to_scan:
+        try:
+            # Get ticker data - handle both dict and GroupBy objects
+            if isinstance(ticker_data_grouped, dict):
+                ticker_data = ticker_data_grouped.get(ticker)
+            elif hasattr(ticker_data_grouped, 'get_group'):
+                ticker_data = ticker_data_grouped.get_group(ticker) if ticker in ticker_data_grouped.groups else None
+            else:
+                ticker_data = None
+                
+            if ticker_data is None or len(ticker_data) == 0:
+                continue
+            
+            # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
+            close_prices = ticker_data['Close'].dropna()
+            n_prices = len(close_prices)
+            
+            if n_prices < 60:
+                continue
+            
+            # Get latest price
+            latest_price = close_prices.iloc[-1]
+            if latest_price <= 0:
+                continue
+            
+            # Calculate 6M performance (approx 126 trading days)
+            lookback_6m = min(126, n_prices - 1)
+            if lookback_6m < 40:
+                continue
+            price_6m_ago = close_prices.iloc[-lookback_6m]
+            if price_6m_ago <= 0:
+                continue
+            performance_6m = (latest_price - price_6m_ago) / price_6m_ago
+            annualized_6m = (1 + performance_6m) ** (252 / lookback_6m) - 1
+            
+            # Calculate 1Y performance (approx 252 trading days)
+            lookback_1y = min(252, n_prices - 1)
+            if lookback_1y < 60:
+                continue
+            price_1y_ago = close_prices.iloc[-lookback_1y]
+            if price_1y_ago <= 0:
+                continue
+            performance_1y = (latest_price - price_1y_ago) / price_1y_ago
+            
+            # Calculate volatility (using daily returns)
+            daily_returns = close_prices.pct_change().dropna()
+            if len(daily_returns) < 30:
+                if ticker in ['SNDK', 'MTS.MC']:
+                    print(f"   ⚠️ DEBUG {ticker}: SKIPPED - daily_returns < 30 ({len(daily_returns)})")
+                continue
+            volatility = daily_returns.std() * (252 ** 0.5)  # Annualized volatility
+            
+            # Calculate average volume
+            avg_volume = ticker_data['Volume'].dropna().mean() if 'Volume' in ticker_data.columns else 100000
+            
+            # Debug for specific tickers
+            if ticker in ['SNDK', 'MTS.MC']:
+                print(f"   🔍 DEBUG {ticker}: price={latest_price:.2f}, 6m_ann={annualized_6m:.4f}, 1y={performance_1y:.4f}, vol={volatility:.4f}, avg_vol={avg_volume:.0f}")
+                print(f"   🔍 DEBUG {ticker}: data_len={len(ticker_data)}, close_len={len(ticker_data['Close'].dropna())}, cols={list(ticker_data.columns[:10])}")
+            
+            # Apply filters - RELAXED criteria
+            if (annualized_6m > 0.0 and  # Any positive 6M momentum
+                performance_1y > -0.3 and  # Allow up to 30% loss in 1Y
+                volatility < 3.0 and  # Volatility < 300%
+                avg_volume > 10000):  # Low volume threshold
+                
+                # Calculate composite score (6M weighted higher)
+                momentum_score = annualized_6m * 0.6 + max(performance_1y, 0) * 0.4
+                volatility_penalty = min(volatility, 1.0)
+                composite_score = momentum_score * (1 - volatility_penalty * 0.3)
+                
+                if ticker in ['SNDK', 'MTS.MC']:
+                    print(f"   ✅ DEBUG {ticker}: PASSED all filters, score={composite_score:.4f}")
+                
+                candidates.append({
+                    'ticker': ticker,
+                    'score': composite_score,
+                    'annualized_6m': annualized_6m,
+                    'performance_1y': performance_1y,
+                    'volatility': volatility
+                })
+            else:
+                if ticker in ['SNDK', 'MTS.MC']:
+                    fails = []
+                    if annualized_6m <= 0.0: fails.append(f"6m_ann={annualized_6m:.4f}<=0")
+                    if performance_1y <= -0.3: fails.append(f"1y={performance_1y:.4f}<=-0.3")
+                    if volatility >= 3.0: fails.append(f"vol={volatility:.4f}>=3.0")
+                    if avg_volume <= 10000: fails.append(f"vol={avg_volume:.0f}<=10000")
+                    print(f"   ❌ DEBUG {ticker}: FAILED filters: {', '.join(fails)}")
+                
+        except Exception as e:
+            if ticker in ['SNDK', 'MTS.MC']:
+                import traceback
+                print(f"   ⚠️ DEBUG {ticker}: EXCEPTION in scoring: {e}")
+                traceback.print_exc()
+            continue
+    
+    # Sort by composite score
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Debug: Check if specific tickers made it
+    candidate_tickers = {c['ticker'] for c in candidates}
+    for debug_ticker in ['SNDK', 'MTS.MC']:
+        if debug_ticker in candidate_tickers:
+            c = next(c for c in candidates if c['ticker'] == debug_ticker)
+            print(f"   🔍 DEBUG {debug_ticker}: IN candidates, score={c['score']:.4f}")
+        else:
+            print(f"   🔍 DEBUG {debug_ticker}: NOT in candidates")
+    
+    # Debug output
+    if candidates:
+        print(f"   🎯 Mom-Vol Hybrid 6M: Found {len(candidates)} candidates")
+        if len(candidates) >= 3:
+            print(f"   Top 3: {candidates[0]['ticker']} ({candidates[0]['score']:.3f}), "
+                  f"{candidates[1]['ticker']} ({candidates[1]['score']:.3f}), "
+                  f"{candidates[2]['ticker']} ({candidates[2]['score']:.3f})")
+    else:
+        print(f"   ⚠️ Mom-Vol Hybrid 6M: No candidates found (checked {len(all_tickers)} tickers)")
+    
+    return [c['ticker'] for c in candidates[:top_n]]
+
+
+def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+    """
+    Hybrid Momentum-Volatility Strategy (1Y/3M Ratio variant): Combines strong 1-year momentum with weak 3-month 
+    performance (buy on dip) and controlled volatility.
+    
+    Strategy: Find stocks with good 1Y performance but recent 3M pullback, filtered by low volatility.
+    """
+    if current_date is None:
+        current_date = datetime.now()
+    
+    candidates = []
+    
+    # Use union of all_tickers and data keys to ensure we don't miss tickers in data
+    tickers_to_scan = set(all_tickers)
+    if isinstance(ticker_data_grouped, dict):
+        tickers_to_scan.update(ticker_data_grouped.keys())
+    
+    for ticker in tickers_to_scan:
+        try:
+            # Get ticker data - handle both dict and GroupBy objects
+            if isinstance(ticker_data_grouped, dict):
+                ticker_data = ticker_data_grouped.get(ticker)
+            elif hasattr(ticker_data_grouped, 'get_group'):
+                ticker_data = ticker_data_grouped.get_group(ticker) if ticker in ticker_data_grouped.groups else None
+            else:
+                ticker_data = None
+                
+            if ticker_data is None or len(ticker_data) == 0:
+                continue
+            
+            # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
+            close_prices = ticker_data['Close'].dropna()
+            n_prices = len(close_prices)
+            
+            if n_prices < 60:
+                continue
+            
+            # Get latest price
+            latest_price = close_prices.iloc[-1]
+            if latest_price <= 0:
+                continue
+            
+            # Calculate 1Y performance (approx 252 trading days)
+            lookback_1y = min(252, n_prices - 1)
+            if lookback_1y < 60:
+                continue
+            price_1y_ago = close_prices.iloc[-lookback_1y]
+            if price_1y_ago <= 0:
+                continue
+            performance_1y = (latest_price - price_1y_ago) / price_1y_ago
+            
+            # Calculate 3M performance (approx 63 trading days)
+            lookback_3m = min(63, n_prices - 1)
+            if lookback_3m < 20:
+                continue
+            price_3m_ago = close_prices.iloc[-lookback_3m]
+            if price_3m_ago <= 0:
+                continue
+            performance_3m = (latest_price - price_3m_ago) / price_3m_ago
+            
+            # Calculate volatility (using daily returns)
+            daily_returns = ticker_data['Close'].pct_change().dropna()
+            if len(daily_returns) < 30:
+                continue
+            volatility = daily_returns.std() * (252 ** 0.5)  # Annualized volatility
+            
+            # Calculate average volume
+            avg_volume = ticker_data['Volume'].mean() if 'Volume' in ticker_data.columns else 100000
+            
+            # Apply filters - looking for strong 1Y but weak 3M (buy on dip)
+            if (performance_1y > 0.05 and  # At least 5% gain in 1Y
+                performance_3m < 0.10 and  # Less than 10% gain in 3M (or negative = pullback)
+                performance_1y > performance_3m and  # 1Y must be stronger than 3M
+                volatility < 2.0 and  # Volatility < 200%
+                avg_volume > 10000):  # Low volume threshold
+                
+                # Calculate composite score: reward high 1Y/3M ratio with volatility penalty
+                # Higher ratio = stronger long-term trend with recent pullback
+                ratio_1y_3m = (1 + performance_1y) / (1 + performance_3m) if performance_3m > -0.5 else 2.0
+                volatility_penalty = min(volatility, 1.0)
+                composite_score = ratio_1y_3m * (1 - volatility_penalty * 0.3)
+                
+                candidates.append({
+                    'ticker': ticker,
+                    'score': composite_score,
+                    'performance_1y': performance_1y,
+                    'performance_3m': performance_3m,
+                    'ratio_1y_3m': ratio_1y_3m,
+                    'volatility': volatility
+                })
+                
+        except Exception as e:
+            continue
+    
+    # Sort by composite score
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Debug output
+    if candidates:
+        print(f"   🎯 Mom-Vol Hybrid 1Y/3M: Found {len(candidates)} candidates")
+        if len(candidates) >= 3:
+            print(f"   Top 3: {candidates[0]['ticker']} (ratio={candidates[0]['ratio_1y_3m']:.2f}, score={candidates[0]['score']:.3f}), "
+                  f"{candidates[1]['ticker']} (ratio={candidates[1]['ratio_1y_3m']:.2f}, score={candidates[1]['score']:.3f}), "
+                  f"{candidates[2]['ticker']} (ratio={candidates[2]['ratio_1y_3m']:.2f}, score={candidates[2]['score']:.3f})")
+    else:
+        print(f"   ⚠️ Mom-Vol Hybrid 1Y/3M: No candidates found (checked {len(all_tickers)} tickers)")
+    
+    return [c['ticker'] for c in candidates[:top_n]]
+
+
+def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+    """
+    Hybrid Momentum-Volatility Strategy (1Y variant): Combines strong 1-year momentum with controlled volatility.
+    Same as 3M/6M variants but uses 1-year lookback as primary momentum signal.
+    """
+    if current_date is None:
+        current_date = datetime.now()
+    
+    candidates = []
+    
+    # Use union of all_tickers and data keys to ensure we don't miss tickers in data
+    tickers_to_scan = set(all_tickers)
+    if isinstance(ticker_data_grouped, dict):
+        tickers_to_scan.update(ticker_data_grouped.keys())
+    
+    for ticker in tickers_to_scan:
+        try:
+            # Get ticker data - handle both dict and GroupBy objects
+            if isinstance(ticker_data_grouped, dict):
+                ticker_data = ticker_data_grouped.get(ticker)
+            elif hasattr(ticker_data_grouped, 'get_group'):
+                ticker_data = ticker_data_grouped.get_group(ticker) if ticker in ticker_data_grouped.groups else None
+            else:
+                ticker_data = None
+                
+            if ticker_data is None or len(ticker_data) == 0:
+                continue
+            
+            # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
+            close_prices = ticker_data['Close'].dropna()
+            n_prices = len(close_prices)
+            
+            if n_prices < 100:
+                continue
+            
+            # Get latest price
+            latest_price = close_prices.iloc[-1]
+            if latest_price <= 0:
+                continue
+            
+            # Calculate 1Y performance (approx 252 trading days)
+            lookback_1y = min(252, n_prices - 1)
+            if lookback_1y < 100:
+                continue
+            price_1y_ago = close_prices.iloc[-lookback_1y]
+            if price_1y_ago <= 0:
+                continue
+            performance_1y = (latest_price - price_1y_ago) / price_1y_ago
+            
+            # Calculate 3Y performance for context (approx 756 trading days)
+            lookback_3y = min(756, n_prices - 1)
+            if lookback_3y >= 200:
+                price_3y_ago = close_prices.iloc[-lookback_3y]
+                if price_3y_ago > 0:
+                    performance_3y = (latest_price - price_3y_ago) / price_3y_ago
+                else:
+                    performance_3y = 0.0
+            else:
+                performance_3y = 0.0
+            
+            # Calculate volatility (using daily returns)
+            daily_returns = ticker_data['Close'].pct_change().dropna()
+            if len(daily_returns) < 60:
+                continue
+            volatility = daily_returns.std() * (252 ** 0.5)  # Annualized volatility
+            
+            # Calculate average volume
+            avg_volume = ticker_data['Volume'].mean() if 'Volume' in ticker_data.columns else 100000
+            
+            # Apply filters - RELAXED criteria for 1Y
+            if (performance_1y > 0.0 and  # Any positive 1Y momentum
+                performance_3y > -0.5 and  # Allow up to 50% loss in 3Y (or no 3Y data)
+                volatility < 2.5 and  # Volatility < 250%
+                avg_volume > 10000):  # Low volume threshold
+                
+                # Calculate composite score (1Y weighted higher, 3Y provides context)
+                momentum_score = performance_1y * 0.7 + max(performance_3y, 0) * 0.3
+                volatility_penalty = min(volatility, 1.0)
+                composite_score = momentum_score * (1 - volatility_penalty * 0.3)
+                
+                candidates.append({
+                    'ticker': ticker,
+                    'score': composite_score,
+                    'performance_1y': performance_1y,
+                    'performance_3y': performance_3y,
+                    'volatility': volatility
+                })
+                
+        except Exception as e:
+            continue
+    
+    # Sort by composite score
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Debug output
+    if candidates:
+        print(f"   🎯 Mom-Vol Hybrid 1Y: Found {len(candidates)} candidates")
+        if len(candidates) >= 3:
+            print(f"   Top 3: {candidates[0]['ticker']} ({candidates[0]['score']:.3f}), "
+                  f"{candidates[1]['ticker']} ({candidates[1]['score']:.3f}), "
+                  f"{candidates[2]['ticker']} ({candidates[2]['score']:.3f})")
+    else:
+        print(f"   ⚠️ Mom-Vol Hybrid 1Y: No candidates found (checked {len(all_tickers)} tickers)")
     
     return [c['ticker'] for c in candidates[:top_n]]
 
@@ -1667,3 +2030,205 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
     else:
         print(f"   ❌ No Price Acceleration candidates found")
         return []
+
+
+def select_voting_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+    """
+    Voting Ensemble Strategy: Combines stock picks from multiple strategies
+    and selects stocks with the highest consensus votes.
+    
+    Strategy List:
+    - momentum_volatility_hybrid
+    - price_acceleration  
+    - static_bh_6m
+    - ratio_3m
+    - vol_adj_mom
+    - momentum_ai_hybrid
+    - static_bh_3m
+    - risk_adj_mom
+    - dynamic_bh_1y_trailing_stop
+    - dynamic_bh_1y_vol_filter
+    - adaptive_ensemble
+    - sentiment_ensemble
+    
+    Args:
+        all_tickers: List of ticker symbols to analyze
+        ticker_data_grouped: Dictionary of ticker data
+        current_date: Current date for analysis
+        top_n: Number of stocks to return
+        
+    Returns:
+        List of selected ticker symbols with highest consensus votes
+    """
+    print(f"   🗳️  Voting Ensemble: Analyzing {len(all_tickers)} tickers")
+    print(f"   📊 Combining picks from 10 strategies...")
+    
+    # Collect stock picks from each strategy
+    strategy_picks = {}
+    vote_counts = {}
+    total_strategies = 0
+    
+    # Strategy 1: Momentum Volatility Hybrid
+    try:
+        print(f"   🔄 Getting picks from momentum_volatility_hybrid...")
+        stocks = select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        if stocks:
+            strategy_picks["momentum_volatility_hybrid"] = stocks
+            for stock in stocks:
+                vote_counts[stock] = vote_counts.get(stock, 0) + 1
+            total_strategies += 1
+            print(f"   ✅ momentum_volatility_hybrid: {len(stocks)} stocks")
+    except Exception as e:
+        print(f"   ⚠️ momentum_volatility_hybrid failed: {e}")
+    
+    # Strategy 2: Price Acceleration
+    try:
+        print(f"   🔄 Getting picks from price_acceleration...")
+        stocks = select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        if stocks:
+            strategy_picks["price_acceleration"] = stocks
+            for stock in stocks:
+                vote_counts[stock] = vote_counts.get(stock, 0) + 1
+            total_strategies += 1
+            print(f"   ✅ price_acceleration: {len(stocks)} stocks")
+    except Exception as e:
+        print(f"   ⚠️ price_acceleration failed: {e}")
+    
+    # Strategy 3: 3M/1Y Ratio
+    try:
+        print(f"   🔄 Getting picks from ratio_3m_1y...")
+        stocks = select_3m_1y_ratio_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        if stocks:
+            strategy_picks["ratio_3m_1y"] = stocks
+            for stock in stocks:
+                vote_counts[stock] = vote_counts.get(stock, 0) + 1
+            total_strategies += 1
+            print(f"   ✅ ratio_3m_1y: {len(stocks)} stocks")
+    except Exception as e:
+        print(f"   ⚠️ ratio_3m_1y failed: {e}")
+    
+    # Strategy 4: Vol-Adj Mom
+    try:
+        print(f"   🔄 Getting picks from vol_adj_mom...")
+        stocks = select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        if stocks:
+            strategy_picks["vol_adj_mom"] = stocks
+            for stock in stocks:
+                vote_counts[stock] = vote_counts.get(stock, 0) + 1
+            total_strategies += 1
+            print(f"   ✅ vol_adj_mom: {len(stocks)} stocks")
+    except Exception as e:
+        print(f"   ⚠️ vol_adj_mom failed: {e}")
+    
+    # Strategy 5: Quality Momentum
+    try:
+        print(f"   🔄 Getting picks from quality_momentum...")
+        stocks = select_quality_momentum_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        if stocks:
+            strategy_picks["quality_momentum"] = stocks
+            for stock in stocks:
+                vote_counts[stock] = vote_counts.get(stock, 0) + 1
+            total_strategies += 1
+            print(f"   ✅ quality_momentum: {len(stocks)} stocks")
+    except Exception as e:
+        print(f"   ⚠️ quality_momentum failed: {e}")
+    
+    # Strategy 6: Turnaround
+    try:
+        print(f"   🔄 Getting picks from turnaround...")
+        stocks = select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        if stocks:
+            strategy_picks["turnaround"] = stocks
+            for stock in stocks:
+                vote_counts[stock] = vote_counts.get(stock, 0) + 1
+            total_strategies += 1
+            print(f"   ✅ turnaround: {len(stocks)} stocks")
+    except Exception as e:
+        print(f"   ⚠️ turnaround failed: {e}")
+    
+    # Strategy 7: 1Y/3M Ratio
+    try:
+        print(f"   🔄 Getting picks from ratio_1y_3m...")
+        stocks = select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        if stocks:
+            strategy_picks["ratio_1y_3m"] = stocks
+            for stock in stocks:
+                vote_counts[stock] = vote_counts.get(stock, 0) + 1
+            total_strategies += 1
+            print(f"   ✅ ratio_1y_3m: {len(stocks)} stocks")
+    except Exception as e:
+        print(f"   ⚠️ ratio_1y_3m failed: {e}")
+    
+    # Strategy 8: Dynamic BH 6M
+    try:
+        print(f"   🔄 Getting picks from dynamic_bh_6m...")
+        stocks = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, "6m", current_date, top_n)
+        if stocks:
+            strategy_picks["dynamic_bh_6m"] = stocks
+            for stock in stocks:
+                vote_counts[stock] = vote_counts.get(stock, 0) + 1
+            total_strategies += 1
+            print(f"   ✅ dynamic_bh_6m: {len(stocks)} stocks")
+    except Exception as e:
+        print(f"   ⚠️ dynamic_bh_6m failed: {e}")
+    
+    # Strategy 9: Dynamic BH 3M
+    try:
+        print(f"   🔄 Getting picks from dynamic_bh_3m...")
+        stocks = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, "3m", current_date, top_n)
+        if stocks:
+            strategy_picks["dynamic_bh_3m"] = stocks
+            for stock in stocks:
+                vote_counts[stock] = vote_counts.get(stock, 0) + 1
+            total_strategies += 1
+            print(f"   ✅ dynamic_bh_3m: {len(stocks)} stocks")
+    except Exception as e:
+        print(f"   ⚠️ dynamic_bh_3m failed: {e}")
+    
+    # Strategy 10: Dynamic BH 1Y
+    try:
+        print(f"   🔄 Getting picks from dynamic_bh_1y...")
+        stocks = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, "1y", current_date, top_n)
+        if stocks:
+            strategy_picks["dynamic_bh_1y"] = stocks
+            for stock in stocks:
+                vote_counts[stock] = vote_counts.get(stock, 0) + 1
+            total_strategies += 1
+            print(f"   ✅ dynamic_bh_1y: {len(stocks)} stocks")
+    except Exception as e:
+        print(f"   ⚠️ dynamic_bh_1y failed: {e}")
+    
+    print(f"   📊 {total_strategies} strategies contributed votes")
+    
+    # Sort stocks by vote count (descending), then by ticker symbol for consistency
+    sorted_stocks = sorted(vote_counts.items(), key=lambda x: (-x[1], x[0]))
+    
+    # Select top N stocks with highest votes
+    top_voted_stocks = [stock for stock, votes in sorted_stocks[:top_n]]
+    
+    # Display voting results
+    if top_voted_stocks:
+        print(f"\n   📊 VOTING RESULTS (Top {len(top_voted_stocks)} stocks):")
+        print(f"   {'Rank':<5} {'Ticker':<8} {'Votes':<8} {'Strategies':<50}")
+        print(f"   {'-'*5} {'-'*8} {'-'*8} {'-'*50}")
+        
+        for rank, (stock, votes) in enumerate(sorted_stocks[:top_n], 1):
+            # Find which strategies voted for this stock
+            voting_strategies = []
+            for strategy_name, picks in strategy_picks.items():
+                if stock in picks:
+                    voting_strategies.append(strategy_name.replace('_', ' ').title())
+            
+            strategies_str = ', '.join(voting_strategies[:3])  # Show first 3 strategies
+            if len(voting_strategies) > 3:
+                strategies_str += f" (+{len(voting_strategies)-3} more)"
+            
+            vote_bar = "█" * votes + "░" * (total_strategies - votes)
+            print(f"   {rank:<5} {stock:<8} {votes}/{total_strategies} {vote_bar} {strategies_str}")
+        
+        print(f"\n   🗳️  Voting Ensemble selected {len(top_voted_stocks)} tickers:")
+        print(f"   ✅ {top_voted_stocks}")
+    else:
+        print(f"   ❌ No stocks received votes from any strategy")
+    
+    return top_voted_stocks

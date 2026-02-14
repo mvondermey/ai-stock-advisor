@@ -18,10 +18,23 @@ def calculate_single_ticker_performance(args):
         if ticker_data.empty:
             return None
             
-        perf_start_date = max(train_start_date, current_date - timedelta(days=period_days))
+        if train_start_date is not None:
+            perf_start_date = max(train_start_date, current_date - timedelta(days=period_days))
+        else:
+            perf_start_date = current_date - timedelta(days=period_days)
         perf_data = ticker_data.loc[perf_start_date:current_date]
         
-        if len(perf_data) >= 50:
+        # Adaptive min rows based on period length
+        if period_days <= 30:
+            min_rows = 10
+        elif period_days <= 100:
+            min_rows = 20
+        elif period_days <= 200:
+            min_rows = 30
+        else:
+            min_rows = 50
+        
+        if len(perf_data) >= min_rows:
             valid_close = perf_data['Close'].dropna()
             if len(valid_close) >= 2:
                 start_price = valid_close.iloc[0]
