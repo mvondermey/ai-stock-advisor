@@ -38,12 +38,9 @@ from shared_strategies import (
 # Configuration Parameters
 # ============================================
 
-# Strategies to include
+# Strategies to include - focused on best performer only
 SENTIMENT_ENSEMBLE_STRATEGIES = [
-    'static_bh_3m',
-    'dyn_bh_1y_vol',
-    'risk_adj_mom',
-    'quality_mom',
+    'mom_vol_hybrid_6m',  # Best performer: +48.8%
 ]
 
 # Sentiment parameters
@@ -52,12 +49,9 @@ MIN_SENTIMENT_SCORE = -0.3  # Minimum sentiment score
 MAX_SENTIMENT_SCORE = 0.3   # Maximum sentiment score
 SENTIMENT_WEIGHT = 0.30     # Weight of sentiment in final score (30%)
 
-# Strategy weights
+# Strategy weights - focused on best performer
 SENTIMENT_STRATEGY_WEIGHTS = {
-    'static_bh_3m': 0.25,
-    'dyn_bh_1y_vol': 0.25,
-    'risk_adj_mom': 0.25,
-    'quality_mom': 0.25,
+    'mom_vol_hybrid_6m': 1.0,  # 100% weight for best performer
 }
 
 
@@ -83,24 +77,23 @@ class SentimentEnhancedEnsemble:
                           top_n: int = 15) -> List[str]:
         """Get stock picks from a specific strategy."""
         try:
-            if strategy_name == 'static_bh_3m':
-                return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                               period='3m', current_date=current_date, top_n=top_n)
+            if strategy_name == 'mom_vol_hybrid_6m':
+                # Momentum-Volatility Hybrid 6M: Best performer
+                from shared_strategies import select_momentum_volatility_hybrid_6m_stocks
+                return select_momentum_volatility_hybrid_6m_stocks(
+                    all_tickers, ticker_data_grouped, 
+                    current_date=current_date, 
+                    top_n=top_n
+                )
             
-            elif strategy_name == 'dyn_bh_1y_vol':
-                picks = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                                period='1y', current_date=current_date, top_n=top_n * 2)
-                # Apply volatility filter
-                filtered_picks = []
-                for ticker in picks:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        if len(ticker_data) >= 20:
-                            daily_returns = ticker_data['Close'].pct_change().dropna()
-                            vol = daily_returns.std() * np.sqrt(252) * 100
-                            if vol <= 120:
-                                filtered_picks.append(ticker)
-                return filtered_picks[:top_n]
+            elif strategy_name == 'mom_vol_hybrid_1y':
+                # Momentum-Volatility Hybrid 1Y: Strong performer
+                from shared_strategies import select_momentum_volatility_hybrid_1y_stocks
+                return select_momentum_volatility_hybrid_1y_stocks(
+                    all_tickers, ticker_data_grouped, 
+                    current_date=current_date, 
+                    top_n=top_n
+                )
             
             elif strategy_name == 'risk_adj_mom':
                 return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped,
@@ -116,6 +109,7 @@ class SentimentEnhancedEnsemble:
                 return []
                 
         except Exception as e:
+            print(f"   ⚠️ Error getting picks for {strategy_name}: {e}")
             return []
     
     def calculate_ensemble_scores(self, strategy_picks: Dict[str, List[str]]) -> Dict[str, float]:
@@ -124,17 +118,18 @@ class SentimentEnhancedEnsemble:
         stock_counts = defaultdict(int)
         
         for strategy, picks in strategy_picks.items():
-            weight = SENTIMENT_STRATEGY_WEIGHTS.get(strategy, 0.25)
+            weight = SENTIMENT_STRATEGY_WEIGHTS.get(strategy, 0.5)
             for rank, ticker in enumerate(picks):
                 rank_score = 1.0 / (rank + 1)
                 stock_scores[ticker] += weight * rank_score
                 stock_counts[ticker] += 1
         
-        # Apply consensus filter (at least 2 strategies)
+        # Apply consensus filter (at least 1 strategy for 2-strategy ensemble)
+        # Stocks picked by both strategies get higher scores naturally
         consensus_scores = {
             ticker: score 
             for ticker, score in stock_scores.items()
-            if stock_counts[ticker] >= 2
+            if stock_counts[ticker] >= 1
         }
         
         return consensus_scores

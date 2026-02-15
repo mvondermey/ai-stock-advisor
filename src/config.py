@@ -206,7 +206,7 @@ TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
 USE_UNIFIED_PARALLEL_TRAINING = True
 
 # --- Backtest & training windows
-BACKTEST_DAYS           = 180      # Backtest period in calendar days (~60=2mo, ~180=6mo, ~365=1yr, ~540=1.5yr)
+BACKTEST_DAYS           = 63       # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 TRAIN_LOOKBACK_DAYS     = 365        # Training period in calendar days (~1 year, ~252 trading days)
 VALIDATION_DAYS         = 90         # FIX 4: Validation period for threshold optimization
@@ -263,10 +263,13 @@ ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validat
 # --- Training Period Enable/Disable Flags ---
 # ENABLE_1YEAR_TRAINING removed - models are now trained during walk-forward backtest
 
-# --- Portfolio Stratebgy Enable/Disable Flags ---
+# --- Portfolio Strategy Enable/Disable Flags ---
 # Set to False to disable specific portfolios in the backtest
-# AI Strategy + traditional strategies
-ENABLE_AI_STRATEGY      = True   # ENABLED - Use existing saved models (no new training)
+ENABLE_MOMENTUM_AI_HYBRID = True  # ENABLED - Momentum+AI Hybrid
+ENABLE_MULTITASK_LEARNING = False # DISABLED - Multi-task learning
+ENABLE_AI_VOLATILITY_ENSEMBLE = False  # DISABLED - AI Volatility Ensemble
+
+# Traditional strategies
 ENABLE_STATIC_BH        = True   # ENABLED - Static Buy & Hold benchmark
 ENABLE_DYNAMIC_BH_1Y    = True   # ENABLED - Dynamic BH 1-year
 ENABLE_DYNAMIC_BH_3M    = True   # ENABLED - Dynamic BH 3-month
@@ -277,12 +280,10 @@ ENABLE_RISK_ADJ_MOM     = True   # ENABLED - Risk-Adjusted Momentum
 ENABLE_MEAN_REVERSION   = True   # ENABLED - Mean Reversion
 ENABLE_SEASONAL         = True   # ENABLED - Seasonal strategy
 ENABLE_QUALITY_MOM      = True   # ENABLED - Quality + Momentum
-ENABLE_MOMENTUM_AI_HYBRID = True   # ENABLED - Use existing saved models
 ENABLE_VOLATILITY_ADJ_MOM = True  # ENABLED - Volatility-Adjusted Momentum strategy
 ENABLE_DYNAMIC_BH_1Y_VOL_FILTER = True  # NEW - Dynamic BH 1Y with Volatility Filter
 ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP = True   # ENABLED - Dynamic BH 1Y with trailing stop
 ENABLE_SECTOR_ROTATION = True   # ENABLED - Sector Rotation Strategy
-ENABLE_MULTITASK_LEARNING = False   # DISABLED - Multi-Task Learning Strategy (slow)
 ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 ENABLE_MOMENTUM_VOLATILITY_HYBRID = True   # ENABLED - Momentum-Volatility Hybrid Strategy
 ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M = True   # ENABLED - Momentum-Volatility Hybrid 6M Strategy (6-month lookback)
@@ -292,10 +293,8 @@ ENABLE_ADAPTIVE_STRATEGY = True   # ENABLED - Adaptive Meta-Ensemble Strategy
 ENABLE_VOLATILITY_ENSEMBLE = True   # ENABLED - Volatility-Adjusted Ensemble Strategy (risk-managed position sizing)
 ENABLE_ENHANCED_VOLATILITY = True   # ENABLED - Enhanced Volatility Trader (ATR stops + take profits)
 ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble Strategy (diversification-focused)
-ENABLE_AI_VOLATILITY_ENSEMBLE = False  # DISABLED - AI-Enhanced Volatility Ensemble Strategy (slow)
 ENABLE_SENTIMENT_ENSEMBLE = True   # ENABLED - Sentiment-Enhanced Ensemble Strategy
 ENABLE_DYNAMIC_POOL = True   # ENABLED - Dynamic Strategy Pool Strategy
-ENABLE_AI_CLASSIFICATION = True   # ENABLED - AI Classification Strategy (SIMPLIFIED: 12 features vs 98+)
 
 # --- Multi-Timeframe Ensemble Strategy ---
 # Combines signals from different timeframes for better entry/exit timing
@@ -313,6 +312,15 @@ ENABLE_MOMENTUM_ACCELERATION = True   # NEW - Momentum Acceleration (3M momentum
 ENABLE_CONCENTRATED_3M = True   # NEW - Concentrated 3M + Vol Filter (fewer positions, volatility filtered)
 ENABLE_DUAL_MOMENTUM = True   # NEW - Dual Momentum (absolute + relative momentum)
 ENABLE_TREND_FOLLOWING_ATR = True   # NEW - Trend Following with ATR Trailing Stop
+ENABLE_ELITE_HYBRID = True   # NEW - Elite Hybrid (Mom-Vol 6M + 1Y/3M Ratio - combines top 2 most consistent strategies)
+ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip opportunities)
+ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (not implemented)
+
+# AI Elite Parameters
+AI_ELITE_WARMUP_DAYS = 20  # Days before starting ML predictions (train on day 20 with 20 days)
+AI_ELITE_RETRAIN_DAYS = 20  # Retrain model every N days
+AI_ELITE_TRAINING_LOOKBACK = -1  # Use all available days (progressive: day 20->20 days, day 40->40 days, etc.)
+AI_ELITE_FORWARD_DAYS = 20  # Predict performance over next N days
 
 # Momentum Acceleration Parameters
 MOM_ACCEL_LOOKBACK_DAYS = 90  # 3-month momentum lookback
@@ -349,15 +357,6 @@ MULTI_TIMEFRAME_WEIGHTS = {
 }
 # Require consensus from at least this many timeframes
 MULTI_TIMEFRAME_MIN_CONSENSUS = 2  # At least 2 timeframes must agree
-ENABLE_LLM_STRATEGY = False  # DISABLED - LLM Strategy
-
-# --- LLM Strategy Parameters (via Ollama) ---
-LLM_OLLAMA_BASE_URL = "http://localhost:11434"
-LLM_OLLAMA_MODEL = "llama3:latest"  # LLM model via Ollama (llama3, mistral, deepseek-coder, etc.)
-LLM_OLLAMA_TIMEOUT = 60  # seconds per request
-LLM_PARALLEL_WORKERS = 8  # Number of parallel LLM requests (GPU is bottleneck, but helps with IO overlap)
-LLM_MIN_SCORE = 0.0  # Minimum score threshold for stock selection
-LLM_REBALANCE_FREQUENCY_DAYS = 20  # Rebalance every N days (LLM calls are slow)
 
 # --- Strategy (separate from feature windows)
 STRAT_SMA_SHORT         = 10
@@ -366,7 +365,7 @@ ATR_PERIOD              = 14
 ATR_MULT_TRAIL          = 2.0
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
 PORTFOLIO_SIZE          = 10        # Number of stocks to hold in portfolio
-TOTAL_CAPITAL           = 100000     # Total capital to invest ($100,000)
+TOTAL_CAPITAL           = 300000     # Total capital to invest ($300,000)
 INVESTMENT_PER_STOCK    = TOTAL_CAPITAL / PORTFOLIO_SIZE  # Automatically calculated
 TRANSACTION_COST        = 0.011      # 1.1% per trade leg (buy or sell)
 ENABLE_STOP_LOSS        = False      # Global enable/disable stop loss protection (overridden by per-strategy settings)
@@ -415,6 +414,22 @@ STRATEGY_STOP_LOSS_PCT = {
     'Dynamic BH 1Y': 0.0,          # -0.2% worse (+15.1% vs +14.9%)
     '1Y/3M Ratio': 0.0,            # -0.2% worse (+7.6% vs +7.4%)
 }
+
+# --- Strategy Performance Filters ---
+# Minimum performance thresholds for stock selection
+# These can be used to filter out underperformers before strategy scoring
+MIN_PERFORMANCE_1Y = 0.10      # 10% minimum 1-year performance
+MIN_PERFORMANCE_6M = 0.05      # 5% minimum 6-month performance (10%/2)
+MIN_PERFORMANCE_3M = 0.025     # 2.5% minimum 3-month performance (10%/4)
+ENABLE_PERFORMANCE_FILTERS = True   # Set to True to enable these filters
+
+# --- Universal Data Requirements ---
+# Single source of truth for minimum data requirements across all strategies
+MIN_DATA_DAYS_1Y = 180         # Minimum days required for 1-year calculations (reduced from 252)
+MIN_DATA_DAYS_6M = 90          # Minimum days required for 6-month calculations (reduced from 126)
+MIN_DATA_DAYS_3M = 45          # Minimum days required for 3-month calculations (reduced from 63)
+MIN_DATA_DAYS_1M = 15          # Minimum days required for 1-month calculations (reduced from 21)
+MIN_DATA_DAYS_GENERAL = 60     # General minimum data requirement for most strategies (reduced from 90)
 
 # --- Dynamic BH 1Y + Volatility Filter Parameters ---
 # Maximum allowed annualized volatility for stock selection (as percentage)
@@ -470,15 +485,6 @@ STATIC_BH_1Y_REBALANCE_DAYS = 0   # Default rebalance period for 1Y selection
 STATIC_BH_3M_REBALANCE_DAYS = 0   # Default rebalance period for 3M selection
 STATIC_BH_1M_REBALANCE_DAYS = 0   # Default rebalance period for 1M selection
 STATIC_BH_6M_REBALANCE_DAYS = 0   # Default rebalance period for 6M selection
-
-# --- AI Meta-Strategy ---
-# Second-level AI that allocates capital across sub-strategies based on recent performance
-ENABLE_META_STRATEGY = True          # Enable AI Meta-Strategy
-META_STRATEGY_WARMUP_DAYS = 10       # Days to observe strategies before first ML allocation
-META_STRATEGY_LOOKBACK_DAYS = 10     # Rolling window for strategy performance features
-META_STRATEGY_FORWARD_DAYS = 10      # Forward return horizon for training labels
-META_STRATEGY_TOP_K = 3              # Concentrate allocation on top K strategies
-META_STRATEGY_RETRAIN_DAYS = 20      # Retrain model every N days
 
 # --- Static BH Monthly Rebalance Variants ---
 # These are separate strategies that rebalance on the first trading day of each month
@@ -537,6 +543,12 @@ MOMENTUM_AI_HYBRID_SELL_THRESHOLD = -0.01  # Sell if AI predicts <-1% return
 MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK = 90  # 3-month momentum for stock ranking
 MOMENTUM_AI_HYBRID_STOP_LOSS = 0.10  # 10% stop loss from entry
 MOMENTUM_AI_HYBRID_TRAILING_STOP = 0.08  # 8% trailing stop once in profit
+
+# --- Momentum-Volatility Hybrid Strategy Parameters ---
+MOMENTUM_VOLATILITY_HYBRID_BUY_THRESHOLD = 0.02  # Buy if predicted return > 2%
+MOMENTUM_VOLATILITY_HYBRID_SELL_THRESHOLD = -0.01  # Sell if predicted return < -1%
+MOMENTUM_VOLATILITY_HYBRID_STOP_LOSS = 0.10  # 10% stop loss
+MOMENTUM_VOLATILITY_HYBRID_TRAILING_STOP = 0.08  # 8% trailing stop
 
 # --- Volatility-Adjusted Momentum Strategy Parameters ---
 VOLATILITY_ADJ_MOM_LOOKBACK = 90  # 90-day momentum lookback

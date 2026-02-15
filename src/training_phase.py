@@ -467,12 +467,11 @@ def train_models_for_period(
     # NEW: Use Unified Parallel Training if enabled
     # ============================================
     if USE_UNIFIED_PARALLEL_TRAINING:
-        print(f"   🚀 Using Unified Parallel Training System (model-level parallelization)")
-        try:
-            from parallel_training import train_all_models_parallel
-        except ModuleNotFoundError:
-            # Fallback for different import contexts
-            from src.parallel_training import train_all_models_parallel
+        print(f"   ⚠️ Unified Parallel Training System disabled (parallel_training.py removed)")
+        print(f"   🔄 Falling back to standard training")
+        USE_UNIFIED_PARALLEL_TRAINING = False
+    
+    if False:  # Disabled - parallel_training.py removed
         
         # Use PERIOD_HORIZONS for prediction horizon (10 days for 1-Year)
         from config import PERIOD_HORIZONS

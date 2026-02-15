@@ -5,10 +5,14 @@ from typing import List, Dict, Tuple, Optional
 import warnings
 import json
 from pathlib import Path
-from alpha_training import alpha_sample_weights
 import joblib # For model saving/loading
 import sys # For current_process in train_worker
 import matplotlib.pyplot as plt # For SHAP plots
+
+
+def alpha_sample_weights(fut, bench):
+    """Simple replacement for alpha_training.alpha_sample_weights - returns uniform weights."""
+    return pd.Series(np.ones(len(fut)), index=fut.index)
 
 
 def _safe_to_cpu(model_or_tensor):

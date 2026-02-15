@@ -32,7 +32,6 @@ from config import (
     BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, VALIDATION_DAYS,
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, PARALLEL_THRESHOLD, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
         ENABLE_1YEAR_BACKTEST,
-    ENABLE_AI_STRATEGY,
     ENABLE_MEAN_REVERSION,
     ENABLE_QUALITY_MOM,
     ENABLE_MOMENTUM_AI_HYBRID,
@@ -57,11 +56,6 @@ from config import (
      RUN_BACKTEST_UNTIL_TODAY,
     RETRAIN_FREQUENCY_DAYS, ENABLE_WALK_FORWARD_RETRAINING
 )
-
-from alpha_training import select_threshold_by_alpha, AlphaThresholdConfig
-# Toggle: use alpha-optimized probability threshold for buys/sells
-USE_ALPHA_THRESHOLD_BUY = True
-USE_ALPHA_THRESHOLD_SELL = True
 
 # Global variables for parallel processing (will be set in main)
 _grouped_data = None
@@ -1033,12 +1027,9 @@ def main(
         print(f"   ⚠️ No existing models found - will train during walk-forward")
         models, scalers, y_scalers = {}, {}, {}
     
-    # ✅ FIX: Enable AI Strategy - models will be trained on Day 1 of walk-forward backtest
-    from config import ENABLE_AI_STRATEGY, ENABLE_WALK_FORWARD_RETRAINING
-    # AI Strategy is available if:
-    # 1. ENABLE_AI_STRATEGY is True, AND
-    # 2. Either (walk-forward retraining enabled) OR (we have existing models)
-    ai_strategy_available = ENABLE_AI_STRATEGY and (ENABLE_WALK_FORWARD_RETRAINING or len(models) > 0)
+    # AI Strategy removed - always disabled
+    from config import ENABLE_WALK_FORWARD_RETRAINING
+    ai_strategy_available = False  # AI Strategy removed
     failed_training_tickers_1y = {}
     top_tickers_ai_filtered = top_tickers  # All tickers available for AI when trained
     
@@ -1138,12 +1129,8 @@ def main(
     print(f"\n[DEBUG MAIN] 1-Year models keys: {list(models.keys())}")
     print(f"[DEBUG MAIN] 1-Year models values types: {[type(v).__name__ if v else 'None' for v in models.values()]}")
 
-    if ENABLE_AI_STRATEGY:
-        # --- Run Backtest (AI Strategy) ---
-        print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (AI Strategy)...")
-    else:
-        # --- Skip AI Strategy, run comparison strategies only ---
-        print(f"\n🔍 Step 8: Skipping AI Strategy (ENABLE_AI_STRATEGY = False), running comparison strategies only...")
+    # AI Strategy removed - running comparison strategies only
+    print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (comparison strategies only)...")
     
     n_top_rebal = 3
     initial_capital_1y = capital_per_stock_1y * n_top_rebal
@@ -1163,7 +1150,7 @@ def main(
             period_name=actual_period_name,
             top_performers_data=top_performers_data,
             horizon_days=PERIOD_HORIZONS.get("1-Year", 10),  # 10 calendar days from config
-            enable_ai_strategy=ENABLE_AI_STRATEGY and ai_strategy_available
+            enable_ai_strategy=False  # AI Strategy removed
         )
         
         if result is None:

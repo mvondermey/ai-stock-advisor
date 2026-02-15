@@ -40,9 +40,15 @@ def select_momentum_acceleration_stocks(
     Returns:
         List of selected tickers
     """
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Momentum Acceleration"
+    )
+    
     if current_date is None:
         latest_dates = [ticker_data_grouped[t].index.max() 
-                       for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
+                       for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
         if latest_dates:
             current_date = max(latest_dates)
         else:
@@ -50,7 +56,7 @@ def select_momentum_acceleration_stocks(
     
     candidates = []
     
-    for ticker in all_tickers:
+    for ticker in filtered_tickers:
         try:
             if ticker not in ticker_data_grouped:
                 continue
@@ -170,9 +176,15 @@ def select_concentrated_3m_stocks(
         else:
             return []
     
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Concentrated 3M"
+    )
+    
     candidates = []
     
-    for ticker in all_tickers:
+    for ticker in filtered_tickers:
         try:
             if ticker not in ticker_data_grouped:
                 continue
@@ -265,11 +277,17 @@ def select_dual_momentum_stocks(
         else:
             return [], False
     
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Dual Momentum"
+    )
+    
     candidates = []
     total_momentum = 0.0
     valid_count = 0
     
-    for ticker in all_tickers:
+    for ticker in filtered_tickers:
         try:
             if ticker not in ticker_data_grouped:
                 continue
@@ -426,32 +444,39 @@ def select_trend_following_atr_stocks(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
     top_n: int = PORTFOLIO_SIZE
-) -> Tuple[List[str], List[str]]:
+) -> List[str]:
     """
-    Trend Following ATR Strategy:
-    - Enter on breakout above N-day high
-    - Exit on ATR trailing stop
-    - Require positive 3M momentum for entry
+    Trend Following with ATR Trailing Stop Strategy:
+    - Identify uptrends using moving averages
+    - Enter on breakout above recent high
+    - Use ATR-based trailing stop for risk management
     
+    Args:
+        all_tickers: List of ticker symbols
+        ticker_data_grouped: Dict of ticker -> DataFrame
+        current_date: Current date for analysis
+        top_n: Number of stocks to select
+        
     Returns:
-        Tuple of (stocks_to_buy, stocks_to_sell)
+        List of selected ticker symbols
     """
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Trend Following ATR"
+    )
+    
     if current_date is None:
         latest_dates = [ticker_data_grouped[t].index.max() 
-                       for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
+                       for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
         if latest_dates:
             current_date = max(latest_dates)
         else:
-            return [], []
+            return []
     
-    trend_tracker = get_trend_atr_instance()
+    candidates = []
     
-    stocks_to_buy = []
-    stocks_to_sell = []
-    breakout_candidates = []
-    
-    # Check existing positions for trailing stop exits
-    for ticker in list(trend_tracker.positions.keys()):
+    for ticker in filtered_tickers:
         try:
             if ticker not in ticker_data_grouped:
                 continue

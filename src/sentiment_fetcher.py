@@ -54,6 +54,26 @@ class SentimentDataFetcher:
         self.last_alpha_vantage_call = time.time()
         self.alpha_vantage_call_count += 1
     
+    def _normalize_ticker(self, ticker: str) -> str:
+        """
+        Normalize ticker by removing all exchange suffixes.
+        Alpha Vantage only accepts alphanumeric characters, colons, underscores, and hyphens.
+        
+        Examples:
+            ENR.DE -> ENR (Deutsche Börse)
+            CBK.DE -> CBK (Deutsche Börse)
+            VOD.L -> VOD (London Stock Exchange)
+            BHP.AX -> BHP (Australian Securities Exchange)
+            NESN.SW -> NESN (Swiss Exchange)
+            MC.PA -> MC (Euronext Paris)
+            7203.T -> 7203 (Tokyo Stock Exchange)
+        """
+        # Remove all exchange suffixes (anything after a dot)
+        if '.' in ticker:
+            base_ticker = ticker.split('.')[0]
+            return base_ticker
+        return ticker
+    
     def get_alpha_vantage_news_sentiment(self, ticker: str, current_date: datetime) -> Dict:
         """
         Get news sentiment from Alpha Vantage API.
@@ -61,8 +81,11 @@ class SentimentDataFetcher:
         Returns:
             Dict with sentiment data: {'sentiment': float, 'news_count': int, 'relevance': float}
         """
+        # Normalize ticker (remove .DE, .L, etc.)
+        normalized_ticker = self._normalize_ticker(ticker)
+        
         # Check cache first (cache for 1 hour)
-        cache_key = f"{ticker}_{current_date.strftime('%Y-%m-%d')}"
+        cache_key = f"{normalized_ticker}_{current_date.strftime('%Y-%m-%d')}"
         if cache_key in self.alpha_vantage_cache:
             cached_time = self.alpha_vantage_cache[cache_key]['timestamp']
             if time.time() - cached_time < 3600:  # 1 hour cache
@@ -79,7 +102,7 @@ class SentimentDataFetcher:
             url = f"https://www.alphavantage.co/query"
             params = {
                 'function': 'NEWS_SENTIMENT',
-                'tickers': ticker,
+                'tickers': normalized_ticker,
                 'apikey': ALPHA_VANTAGE_API_KEY,
                 'limit': 50  # Get recent news
             }
@@ -105,7 +128,7 @@ class SentimentDataFetcher:
                     
                     if 'ticker_sentiment' in article:
                         for ticker_data in article['ticker_sentiment']:
-                            if ticker_data['ticker'] == ticker:
+                            if ticker_data['ticker'] == normalized_ticker:
                                 ticker_sentiment = float(ticker_data['ticker_sentiment_score'])
                                 ticker_relevance = float(ticker_data['relevance_score'])
                                 break

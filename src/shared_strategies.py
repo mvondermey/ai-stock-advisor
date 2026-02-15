@@ -16,18 +16,12 @@ from config import (
     RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER,
     RISK_ADJ_MOM_MIN_SCORE, VOLATILITY_ADJ_MOM_LOOKBACK, VOLATILITY_ADJ_MOM_VOL_WINDOW,
     VOLATILITY_ADJ_MOM_MIN_SCORE, PARALLEL_THRESHOLD, DATA_FRESHNESS_MAX_DAYS,
-    ENABLE_MULTITASK_LEARNING
+    ENABLE_MULTITASK_LEARNING,
+    MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M, MIN_DATA_DAYS_GENERAL
 )
 
-# Import multi-task learning strategy
-if ENABLE_MULTITASK_LEARNING:
-    try:
-        from multitask_strategy import select_multitask_stocks
-        MULTITASK_AVAILABLE = True
-    except ImportError:
-        MULTITASK_AVAILABLE = False
-else:
-    MULTITASK_AVAILABLE = False
+# Multi-task learning strategy removed
+MULTITASK_AVAILABLE = False
 
 
 def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_date: datetime = None, train_start_date: datetime = None) -> tuple:
@@ -234,393 +228,51 @@ def check_volume_confirmation(ticker_data: pd.DataFrame) -> bool:
     return recent_volume >= avg_volume * RISK_ADJ_MOM_VOLUME_MULTIPLIER
 
 
-def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame], 
-                               current_date: datetime = None, train_start_date: datetime = None, top_n: int = 20) -> List[str]:
-    """
-    Shared Risk-Adjusted Momentum stock selection logic.
-    Used by both backtesting and live trading.
-    
-    Args:
-        all_tickers: List of ticker symbols to analyze
-        ticker_data_grouped: Dict mapping ticker -> price data
-        current_date: Current date for analysis (None for last available)
-        top_n: Number of stocks to select
-        
-    Returns:
-        List[str]: Selected ticker symbols
-    """
-    # Use parallel processing for large ticker lists
-    from config import PARALLEL_THRESHOLD
-    if len(all_tickers) > PARALLEL_THRESHOLD:  # Use parallel only for large lists
-        try:
-            from parallel_backtest import calculate_parallel_risk_adj_scores
-            from config import NUM_PROCESSES
-            
-            # Calculate scores in parallel
-            scores_data = calculate_parallel_risk_adj_scores(
-                all_tickers,
-                ticker_data_grouped,
-                current_date,
-                train_start_date
-            )
-            
-            # Apply filters
-            current_top_performers = []
-            momentum_filtered = 0
-            volume_filtered = 0
-            data_issues = 0
-            
-            for ticker, score, return_pct, volatility_pct in scores_data:
-                try:
-                    ticker_data = ticker_data_grouped[ticker]
-                    
-                    # Check momentum confirmation
-                    momentum_confirmations = check_momentum_confirmation(ticker_data, current_date, train_start_date)
-                    
-                    if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
-                        if momentum_confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
-                            momentum_filtered += 1
-                            continue
-                    
-                    # Check volume confirmation
-                    if not check_volume_confirmation(ticker_data):
-                        volume_filtered += 1
-                        continue
-                    
-                    if score > RISK_ADJ_MOM_MIN_SCORE:
-                        current_top_performers.append((ticker, score, return_pct, volatility_pct))
-                        
-                except Exception:
-                    data_issues += 1
-                    continue
-            
-            analyzed_count = len(scores_data)
-            
-        except ImportError:
-            # Fallback to sequential if parallel module not available
-            return select_risk_adj_mom_stocks_sequential(all_tickers, ticker_data_grouped, current_date, train_start_date, top_n)
-    else:
-        # Use sequential for small lists
-        return select_risk_adj_mom_stocks_sequential(all_tickers, ticker_data_grouped, current_date, train_start_date, top_n)
-    
-    # Sort by risk-adjusted score and get top N
-    if current_top_performers:
-        current_top_performers.sort(key=lambda x: x[1], reverse=True)
-        selected_tickers = [ticker for ticker, score, ret, vol in current_top_performers[:top_n]]
-        
-        # Debug info
-        confirm_parts = []
-        if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
-            confirm_parts.append("momentum")
-        if RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION:
-            confirm_parts.append("volume")
-        confirm_text = f" (with {' + '.join(confirm_parts)} confirmation)" if confirm_parts else ""
-        
-        print(f"   📊 Analysis: {analyzed_count} processed (PARALLEL), {momentum_filtered} momentum filtered, {volume_filtered} volume filtered, {data_issues} data issues")
-        print(f"   🎯 Selected {len(selected_tickers)} stocks{confirm_text}:")
-        for ticker, score, ret, vol in current_top_performers[:top_n]:
-            print(f"      {ticker}: score={score:.2f}, return={ret:.1f}%, vol={vol:.1f}%")
-        
-        return selected_tickers
-    else:
-        print(f"   ❌ No stocks passed filtering criteria (analyzed: {analyzed_count})")
-        return []
-
-
-def select_risk_adj_mom_stocks_sequential(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame], 
-                                         current_date: datetime = None, train_start_date: datetime = None, top_n: int = 20) -> List[str]:
-    """
-    Sequential version of Risk-Adjusted Momentum stock selection (original implementation).
-    """
-    import time
-    from config import (RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
-                       RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_MIN_SCORE)
-    start_time = time.time()
-    
-    current_top_performers = []
-    analyzed_count = 0
-    momentum_filtered = 0
-    volume_filtered = 0
-    data_issues = 0
-    stale_data_count = 0
-    
-    # Debug: Show first few tickers and keys
-    if len(all_tickers) > 0 and len(ticker_data_grouped) > 0:
-        print(f"   🔍 DEBUG: First 3 all_tickers: {all_tickers[:3]}")
-        all_keys = list(ticker_data_grouped.keys())
-        print(f"   🔍 DEBUG: Total keys in ticker_data_grouped: {len(all_keys)}")
-        # Check if first ticker exists
-        first_ticker = all_tickers[0]
-        print(f"   🔍 DEBUG: '{first_ticker}' in ticker_data_grouped: {first_ticker in all_keys}")
-        # Find matching tickers
-        matching = [t for t in all_tickers if t in all_keys]
-        print(f"   🔍 DEBUG: Matching tickers: {len(matching)} of {len(all_tickers)}")
-        if matching:
-            df = ticker_data_grouped[matching[0]]
-            print(f"   🔍 DEBUG: {matching[0]} data shape: {df.shape}, index: {type(df.index).__name__}, range: {df.index.min()} to {df.index.max()}")
-    
-    for ticker in all_tickers:
-        try:
-            analyzed_count += 1
-            
-            if ticker not in ticker_data_grouped:
-                data_issues += 1
-                continue
-            
-            ticker_data = ticker_data_grouped[ticker]
-            
-            # Check momentum confirmation
-            momentum_confirmations = check_momentum_confirmation(ticker_data, current_date, train_start_date)
-            
-            if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
-                if momentum_confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
-                    momentum_filtered += 1
-                    continue
-            
-            # Check volume confirmation
-            if not check_volume_confirmation(ticker_data):
-                volume_filtered += 1
-                continue
-            
-            # Calculate risk-adjusted score
-            score, return_pct, volatility_pct = calculate_risk_adjusted_momentum_score(ticker_data, current_date, train_start_date)
-            
-            # Debug first few tickers
-            if analyzed_count <= 3:
-                print(f"   🔍 DEBUG: {ticker} score={score:.2f}, return={return_pct:.1f}%, vol={volatility_pct:.1f}%, min_score={RISK_ADJ_MOM_MIN_SCORE}")
-            
-            if score > RISK_ADJ_MOM_MIN_SCORE:  # Use configurable minimum score
-                current_top_performers.append((ticker, score, return_pct, volatility_pct))
-        
-        except Exception as e:
-            # Check if it's a stale data error
-            error_str = str(e)
-            if "Data too old" in error_str:
-                stale_data_count += 1
-                if stale_data_count <= 3:
-                    print(f"   🔍 DEBUG: {ticker} {error_str}")
-            else:
-                data_issues += 1
-                if data_issues <= 3:
-                    print(f"   🔍 DEBUG: {ticker} exception: {type(e).__name__}: {error_str}")
-            continue
-    
-    # Sort by risk-adjusted score and get top N
-    elapsed = time.time() - start_time
-    if current_top_performers:
-        current_top_performers.sort(key=lambda x: x[1], reverse=True)
-        selected_tickers = [ticker for ticker, score, ret, vol in current_top_performers[:top_n]]
-        
-        # Debug info
-        confirm_parts = []
-        if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
-            confirm_parts.append("momentum")
-        if RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION:
-            confirm_parts.append("volume")
-        confirm_text = f" (with {' + '.join(confirm_parts)} confirmation)" if confirm_parts else ""
-        
-        # Build summary message
-        summary_parts = [f"{analyzed_count} processed (SEQUENTIAL) in {elapsed:.2f}s"]
-        summary_parts.append(f"{momentum_filtered} momentum filtered")
-        summary_parts.append(f"{volume_filtered} volume filtered")
-        if stale_data_count > 0:
-            summary_parts.append(f"⚠️ {stale_data_count} stale data (>{DATA_FRESHNESS_MAX_DAYS} days old)")
-        if data_issues > 0:
-            summary_parts.append(f"{data_issues} other data issues")
-        
-        print(f"   📊 Analysis: {', '.join(summary_parts)}")
-        print(f"   🎯 Selected {len(selected_tickers)} stocks{confirm_text}:")
-        for ticker, score, ret, vol in current_top_performers[:top_n]:
-            print(f"      {ticker}: score={score:.2f}, return={ret:.1f}%, vol={vol:.1f}%")
-        
-        return selected_tickers
-    else:
-        # Build failure summary
-        summary_parts = [f"analyzed: {analyzed_count}"]
-        if stale_data_count > 0:
-            summary_parts.append(f"⚠️ {stale_data_count} rejected due to stale data (>{DATA_FRESHNESS_MAX_DAYS} days old)")
-        if data_issues > 0:
-            summary_parts.append(f"{data_issues} data issues")
-        
-        print(f"   ❌ No stocks passed filtering criteria ({', '.join(summary_parts)})")
-        return []
-
-
-def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', current_date=None, top_n=20):
-    """
-    Shared Dynamic Buy & Hold stock selection logic.
-    """
-    performances = []
-    
-    # DEBUG: Print current_date and period
-    print(f"   🔍 DEBUG select_dynamic_bh_stocks: period={period}, current_date={current_date}")
-    
-    # Use current date or last available date
-    if current_date is None:
-        # Find the latest date across all tickers
-        latest_dates = [ticker_data_grouped[t].index.max() for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
-    
-    # Ensure current_date is a datetime object
-    if isinstance(current_date, str):
-        try:
-            current_date = pd.to_datetime(current_date)
-        except Exception:
-            pass
-
-    # Ensure current_date is timezone-aware for comparison
-    if hasattr(current_date, 'tzinfo') and current_date.tzinfo is None:
-        current_date = current_date.replace(tzinfo=timezone.utc)
-    elif not hasattr(current_date, 'tzinfo'):
-        # Fallback if it's not a datetime-like object
-        return []
-    
-    # Determine lookback period
-    if period == '1y':
-        lookback_days = 365
-    elif period == '6m':
-        lookback_days = 180
-    elif period == '3m':
-        lookback_days = 90
-    elif period == '1m':
-        lookback_days = 30
-    else:
-        lookback_days = 365
-    
-    stale_data_count = 0
-    analyzed_count = 0
-    
-    for ticker in all_tickers:  # Process all tickers
-        try:
-            if ticker not in ticker_data_grouped:
-                continue
-            
-            analyzed_count += 1
-            ticker_data = ticker_data_grouped[ticker]
-            
-            # ✅ Check data freshness before processing
-            data_max_date = ticker_data.index.max()
-            current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-                else:
-                    current_ts = current_ts.tz_convert(ticker_data.index.tz)
-            
-            data_age_days = (current_ts - data_max_date).total_seconds() / 86400
-            if data_age_days > DATA_FRESHNESS_MAX_DAYS:
-                stale_data_count += 1
-                if stale_data_count <= 3:  # Only print first 3
-                    print(f"   🔍 DEBUG: {ticker} data too old: {data_age_days:.1f} days (max {DATA_FRESHNESS_MAX_DAYS} days)")
-                continue  # Skip stale data instead of raising exception
-            
-            # Calculate start date based on lookback period
-            start_date = current_date - timedelta(days=lookback_days)
-            
-            # DEBUG: Show date calculation for first few tickers
-            if analyzed_count <= 3:
-                print(f"   🔍 DEBUG {ticker}: current_date={current_date.date()}, lookback_days={lookback_days}, start_date={start_date.date()}")
-            
-            # Filter data to the exact period - be more flexible with date range
-            available_start = ticker_data.index.min()
-            available_end = ticker_data.index.max()
-            
-            # DEBUG: Show available data range
-            if analyzed_count <= 3:
-                print(f"   🔍 DEBUG {ticker}: available_start={available_start.date()}, available_end={available_end.date()}")
-            
-            # Use available data if it covers most of the period
-            if available_start > start_date:
-                days_short = (available_start - start_date).days
-                # DEBUG: Show days short calculation
-                if analyzed_count <= 3:
-                    print(f"   🔍 DEBUG {ticker}: available_start > start_date by {days_short} days")
-                # Use whatever data is available (no threshold)
-                start_date = available_start
-                if analyzed_count <= 3:
-                    print(f"   🔍 DEBUG {ticker}: ADJUSTING start_date to {start_date.date()}")
-            
-            period_data = ticker_data[(ticker_data.index >= start_date) & (ticker_data.index <= current_ts)]
-            
-            # Reduce minimum data requirement for live trading
-            min_data_points = max(5, lookback_days // 30)  # At least 5 points or 1 per month
-            if len(period_data) < min_data_points:
-                continue
-            
-            valid_close = period_data['Close'].dropna()
-            if len(valid_close) < 2:
-                continue
-            
-            start_price = valid_close.iloc[0]
-            end_price = valid_close.iloc[-1]
-            
-            if start_price > 0:
-                performance = ((end_price - start_price) / start_price) * 100
-                # Include all stocks (not just positive performance) to ensure we have picks
-                performances.append((ticker, performance))
-        
-        except Exception as e:
-            print(f"   🔍 DEBUG: {ticker} error: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
-    
-    # Check if all data was stale
-    if stale_data_count > 0 and stale_data_count == analyzed_count:
-        print(f"   ❌ No stocks passed filtering (⚠️ {stale_data_count} rejected due to stale data (>{DATA_FRESHNESS_MAX_DAYS} days old))")
-        return []
-    
-    # Sort by performance and get top N
-    if performances:
-        performances.sort(key=lambda x: x[1], reverse=True)
-        selected_tickers = [ticker for ticker, _ in performances[:top_n]]
-        
-        print(f"   📊 Top {top_n} performers ({period}): {selected_tickers}")
-        for i, (ticker, perf) in enumerate(performances[:top_n], 1):
-            print(f"      {i}. {ticker}: {perf:+.1f}%")
-        
-        return selected_tickers
-    else:
-        if stale_data_count > 0:
-            print(f"   ❌ No valid performance data found for {period} (⚠️ {stale_data_count} stale data)")
-        else:
-            print(f"   ❌ No valid performance data found for {period}")
-        return []
-
-
 def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame], 
                                      current_date: datetime = None, top_n: int = 20) -> List[str]:
     """
     Shared Volatility-Adjusted Momentum stock selection logic.
     """
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Vol-Adj Mom"
+    )
+    
     current_top_performers = []
     
-    for ticker in all_tickers:
+    for ticker in filtered_tickers:
         try:
             if ticker not in ticker_data_grouped:
                 continue
             
             ticker_data = ticker_data_grouped[ticker]
             
-            # Use dropna'd Close series for all calculations (handles NaN-padded DataFrames)
-            close_prices = ticker_data['Close'].dropna()
-            n_prices = len(close_prices)
+            # ✅ FIX: Filter data up to current_date to avoid temporal leakage
+            if current_date is not None:
+                current_ts = pd.Timestamp(current_date)
+                if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                    if current_ts.tz is None:
+                        current_ts = current_ts.tz_localize(ticker_data.index.tz)
+                ticker_data_filtered = ticker_data.loc[:current_ts]
+            else:
+                ticker_data_filtered = ticker_data
             
-            if n_prices < VOLATILITY_ADJ_MOM_LOOKBACK:
+            if len(ticker_data_filtered) < VOLATILITY_ADJ_MOM_LOOKBACK:
                 continue
             
             # Calculate momentum return over lookback period
-            momentum_return = (close_prices.iloc[-1] / close_prices.iloc[-VOLATILITY_ADJ_MOM_LOOKBACK] - 1)
+            if len(ticker_data_filtered) >= VOLATILITY_ADJ_MOM_LOOKBACK:
+                momentum_return = (ticker_data_filtered['Close'].iloc[-1] / ticker_data_filtered['Close'].iloc[-VOLATILITY_ADJ_MOM_LOOKBACK] - 1)
+            else:
+                momentum_return = 0.0
             
             # Only include stocks with positive momentum return
             if momentum_return <= 0:
                 continue
             
             # Calculate volatility
-            daily_returns = close_prices.pct_change().dropna()
+            daily_returns = ticker_data_filtered['Close'].pct_change().dropna()
             if len(daily_returns) >= VOLATILITY_ADJ_MOM_VOL_WINDOW:
                 volatility = daily_returns.iloc[-VOLATILITY_ADJ_MOM_VOL_WINDOW:].std()
             else:
@@ -654,17 +306,156 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
         return []
 
 
+def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame], 
+                               current_date: datetime = None, train_start_date: datetime = None, top_n: int = 20) -> List[str]:
+    """
+    Shared Risk-Adjusted Momentum stock selection logic.
+    """
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Risk-Adj Mom"
+    )
+    
+    current_top_performers = []
+    
+    # Use parallel processing for large ticker lists
+    from config import PARALLEL_THRESHOLD
+    use_parallel = False
+    
+    if len(filtered_tickers) > PARALLEL_THRESHOLD:  # Use parallel only for large lists
+        try:
+            from parallel_backtest import calculate_parallel_risk_adjusted_scores
+            from config import NUM_PROCESSES
+            
+            # Calculate scores in parallel
+            scores_data = calculate_parallel_risk_adjusted_scores(
+                filtered_tickers,
+                ticker_data_grouped,
+                current_date,
+                train_start_date
+            )
+            use_parallel = True
+            
+            # Apply filters
+            momentum_filtered = 0
+            volume_filtered = 0
+            data_issues = 0
+            
+            for ticker, score, return_pct, volatility_pct in scores_data:
+                try:
+                    ticker_data = ticker_data_grouped[ticker]
+                    
+                    # Check momentum confirmation
+                    momentum_confirmations = check_momentum_confirmation(ticker_data, current_date, train_start_date)
+                    
+                    if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
+                        if momentum_confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
+                            momentum_filtered += 1
+                            continue
+                    
+                    # Check volume confirmation
+                    if not check_volume_confirmation(ticker_data):
+                        volume_filtered += 1
+                        continue
+                    
+                    if score > RISK_ADJ_MOM_MIN_SCORE:
+                        current_top_performers.append((ticker, score, return_pct, volatility_pct))
+                        
+                except Exception:
+                    data_issues += 1
+                    continue
+            
+            analyzed_count = len(scores_data)
+            
+        except (ImportError, Exception):
+            # Fallback to sequential if parallel module not available or error
+            use_parallel = False
+    
+    # Sequential processing (for small lists or if parallel failed)
+    if not use_parallel:
+        momentum_filtered = 0
+        volume_filtered = 0
+        data_issues = 0
+        analyzed_count = 0
+        
+        for ticker in filtered_tickers:
+            try:
+                if ticker not in ticker_data_grouped:
+                    continue
+                
+                ticker_data = ticker_data_grouped[ticker]
+                analyzed_count += 1
+                
+                # Calculate risk-adjusted momentum score
+                score, return_pct, volatility_pct = calculate_risk_adjusted_momentum_score(
+                    ticker_data, current_date, train_start_date
+                )
+                
+                if score is None:
+                    data_issues += 1
+                    continue
+                
+                # Check momentum confirmation
+                momentum_confirmations = check_momentum_confirmation(ticker_data, current_date, train_start_date)
+                
+                if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
+                    if momentum_confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
+                        momentum_filtered += 1
+                        continue
+                
+                # Check volume confirmation
+                if not check_volume_confirmation(ticker_data):
+                    volume_filtered += 1
+                    continue
+                
+                if score > RISK_ADJ_MOM_MIN_SCORE:
+                    current_top_performers.append((ticker, score, return_pct, volatility_pct))
+                    
+            except Exception:
+                data_issues += 1
+                continue
+    
+    # Sort by risk-adjusted score and get top N
+    if current_top_performers:
+        current_top_performers.sort(key=lambda x: x[1], reverse=True)
+        selected_tickers = [ticker for ticker, score, ret, vol in current_top_performers[:top_n]]
+        
+        # Debug info
+        confirm_parts = []
+        if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
+            confirm_parts.append("momentum")
+        if RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION:
+            confirm_parts.append("volume")
+        confirm_text = f" (with {' + '.join(confirm_parts)} confirmation)" if confirm_parts else ""
+        
+        print(f"   📊 Analysis: {analyzed_count} processed (PARALLEL), {momentum_filtered} momentum filtered, {volume_filtered} volume filtered, {data_issues} data issues")
+        print(f"   🎯 Selected {len(selected_tickers)} stocks{confirm_text}:")
+        for ticker, score, ret, vol in current_top_performers[:top_n]:
+            print(f"      {ticker}: score={score:.2f}, return={ret:.1f}%, vol={vol:.1f}%")
+        
+        return selected_tickers
+    else:
+        print(f"   ❌ No stocks passed filtering criteria (analyzed: {analyzed_count})")
+        return []
+
+
 def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame], 
                                 current_date: datetime = None, top_n: int = 20) -> List[str]:
     """
     Shared Mean Reversion stock selection logic.
-    Selects oversold stocks based on recent price decline.
     """
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Mean Reversion"
+    )
+    
     oversold_candidates = []
     
     # Use current date or last available date
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max() for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
+        latest_dates = [ticker_data_grouped[t].index.max() for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
         if latest_dates:
             current_date = max(latest_dates)
         else:
@@ -684,7 +475,7 @@ def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Di
         # Fallback if it's not a datetime-like object
         return []
     
-    for ticker in all_tickers:
+    for ticker in filtered_tickers:
         try:
             if ticker not in ticker_data_grouped:
                 continue
@@ -747,26 +538,31 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
                                    current_date: datetime = None, top_n: int = 20) -> List[str]:
     """
     Shared Quality + Momentum stock selection logic.
-    Combines fundamental quality indicators with momentum.
     """
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Quality+Mom"
+    )
+    
     quality_momentum_candidates = []
     
     # Use current date or last available date
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max() for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
+        latest_dates = [ticker_data_grouped[t].index.max() for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
         if latest_dates:
             current_date = max(latest_dates)
         else:
             return []
     
-    for ticker in all_tickers:
+    for ticker in filtered_tickers:
         try:
             if ticker not in ticker_data_grouped:
                 continue
             
             ticker_data = ticker_data_grouped[ticker]
             
-            if len(ticker_data) < 200:  # Need enough data for quality assessment
+            if len(ticker_data) < MIN_DATA_DAYS_GENERAL:  # Need enough data for quality assessment
                 continue
             
             # ✅ BETTER FIX: Use data's max date and convert current_date to pandas Timestamp
@@ -989,6 +785,12 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
     Returns:
         List[str]: Selected ticker symbols
     """
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "3M/1Y Ratio"
+    )
+    
     ratio_candidates = []
     
     # Use current date or last available date
@@ -1014,7 +816,7 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
         # Fallback if it's not a datetime-like object
         return []
     
-    print(f"   📊 3M/1Y Ratio Strategy analyzing {len(all_tickers)} tickers")
+    print(f"   📊 3M/1Y Ratio Strategy analyzing {len(filtered_tickers)} tickers")
     
     analysis_count = 0
     filtered_3m_negative = 0
@@ -1023,7 +825,7 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
     filtered_ratio_too_high = 0
     data_insufficient = 0
     
-    for ticker in all_tickers:
+    for ticker in filtered_tickers:
         try:
             analysis_count += 1
             
@@ -1034,7 +836,7 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
             ticker_data = ticker_data_grouped[ticker]
             
             # Need at least 1 year of data
-            if len(ticker_data) < 250:
+            if len(ticker_data) < MIN_DATA_DAYS_1Y:
                 data_insufficient += 1
                 continue
             
@@ -1152,7 +954,7 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
         return selected_tickers
     else:
         print(f"   ❌ No Annualized Acceleration candidates found")
-        print(f"   ❌ Analyzed {len(all_tickers)} tickers, found {len(ratio_candidates)} valid candidates")
+        print(f"   ❌ Analyzed {len(filtered_tickers)} tickers, found {len(ratio_candidates)} valid candidates")
         return []
 
 
@@ -1204,16 +1006,22 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
     Turnaround Strategy: Select stocks with low 3Y performance but high 1Y performance.
     This identifies stocks that may be emerging from a long decline with strong recent momentum.
     """
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Turnaround"
+    )
+    
     turnaround_candidates = []
     data_insufficient = 0
     filtered_3y_positive = 0
     filtered_1y_low = 0
     
-    print(f"   🔍 Turnaround: Analyzing {len(all_tickers)} tickers")
+    print(f"   🔍 Turnaround: Analyzing {len(filtered_tickers)} tickers")
     
     # Use current date or last available date
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max() for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
+        latest_dates = [ticker_data_grouped[t].index.max() for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
         if latest_dates:
             current_date = max(latest_dates)
         else:
@@ -1233,7 +1041,7 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
         # Fallback if it's not a datetime-like object
         return []
     
-    for ticker in all_tickers:
+    for ticker in filtered_tickers:
         try:
             if ticker not in ticker_data_grouped:
                 continue
@@ -1329,16 +1137,22 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
     1Y/3M Ratio Strategy: Select stocks with strong 1Y performance but weak 3M performance.
     This identifies stocks in long-term uptrends that recently pulled back (buy on dip).
     """
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "1Y/3M Ratio"
+    )
+    
     ratio_candidates = []
     data_insufficient = 0
     filtered_3m_positive = 0
     filtered_1y_low = 0
     
-    print(f"   🔍 1Y/3M Ratio: Analyzing {len(all_tickers)} tickers")
+    print(f"   🔍 1Y/3M Ratio: Analyzing {len(filtered_tickers)} tickers")
     
     # Use current date or last available date
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max() for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
+        latest_dates = [ticker_data_grouped[t].index.max() for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
         if latest_dates:
             current_date = max(latest_dates)
     
@@ -1346,7 +1160,7 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
     if current_date.tzinfo is None:
         current_date = current_date.replace(tzinfo=timezone.utc)
     
-    for ticker in all_tickers:
+    for ticker in filtered_tickers:
         try:
             if ticker not in ticker_data_grouped:
                 continue
@@ -1374,7 +1188,7 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
                                       (ticker_data.index <= current_date_tz)]
             
             # Check data sufficiency
-            if len(three_month_data) < 10 or len(one_year_data) < 200:
+            if len(three_month_data) < MIN_DATA_DAYS_3M or len(one_year_data) < MIN_DATA_DAYS_1Y:
                 data_insufficient += 1
                 continue
             
@@ -1452,10 +1266,16 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
     if current_date is None:
         current_date = datetime.now()
     
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid"
+    )
+    
     candidates = []
     
-    # Use union of all_tickers and data keys to ensure we don't miss tickers in data
-    tickers_to_scan = set(all_tickers)
+    # Use filtered tickers for analysis
+    tickers_to_scan = set(filtered_tickers)
     if isinstance(ticker_data_grouped, dict):
         tickers_to_scan.update(ticker_data_grouped.keys())
     
@@ -1472,8 +1292,18 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
             if ticker_data is None or len(ticker_data) == 0:
                 continue
             
+            # ✅ FIX: Filter data up to current_date to avoid temporal leakage
+            if current_date is not None:
+                current_ts = pd.Timestamp(current_date)
+                if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                    if current_ts.tz is None:
+                        current_ts = current_ts.tz_localize(ticker_data.index.tz)
+                ticker_data_filtered = ticker_data.loc[:current_ts]
+            else:
+                ticker_data_filtered = ticker_data
+            
             # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
-            close_prices = ticker_data['Close'].dropna()
+            close_prices = ticker_data_filtered['Close'].dropna()
             n_prices = len(close_prices)
             
             if n_prices < 60:
@@ -1558,10 +1388,16 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
     if current_date is None:
         current_date = datetime.now()
     
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 6M"
+    )
+    
     candidates = []
     
-    # Use union of all_tickers and data keys to ensure we don't miss tickers in data
-    tickers_to_scan = set(all_tickers)
+    # Use filtered tickers for analysis
+    tickers_to_scan = set(filtered_tickers)
     if isinstance(ticker_data_grouped, dict):
         tickers_to_scan.update(ticker_data_grouped.keys())
     
@@ -1578,8 +1414,18 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
             if ticker_data is None or len(ticker_data) == 0:
                 continue
             
+            # ✅ FIX: Filter data up to current_date to avoid temporal leakage
+            if current_date is not None:
+                current_ts = pd.Timestamp(current_date)
+                if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                    if current_ts.tz is None:
+                        current_ts = current_ts.tz_localize(ticker_data.index.tz)
+                ticker_data_filtered = ticker_data.loc[:current_ts]
+            else:
+                ticker_data_filtered = ticker_data
+            
             # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
-            close_prices = ticker_data['Close'].dropna()
+            close_prices = ticker_data_filtered['Close'].dropna()
             n_prices = len(close_prices)
             
             if n_prices < 60:
@@ -1697,10 +1543,16 @@ def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_group
     if current_date is None:
         current_date = datetime.now()
     
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 1Y/3M"
+    )
+    
     candidates = []
     
-    # Use union of all_tickers and data keys to ensure we don't miss tickers in data
-    tickers_to_scan = set(all_tickers)
+    # Use filtered tickers for analysis
+    tickers_to_scan = set(filtered_tickers)
     if isinstance(ticker_data_grouped, dict):
         tickers_to_scan.update(ticker_data_grouped.keys())
     
@@ -1717,8 +1569,18 @@ def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_group
             if ticker_data is None or len(ticker_data) == 0:
                 continue
             
+            # ✅ FIX: Filter data up to current_date to avoid temporal leakage
+            if current_date is not None:
+                current_ts = pd.Timestamp(current_date)
+                if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                    if current_ts.tz is None:
+                        current_ts = current_ts.tz_localize(ticker_data.index.tz)
+                ticker_data_filtered = ticker_data.loc[:current_ts]
+            else:
+                ticker_data_filtered = ticker_data
+            
             # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
-            close_prices = ticker_data['Close'].dropna()
+            close_prices = ticker_data_filtered['Close'].dropna()
             n_prices = len(close_prices)
             
             if n_prices < 60:
@@ -1748,7 +1610,7 @@ def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_group
             performance_3m = (latest_price - price_3m_ago) / price_3m_ago
             
             # Calculate volatility (using daily returns)
-            daily_returns = ticker_data['Close'].pct_change().dropna()
+            daily_returns = ticker_data_filtered['Close'].pct_change().dropna()
             if len(daily_returns) < 30:
                 continue
             volatility = daily_returns.std() * (252 ** 0.5)  # Annualized volatility
@@ -1805,10 +1667,16 @@ def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped
     if current_date is None:
         current_date = datetime.now()
     
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 1Y"
+    )
+    
     candidates = []
     
-    # Use union of all_tickers and data keys to ensure we don't miss tickers in data
-    tickers_to_scan = set(all_tickers)
+    # Use filtered tickers for analysis
+    tickers_to_scan = set(filtered_tickers)
     if isinstance(ticker_data_grouped, dict):
         tickers_to_scan.update(ticker_data_grouped.keys())
     
@@ -1825,8 +1693,18 @@ def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped
             if ticker_data is None or len(ticker_data) == 0:
                 continue
             
+            # Filter data up to current_date to avoid temporal leakage
+            if current_date is not None:
+                current_ts = pd.Timestamp(current_date)
+                if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                    if current_ts.tz is None:
+                        current_ts = current_ts.tz_localize(ticker_data.index.tz)
+                ticker_data_filtered = ticker_data.loc[:current_ts]
+            else:
+                ticker_data_filtered = ticker_data
+            
             # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
-            close_prices = ticker_data['Close'].dropna()
+            close_prices = ticker_data_filtered['Close'].dropna()
             n_prices = len(close_prices)
             
             if n_prices < 100:
@@ -1917,15 +1795,21 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
     if current_date is None:
         current_date = datetime.now()
     
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, "Price Acceleration"
+    )
+    
     candidates = []
     data_insufficient = 0
     low_velocity = 0
     negative_acceleration = 0
     
-    print(f"   🚀 Price Acceleration: Analyzing {len(all_tickers)} tickers")
+    print(f"   🚀 Price Acceleration: Analyzing {len(filtered_tickers)} tickers (filtered from {len(all_tickers)})")
     print(f"   📐 Formula: velocity = price.pct_change(), acceleration = velocity.diff()")
     
-    for ticker in all_tickers:
+    for ticker in filtered_tickers:
         try:
             # Get ticker data
             if isinstance(ticker_data_grouped, dict):
@@ -1939,8 +1823,18 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
                 data_insufficient += 1
                 continue
             
+            # ✅ FIX: Filter data up to current_date to avoid temporal leakage
+            if current_date is not None:
+                current_ts = pd.Timestamp(current_date)
+                if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                    if current_ts.tz is None:
+                        current_ts = current_ts.tz_localize(ticker_data.index.tz)
+                ticker_data_filtered = ticker_data.loc[:current_ts]
+            else:
+                ticker_data_filtered = ticker_data
+            
             # Calculate velocity (daily returns)
-            prices = ticker_data['Close'].dropna()
+            prices = ticker_data_filtered['Close'].dropna()
             if len(prices) < 30:
                 data_insufficient += 1
                 continue
@@ -2029,6 +1923,134 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
         return selected
     else:
         print(f"   ❌ No Price Acceleration candidates found")
+        return []
+
+
+def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', current_date=None, top_n=20):
+    """
+    Shared Dynamic Buy & Hold stock selection logic.
+    """
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers, ticker_data_grouped, current_date, f"Dynamic BH {period}"
+    )
+    
+    performances = []
+    
+    # Use current date or last available date
+    if current_date is None:
+        # Find the latest date across all tickers
+        latest_dates = [ticker_data_grouped[t].index.max() for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
+        if latest_dates:
+            current_date = max(latest_dates)
+        else:
+            return []
+    
+    # Ensure current_date is a datetime object
+    if isinstance(current_date, str):
+        try:
+            current_date = pd.to_datetime(current_date)
+        except Exception:
+            pass
+
+    # Ensure current_date is timezone-aware for comparison
+    if hasattr(current_date, 'tzinfo') and current_date.tzinfo is None:
+        current_date = current_date.replace(tzinfo=timezone.utc)
+    elif not hasattr(current_date, 'tzinfo'):
+        # Fallback if it's not a datetime-like object
+        return []
+    
+    # Determine lookback period
+    if period == '1y':
+        lookback_days = 365
+    elif period == '6m':
+        lookback_days = 180
+    elif period == '3m':
+        lookback_days = 90
+    elif period == '1m':
+        lookback_days = 30
+    else:
+        lookback_days = 365
+    
+    stale_data_count = 0
+    analyzed_count = 0
+    
+    for ticker in filtered_tickers:  # Process filtered tickers
+        try:
+            if ticker not in ticker_data_grouped:
+                continue
+            
+            analyzed_count += 1
+            ticker_data = ticker_data_grouped[ticker]
+            
+            # Check data freshness before processing
+            data_max_date = ticker_data.index.max()
+            current_ts = pd.Timestamp(current_date)
+            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                if current_ts.tz is None:
+                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
+                else:
+                    current_ts = current_ts.tz_convert(ticker_data.index.tz)
+            
+            data_age_days = (current_ts - data_max_date).total_seconds() / 86400
+            if data_age_days > DATA_FRESHNESS_MAX_DAYS:
+                stale_data_count += 1
+                continue  # Skip stale data instead of raising exception
+            
+            # Calculate start date based on lookback period
+            start_date = current_date - timedelta(days=lookback_days)
+            
+            # Filter data to the exact period - be more flexible with date range
+            available_start = ticker_data.index.min()
+            available_end = ticker_data.index.max()
+            
+            # Use available data if it covers most of the period
+            if available_start > start_date:
+                start_date = available_start
+            
+            period_data = ticker_data[(ticker_data.index >= start_date) & (ticker_data.index <= current_ts)]
+            
+            # Reduce minimum data requirement for live trading
+            min_data_points = max(5, lookback_days // 30)  # At least 5 points or 1 per month
+            if len(period_data) < min_data_points:
+                continue
+            
+            valid_close = period_data['Close'].dropna()
+            if len(valid_close) < 2:
+                continue
+            
+            start_price = valid_close.iloc[0]
+            end_price = valid_close.iloc[-1]
+            
+            if start_price > 0:
+                performance = ((end_price - start_price) / start_price) * 100
+                # Include all stocks (not just positive performance) to ensure we have picks
+                performances.append((ticker, performance))
+        
+        except Exception as e:
+            continue
+    
+    # Check if all data was stale
+    if stale_data_count > 0 and stale_data_count == analyzed_count:
+        print(f"   ❌ No stocks passed filtering (stale data)")
+        return []
+    
+    # Sort by performance and get top N
+    if performances:
+        performances.sort(key=lambda x: x[1], reverse=True)
+        selected_tickers = [ticker for ticker, _ in performances[:top_n]]
+        
+        print(f"   📊 Top {top_n} performers ({period}): {selected_tickers}")
+        for i, (ticker, perf) in enumerate(performances[:top_n], 1):
+            print(f"      {i}. {ticker}: {perf:+.1f}%")
+        
+        return selected_tickers
+    else:
+        if stale_data_count > 0:
+            print(f"   ❌ No valid performance data found for {period} (stale data: {stale_data_count})")
+        else:
+            print(f"   ❌ No valid performance data found for {period}")
         return []
 
 
