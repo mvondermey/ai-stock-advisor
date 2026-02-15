@@ -6127,10 +6127,6 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = voting_ensemble_cash
                     num_positions = len(voting_ensemble_positions)
                     invested = value - strat_cash
-                elif name == "AI Classification" and ENABLE_AI_CLASSIFICATION:
-                    strat_cash = ai_classification_cash
-                    num_positions = len(ai_classification_positions)
-                    invested = value - strat_cash
                 elif name == "Adaptive Ensemble" and ENABLE_ADAPTIVE_STRATEGY:
                     strat_cash = adaptive_ensemble_cash
                     num_positions = len(adaptive_ensemble_positions)
@@ -6699,7 +6695,6 @@ def _run_portfolio_backtest_walk_forward(
         ('Correlation Ensemble', correlation_ensemble_portfolio_history if ENABLE_CORRELATION_ENSEMBLE else None),
         ('Dynamic Pool', dynamic_pool_portfolio_history if ENABLE_DYNAMIC_POOL else None),
         ('Sentiment Ensemble', sentiment_ensemble_portfolio_history if ENABLE_SENTIMENT_ENSEMBLE else None),
-        ('AI Classification', ai_classification_portfolio_history if ENABLE_AI_CLASSIFICATION else None),
         ('Mom Acceleration', mom_accel_portfolio_history if ENABLE_MOMENTUM_ACCELERATION else None),
         ('Concentrated 3M', concentrated_3m_portfolio_history if ENABLE_CONCENTRATED_3M else None),
         ('Dual Momentum', dual_mom_portfolio_history if ENABLE_DUAL_MOMENTUM else None),

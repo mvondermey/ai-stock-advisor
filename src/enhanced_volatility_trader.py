@@ -242,12 +242,22 @@ class EnhancedVolatilityTrader:
         try:
             if strategy_name == 'static_bh_3m':
                 from shared_strategies import select_dynamic_bh_stocks
-                picks = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, 
-                                                current_date, '3m', top_n=top_n)
+                picks = select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='3m',
+                    current_date=current_date,
+                    top_n=top_n
+                )
             elif strategy_name == 'dyn_bh_1y_vol':
                 from shared_strategies import select_dynamic_bh_stocks
-                picks = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                                current_date, '1y', top_n=top_n)
+                picks = select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='1y',
+                    current_date=current_date,
+                    top_n=top_n
+                )
             elif strategy_name == 'risk_adj_mom':
                 from shared_strategies import select_risk_adj_mom_stocks
                 picks = select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped,

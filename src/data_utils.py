@@ -68,6 +68,12 @@ except ImportError:
     FEAT_VOL_WINDOW = 10
     ATR_PERIOD = 14
 
+# Resolve cache directory relative to repo root (not current working directory)
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_RESOLVED_DATA_CACHE_DIR = DATA_CACHE_DIR if Path(DATA_CACHE_DIR).is_absolute() else (_REPO_ROOT / DATA_CACHE_DIR)
+_MISSING_TICKER_CACHE_DIR = _RESOLVED_DATA_CACHE_DIR / "_missing"
+_MISSING_TICKER_RETRY_HOURS = 24
+
 # Optional Stooq provider
 try:
     from pandas_datareader import data as pdr
@@ -359,8 +365,10 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     if not hasattr(load_prices, '_cache_lock'):
         load_prices._cache_lock = threading.Lock()
     
-    _ensure_dir(DATA_CACHE_DIR)
-    cache_file = DATA_CACHE_DIR / f"{ticker}.csv"
+    _ensure_dir(_RESOLVED_DATA_CACHE_DIR)
+    _ensure_dir(_MISSING_TICKER_CACHE_DIR)
+    cache_file = _RESOLVED_DATA_CACHE_DIR / f"{ticker}.csv"
+    missing_marker_file = _MISSING_TICKER_CACHE_DIR / f"{ticker}.txt"
     
     cached_df = pd.DataFrame()
     new_df = pd.DataFrame()
@@ -370,6 +378,16 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     
     # --- Step 1: Check existing cache and determine what to fetch ---
     with load_prices._cache_lock:
+        # If we recently failed to fetch this ticker and have no local cache, skip re-fetch for a while
+        if not cache_file.exists() and missing_marker_file.exists():
+            try:
+                marker_mtime = datetime.fromtimestamp(missing_marker_file.stat().st_mtime, tz=timezone.utc)
+                marker_age_hours = (datetime.now(timezone.utc) - marker_mtime).total_seconds() / 3600
+                if marker_age_hours < _MISSING_TICKER_RETRY_HOURS:
+                    return pd.DataFrame()
+            except Exception:
+                pass
+
         if cache_file.exists():
             try:
                 # Check if cache has 'Date' or 'Datetime' column
@@ -468,6 +486,13 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     elif not new_df.empty:
         price_df = new_df
     else:
+        # Persist a short-lived marker for unavailable/delisted tickers to avoid re-fetching every run
+        if cached_df.empty:
+            with load_prices._cache_lock:
+                try:
+                    missing_marker_file.write_text(datetime.now(timezone.utc).isoformat(), encoding='utf-8')
+                except Exception:
+                    pass
         return pd.DataFrame()
     
     # --- Step 4: Save updated cache (always save original 1h data) ---
@@ -480,6 +505,14 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 price_df.to_csv(cache_file)
             except Exception as e:
                 print(f"  Warning: Could not save cache for {ticker}: {e}")
+
+    # Clear missing-marker once we have valid price data
+    if not price_df.empty and missing_marker_file.exists():
+        with load_prices._cache_lock:
+            try:
+                missing_marker_file.unlink(missing_ok=True)
+            except Exception:
+                pass
     
     # --- Step 5: Convert 1h data to daily data if DATA_INTERVAL is 1h ---
     if DATA_INTERVAL == '1h' and not price_df.empty:
