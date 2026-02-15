@@ -1762,7 +1762,7 @@ if __name__ == "__main__":
     parser.add_argument("--live-trading", action="store_true", 
                        help="Run in live trading mode instead of backtesting")
     parser.add_argument("--strategy", type=str, default="volatility_ensemble",
-                       help="Strategy for live trading. Available: volatility_ensemble, enhanced_volatility, correlation_ensemble, momentum_breakout, factor_rotation, pairs_trading, earnings_momentum, insider_trading, options_sentiment, ml_ensemble, risk_adj_mom, dynamic_bh_1y, quality_momentum")
+                       help="Strategy for live trading. Available: volatility_ensemble, enhanced_volatility, correlation_ensemble, momentum_breakout, factor_rotation, pairs_trading, earnings_momentum, insider_trading, options_sentiment, ml_ensemble, risk_adj_mom, dynamic_bh_1y, quality_momentum, momentum_ai_hybrid, elite_hybrid")
     
     args = parser.parse_args()
     

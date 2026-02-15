@@ -492,6 +492,14 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
     elif strategy == 'dual_momentum':
         # Dual Momentum Strategy: Antonacci style absolute + relative momentum
         return get_dual_momentum_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'momentum_ai_hybrid':
+        # Momentum AI Hybrid Strategy: Combines momentum with AI predictions
+        return get_momentum_ai_hybrid_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'elite_hybrid':
+        # Elite Hybrid Strategy: Advanced multi-factor ensemble
+        return get_elite_hybrid_tickers(all_tickers, all_tickers_data)
 
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
@@ -886,6 +894,58 @@ def get_dual_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.DataF
         return []
     
     return selected
+
+
+def get_momentum_ai_hybrid_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Momentum AI Hybrid Strategy: Selects top momentum stocks with AI filtering."""
+    from config import MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK
+    
+    print(f"   🤖 Momentum AI Hybrid: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Momentum AI Hybrid")
+    
+    current_date = datetime.now(timezone.utc)
+    momentum_scores = []
+    
+    for ticker in all_tickers:
+        try:
+            if ticker in ticker_data_grouped:
+                ticker_history = ticker_data_grouped[ticker]
+                
+                # Filter to lookback period
+                ticker_history = ticker_history[ticker_history.index <= pd.Timestamp(current_date)].tail(MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK + 10)
+                
+                if len(ticker_history) >= MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK:
+                    lookback_data = ticker_history.tail(MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK)
+                    start_price = lookback_data.iloc[0]['Close']
+                    end_price = lookback_data.iloc[-1]['Close']
+                    
+                    if start_price > 0:
+                        momentum_return = (end_price - start_price) / start_price
+                        momentum_scores.append((ticker, momentum_return))
+            
+        except Exception:
+            continue
+    
+    if momentum_scores:
+        # Sort by momentum (descending)
+        momentum_scores.sort(key=lambda x: x[1], reverse=True)
+        top_stocks = [ticker for ticker, score in momentum_scores[:PORTFOLIO_SIZE]]
+        
+        print(f"   📈 Top {PORTFOLIO_SIZE} momentum stocks: {[(t, f'{s*100:.1f}%') for t, s in momentum_scores[:PORTFOLIO_SIZE]]}")
+        return top_stocks
+    
+    return []
+
+
+def get_elite_hybrid_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Elite Hybrid Strategy: Advanced multi-factor ensemble."""
+    from elite_hybrid_strategy import select_elite_hybrid_stocks
+    
+    print(f"   🏆 Elite Hybrid: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Elite Hybrid")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_elite_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tickers_data: pd.DataFrame = None):
