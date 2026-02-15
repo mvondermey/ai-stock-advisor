@@ -1598,13 +1598,6 @@ def _run_portfolio_backtest_walk_forward(
     ai_elite_model = None  # ML model (trained during backtest)
     ai_elite_last_train_day = -999  # Track when model was last trained
 
-    # LLM STRATEGY: Removed - stub variables for compatibility
-    llm_strategy_portfolio_value = 0
-    llm_strategy_portfolio_history = []
-    llm_strategy_positions = {}
-    llm_strategy_cash = 0
-    llm_available = False
-    
     # MEAN REVERSION: Initialize portfolio tracking
     mean_reversion_portfolio_value = initial_capital_needed
     mean_reversion_portfolio_history = [mean_reversion_portfolio_value]
@@ -6154,10 +6147,6 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = sector_rotation_cash
                     num_positions = len(sector_rotation_positions)
                     invested = value - strat_cash
-                elif name == "LLM Strategy" and ENABLE_LLM_STRATEGY:
-                    strat_cash = llm_strategy_cash
-                    num_positions = len(llm_strategy_positions)
-                    invested = value - strat_cash
                 elif name == "Mom-Vol Hybrid" and ENABLE_MOMENTUM_VOLATILITY_HYBRID:
                     strat_cash = momentum_volatility_hybrid_cash
                     num_positions = len(momentum_volatility_hybrid_positions)
@@ -6695,7 +6684,6 @@ def _run_portfolio_backtest_walk_forward(
         ('Dynamic BH 1Y+Vol', dynamic_bh_1y_vol_filter_portfolio_history if ENABLE_DYNAMIC_BH_1Y_VOL_FILTER else None),
         ('Dynamic BH 1Y+TS', dynamic_bh_1y_trailing_stop_portfolio_history if ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP else None),
         ('Sector Rotation', sector_rotation_portfolio_history if ENABLE_SECTOR_ROTATION else None),
-        ('LLM Strategy', llm_strategy_portfolio_history if ENABLE_LLM_STRATEGY and llm_available else None),
         ('Multi-Task', multitask_portfolio_history if ENABLE_MULTITASK_LEARNING else None),
         ('3M/1Y Ratio', ratio_3m_1y_portfolio_history if ENABLE_3M_1Y_RATIO else None),
         ('1Y/3M Ratio', ratio_1y_3m_portfolio_history),
