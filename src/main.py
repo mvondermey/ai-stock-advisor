@@ -1544,9 +1544,7 @@ def main(
         sentiment_ensemble_1y_return=_ret('sentiment_ensemble'),
         final_voting_ensemble_value_1y=s['voting_ensemble']['value'],
         voting_ensemble_1y_return=_ret('voting_ensemble'),
-        final_ai_classification_value_1y=s['ai_classification']['value'],
-        ai_classification_1y_return=_ret('ai_classification'),
-        # Ensemble transaction costs
+                # Ensemble transaction costs
         adaptive_ensemble_transaction_costs=s['adaptive_ensemble']['costs'],
         volatility_ensemble_transaction_costs=s['volatility_ensemble']['costs'],
         ai_volatility_ensemble_transaction_costs=s['ai_volatility_ensemble']['costs'],
@@ -1555,8 +1553,7 @@ def main(
         dynamic_pool_transaction_costs=s['dynamic_pool']['costs'],
         sentiment_ensemble_transaction_costs=s['sentiment_ensemble']['costs'],
         voting_ensemble_transaction_costs=s['voting_ensemble']['costs'],
-        ai_classification_transaction_costs=s['ai_classification']['costs'],
-        # Ensemble cash deployed
+                # Ensemble cash deployed
         adaptive_ensemble_cash_deployed=s['adaptive_ensemble']['cash_deployed'],
         volatility_ensemble_cash_deployed=s['volatility_ensemble']['cash_deployed'],
         ai_volatility_ensemble_cash_deployed=s['ai_volatility_ensemble']['cash_deployed'],
@@ -1565,8 +1562,7 @@ def main(
         dynamic_pool_cash_deployed=s['dynamic_pool']['cash_deployed'],
         sentiment_ensemble_cash_deployed=s['sentiment_ensemble']['cash_deployed'],
         voting_ensemble_cash_deployed=s['voting_ensemble']['cash_deployed'],
-        ai_classification_cash_deployed=s['ai_classification']['cash_deployed'],
-        # Rebalance horizon optimization results
+                # Rebalance horizon optimization results
         static_bh_1y_best_horizon=rebalance_optimization_results['1Y']['best_horizon'] if rebalance_optimization_results and '1Y' in rebalance_optimization_results else None,
         static_bh_6m_best_horizon=rebalance_optimization_results['6M']['best_horizon'] if rebalance_optimization_results and '6M' in rebalance_optimization_results else None,
         static_bh_3m_best_horizon=rebalance_optimization_results['3M']['best_horizon'] if rebalance_optimization_results and '3M' in rebalance_optimization_results else None,
