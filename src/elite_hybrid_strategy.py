@@ -75,10 +75,22 @@ def select_elite_hybrid_stocks(
             # ✅ FIX: Filter data up to current_date to avoid temporal leakage
             if current_date is not None:
                 current_ts = pd.Timestamp(current_date)
+                # Ensure both are timezone-aware or both are naive
                 if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
                     if current_ts.tz is None:
                         current_ts = current_ts.tz_localize(ticker_data.index.tz)
-                ticker_data_filtered = ticker_data.loc[:current_ts]
+                    else:
+                        current_ts = current_ts.tz_convert(ticker_data.index.tz)
+                elif current_ts.tz is not None:
+                    # Ticker data is naive but current_ts has timezone - make current_ts naive
+                    current_ts = current_ts.replace(tzinfo=None)
+                
+                # Use <= comparison to avoid issues with exact timestamp matches
+                try:
+                    ticker_data_filtered = ticker_data[ticker_data.index <= current_ts]
+                except (TypeError, ValueError):
+                    # Fallback: use loc with slice
+                    ticker_data_filtered = ticker_data.loc[:current_ts]
             else:
                 ticker_data_filtered = ticker_data
             
