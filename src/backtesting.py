@@ -3491,7 +3491,7 @@ def _run_portfolio_backtest_walk_forward(
             try:
                 from sentiment_ensemble import select_sentiment_ensemble_stocks
                 
-                print(f"   📊 Sentiment Ensemble Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+                print(f"   📊 Mom-Vol 6M Sentiment Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
                 
                 new_sentiment_ensemble_stocks = select_sentiment_ensemble_stocks(
                     initial_top_tickers, 
@@ -3504,7 +3504,7 @@ def _run_portfolio_backtest_walk_forward(
                 if new_sentiment_ensemble_stocks:
                     # Use universal smart rebalancing function
                     sentiment_ensemble_positions, sentiment_ensemble_cash, current_sentiment_ensemble_stocks, rebalance_costs = _smart_rebalance_portfolio(
-                        strategy_name="Sentiment Ensemble",
+                        strategy_name="Mom-Vol 6M Sentiment",
                         current_stocks=current_sentiment_ensemble_stocks,
                         new_stocks=new_sentiment_ensemble_stocks,
                         positions=sentiment_ensemble_positions,
@@ -3519,7 +3519,7 @@ def _run_portfolio_backtest_walk_forward(
                     sentiment_ensemble_last_rebalance_value = sentiment_ensemble_portfolio_value
                 
             except Exception as e:
-                print(f"   ⚠️ Sentiment Ensemble strategy error: {e}")
+                print(f"   ⚠️ Mom-Vol 6M Sentiment strategy error: {e}")
 
         # ELITE HYBRID SENTIMENT: Rebalance using elite hybrid + sentiment strategy DAILY
         if ENABLE_ELITE_HYBRID_SENTIMENT:
@@ -5403,7 +5403,7 @@ def _run_portfolio_backtest_walk_forward(
                     else:
                         sentiment_ensemble_invested_value += sentiment_ensemble_positions[ticker].get('value', 0.0)
                 except Exception as e:
-                    print(f"   ⚠️ Error updating sentiment ensemble position for {ticker}: {e}")
+                    print(f"   ⚠️ Error updating Mom-Vol 6M Sentiment position for {ticker}: {e}")
                     sentiment_ensemble_invested_value += sentiment_ensemble_positions[ticker].get('value', 0.0)
 
             sentiment_ensemble_portfolio_value = sentiment_ensemble_invested_value + sentiment_ensemble_cash
@@ -6042,7 +6042,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("AI Volatility Ensemble", ai_volatility_ensemble_portfolio_value if ENABLE_AI_VOLATILITY_ENSEMBLE else None),
                 ("Correlation Ensemble", correlation_ensemble_portfolio_value if ENABLE_CORRELATION_ENSEMBLE else None),
                 ("Dynamic Pool", dynamic_pool_portfolio_value if ENABLE_DYNAMIC_POOL else None),
-                ("Sentiment Ensemble", sentiment_ensemble_portfolio_value if ENABLE_SENTIMENT_ENSEMBLE else None),
+                ("Mom-Vol 6M Sentiment", sentiment_ensemble_portfolio_value if ENABLE_SENTIMENT_ENSEMBLE else None),
                 ("Elite Hybrid Sentiment", elite_hybrid_sentiment_portfolio_value if ENABLE_ELITE_HYBRID_SENTIMENT else None),
                 ("Voting Ensemble", voting_ensemble_portfolio_value if ENABLE_VOTING_ENSEMBLE else None),
                 ("Mom Acceleration", mom_accel_portfolio_value if ENABLE_MOMENTUM_ACCELERATION else None),
@@ -6190,9 +6190,13 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = ai_elite_cash
                     num_positions = len(ai_elite_positions)
                     invested = value - strat_cash
-                elif name == "Sentiment Ensemble" and ENABLE_SENTIMENT_ENSEMBLE:
+                elif name == "Mom-Vol 6M Sentiment" and ENABLE_SENTIMENT_ENSEMBLE:
                     strat_cash = sentiment_ensemble_cash
                     num_positions = len(sentiment_ensemble_positions)
+                    invested = value - strat_cash
+                elif name == "Elite Hybrid Sentiment" and ENABLE_ELITE_HYBRID_SENTIMENT:
+                    strat_cash = elite_hybrid_sentiment_cash
+                    num_positions = len(elite_hybrid_sentiment_positions)
                     invested = value - strat_cash
                 elif name == "Voting Ensemble" and ENABLE_VOTING_ENSEMBLE:
                     strat_cash = voting_ensemble_cash
