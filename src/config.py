@@ -421,7 +421,7 @@ STRATEGY_STOP_LOSS_PCT = {
 MIN_PERFORMANCE_1Y = 0.10      # 10% minimum 1-year performance
 MIN_PERFORMANCE_6M = 0.05      # 5% minimum 6-month performance (10%/2)
 MIN_PERFORMANCE_3M = 0.025     # 2.5% minimum 3-month performance (10%/4)
-ENABLE_PERFORMANCE_FILTERS = False   # DISABLED - Allow strategies to use full universe
+ENABLE_PERFORMANCE_FILTERS = True   # Set to True to enable these filters
 
 # --- Universal Data Requirements ---
 # Single source of truth for minimum data requirements across all strategies
