@@ -24,7 +24,7 @@ from config import (
 MULTITASK_AVAILABLE = False
 
 
-def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_date: datetime = None, train_start_date: datetime = None) -> tuple:
+def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_date: datetime = None) -> tuple:
     """
     Calculate risk-adjusted momentum score for a ticker.
     
@@ -68,10 +68,8 @@ def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_da
             # For other errors (timezone conversion, etc), stick with data's max date
             pass
     
-    # Calculate 1-year performance with train_start_date constraint
+    # Calculate 1-year performance (rolling window)
     start_date = end_date - timedelta(days=RISK_ADJ_MOM_PERFORMANCE_WINDOW)
-    if train_start_date:
-        start_date = max(train_start_date, start_date)
     
     # ✅ Use boolean indexing instead of .loc[] to avoid KeyError with timezone mismatches
     perf_data = ticker_data[(ticker_data.index >= start_date) & (ticker_data.index <= end_date)]
@@ -110,7 +108,7 @@ def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_da
     return risk_adj_score, basic_return, volatility
 
 
-def check_momentum_confirmation(ticker_data: pd.DataFrame, current_date: datetime = None, train_start_date: datetime = None) -> int:
+def check_momentum_confirmation(ticker_data: pd.DataFrame, current_date: datetime = None) -> int:
     """
     Check momentum confirmation across multiple timeframes.
     
@@ -158,8 +156,6 @@ def check_momentum_confirmation(ticker_data: pd.DataFrame, current_date: datetim
     # 3-month momentum check
     if RISK_ADJ_MOM_CONFIRM_SHORT:
         start_3m = end_date - timedelta(days=90)
-        if train_start_date:
-            start_3m = max(train_start_date, start_3m)
         
         # ✅ Use boolean indexing instead of .loc[] to avoid KeyError
         data_3m = ticker_data[(ticker_data.index >= start_3m) & (ticker_data.index <= end_date)]
@@ -176,8 +172,6 @@ def check_momentum_confirmation(ticker_data: pd.DataFrame, current_date: datetim
     # 6-month momentum check
     if RISK_ADJ_MOM_CONFIRM_MEDIUM:
         start_6m = end_date - timedelta(days=180)
-        if train_start_date:
-            start_6m = max(train_start_date, start_6m)
         data_6m = ticker_data[(ticker_data.index >= start_6m) & (ticker_data.index <= end_date)]
         if len(data_6m) >= 60:
             valid_close = data_6m['Close'].dropna()
@@ -192,8 +186,6 @@ def check_momentum_confirmation(ticker_data: pd.DataFrame, current_date: datetim
     # 1-year momentum check
     if RISK_ADJ_MOM_CONFIRM_LONG:
         start_1y = end_date - timedelta(days=365)
-        if train_start_date:
-            start_1y = max(train_start_date, start_1y)
         data_1y = ticker_data[(ticker_data.index >= start_1y) & (ticker_data.index <= end_date)]
         if len(data_1y) >= 100:
             valid_close = data_1y['Close'].dropna()
@@ -311,7 +303,7 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
 
 
 def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame], 
-                               current_date: datetime = None, train_start_date: datetime = None, top_n: int = 20) -> List[str]:
+                               current_date: datetime = None, top_n: int = 20) -> List[str]:
     """
     Shared Risk-Adjusted Momentum stock selection logic.
     """
@@ -329,16 +321,15 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
     
     if len(filtered_tickers) > PARALLEL_THRESHOLD:  # Use parallel only for large lists
         try:
-            from parallel_backtest import calculate_parallel_risk_adjusted_scores
+            from parallel_backtest import calculate_parallel_risk_adj_momentum
             from config import NUM_PROCESSES
             
             # Calculate scores in parallel
-            scores_data = calculate_parallel_risk_adjusted_scores(
-                filtered_tickers,
-                ticker_data_grouped,
-                current_date,
-                train_start_date
-            )
+            scores_data = calculate_parallel_risk_adj_momentum(
+                    filtered_tickers,
+                    ticker_data_grouped,
+                    current_date
+                )
             use_parallel = True
             
             # Apply filters
@@ -351,7 +342,7 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
                     ticker_data = ticker_data_grouped[ticker]
                     
                     # Check momentum confirmation
-                    momentum_confirmations = check_momentum_confirmation(ticker_data, current_date, train_start_date)
+                    momentum_confirmations = check_momentum_confirmation(ticker_data, current_date)
                     
                     if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
                         if momentum_confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
@@ -393,7 +384,7 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
                 
                 # Calculate risk-adjusted momentum score
                 score, return_pct, volatility_pct = calculate_risk_adjusted_momentum_score(
-                    ticker_data, current_date, train_start_date
+                    ticker_data, current_date
                 )
                 
                 if score is None:
@@ -401,7 +392,7 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
                     continue
                 
                 # Check momentum confirmation
-                momentum_confirmations = check_momentum_confirmation(ticker_data, current_date, train_start_date)
+                momentum_confirmations = check_momentum_confirmation(ticker_data, current_date)
                 
                 if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
                     if momentum_confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
@@ -966,8 +957,7 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
 
 
 def select_multitask_learning_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame], 
-                                     current_date: datetime = None, train_start_date: datetime = None,
-                                     train_end_date: datetime = None, top_n: int = 20) -> List[str]:
+                                     current_date: datetime = None, train_end_date: datetime = None, top_n: int = 20) -> List[str]:
     """
     Multi-Task Learning stock selection strategy wrapper.
     
@@ -990,8 +980,8 @@ def select_multitask_learning_stocks(all_tickers: List[str], ticker_data_grouped
         print("   ⚠️ Multi-Task Learning not available, using fallback")
         return []
     
-    if train_start_date is None or train_end_date is None:
-        print("   ⚠️ Multi-Task Learning requires training dates")
+    if train_end_date is None:
+        print("   ⚠️ Multi-Task Learning requires training end date")
         return []
     
     try:
@@ -999,7 +989,6 @@ def select_multitask_learning_stocks(all_tickers: List[str], ticker_data_grouped
             all_tickers=all_tickers,
             ticker_data_grouped=ticker_data_grouped,
             current_date=current_date,
-            train_start_date=train_start_date,
             train_end_date=train_end_date,
             top_n=top_n
         )

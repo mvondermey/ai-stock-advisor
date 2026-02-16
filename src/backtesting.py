@@ -35,7 +35,7 @@ from config import (
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
     ENABLE_ELITE_HYBRID, ENABLE_AI_ELITE,
     CONCENTRATED_3M_REBALANCE_DAYS,
-    AI_ELITE_WARMUP_DAYS, AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS
+    AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS
 )
 import signal
 from contextlib import contextmanager
@@ -1170,7 +1170,6 @@ def analyze_performance(
 
 def _run_portfolio_backtest_walk_forward(
     all_tickers_data: pd.DataFrame,
-    train_start_date: datetime,
     backtest_start_date: datetime,
     backtest_end_date: datetime,
     initial_top_tickers: List[str],
@@ -1893,7 +1892,6 @@ def _run_portfolio_backtest_walk_forward(
                         initial_top_tickers,
                         ticker_data_grouped,
                         current_date,
-                        train_start_date,
                         period_days=365
                     )
                 else:
@@ -1903,7 +1901,7 @@ def _run_portfolio_backtest_walk_forward(
                         if ticker not in ticker_data_grouped:
                             continue
                         ticker_data = ticker_data_grouped[ticker]
-                        perf_start = max(train_start_date, current_date - timedelta(days=365))
+                        perf_start = current_date - timedelta(days=365)
                         perf_data = ticker_data.loc[perf_start:current_date]
                         if len(perf_data) >= 50:
                             valid_close = perf_data['Close'].dropna()
@@ -1955,7 +1953,7 @@ def _run_portfolio_backtest_walk_forward(
                     if ticker not in ticker_data_grouped:
                         continue
                     ticker_data = ticker_data_grouped[ticker]
-                    perf_start = max(train_start_date, current_date - timedelta(days=90))
+                    perf_start = current_date - timedelta(days=90)
                     perf_data = ticker_data.loc[perf_start:current_date]
                     if len(perf_data) >= 30:
                         valid_close = perf_data['Close'].dropna()
@@ -2112,7 +2110,7 @@ def _run_portfolio_backtest_walk_forward(
                 from config import PARALLEL_THRESHOLD
                 if len(initial_top_tickers) > PARALLEL_THRESHOLD:
                     from parallel_backtest import calculate_parallel_performance
-                    perf_1y_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, train_start_date, 365)
+                    perf_1y_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 365)
                 else:
                     perf_1y_m_list = []
                     _debug_skip_reasons = {'not_in_data': 0, 'too_few_rows': 0, 'too_few_close': 0, 'zero_price': 0, 'ok': 0}
@@ -2121,7 +2119,7 @@ def _run_portfolio_backtest_walk_forward(
                             _debug_skip_reasons['not_in_data'] += 1
                             continue
                         ticker_data = ticker_data_grouped[ticker]
-                        perf_start = max(train_start_date, current_date - timedelta(days=365))
+                        perf_start = current_date - timedelta(days=365)
                         perf_data = ticker_data.loc[perf_start:current_date]
                         if len(perf_data) >= 50:
                             valid_close = perf_data['Close'].dropna()
@@ -2165,14 +2163,14 @@ def _run_portfolio_backtest_walk_forward(
                 from config import PARALLEL_THRESHOLD
                 if len(initial_top_tickers) > PARALLEL_THRESHOLD:
                     from parallel_backtest import calculate_parallel_performance
-                    perf_6m_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, None, 180)
+                    perf_6m_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 180)
                 else:
                     perf_6m_m_list = []
                     for ticker in initial_top_tickers:
                         if ticker not in ticker_data_grouped:
                             continue
                         ticker_data = ticker_data_grouped[ticker]
-                        perf_start = max(train_start_date, current_date - timedelta(days=180))
+                        perf_start = current_date - timedelta(days=180)
                         perf_data = ticker_data.loc[perf_start:current_date]
                         if len(perf_data) >= 30:
                             valid_close = perf_data['Close'].dropna()
@@ -2204,14 +2202,14 @@ def _run_portfolio_backtest_walk_forward(
                 from config import PARALLEL_THRESHOLD
                 if len(initial_top_tickers) > PARALLEL_THRESHOLD:
                     from parallel_backtest import calculate_parallel_performance
-                    perf_3m_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, None, 90)
+                    perf_3m_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 90)
                 else:
                     perf_3m_m_list = []
                     for ticker in initial_top_tickers:
                         if ticker not in ticker_data_grouped:
                             continue
                         ticker_data = ticker_data_grouped[ticker]
-                        perf_start = max(train_start_date, current_date - timedelta(days=90))
+                        perf_start = current_date - timedelta(days=90)
                         perf_data = ticker_data.loc[perf_start:current_date]
                         if len(perf_data) >= 20:
                             valid_close = perf_data['Close'].dropna()
@@ -2258,7 +2256,6 @@ def _run_portfolio_backtest_walk_forward(
                         filtered_tickers_1y,
                         ticker_data_grouped,
                         current_date,
-                        train_start_date,
                         period_days=365
                     )
                 else:
@@ -2336,7 +2333,7 @@ def _run_portfolio_backtest_walk_forward(
                 if len(filtered_tickers_6m) > PARALLEL_THRESHOLD:
                     from parallel_backtest import calculate_parallel_performance
                     current_top_performers_6m = calculate_parallel_performance(
-                        filtered_tickers_6m, ticker_data_grouped, current_date, None, 180)
+                        filtered_tickers_6m, ticker_data_grouped, current_date, 180)
                 else:
                     current_top_performers_6m = []
                     for ticker in filtered_tickers_6m:
@@ -2399,7 +2396,7 @@ def _run_portfolio_backtest_walk_forward(
             if len(filtered_tickers_3m) > PARALLEL_THRESHOLD:
                 from parallel_backtest import calculate_parallel_performance
                 current_top_performers_3m = calculate_parallel_performance(
-                    filtered_tickers_3m, ticker_data_grouped, current_date, None, 90)
+                    filtered_tickers_3m, ticker_data_grouped, current_date, 90)
             else:
                 current_top_performers_3m = []
                 for ticker in filtered_tickers_3m:
@@ -2458,7 +2455,7 @@ def _run_portfolio_backtest_walk_forward(
             if len(filtered_tickers_1m) > PARALLEL_THRESHOLD:
                 from parallel_backtest import calculate_parallel_performance
                 current_top_performers_1m = calculate_parallel_performance(
-                    filtered_tickers_1m, ticker_data_grouped, current_date, None, 21)
+                    filtered_tickers_1m, ticker_data_grouped, current_date, 21)
             else:
                 current_top_performers_1m = []
                 for ticker in filtered_tickers_1m:
@@ -2518,7 +2515,6 @@ def _run_portfolio_backtest_walk_forward(
                             initial_top_tickers,
                             ticker_data_grouped,
                             current_date,
-                            train_start_date,
                             period_days=365
                         )
                     else:
@@ -2905,7 +2901,6 @@ def _run_portfolio_backtest_walk_forward(
                         initial_top_tickers, 
                         ticker_data_grouped, 
                         current_date,
-                        train_start_date,  # Add train_start_date parameter
                         top_n=PORTFOLIO_SIZE
                     )
 
@@ -2945,7 +2940,6 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, 
                     ticker_data_grouped, 
                     current_date,
-                    train_start_date,  # Required for multi-task training
                     multitask_train_end,    # Required for multi-task training
                     top_n=PORTFOLIO_SIZE
                 )
@@ -3291,7 +3285,6 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, 
                     ticker_data_grouped,
                     current_date=current_date,
-                    train_start_date=train_start_date,
                     top_n=PORTFOLIO_SIZE
                 )
                 
@@ -3332,8 +3325,7 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, 
                     ticker_data_grouped,
                     current_date=current_date,
-                    train_start_date=train_start_date,
-                    top_n=PORTFOLIO_SIZE
+                                        top_n=PORTFOLIO_SIZE
                 )
                 
                 if new_volatility_ensemble_stocks:
@@ -3458,8 +3450,7 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, 
                     ticker_data_grouped,
                     current_date=current_date,
-                    train_start_date=train_start_date,
-                    top_n=PORTFOLIO_SIZE
+                                        top_n=PORTFOLIO_SIZE
                 )
                 
                 if new_dynamic_pool_stocks:
@@ -3497,8 +3488,7 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, 
                     ticker_data_grouped,
                     current_date=current_date,
-                    train_start_date=train_start_date,
-                    top_n=PORTFOLIO_SIZE
+                                        top_n=PORTFOLIO_SIZE
                 )
                 
                 if new_sentiment_ensemble_stocks:
@@ -3532,8 +3522,7 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, 
                     ticker_data_grouped,
                     current_date=current_date,
-                    train_start_date=train_start_date,
-                    top_n=PORTFOLIO_SIZE
+                                        top_n=PORTFOLIO_SIZE
                 )
                 
                 if new_elite_hybrid_sentiment_stocks:
@@ -4376,22 +4365,22 @@ def _run_portfolio_backtest_walk_forward(
                 # Check if we need to train/retrain the model
                 should_train = False
                 
-                # Initial training on day 20
-                if day_count == AI_ELITE_WARMUP_DAYS and ai_elite_model is None:
+                # Initial training on day 1
+                if day_count == 1 and ai_elite_model is None:
                     should_train = True
-                    print(f"   🎓 AI Elite: Initial training on day {day_count} with {day_count} days of data...")
+                    print(f"   🎓 AI Elite: Initial training on day {day_count} with {AI_ELITE_TRAINING_LOOKBACK} days of data...")
                 
-                # Periodic retraining every 20 days (day 40, 60, 80, etc.)
+                # Periodic retraining every 20 days (day 21, 41, 61, 81, etc.)
                 elif ai_elite_model is not None and (day_count - ai_elite_last_train_day) >= AI_ELITE_RETRAIN_DAYS:
                     should_train = True
-                    print(f"   🔄 AI Elite: Retraining on day {day_count} with {day_count} days of data...")
+                    print(f"   🔄 AI Elite: Retraining on day {day_count} with {AI_ELITE_TRAINING_LOOKBACK} days of data...")
                 
                 # Train model if needed
                 if should_train:
-                    # Progressive training: use all available days from backtest start
-                    # Day 20 -> train on 20 days, Day 40 -> train on 40 days, etc.
-                    train_start = start_date  # Use backtest start date
+                    # Fixed 20-day training window for AI Elite
+                    # Always train on last 20 days, regardless of backtest day
                     train_end = current_date
+                    train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
                     
                     ai_elite_model = train_ai_elite_model(
                         ticker_data_grouped=ticker_data_grouped,

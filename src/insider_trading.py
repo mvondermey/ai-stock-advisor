@@ -183,7 +183,6 @@ class InsiderTradingSignal:
     def select_stocks(self, all_tickers: List[str],
                      ticker_data_grouped: Dict[str, pd.DataFrame],
                      current_date: datetime,
-                     train_start_date: datetime = None,
                      top_n: int = PORTFOLIO_SIZE) -> List[str]:
         """Select stocks with positive insider trading signals."""
         print(f"\n   🎯 Insider Trading Signal Strategy")
@@ -244,7 +243,6 @@ def get_insider_instance() -> InsiderTradingSignal:
 def select_insider_trading_stocks(all_tickers: List[str],
                                   ticker_data_grouped: Dict[str, pd.DataFrame],
                                   current_date: datetime = None,
-                                  train_start_date: datetime = None,
                                   top_n: int = PORTFOLIO_SIZE) -> List[str]:
     """
     Insider Trading Signal stock selection strategy.
@@ -262,7 +260,7 @@ def select_insider_trading_stocks(all_tickers: List[str],
     
     instance = get_insider_instance()
     return instance.select_stocks(
-        all_tickers, ticker_data_grouped, current_date, train_start_date, top_n
+        all_tickers, ticker_data_grouped, current_date, top_n
     )
 
 

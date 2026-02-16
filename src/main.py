@@ -944,8 +944,6 @@ def main(
     # --- Define training date variables (needed for backtest even when training disabled) ---
     # Train on data before backtest starts (clean temporal separation)
     train_end_1y = bt_start_1y - timedelta(days=1)
-    train_start_1y_calc = train_end_1y - timedelta(days=TRAIN_LOOKBACK_DAYS)
-    print(f"📅 Training period: {train_start_1y_calc.date()} to {train_end_1y.date()}")
 
     # ✅ FIX: Calculate actual period name based on backtest length
     if BACKTEST_DAYS >= 250:  # ~1 year
@@ -1139,7 +1137,6 @@ def main(
     try:
         result = _run_portfolio_backtest_walk_forward(
             all_tickers_data=all_tickers_data,
-            train_start_date=train_start_1y_calc,
             backtest_start_date=bt_start_1y,
             backtest_end_date=bt_end,
             initial_top_tickers=top_tickers,

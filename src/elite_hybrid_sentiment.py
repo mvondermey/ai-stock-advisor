@@ -120,7 +120,6 @@ class EliteHybridSentiment:
     def select_stocks(self, all_tickers: List[str],
                      ticker_data_grouped: Dict[str, pd.DataFrame],
                      current_date: datetime = None,
-                     train_start_date: datetime = None,
                      top_n: int = PORTFOLIO_SIZE) -> List[str]:
         """Main entry point: Select stocks with Elite Hybrid + Sentiment."""
         print(f"\n   🎯 Elite Hybrid Sentiment Strategy")
@@ -184,7 +183,6 @@ def get_elite_hybrid_sentiment_instance() -> EliteHybridSentiment:
 def select_elite_hybrid_sentiment_stocks(all_tickers: List[str],
                                          ticker_data_grouped: Dict[str, pd.DataFrame],
                                          current_date: datetime = None,
-                                         train_start_date: datetime = None,
                                          top_n: int = PORTFOLIO_SIZE) -> List[str]:
     """
     Elite Hybrid Sentiment stock selection strategy.
@@ -215,7 +213,7 @@ def select_elite_hybrid_sentiment_stocks(all_tickers: List[str],
     
     ensemble = get_elite_hybrid_sentiment_instance()
     return ensemble.select_stocks(
-        all_tickers, ticker_data_grouped, current_date, train_start_date, top_n
+        all_tickers, ticker_data_grouped, current_date, top_n
     )
 
 

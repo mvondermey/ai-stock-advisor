@@ -227,7 +227,6 @@ class FactorRotation:
     def select_stocks(self, all_tickers: List[str],
                      ticker_data_grouped: Dict[str, pd.DataFrame],
                      current_date: datetime,
-                     train_start_date: datetime = None,
                      top_n: int = PORTFOLIO_SIZE) -> List[str]:
         """Select stocks based on factor rotation."""
         print(f"\n   🎯 Factor Rotation Strategy")
@@ -281,7 +280,6 @@ def get_factor_rotation_instance() -> FactorRotation:
 def select_factor_rotation_stocks(all_tickers: List[str],
                                   ticker_data_grouped: Dict[str, pd.DataFrame],
                                   current_date: datetime = None,
-                                  train_start_date: datetime = None,
                                   top_n: int = PORTFOLIO_SIZE) -> List[str]:
     """
     Factor Rotation stock selection strategy.
@@ -299,7 +297,7 @@ def select_factor_rotation_stocks(all_tickers: List[str],
     
     instance = get_factor_rotation_instance()
     return instance.select_stocks(
-        all_tickers, ticker_data_grouped, current_date, train_start_date, top_n
+        all_tickers, ticker_data_grouped, current_date, top_n
     )
 
 

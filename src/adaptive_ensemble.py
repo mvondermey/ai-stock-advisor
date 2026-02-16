@@ -171,8 +171,7 @@ class AdaptiveMetaEnsemble:
     
     def get_strategy_picks(self, strategy_name: str, all_tickers: List[str],
                           ticker_data_grouped: Dict[str, pd.DataFrame],
-                          current_date: datetime, train_start_date: datetime = None,
-                          top_n: int = 20) -> List[str]:
+                          current_date: datetime, top_n: int = 20) -> List[str]:
         """
         Get stock picks from a specific strategy.
         """
@@ -200,7 +199,6 @@ class AdaptiveMetaEnsemble:
             elif strategy_name == 'risk_adj_mom':
                 return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped,
                                                  current_date=current_date, 
-                                                 train_start_date=train_start_date,
                                                  top_n=top_n)
             
             elif strategy_name == 'quality_mom':
@@ -289,7 +287,6 @@ class AdaptiveMetaEnsemble:
     def select_stocks(self, all_tickers: List[str], 
                      ticker_data_grouped: Dict[str, pd.DataFrame],
                      current_date: datetime,
-                     train_start_date: datetime = None,
                      top_n: int = PORTFOLIO_SIZE) -> List[str]:
         """
         Main entry point: Select stocks using adaptive ensemble.
@@ -313,7 +310,7 @@ class AdaptiveMetaEnsemble:
             print(f"   🔍 Getting picks from {strategy}...")
             picks = self.get_strategy_picks(
                 strategy, all_tickers, ticker_data_grouped,
-                current_date, train_start_date, top_n=top_n * 2
+                current_date, top_n=top_n * 2
             )
             strategy_picks[strategy] = picks
             print(f"      → {len(picks)} picks")
@@ -375,7 +372,6 @@ def get_ensemble_instance() -> AdaptiveMetaEnsemble:
 def select_adaptive_ensemble_stocks(all_tickers: List[str], 
                                     ticker_data_grouped: Dict[str, pd.DataFrame],
                                     current_date: datetime = None,
-                                    train_start_date: datetime = None,
                                     top_n: int = PORTFOLIO_SIZE) -> List[str]:
     """
     Adaptive Meta-Ensemble stock selection strategy.
@@ -389,7 +385,6 @@ def select_adaptive_ensemble_stocks(all_tickers: List[str],
         all_tickers: List of ticker symbols to analyze
         ticker_data_grouped: Dict mapping ticker -> price data (with date as index)
         current_date: Current date for analysis
-        train_start_date: Start date for training (used by some sub-strategies)
         top_n: Number of stocks to select
         
     Returns:
@@ -409,7 +404,7 @@ def select_adaptive_ensemble_stocks(all_tickers: List[str],
     # Get ensemble instance and select stocks
     ensemble = get_ensemble_instance()
     return ensemble.select_stocks(
-        all_tickers, ticker_data_grouped, current_date, train_start_date, top_n
+        all_tickers, ticker_data_grouped, current_date, top_n
     )
 
 

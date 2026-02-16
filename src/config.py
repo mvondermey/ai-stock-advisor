@@ -318,9 +318,8 @@ ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip 
 ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (not implemented)
 
 # AI Elite Parameters
-AI_ELITE_WARMUP_DAYS = 20  # Days before starting ML predictions (train on day 20 with 20 days)
 AI_ELITE_RETRAIN_DAYS = 20  # Retrain model every N days
-AI_ELITE_TRAINING_LOOKBACK = -1  # Use all available days (progressive: day 20->20 days, day 40->40 days, etc.)
+AI_ELITE_TRAINING_LOOKBACK = 20  # Use fixed 20-day window for training
 AI_ELITE_FORWARD_DAYS = 20  # Predict performance over next N days
 
 # Momentum Acceleration Parameters

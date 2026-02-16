@@ -295,7 +295,6 @@ class EnhancedVolatilityTrader:
     def select_enhanced_stocks(self, all_tickers: List[str], 
                              ticker_data_grouped: Dict[str, pd.DataFrame],
                              current_date: datetime = None,
-                             train_start_date: datetime = None,
                              top_n: int = PORTFOLIO_SIZE) -> List[str]:
         """
         Select stocks using enhanced strategy with stop-loss/take-profit.
@@ -456,11 +455,10 @@ class EnhancedVolatilityTrader:
 def select_enhanced_volatility_stocks(all_tickers: List[str], 
                                       ticker_data_grouped: Dict[str, pd.DataFrame],
                                       current_date: datetime = None,
-                                      train_start_date: datetime = None,
                                       top_n: int = PORTFOLIO_SIZE) -> List[str]:
     """
     Main function to select stocks using enhanced volatility strategy.
     """
     trader = EnhancedVolatilityTrader()
     return trader.select_enhanced_stocks(all_tickers, ticker_data_grouped,
-                                        current_date, train_start_date, top_n)
+                                        current_date, top_n)

@@ -212,8 +212,7 @@ class CorrelationFilteredEnsemble:
     
     def get_strategy_picks(self, strategy_name: str, all_tickers: List[str],
                           ticker_data_grouped: Dict[str, pd.DataFrame],
-                          current_date: datetime, train_start_date: datetime = None,
-                          top_n: int = 15) -> List[str]:
+                          current_date: datetime, top_n: int = 15) -> List[str]:
         """Get stock picks from a specific strategy."""
         try:
             if strategy_name == 'static_bh_3m':
@@ -250,7 +249,6 @@ class CorrelationFilteredEnsemble:
             elif strategy_name == 'risk_adj_mom':
                 return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped,
                                                  current_date=current_date,
-                                                 train_start_date=train_start_date,
                                                  top_n=top_n)
             
             elif strategy_name == 'quality_mom':
@@ -287,7 +285,6 @@ class CorrelationFilteredEnsemble:
     def select_stocks(self, all_tickers: List[str],
                      ticker_data_grouped: Dict[str, pd.DataFrame],
                      current_date: datetime,
-                     train_start_date: datetime = None,
                      top_n: int = PORTFOLIO_SIZE) -> List[str]:
         """Main entry point: Select stocks with correlation filtering."""
         print(f"\n   🎯 Correlation-Filtered Ensemble Strategy")
@@ -299,7 +296,7 @@ class CorrelationFilteredEnsemble:
             print(f"   🔍 Getting picks from {strategy}...")
             picks = self.get_strategy_picks(
                 strategy, all_tickers, ticker_data_grouped,
-                current_date, train_start_date, top_n=top_n * 2
+                current_date, top_n=top_n * 2
             )
             strategy_picks[strategy] = picks
             print(f"      → {len(picks)} picks")
@@ -386,7 +383,6 @@ def get_corr_ensemble_instance() -> CorrelationFilteredEnsemble:
 def select_correlation_ensemble_stocks(all_tickers: List[str],
                                        ticker_data_grouped: Dict[str, pd.DataFrame],
                                        current_date: datetime = None,
-                                       train_start_date: datetime = None,
                                        top_n: int = PORTFOLIO_SIZE) -> List[str]:
     """
     Correlation-Filtered Ensemble stock selection strategy.
@@ -417,7 +413,7 @@ def select_correlation_ensemble_stocks(all_tickers: List[str],
     
     ensemble = get_corr_ensemble_instance()
     return ensemble.select_stocks(
-        all_tickers, ticker_data_grouped, current_date, train_start_date, top_n
+        all_tickers, ticker_data_grouped, current_date, top_n
     )
 
 

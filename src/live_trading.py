@@ -539,11 +539,9 @@ def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     
     # Pass required date parameters
     current_date = datetime.now(timezone.utc)
-    train_start_date = current_date - timedelta(days=365)
     
     selected = select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, 
                                           current_date=current_date, 
-                                          train_start_date=train_start_date,
                                           top_n=PORTFOLIO_SIZE)
     
     if selected:

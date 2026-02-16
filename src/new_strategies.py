@@ -53,7 +53,7 @@ def select_momentum_acceleration_stocks(
             current_date = max(latest_dates)
         else:
             return []
-    
+
     candidates = []
     
     for ticker in filtered_tickers:
@@ -474,7 +474,10 @@ def select_trend_following_atr_stocks(
         else:
             return []
     
-    candidates = []
+    trend_tracker = get_trend_atr_instance()
+    stocks_to_buy = []
+    stocks_to_sell = []
+    breakout_candidates = []
     
     for ticker in filtered_tickers:
         try:
@@ -504,7 +507,7 @@ def select_trend_following_atr_stocks(
         trend_tracker.remove_position(ticker)
     
     # Find new breakout candidates
-    for ticker in all_tickers:
+    for ticker in filtered_tickers:
         try:
             # Skip if already in position
             if ticker in trend_tracker.positions:

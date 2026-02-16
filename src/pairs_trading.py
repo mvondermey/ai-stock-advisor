@@ -195,7 +195,6 @@ class PairsTrading:
     def select_stocks(self, all_tickers: List[str],
                      ticker_data_grouped: Dict[str, pd.DataFrame],
                      current_date: datetime,
-                     train_start_date: datetime = None,
                      top_n: int = PORTFOLIO_SIZE) -> List[str]:
         """Select stocks from pairs trading signals (long side only for simplicity)."""
         print(f"\n   🎯 Pairs Trading Strategy")
@@ -278,7 +277,6 @@ def get_pairs_instance() -> PairsTrading:
 def select_pairs_trading_stocks(all_tickers: List[str],
                                 ticker_data_grouped: Dict[str, pd.DataFrame],
                                 current_date: datetime = None,
-                                train_start_date: datetime = None,
                                 top_n: int = PORTFOLIO_SIZE) -> List[str]:
     """
     Pairs Trading stock selection strategy.
@@ -296,7 +294,7 @@ def select_pairs_trading_stocks(all_tickers: List[str],
     
     instance = get_pairs_instance()
     return instance.select_stocks(
-        all_tickers, ticker_data_grouped, current_date, train_start_date, top_n
+        all_tickers, ticker_data_grouped, current_date, top_n
     )
 
 

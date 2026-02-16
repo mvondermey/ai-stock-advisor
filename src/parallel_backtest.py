@@ -12,16 +12,13 @@ from datetime import datetime, timedelta
 
 def calculate_single_ticker_performance(args):
     """Calculate performance for a single ticker - used for parallel processing."""
-    ticker, ticker_data, current_date, train_start_date, period_days = args
+    ticker, ticker_data, current_date, period_days = args
     
     try:
         if ticker_data.empty:
             return None
             
-        if train_start_date is not None:
-            perf_start_date = max(train_start_date, current_date - timedelta(days=period_days))
-        else:
-            perf_start_date = current_date - timedelta(days=period_days)
+        perf_start_date = current_date - timedelta(days=period_days)
         perf_data = ticker_data.loc[perf_start_date:current_date]
         
         # Adaptive min rows based on period length
@@ -52,7 +49,6 @@ def calculate_single_ticker_performance(args):
 def calculate_parallel_performance(tickers: List[str], 
                                  ticker_data_grouped: Dict[str, pd.DataFrame],
                                  current_date: datetime,
-                                 train_start_date: datetime,
                                  period_days: int = 365,
                                  num_processes: int = None) -> List[Tuple[str, float]]:
     """
@@ -62,7 +58,6 @@ def calculate_parallel_performance(tickers: List[str],
         tickers: List of ticker symbols
         ticker_data_grouped: Dict mapping ticker -> price data
         current_date: Current date for calculation
-        train_start_date: Training start date constraint
         period_days: Performance window in days
         num_processes: Number of parallel processes (default: from config)
     
@@ -77,7 +72,7 @@ def calculate_parallel_performance(tickers: List[str],
     args_list = []
     for ticker in tickers:
         ticker_data = ticker_data_grouped.get(ticker, pd.DataFrame())
-        args_list.append((ticker, ticker_data, current_date, train_start_date, period_days))
+        args_list.append((ticker, ticker_data, current_date, period_days))
     
     # Process in parallel
     import time
@@ -95,7 +90,6 @@ def calculate_parallel_performance(tickers: List[str],
 def calculate_parallel_risk_adjusted_scores(tickers: List[str],
                                            ticker_data_grouped: Dict[str, pd.DataFrame],
                                            current_date: datetime,
-                                           train_start_date: datetime,
                                            num_processes: int = None) -> List[Tuple[str, float, float, float]]:
     """
     Calculate risk-adjusted momentum scores in parallel.
@@ -108,7 +102,7 @@ def calculate_parallel_risk_adjusted_scores(tickers: List[str],
         num_processes = max(1, NUM_PROCESSES)
     
     def calculate_single_risk_adj(args):
-        ticker, ticker_data, current_date, train_start_date = args
+        ticker, ticker_data, current_date = args
         
         try:
             if len(ticker_data) < 100:
@@ -116,8 +110,6 @@ def calculate_parallel_risk_adjusted_scores(tickers: List[str],
                 
             end_date = current_date or ticker_data.index.max()
             start_date = end_date - timedelta(days=365)  # Risk-adj uses 1-year
-            if train_start_date:
-                start_date = max(train_start_date, start_date)
             
             perf_data = ticker_data.loc[start_date:end_date]
             if len(perf_data) < 50:
@@ -152,7 +144,7 @@ def calculate_parallel_risk_adjusted_scores(tickers: List[str],
     args_list = []
     for ticker in tickers:
         ticker_data = ticker_data_grouped.get(ticker, pd.DataFrame())
-        args_list.append((ticker, ticker_data, current_date, train_start_date))
+        args_list.append((ticker, ticker_data, current_date))
     
     # Process in parallel
     with Pool(processes=num_processes) as pool:
