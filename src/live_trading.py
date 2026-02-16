@@ -450,8 +450,12 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
         return get_dynamic_pool_tickers(all_tickers, all_tickers_data)
     
     elif strategy == 'sentiment_ensemble':
-        # Sentiment-Enhanced Ensemble Strategy: Incorporates news sentiment
+        # Mom-Vol Hybrid 6M + Sentiment Strategy: Incorporates news sentiment
         return get_sentiment_ensemble_tickers(all_tickers, all_tickers_data)
+    
+    elif strategy == 'elite_hybrid_sentiment':
+        # Elite Hybrid + Sentiment Strategy: Elite Hybrid with news sentiment
+        return get_elite_hybrid_sentiment_tickers(all_tickers, all_tickers_data)
     
     elif strategy == 'momentum_breakout':
         # Momentum Breakout Strategy: 52-week high breakouts with volume
@@ -758,14 +762,25 @@ def get_dynamic_pool_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
 
 
 def get_sentiment_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
-    """Sentiment-Enhanced Ensemble Strategy: Incorporates news sentiment."""
+    """Mom-Vol Hybrid 6M + Sentiment Strategy: Incorporates news sentiment."""
     from sentiment_ensemble import select_sentiment_ensemble_stocks
     
-    print(f"   🔍 Sentiment Ensemble: Processing {len(all_tickers)} tickers")
-    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Sentiment Ensemble")
+    print(f"   🔍 Mom-Vol 6M Sentiment: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Mom-Vol 6M Sentiment")
     
     current_date = datetime.now(timezone.utc)
     return select_sentiment_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_elite_hybrid_sentiment_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Elite Hybrid + Sentiment Strategy: Elite Hybrid with news sentiment."""
+    from elite_hybrid_sentiment import select_elite_hybrid_sentiment_stocks
+    
+    print(f"   🔍 Elite Hybrid Sentiment: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Elite Hybrid Sentiment")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_elite_hybrid_sentiment_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 def get_momentum_breakout_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
@@ -991,7 +1006,8 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
         'ai_volatility_ensemble': 'AI Volatility Ensemble (AI-Enhanced)',
         'correlation_ensemble': 'Correlation Ensemble (Diversified)',
         'dynamic_pool': 'Dynamic Pool (Adaptive)',
-        'sentiment_ensemble': 'Sentiment Ensemble (News-Enhanced)',
+        'sentiment_ensemble': 'Mom-Vol 6M Sentiment (News-Enhanced)',
+        'elite_hybrid_sentiment': 'Elite Hybrid Sentiment (News-Enhanced)',
         'momentum_breakout': 'Momentum Breakout (52-Week High)',
         'factor_rotation': 'Factor Rotation (Value/Growth/Mom/Quality)',
         'pairs_trading': 'Pairs Trading (Statistical Arbitrage)',

@@ -1,12 +1,12 @@
 """
-Sentiment-Enhanced Ensemble Strategy
+Mom-Vol Hybrid 6M Sentiment Strategy
 
-Combines multiple strategies with real news sentiment analysis.
+Combines Mom-Vol Hybrid 6M (best performer +48.8%) with real news sentiment analysis.
 Features:
+- Mom-Vol Hybrid 6M base selection (6-month momentum with volatility adjustment)
 - Real news sentiment from Alpha Vantage API (FREE tier)
 - Reddit sentiment from public API
-- Ensemble consensus with sentiment filtering
-- Risk-adjusted sentiment weighting
+- Sentiment filtering and score boosting
 """
 
 import pandas as pd

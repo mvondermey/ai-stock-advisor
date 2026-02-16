@@ -293,7 +293,8 @@ ENABLE_ADAPTIVE_STRATEGY = True   # ENABLED - Adaptive Meta-Ensemble Strategy
 ENABLE_VOLATILITY_ENSEMBLE = True   # ENABLED - Volatility-Adjusted Ensemble Strategy (risk-managed position sizing)
 ENABLE_ENHANCED_VOLATILITY = True   # ENABLED - Enhanced Volatility Trader (ATR stops + take profits)
 ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble Strategy (diversification-focused)
-ENABLE_SENTIMENT_ENSEMBLE = True   # ENABLED - Sentiment-Enhanced Ensemble Strategy
+ENABLE_SENTIMENT_ENSEMBLE = True   # ENABLED - Mom-Vol Hybrid 6M + Sentiment (was Sentiment Ensemble)
+ENABLE_ELITE_HYBRID_SENTIMENT = True   # NEW - Elite Hybrid + Sentiment Strategy
 ENABLE_DYNAMIC_POOL = True   # ENABLED - Dynamic Strategy Pool Strategy
 
 # --- Multi-Timeframe Ensemble Strategy ---
