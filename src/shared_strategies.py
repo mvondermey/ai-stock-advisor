@@ -31,7 +31,8 @@ def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_da
     Returns:
         tuple: (score, return_pct, volatility_pct) or (0, 0, 0) if insufficient data
     """
-    if len(ticker_data) < 100:
+    from config import MIN_DATA_DAYS_MOMENTUM_CONFIRM
+    if len(ticker_data) < MIN_DATA_DAYS_MOMENTUM_CONFIRM:
         return 0.0, 0.0, 0.0
     
     # ✅ BETTER FIX: Use data's max date and convert current_date to pandas Timestamp
@@ -75,11 +76,12 @@ def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_da
     # ✅ Use boolean indexing instead of .loc[] to avoid KeyError with timezone mismatches
     perf_data = ticker_data[(ticker_data.index >= start_date) & (ticker_data.index <= end_date)]
     
-    if len(perf_data) < 50:
+    from config import MIN_DATA_DAYS_PERFORMANCE_DATA, MIN_DATA_DAYS_VALID_CLOSE
+    if len(perf_data) < MIN_DATA_DAYS_PERFORMANCE_DATA:
         return 0.0, 0.0, 0.0
     
     valid_close = perf_data['Close'].dropna()
-    if len(valid_close) < 10:
+    if len(valid_close) < MIN_DATA_DAYS_VALID_CLOSE:
         return 0.0, 0.0, 0.0
     
     start_price = valid_close.iloc[0]
@@ -94,7 +96,8 @@ def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_da
     
     # Calculate volatility
     daily_returns = valid_close.pct_change().dropna()
-    if len(daily_returns) <= 5:
+    from config import MIN_DATA_DAYS_DAILY_RETURNS
+    if len(daily_returns) <= MIN_DATA_DAYS_DAILY_RETURNS:
         return 0.0, 0.0, 0.0
     
     # Calculate volatility using full performance window
@@ -216,7 +219,8 @@ def check_volume_confirmation(ticker_data: pd.DataFrame) -> bool:
         return True  # No volume confirmation required
     
     volume_data = ticker_data['Volume'].dropna()
-    if len(volume_data) < RISK_ADJ_MOM_VOLUME_WINDOW + 20:
+    from config import MIN_DATA_DAYS_VOLUME_CONFIRM
+    if len(volume_data) < MIN_DATA_DAYS_VOLUME_CONFIRM:
         return True  # Insufficient data, pass by default
     
     recent_volume = volume_data.tail(RISK_ADJ_MOM_VOLUME_WINDOW).mean()
@@ -482,7 +486,8 @@ def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Di
             
             ticker_data = ticker_data_grouped[ticker]
             
-            if len(ticker_data) < 50:  # Need at least 50 days of data
+            from config import MIN_DATA_DAYS_PERFORMANCE_DATA
+            if len(ticker_data) < MIN_DATA_DAYS_PERFORMANCE_DATA:  # Need at least 50 days of data
                 continue
             
             # Convert current_date to pandas Timestamp with timezone
@@ -853,7 +858,8 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
             three_month_data = ticker_data[(ticker_data.index >= three_month_start) & 
                                          (ticker_data.index <= current_date_tz)]
             
-            if len(three_month_data) < 10:  # Need at least 10 data points
+            from config import MIN_DATA_DAYS_THREE_MONTH_POINTS
+            if len(three_month_data) < MIN_DATA_DAYS_THREE_MONTH_POINTS:  # Need at least 10 data points
                 data_insufficient += 1
                 continue
             
@@ -877,7 +883,8 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
             one_year_data = ticker_data[(ticker_data.index >= one_year_start) & 
                                       (ticker_data.index <= current_date_tz)]
             
-            if len(one_year_data) < 50:  # Need at least 50 data points
+            from config import MIN_DATA_DAYS_ONE_YEAR_POINTS
+            if len(one_year_data) < MIN_DATA_DAYS_ONE_YEAR_POINTS:  # Need at least 50 data points
                 data_insufficient += 1
                 continue
             
@@ -1819,7 +1826,8 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
             else:
                 ticker_data = None
                 
-            if ticker_data is None or len(ticker_data) < 30:
+            from config import MIN_DATA_DAYS_PERIOD_DATA
+            if ticker_data is None or len(ticker_data) < MIN_DATA_DAYS_PERIOD_DATA:
                 data_insufficient += 1
                 continue
             

@@ -182,7 +182,8 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
         
         # Feature 2: Volatility (annualized)
         daily_returns = close_prices.pct_change().dropna()
-        if len(daily_returns) < 30:
+        from config import MIN_DATA_DAYS_AI_ELITE_VOLATILITY
+        if len(daily_returns) < MIN_DATA_DAYS_AI_ELITE_VOLATILITY:
             return None
         volatility = daily_returns.std() * (252 ** 0.5) * 100  # As percentage
         
@@ -364,7 +365,8 @@ def train_ai_elite_model(
             except Exception as e:
                 continue
     
-    if len(training_data) < 100:
+    from config import MIN_TRAINING_SAMPLES_AI_ELITE
+    if len(training_data) < MIN_TRAINING_SAMPLES_AI_ELITE:
         print(f"   ⚠️ AI Elite: Insufficient training data ({len(training_data)} samples), using fallback")
         return None
     

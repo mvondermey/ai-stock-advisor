@@ -43,7 +43,8 @@ def predict_return_for_ticker(
             return -np.inf
         
         # Check if we have required OHLCV data
-        if data.empty or len(data) < horizon_days:
+        from config import MIN_DATA_DAYS_PREDICTION_HORIZON
+        if data.empty or len(data) < max(horizon_days, MIN_DATA_DAYS_PREDICTION_HORIZON):
             return -np.inf
         
         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -56,7 +57,8 @@ def predict_return_for_ticker(
             data
         )
         
-        if processed_data.empty or len(processed_data) < 1:
+        from config import MIN_DATA_DAYS_PREDICTION_HORIZON
+        if processed_data.empty or len(processed_data) < MIN_DATA_DAYS_PREDICTION_HORIZON:
             return -np.inf
         
         # Get the last row for prediction
@@ -76,7 +78,8 @@ def predict_return_for_ticker(
 
                 if isinstance(model, (LSTMClassifier, GRUClassifier, GRURegressor, TCNRegressor)):
                     # Need sequence data for PyTorch models
-                    if len(processed_data) < SEQUENCE_LENGTH:
+                    from config import MIN_DATA_DAYS_SEQUENCE_LENGTH
+                    if len(processed_data) < max(SEQUENCE_LENGTH, MIN_DATA_DAYS_SEQUENCE_LENGTH):
                         return -np.inf
                     
                     import torch

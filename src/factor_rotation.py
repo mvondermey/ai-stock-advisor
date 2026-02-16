@@ -136,13 +136,14 @@ class FactorRotation:
         """Calculate value factor score based on price trends (proxy for valuation)."""
         try:
             data = ticker_data[ticker_data.index <= current_date]
-            if len(data) < 252:
+            from config import MIN_DATA_DAYS_FACTOR_VALUE
+            if len(data) < MIN_DATA_DAYS_FACTOR_VALUE:
                 return 0.0
             
             # Use price-to-52-week-high as value proxy
             # Lower ratio = more "value" (beaten down)
             price_now = data['Close'].iloc[-1]
-            high_52w = data['Close'].iloc[-252:].max()
+            high_52w = data['Close'].iloc[-MIN_DATA_DAYS_FACTOR_VALUE:].max()
             
             # Invert so lower price relative to high = higher value score
             value_score = 1 - (price_now / high_52w)

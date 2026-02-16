@@ -431,6 +431,23 @@ MIN_DATA_DAYS_3M = 45          # Minimum days required for 3-month calculations 
 MIN_DATA_DAYS_1M = 15          # Minimum days required for 1-month calculations (reduced from 21)
 MIN_DATA_DAYS_GENERAL = 60     # General minimum data requirement for most strategies (reduced from 90)
 
+# --- Strategy-Specific Data Requirements ---
+# Additional minimum data requirements for specific strategies
+MIN_DATA_DAYS_AI_ELITE_VOLATILITY = 30      # AI Elite volatility calculation
+MIN_TRAINING_SAMPLES_AI_ELITE = 100         # AI Elite training samples
+MIN_DATA_DAYS_ENHANCED_VOLATILITY = 10      # Enhanced volatility trader
+MIN_DATA_DAYS_FACTOR_VALUE = 252            # Factor rotation value calculation
+MIN_DATA_DAYS_PREDICTION_HORIZON = 1        # Minimum prediction horizon days
+MIN_DATA_DAYS_SEQUENCE_LENGTH = 50          # Minimum for sequence models
+MIN_DATA_DAYS_MOMENTUM_CONFIRM = 50         # Risk-adj momentum confirmation
+MIN_DATA_DAYS_PERFORMANCE_DATA = 50         # Performance data validation
+MIN_DATA_DAYS_VALID_CLOSE = 10              # Minimum valid close prices
+MIN_DATA_DAYS_DAILY_RETURNS = 5             # Minimum daily returns for volatility
+MIN_DATA_DAYS_VOLUME_CONFIRM = 20           # Volume confirmation window
+MIN_DATA_DAYS_THREE_MONTH_POINTS = 10       # Three month data points
+MIN_DATA_DAYS_ONE_YEAR_POINTS = 50          # One year data points
+MIN_DATA_DAYS_PERIOD_DATA = 30              # Period data for calculations
+
 # --- Dynamic BH 1Y + Volatility Filter Parameters ---
 # Maximum allowed annualized volatility for stock selection (as percentage)
 # Higher values allow more volatile stocks, lower values are more conservative

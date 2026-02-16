@@ -97,7 +97,8 @@ class EnhancedVolatilityTrader:
             recent_data = ticker_data[(ticker_data.index >= lookback_start) & 
                                       (ticker_data.index <= current_date)]
             
-            if len(recent_data) < period + 5:
+            from config import MIN_DATA_DAYS_ENHANCED_VOLATILITY
+            if len(recent_data) < period + MIN_DATA_DAYS_ENHANCED_VOLATILITY:
                 # Return reasonable default ATR (2% of current price)
                 current_price = recent_data['Close'].iloc[-1] if len(recent_data) > 0 else 100.0
                 return current_price * 0.02  # 2% of price as default ATR
@@ -128,7 +129,8 @@ class EnhancedVolatilityTrader:
             recent_data = ticker_data[(ticker_data.index >= lookback_start) & 
                                       (ticker_data.index <= current_date)]
             
-            if len(recent_data) < window + 5:
+            from config import MIN_DATA_DAYS_ENHANCED_VOLATILITY
+            if len(recent_data) < window + MIN_DATA_DAYS_ENHANCED_VOLATILITY:
                 return 1.5  # Default above MIN_VOLUME_RATIO threshold
             
             # Check if Volume column exists
@@ -157,11 +159,12 @@ class EnhancedVolatilityTrader:
             recent_data = ticker_data[(ticker_data.index >= lookback_start) & 
                                       (ticker_data.index <= current_date)]
             
-            if len(recent_data) < 10:
+            from config import MIN_DATA_DAYS_PERIOD_DATA, MIN_DATA_DAYS_DAILY_RETURNS
+            if len(recent_data) < MIN_DATA_DAYS_PERIOD_DATA:
                 return 0.5
             
             daily_returns = recent_data['Close'].pct_change().dropna()
-            if len(daily_returns) < 5:
+            if len(daily_returns) < MIN_DATA_DAYS_DAILY_RETURNS:
                 return 0.5
             
             volatility = daily_returns.std() * np.sqrt(252)
@@ -185,7 +188,8 @@ class EnhancedVolatilityTrader:
             data_3m = ticker_data[(ticker_data.index >= start_3m) & 
                                   (ticker_data.index <= end_date)]
             
-            if len(data_3m) < 30:
+            from config import MIN_DATA_DAYS_PERIOD_DATA
+            if len(data_3m) < MIN_DATA_DAYS_PERIOD_DATA:
                 return 20.0  # Default momentum score when insufficient data
             
             start_price = data_3m['Close'].iloc[0]
@@ -197,7 +201,8 @@ class EnhancedVolatilityTrader:
             data_1m = ticker_data[(ticker_data.index >= start_1m) & 
                                   (ticker_data.index <= end_date)]
             
-            if len(data_1m) < 15:
+            from config import MIN_DATA_DAYS_1M
+            if len(data_1m) < MIN_DATA_DAYS_1M:
                 return momentum_3m * 0.8  # Discount if no 1m data
             
             start_price_1m = data_1m['Close'].iloc[0]
