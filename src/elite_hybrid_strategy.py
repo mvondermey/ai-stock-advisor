@@ -58,7 +58,7 @@ def select_elite_hybrid_stocks(
     
     candidates = []
     
-    print(f"   🏆 Elite Hybrid: Analyzing {len(filtered_tickers)} tickers (filtered from {len(all_tickers)})")
+    print(f"   [INFO] Elite Hybrid: Analyzing {len(filtered_tickers)} tickers (filtered from {len(all_tickers)})")
     
     # Debug: Track specific tickers
     debug_tickers = ['SNDK', 'WDC', 'MU', 'AMAT', 'TER', 'GLW']
@@ -195,23 +195,23 @@ def select_elite_hybrid_stocks(
             
             # Debug: Show specific tickers
             if ticker in debug_tickers:
-                print(f"   🔍 DEBUG {ticker}: Elite={elite_score:.3f}, 6M={momentum_6m*100:+.1f}%, "
+                print(f"   [DEBUG] {ticker}: Elite={elite_score:.3f}, 6M={momentum_6m*100:+.1f}%, "
                       f"Vol={volatility*100:.1f}%, 1Y={perf_1y:+.1f}%, 3M={perf_3m:+.1f}%, Dip={dip_score:.1f}")
             
         except Exception as e:
             if ticker in debug_tickers:
-                print(f"   ❌ DEBUG {ticker}: FAILED - {e}")
+                print(f"   [FAIL] DEBUG {ticker}: FAILED - {e}")
             continue
     
     if not candidates:
-        print(f"   ⚠️ Elite Hybrid: No candidates found")
+        print(f"   [WARN] Elite Hybrid: No candidates found")
         return []
     
     # Sort by elite score (descending)
     candidates.sort(key=lambda x: x['elite_score'], reverse=True)
     
     # Debug: show top candidates
-    print(f"   ✅ Elite Hybrid: Found {len(candidates)} candidates")
+    print(f"   [INFO] Elite Hybrid: Found {len(candidates)} candidates")
     for i, c in enumerate(candidates[:5], 1):
         print(f"      {i}. {c['ticker']}: Elite={c['elite_score']:.3f}, "
               f"6M={c['momentum_6m']:+.1f}%, Vol={c['volatility']:.1f}%, "

@@ -24,8 +24,7 @@ from config import (
     TRAINING_POOL_MAXTASKSPERCHILD,
     TRAINING_NUM_PROCESSES,
     USE_UNIFIED_PARALLEL_TRAINING,
-    TRAIN_LOOKBACK_DAYS,
-    )
+        )
 from data_utils import fetch_training_data, _ensure_dir
 from ml_models import initialize_ml_libraries, train_and_evaluate_models
 from data_validation import validate_training_data, validate_features_after_engineering, InsufficientDataError

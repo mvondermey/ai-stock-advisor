@@ -51,13 +51,13 @@ def apply_performance_filters(
         
         if len(data_up_to_current) < MIN_DATA_DAYS_1Y:  # Need at least 1 year of data
             if debug_limit > 0:
-                print(f"   ⚠️ {ticker}: Insufficient data ({len(data_up_to_current)} < {MIN_DATA_DAYS_1Y} days)")
+                print(f"   [WARN] {ticker}: Insufficient data ({len(data_up_to_current)} < {MIN_DATA_DAYS_1Y} days)")
             return None
         
         close_prices = data_up_to_current['Close'].dropna()
         if len(close_prices) < MIN_DATA_DAYS_1Y:
             if debug_limit > 0:
-                print(f"   ⚠️ {ticker}: Insufficient Close data ({len(close_prices)} < {MIN_DATA_DAYS_1Y} valid prices)")
+                print(f"   [WARN] {ticker}: Insufficient Close data ({len(close_prices)} < {MIN_DATA_DAYS_1Y} valid prices)")
             return None
         
         # Calculate 1Y performance
@@ -71,7 +71,7 @@ def apply_performance_filters(
             perf_6m = (price_current - price_6m_ago) / price_6m_ago
         else:
             if debug_limit > 0:
-                print(f"   ⚠️ {ticker}: Insufficient 6M data ({len(close_prices)} < {MIN_DATA_DAYS_6M} days)")
+                print(f"   [WARN] {ticker}: Insufficient 6M data ({len(close_prices)} < {MIN_DATA_DAYS_6M} days)")
             return None  # Insufficient data for 6M
         
         # Calculate 3M performance
@@ -80,23 +80,23 @@ def apply_performance_filters(
             perf_3m = (price_current - price_3m_ago) / price_3m_ago
         else:
             if debug_limit > 0:
-                print(f"   ⚠️ {ticker}: Insufficient 3M data ({len(close_prices)} < {MIN_DATA_DAYS_3M} days)")
+                print(f"   [WARN] {ticker}: Insufficient 3M data ({len(close_prices)} < {MIN_DATA_DAYS_3M} days)")
             return None  # Insufficient data for 3M
         
         # Apply filters
         if perf_1y < MIN_PERFORMANCE_1Y:
             if debug_limit > 0:
-                print(f"   ❌ {ticker}: Failed 1Y filter ({perf_1y:.1%} < {MIN_PERFORMANCE_1Y:.1%})")
+                print(f"   [FAIL] {ticker}: Failed 1Y filter ({perf_1y:.1%} < {MIN_PERFORMANCE_1Y:.1%})")
             return None  # Failed 1Y filter
         
         if perf_6m < MIN_PERFORMANCE_6M:
             if debug_limit > 0:
-                print(f"   ❌ {ticker}: Failed 6M filter ({perf_6m:.1%} < {MIN_PERFORMANCE_6M:.1%})")
+                print(f"   [FAIL] {ticker}: Failed 6M filter ({perf_6m:.1%} < {MIN_PERFORMANCE_6M:.1%})")
             return None  # Failed 6M filter
         
         if perf_3m < MIN_PERFORMANCE_3M:
             if debug_limit > 0:
-                print(f"   ❌ {ticker}: Failed 3M filter ({perf_3m:.1%} < {MIN_PERFORMANCE_3M:.1%})")
+                print(f"   [FAIL] {ticker}: Failed 3M filter ({perf_3m:.1%} < {MIN_PERFORMANCE_3M:.1%})")
             return None  # Failed 3M filter
         
         # Return performance metrics
@@ -137,7 +137,7 @@ def filter_tickers_by_performance(
     debug_count = 0
     max_debug = 10  # Limit debug output to avoid flooding
     
-    print(f"\n   🔍 {strategy_name}: Performance filter analysis (first {max_debug} failures shown)")
+    print(f"\n   [DEBUG] {strategy_name}: Performance filter analysis (first {max_debug} failures shown)")
     
     for ticker in all_tickers:
         try:
@@ -157,7 +157,7 @@ def filter_tickers_by_performance(
                 # Passed all filters
                 passed_tickers.append(ticker)
                 if len(passed_tickers) <= 5:  # Show first 5 successes
-                    print(f"   ✅ {ticker}: PASSED (1Y={perf_metrics['perf_1y']:.1%}, 6M={perf_metrics['perf_6m']:.1%}, 3M={perf_metrics['perf_3m']:.1%})")
+                    print(f"   [PASS] {ticker}: PASSED (1Y={perf_metrics['perf_1y']:.1%}, 6M={perf_metrics['perf_6m']:.1%}, 3M={perf_metrics['perf_3m']:.1%})")
             else:
                 # Failed at least one filter
                 failed_count += 1
@@ -170,6 +170,6 @@ def filter_tickers_by_performance(
     
     if failed_count > 0 and len(all_tickers) > 0:
         pass_rate = (len(passed_tickers) / len(all_tickers)) * 100
-        print(f"   📊 {strategy_name}: Performance filters - {len(passed_tickers)}/{len(all_tickers)} passed ({pass_rate:.1f}%)")
+        print(f"   [INFO] {strategy_name}: Performance filters - {len(passed_tickers)}/{len(all_tickers)} passed ({pass_rate:.1f}%)")
     
     return passed_tickers

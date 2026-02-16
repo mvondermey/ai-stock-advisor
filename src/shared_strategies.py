@@ -53,9 +53,6 @@ def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_da
                     # current_ts has timezone, convert to data's timezone
                     current_ts = current_ts.tz_convert(ticker_data.index.tz)
             
-            # Use the minimum of current_ts and data's max (can't use future data)
-            end_date = min(current_ts, end_date)
-            
             # Check data freshness - warn if data is older than configured limit
             data_age_days = (current_ts - end_date).total_seconds() / 86400
             if data_age_days > DATA_FRESHNESS_MAX_DAYS:
@@ -224,6 +221,50 @@ def check_volume_confirmation(ticker_data: pd.DataFrame) -> bool:
     return recent_volume >= avg_volume * RISK_ADJ_MOM_VOLUME_MULTIPLIER
 
 
+def calculate_volatility_adjusted_momentum(ticker_data, lookback_days=90, vol_window=20):
+    """
+    Calculate volatility-adjusted momentum score for a ticker.
+    
+    Args:
+        ticker_data: DataFrame with price data for a single ticker
+        lookback_days: Period for momentum calculation (default 90 days)
+        vol_window: Period for volatility calculation (default 20 days)
+    
+    Returns:
+        Volatility-adjusted momentum score
+    """
+    try:
+        if len(ticker_data) < lookback_days + vol_window:
+            return 0.0
+        
+        # Calculate momentum return over lookback period
+        if len(ticker_data) >= lookback_days:
+            momentum_return = (ticker_data['Close'].iloc[-1] / ticker_data['Close'].iloc[-lookback_days] - 1)
+        else:
+            momentum_return = 0.0
+        
+        # Calculate volatility (standard deviation of daily returns)
+        daily_returns = ticker_data['Close'].pct_change().dropna()
+        if len(daily_returns) >= vol_window:
+            volatility = daily_returns.iloc[-vol_window:].std()
+        else:
+            volatility = daily_returns.std()
+        
+        # Avoid division by zero
+        if volatility <= 0:
+            return 0.0
+        
+        # Volatility-adjusted momentum (higher is better)
+        # This penalizes high volatility and rewards steady momentum
+        vol_adjusted_score = momentum_return / (volatility ** 0.5)
+        
+        return vol_adjusted_score
+        
+    except Exception as e:
+        print(f"   ⚠️ Error calculating volatility-adjusted momentum: {e}")
+        return 0.0
+
+
 def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame], 
                                      current_date: datetime = None, top_n: int = 20) -> List[str]:
     """
@@ -244,45 +285,28 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
             
             ticker_data = ticker_data_grouped[ticker]
             
-            # ✅ FIX: Filter data up to current_date to avoid temporal leakage
-            if current_date is not None:
-                current_ts = pd.Timestamp(current_date)
-                if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                    if current_ts.tz is None:
-                        current_ts = current_ts.tz_localize(ticker_data.index.tz)
-                ticker_data_filtered = ticker_data.loc[:current_ts]
-            else:
-                ticker_data_filtered = ticker_data
+            # Use same approach as backtesting
+            lookback_start = current_date - timedelta(days=VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW + 30)
+            ticker_history = ticker_data[
+                (ticker_data.index >= lookback_start) & 
+                (ticker_data.index <= current_date)
+            ]
             
-            if len(ticker_data_filtered) < VOLATILITY_ADJ_MOM_LOOKBACK:
+            # Use same minimum requirement as backtesting
+            min_required = min(60, VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW)
+            if len(ticker_history) < min_required:
                 continue
             
-            # Calculate momentum return over lookback period
-            if len(ticker_data_filtered) >= VOLATILITY_ADJ_MOM_LOOKBACK:
-                momentum_return = (ticker_data_filtered['Close'].iloc[-1] / ticker_data_filtered['Close'].iloc[-VOLATILITY_ADJ_MOM_LOOKBACK] - 1)
-            else:
-                momentum_return = 0.0
+            # Calculate volatility-adjusted momentum score (same as backtesting)
+            vol_adj_score = calculate_volatility_adjusted_momentum(
+                ticker_history, 
+                min(VOLATILITY_ADJ_MOM_LOOKBACK, len(ticker_history) - VOLATILITY_ADJ_MOM_VOL_WINDOW), 
+                VOLATILITY_ADJ_MOM_VOL_WINDOW
+            )
             
-            # Only include stocks with positive momentum return
-            if momentum_return <= 0:
-                continue
-            
-            # Calculate volatility
-            daily_returns = ticker_data_filtered['Close'].pct_change().dropna()
-            if len(daily_returns) >= VOLATILITY_ADJ_MOM_VOL_WINDOW:
-                volatility = daily_returns.iloc[-VOLATILITY_ADJ_MOM_VOL_WINDOW:].std()
-            else:
-                volatility = daily_returns.std()
-            
-            # Avoid division by zero
-            if volatility <= 0:
-                continue
-            
-            # Volatility-adjusted momentum score
-            vol_adjusted_score = momentum_return / (volatility ** 0.5)
-            
-            if vol_adjusted_score >= VOLATILITY_ADJ_MOM_MIN_SCORE:
-                current_top_performers.append((ticker, vol_adjusted_score, momentum_return * 100, volatility * 100))
+            # Use same threshold as backtesting (accept any positive score)
+            if vol_adj_score > 0:
+                current_top_performers.append((ticker, vol_adj_score))
         
         except Exception:
             continue
@@ -290,11 +314,11 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
     # Sort by volatility-adjusted score and get top N
     if current_top_performers:
         current_top_performers.sort(key=lambda x: x[1], reverse=True)
-        selected_tickers = [ticker for ticker, score, ret, vol in current_top_performers[:top_n]]
+        selected_tickers = [ticker for ticker, score in current_top_performers[:top_n]]
         
         print(f"   📊 Top {top_n} volatility-adjusted momentum: {selected_tickers}")
-        for ticker, score, ret, vol in current_top_performers[:top_n]:
-            print(f"      {ticker}: score={score:.3f}, return={ret:.1f}%, vol={vol:.1f}%")
+        for ticker, score in current_top_performers[:top_n]:
+            print(f"      {ticker}: score={score:.3f}")
         
         return selected_tickers
     else:
@@ -1298,7 +1322,7 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
             else:
                 ticker_data_filtered = ticker_data
             
-            # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
+            # Use dropna'd Close series for all calculations
             close_prices = ticker_data_filtered['Close'].dropna()
             n_prices = len(close_prices)
             
@@ -1420,7 +1444,7 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
             else:
                 ticker_data_filtered = ticker_data
             
-            # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
+            # Use dropna'd Close series for all calculations
             close_prices = ticker_data_filtered['Close'].dropna()
             n_prices = len(close_prices)
             
@@ -1575,7 +1599,7 @@ def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_group
             else:
                 ticker_data_filtered = ticker_data
             
-            # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
+            # Use dropna'd Close series for all calculations
             close_prices = ticker_data_filtered['Close'].dropna()
             n_prices = len(close_prices)
             
@@ -1699,7 +1723,7 @@ def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped
             else:
                 ticker_data_filtered = ticker_data
             
-            # Use dropna'd Close series for all calculations (handles NaN-padded MultiIndex DataFrames)
+            # Use dropna'd Close series for all calculations
             close_prices = ticker_data_filtered['Close'].dropna()
             n_prices = len(close_prices)
             

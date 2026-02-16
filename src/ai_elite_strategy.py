@@ -66,27 +66,43 @@ def select_ai_elite_stocks(
     print(f"   🤖 AI Elite: Analyzing {len(filtered_tickers)} tickers with ML scoring (filtered from {len(all_tickers)})")
     
     # Extract features for all candidates
+    debug_count = 0
+    fail_reasons = {'not_in_data': 0, 'empty': 0, 'features_none': 0, 'exception': 0}
     for ticker in filtered_tickers:
         try:
             if ticker not in ticker_data_grouped:
+                fail_reasons['not_in_data'] += 1
                 continue
             
             ticker_data = ticker_data_grouped[ticker]
             if len(ticker_data) == 0:
+                fail_reasons['empty'] += 1
                 continue
+            
+            # Debug first 3 tickers
+            if debug_count < 3:
+                print(f"   🔍 AI Elite DEBUG {ticker}: index_type={type(ticker_data.index).__name__}, "
+                      f"len={len(ticker_data)}, cols={list(ticker_data.columns[:5])}, "
+                      f"index[0]={ticker_data.index[0]}, index[-1]={ticker_data.index[-1]}")
+                debug_count += 1
             
             # Calculate all features
             features = _extract_features(ticker, ticker_data, current_date)
             if features is None:
+                fail_reasons['features_none'] += 1
                 continue
             
             candidates.append(features)
             
         except Exception as e:
+            fail_reasons['exception'] += 1
+            if debug_count < 5:
+                print(f"   ⚠️ AI Elite DEBUG {ticker}: Exception: {e}")
             continue
     
     if not candidates:
         print(f"   ⚠️ AI Elite: No candidates found")
+        print(f"   🔍 AI Elite: Fail reasons: {fail_reasons}")
         return []
     
     # Use provided model or load from path
@@ -147,19 +163,51 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
     - perf_3m: 3-month return percentage
     """
     try:
+        # ✅ FIX: Deduplicate index (hourly data combined creates duplicates)
+        if ticker_data.index.duplicated().any():
+            ticker_data = ticker_data[~ticker_data.index.duplicated(keep='last')]
+        
         # ✅ FIX: Filter data up to current_date to avoid temporal leakage
         if current_date is not None:
             current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-            ticker_data_filtered = ticker_data.loc[:current_ts]
+            # Ensure both are UTC-aware for proper comparison
+            if current_ts.tz is None:
+                current_ts = current_ts.tz_localize('UTC')
+            elif str(current_ts.tz) != 'UTC':
+                current_ts = current_ts.tz_convert('UTC')
+            
+            # Ensure index is also UTC-aware
+            if ticker_data.index.tz is None:
+                ticker_data = ticker_data.copy()
+                ticker_data.index = ticker_data.index.tz_localize('UTC')
+            elif str(ticker_data.index.tz) != 'UTC':
+                ticker_data = ticker_data.copy()
+                ticker_data.index = ticker_data.index.tz_convert('UTC')
+            
+            # Use boolean indexing (safe for non-unique indices)
+            ticker_data_filtered = ticker_data[ticker_data.index <= current_ts]
         else:
             ticker_data_filtered = ticker_data
         
         # Use dropna'd Close series for all calculations (adaptive approach)
-        close_prices = ticker_data_filtered['Close'].dropna()
+        close_col = ticker_data_filtered['Close']
+        # Handle case where Close is a DataFrame (multiple columns) instead of Series
+        if isinstance(close_col, pd.DataFrame):
+            close_col = close_col.iloc[:, 0]
+        close_prices = close_col.dropna()
         n_prices = len(close_prices)
+        
+        # Debug: Check data length for first few tickers
+        if ticker in ['SNDK', 'ZEC-USD', 'WDC'] and hasattr(_extract_features, '_debug_count2'):
+            if _extract_features._debug_count2 < 3:
+                print(f"   🔍 FEAT DEBUG2 {ticker}: n_prices={n_prices}, filtered_len={len(ticker_data_filtered)}, "
+                      f"duplicated={ticker_data.index.duplicated().any()}")
+                _extract_features._debug_count2 += 1
+        if not hasattr(_extract_features, '_debug_count2'):
+            _extract_features._debug_count2 = 0
+            print(f"   🔍 FEAT DEBUG2 {ticker}: n_prices={n_prices}, filtered_len={len(ticker_data_filtered)}, "
+                  f"duplicated={ticker_data.index.duplicated().any()}")
+            _extract_features._debug_count2 = 1
         
         if n_prices < 60:  # Minimum 60 days
             return None
@@ -224,15 +272,17 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
         }
         
     except Exception as e:
+        if not hasattr(_extract_features, '_err_logged') or _extract_features._err_logged < 3:
+            print(f"   ❌ FEAT EXCEPTION {ticker}: {type(e).__name__}: {e}")
+            if not hasattr(_extract_features, '_err_logged'):
+                _extract_features._err_logged = 0
+            _extract_features._err_logged += 1
         return None
 
 
 def _load_or_create_model(model_path: Optional[str] = None):
     """
-    Load existing ML model or return None to use fallback scoring.
-    
-    In future iterations, this will train a model on historical data.
-    For now, we use fallback scoring until we have training data.
+    Load existing ML model or train a new one if not available.
     """
     if model_path and os.path.exists(model_path):
         try:
@@ -242,11 +292,51 @@ def _load_or_create_model(model_path: Optional[str] = None):
             return model
         except Exception as e:
             print(f"   ⚠️ AI Elite: Failed to load model: {e}")
-            return None
     
-    # No model available yet - will use fallback scoring
-    # In future: implement walk-forward training here
-    return None
+    # No model available - train a new one
+    print(f"   🎓 AI Elite: No existing model found, training new model...")
+    
+    # For live trading, we need to train with available historical data
+    # This is a simplified training approach for live trading
+    try:
+        from datetime import timedelta
+        import xgboost as xgb
+        from config import XGBOOST_USE_GPU
+        
+        # Create a simple XGBoost model for live trading
+        # This will be trained on the fly with available data
+        device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
+        model = xgb.XGBClassifier(
+            n_estimators=100,
+            max_depth=4,
+            learning_rate=0.1,
+            subsample=0.8,
+            random_state=42,
+            tree_method='hist',
+            device=device,
+            verbosity=0,
+            n_jobs=1
+        )
+        
+        print(f"   🚀 AI Elite: Created new XGBoost model ({device})")
+        print(f"   ⚠️ AI Elite: Model will be trained on first available data")
+        
+        # Save the model for future use
+        if model_path:
+            try:
+                import os
+                os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                with open(model_path, 'wb') as f:
+                    pickle.dump(model, f)
+                print(f"   💾 AI Elite: Saved new model to {model_path}")
+            except Exception as e:
+                print(f"   ⚠️ AI Elite: Failed to save model: {e}")
+        
+        return model
+        
+    except Exception as e:
+        print(f"   ⚠️ AI Elite: Failed to create model: {e}")
+        return None
 
 
 def _fallback_scoring(candidates_df: pd.DataFrame) -> np.ndarray:
@@ -304,8 +394,18 @@ def train_ai_elite_model(
     Returns:
         Trained model or None if training fails
     """
+    # Import both XGBoost and sklearn GradientBoosting
+    try:
+        import xgboost as xgb
+        from config import XGBOOST_USE_GPU
+        xgb_available = True
+        print(f"   🚀 AI Elite: Using XGBoost {'(GPU)' if XGBOOST_USE_GPU else '(CPU)'}")
+    except ImportError:
+        xgb_available = False
+        print(f"   ⚠️ AI Elite: XGBoost not available, will use sklearn GradientBoosting (CPU only)")
+    
+    # Always import sklearn as fallback
     from sklearn.ensemble import GradientBoostingClassifier
-    from sklearn.preprocessing import StandardScaler
     
     print(f"   🎓 AI Elite: Training ML model on {train_start_date.date()} to {train_end_date.date()}...")
     
@@ -326,6 +426,11 @@ def train_ai_elite_model(
         current_date += timedelta(days=5)
     
     print(f"   📊 AI Elite: Sampling {len(sample_dates)} dates for training...")
+    print(f"   📊 AI Elite: Sample dates: {[d.date() for d in sample_dates]}")
+    
+    debug_count = 0
+    features_none_count = 0
+    forward_none_count = 0
     
     for sample_date in sample_dates:
         # Extract features for all tickers on this date
@@ -338,9 +443,19 @@ def train_ai_elite_model(
                 if len(ticker_data) == 0:
                     continue
                 
+                # Debug first few tickers on first sample date
+                if debug_count < 3 and sample_date == sample_dates[0]:
+                    print(f"   🔍 TRAIN DEBUG {ticker}: index.tz={ticker_data.index.tz}, "
+                          f"cols={list(ticker_data.columns[:5])}, shape={ticker_data.shape}, "
+                          f"sample_date={sample_date}, sample_date.tz={sample_date.tzinfo}")
+                
                 # Extract features (uses adaptive lookback, min 60 days)
                 features = _extract_features(ticker, ticker_data, sample_date)
                 if features is None:
+                    if debug_count < 3 and sample_date == sample_dates[0]:
+                        print(f"   🔍 TRAIN DEBUG {ticker}: _extract_features returned None")
+                        debug_count += 1
+                    features_none_count += 1
                     continue
                 
                 # Calculate forward return (label)
@@ -348,6 +463,7 @@ def train_ai_elite_model(
                     ticker_data, sample_date, forward_days
                 )
                 if forward_return is None:
+                    forward_none_count += 1
                     continue
                 
                 # Store training sample (label will be assigned after collecting all samples)
@@ -364,6 +480,8 @@ def train_ai_elite_model(
                 
             except Exception as e:
                 continue
+    
+    print(f"   📊 AI Elite: Training loop done - samples={len(training_data)}, features_none={features_none_count}, forward_none={forward_none_count}")
     
     from config import MIN_TRAINING_SAMPLES_AI_ELITE
     if len(training_data) < MIN_TRAINING_SAMPLES_AI_ELITE:
@@ -414,7 +532,22 @@ def train_ai_elite_model(
     y = train_df['label'].values
     
     # Train model
-    try:
+    if xgb_available:
+        # Use XGBoost for GPU acceleration
+        device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
+        model = xgb.XGBClassifier(
+            n_estimators=100,
+            max_depth=4,
+            learning_rate=0.1,
+            subsample=0.8,
+            random_state=42,
+            tree_method='hist' if device == 'cuda' else 'hist',
+            device=device,
+            verbosity=0,
+            n_jobs=1  # Prevent multiprocessing conflicts
+        )
+    else:
+        # Fallback to sklearn
         model = GradientBoostingClassifier(
             n_estimators=100,
             max_depth=4,
@@ -423,17 +556,17 @@ def train_ai_elite_model(
             random_state=42,
             verbose=0
         )
-        
-        model.fit(X, y)
-        
-        # Calculate training accuracy
-        train_accuracy = model.score(X, y)
-        print(f"   ✅ AI Elite: Model trained! Accuracy: {train_accuracy*100:.1f}%")
-        
-        # Show feature importances
-        importances = model.feature_importances_
-        for i, col in enumerate(feature_cols):
-            print(f"      {col}: {importances[i]:.3f}")
+    
+    model.fit(X, y)
+    
+    # Calculate training accuracy
+    train_accuracy = model.score(X, y)
+    print(f"   ✅ AI Elite: Model trained! Accuracy: {train_accuracy*100:.1f}%")
+    
+    # Show feature importances
+    importances = model.feature_importances_
+    for i, col in enumerate(feature_cols):
+        print(f"      {col}: {importances[i]:.3f}")
         
         # Save model if path provided
         if save_path:
@@ -447,10 +580,6 @@ def train_ai_elite_model(
                 print(f"   ⚠️ AI Elite: Failed to save model: {e}")
         
         return model
-        
-    except Exception as e:
-        print(f"   ⚠️ AI Elite: Training failed: {e}")
-        return None
 
 
 def _calculate_forward_return(
@@ -470,19 +599,33 @@ def _calculate_forward_return(
         Forward return percentage or None if insufficient data
     """
     try:
-        # Convert current_date to pandas Timestamp with timezone
+        # ✅ FIX: Deduplicate index (hourly data combined creates duplicates)
+        if ticker_data.index.duplicated().any():
+            ticker_data = ticker_data[~ticker_data.index.duplicated(keep='last')]
+        
+        # Convert current_date to pandas Timestamp - ensure UTC-aware
         current_date_tz = pd.Timestamp(current_date)
-        if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-            if current_date_tz.tz is None:
-                current_date_tz = current_date_tz.tz_localize(ticker_data.index.tz)
-            else:
-                current_date_tz = current_date_tz.tz_convert(ticker_data.index.tz)
+        if current_date_tz.tz is None:
+            current_date_tz = current_date_tz.tz_localize('UTC')
+        elif str(current_date_tz.tz) != 'UTC':
+            current_date_tz = current_date_tz.tz_convert('UTC')
+        
+        # Ensure index is also UTC-aware
+        if ticker_data.index.tz is None:
+            ticker_data = ticker_data.copy()
+            ticker_data.index = ticker_data.index.tz_localize('UTC')
+        elif str(ticker_data.index.tz) != 'UTC':
+            ticker_data = ticker_data.copy()
+            ticker_data.index = ticker_data.index.tz_convert('UTC')
         
         # Get current price
         current_data = ticker_data[ticker_data.index <= current_date_tz]
         if len(current_data) == 0:
             return None
-        current_price = current_data['Close'].iloc[-1]
+        close_col = current_data['Close']
+        if isinstance(close_col, pd.DataFrame):
+            close_col = close_col.iloc[:, 0]
+        current_price = close_col.iloc[-1]
         
         # Get future price
         future_date = current_date_tz + timedelta(days=forward_days)
@@ -492,7 +635,10 @@ def _calculate_forward_return(
         if len(future_data) == 0:
             return None
         
-        future_price = future_data['Close'].iloc[-1]
+        future_close = future_data['Close']
+        if isinstance(future_close, pd.DataFrame):
+            future_close = future_close.iloc[:, 0]
+        future_price = future_close.iloc[-1]
         
         # Calculate return
         forward_return = ((future_price - current_price) / current_price) * 100

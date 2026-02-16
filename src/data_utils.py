@@ -196,7 +196,7 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
                 if metric in income_statement.index:
                     financial_data[metric] = income_statement.loc[metric]
     except Exception as e:
-        print(f"  ⚠️ Could not fetch income statement for {ticker}: {e}")
+        print(f"  [WARN] Could not fetch income statement for {ticker}: {e}")
 
     try:
         balance_sheet = yf_ticker.quarterly_balance_sheet
@@ -206,7 +206,7 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
                 if metric in balance_sheet.index:
                     financial_data[metric] = balance_sheet.loc[metric]
     except Exception as e:
-        print(f"  ⚠️ Could not fetch balance sheet for {ticker}: {e}")
+        print(f"  [WARN] Could not fetch balance sheet for {ticker}: {e}")
 
     try:
         cash_flow = yf_ticker.quarterly_cash_flow
@@ -216,7 +216,7 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
                 if metric in cash_flow.index:
                     financial_data[metric] = cash_flow.loc[metric]
     except Exception as e:
-        print(f"  ⚠️ Could not fetch cash flow for {ticker}: {e}")
+        print(f"  [WARN] Could not fetch cash flow for {ticker}: {e}")
 
     if not financial_data:
         return pd.DataFrame()
@@ -405,9 +405,9 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                     last_cached_date = cached_df.index[-1]
                     # Debug: Show cache file info for specific tickers
                     if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
-                        print(f"  🗂️ Cache {ticker}: shape={cached_df.shape}, Close[0]={cached_df['Close'].iloc[0]:.2f}, Close[-1]={cached_df['Close'].iloc[-1]:.2f}")
+                        print(f"  [INFO] Cache {ticker}: shape={cached_df.shape}, Close[0]={cached_df['Close'].iloc[0]:.2f}, Close[-1]={cached_df['Close'].iloc[-1]:.2f}")
                     
-                    # ✅ FIX: Use proper trading day check to avoid fetching on weekends
+                    # [PASS] FIX: Use proper trading day check to avoid fetching on weekends
                     if _is_cache_current(last_cached_date):
                         # Cache already has data up to the last trading day
                         needs_fetch = False
@@ -438,7 +438,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             hours_to_fetch = days_to_fetch * 24
             print(f"  Updating {ticker} (+{hours_to_fetch} hours)... (DATA_INTERVAL={DATA_INTERVAL})")
         
-        # ✅ FIX: Try providers in order: Alpaca → TwelveData → Yahoo (cascade fallback)
+        # [PASS] FIX: Try providers in order: Alpaca → TwelveData → Yahoo (cascade fallback)
         # Try Alpaca first (if available)
         if new_df.empty and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
             new_df = _fetch_from_alpaca(ticker, start_utc, end_utc)
@@ -461,8 +461,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         
         # Clean up new data
         if not new_df.empty:
-            if isinstance(new_df.columns, pd.MultiIndex):
-                new_df.columns = new_df.columns.get_level_values(0)
+            # MultiIndex removed - data is now in long format
             new_df.columns = [str(col).capitalize() for col in new_df.columns]
             if "Close" not in new_df.columns and "Adj close" in new_df.columns:
                 new_df = new_df.rename(columns={"Adj close": "Close"})
@@ -591,7 +590,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 daily_features = len(daily_df.columns)
                 start_date = daily_df.index[0].strftime('%Y-%m-%d')
                 end_date = daily_df.index[-1].strftime('%Y-%m-%d')
-                print(f"  🔄 Converted {ticker}: 1h ({price_df.shape[0]} rows, {original_features} features) → daily ({daily_df.shape[0]} rows, {daily_features} features)")
+                print(f"  [INFO] Converted {ticker}: 1h ({price_df.shape[0]} rows, {original_features} features) → daily ({daily_df.shape[0]} rows, {daily_features} features)")
                 print(f"     📅 Date range: {start_date} to {end_date} ({daily_df.shape[0]} trading days)")
             
             price_df = daily_df
@@ -608,25 +607,33 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -> pd.DataFrame:
     """
     Download multiple tickers with incremental caching.
-    Returns DataFrame with MultiIndex columns (Field, Ticker) like the original implementation.
+    Returns DataFrame in long format (no MultiIndex).
     """
     all_data_frames = []
     
-    print(f"  📂 Processing {len(tickers)} tickers with incremental caching...")
+    print(f"  [INFO] Processing {len(tickers)} tickers with incremental caching...")
     
     for ticker in tickers:
         try:
             df = load_prices(ticker, start, end)
             if not df.empty:
-                # Convert to MultiIndex format (Field, Ticker)
-                df.columns = pd.MultiIndex.from_product([df.columns, [ticker]])
+                # Add ticker column and keep in long format
+                df = df.copy()
+                df['ticker'] = ticker
+                # Reset index to make date a column, and standardize name to 'date'
+                df = df.reset_index()
+                # Rename 'Date' or 'Datetime' to 'date' for consistency
+                if 'Date' in df.columns:
+                    df = df.rename(columns={'Date': 'date'})
+                elif 'Datetime' in df.columns:
+                    df = df.rename(columns={'Datetime': 'date'})
                 all_data_frames.append(df)
         except Exception as e:
-            print(f"  ⚠️ Failed to download {ticker}: {e}")
+            print(f"  [WARN] Failed to download {ticker}: {e}")
     
     if all_data_frames:
-        # Concatenate all tickers into wide format with MultiIndex columns
-        combined_df = pd.concat(all_data_frames, axis=1)
+        # Concatenate all tickers into long format
+        combined_df = pd.concat(all_data_frames, axis=0, ignore_index=True)
         return combined_df
     else:
         return pd.DataFrame()
@@ -646,20 +653,20 @@ def load_prices_robust(ticker: str, start: datetime, end: datetime) -> pd.DataFr
             error_str = str(e).lower()
             # Handle YFTzMissingError for delisted stocks gracefully
             if "yftzmissingerror" in error_str or "no timezone found" in error_str:
-                print(f"  ℹ️ Skipping {ticker}: Data not available (possibly delisted).")
+                print(f"  [INFO] Skipping {ticker}: Data not available (possibly delisted).")
                 return pd.DataFrame()
             
             # Handle rate limiting with exponential backoff
             if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str:
                 wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, 1)
-                print(f"  ⚠️ Rate limited trying to fetch {ticker}. Retrying in {wait_time:.2f} seconds...")
+                print(f"  [WARN] Rate limited trying to fetch {ticker}. Retrying in {wait_time:.2f} seconds...")
                 time.sleep(wait_time)
             else:
                 # For other unexpected errors, log it and fail for this ticker
-                print(f"  ⚠️ An unexpected error occurred for {ticker}: {e}. Skipping.")
+                print(f"  [WARN] An unexpected error occurred for {ticker}: {e}. Skipping.")
                 return pd.DataFrame()
     
-    print(f"  ❌ Failed to load data for {ticker} after {max_retries} retries due to persistent rate limiting.")
+    print(f"  [FAIL] Failed to load data for {ticker} after {max_retries} retries due to persistent rate limiting.")
     return pd.DataFrame()
 
 
@@ -683,7 +690,7 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CL
 
     df = data.copy()
     
-    # ✅ FIX: Handle long format data (with 'date' and 'ticker' columns)
+    # [PASS] FIX: Handle long format data (with 'date' and 'ticker' columns)
     if 'date' in df.columns and 'ticker' in df.columns:
         # Convert from long format to wide format
         df = df.set_index('date')
@@ -915,11 +922,11 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CL
 
     df["Target"]     = df["Close"].shift(-1)
 
-    # ✅ FIX: Sort by date index before calculating forward returns
+    # [PASS] FIX: Sort by date index before calculating forward returns
     if hasattr(df, 'index') and hasattr(df.index, 'sort_values'):
         df = df.sort_index()
     
-    # ✅ NEW: Date-based forward return calculation (replaces shift-based approach)
+    # [PASS] NEW: Date-based forward return calculation (replaces shift-based approach)
     # Calculate TargetReturn using actual calendar days instead of row-based shift
     df["TargetReturn"] = np.nan
     
@@ -940,24 +947,24 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CL
     if train_start is not None:
         df = df[df.index >= train_start]
         if ticker in ['SNDK', 'WDC', 'MU']:
-            print(f"  🔍 DEBUG {ticker}: Filtered to train_start {train_start.date()}, now {len(df)} rows")
+            print(f"  [DEBUG] DEBUG {ticker}: Filtered to train_start {train_start.date()}, now {len(df)} rows")
     
     if train_end is not None:
         df = df[df.index <= train_end]
         if ticker in ['SNDK', 'WDC', 'MU']:
-            print(f"  🔍 DEBUG {ticker}: Filtered to train_end {train_end.date()}, now {len(df)} rows")
+            print(f"  [DEBUG] DEBUG {ticker}: Filtered to train_end {train_end.date()}, now {len(df)} rows")
     
     # DEBUG: Check TargetReturn calculation
     if ticker in ['SNDK', 'WDC', 'MU']:
-        print(f"  🔍 DEBUG {ticker}: df shape after TargetReturn calc: {df.shape}")
+        print(f"  [DEBUG] DEBUG {ticker}: df shape after TargetReturn calc: {df.shape}")
         if hasattr(df, 'index') and len(df.index) > 0:
-            print(f"  🔍 DEBUG {ticker}: Date range: {df.index.min()} to {df.index.max()}")
-        print(f"  🔍 DEBUG {ticker}: TargetReturn non-NaN count: {df['TargetReturn'].notna().sum()}")
-        print(f"  🔍 DEBUG {ticker}: Total rows: {len(df)}")
-        print(f"  🔍 DEBUG {ticker}: Last 10 dates: {df.index[-10:].tolist()}")
-        print(f"  🔍 DEBUG {ticker}: Close tail: {df['Close'].tail(10).tolist()}")
-        print(f"  🔍 DEBUG {ticker}: TargetReturn tail: {df['TargetReturn'].tail(10).tolist()}")
-        print(f"  🔍 DEBUG {ticker}: Is index sorted: {df.index.is_monotonic_increasing}")
+            print(f"  [DEBUG] DEBUG {ticker}: Date range: {df.index.min()} to {df.index.max()}")
+        print(f"  [DEBUG] DEBUG {ticker}: TargetReturn non-NaN count: {df['TargetReturn'].notna().sum()}")
+        print(f"  [DEBUG] DEBUG {ticker}: Total rows: {len(df)}")
+        print(f"  [DEBUG] DEBUG {ticker}: Last 10 dates: {df.index[-10:].tolist()}")
+        print(f"  [DEBUG] DEBUG {ticker}: Close tail: {df['Close'].tail(10).tolist()}")
+        print(f"  [DEBUG] DEBUG {ticker}: TargetReturn tail: {df['TargetReturn'].tail(10).tolist()}")
+        print(f"  [DEBUG] DEBUG {ticker}: Is index sorted: {df.index.is_monotonic_increasing}")
 
     # Dynamically build the list of features that are actually present in the DataFrame
     # This is the most critical part to ensure consistency
@@ -1001,14 +1008,14 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CL
     if missing_features and ticker in ['TTD', 'SOXS']:  # Debug for first few tickers
         print(f"   ↳ {ticker}: Missing features: {missing_features[:5]}...")  # Limit output
 
-    # ✅ FIX: Fill NaN values before dropping to preserve more rows
+    # [PASS] FIX: Fill NaN values before dropping to preserve more rows
     # First, forward-fill and back-fill numeric columns
     ready = df[cols_for_ready_final].copy()
     for col in ready.columns:
         if col not in target_cols:  # Don't fill target columns
             ready[col] = ready[col].ffill().bfill().fillna(0)
     
-    # ✅ FIX: Only drop rows where the ACTIVE target is NaN
+    # [PASS] FIX: Only drop rows where the ACTIVE target is NaN
     # In regression mode (default): only TargetReturn matters
     # In classification mode: only Target matters
     # We use TargetReturn for regression, so only require that column
@@ -1016,12 +1023,12 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CL
     
     # DEBUG: Check TargetReturn before dropna
     if ticker in ['SNDK', 'WDC', 'AAPL']:
-        print(f"   🔍 DEBUG {ticker}: cols_for_ready_final has {len(cols_for_ready_final)} cols")
-        print(f"   🔍 DEBUG {ticker}: 'TargetReturn' in cols_for_ready_final: {'TargetReturn' in cols_for_ready_final}")
-        print(f"   🔍 DEBUG {ticker}: 'TargetReturn' in df.columns: {'TargetReturn' in df.columns}")
+        print(f"   [DEBUG] DEBUG {ticker}: cols_for_ready_final has {len(cols_for_ready_final)} cols")
+        print(f"   [DEBUG] DEBUG {ticker}: 'TargetReturn' in cols_for_ready_final: {'TargetReturn' in cols_for_ready_final}")
+        print(f"   [DEBUG] DEBUG {ticker}: 'TargetReturn' in df.columns: {'TargetReturn' in df.columns}")
         if active_target_col in ready.columns:
             non_nan_count = ready[active_target_col].notna().sum()
-            print(f"   🔍 DEBUG {ticker}: {active_target_col} has {non_nan_count} non-NaN values out of {len(ready)}")
+            print(f"   [DEBUG] DEBUG {ticker}: {active_target_col} has {non_nan_count} non-NaN values out of {len(ready)}")
     
     ready = ready.dropna(subset=[active_target_col])
 
@@ -1124,8 +1131,11 @@ def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime, api_key:
         # Ensure proper column names
         df.columns = [col.capitalize() for col in df.columns]
         if 'Datetime' in df.columns:
-            df = df.rename(columns={'Datetime': 'Date'})
-            df = df.set_index('Date')
+            df = df.rename(columns={'Datetime': 'date'})
+            df = df.set_index('date')
+        elif 'Date' in df.columns:
+            df = df.rename(columns={'Date': 'date'})
+            df = df.set_index('date')
         
         return df[['Open', 'High', 'Low', 'Close', 'Volume']]
     except Exception:
@@ -1159,7 +1169,7 @@ def _fetch_intermarket_data(start: datetime = None, end: datetime = None) -> pd.
                     df_renamed.columns = [f'{symbol}_Close']
                     all_data.append(df_renamed)
             except Exception as e:
-                print(f"  ⚠️ Failed to fetch {symbol}: {e}")
+                print(f"  [WARN] Failed to fetch {symbol}: {e}")
         
         if all_data:
             return pd.concat(all_data, axis=1)

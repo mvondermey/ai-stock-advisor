@@ -17,7 +17,7 @@ import pandas as pd
 from ticker_selection import get_all_tickers, find_top_performers
 from training_phase import train_models_for_period
 from data_utils import _download_batch_robust
-from config import TRAIN_LOOKBACK_DAYS, N_TOP_TICKERS, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, TOP_TICKER_SELECTION_LOOKBACK
+from config import N_TOP_TICKERS, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, TOP_TICKER_SELECTION_LOOKBACK
 
 print("=" * 80)
 print("🤖 AI STOCK ADVISOR - MODEL TRAINING (No Backtest)")
@@ -28,7 +28,7 @@ print("=" * 80)
 # 1. Get all available tickers from config
 print(f"\n🔍 Step 1: Fetching available tickers from config...")
 end_date = datetime.now(timezone.utc)
-start_date = end_date - timedelta(days=TRAIN_LOOKBACK_DAYS)
+start_date = end_date - timedelta(days=365)
 
 try:
     all_available_tickers = get_all_tickers()
@@ -47,7 +47,7 @@ except Exception as e:
 # 2. Download historical data for ALL tickers (needed for momentum filtering)
 print(f"\n📥 Step 2: Downloading data for {len(all_available_tickers)} tickers...")
 print(f"  Period: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
-print(f"  Lookback: {TRAIN_LOOKBACK_DAYS} days")
+print(f"  Lookback: 365 days")
 print(f"  (Need data for all tickers to calculate momentum)\n")
 
 try:
@@ -76,7 +76,7 @@ try:
         sys.exit(1)
     
     # Concatenate all batch data
-    all_tickers_data = pd.concat(all_tickers_data_list, axis=1)
+    all_tickers_data = pd.concat(all_tickers_data_list, axis=0)
     
     if all_tickers_data.empty:
         print("❌ Downloaded data is empty")

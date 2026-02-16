@@ -205,11 +205,9 @@ TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
 # ENABLED: Trains all models in parallel by model type for maximum efficiency
 USE_UNIFIED_PARALLEL_TRAINING = True
 
-# --- Backtest & training windows
+# --- Backtest windows
 BACKTEST_DAYS           = 63       # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
-TRAIN_LOOKBACK_DAYS     = 365        # Training period in calendar days (~1 year, ~252 trading days)
-VALIDATION_DAYS         = 90         # FIX 4: Validation period for threshold optimization
 
 # --- Calendar days ---
 CALENDAR_DAYS_PER_YEAR = 365
@@ -318,7 +316,7 @@ ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip 
 ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (not implemented)
 
 # AI Elite Parameters
-AI_ELITE_RETRAIN_DAYS = 20  # Retrain model every N days
+AI_ELITE_RETRAIN_DAYS = 10  # Retrain model every N days
 AI_ELITE_TRAINING_LOOKBACK = 20  # Use fixed 20-day window for training
 AI_ELITE_FORWARD_DAYS = 20  # Predict performance over next N days
 

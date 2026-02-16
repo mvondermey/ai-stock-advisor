@@ -894,31 +894,6 @@ def find_top_performers(
         
         print(f"   Found {len(quality_tickers)} tickers with {min_points_quality}+ data points", flush=True)
         
-        # Step 2: Now filter to lookback period for performance calculation
-        print(f"   Filtering data for period {start_date.date()} to {end_date.date()}...", flush=True)
-        all_data = all_tickers_data.loc[start_date:end_date]
-        
-        # Extract individual ticker DataFrames to avoid data mixing
-        ticker_data_dict = {}
-        if isinstance(all_data.columns, pd.MultiIndex):
-            # Get unique tickers from level 1 of MultiIndex
-            unique_tickers = all_data.columns.get_level_values(1).unique()
-            for ticker in unique_tickers:
-                # Use xs to extract all columns for this ticker
-                try:
-                    ticker_df = all_data.xs(ticker, level=1, axis=1).copy()
-                    if not ticker_df.empty:
-                        ticker_data_dict[ticker] = ticker_df
-                except Exception as e:
-                    print(f"  ⚠️ Error extracting {ticker}: {e}")
-        else:
-            # Fallback - assume ticker columns
-            ticker_data_dict = all_data
-        
-        valid_tickers = [t for t in quality_tickers if t in ticker_data_dict]
-
-        print(f"   Building parameters for {len(valid_tickers)} tickers...", flush=True)
-        
         # Prepare data slices (wide format is already column-based, so this is fast)
         prep_args = []
         for ticker in tqdm(valid_tickers, desc="Building params", ncols=100):

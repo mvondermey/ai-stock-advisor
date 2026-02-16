@@ -122,8 +122,10 @@ class CorrelationFilteredEnsemble:
                     ticker_data = ticker_data_grouped[ticker]
                     # Reset index to avoid duplicate label issues
                     ticker_data = ticker_data.reset_index(drop=False)
-                    if 'Date' in ticker_data.columns:
-                        ticker_data = ticker_data.set_index('Date')
+                    if 'date' in ticker_data.columns:
+                        ticker_data = ticker_data.set_index('date')
+                    elif 'Date' in ticker_data.columns:
+                        ticker_data = ticker_data.rename(columns={'Date': 'date'}).set_index('date')
                     elif 'index' in ticker_data.columns:
                         ticker_data = ticker_data.set_index('index')
                     # Remove any duplicate indices

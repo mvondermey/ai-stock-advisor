@@ -88,71 +88,58 @@ def _prepare_ticker_data_grouped(all_tickers: List[str], all_tickers_data: pd.Da
     if all_tickers_data is None:
         return ticker_data_grouped
     
-    print(f"   🔍 {strategy_name}: Data shape: {all_tickers_data.shape}")
-    print(f"   🔍 {strategy_name}: Columns: {list(all_tickers_data.columns[:5])}")
+    print(f"   [DEBUG] {strategy_name}: Data shape: {all_tickers_data.shape}")
+    print(f"   [DEBUG] {strategy_name}: Columns: {list(all_tickers_data.columns[:5])}")
     
     # Debug: Check unique tickers in data
     if 'ticker' in all_tickers_data.columns:
         unique_tickers = all_tickers_data['ticker'].unique()
-        print(f"   🔍 {strategy_name}: Unique tickers in data: {len(unique_tickers)}")
+        print(f"   [DEBUG] {strategy_name}: Unique tickers in data: {len(unique_tickers)}")
         # Check if requested tickers are in data
         matching = [t for t in all_tickers[:5] if t in unique_tickers]
-        print(f"   🔍 {strategy_name}: First 5 requested tickers in data: {matching}")
+        print(f"   [DEBUG] {strategy_name}: First 5 requested tickers in data: {matching}")
     
-    if isinstance(all_tickers_data.columns, pd.MultiIndex):
-        # Wide format: columns are (field, ticker) e.g. ('Close', 'AAPL')
-        print(f"   🔍 {strategy_name}: Using MultiIndex format")
+    # Helper function to process ticker data
+    def process_ticker_data(ticker, group):
+        """Process a single ticker's data group."""
+        group_copy = group.copy()
+        if 'date' in group_copy.columns:
+            group_copy['date'] = pd.to_datetime(group_copy['date'])
+            group_copy = group_copy.set_index('date')
+            # Remove ticker column since it's now the key
+            group_copy = group_copy.drop('ticker', axis=1)
+            return group_copy
+        else:
+            print(f"   [WARN] No 'date' column found for ticker {ticker}")
+            return None
+    
+    # Data is in long format - check for 'ticker' column
+    if 'ticker' in all_tickers_data.columns:
+        print(f"   [DEBUG] {strategy_name}: Using long format (ticker in columns)")
         
-        # Get unique tickers from level 1 (ticker level)
-        unique_tickers = all_tickers_data.columns.get_level_values(1).unique()
-        print(f"   🔍 {strategy_name}: Found {len(unique_tickers)} unique tickers")
-        
-        for ticker in unique_tickers:
-            # Use xs (cross-section) to get all columns for this ticker
-            try:
-                ticker_data = all_tickers_data.xs(ticker, level=1, axis=1).copy()
-                if not ticker_data.empty:
-                    # Debug for specific tickers
-                    if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
-                        # Check if Close column exists and has valid data
-                        if 'Close' in ticker_data.columns:
-                            close_values = ticker_data['Close'].dropna()
-                            if len(close_values) > 0:
-                                print(f"   🔍 DEBUG {ticker}: shape={ticker_data.shape}, Close[0]={close_values.iloc[0]:.2f}, Close[-1]={close_values.iloc[-1]:.2f}")
-                            else:
-                                print(f"   🔍 DEBUG {ticker}: shape={ticker_data.shape}, Close column is all NaN")
-                        else:
-                            print(f"   🔍 DEBUG {ticker}: shape={ticker_data.shape}, No Close column")
-                    ticker_data_grouped[ticker] = ticker_data
-            except Exception as e:
-                print(f"   ⚠️ Error extracting {ticker}: {e}")
-    elif 'ticker' in all_tickers_data.columns:
-        # Long format: group by ticker, set date as index
-        print(f"   🔍 {strategy_name}: Using long format (ticker in columns)")
+        # Group by ticker
         for ticker, group in all_tickers_data.groupby('ticker'):
-            group_copy = group.copy()
-            if 'date' in group_copy.columns:
-                group_copy['date'] = pd.to_datetime(group_copy['date'])
-                group_copy = group_copy.set_index('date')
-            ticker_data_grouped[ticker] = group_copy
+            processed_data = process_ticker_data(ticker, group)
+            if processed_data is not None:
+                ticker_data_grouped[ticker] = processed_data
+                
     elif 'ticker' in all_tickers_data.index.names:
-        # Long format: ticker in index, ensure date is index
-        print(f"   🔍 {strategy_name}: Using long format (ticker in index)")
+        # Long format: ticker in index
+        print(f"   [DEBUG] {strategy_name}: Using long format (ticker in index)")
         for ticker, group in all_tickers_data.groupby('ticker'):
-            group_copy = group.copy()
-            if 'date' in group_copy.columns:
-                group_copy['date'] = pd.to_datetime(group_copy['date'])
-                group_copy = group_copy.set_index('date')
-            ticker_data_grouped[ticker] = group_copy
+            processed_data = process_ticker_data(ticker, group)
+            if processed_data is not None:
+                ticker_data_grouped[ticker] = processed_data
+                
     else:
-        # Assume ticker columns
-        print(f"   🔍 {strategy_name}: Using ticker columns format")
+        # Assume ticker columns (fallback - should not happen with new data format)
+        print(f"   [WARN] {strategy_name}: Using ticker columns format (unexpected)")
         for ticker in all_tickers:
             if ticker in all_tickers_data.columns:
                 ticker_data_grouped[ticker] = all_tickers_data[[ticker]].copy()
                 ticker_data_grouped[ticker].columns = ['Close']
     
-    print(f"   🔍 {strategy_name}: Prepared {len(ticker_data_grouped)} ticker data groups")
+    print(f"   [DEBUG] {strategy_name}: Prepared {len(ticker_data_grouped)} ticker data groups")
     return ticker_data_grouped
 
 
@@ -252,12 +239,12 @@ def rebalance_portfolio(
     print(f"\n Rebalancing portfolio to hold: {target_tickers}")
     
     if not target_tickers:
-        print(f"   ⚠️  NO TARGET TICKERS SELECTED!")
-        print(f"   💡 Possible reasons:")
+        print(f"   [WARN] NO TARGET TICKERS SELECTED!")
+        print(f"   [INFO] Possible reasons:")
         print(f"      - No stocks met the Risk-Adjusted Momentum criteria (min score: 30.0)")
         print(f"      - Insufficient data for momentum calculation")
         print(f"      - Data format issue")
-        print(f"   ℹ️  Skipping rebalancing - portfolio unchanged")
+        print(f"   [INFO]  Skipping rebalancing - portfolio unchanged")
         return
     
     # Get account information
@@ -266,7 +253,7 @@ def rebalance_portfolio(
         buying_power = float(account.buying_power)
         cash = float(account.cash)
         portfolio_value = float(account.portfolio_value)
-        print(f"   💰 Account Info:")
+        print(f"   [INFO] Account Info:")
         print(f"      Cash: ${cash:,.2f}")
         print(f"      Buying Power: ${buying_power:,.2f}")
         print(f"      Portfolio Value: ${portfolio_value:,.2f}")
@@ -274,10 +261,10 @@ def rebalance_portfolio(
         print(f"      Total needed for {len(target_tickers)} stocks: ${investment_per_stock * len(target_tickers):,.2f}")
         
         if buying_power < investment_per_stock * len(target_tickers):
-            print(f"   ⚠️  INSUFFICIENT FUNDS: Need ${investment_per_stock * len(target_tickers):,.2f}, only have ${buying_power:,.2f}")
-            print(f"   💡 Consider reducing INVESTMENT_PER_STOCK")
+            print(f"   [WARN]  INSUFFICIENT FUNDS: Need ${investment_per_stock * len(target_tickers):,.2f}, only have ${buying_power:,.2f}")
+            print(f"   [INFO] Consider reducing INVESTMENT_PER_STOCK")
     except Exception as e:
-        print(f"   ⚠️ Could not get account info: {e}")
+        print(f"   [WARN] Could not get account info: {e}")
 
     # Calculate target quantities
     target_positions = {}
@@ -289,7 +276,7 @@ def rebalance_portfolio(
             price = 100.0  # Placeholder price
             qty = int(investment_per_stock / price)
             target_positions[ticker] = qty
-            print(f"   📊 {ticker}: ${investment_per_stock:,.2f} → {qty} shares @ ${price:.2f}")
+            print(f"   [INFO] {ticker}: ${investment_per_stock:,.2f} → {qty} shares @ ${price:.2f}")
         except Exception as e:
             print(f"   Error calculating quantity for {ticker}: {e}")
             continue
@@ -302,13 +289,13 @@ def rebalance_portfolio(
         # Get ALL orders (not just 'open') to catch pending orders
         request = GetOrdersRequest(status=QueryOrderStatus.OPEN)
         orders = client.get_orders(filter=request)
-        print(f"   📋 Found {len(orders)} open orders")
+        print(f"   [INFO] Found {len(orders)} open orders")
         for order in orders:
             if order.symbol not in orders_by_ticker:
                 orders_by_ticker[order.symbol] = []
             orders_by_ticker[order.symbol].append(order)
         if orders_by_ticker:
-            print(f"   📋 Active orders for {len(orders_by_ticker)} tickers")
+            print(f"   [INFO] Active orders for {len(orders_by_ticker)} tickers")
     except Exception as e:
         print(f"   Could not get orders: {e}")
 
@@ -334,7 +321,7 @@ def rebalance_portfolio(
                 print(f" Selling {sell_qty} shares of {ticker} (not in target portfolio)")
                 place_order(client, ticker, sell_qty, OrderSide.SELL)
             except Exception as e:
-                print(f" ⚠️ Could not check position for {ticker}: {e}")
+                print(f" [WARN] Could not check position for {ticker}: {e}")
 
     # Open positions for target tickers
     for ticker in target_tickers:
@@ -355,16 +342,16 @@ def rebalance_portfolio(
 
 def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Get the tickers to hold based on the selected strategy."""
-    print(f"   🎯 DEBUG: Strategy passed = '{strategy}'")
+    print(f"   [DEBUG] DEBUG: Strategy passed = '{strategy}'")
 
     if strategy == 'ai_individual' or strategy == 'ai_strategy':
         # AI Strategy: REMOVED - fallback to momentum-based selection
-        print(f"   ⚠️ AI Strategy removed. Using momentum_volatility_hybrid_6m instead.")
+        print(f"   [WARN] AI Strategy removed. Using momentum_volatility_hybrid_6m instead.")
         return get_momentum_volatility_hybrid_tickers(all_tickers, '6m', all_tickers_data)
 
     elif strategy == 'multitask':
         # Multi-Task Learning Strategy: REMOVED - fallback to momentum-based selection
-        print(f"   ⚠️ Multi-Task Learning removed. Using momentum_volatility_hybrid_6m instead.")
+        print(f"   [WARN] Multi-Task Learning removed. Using momentum_volatility_hybrid_6m instead.")
         return get_momentum_volatility_hybrid_tickers(all_tickers, '6m', all_tickers_data)
 
     elif strategy.startswith('dynamic_bh_'):
@@ -505,6 +492,10 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
         # Elite Hybrid Strategy: Advanced multi-factor ensemble
         return get_elite_hybrid_tickers(all_tickers, all_tickers_data)
 
+    elif strategy == 'ai_elite':
+        # AI Elite Strategy: ML-powered scoring of momentum + dip opportunities
+        return get_ai_elite_tickers(all_tickers, all_tickers_data)
+
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
         return get_dynamic_bh_tickers(all_tickers, '3m', all_tickers_data)
@@ -512,7 +503,7 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
 
 def get_ai_strategy_tickers(all_tickers: List[str]) -> List[str]:
     """AI Strategy: REMOVED - returns fallback to top tickers."""
-    print(f"   ⚠️ AI Strategy has been removed. Returning top {TOP_N_STOCKS} tickers.")
+    print(f"   [WARN] AI Strategy has been removed. Returning top {TOP_N_STOCKS} tickers.")
     return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
@@ -520,7 +511,7 @@ def get_3m_1y_ratio_tickers(all_tickers: List[str], all_tickers_data: pd.DataFra
     """3M/1Y Ratio Strategy: Select stocks with strong 3M momentum vs 1Y performance."""
     from shared_strategies import select_3m_1y_ratio_stocks
     
-    print(f"   🔍 3M/1Y Ratio: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] 3M/1Y Ratio: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "3M/1Y Ratio")
     
     current_date = datetime.now(timezone.utc)
@@ -531,8 +522,8 @@ def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     """Risk-Adjusted Momentum Strategy: Use shared strategy logic."""
     from shared_strategies import select_risk_adj_mom_stocks
     
-    print(f"   🔍 Risk-Adj Mom: Processing {len(all_tickers)} tickers")
-    print(f"   🔍 Risk-Adj Mom: Data available: {all_tickers_data is not None}")
+    print(f"   [DEBUG] Risk-Adj Mom: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Risk-Adj Mom: Data available: {all_tickers_data is not None}")
     
     # Use shared helper to prepare data with date as index
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Risk-Adj Mom")
@@ -545,9 +536,9 @@ def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
                                           top_n=PORTFOLIO_SIZE)
     
     if selected:
-        print(f"   ✅ Risk-Adj Mom: Selected {len(selected)} stocks: {selected}")
+        print(f"   [PASS] Risk-Adj Mom: Selected {len(selected)} stocks: {selected}")
     else:
-        print(f"   ⚠️  Risk-Adj Mom: No stocks selected!")
+        print(f"   [WARN]  Risk-Adj Mom: No stocks selected!")
         print(f"      - Check if data has 'Close' column")
         print(f"      - Check if stocks meet min score threshold (30.0)")
     
@@ -558,7 +549,7 @@ def get_mean_reversion_tickers(all_tickers: List[str], all_tickers_data: pd.Data
     """Mean Reversion Strategy: Use shared strategy logic."""
     from shared_strategies import select_mean_reversion_stocks
     
-    print(f"   🔍 Mean Reversion: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Mean Reversion: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Mean Reversion")
     
     current_date = datetime.now(timezone.utc)
@@ -569,10 +560,10 @@ def get_volatility_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.
     """Volatility-Adjusted Momentum Strategy: Use shared strategy logic."""
     from shared_strategies import select_volatility_adj_mom_stocks
     
-    print(f"   🔍 Vol-Adj Mom: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Vol-Adj Mom: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Vol-Adj Mom")
     
-    current_date = datetime.now(timezone.utc)
+    current_date = _get_latest_data_date(ticker_data_grouped, all_tickers)
     return select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -580,8 +571,8 @@ def get_dynamic_bh_tickers(all_tickers: List[str], period: str, all_tickers_data
     """Dynamic Buy & Hold Strategy: Use shared strategy logic."""
     from shared_strategies import select_dynamic_bh_stocks
     
-    print(f"   🔍 Dynamic BH ({period}): Processing {len(all_tickers)} tickers")
-    print(f"   🔍 Dynamic BH ({period}): Data available: {all_tickers_data is not None}")
+    print(f"   [DEBUG] Dynamic BH ({period}): Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Dynamic BH ({period}): Data available: {all_tickers_data is not None}")
     
     # Use shared helper to prepare data with date as index
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, f"Dynamic BH ({period})")
@@ -600,8 +591,8 @@ def get_static_bh_tickers(all_tickers: List[str], period: str, all_tickers_data:
     """Static Buy & Hold Strategy: Select top performers based on period and hold them."""
     from shared_strategies import select_dynamic_bh_stocks
     
-    print(f"   🔍 Static BH ({period}): Processing {len(all_tickers)} tickers")
-    print(f"   🔍 Static BH ({period}): Data available: {all_tickers_data is not None}")
+    print(f"   [DEBUG] Static BH ({period}): Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Static BH ({period}): Data available: {all_tickers_data is not None}")
     
     # Use shared helper to prepare data with date as index
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, f"Static BH ({period})")
@@ -620,20 +611,20 @@ def get_quality_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.Da
     """Quality + Momentum Strategy: Use shared strategy logic."""
     from shared_strategies import select_quality_momentum_stocks
     
-    print(f"   🔍 Quality+Mom: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Quality+Mom: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Quality+Mom")
     
-    current_date = datetime.now(timezone.utc)
+    current_date = _get_latest_data_date(ticker_data_grouped, all_tickers)
     return select_quality_momentum_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 def get_multitask_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Multi-Task Learning Strategy: DISABLED - fallback to momentum."""
-    print(f"   ⚠️ Multi-Task strategy disabled, falling back to momentum-based selection")
+    print(f"   [WARN] Multi-Task strategy disabled, falling back to momentum-based selection")
     try:
         return get_dynamic_bh_1y_tickers(all_tickers, all_tickers_data)
     except Exception as e:
-        print(f"   ❌ Multi-Task failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
+        print(f"   [FAIL] Multi-Task failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
         return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
@@ -641,7 +632,7 @@ def get_turnaround_tickers(all_tickers: List[str], all_tickers_data: pd.DataFram
     """Turnaround Strategy: Select stocks with low 3Y but high 1Y performance."""
     from shared_strategies import select_turnaround_stocks
     
-    print(f"   🔍 Turnaround: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Turnaround: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Turnaround")
     
     current_date = datetime.now(timezone.utc)
@@ -654,7 +645,7 @@ def get_ratio_1y_3m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFra
     """1Y/3M Ratio Strategy: Select stocks with strong 1Y performance but weak 3M (buy on dip)."""
     from shared_strategies import select_1y_3m_ratio_stocks
     
-    print(f"   🔍 1Y/3M Ratio: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] 1Y/3M Ratio: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "1Y/3M Ratio")
     
     current_date = datetime.now(timezone.utc)
@@ -665,7 +656,7 @@ def get_momentum_volatility_hybrid_tickers(all_tickers: List[str], all_tickers_d
     """Hybrid Momentum-Volatility Strategy: Combines strong momentum with controlled volatility."""
     from shared_strategies import select_momentum_volatility_hybrid_stocks
     
-    print(f"   🎯 Momentum-Volatility Hybrid: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Momentum-Volatility Hybrid: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Momentum-Volatility Hybrid")
     
     current_date = datetime.now(timezone.utc)
@@ -676,7 +667,7 @@ def get_momentum_volatility_hybrid_6m_tickers(all_tickers: List[str], all_ticker
     """Hybrid Momentum-Volatility Strategy (6M variant): Combines strong 6-month momentum with controlled volatility."""
     from shared_strategies import select_momentum_volatility_hybrid_6m_stocks
     
-    print(f"   🎯 Mom-Vol Hybrid 6M: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Mom-Vol Hybrid 6M: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Mom-Vol Hybrid 6M")
     
     current_date = datetime.now(timezone.utc)
@@ -687,7 +678,7 @@ def get_momentum_volatility_hybrid_1y_tickers(all_tickers: List[str], all_ticker
     """Hybrid Momentum-Volatility Strategy (1Y variant): Combines strong 1-year momentum with controlled volatility."""
     from shared_strategies import select_momentum_volatility_hybrid_1y_stocks
     
-    print(f"   🎯 Mom-Vol Hybrid 1Y: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Mom-Vol Hybrid 1Y: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Mom-Vol Hybrid 1Y")
     
     current_date = datetime.now(timezone.utc)
@@ -698,7 +689,7 @@ def get_momentum_volatility_hybrid_1y3m_tickers(all_tickers: List[str], all_tick
     """Hybrid Momentum-Volatility Strategy (1Y/3M variant): Strong 1Y performance, weak 3M (buy on dip)."""
     from shared_strategies import select_momentum_volatility_hybrid_1y3m_stocks
     
-    print(f"   🎯 Mom-Vol Hybrid 1Y/3M: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Mom-Vol Hybrid 1Y/3M: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Mom-Vol Hybrid 1Y/3M")
     
     current_date = datetime.now(timezone.utc)
@@ -709,7 +700,7 @@ def get_adaptive_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.D
     """Adaptive Ensemble Strategy: Meta-ensemble combining multiple strategies dynamically."""
     from adaptive_ensemble import select_adaptive_ensemble_stocks
     
-    print(f"   🔍 Adaptive Ensemble: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Adaptive Ensemble: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Adaptive Ensemble")
     
     current_date = datetime.now(timezone.utc)
@@ -720,7 +711,7 @@ def get_volatility_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd
     """Volatility-Adjusted Ensemble Strategy: Risk-managed position sizing."""
     from volatility_ensemble import select_volatility_ensemble_stocks
     
-    print(f"   🔍 Volatility Ensemble: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Volatility Ensemble: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Volatility Ensemble")
     
     current_date = datetime.now(timezone.utc)
@@ -729,11 +720,11 @@ def get_volatility_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd
 
 def get_ai_volatility_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """AI-Enhanced Volatility Ensemble Strategy: DISABLED - fallback to regular volatility ensemble."""
-    print(f"   ⚠️ AI Volatility Ensemble disabled, falling back to regular Volatility Ensemble")
+    print(f"   [WARN] AI Volatility Ensemble disabled, falling back to regular Volatility Ensemble")
     try:
         return get_volatility_ensemble_tickers(all_tickers, all_tickers_data)
     except Exception as e:
-        print(f"   ❌ AI Volatility Ensemble failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
+        print(f"   [FAIL] AI Volatility Ensemble failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
         return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
@@ -741,7 +732,7 @@ def get_correlation_ensemble_tickers(all_tickers: List[str], all_tickers_data: p
     """Correlation-Filtered Ensemble Strategy: Diversification-focused."""
     from correlation_ensemble import select_correlation_ensemble_stocks
     
-    print(f"   🔍 Correlation Ensemble: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Correlation Ensemble: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Correlation Ensemble")
     
     current_date = datetime.now(timezone.utc)
@@ -752,7 +743,7 @@ def get_dynamic_pool_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     """Dynamic Strategy Pool Strategy: Rotates strategies based on performance."""
     from dynamic_pool import select_dynamic_pool_stocks
     
-    print(f"   🔍 Dynamic Pool: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Dynamic Pool: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Dynamic Pool")
     
     current_date = datetime.now(timezone.utc)
@@ -763,21 +754,37 @@ def get_sentiment_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.
     """Mom-Vol Hybrid 6M + Sentiment Strategy: Incorporates news sentiment."""
     from sentiment_ensemble import select_sentiment_ensemble_stocks
     
-    print(f"   🔍 Mom-Vol 6M Sentiment: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Mom-Vol 6M Sentiment: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Mom-Vol 6M Sentiment")
     
     current_date = datetime.now(timezone.utc)
     return select_sentiment_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
+def _get_latest_data_date(ticker_data_grouped: Dict, all_tickers: List[str]) -> datetime:
+    """Get the latest available data date from ticker data."""
+    latest_dates = [ticker_data_grouped[t].index.max() 
+                   for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
+    if latest_dates:
+        latest_date = max(latest_dates)
+        # Convert to pandas Timestamp first, then ensure timezone-aware
+        latest_ts = pd.Timestamp(latest_date)
+        if latest_ts.tz is None:
+            latest_ts = latest_ts.tz_localize('UTC')
+        return latest_ts
+    else:
+        return datetime.now(timezone.utc)
+
+
 def get_elite_hybrid_sentiment_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Elite Hybrid + Sentiment Strategy: Elite Hybrid with news sentiment."""
     from elite_hybrid_sentiment import select_elite_hybrid_sentiment_stocks
     
-    print(f"   🔍 Elite Hybrid Sentiment: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Elite Hybrid Sentiment: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Elite Hybrid Sentiment")
     
-    current_date = datetime.now(timezone.utc)
+    # Use latest available data date instead of current_date
+    current_date = _get_latest_data_date(ticker_data_grouped, all_tickers)
     return select_elite_hybrid_sentiment_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -785,7 +792,7 @@ def get_momentum_breakout_tickers(all_tickers: List[str], all_tickers_data: pd.D
     """Momentum Breakout Strategy: 52-week high breakouts with volume confirmation."""
     from momentum_breakout import select_momentum_breakout_stocks
     
-    print(f"   🔍 Momentum Breakout: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Momentum Breakout: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Momentum Breakout")
     
     current_date = datetime.now(timezone.utc)
@@ -808,7 +815,7 @@ def get_factor_rotation_tickers(all_tickers: List[str], all_tickers_data: pd.Dat
     """Factor Rotation Strategy: Rotates between Value/Growth/Momentum/Quality based on regime."""
     from factor_rotation import select_factor_rotation_stocks
     
-    print(f"   🔍 Factor Rotation: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Factor Rotation: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Factor Rotation")
     
     current_date = datetime.now(timezone.utc)
@@ -819,7 +826,7 @@ def get_pairs_trading_tickers(all_tickers: List[str], all_tickers_data: pd.DataF
     """Pairs Trading Strategy: Statistical arbitrage on correlated pairs."""
     from pairs_trading import select_pairs_trading_stocks
     
-    print(f"   🔍 Pairs Trading: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Pairs Trading: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Pairs Trading")
     
     current_date = datetime.now(timezone.utc)
@@ -830,7 +837,7 @@ def get_earnings_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.D
     """Earnings Momentum (PEAD) Strategy: Post-earnings announcement drift."""
     from earnings_momentum import select_earnings_momentum_stocks
     
-    print(f"   🔍 Earnings Momentum: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Earnings Momentum: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Earnings Momentum")
     
     current_date = datetime.now(timezone.utc)
@@ -841,7 +848,7 @@ def get_insider_trading_tickers(all_tickers: List[str], all_tickers_data: pd.Dat
     """Insider Trading Signal Strategy: Follow insider buying patterns."""
     from insider_trading import select_insider_trading_stocks
     
-    print(f"   🔍 Insider Trading: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Insider Trading: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Insider Trading")
     
     current_date = datetime.now(timezone.utc)
@@ -852,7 +859,7 @@ def get_options_sentiment_tickers(all_tickers: List[str], all_tickers_data: pd.D
     """Options-Based Sentiment Strategy: Put/call ratios and unusual activity."""
     from options_sentiment import select_options_sentiment_stocks
     
-    print(f"   🔍 Options Sentiment: Processing {len(all_tickers)} tickers")
+    print(f"   [DEBUG] Options Sentiment: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Options Sentiment")
     
     current_date = datetime.now(timezone.utc)
@@ -861,11 +868,11 @@ def get_options_sentiment_tickers(all_tickers: List[str], all_tickers_data: pd.D
 
 def get_ml_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """ML Ensemble Strategy: DISABLED - fallback to momentum."""
-    print(f"   ⚠️ ML Ensemble disabled, falling back to momentum-based selection")
+    print(f"   [WARN] ML Ensemble disabled, falling back to momentum-based selection")
     try:
         return get_dynamic_bh_1y_tickers(all_tickers, all_tickers_data)
     except Exception as e:
-        print(f"   ❌ ML Ensemble failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
+        print(f"   [FAIL] ML Ensemble failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
         return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
@@ -895,7 +902,7 @@ def get_dual_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.DataF
     """Dual Momentum Strategy: Antonacci style absolute + relative momentum."""
     from new_strategies import select_dual_momentum_stocks
     
-    print(f"   📊 Dual Momentum: Processing {len(all_tickers)} tickers")
+    print(f"   [INFO] Dual Momentum: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Dual Momentum")
     
     current_date = datetime.now(timezone.utc)
@@ -903,7 +910,7 @@ def get_dual_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.DataF
     
     # If risk-off, return empty list (strategy will go to cash)
     if not is_risk_on:
-        print(f"   ⚠️ Dual Momentum: RISK-OFF mode - holding cash")
+        print(f"   [WARN] Dual Momentum: RISK-OFF mode - holding cash")
         return []
     
     return selected
@@ -944,7 +951,7 @@ def get_momentum_ai_hybrid_tickers(all_tickers: List[str], all_tickers_data: pd.
         momentum_scores.sort(key=lambda x: x[1], reverse=True)
         top_stocks = [ticker for ticker, score in momentum_scores[:PORTFOLIO_SIZE]]
         
-        print(f"   📈 Top {PORTFOLIO_SIZE} momentum stocks: {[(t, f'{s*100:.1f}%') for t, s in momentum_scores[:PORTFOLIO_SIZE]]}")
+        print(f"   [INFO] Top {PORTFOLIO_SIZE} momentum stocks: {[(t, f'{s*100:.1f}%') for t, s in momentum_scores[:PORTFOLIO_SIZE]]}")
         return top_stocks
     
     return []
@@ -954,10 +961,10 @@ def get_elite_hybrid_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     """Elite Hybrid Strategy: Advanced multi-factor ensemble."""
     from elite_hybrid_strategy import select_elite_hybrid_stocks
     
-    print(f"   🏆 Elite Hybrid: Processing {len(all_tickers)} tickers")
+    print(f"   [INFO] Elite Hybrid: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Elite Hybrid")
     
-    current_date = datetime.now(timezone.utc)
+    current_date = _get_latest_data_date(ticker_data_grouped, all_tickers)
     return select_elite_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -1003,6 +1010,7 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
         'volatility_ensemble': 'Volatility Ensemble (Risk-Managed)',
         'ai_volatility_ensemble': 'AI Volatility Ensemble (AI-Enhanced)',
         'correlation_ensemble': 'Correlation Ensemble (Diversified)',
+        'ai_elite': 'AI Elite (ML-Powered Momentum + Dip Scoring)',
         'dynamic_pool': 'Dynamic Pool (Adaptive)',
         'sentiment_ensemble': 'Mom-Vol 6M Sentiment (News-Enhanced)',
         'elite_hybrid_sentiment': 'Elite Hybrid Sentiment (News-Enhanced)',
@@ -1039,30 +1047,30 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
             if float(pos.qty_available) != 0:  # Only include positions with available shares
                 current_positions[pos.symbol] = float(pos.qty_available)
     except Exception as e:
-        print(f"   ⚠️ Could not get current positions: {e}")
+        print(f"   [WARN] Could not get current positions: {e}")
 
     print(f"\n Current positions: {len(current_positions)}")
     for ticker, qty in current_positions.items():
         print(f"  - {ticker}: {int(qty)} shares")
 
     # Get target tickers based on strategy
-    print(f"\n 🎯 Running {LIVE_TRADING_STRATEGY} strategy...")
+    print(f"\n [DEBUG] Running {LIVE_TRADING_STRATEGY} strategy...")
     print(f"    Available tickers: {len(valid_tickers)}")
     
     # Pass downloaded data if available for strategies that need it
-    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble'] and all_tickers_data_for_strategy is not None else None
-    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble']:
+    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble', 'ai_elite'] and all_tickers_data_for_strategy is not None else None
+    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble', 'ai_elite']:
         print(f"    Data available: {all_tickers_data_for_strategy is not None}")
     
     target_tickers = get_strategy_tickers(LIVE_TRADING_STRATEGY, valid_tickers, all_tickers_data_for_strategy)
     
-    print(f"\n🎯 SELECTED STOCKS FOR TRADING:")
+    print(f"\n[DEBUG] SELECTED STOCKS FOR TRADING:")
     print(f"   Strategy: {LIVE_TRADING_STRATEGY}")
     print(f"   Number of stocks: {len(target_tickers)}")
     print(f"   Stocks to buy: {target_tickers}")
     
     # Show current vs target positions
-    print(f"\n📊 PORTFOLIO CHANGES:")
+    print(f"\n[INFO] PORTFOLIO CHANGES:")
     current_stocks = list(current_positions.keys())
     stocks_to_sell = [ticker for ticker in current_stocks if ticker not in target_tickers]
     stocks_to_buy = [ticker for ticker in target_tickers if ticker not in current_stocks]
@@ -1074,17 +1082,17 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
     if not stocks_to_sell and not stocks_to_buy:
         print(f"   No changes needed - portfolio already aligned")
     
-    print(f"\n⚠️  TRADING MODE: {'DRY RUN' if not LIVE_TRADING_ENABLED else ('PAPER TRADING' if USE_PAPER_TRADING else 'LIVE TRADING')}")
+    print(f"\n[WARN]  TRADING MODE: {'DRY RUN' if not LIVE_TRADING_ENABLED else ('PAPER TRADING' if USE_PAPER_TRADING else 'LIVE TRADING')}")
     
     # Ask for confirmation in live mode
     if LIVE_TRADING_ENABLED and not USE_PAPER_TRADING:
         try:
             confirm = input("\n❓ Execute these trades? (y/N): ").strip().lower()
             if confirm != 'y':
-                print("❌ Trading cancelled by user")
+                print("[FAIL] Trading cancelled by user")
                 return
         except KeyboardInterrupt:
-            print("\n❌ Trading cancelled by user")
+            print("\n[FAIL] Trading cancelled by user")
             return
 
     # Rebalance portfolio
@@ -1118,6 +1126,61 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
     print(f" Portfolio should now hold: {target_tickers}")
     print(f" Check Alpaca dashboard: https://app.alpaca.markets/{'paper' if USE_PAPER_TRADING else 'live'}/dashboard")
     print("=" * 80)
+
+
+def get_ai_elite_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """AI Elite Strategy: ML-powered scoring of momentum + dip opportunities.
+    Trains the ML model on recent data, then scores all tickers."""
+    from ai_elite_strategy import select_ai_elite_stocks, train_ai_elite_model
+    from config import AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS
+    import os
+    
+    print(f"   🤖 AI Elite: Processing {len(all_tickers)} tickers")
+    print(f"   🤖 AI Elite: Data available: {all_tickers_data is not None}")
+    
+    # Use shared helper to prepare data with date as index
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "AI Elite")
+    
+    model_path = "models/ai_elite_live_model.pkl"
+    
+    # Step 1: Train the ML model on recent historical data
+    # Use latest available data date, not current_date (which may be in the future)
+    latest_data_date = _get_latest_data_date(ticker_data_grouped, all_tickers)
+    
+    # Train_end must be early enough to have forward_days of future data
+    # Subtract forward_days to ensure we can calculate forward returns
+    train_end = latest_data_date - timedelta(days=AI_ELITE_FORWARD_DAYS)
+    train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
+    
+    # For scoring, use the latest available data date
+    scoring_date = latest_data_date
+    
+    print(f"   🎓 AI Elite: Training ML model on {train_start.date()} to {train_end.date()}...")
+    model = train_ai_elite_model(
+        ticker_data_grouped=ticker_data_grouped,
+        all_tickers=all_tickers,
+        train_start_date=train_start,
+        train_end_date=train_end,
+        save_path=model_path,
+        forward_days=AI_ELITE_FORWARD_DAYS
+    )
+    
+    if model is None:
+        print(f"   [WARN] AI Elite: Training failed, using fallback scoring")
+    
+    # Step 2: Score tickers using the trained model
+    # Use scoring_date (latest available data) for scoring
+    selected = select_ai_elite_stocks(all_tickers, ticker_data_grouped, 
+                                      current_date=scoring_date, 
+                                      top_n=PORTFOLIO_SIZE,
+                                      model=model)
+    
+    if selected:
+        print(f"   [PASS] AI Elite: Selected {len(selected)} stocks: {selected}")
+    else:
+        print(f"   [WARN] AI Elite: No stocks selected")
+    
+    return selected
 
 
 

@@ -29,7 +29,7 @@ sys.path.insert(1, str(project_root))
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
-    BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS, VALIDATION_DAYS,
+    BACKTEST_DAYS,
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, PARALLEL_THRESHOLD, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
         ENABLE_1YEAR_BACKTEST,
     ENABLE_MEAN_REVERSION,
@@ -164,7 +164,6 @@ import os
 # from rule_based_strategy import run_rule_based_portfolio_strategy  # Module deleted
 from summary_phase import print_final_summary
 from notifications import send_training_notification, send_backtesting_notification, send_error_notification
-from training_phase import train_worker, train_models_for_period
 from backtesting_phase import _run_portfolio_backtest_walk_forward
 from data_validation import get_data_summary, print_data_diagnostics, InsufficientDataError
 from selection_backtester import run_selection_strategy_comparison, print_strategy_stock_overlap
@@ -291,7 +290,7 @@ except ImportError:
 # --- Parallel Processing
 # NUM_PROCESSES           = max(1, cpu_count() - 5) # Use all but one CPU core for parallel processing # Moved to config.py
 
-# --- Backtest & training windows (see config.py for BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS)
+# --- Backtest windows (see config.py for BACKTEST_DAYS)
 
 # --- Backtest Period Enable/Disable Flags ---
 # ENABLE_1YEAR_BACKTEST   = True # Moved to config.py
@@ -536,15 +535,13 @@ def main(
             # Filter to only the date range we actually need for analysis
             # Keep the expanded range in cache for future use
 
-            # Ensure batch_data index is timezone-aware for proper comparison
-            if batch_data.index.tzinfo is None:
-                batch_data.index = batch_data.index.tz_localize('UTC')
-            elif batch_data.index.tzinfo != timezone.utc:
-                batch_data.index = batch_data.index.tz_convert('UTC')
+            # Ensure date column is timezone-aware for proper comparison
+            if 'date' in batch_data.columns:
+                batch_data['date'] = pd.to_datetime(batch_data['date'], utc=True)
 
-            filtered_batch_data = batch_data.loc[
-                (batch_data.index >= _to_utc(actual_start_date)) &
-                (batch_data.index <= _to_utc(today_for_data_fetch))
+            filtered_batch_data = batch_data[
+                (batch_data['date'] >= _to_utc(actual_start_date)) &
+                (batch_data['date'] <= _to_utc(today_for_data_fetch))
             ]
             if not filtered_batch_data.empty:
                 all_tickers_data_list.append(filtered_batch_data)
@@ -556,56 +553,30 @@ def main(
         print("❌ Comprehensive batch download failed. Aborting.")
         return (None,) * 15
 
-    all_tickers_data = pd.concat(all_tickers_data_list, axis=1)
+    all_tickers_data = pd.concat(all_tickers_data_list, axis=0)
 
     if all_tickers_data.empty:
         print("❌ Comprehensive batch download failed. Aborting.")
         return (None,) * 15
     
-    # Ensure index is timezone-aware
-    if all_tickers_data.index.tzinfo is None:
-        all_tickers_data.index = all_tickers_data.index.tz_localize('UTC')
-    else:
-        all_tickers_data.index = all_tickers_data.index.tz_convert('UTC')
+    # Data is in long format with date and ticker columns
+    print(f"   📊 Data shape: {all_tickers_data.shape}")
+    print(f"   📊 Columns: {list(all_tickers_data.columns[:5])}")
     
-    # ✅ FIX 1: Convert wide-format DataFrame to long-format with 'ticker' column
-    # This is required for backtesting code to work properly
-    print("🔄 Converting data from wide format to long format...")
-    
-    # Check if we have MultiIndex columns (wide format from yfinance)
-    if isinstance(all_tickers_data.columns, pd.MultiIndex):
-        # Stack the DataFrame to convert from wide to long format
-        # Reset index to make 'date' a column
-        all_tickers_data_long = all_tickers_data.stack(level=1, future_stack=True)
-        all_tickers_data_long.index.names = ['date', 'ticker']
-        all_tickers_data_long = all_tickers_data_long.reset_index()
-        
-        # ✅ IMPORTANT: Drop rows with NaN in critical columns immediately after stacking
-        # Wide-to-long conversion creates NaNs for dates where some tickers have data but others don't.
-        # These sparse rows cause data validation warnings and downstream errors.
-        initial_len = len(all_tickers_data_long)
-        all_tickers_data_long = all_tickers_data_long.dropna(subset=['Close'])
-        cleaned_len = len(all_tickers_data_long)
-        
-        if initial_len > cleaned_len:
-            print(f"   🧹 Removed {initial_len - cleaned_len} rows with missing 'Close' price (sparse data cleanup)")
-            
-        all_tickers_data = all_tickers_data_long
-        
-        # Expand all_available_tickers to include any extra tickers found in downloaded data
+    # Expand all_available_tickers to include any extra tickers found in downloaded data
+    if 'ticker' in all_tickers_data.columns:
         tickers_in_data = set(all_tickers_data['ticker'].unique())
         extra_tickers = tickers_in_data - set(all_available_tickers)
         if extra_tickers:
             print(f"   ℹ️ Found {len(extra_tickers)} extra tickers in data not in original list: {sorted(extra_tickers)[:10]}{'...' if len(extra_tickers) > 10 else ''}")
             all_available_tickers = sorted(set(all_available_tickers) | extra_tickers)
             print(f"   ℹ️ Expanded ticker universe to {len(all_available_tickers)} tickers")
-        
-        print(f"   ✅ Converted to long format: {len(all_tickers_data)} rows, {len(tickers_in_data)} tickers")
     else:
-        print("   ℹ️ Data already in long format, skipping conversion")
+        print("   ⚠️ No 'ticker' column found in data")
+        return (None,) * 15
     
-    # ✅ Filter out delisted stocks (no recent data within last 30 days)
-    print("🔍 Filtering out delisted stocks (no recent data)...")
+    # Filter out delisted stocks (no recent data within last 30 days)
+    print(" Filtering out delisted stocks (no recent data)...")
     cutoff_date = today_for_data_fetch - timedelta(days=30)
     
     # Find tickers with data in the last 30 days
@@ -899,21 +870,9 @@ def main(
                     ticker_df = ticker_df.set_index('date')
                     ticker_data_dict[ticker] = ticker_df
         else:
-            # Wide format with MultiIndex columns - extract individual ticker DataFrames
-            if isinstance(all_tickers_data.columns, pd.MultiIndex):
-                # Get unique tickers from level 1 of MultiIndex
-                unique_tickers = all_tickers_data.columns.get_level_values(1).unique()
-                for ticker in unique_tickers:
-                    # Use xs to extract all columns for this ticker
-                    try:
-                        ticker_df = all_tickers_data.xs(ticker, level=1, axis=1).copy()
-                        if not ticker_df.empty:
-                            ticker_data_dict[ticker] = ticker_df
-                    except Exception as e:
-                        print(f"  ⚠️ Error extracting {ticker} for performance calc: {e}")
-            else:
-                # Fallback - assume ticker columns
-                ticker_data_dict = all_tickers_data
+            # Should not happen with new long format data
+            print(f"   [WARN] Unexpected data format in main.py")
+            print(f"   Available columns: {list(all_tickers_data.columns[:5])}")
     elif isinstance(all_tickers_data, dict):
         ticker_data_dict = all_tickers_data
     
@@ -1826,8 +1785,8 @@ if __name__ == "__main__":
                 
                 # Use ALL tickers that have data, not just the ones from get_all_tickers()
                 # yfinance batch downloads can return extra tickers (aliases, related)
-                if isinstance(all_tickers_data.columns, pd.MultiIndex):
-                    tickers_with_data = sorted(all_tickers_data.columns.get_level_values(1).unique().tolist())
+                if 'ticker' in all_tickers_data.columns:
+                    tickers_with_data = sorted(all_tickers_data['ticker'].unique().tolist())
                 else:
                     tickers_with_data = sorted(all_tickers_data.columns.tolist())
                 print(f"   ✅ Downloaded data for {len(tickers_with_data)} tickers")
@@ -1839,13 +1798,8 @@ if __name__ == "__main__":
                     all_available_tickers = sorted(set(all_available_tickers) | extra_tickers)
                     print(f"   ℹ️ Expanded ticker universe to {len(all_available_tickers)} tickers")
                 
-                # For live trading, keep wide format with MultiIndex columns
-                # Only convert to long format for find_top_performers
-                all_tickers_data_for_filtering = all_tickers_data.copy()
-                if isinstance(all_tickers_data_for_filtering.columns, pd.MultiIndex):
-                    all_tickers_data_for_filtering = all_tickers_data_for_filtering.stack(level=1)
-                    all_tickers_data_for_filtering = all_tickers_data_for_filtering.reset_index()
-                    all_tickers_data_for_filtering.columns = ['date', 'ticker'] + list(all_tickers_data_for_filtering.columns[2:])
+                # Use the same long format data for both live trading and filtering
+                all_tickers_data_for_filtering = all_tickers_data
                 
                 # Filter to top performers (same as backtest)
                 print(f"   🔍 Filtering to top {N_TOP_TICKERS} performers...")
@@ -2007,29 +1961,30 @@ if __name__ == "__main__":
             print(f"   Data shape: {all_tickers_data.shape}")
             print(f"   Columns: {list(all_tickers_data.columns)[:5]}...")  # Show first 5 columns
             
-            # Check if data is in wide format (MultiIndex columns) or long format
-            if isinstance(all_tickers_data.columns, pd.MultiIndex):
-                print("   Data is in wide format (MultiIndex columns)")
-                # Convert to long format for performance calculation
-                all_tickers_data_long = all_tickers_data.stack(level=1, future_stack=True)
-                all_tickers_data_long.index.names = ['date', 'ticker']
-                all_tickers_data_long = all_tickers_data_long.reset_index()
-                all_tickers_data_long = all_tickers_data_long.dropna(subset=['Close'])
-                all_tickers_data = all_tickers_data_long
-                print(f"   Converted to long format: {len(all_tickers_data)} rows")
-            else:
-                print("   Data is in long format")
-                # Ensure we have a 'ticker' column in long format
-                if 'ticker' not in all_tickers_data.columns:
-                    print("   ⚠️ No 'ticker' column found in long format data")
-                    # Try to infer ticker from other columns or raise a clear error
-                    possible_cols = [col for col in all_tickers_data.columns if 'ticker' in col.lower() or 'symbol' in col.lower()]
-                    if possible_cols:
-                        ticker_col = possible_cols[0]
-                        print(f"   Using column '{ticker_col}' as ticker")
-                        all_tickers_data = all_tickers_data.rename(columns={ticker_col: 'ticker'})
-                    else:
-                        raise ValueError("Data is in long format but missing 'ticker' column and cannot infer it")
+            # Data is in long format
+            print("   Data is in long format")
+            
+            # Check if date is in index or column
+            if 'date' not in all_tickers_data.columns:
+                if hasattr(all_tickers_data.index, 'names') and 'date' in all_tickers_data.index.names:
+                    # Date is in index, reset it to make it a column
+                    all_tickers_data = all_tickers_data.reset_index()
+                    print("   Reset index to make 'date' a column")
+                else:
+                    print("   ⚠️ No 'date' column found in data")
+                    raise ValueError("Date column not found in data")
+            
+            # Ensure we have a 'ticker' column in long format
+            if 'ticker' not in all_tickers_data.columns:
+                print("   ⚠️ No 'ticker' column found in long format data")
+                # Try to infer ticker from other columns or raise a clear error
+                possible_cols = [col for col in all_tickers_data.columns if 'ticker' in col.lower() or 'symbol' in col.lower()]
+                if possible_cols:
+                    ticker_col = possible_cols[0]
+                    print(f"   Using column '{ticker_col}' as ticker")
+                    all_tickers_data = all_tickers_data.rename(columns={ticker_col: 'ticker'})
+                else:
+                    raise ValueError("Data is in long format but missing 'ticker' column and cannot infer it")
             
             # Get unique tickers from the backtest data
             if 'ticker' in all_tickers_data.columns:
@@ -2045,7 +2000,8 @@ if __name__ == "__main__":
             for ticker in all_available_tickers:
                 ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
                 if not ticker_df.empty:
-                    ticker_df = ticker_df.set_index('date')
+                    if 'date' in ticker_df.columns:
+                        ticker_df = ticker_df.set_index('date')
                     ticker_data_dict[ticker] = ticker_df
             
             # Calculate 3M and 1Y performance for all tickers in backtest data

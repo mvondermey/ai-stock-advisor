@@ -18,7 +18,7 @@ from pathlib import Path
 from config import (
     GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS,
     TRANSACTION_COST, SEED, INVESTMENT_PER_STOCK, PORTFOLIO_SIZE,
-    BACKTEST_DAYS, TRAIN_LOOKBACK_DAYS,
+    BACKTEST_DAYS,
     N_TOP_TICKERS, USE_PERFORMANCE_BENCHMARK, PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK,
     DATA_CACHE_DIR, CACHE_DAYS, TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY,
     FEAT_SMA_LONG, FEAT_SMA_SHORT, FEAT_VOL_WINDOW, ATR_PERIOD, NUM_PROCESSES, SEQUENCE_LENGTH,
@@ -1215,16 +1215,14 @@ def _run_portfolio_backtest_walk_forward(
         print(f"   - Sample tickers: {list(all_tickers_data['ticker'].unique())[:5]}")
     else:
         print(f"   ❌ 'ticker' column NOT found! This will cause prediction failures.")
-        print(f"   - Checking if MultiIndex columns: {isinstance(all_tickers_data.columns, pd.MultiIndex)}")
+        # MultiIndex removed - no longer needed
         
     if 'date' in all_tickers_data.columns:
         print(f"   ✅ 'date' column found")
     else:
         print(f"   ❌ 'date' column NOT found!")
 
-    # Implement day-by-day walk-forward backtesting with daily selection
-    from training_phase import train_models_for_period
-
+    
     # Initialize
     current_models = initial_models.copy()  # Single regression models
     current_scalers = initial_scalers.copy()
@@ -1751,10 +1749,12 @@ def _run_portfolio_backtest_walk_forward(
     grouped = all_tickers_data.groupby('ticker')
     available_tickers_in_data = set(all_tickers_data['ticker'].unique())
     missing_tickers = []
+    
     for ticker in initial_top_tickers:
         try:
             ticker_df = grouped.get_group(ticker).copy()
-            ticker_df = ticker_df.set_index('date')
+            if 'date' in ticker_df.columns:
+                ticker_df = ticker_df.set_index('date')
             ticker_data_grouped[ticker] = ticker_df
         except KeyError:
             missing_tickers.append(ticker)
@@ -1782,91 +1782,7 @@ def _run_portfolio_backtest_walk_forward(
     for current_date in business_days:
         day_count += 1
 
-        # Check if it's time to retrain (every RETRAIN_FREQUENCY_DAYS)
-        should_retrain = (day_count % RETRAIN_FREQUENCY_DAYS == 1)  # Retrain on day 1, 6, 11, 16, etc.
-
-        # Import config variables needed for training logic
-        from config import ENABLE_WALK_FORWARD_RETRAINING
-
-        # ✅ FIX: Train models if ENABLE_WALK_FORWARD_RETRAINING is True
-        # Only train individual stock prediction models when main AI strategy is enabled
-        needs_training = enable_ai_strategy and ENABLE_WALK_FORWARD_RETRAINING and (day_count == 1 or (should_retrain and day_count > 1))
-        
-        if needs_training:
-            # Check if walk-forward retraining is disabled
-            if not ENABLE_WALK_FORWARD_RETRAINING:
-                print(f"\n⏭️ Day {day_count} ({current_date.strftime('%Y-%m-%d')}): Walk-forward retraining disabled - using existing models")
-                # Keep using existing models, don't retrain
-                continue
-            
-            retrain_count += 1
-            print(f"\n🧠 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): {'Initial training' if day_count == 1 else 'Retraining'} models...")
-
-            try:
-                # Retrain models using rolling window ending at current day
-                # For walk-forward, we train AFTER market close, so we can include current day's data
-                train_end_date = current_date
-                # ✅ FIX: Use rolling window - always use last 365 days from current point
-                train_start_date_rolling = train_end_date - timedelta(days=TRAIN_LOOKBACK_DAYS)
-                
-                retraining_results = train_models_for_period(
-                    period_name=f"{period_name}_retrain_{retrain_count}",
-                    tickers=initial_top_tickers,  # Retrain on all 40 tickers
-                    all_tickers_data=all_tickers_data,
-                    train_start=train_start_date_rolling,  # Use rolling start date
-                    train_end=train_end_date,
-                    top_performers_data=top_performers_data,
-                    feature_set=None
-                )
-
-                # ✅ Load retrained models from disk (training returns None to avoid GPU/CPU memory issues)
-                from prediction import load_models_for_tickers
-                
-                # Get list of successfully retrained tickers
-                retrained_tickers = [r['ticker'] for r in retraining_results if r and r.get('status') in ['trained', 'loaded']]
-                
-                if retrained_tickers:
-                    new_models, new_scalers, new_y_scalers = load_models_for_tickers(retrained_tickers)
                     
-                    # Update current models
-                    current_models.update(new_models)
-                    current_scalers.update(new_scalers)
-                    current_y_scalers.update(new_y_scalers)
-                    
-                    print(f"   ✅ Retrained and loaded models for {len(new_models)} stocks")
-                else:
-                    new_models = {}
-                    print(f"   ⚠️ No models successfully retrained")
-                
-                # ✅ FIX: Check if training completely failed
-                if len(new_models) == 0:
-                    consecutive_training_failures += 1
-                    print(f"   ⚠️ WARNING: No models successfully trained! ({consecutive_training_failures} consecutive failures)")
-                    
-                    if consecutive_training_failures >= MAX_CONSECUTIVE_FAILURES:
-                        print(f"\n❌ ABORT: Training has failed {consecutive_training_failures} times in a row!")
-                        print(f"   💡 Possible reasons:")
-                        print(f"      - Insufficient historical data for features")
-                        print(f"      - Data quality issues (too many NaN values)")
-                        print(f"      - Training period too short")
-                        print(f"   🔧 Solutions:")
-                        print(f"      - Increase TRAIN_LOOKBACK_DAYS in config")
-                        print(f"      - Check data sources for quality")
-                        print(f"      - Reduce number of tickers")
-                        raise InsufficientDataError("Training consistently failing - aborting backtest")
-                else:
-                    consecutive_training_failures = 0  # Reset counter on success
-
-            except InsufficientDataError:
-                raise  # Re-raise to abort
-            except Exception as e:
-                consecutive_training_failures += 1
-                print(f"   ⚠️ Retraining failed: {e}. Using existing models.")
-                
-                if consecutive_training_failures >= MAX_CONSECUTIVE_FAILURES:
-                    print(f"\n❌ ABORT: Training has failed {consecutive_training_failures} times in a row!")
-                    raise InsufficientDataError(f"Training consistently failing: {e}")
-            
         # STATIC BH PORTFOLIOS: Initialize on day 1 and optional periodic rebalancing
         # Static BH 1Y, 3M, and 1M are always initialized, then rebalance every N days if configured
         if ENABLE_STATIC_BH:
@@ -6290,39 +6206,7 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   🔄 Portfolio rebalances: {rebalance_count} (only when stocks change)")
     print(f"   💰 Transaction costs minimized - daily monitoring, trading only when portfolio changes")
     
-    # ✅ NEW: Final training at the end of backtesting for live trading preparation
-    if enable_ai_strategy and ENABLE_WALK_FORWARD_RETRAINING and day_count > 0:
-        print(f"\n🧠 Final training at end of backtesting (Day {day_count}) for live trading preparation...")
-        try:
-            # Use the last day of backtest for final training
-            final_train_end_date = business_days[-1]  # Last trading day
-            # ✅ FIX: Use rolling window for final training too
-            final_train_start_date = final_train_end_date - timedelta(days=TRAIN_LOOKBACK_DAYS)
-            
-            retraining_results = train_models_for_period(
-                period_name=f"{period_name}_final_training",
-                tickers=initial_top_tickers,
-                all_tickers_data=all_tickers_data,
-                train_start=final_train_start_date,  # Use rolling start
-                train_end=final_train_end_date,
-                top_performers_data=top_performers_data,
-                feature_set=None
-            )
-            
-            # Load final models
-            from prediction import load_models_for_tickers
-            final_trained_tickers = [r['ticker'] for r in retraining_results if r and r.get('status') in ['trained', 'loaded']]
-            
-            if final_trained_tickers:
-                final_models, final_scalers, final_y_scalers = load_models_for_tickers(final_trained_tickers)
-                print(f"   ✅ Final training completed for {len(final_trained_tickers)} tickers")
-                print(f"   🎯 Models ready for live trading with data up to {final_train_end_date.strftime('%Y-%m-%d')}")
-            else:
-                print(f"   ❌ No models successfully trained in final session")
-                
-        except Exception as e:
-            print(f"   ❌ Final training failed: {e}")
-    
+        
     # ✅ NEW: Print prediction accuracy summary
     if daily_prediction_log:
         print(f"\n📈 PREDICTION ACCURACY SUMMARY")
@@ -6931,20 +6815,29 @@ def _get_current_risk_adj_mom_selections(all_tickers: List[str], all_tickers_dat
     # Group data by ticker for shared strategy
     ticker_data_grouped = {}
     if all_tickers_data is not None:
-        # Handle different data formats (wide vs long)
-        if isinstance(all_tickers_data.columns, pd.MultiIndex):
-            # Wide format: columns are (field, ticker)
-            for ticker in all_tickers_data.columns.levels[1]:
-                ticker_cols = [col for col in all_tickers_data.columns if col[1] == ticker]
-                if ticker_cols:
-                    ticker_data = all_tickers_data[ticker_cols].copy()
-                    ticker_data.columns = [col[0] for col in ticker_cols]
-                    ticker_data_grouped[ticker] = ticker_data
-        elif 'ticker' in all_tickers_data.index.names:
+        # Helper function to process ticker data
+        def process_ticker_data(ticker, group):
+            """Process a single ticker's data group."""
+            group_copy = group.copy()
+            if 'date' in group_copy.columns:
+                group_copy['date'] = pd.to_datetime(group_copy['date'])
+                group_copy = group_copy.set_index('date')
+                # Remove ticker column if it exists
+                if 'ticker' in group_copy.columns:
+                    group_copy = group_copy.drop('ticker', axis=1)
+            return group_copy
+        
+        # Handle long format data (with 'ticker' column)
+        if 'ticker' in all_tickers_data.columns:
             # Long format: group by ticker
-            ticker_data_grouped = {ticker: group for ticker, group in all_tickers_data.groupby('ticker')}
+            for ticker, group in all_tickers_data.groupby('ticker'):
+                ticker_data_grouped[ticker] = process_ticker_data(ticker, group)
+        elif 'ticker' in all_tickers_data.index.names:
+            # Long format: ticker in index
+            for ticker, group in all_tickers_data.groupby('ticker'):
+                ticker_data_grouped[ticker] = process_ticker_data(ticker, group)
         else:
-            # Assume ticker columns
+            # Assume ticker columns (fallback for old format)
             for ticker in all_tickers:
                 if ticker in all_tickers_data.columns:
                     ticker_data_grouped[ticker] = all_tickers_data[[ticker]].copy()
@@ -7841,49 +7734,8 @@ def print_final_summary(
     print("="*80)
 
 
-def calculate_volatility_adjusted_momentum(ticker_data, lookback_days=VOLATILITY_ADJ_MOM_LOOKBACK, 
-                                          vol_window=VOLATILITY_ADJ_MOM_VOL_WINDOW):
-    """
-    Calculate volatility-adjusted momentum score for a ticker.
-    
-    Args:
-        ticker_data: DataFrame with price data for a single ticker
-        lookback_days: Period for momentum calculation (default 90 days)
-        vol_window: Period for volatility calculation (default 20 days)
-    
-    Returns:
-        Volatility-adjusted momentum score
-    """
-    try:
-        if len(ticker_data) < lookback_days + vol_window:
-            return 0.0
-        
-        # Calculate momentum return over lookback period
-        if len(ticker_data) >= lookback_days:
-            momentum_return = (ticker_data['Close'].iloc[-1] / ticker_data['Close'].iloc[-lookback_days] - 1)
-        else:
-            momentum_return = 0.0
-        
-        # Calculate volatility (standard deviation of daily returns)
-        daily_returns = ticker_data['Close'].pct_change().dropna()
-        if len(daily_returns) >= vol_window:
-            volatility = daily_returns.iloc[-vol_window:].std()
-        else:
-            volatility = daily_returns.std()
-        
-        # Avoid division by zero
-        if volatility <= 0:
-            return 0.0
-        
-        # Volatility-adjusted momentum (higher is better)
-        # This penalizes high volatility and rewards steady momentum
-        vol_adjusted_score = momentum_return / (volatility ** 0.5)
-        
-        return vol_adjusted_score
-        
-    except Exception as e:
-        print(f"   ⚠️ Error calculating volatility-adjusted momentum: {e}")
-        return 0.0
+# Import shared function
+from shared_strategies import calculate_volatility_adjusted_momentum
 
 
 def _rebalance_volatility_adj_mom_portfolio(new_stocks, current_date, all_tickers_data,
