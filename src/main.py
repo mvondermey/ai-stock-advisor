@@ -1542,6 +1542,8 @@ def main(
         dynamic_pool_1y_return=_ret('dynamic_pool'),
         final_sentiment_ensemble_value_1y=s['sentiment_ensemble']['value'],
         sentiment_ensemble_1y_return=_ret('sentiment_ensemble'),
+        final_elite_hybrid_sentiment_value_1y=s['elite_hybrid_sentiment']['value'],
+        elite_hybrid_sentiment_1y_return=_ret('elite_hybrid_sentiment'),
         final_voting_ensemble_value_1y=s['voting_ensemble']['value'],
         voting_ensemble_1y_return=_ret('voting_ensemble'),
                 # Ensemble transaction costs
@@ -1552,6 +1554,7 @@ def main(
         correlation_ensemble_transaction_costs=s['correlation_ensemble']['costs'],
         dynamic_pool_transaction_costs=s['dynamic_pool']['costs'],
         sentiment_ensemble_transaction_costs=s['sentiment_ensemble']['costs'],
+        elite_hybrid_sentiment_transaction_costs=s['elite_hybrid_sentiment']['costs'],
         voting_ensemble_transaction_costs=s['voting_ensemble']['costs'],
                 # Ensemble cash deployed
         adaptive_ensemble_cash_deployed=s['adaptive_ensemble']['cash_deployed'],
@@ -1561,6 +1564,7 @@ def main(
         correlation_ensemble_cash_deployed=s['correlation_ensemble']['cash_deployed'],
         dynamic_pool_cash_deployed=s['dynamic_pool']['cash_deployed'],
         sentiment_ensemble_cash_deployed=s['sentiment_ensemble']['cash_deployed'],
+        elite_hybrid_sentiment_cash_deployed=s['elite_hybrid_sentiment']['cash_deployed'],
         voting_ensemble_cash_deployed=s['voting_ensemble']['cash_deployed'],
                 # Rebalance horizon optimization results
         static_bh_1y_best_horizon=rebalance_optimization_results['1Y']['best_horizon'] if rebalance_optimization_results and '1Y' in rebalance_optimization_results else None,

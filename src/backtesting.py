@@ -29,7 +29,7 @@ from config import (
     ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, ENABLE_SECTOR_ROTATION,
     MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M, MIN_DATA_DAYS_GENERAL,
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M, ENABLE_ADAPTIVE_STRATEGY, ENABLE_TURNAROUND, ENABLE_PRICE_ACCELERATION,
-    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE, ENABLE_AI_VOLATILITY_ENSEMBLE,
+    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE, ENABLE_ELITE_HYBRID_SENTIMENT, ENABLE_AI_VOLATILITY_ENSEMBLE,
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
     CALENDAR_DAYS_PER_YEAR,
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
@@ -78,7 +78,7 @@ from config import (
     ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT,
     ENABLE_SECTOR_ROTATION, AI_REBALANCE_FREQUENCY_DAYS, ENABLE_PROFIT_GUARD, ENABLE_STOP_LOSS, STOP_LOSS_PCT, STRATEGY_STOP_LOSS_PCT,
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M, ENABLE_ADAPTIVE_STRATEGY,
-    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE,
+    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE, ENABLE_ELITE_HYBRID_SENTIMENT,
     ENABLE_TURNAROUND, ENABLE_VOTING_ENSEMBLE,
     ENABLE_STATIC_BH_1Y_MONTHLY, ENABLE_STATIC_BH_6M_MONTHLY, ENABLE_STATIC_BH_3M_MONTHLY,
     RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION, RISK_ADJ_MOM_CONFIRM_SHORT, RISK_ADJ_MOM_CONFIRM_MEDIUM, RISK_ADJ_MOM_CONFIRM_LONG, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
@@ -115,6 +115,7 @@ enhanced_volatility_transaction_costs = 0
 correlation_ensemble_transaction_costs = 0
 dynamic_pool_transaction_costs = 0
 sentiment_ensemble_transaction_costs = 0
+elite_hybrid_sentiment_transaction_costs = 0
 voting_ensemble_transaction_costs = 0
 momentum_volatility_hybrid_transaction_costs = 0
 momentum_volatility_hybrid_6m_transaction_costs = 0
@@ -1529,6 +1530,14 @@ def _run_portfolio_backtest_walk_forward(
     current_sentiment_ensemble_stocks = []  # Current top stocks held by sentiment ensemble
     sentiment_ensemble_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
+    # ELITE HYBRID SENTIMENT: Initialize portfolio tracking
+    elite_hybrid_sentiment_portfolio_value = initial_capital_needed
+    elite_hybrid_sentiment_portfolio_history = [elite_hybrid_sentiment_portfolio_value]
+    elite_hybrid_sentiment_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    elite_hybrid_sentiment_cash = initial_capital_needed  # Start with same capital as AI
+    current_elite_hybrid_sentiment_stocks = []  # Current top stocks held by elite hybrid sentiment
+    elite_hybrid_sentiment_last_rebalance_value = initial_capital_needed  # Transaction cost guard
+
     # VOTING ENSEMBLE: Initialize portfolio tracking
     voting_ensemble_portfolio_value = initial_capital_needed
     voting_ensemble_portfolio_history = [voting_ensemble_portfolio_value]
@@ -1668,6 +1677,7 @@ def _run_portfolio_backtest_walk_forward(
     correlation_ensemble_transaction_costs = 0.0
     dynamic_pool_transaction_costs = 0.0
     sentiment_ensemble_transaction_costs = 0.0
+    elite_hybrid_sentiment_transaction_costs = 0.0
     voting_ensemble_transaction_costs = 0.0
     mom_accel_transaction_costs = 0.0
     concentrated_3m_transaction_costs = 0.0
@@ -1718,6 +1728,7 @@ def _run_portfolio_backtest_walk_forward(
     correlation_ensemble_cash_deployed = 0.0
     dynamic_pool_cash_deployed = 0.0
     sentiment_ensemble_cash_deployed = 0.0
+    elite_hybrid_sentiment_cash_deployed = 0.0
     ai_classification_cash_deployed = 0.0
     ai_classification_transaction_costs = 0.0
 
@@ -3509,6 +3520,41 @@ def _run_portfolio_backtest_walk_forward(
                 
             except Exception as e:
                 print(f"   ⚠️ Sentiment Ensemble strategy error: {e}")
+
+        # ELITE HYBRID SENTIMENT: Rebalance using elite hybrid + sentiment strategy DAILY
+        if ENABLE_ELITE_HYBRID_SENTIMENT:
+            try:
+                from elite_hybrid_sentiment import select_elite_hybrid_sentiment_stocks
+                
+                print(f"   📊 Elite Hybrid Sentiment Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+                
+                new_elite_hybrid_sentiment_stocks = select_elite_hybrid_sentiment_stocks(
+                    initial_top_tickers, 
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    train_start_date=train_start_date,
+                    top_n=PORTFOLIO_SIZE
+                )
+                
+                if new_elite_hybrid_sentiment_stocks:
+                    # Use universal smart rebalancing function
+                    elite_hybrid_sentiment_positions, elite_hybrid_sentiment_cash, current_elite_hybrid_sentiment_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        strategy_name="Elite Hybrid Sentiment",
+                        current_stocks=current_elite_hybrid_sentiment_stocks,
+                        new_stocks=new_elite_hybrid_sentiment_stocks,
+                        positions=elite_hybrid_sentiment_positions,
+                        cash=elite_hybrid_sentiment_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_elite_hybrid_sentiment_stocks  # Force initial allocation on day 1
+                    )
+                    elite_hybrid_sentiment_transaction_costs += rebalance_costs
+                    elite_hybrid_sentiment_last_rebalance_value = elite_hybrid_sentiment_portfolio_value
+                
+            except Exception as e:
+                print(f"   ⚠️ Elite Hybrid Sentiment strategy error: {e}")
 
         # VOTING ENSEMBLE: Rebalance using consensus voting strategy DAILY
         if ENABLE_VOTING_ENSEMBLE:
@@ -5363,6 +5409,30 @@ def _run_portfolio_backtest_walk_forward(
             sentiment_ensemble_portfolio_value = sentiment_ensemble_invested_value + sentiment_ensemble_cash
             sentiment_ensemble_portfolio_history.append(sentiment_ensemble_portfolio_value)
 
+        # Update ELITE HYBRID SENTIMENT portfolio value daily (skip if disabled)
+        if ENABLE_ELITE_HYBRID_SENTIMENT:
+            elite_hybrid_sentiment_invested_value = 0.0
+            for ticker in list(elite_hybrid_sentiment_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = elite_hybrid_sentiment_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            elite_hybrid_sentiment_positions[ticker]['value'] = position_value
+                            elite_hybrid_sentiment_invested_value += position_value
+                        else:
+                            elite_hybrid_sentiment_invested_value += elite_hybrid_sentiment_positions[ticker].get('value', 0.0)
+                    else:
+                        elite_hybrid_sentiment_invested_value += elite_hybrid_sentiment_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating elite hybrid sentiment position for {ticker}: {e}")
+                    elite_hybrid_sentiment_invested_value += elite_hybrid_sentiment_positions[ticker].get('value', 0.0)
+
+            elite_hybrid_sentiment_portfolio_value = elite_hybrid_sentiment_invested_value + elite_hybrid_sentiment_cash
+            elite_hybrid_sentiment_portfolio_history.append(elite_hybrid_sentiment_portfolio_value)
+
         # Update VOTING ENSEMBLE portfolio value daily (skip if disabled)
         if ENABLE_VOTING_ENSEMBLE:
             voting_ensemble_invested_value = 0.0
@@ -5973,6 +6043,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("Correlation Ensemble", correlation_ensemble_portfolio_value if ENABLE_CORRELATION_ENSEMBLE else None),
                 ("Dynamic Pool", dynamic_pool_portfolio_value if ENABLE_DYNAMIC_POOL else None),
                 ("Sentiment Ensemble", sentiment_ensemble_portfolio_value if ENABLE_SENTIMENT_ENSEMBLE else None),
+                ("Elite Hybrid Sentiment", elite_hybrid_sentiment_portfolio_value if ENABLE_ELITE_HYBRID_SENTIMENT else None),
                 ("Voting Ensemble", voting_ensemble_portfolio_value if ENABLE_VOTING_ENSEMBLE else None),
                 ("Mom Acceleration", mom_accel_portfolio_value if ENABLE_MOMENTUM_ACCELERATION else None),
                 ("Concentrated 3M", concentrated_3m_portfolio_value if ENABLE_CONCENTRATED_3M else None),
@@ -6840,6 +6911,7 @@ def _run_portfolio_backtest_walk_forward(
             'correlation_ensemble':     _strat(correlation_ensemble_portfolio_value, correlation_ensemble_portfolio_history, correlation_ensemble_transaction_costs, correlation_ensemble_cash_deployed),
             'dynamic_pool':             _strat(dynamic_pool_portfolio_value, dynamic_pool_portfolio_history, dynamic_pool_transaction_costs, dynamic_pool_cash_deployed),
             'sentiment_ensemble':       _strat(sentiment_ensemble_portfolio_value, sentiment_ensemble_portfolio_history, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash_deployed),
+            'elite_hybrid_sentiment':   _strat(elite_hybrid_sentiment_portfolio_value, elite_hybrid_sentiment_portfolio_history, elite_hybrid_sentiment_transaction_costs, elite_hybrid_sentiment_cash_deployed),
             'voting_ensemble':          _strat(voting_ensemble_portfolio_value, voting_ensemble_portfolio_history, voting_ensemble_transaction_costs, voting_ensemble_cash),
             'mom_accel':                _strat(mom_accel_portfolio_value, mom_accel_portfolio_history, mom_accel_transaction_costs, mom_accel_cash),
             'concentrated_3m':          _strat(concentrated_3m_portfolio_value, concentrated_3m_portfolio_history, concentrated_3m_transaction_costs, concentrated_3m_cash),
