@@ -527,9 +527,21 @@ def main(
     print(f"  (Requesting {days_back} days of data - fixed maximum range for consistency)")
 
     all_tickers_data_list = []
-    for i in range(0, len(all_available_tickers), BATCH_DOWNLOAD_SIZE):
+    
+    # Add progress bar for batch downloads
+    try:
+        from tqdm import tqdm
+        batch_iterator = range(0, len(all_available_tickers), BATCH_DOWNLOAD_SIZE)
+        batch_iterator = tqdm(batch_iterator, desc="  [INFO] Downloading batches", ncols=100)
+    except ImportError:
+        batch_iterator = range(0, len(all_available_tickers), BATCH_DOWNLOAD_SIZE)
+        print("  [INFO] Note: Install tqdm for progress bars: pip install tqdm")
+    
+    for i in batch_iterator:
         batch = all_available_tickers[i:i + BATCH_DOWNLOAD_SIZE]
-        print(f"  - Downloading batch {i//BATCH_DOWNLOAD_SIZE + 1}/{(len(all_available_tickers) + BATCH_DOWNLOAD_SIZE - 1)//BATCH_DOWNLOAD_SIZE} ({len(batch)} tickers)...")
+        batch_num = i//BATCH_DOWNLOAD_SIZE + 1
+        total_batches = (len(all_available_tickers) + BATCH_DOWNLOAD_SIZE - 1)//BATCH_DOWNLOAD_SIZE
+        print(f"  - Batch {batch_num}/{total_batches}: {len(batch)} tickers")
         batch_data = _download_batch_robust(batch, start=cache_start_date, end=today_for_data_fetch)
         if not batch_data.empty:
             # Filter to only the date range we actually need for analysis
@@ -739,22 +751,38 @@ def main(
             from multiprocessing import Pool
             import functools
             
+            # Add progress bar
+            try:
+                from tqdm import tqdm
+                progress_bar = tqdm(total=len(all_available_tickers), desc="   [INFO] Validating tickers", ncols=100)
+            except ImportError:
+                progress_bar = None
+                print("   [INFO] Note: Install tqdm for progress bars: pip install tqdm")
+            
             # Partial function to pass ticker_counts
             validate_func = functools.partial(validate_single_ticker, ticker_counts=ticker_counts)
             
             num_workers = min(NUM_PROCESSES, len(all_available_tickers))
             with Pool(processes=num_workers) as pool:
-                data_summaries = list(tqdm(
-                    pool.imap(validate_func, all_available_tickers),
-                    total=len(all_available_tickers),
-                    desc="Quick validation",
-                    ncols=100
-                ))
+                if progress_bar:
+                    data_summaries = []
+                    for result in pool.imap_unordered(validate_func, all_available_tickers):
+                        data_summaries.append(result)
+                        progress_bar.update(1)
+                    progress_bar.close()
+                else:
+                    data_summaries = list(pool.imap(validate_func, all_available_tickers))
         else:
             # Sequential for small lists
             data_summaries = []
-            for ticker in tqdm(all_available_tickers, desc="Quick validation", ncols=100):
-                data_summaries.append(validate_single_ticker(ticker, ticker_counts))
+            try:
+                from tqdm import tqdm
+                data_summaries = [validate_single_ticker(ticker, ticker_counts) 
+                                 for ticker in tqdm(all_available_tickers, desc="   [INFO] Quick validation", ncols=100)]
+            except ImportError:
+                data_summaries = [validate_single_ticker(ticker, ticker_counts) 
+                                 for ticker in all_available_tickers]
+                print("   [INFO] Note: Install tqdm for progress bars: pip install tqdm")
         
         # Print summary stats
         ok_count = sum(1 for s in data_summaries if s['status'] == 'OK')

@@ -408,7 +408,10 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                         print(f"  [INFO] Cache {ticker}: shape={cached_df.shape}, Close[0]={cached_df['Close'].iloc[0]:.2f}, Close[-1]={cached_df['Close'].iloc[-1]:.2f}")
                     
                     # [PASS] FIX: Use proper trading day check to avoid fetching on weekends
-                    if _is_cache_current(last_cached_date):
+                    is_current = _is_cache_current(last_cached_date)
+                    if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
+                        print(f"  [DEBUG] Cache check for {ticker}: last_cached={last_cached_date.date()}, is_current={is_current}")
+                    if is_current:
                         # Cache already has data up to the last trading day
                         needs_fetch = False
                     else:
@@ -425,7 +428,10 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         fetch_start = start
     
     # --- Step 2: Fetch new data if needed ---
+    new_df = pd.DataFrame()
     if needs_fetch and fetch_start is not None:
+        if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
+            print(f"  [DEBUG] Fetching new data for {ticker} from {fetch_start.date()}")
         start_utc = _to_utc(fetch_start)
         end_utc = _to_utc(fetch_end)
         
@@ -458,22 +464,25 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                     new_df = downloaded_df.dropna()
             except Exception:
                 pass
+    else:
+        if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
+            print(f"  [DEBUG] Skipping fetch for {ticker} - cache is current")
+    
+    # Clean up new data (only if we fetched anything)
+    if not new_df.empty:
+        # MultiIndex removed - data is now in long format
+        new_df.columns = [str(col).capitalize() for col in new_df.columns]
+        if "Close" not in new_df.columns and "Adj close" in new_df.columns:
+            new_df = new_df.rename(columns={"Adj close": "Close"})
+        if "Volume" in new_df.columns:
+            new_df.loc[:, "Volume"] = new_df["Volume"].fillna(0).astype(int)
+        else:
+            new_df.loc[:, "Volume"] = 0
         
-        # Clean up new data
-        if not new_df.empty:
-            # MultiIndex removed - data is now in long format
-            new_df.columns = [str(col).capitalize() for col in new_df.columns]
-            if "Close" not in new_df.columns and "Adj close" in new_df.columns:
-                new_df = new_df.rename(columns={"Adj close": "Close"})
-            if "Volume" in new_df.columns:
-                new_df.loc[:, "Volume"] = new_df["Volume"].fillna(0).astype(int)
-            else:
-                new_df.loc[:, "Volume"] = 0
-            
-            if new_df.index.tzinfo is None:
-                new_df.index = new_df.index.tz_localize('UTC')
-            else:
-                new_df.index = new_df.index.tz_convert('UTC')
+        if new_df.index.tzinfo is None:
+            new_df.index = new_df.index.tz_localize('UTC')
+        else:
+            new_df.index = new_df.index.tz_convert('UTC')
     
     # --- Step 3: Merge cached and new data ---
     if not cached_df.empty and not new_df.empty:
@@ -590,8 +599,8 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 daily_features = len(daily_df.columns)
                 start_date = daily_df.index[0].strftime('%Y-%m-%d')
                 end_date = daily_df.index[-1].strftime('%Y-%m-%d')
-                print(f"  [INFO] Converted {ticker}: 1h ({price_df.shape[0]} rows, {original_features} features) → daily ({daily_df.shape[0]} rows, {daily_features} features)")
-                print(f"     📅 Date range: {start_date} to {end_date} ({daily_df.shape[0]} trading days)")
+                print(f"  [INFO] Converted {ticker}: 1h ({price_df.shape[0]} rows, {original_features} features) -> daily ({daily_df.shape[0]} rows, {daily_features} features)")
+                print(f"     [INFO] Date range: {start_date} to {end_date} ({daily_df.shape[0]} trading days)")
             
             price_df = daily_df
         except Exception as e:
@@ -613,7 +622,16 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
     
     print(f"  [INFO] Processing {len(tickers)} tickers with incremental caching...")
     
-    for ticker in tickers:
+    # Add progress bar
+    try:
+        from tqdm import tqdm
+        ticker_iterator = tqdm(tickers, desc="  [INFO] Downloading tickers", ncols=100)
+    except ImportError:
+        # Fallback to no progress bar if tqdm not available
+        ticker_iterator = tickers
+        print("  [INFO] Note: Install tqdm for progress bars: pip install tqdm")
+    
+    for ticker in ticker_iterator:
         try:
             df = load_prices(ticker, start, end)
             if not df.empty:
