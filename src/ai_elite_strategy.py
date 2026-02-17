@@ -115,12 +115,9 @@ def select_ai_elite_stocks(
     if model is not None:
         candidates_df = pd.DataFrame(candidates)
         
-        # Add engineered features (same as training)
-        candidates_df['mom_vol_ratio'] = candidates_df['momentum_6m'] / candidates_df['volatility']
-        candidates_df['dip_ratio'] = candidates_df['perf_1y'] / (candidates_df['perf_3m'] + 1)
-        
-        feature_cols = ['momentum_6m', 'volatility', 'avg_volume', 'dip_score', 'perf_1y', 'perf_3m',
-                        'mom_vol_ratio', 'dip_ratio']
+        # Use only the 2 features that the model was trained with
+        # Model expects: ['momentum_6m', 'volatility'] 
+        feature_cols = ['momentum_6m', 'volatility']
         
         # Predict scores
         print(f"   🔍 AI Elite: Attempting ML scoring with {len(candidates_df)} candidates")
