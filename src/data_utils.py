@@ -424,12 +424,16 @@ def _is_cache_current(last_cached_date, ticker_symbol=None):
     if ticker_symbol and any(suffix in ticker_symbol for suffix in ['.SW', '.DE', '.PA', '.MI', '.MC', '.L']):
         # EU stocks - allow reasonable time zone differences
         if cached_date > last_trading_day + timedelta(days=2):
+            print(f"  [DEBUG] {ticker_symbol}: Cache too new ({cached_date} > {last_trading_day + timedelta(days=2)})")
             return False  # Too far in future
         else:
+            print(f"  [DEBUG] {ticker_symbol}: Cache OK ({cached_date} <= {last_trading_day + timedelta(days=2)})")
             return True  # EU stock with recent data is OK
     else:
         # US stocks - strict check
-        return cached_date >= last_trading_day
+        is_current = cached_date >= last_trading_day
+        print(f"  [DEBUG] {ticker_symbol}: US cache check {cached_date} >= {last_trading_day} = {is_current}")
+        return is_current
 
 # CLASS_HORIZON is now imported from config above
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
@@ -491,8 +495,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                     
                     # [PASS] FIX: Use proper trading day check to avoid fetching on weekends
                     is_current = _is_cache_current(last_cached_date, ticker)
-                    if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL', 'NESN.SW', 'UBSG.SW']:
-                        print(f"  [DEBUG] Cache check for {ticker}: last_cached={last_cached_date.date()}, is_current={is_current}")
+                    print(f"  [DEBUG] Cache check for {ticker}: last_cached={last_cached_date.date()}, is_current={is_current}")
                     if is_current:
                         # Cache already has data up to the last trading day
                         needs_fetch = False
@@ -547,8 +550,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             except Exception:
                 pass
     else:
-        if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
-            print(f"  [DEBUG] Skipping fetch for {ticker} - cache is current")
+        print(f"  [DEBUG] Skipping fetch for {ticker} - cache is current")
     
     # Clean up new data (only if we fetched anything)
     if not new_df.empty:
