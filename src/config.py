@@ -373,7 +373,7 @@ INVESTMENT_PER_STOCK    = TOTAL_CAPITAL / PORTFOLIO_SIZE  # Automatically calcul
 TRANSACTION_COST        = 0.011      # 1.1% per trade leg (buy or sell)
 ENABLE_STOP_LOSS        = False      # Global enable/disable stop loss protection (overridden by per-strategy settings)
 STOP_LOSS_PCT           = 0.05       # Default stop loss percentage (5%)
-ENABLE_PROFIT_GUARD     = True       # Set to False to test old behavior (sell everything not in buy list)
+ENABLE_PROFIT_GUARD     = False      # Sell stocks when not in top 10 (no profit/loss consideration)
 
 # --- Strategy-Specific Stop Loss Configuration ---
 # All stop loss values respect the global ENABLE_STOP_LOSS flag
