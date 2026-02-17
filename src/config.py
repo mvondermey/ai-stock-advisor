@@ -375,46 +375,72 @@ ENABLE_STOP_LOSS        = False      # Global enable/disable stop loss protectio
 STOP_LOSS_PCT           = 0.05       # Default stop loss percentage (5%)
 ENABLE_PROFIT_GUARD     = True       # Set to False to test old behavior (sell everything not in buy list)
 
-# Per-strategy stop loss configuration (respects global ENABLE_STOP_LOSS flag)
-# Based on backtest analysis: AI Strategy benefits from stop loss, quality/momentum strategies don't
+# --- Strategy-Specific Stop Loss Configuration ---
+# All stop loss values respect the global ENABLE_STOP_LOSS flag
+# Based on backtest analysis: Some strategies benefit from stop loss, others don't
+
+# Strategies with 5% stop loss (show positive improvement with stop loss protection)
+AI_STRATEGY_STOP_LOSS = 0.05           # +17.7% improvement (+31.9% vs +14.2%)
+VOLATILITY_ENSEMBLE_STOP_LOSS = 0.05   # +6.8% improvement (-5.1% vs -11.9%)
+MOM_VOL_HYBRID_STOP_LOSS = 0.05        # +5.5% improvement (+45.6% vs +40.1%)
+RATIO_3M_1Y_STOP_LOSS = 0.05           # +4.0% improvement (+21.0% vs +17.0%)
+STATIC_BH_6M_STOP_LOSS = 0.05          # +3.5% improvement (+30.5% vs +27.0%)
+SENTIMENT_ENSEMBLE_STOP_LOSS = 0.05    # +3.1% improvement (+20.2% vs +17.1%)
+TURNAROUND_STOP_LOSS = 0.05            # +2.5% improvement (+20.0% vs +17.5%)
+PRICE_ACCELERATION_STOP_LOSS = 0.05    # +2.4% improvement (+2.1% vs -0.3%)
+ADAPTIVE_ENSEMBLE_STOP_LOSS = 0.05     # +2.4% improvement (+18.0% vs +15.6%)
+CONCENTRATED_3M_STOP_LOSS = 0.05       # +1.4% improvement (+5.6% vs +4.2%)
+STATIC_BH_1M_STOP_LOSS = 0.05          # +1.2% improvement (+7.7% vs +6.5%)
+AI_VOLATILITY_ENSEMBLE_STOP_LOSS = 0.05 # +1.0% improvement (-7.8% vs -8.8%)
+STATIC_BH_3M_STOP_LOSS = 0.05          # +0.8% improvement (+30.1% vs +29.3%)
+STATIC_BH_1Y_STOP_LOSS = 0.05          # +0.7% improvement (+17.1% vs +16.4%)
+SECTOR_ROTATION_STOP_LOSS = 0.05       # +0.7% improvement (+4.1% vs +3.4%)
+MOM_ACCELERATION_STOP_LOSS = 0.05      # +0.4% improvement (-3.6% vs -4.0%)
+
+# Strategies without stop loss (perform better with profit guard only)
+MEAN_REVERSION_STOP_LOSS = 0.0         # -10.2% worse with stop (+2.0% vs -8.2%)
+RISK_ADJ_MOM_STOP_LOSS = 0.0           # -3.1% worse with stop (+15.9% vs +12.8%)
+QUALITY_MOMENTUM_STOP_LOSS = 0.0       # -2.8% worse with stop (+25.8% vs +23.0%)
+MOMENTUM_6M_STOP_LOSS = 0.0            # -2.4% worse with stop (+16.3% vs +13.9%)
+TREND_FOLLOWING_ATR_STOP_LOSS = 0.0   # -1.8% worse with stop (+20.0% vs +18.2%)
+ELITE_HYBRID_SENTIMENT_STOP_LOSS = 0.0 # -1.6% worse with stop (+25.4% vs +23.8%)
+AI_ELITE_STOP_LOSS = 0.0               # -1.3% worse with stop (+19.3% vs +18.0%)
+VOLATILITY_TRADER_STOP_LOSS = 0.0      # -1.1% worse with stop (+18.1% vs +17.0%)
+CORRELATION_ENSEMBLE_STOP_LOSS = 0.0   # -0.9% worse with stop (+18.9% vs +18.0%)
+DYNAMIC_POOL_STOP_LOSS = 0.0           # -0.8% worse with stop (+17.6% vs +16.8%)
+ENHANCED_VOLATILITY_STOP_LOSS = 0.0    # -0.7% worse with stop (+18.6% vs +17.9%)
+BUY_HOLD_STOP_LOSS = 0.0               # -0.6% worse with stop (+17.1% vs +16.5%)
+
+# Dictionary for backward compatibility (used by backtesting.py)
 STRATEGY_STOP_LOSS_PCT = {
-    # Strategies with 5% stop loss (show positive improvement with stop loss protection)
-    'AI Strategy': 0.05,           # +17.7% improvement (+31.9% vs +14.2%)
-    'Volatility Ensemble': 0.05,   # +6.8% improvement (-5.1% vs -11.9%)
-    'Mom-Vol Hybrid': 0.05,        # +5.5% improvement (+45.6% vs +40.1%) - respects global ENABLE_STOP_LOSS
-    '3M/1Y Ratio': 0.05,           # +4.0% improvement (+21.0% vs +17.0%)
-    'Static BH 6M': 0.05,          # +3.5% improvement (+30.5% vs +27.0%)
-    'Sentiment Ensemble': 0.05,    # +3.1% improvement (+20.2% vs +17.1%)
-    'Turnaround': 0.05,            # +2.5% improvement (+20.0% vs +17.5%)
-    'Price Acceleration': 0.05,    # +2.4% improvement (+2.1% vs -0.3%)
-    'Adaptive Ensemble': 0.05,     # +2.4% improvement (+18.0% vs +15.6%)
-    'Concentrated 3M': 0.05,       # +1.4% improvement (+5.6% vs +4.2%)
-    'Static BH 1M': 0.05,          # +1.2% improvement (+7.7% vs +6.5%)
-    'AI Volatility Ensemble': 0.05,# +1.0% improvement (-7.8% vs -8.8%)
-    'Static BH 3M': 0.05,          # +0.8% improvement (+30.1% vs +29.3%)
-    'Static BH 1Y': 0.05,          # +0.7% improvement (+17.1% vs +16.4%)
-    'Sector Rotation': 0.05,       # +0.7% improvement (+4.1% vs +3.4%)
-    'Mom Acceleration': 0.05,      # +0.4% improvement (-3.6% vs -4.0%)
-    
-    # Strategies without stop loss (perform better with profit guard only)
-    'Mean Reversion': 0.0,         # -10.2% worse with stop (+2.0% vs -8.2%)
-    'Enhanced Volatility': 0.0,    # -8.9% worse (-5.5% vs -14.4%)
-    'Vol-Adj Mom': 0.0,            # -8.1% worse (+26.6% vs +18.5%)
-    'Quality+Mom': 0.0,            # -7.8% worse (+29.3% vs +21.5%)
-    'Dynamic BH 6M': 0.0,          # -6.2% worse (+19.6% vs +13.4%)
-    'Dynamic BH 3M': 0.0,          # -3.5% worse (+20.4% vs +16.9%)
-    'Dual Momentum': 0.0,          # -3.5% worse (+20.4% vs +16.9%)
-    'LLM Strategy': 0.0,           # -2.7% worse (+8.6% vs +5.9%)
-    'Trend ATR': 0.0,              # -2.5% worse (+5.7% vs +3.2%)
-    'Dynamic Pool': 0.0,           # -2.4% worse (+17.7% vs +15.3%)
-    'Multi-Task': 0.0,             # -2.1% worse (+9.0% vs +6.9%)
-    'Momentum+AI': 0.0,            # -2.0% worse (+28.3% vs +26.3%)
-    'Dynamic BH 1M': 0.0,          # -2.0% worse (-0.3% vs -2.3%)
-    'Dynamic BH 1Y+Vol': 0.0,      # -1.5% worse (+15.9% vs +14.4%)
-    'Risk-Adj Mom': 0.0,           # -1.3% worse (+24.3% vs +23.0%)
-    'Correlation Ensemble': 0.0,   # -0.9% worse (-1.1% vs -2.0%)
-    'Dynamic BH 1Y+TS': 0.0,       # -0.4% worse (+15.1% vs +14.7%)
-    'Dynamic BH 1Y': 0.0,          # -0.2% worse (+15.1% vs +14.9%)
+    'AI Strategy': AI_STRATEGY_STOP_LOSS,
+    'Volatility Ensemble': VOLATILITY_ENSEMBLE_STOP_LOSS,
+    'Mom-Vol Hybrid': MOM_VOL_HYBRID_STOP_LOSS,
+    '3M/1Y Ratio': RATIO_3M_1Y_STOP_LOSS,
+    'Static BH 6M': STATIC_BH_6M_STOP_LOSS,
+    'Sentiment Ensemble': SENTIMENT_ENSEMBLE_STOP_LOSS,
+    'Turnaround': TURNAROUND_STOP_LOSS,
+    'Price Acceleration': PRICE_ACCELERATION_STOP_LOSS,
+    'Adaptive Ensemble': ADAPTIVE_ENSEMBLE_STOP_LOSS,
+    'Concentrated 3M': CONCENTRATED_3M_STOP_LOSS,
+    'Static BH 1M': STATIC_BH_1M_STOP_LOSS,
+    'AI Volatility Ensemble': AI_VOLATILITY_ENSEMBLE_STOP_LOSS,
+    'Static BH 3M': STATIC_BH_3M_STOP_LOSS,
+    'Static BH 1Y': STATIC_BH_1Y_STOP_LOSS,
+    'Sector Rotation': SECTOR_ROTATION_STOP_LOSS,
+    'Mom Acceleration': MOM_ACCELERATION_STOP_LOSS,
+    'Mean Reversion': MEAN_REVERSION_STOP_LOSS,
+    'Risk-Adj Mom': RISK_ADJ_MOM_STOP_LOSS,
+    'Quality Momentum': QUALITY_MOMENTUM_STOP_LOSS,
+    'Momentum 6M': MOMENTUM_6M_STOP_LOSS,
+    'Trend Following ATR': TREND_FOLLOWING_ATR_STOP_LOSS,
+    'Elite Hybrid Sentiment': ELITE_HYBRID_SENTIMENT_STOP_LOSS,
+    'AI Elite': AI_ELITE_STOP_LOSS,
+    'Volatility Trader': VOLATILITY_TRADER_STOP_LOSS,
+    'Correlation Ensemble': CORRELATION_ENSEMBLE_STOP_LOSS,
+    'Dynamic Pool': DYNAMIC_POOL_STOP_LOSS,
+    'Enhanced Volatility': ENHANCED_VOLATILITY_STOP_LOSS,
+    'Buy & Hold': BUY_HOLD_STOP_LOSS,
     '1Y/3M Ratio': 0.0,            # -0.2% worse (+7.6% vs +7.4%)
 }
 
