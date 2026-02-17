@@ -395,7 +395,24 @@ def _is_cache_current(last_cached_date, ticker_symbol=None):
         ticker_symbol: Optional ticker symbol to determine exchange/market
     """
     last_trading_day = _get_last_trading_day()
-    cached_date = last_cached_date.date() if isinstance(last_cached_date, datetime) else last_cached_date
+    
+    # Convert cached_date to proper date object
+    if isinstance(last_cached_date, datetime):
+        cached_date = last_cached_date.date()
+    elif hasattr(last_cached_date, 'date'):
+        cached_date = last_cached_date.date()
+    else:
+        # Handle pandas Timestamp or other formats
+        try:
+            import pandas as pd
+            if isinstance(last_cached_date, pd.Timestamp):
+                cached_date = last_cached_date.date()
+            else:
+                # Convert from string or other format
+                cached_date = pd.to_datetime(last_cached_date).date()
+        except:
+            print(f"  [DEBUG] Cannot convert cached_date {last_cached_date} to date, using fallback")
+            return cached_date >= last_trading_day if isinstance(cached_date, (int, float)) else False
     
     # Determine market based on ticker suffix
     market = None
