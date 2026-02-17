@@ -206,7 +206,7 @@ TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
 USE_UNIFIED_PARALLEL_TRAINING = True
 
 # --- Backtest windows
-BACKTEST_DAYS           = 63       # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           = 30       # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 
 # --- Calendar days ---
@@ -215,8 +215,8 @@ CALENDAR_DAYS_PER_YEAR = 365
 # --- Data Granularity ---
 # Use daily data by default (recommended for momentum strategies)
 # Set to True to enhance with intraday features (experimental)
-ENABLE_INTRADAY_ENHANCEMENT = False   # Add 5m/15m data for enhanced features
-INTRADAY_INTERVAL = "15m"             # Use 15-minute intervals for balance
+ENABLE_INTRADAY_ENHANCEMENT = True    # Add 5m/15m data for enhanced features - ENABLED for AI Elite
+INTRADAY_INTERVAL = "1h"              # Use 1-hour intervals for AI Elite training
 INTRADAY_LOOKBACK_DAYS = 30            # Only use recent intraday data
 # Set to True to run backtest until today - prediction horizon (ensures future data for validation)
 # Set to False to subtract prediction horizon from end date (ensures future data for validation)
@@ -319,6 +319,11 @@ ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (not implemented)
 AI_ELITE_RETRAIN_DAYS = 1  # Retrain model every N days
 AI_ELITE_TRAINING_LOOKBACK = 20  # Use fixed 20-day window for training
 AI_ELITE_FORWARD_DAYS = 20  # Predict performance over next N days
+
+# AI Elite Intraday Configuration
+AI_ELITE_USE_INTRADAY = True  # Use hourly data for richer training
+AI_ELITE_INTRADAY_INTERVAL = "1h"  # Use 1-hour data for maximum granularity
+AI_ELITE_INTRADAY_LOOKBACK = 20  # Days of hourly data to use (480 data points per stock)
 
 # Momentum Acceleration Parameters
 MOM_ACCEL_LOOKBACK_DAYS = 90  # 3-month momentum lookback

@@ -167,6 +167,10 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
         if ticker_data.index.duplicated().any():
             ticker_data = ticker_data[~ticker_data.index.duplicated(keep='last')]
         
+        # Check if we should use intraday data for richer features
+        from config import AI_ELITE_USE_INTRADAY, AI_ELITE_INTRADAY_LOOKBACK
+        use_intraday = AI_ELITE_USE_INTRADAY and len(ticker_data) > (AI_ELITE_INTRADAY_LOOKBACK * 24)
+        
         # ✅ FIX: Filter data up to current_date to avoid temporal leakage
         if current_date is not None:
             current_ts = pd.Timestamp(current_date)
@@ -209,8 +213,14 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
                   f"duplicated={ticker_data.index.duplicated().any()}")
             _extract_features._debug_count2 = 1
         
-        if n_prices < 60:  # Minimum 60 days
-            return None
+        # Adjust minimum data requirements based on intraday availability
+        if use_intraday:
+            min_data_points = AI_ELITE_INTRADAY_LOOKBACK * 24  # 20 days * 24 hours = 480 points
+            if n_prices < min_data_points:
+                return None
+        else:
+            if n_prices < 60:  # Minimum 60 days for daily data
+                return None
         
         # Get latest price
         latest_price = close_prices.iloc[-1]
@@ -229,46 +239,27 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
         momentum_6m = ((latest_price - price_6m_ago) / price_6m_ago) * 100
         
         # Feature 2: Volatility (annualized)
-        daily_returns = close_prices.pct_change().dropna()
+        returns = close_prices.pct_change().dropna()
         from config import MIN_DATA_DAYS_AI_ELITE_VOLATILITY
-        if len(daily_returns) < MIN_DATA_DAYS_AI_ELITE_VOLATILITY:
-            return None
-        volatility = daily_returns.std() * (252 ** 0.5) * 100  # As percentage
         
-        # Feature 3: Average volume
-        avg_volume = ticker_data['Volume'].dropna().mean() if 'Volume' in ticker_data.columns else 100000
+        # Adjust volatility calculation for intraday data
+        if use_intraday:
+            # For hourly data, use different annualization factor
+            # 24 hours/day * 252 trading days/year = 6048 hours/year
+            min_returns = MIN_DATA_DAYS_AI_ELITE_VOLATILITY * 24  # 30 days * 24 hours = 720
+            if len(returns) < min_returns:
+                return None
+            volatility = returns.std() * (6048 ** 0.5) * 100  # Annualized hourly volatility
+        else:
+            # Daily data
+            if len(returns) < MIN_DATA_DAYS_AI_ELITE_VOLATILITY:
+                return None
+            volatility = returns.std() * (252 ** 0.5) * 100  # As percentage
         
-        # Calculate 3M performance (adaptive: use up to 63 trading days)
-        lookback_3m = min(63, n_prices - 1)
-        if lookback_3m < 10:
-            return None
-        price_3m_ago = close_prices.iloc[-lookback_3m]
-        if price_3m_ago <= 0:
-            return None
-        perf_3m = ((latest_price - price_3m_ago) / price_3m_ago) * 100
-        
-        # Calculate 1Y performance (adaptive: use up to 252 trading days)
-        lookback_1y = min(252, n_prices - 1)
-        if lookback_1y < 60:
-            return None
-        price_1y_ago = close_prices.iloc[-lookback_1y]
-        if price_1y_ago <= 0:
-            return None
-        perf_1y = ((latest_price - price_1y_ago) / price_1y_ago) * 100
-        
-        # Feature 6: Dip score
-        dip_score = max(perf_1y - perf_3m, 0)
-        
-        # NO HARD FILTERS - let ML decide what's good
-        
+        # SIMPLIFIED: Return only momentum_6m and volatility (no unnecessary calculations)
         return {
-            'ticker': ticker,
             'momentum_6m': momentum_6m,
-            'volatility': volatility,
-            'avg_volume': avg_volume,
-            'dip_score': dip_score,
-            'perf_1y': perf_1y,
-            'perf_3m': perf_3m
+            'volatility': volatility
         }
         
     except Exception as e:
@@ -470,10 +461,6 @@ def train_ai_elite_model(
                 training_data.append({
                     'momentum_6m': features['momentum_6m'],
                     'volatility': features['volatility'],
-                    'avg_volume': features['avg_volume'],
-                    'dip_score': features['dip_score'],
-                    'perf_1y': features['perf_1y'],
-                    'perf_3m': features['perf_3m'],
                     'forward_return': forward_return,
                     'sample_date': sample_date
                 })
@@ -493,41 +480,25 @@ def train_ai_elite_model(
     
     print(f"   📈 AI Elite: Collected {len(train_df)} training samples")
     
-    # Assign labels based on ranking within each date
-    # Top 20% performers = 1, Bottom 20% = 0, Middle 60% excluded
-    labeled_samples = []
-    for sample_date in train_df['sample_date'].unique():
-        date_samples = train_df[train_df['sample_date'] == sample_date].copy()
-        
-        # Sort by forward return
-        date_samples = date_samples.sort_values('forward_return', ascending=False)
-        n_samples = len(date_samples)
-        
-        # Top 20% get label 1
-        top_20_pct = int(n_samples * 0.2)
-        date_samples.iloc[:top_20_pct, date_samples.columns.get_loc('forward_return')] = 1
-        
-        # Bottom 20% get label 0
-        bottom_20_pct = int(n_samples * 0.2)
-        date_samples.iloc[-bottom_20_pct:, date_samples.columns.get_loc('forward_return')] = 0
-        
-        # Keep only top and bottom (exclude middle 60%)
-        labeled_samples.append(date_samples.iloc[:top_20_pct])
-        labeled_samples.append(date_samples.iloc[-bottom_20_pct:])
+    # Assign labels based on absolute returns (making money focus)
+    # Positive returns = 1, Negative returns = 0
+    train_df['label'] = (train_df['forward_return'] > 0).astype(int)
     
-    train_df = pd.concat(labeled_samples, ignore_index=True)
-    train_df['label'] = train_df['forward_return'].astype(int)
+    # Remove stocks with minimal returns (to avoid noise)
+    min_return_threshold = 0.5  # 0.5% minimum return
+    train_df = train_df[abs(train_df['forward_return']) >= min_return_threshold]
     
-    print(f"   📊 AI Elite: Training on {len(train_df)} samples (top/bottom 20% only)")
-    print(f"   📊 AI Elite: Positive labels: {train_df['label'].sum()} ({train_df['label'].mean()*100:.1f}%)")
+    print(f"   📊 AI Elite: Using absolute returns labeling")
+    print(f"   📊 AI Elite: Positive returns: {train_df['label'].sum()} ({train_df['label'].mean()*100:.1f}%)")
+    print(f"   📊 AI Elite: Average return: {train_df['forward_return'].mean():.2f}%")
+    print(f"   📊 AI Elite: Training on {len(train_df)} samples")
     
-    # Add engineered features
-    train_df['mom_vol_ratio'] = train_df['momentum_6m'] / train_df['volatility']
-    train_df['dip_ratio'] = train_df['perf_1y'] / (train_df['perf_3m'] + 1)  # +1 to avoid div by zero
+    # SIMPLIFIED: Use only momentum_6m and volatility (like Risk-Adj Mom)
+    # Remove complex features that may cause overfitting
+    print(f"   📊 AI Elite: Using simplified features (momentum_6m + volatility only)")
     
     # Prepare features and labels
-    feature_cols = ['momentum_6m', 'volatility', 'avg_volume', 'dip_score', 'perf_1y', 'perf_3m', 
-                    'mom_vol_ratio', 'dip_ratio']
+    feature_cols = ['momentum_6m', 'volatility']
     X = train_df[feature_cols].values
     y = train_df['label'].values
     
