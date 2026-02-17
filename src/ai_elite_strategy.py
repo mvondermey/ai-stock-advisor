@@ -126,7 +126,11 @@ def select_ai_elite_stocks(
         # Force model retraining if feature mismatch
         if hasattr(model, 'n_features_in_') and model.n_features_in_ != len(feature_cols):
             print(f"   🔄 AI Elite: Feature count changed ({model.n_features_in_} -> {len(feature_cols)}), retraining model")
-            model = None  # Force retraining
+            model = _load_or_create_model(model_path)  # Retrain immediately
+            if model is None:
+                print(f"   ❌ AI Elite: Model retraining failed, using fallback")
+                candidates_df['ai_score'] = _fallback_scoring(candidates_df)
+                return selected
         
         # Predict scores
         print(f"   🔍 AI Elite: Attempting ML scoring with {len(candidates_df)} candidates")
