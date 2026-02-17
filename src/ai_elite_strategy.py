@@ -115,9 +115,18 @@ def select_ai_elite_stocks(
     if model is not None:
         candidates_df = pd.DataFrame(candidates)
         
-        # Use only the 2 features that the model was trained with
-        # Model expects: ['momentum_6m', 'volatility'] 
-        feature_cols = ['momentum_6m', 'volatility']
+        # Add engineered features for better predictions
+        candidates_df['mom_vol_ratio'] = candidates_df['momentum_6m'] / candidates_df['volatility']
+        candidates_df['dip_ratio'] = candidates_df['perf_1y'] / (candidates_df['perf_3m'] + 1)
+        
+        # Use full feature set for better predictions
+        feature_cols = ['momentum_6m', 'volatility', 'avg_volume', 'dip_score', 'perf_1y', 'perf_3m',
+                        'mom_vol_ratio', 'dip_ratio']
+        
+        # Force model retraining if feature mismatch
+        if hasattr(model, 'n_features_in_') and model.n_features_in_ != len(feature_cols):
+            print(f"   🔄 AI Elite: Feature count changed ({model.n_features_in_} -> {len(feature_cols)}), retraining model")
+            model = None  # Force retraining
         
         # Predict scores
         print(f"   🔍 AI Elite: Attempting ML scoring with {len(candidates_df)} candidates")
