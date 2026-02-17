@@ -352,8 +352,8 @@ def _smart_rebalance_portfolio(
                     should_sell = False
                     sell_reason = ""
                     
-                    # Get strategy-specific stop loss, or use global setting as fallback
-                    if strategy_name in STRATEGY_STOP_LOSS_PCT:
+                    # Get strategy-specific stop loss, but only if global stop loss is enabled
+                    if ENABLE_STOP_LOSS and strategy_name in STRATEGY_STOP_LOSS_PCT:
                         strategy_stop_loss = STRATEGY_STOP_LOSS_PCT[strategy_name]
                     elif ENABLE_STOP_LOSS:
                         strategy_stop_loss = STOP_LOSS_PCT  # Use global stop loss

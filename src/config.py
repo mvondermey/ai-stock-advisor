@@ -375,13 +375,13 @@ ENABLE_STOP_LOSS        = False      # Global enable/disable stop loss protectio
 STOP_LOSS_PCT           = 0.05       # Default stop loss percentage (5%)
 ENABLE_PROFIT_GUARD     = True       # Set to False to test old behavior (sell everything not in buy list)
 
-# Per-strategy stop loss configuration (overrides global ENABLE_STOP_LOSS)
+# Per-strategy stop loss configuration (respects global ENABLE_STOP_LOSS flag)
 # Based on backtest analysis: AI Strategy benefits from stop loss, quality/momentum strategies don't
 STRATEGY_STOP_LOSS_PCT = {
     # Strategies with 5% stop loss (show positive improvement with stop loss protection)
     'AI Strategy': 0.05,           # +17.7% improvement (+31.9% vs +14.2%)
     'Volatility Ensemble': 0.05,   # +6.8% improvement (-5.1% vs -11.9%)
-    'Mom-Vol Hybrid': 0.05,        # +5.5% improvement (+45.6% vs +40.1%)
+    'Mom-Vol Hybrid': 0.05,        # +5.5% improvement (+45.6% vs +40.1%) - respects global ENABLE_STOP_LOSS
     '3M/1Y Ratio': 0.05,           # +4.0% improvement (+21.0% vs +17.0%)
     'Static BH 6M': 0.05,          # +3.5% improvement (+30.5% vs +27.0%)
     'Sentiment Ensemble': 0.05,    # +3.1% improvement (+20.2% vs +17.1%)
