@@ -123,15 +123,24 @@ def select_ai_elite_stocks(
                         'mom_vol_ratio', 'dip_ratio']
         
         # Predict scores
-        X = candidates_df[feature_cols].values
+        print(f"   🔍 AI Elite: Attempting ML scoring with {len(candidates_df)} candidates")
+        print(f"   🔍 AI Elite: Feature columns: {feature_cols}")
+        print(f"   🔍 AI Elite: Feature shape: {candidates_df[feature_cols].shape}")
+        
         try:
-            # Model predicts probability of outperformance
-            scores = model.predict_proba(X)[:, 1] if hasattr(model, 'predict_proba') else model.predict(X)
+            X = candidates_df[feature_cols].values
+            print(f"   🔍 AI Elite: X shape: {X.shape}, X dtype: {X.dtype}")
+            print(f"   🔍 AI Elite: Model type: {type(model)}")
+            
+            scores = model.predict_proba(X)[:, 1]  # Probability of positive class
+            print(f"   🔍 AI Elite: ML scoring succeeded, scores shape: {scores.shape}")
             candidates_df['ai_score'] = scores
-        except:
-            # Fallback to product-based scoring if ML fails
-            print(f"   ⚠️ AI Elite: ML scoring failed, using fallback")
-            candidates_df['ai_score'] = _fallback_scoring(candidates_df)
+            
+        except Exception as e:
+            print(f"   ❌ AI Elite: ML scoring FAILED: {type(e).__name__}: {e}")
+            print(f"   ❌ AI Elite: Error details: {str(e)}")
+            # Don't use fallback - let it fail so we can debug
+            raise e
     else:
         # No model available, use fallback
         candidates_df = pd.DataFrame(candidates)
