@@ -323,7 +323,7 @@ AI_ELITE_FORWARD_DAYS = 20  # Predict performance over next N days
 # AI Elite Intraday Configuration
 AI_ELITE_USE_INTRADAY = True  # Use hourly data for richer training
 AI_ELITE_INTRADAY_INTERVAL = "1h"  # Use 1-hour data for maximum granularity
-AI_ELITE_INTRADAY_LOOKBACK = 20  # Days of hourly data to use (480 data points per stock)
+AI_ELITE_INTRADAY_LOOKBACK = 10  # Days of hourly data to use (240 data points per stock)
 
 # Momentum Acceleration Parameters
 MOM_ACCEL_LOOKBACK_DAYS = 90  # 3-month momentum lookback

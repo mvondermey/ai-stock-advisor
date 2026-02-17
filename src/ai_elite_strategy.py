@@ -215,7 +215,7 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
         
         # Adjust minimum data requirements based on intraday availability
         if use_intraday:
-            min_data_points = AI_ELITE_INTRADAY_LOOKBACK * 24  # 20 days * 24 hours = 480 points
+            min_data_points = AI_ELITE_INTRADAY_LOOKBACK * 24  # 10 days * 24 hours = 240 points
             if n_prices < min_data_points:
                 return None
         else:
@@ -246,7 +246,7 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
         if use_intraday:
             # For hourly data, use different annualization factor
             # 24 hours/day * 252 trading days/year = 6048 hours/year
-            min_returns = MIN_DATA_DAYS_AI_ELITE_VOLATILITY * 24  # 30 days * 24 hours = 720
+            min_returns = AI_ELITE_INTRADAY_LOOKBACK * 24  # 10 days * 24 hours = 240
             if len(returns) < min_returns:
                 return None
             volatility = returns.std() * (6048 ** 0.5) * 100  # Annualized hourly volatility
