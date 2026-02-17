@@ -126,6 +126,15 @@ def select_ai_elite_stocks(
         # Force model retraining if feature mismatch
         if hasattr(model, 'n_features_in_') and model.n_features_in_ != len(feature_cols):
             print(f"   🔄 AI Elite: Feature count changed ({model.n_features_in_} -> {len(feature_cols)}), retraining model")
+            
+            # Delete old model file to force retraining with new features
+            if model_path and os.path.exists(model_path):
+                try:
+                    os.remove(model_path)
+                    print(f"   🗑️ AI Elite: Deleted old model file {model_path}")
+                except Exception as e:
+                    print(f"   ⚠️ AI Elite: Failed to delete old model: {e}")
+            
             model = _load_or_create_model(model_path)  # Retrain immediately
             if model is None:
                 print(f"   ❌ AI Elite: Model retraining failed, using fallback")
