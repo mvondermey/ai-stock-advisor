@@ -604,7 +604,8 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             price_df['Vol_Regime_Change'] = price_df['Hourly_Volatility'].rolling(8).std() / price_df['Hourly_Volatility'].rolling(20).std()
             
             # Resample 1h data to daily data with enhanced features
-            daily_df = price_df.resample('D').agg({
+            # Use 'B' for business days to preserve trading day alignment
+            daily_df = price_df.resample('B').agg({
                 # Basic OHLCV
                 'Open': 'first',
                 'High': 'max', 

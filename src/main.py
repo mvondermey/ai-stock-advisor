@@ -453,7 +453,17 @@ def main(
 
     # Get accurate time from internet source for consistent backtesting
     end_date = get_internet_time()
-    bt_end = end_date
+    
+    # IMPORTANT: Use last trading day, not today's date (to avoid holiday issues)
+    from data_utils import _get_last_trading_day
+    last_trading_day = _get_last_trading_day()
+    bt_end = datetime.combine(last_trading_day, datetime.min.time(), tzinfo=timezone.utc)
+    
+    # Update end_date to last trading day for consistency
+    end_date = bt_end
+    
+    print(f"📅 Today: {get_internet_time().date()}, Last Trading Day: {last_trading_day}")
+    print(f"📅 Using last trading day for backtesting: {bt_end.date()}")
     
     # Store TODAY's date for data fetching (always fetch up to current date)
     today_for_data_fetch = end_date
