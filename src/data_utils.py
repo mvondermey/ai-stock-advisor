@@ -419,16 +419,17 @@ def _is_cache_current(last_cached_date, ticker_symbol=None):
         except:
             return False
     
-    # Simple logic: For EU stocks, allow up to 2 days ahead (time zone + weekend differences)
+    # Simple logic: For EU stocks, cache with newer data is OK (we can use subset)
     # For US stocks, use strict US trading day check
     if ticker_symbol and any(suffix in ticker_symbol for suffix in ['.SW', '.DE', '.PA', '.MI', '.MC', '.L']):
-        # EU stocks - allow reasonable time zone differences
-        if cached_date > last_trading_day + timedelta(days=2):
-            print(f"  [DEBUG] {ticker_symbol}: Cache too new ({cached_date} > {last_trading_day + timedelta(days=2)})")
-            return False  # Too far in future
+        # EU stocks - if cache has data >= last trading day, it's current
+        # Even if cache has newer data (like Feb 17), we can use data up to Feb 13
+        if cached_date >= last_trading_day:
+            print(f"  [DEBUG] {ticker_symbol}: EU Cache OK ({cached_date} >= {last_trading_day})")
+            return True  # Cache has data we need (even if newer)
         else:
-            print(f"  [DEBUG] {ticker_symbol}: Cache OK ({cached_date} <= {last_trading_day + timedelta(days=2)})")
-            return True  # EU stock with recent data is OK
+            print(f"  [DEBUG] {ticker_symbol}: EU Cache too old ({cached_date} < {last_trading_day})")
+            return False  # Cache doesn't have recent enough data
     else:
         # US stocks - strict check
         is_current = cached_date >= last_trading_day

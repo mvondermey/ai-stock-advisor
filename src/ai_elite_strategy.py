@@ -92,6 +92,8 @@ def select_ai_elite_stocks(
                 fail_reasons['features_none'] += 1
                 continue
             
+            # Add ticker to features for DataFrame
+            features['ticker'] = ticker
             candidates.append(features)
             
         except Exception as e:
@@ -256,10 +258,19 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
                 return None
             volatility = returns.std() * (252 ** 0.5) * 100  # As percentage
         
-        # SIMPLIFIED: Return only momentum_6m and volatility (no unnecessary calculations)
+        # Calculate performance metrics needed for AI Elite
+        perf_1y = ((latest_price / close_prices.iloc[-252]) - 1) * 100 if len(close_prices) >= 252 else momentum_6m
+        perf_3m = ((latest_price / close_prices.iloc[-63]) - 1) * 100 if len(close_prices) >= 63 else momentum_6m / 2
+        dip_score = perf_1y - perf_3m
+        avg_volume = ticker_data['Volume'].tail(min(30, len(ticker_data))).mean() if 'Volume' in ticker_data.columns else 0
+        
         return {
             'momentum_6m': momentum_6m,
-            'volatility': volatility
+            'volatility': volatility,
+            'avg_volume': avg_volume,
+            'dip_score': dip_score,
+            'perf_1y': perf_1y,
+            'perf_3m': perf_3m
         }
         
     except Exception as e:
