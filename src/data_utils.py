@@ -313,12 +313,35 @@ def _is_market_day_complete(date):
 
 def _get_last_trading_day():
     """
-    Get the last trading day (excludes weekends).
-    For US markets: Mon-Fri are trading days.
+    Get the last trading day (excludes weekends and US holidays).
+    For US markets: Mon-Fri are trading days except holidays.
     """
     now_utc = datetime.now(timezone.utc)
     today = now_utc.date()
     weekday = today.weekday()
+    
+    # Use pandas US Federal Holiday Calendar
+    try:
+        from pandas.tseries.holiday import USFederalHolidayCalendar
+        # Create calendar for current year
+        cal = USFederalHolidayCalendar()
+        # Get holidays for current year
+        us_holidays = cal.holidays(start=f'{today.year}-01-01', end=f'{today.year}-12-31')
+        # Convert to set for fast lookup
+        holiday_set = set(us_holidays.date)
+        
+        def is_us_holiday(date):
+            return date in holiday_set
+    except ImportError:
+        # Fallback to basic check if pandas not available
+        def is_us_holiday(date):
+            # Presidents' Day (third Monday in February)
+            if date.month == 2 and date.weekday() == 0:  # Monday in February
+                first_day = date.replace(day=1)
+                first_monday = first_day + timedelta(days=(7 - first_day.weekday()) % 7)
+                if first_monday.day <= date.day <= first_monday.day + 14:
+                    return True
+            return False
     
     # If today is Saturday (5), last trading day was Friday (1 day ago)
     # If today is Sunday (6), last trading day was Friday (2 days ago)
@@ -329,13 +352,35 @@ def _get_last_trading_day():
     elif weekday == 6:  # Sunday
         return today - timedelta(days=2)  # Friday
     elif weekday == 0:  # Monday
+        # Check if today is a holiday
+        if is_us_holiday(today):
+            return today - timedelta(days=3)  # Friday
         # Check if market data for today is available yet
-        if now_utc.hour < 23:  # Before 11pm UTC
+        elif now_utc.hour < 23:  # Before 11pm UTC
             return today - timedelta(days=3)  # Friday
         else:
             return today
     else:  # Tuesday-Friday
-        if now_utc.hour < 23:  # Before 11pm UTC
+        # Check if today is a holiday
+        if is_us_holiday(today):
+            # Find the last non-holiday weekday
+            days_back = 1
+            while days_back <= 7:  # Don't loop forever
+                check_date = today - timedelta(days=days_back)
+                if check_date.weekday() < 5 and not is_us_holiday(check_date):  # Weekday and not holiday
+                    return check_date
+                days_back += 1
+        # Check if yesterday was a holiday
+        yesterday = today - timedelta(days=1)
+        if is_us_holiday(yesterday):
+            # Find the last non-holiday weekday
+            days_back = 2
+            while days_back <= 7:  # Don't loop forever
+                check_date = today - timedelta(days=days_back)
+                if check_date.weekday() < 5 and not is_us_holiday(check_date):  # Weekday and not holiday
+                    return check_date
+                days_back += 1
+        elif now_utc.hour < 23:  # Before 11pm UTC
             return today - timedelta(days=1)  # Yesterday
         else:
             return today
