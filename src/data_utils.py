@@ -397,152 +397,38 @@ def _is_cache_current(last_cached_date, ticker_symbol=None):
     last_trading_day = _get_last_trading_day()
     
     # Convert cached_date to proper date object
-    if isinstance(last_cached_date, datetime):
-        cached_date = last_cached_date.date()
-    elif hasattr(last_cached_date, 'date'):
-        cached_date = last_cached_date.date()
-    else:
-        # Handle pandas Timestamp or other formats
-        try:
+    try:
+        if isinstance(last_cached_date, datetime):
+            cached_date = last_cached_date.date()
+        elif hasattr(last_cached_date, 'date'):
+            cached_date = last_cached_date.date()
+        else:
+            # Handle pandas Timestamp or other formats
             import pandas as pd
             if isinstance(last_cached_date, pd.Timestamp):
                 cached_date = last_cached_date.date()
             else:
                 # Convert from string or other format
                 cached_date = pd.to_datetime(last_cached_date).date()
-        except:
-            print(f"  [DEBUG] Cannot convert cached_date {last_cached_date} to date, using fallback")
-            return cached_date >= last_trading_day if isinstance(cached_date, (int, float)) else False
-    
-    # Determine market based on ticker suffix
-    market = None
-    if ticker_symbol:
-        if ticker_symbol.endswith('.SW'):
-            market = 'Switzerland'  # SIX Swiss Exchange
-        elif ticker_symbol.endswith('.DE'):
-            market = 'Germany'      # XETRA/Frankfurt
-        elif ticker_symbol.endswith('.PA'):
-            market = 'France'       # Euronext Paris
-        elif ticker_symbol.endswith('.MI'):
-            market = 'Italy'        # Borsa Italiana
-        elif ticker_symbol.endswith('.MC'):
-            market = 'Spain'        # BME
-        elif ticker_symbol.endswith('.L'):
-            market = 'UK'           # LSE
-    
-    # Get appropriate holiday calendar
-    try:
-        from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday, nearest_workday, MO, TU, WE, TH, FR
-        
-        if market == 'Switzerland':
-            # Swiss holidays (simplified)
-            class SwissHolidayCalendar(AbstractHolidayCalendar):
-                rules = [
-                    Holiday('New Years Day', month=1, day=1),
-                    Holiday('Berchtolds Day', month=1, day=2),
-                    Holiday('Good Friday', month=1, day=1, offset=[nearest_workday(-2)]),  # Before Easter Monday
-                    Holiday('Easter Monday', month=1, day=1, offset=[nearest_workday(-2)]),  # After Easter
-                    Holiday('Labor Day', month=5, day=1),
-                    Holiday('Ascension Day', month=1, day=1, offset=[nearest_workday(-2)]),  # 39 days after Easter
-                    Holiday('Whit Monday', month=1, day=1, offset=[nearest_workday(-2)]),   # 50 days after Easter
-                    Holiday('Swiss National Day', month=8, day=1),
-                    Holiday('Christmas', month=12, day=25),
-                    Holiday('St Stephens Day', month=12, day=26),
-                ]
-            cal = SwissHolidayCalendar()
-            
-        elif market == 'Germany':
-            # German holidays
-            class GermanHolidayCalendar(AbstractHolidayCalendar):
-                rules = [
-                    Holiday('New Years Day', month=1, day=1),
-                    Holiday('Good Friday', month=1, day=1, offset=[nearest_workday(-2)]),
-                    Holiday('Easter Monday', month=1, day=1, offset=[nearest_workday(-2)]),
-                    Holiday('Labor Day', month=5, day=1),
-                    Holiday('Ascension Day', month=1, day=1, offset=[nearest_workday(-2)]),
-                    Holiday('Whit Monday', month=1, day=1, offset=[nearest_workday(-2)]),
-                    Holiday('German Unity Day', month=10, day=3),
-                    Holiday('Christmas', month=12, day=25),
-                    Holiday('Christmas Day', month=12, day=26),
-                ]
-            cal = GermanHolidayCalendar()
-            
-        elif market == 'France':
-            # French holidays
-            class FrenchHolidayCalendar(AbstractHolidayCalendar):
-                rules = [
-                    Holiday('New Years Day', month=1, day=1),
-                    Holiday('Easter Monday', month=1, day=1, offset=[nearest_workday(-2)]),
-                    Holiday('Labor Day', month=5, day=1),
-                    Holiday('Victory in Europe Day', month=5, day=8),
-                    Holiday('Ascension Day', month=1, day=1, offset=[nearest_workday(-2)]),
-                    Holiday('Whit Monday', month=1, day=1, offset=[nearest_workday(-2)]),
-                    Holiday('Bastille Day', month=7, day=14),
-                    Holiday('Assumption of Mary', month=8, day=15),
-                    Holiday('All Saints Day', month=11, day=1),
-                    Holiday('Armistice Day', month=11, day=11),
-                    Holiday('Christmas', month=12, day=25),
-                ]
-            cal = FrenchHolidayCalendar()
-            
-        elif market == 'Italy':
-            # Italian holidays
-            class ItalianHolidayCalendar(AbstractHolidayCalendar):
-                rules = [
-                    Holiday('New Years Day', month=1, day=1),
-                    Holiday('Easter Monday', month=1, day=1, offset=[nearest_workday(-2)]),
-                    Holiday('Liberation Day', month=4, day=25),
-                    Holiday('Labor Day', month=5, day=1),
-                    Holiday('Republic Day', month=6, day=2),
-                    Holiday('Ferragosto', month=8, day=15),
-                    Holiday('All Saints Day', month=11, day=1),
-                    Holiday('Immaculate Conception', month=12, day=8),
-                    Holiday('Christmas', month=12, day=25),
-                    Holiday('St Stephens Day', month=12, day=26),
-                ]
-            cal = ItalianHolidayCalendar()
-            
-        elif market == 'UK':
-            # UK holidays
-            class UKHolidayCalendar(AbstractHolidayCalendar):
-                rules = [
-                    Holiday('New Years Day', month=1, day=1, observance=nearest_workday),
-                    Holiday('Good Friday', month=1, day=1, offset=[nearest_workday(-2)]),
-                    Holiday('Easter Monday', month=1, day=1, offset=[nearest_workday(-2)]),
-                    Holiday('Early May Bank Holiday', month=5, day=1, offset=[MO(1)]),
-                    Holiday('Spring Bank Holiday', month=5, day=31, offset=[MO(-1)]),
-                    Holiday('Summer Bank Holiday', month=8, day=31, offset=[MO(-1)]),
-                    Holiday('Christmas Day', month=12, day=25, observance=nearest_workday),
-                    Holiday('Boxing Day', month=12, day=26, observance=nearest_workday),
-                ]
-            cal = UKHolidayCalendar()
-            
-        else:
-            # Default to US Federal holidays
-            from pandas.tseries.holiday import USFederalHolidayCalendar
-            cal = USFederalHolidayCalendar()
-        
-        # Get holidays for the relevant year
-        holidays = cal.holidays(start=f'{cached_date.year}-01-01', end=f'{cached_date.year}-12-31')
-        holiday_set = set(holidays.date)
-        
-        # Check if cached date is a trading day for that market
-        if cached_date.weekday() >= 5:  # Weekend
-            return False
-        if cached_date in holiday_set:  # Holiday
-            return False
-            
-        # For non-US markets, check if date is reasonable (not too far in future)
-        if market and market != 'US':
-            # Allow up to 1 day ahead (time zone differences)
-            if cached_date > last_trading_day + timedelta(days=1):
-                return False
-        
-        return True
-        
     except Exception as e:
-        # Fallback to simple check if holiday calendars fail
-        print(f"  [DEBUG] Holiday calendar failed for {ticker_symbol}: {e}, using fallback")
+        print(f"  [DEBUG] Cannot convert cached_date {last_cached_date} (type: {type(last_cached_date)}) to date: {e}")
+        # Simple fallback for type errors
+        try:
+            import pandas as pd
+            cached_date = pd.to_datetime(last_cached_date).date()
+        except:
+            return False
+    
+    # Simple logic: For EU stocks, allow up to 2 days ahead (time zone + weekend differences)
+    # For US stocks, use strict US trading day check
+    if ticker_symbol and any(suffix in ticker_symbol for suffix in ['.SW', '.DE', '.PA', '.MI', '.MC', '.L']):
+        # EU stocks - allow reasonable time zone differences
+        if cached_date > last_trading_day + timedelta(days=2):
+            return False  # Too far in future
+        else:
+            return True  # EU stock with recent data is OK
+    else:
+        # US stocks - strict check
         return cached_date >= last_trading_day
 
 # CLASS_HORIZON is now imported from config above

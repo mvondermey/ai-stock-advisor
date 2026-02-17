@@ -1806,9 +1806,11 @@ if __name__ == "__main__":
             print(f"   Found {len(all_available_tickers)} tickers in universe")
             
             # Download data (same as backtest)
-            end_date = datetime.now(timezone.utc)
+            from data_utils import _get_last_trading_day
+            last_trading_day = _get_last_trading_day()
+            end_date = datetime.combine(last_trading_day, datetime.min.time(), tzinfo=timezone.utc)
             start_date = end_date - timedelta(days=365)
-            print(f"   Downloading data from {start_date.date()} to {end_date.date()}...")
+            print(f"   Downloading data from {start_date.date()} to {end_date.date()}... (Last trading day: {last_trading_day})")
             
             batch_size = 100
             all_data_list = []
