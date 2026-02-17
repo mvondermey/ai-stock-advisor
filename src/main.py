@@ -1386,9 +1386,11 @@ def main(
     print(f"   📅 Actual backtest days: {actual_backtest_days} (config BACKTEST_DAYS={BACKTEST_DAYS})")
     
     # Helper: get return % for a strategy from the results dict
+    # Use the actual portfolio initial capital (10 stocks) not the comparison initial capital (3 stocks)
+    portfolio_initial_capital = INVESTMENT_PER_STOCK * PORTFOLIO_SIZE
     def _ret(name):
         v = s[name]['value']
-        return ((v - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0.0
+        return ((v - portfolio_initial_capital) / abs(portfolio_initial_capital)) * 100 if portfolio_initial_capital != 0 else 0.0
     
     print_final_summary(
         sorted_final_results, models, scalers, optimized_params_per_ticker,
@@ -1590,8 +1592,8 @@ def main(
     if 'meta_strategy_ml' in s:
         ml_val = s['meta_strategy_ml']['value']
         mom_val = s['meta_strategy_mom']['value']
-        ml_ret = ((ml_val - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0
-        mom_ret = ((mom_val - initial_capital_1y) / abs(initial_capital_1y)) * 100 if initial_capital_1y != 0 else 0
+        ml_ret = ((ml_val - portfolio_initial_capital) / abs(portfolio_initial_capital)) * 100 if portfolio_initial_capital != 0 else 0
+        mom_ret = ((mom_val - portfolio_initial_capital) / abs(portfolio_initial_capital)) * 100 if portfolio_initial_capital != 0 else 0
         ml_costs = s['meta_strategy_ml']['costs']
         print("\n" + "=" * 80)
         print("              🧠 AI META-STRATEGY RESULTS 🧠")

@@ -326,8 +326,12 @@ def print_final_summary(
     
     # Fix period name to show actual backtest duration
     if backtest_days is not None:
-        if backtest_days <= 31:
+        if backtest_days <= 21:
+            display_period = "3-Week"
+        elif backtest_days <= 31:
             display_period = "1-Month"
+        elif backtest_days <= 62:
+            display_period = "2-Month"
         elif backtest_days <= 92:
             display_period = "3-Month"
         elif backtest_days <= 184:
