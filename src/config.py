@@ -368,6 +368,7 @@ ATR_PERIOD              = 14
 ATR_MULT_TRAIL          = 2.0
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
 PORTFOLIO_SIZE          = 10        # Number of stocks to hold in portfolio
+PORTFOLIO_BUFFER_SIZE    = 12        # Sell when stock not in top X (buffer for stability)
 TOTAL_CAPITAL           = 300000     # Total capital to invest ($300,000)
 INVESTMENT_PER_STOCK    = TOTAL_CAPITAL / PORTFOLIO_SIZE  # Automatically calculated
 TRANSACTION_COST        = 0.011      # 1.1% per trade leg (buy or sell)

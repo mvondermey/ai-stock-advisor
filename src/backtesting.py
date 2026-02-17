@@ -76,7 +76,7 @@ from config import (
     STATIC_BH_1Y_REBALANCE_DAYS, STATIC_BH_6M_REBALANCE_DAYS, STATIC_BH_3M_REBALANCE_DAYS, STATIC_BH_1M_REBALANCE_DAYS,
     ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY,
     ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT,
-    ENABLE_SECTOR_ROTATION, AI_REBALANCE_FREQUENCY_DAYS, ENABLE_PROFIT_GUARD, ENABLE_STOP_LOSS, STOP_LOSS_PCT, STRATEGY_STOP_LOSS_PCT,
+    ENABLE_SECTOR_ROTATION, AI_REBALANCE_FREQUENCY_DAYS, ENABLE_PROFIT_GUARD, ENABLE_STOP_LOSS, STOP_LOSS_PCT, STRATEGY_STOP_LOSS_PCT, PORTFOLIO_BUFFER_SIZE,
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M, ENABLE_ADAPTIVE_STRATEGY,
     ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE, ENABLE_ELITE_HYBRID_SENTIMENT,
     ENABLE_TURNAROUND, ENABLE_VOTING_ENSEMBLE,
@@ -275,7 +275,8 @@ def _smart_rebalance_portfolio(
     current_date: datetime,
     transaction_cost: float,
     portfolio_size: int = 10,
-    force_rebalance: bool = False
+    force_rebalance: bool = False,
+    buffer_size: int = None
 ) -> Tuple[Dict[str, Dict], float, List[str], float]:
     """
     Universal smart rebalancing function for all strategies.
@@ -300,16 +301,26 @@ def _smart_rebalance_portfolio(
     if not new_stocks:
         return positions, cash, current_stocks, 0.0
     
+    # Use buffer size if provided, otherwise use config value
+    effective_buffer_size = buffer_size if buffer_size is not None else PORTFOLIO_BUFFER_SIZE
+    
     # Convert to sets for comparison
     current_positions_set = set(current_stocks)
     new_positions_set = set(new_stocks)
     
-    # Classify positions
-    positions_to_sell = current_positions_set - new_positions_set  # Stocks to exit
-    positions_to_buy = new_positions_set - current_positions_set   # Stocks to enter
-    positions_to_keep = current_positions_set & new_positions_set   # Stocks to keep
+    # Create buffer set (top X stocks where X = buffer_size)
+    # If buffer_size > portfolio_size, we keep more stocks than we target
+    if len(new_stocks) >= effective_buffer_size:
+        buffer_set = set(new_stocks[:effective_buffer_size])
+    else:
+        buffer_set = new_positions_set  # All new stocks are in buffer
     
-    print(f"   📊 {strategy_name} Rebalance summary: {len(positions_to_keep)} keep, {len(positions_to_sell)} sell, {len(positions_to_buy)} buy")
+    # Classify positions with buffer logic
+    positions_to_sell = current_positions_set - buffer_set  # Sell if not in top buffer_size
+    positions_to_buy = new_positions_set - current_positions_set   # Buy new top stocks
+    positions_to_keep = current_positions_set & buffer_set   # Keep if in buffer
+    
+    print(f"   📊 {strategy_name} Rebalance summary (buffer={effective_buffer_size}): {len(positions_to_keep)} keep, {len(positions_to_sell)} sell, {len(positions_to_buy)} buy")
     
     # Calculate capital per stock (only for new positions)
     if positions_to_buy:
