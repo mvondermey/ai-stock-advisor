@@ -291,8 +291,6 @@ ENABLE_ADAPTIVE_STRATEGY = True   # ENABLED - Adaptive Meta-Ensemble Strategy
 ENABLE_VOLATILITY_ENSEMBLE = True   # ENABLED - Volatility-Adjusted Ensemble Strategy (risk-managed position sizing)
 ENABLE_ENHANCED_VOLATILITY = True   # ENABLED - Enhanced Volatility Trader (ATR stops + take profits)
 ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble Strategy (diversification-focused)
-ENABLE_SENTIMENT_ENSEMBLE = False   # DISABLED - Replaced by Risk-Adj Mom Sentiment
-ENABLE_ELITE_HYBRID_SENTIMENT = False   # DISABLED - Replaced by Risk-Adj Mom Sentiment
 ENABLE_RISK_ADJ_MOM_SENTIMENT = True   # NEW - Risk-Adjusted Momentum + Sentiment Strategy
 ENABLE_DYNAMIC_POOL = True   # ENABLED - Dynamic Strategy Pool Strategy
 
@@ -387,7 +385,6 @@ VOLATILITY_ENSEMBLE_STOP_LOSS = 0.05   # +6.8% improvement (-5.1% vs -11.9%)
 MOM_VOL_HYBRID_STOP_LOSS = 0.05        # +5.5% improvement (+45.6% vs +40.1%)
 RATIO_3M_1Y_STOP_LOSS = 0.05           # +4.0% improvement (+21.0% vs +17.0%)
 STATIC_BH_6M_STOP_LOSS = 0.05          # +3.5% improvement (+30.5% vs +27.0%)
-SENTIMENT_ENSEMBLE_STOP_LOSS = 0.05    # +3.1% improvement (+20.2% vs +17.1%)
 TURNAROUND_STOP_LOSS = 0.05            # +2.5% improvement (+20.0% vs +17.5%)
 PRICE_ACCELERATION_STOP_LOSS = 0.05    # +2.4% improvement (+2.1% vs -0.3%)
 ADAPTIVE_ENSEMBLE_STOP_LOSS = 0.05     # +2.4% improvement (+18.0% vs +15.6%)
@@ -405,7 +402,6 @@ RISK_ADJ_MOM_STOP_LOSS = 0.0           # -3.1% worse with stop (+15.9% vs +12.8%
 QUALITY_MOMENTUM_STOP_LOSS = 0.0       # -2.8% worse with stop (+25.8% vs +23.0%)
 MOMENTUM_6M_STOP_LOSS = 0.0            # -2.4% worse with stop (+16.3% vs +13.9%)
 TREND_FOLLOWING_ATR_STOP_LOSS = 0.0   # -1.8% worse with stop (+20.0% vs +18.2%)
-ELITE_HYBRID_SENTIMENT_STOP_LOSS = 0.0 # -1.6% worse with stop (+25.4% vs +23.8%)
 AI_ELITE_STOP_LOSS = 0.0               # -1.3% worse with stop (+19.3% vs +18.0%)
 VOLATILITY_TRADER_STOP_LOSS = 0.0      # -1.1% worse with stop (+18.1% vs +17.0%)
 CORRELATION_ENSEMBLE_STOP_LOSS = 0.0   # -0.9% worse with stop (+18.9% vs +18.0%)
@@ -420,7 +416,6 @@ STRATEGY_STOP_LOSS_PCT = {
     'Mom-Vol Hybrid': MOM_VOL_HYBRID_STOP_LOSS,
     '3M/1Y Ratio': RATIO_3M_1Y_STOP_LOSS,
     'Static BH 6M': STATIC_BH_6M_STOP_LOSS,
-    'Sentiment Ensemble': SENTIMENT_ENSEMBLE_STOP_LOSS,
     'Turnaround': TURNAROUND_STOP_LOSS,
     'Price Acceleration': PRICE_ACCELERATION_STOP_LOSS,
     'Adaptive Ensemble': ADAPTIVE_ENSEMBLE_STOP_LOSS,
@@ -437,7 +432,6 @@ STRATEGY_STOP_LOSS_PCT = {
     'Quality Momentum': QUALITY_MOMENTUM_STOP_LOSS,
     'Momentum 6M': MOMENTUM_6M_STOP_LOSS,
     'Trend Following ATR': TREND_FOLLOWING_ATR_STOP_LOSS,
-    'Elite Hybrid Sentiment': ELITE_HYBRID_SENTIMENT_STOP_LOSS,
     'AI Elite': AI_ELITE_STOP_LOSS,
     'Volatility Trader': VOLATILITY_TRADER_STOP_LOSS,
     'Correlation Ensemble': CORRELATION_ENSEMBLE_STOP_LOSS,
