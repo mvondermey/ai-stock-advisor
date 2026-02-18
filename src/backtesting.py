@@ -29,7 +29,7 @@ from config import (
     ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, ENABLE_SECTOR_ROTATION,
     MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M, MIN_DATA_DAYS_GENERAL,
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M, ENABLE_ADAPTIVE_STRATEGY, ENABLE_TURNAROUND, ENABLE_PRICE_ACCELERATION,
-    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE, ENABLE_ELITE_HYBRID_SENTIMENT, ENABLE_AI_VOLATILITY_ENSEMBLE,
+    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_RISK_ADJ_MOM_SENTIMENT, ENABLE_AI_VOLATILITY_ENSEMBLE,
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
     CALENDAR_DAYS_PER_YEAR,
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
@@ -78,7 +78,7 @@ from config import (
     ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT,
     ENABLE_SECTOR_ROTATION, AI_REBALANCE_FREQUENCY_DAYS, ENABLE_PROFIT_GUARD, ENABLE_STOP_LOSS, STOP_LOSS_PCT, STRATEGY_STOP_LOSS_PCT, PORTFOLIO_BUFFER_SIZE,
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M, ENABLE_ADAPTIVE_STRATEGY,
-    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_SENTIMENT_ENSEMBLE, ENABLE_ELITE_HYBRID_SENTIMENT,
+    ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_RISK_ADJ_MOM_SENTIMENT,
     ENABLE_TURNAROUND, ENABLE_VOTING_ENSEMBLE,
     ENABLE_STATIC_BH_1Y_MONTHLY, ENABLE_STATIC_BH_6M_MONTHLY, ENABLE_STATIC_BH_3M_MONTHLY,
     RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION, RISK_ADJ_MOM_CONFIRM_SHORT, RISK_ADJ_MOM_CONFIRM_MEDIUM, RISK_ADJ_MOM_CONFIRM_LONG, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
@@ -5289,54 +5289,6 @@ def _run_portfolio_backtest_walk_forward(
 
             dynamic_pool_portfolio_value = dynamic_pool_invested_value + dynamic_pool_cash
             dynamic_pool_portfolio_history.append(dynamic_pool_portfolio_value)
-
-        # Update SENTIMENT ENSEMBLE portfolio value daily (skip if disabled)
-        if ENABLE_SENTIMENT_ENSEMBLE:
-            sentiment_ensemble_invested_value = 0.0
-            for ticker in list(sentiment_ensemble_positions.keys()):
-                try:
-                    ticker_df = ticker_data_grouped.get(ticker)
-                    if ticker_df is not None:
-                        current_price = _last_valid_close_up_to(ticker_df, current_date)
-                        if current_price is not None:
-                            shares = sentiment_ensemble_positions[ticker]['shares']
-                            position_value = shares * current_price
-                            sentiment_ensemble_positions[ticker]['value'] = position_value
-                            sentiment_ensemble_invested_value += position_value
-                        else:
-                            sentiment_ensemble_invested_value += sentiment_ensemble_positions[ticker].get('value', 0.0)
-                    else:
-                        sentiment_ensemble_invested_value += sentiment_ensemble_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating Mom-Vol 6M Sentiment position for {ticker}: {e}")
-                    sentiment_ensemble_invested_value += sentiment_ensemble_positions[ticker].get('value', 0.0)
-
-            sentiment_ensemble_portfolio_value = sentiment_ensemble_invested_value + sentiment_ensemble_cash
-            sentiment_ensemble_portfolio_history.append(sentiment_ensemble_portfolio_value)
-
-        # Update ELITE HYBRID SENTIMENT portfolio value daily (skip if disabled)
-        if ENABLE_ELITE_HYBRID_SENTIMENT:
-            elite_hybrid_sentiment_invested_value = 0.0
-            for ticker in list(elite_hybrid_sentiment_positions.keys()):
-                try:
-                    ticker_df = ticker_data_grouped.get(ticker)
-                    if ticker_df is not None:
-                        current_price = _last_valid_close_up_to(ticker_df, current_date)
-                        if current_price is not None:
-                            shares = elite_hybrid_sentiment_positions[ticker]['shares']
-                            position_value = shares * current_price
-                            elite_hybrid_sentiment_positions[ticker]['value'] = position_value
-                            elite_hybrid_sentiment_invested_value += position_value
-                        else:
-                            elite_hybrid_sentiment_invested_value += elite_hybrid_sentiment_positions[ticker].get('value', 0.0)
-                    else:
-                        elite_hybrid_sentiment_invested_value += elite_hybrid_sentiment_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating elite hybrid sentiment position for {ticker}: {e}")
-                    elite_hybrid_sentiment_invested_value += elite_hybrid_sentiment_positions[ticker].get('value', 0.0)
-
-            elite_hybrid_sentiment_portfolio_value = elite_hybrid_sentiment_invested_value + elite_hybrid_sentiment_cash
-            elite_hybrid_sentiment_portfolio_history.append(elite_hybrid_sentiment_portfolio_value)
 
         # Update VOTING ENSEMBLE portfolio value daily (skip if disabled)
         if ENABLE_VOTING_ENSEMBLE:
