@@ -276,7 +276,8 @@ def _smart_rebalance_portfolio(
     transaction_cost: float,
     portfolio_size: int = 10,
     force_rebalance: bool = False,
-    buffer_size: int = None
+    buffer_size: int = None,
+    strategy_stop_loss: float = None
 ) -> Tuple[Dict[str, Dict], float, List[str], float]:
     """
     Universal smart rebalancing function for all strategies.
@@ -294,6 +295,8 @@ def _smart_rebalance_portfolio(
         transaction_cost: Transaction cost rate
         portfolio_size: Target portfolio size
         force_rebalance: Force rebalance regardless of profit guards
+        buffer_size: Buffer size for portfolio rebalancing
+        strategy_stop_loss: Strategy-specific stop loss percentage (optional)
     
     Returns:
         Tuple of (updated_positions, updated_cash, final_stocks, total_transaction_costs)
@@ -3426,8 +3429,11 @@ def _run_portfolio_backtest_walk_forward(
                         new_stocks=new_risk_adj_mom_sentiment_stocks,
                         positions=risk_adj_mom_sentiment_positions,
                         cash=risk_adj_mom_sentiment_cash,
-                        current_date=current_date,
                         ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        buffer_size=PORTFOLIO_BUFFER_SIZE,
                         strategy_stop_loss=STRATEGY_STOP_LOSS_PCT.get('Risk-Adj Mom Sentiment', STOP_LOSS_PCT)
                     )
                     
@@ -4857,15 +4863,24 @@ def _run_portfolio_backtest_walk_forward(
             risk_adj_mom_sentiment_invested_value = 0.0
             for ticker in list(risk_adj_mom_sentiment_positions.keys()):
                 try:
-                    if ticker in ticker_data_grouped:
-                        current_price = ticker_data_grouped[ticker]['Close'].iloc[-1]
-                        risk_adj_mom_sentiment_positions[ticker]['value'] = risk_adj_mom_sentiment_positions[ticker]['shares'] * current_price
-                        risk_adj_mom_sentiment_invested_value += risk_adj_mom_sentiment_positions[ticker]['value']
-                    else:
-                        risk_adj_mom_sentiment_invested_value += risk_adj_mom_sentiment_positions[ticker].get('value', 0.0)
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
+                    if not ticker_data.empty:
+                        ticker_data = ticker_data.set_index('date')
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    position_value = risk_adj_mom_sentiment_positions[ticker]['shares'] * current_price
+                                    risk_adj_mom_sentiment_positions[ticker]['value'] = position_value
+                                    risk_adj_mom_sentiment_invested_value += position_value
+                                else:
+                                    risk_adj_mom_sentiment_invested_value += risk_adj_mom_sentiment_positions[ticker].get('value', 0.0)
+                            else:
+                                risk_adj_mom_sentiment_invested_value += risk_adj_mom_sentiment_positions[ticker].get('value', 0.0)
                 except Exception as e:
                     print(f"   ⚠️ Error updating risk adj mom sentiment position for {ticker}: {e}")
-                    risk_adj_mom_sentiment_invested_value += risk_adj_mom_sentiment_positions[ticker].get('value', 0.0)
 
             risk_adj_mom_sentiment_portfolio_value = risk_adj_mom_sentiment_invested_value + risk_adj_mom_sentiment_cash
             risk_adj_mom_sentiment_portfolio_history.append(risk_adj_mom_sentiment_portfolio_value)
