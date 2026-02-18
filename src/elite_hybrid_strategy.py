@@ -151,37 +151,82 @@ def select_elite_hybrid_stocks(
                 continue
             perf_1y = ((latest_price - price_1y_ago) / price_1y_ago) * 100
             
+            # Calculate average volume (for volume confirmation)
+            avg_volume = ticker_data_filtered['Volume'].tail(min(30, len(ticker_data_filtered))).mean() if 'Volume' in ticker_data_filtered.columns else 1000000
+            
             # Dip score: for reference only (not used in scoring)
             dip_score = max(perf_1y - perf_3m, 0)
             
-            # === PART 3: Combined Elite Score ===
+            # === PART 3: Combined Elite Score (IMPROVED with Risk-Adj Mom techniques) ===
             
-            # Component 1: Mom-Vol score (momentum/volatility)
+            # Component 1: Risk-adjusted momentum (use sqrt volatility like Risk-Adj Mom)
             annualized_6m = momentum_6m * 2  # 6M -> 1Y
             if volatility > 0:
-                mom_vol_score = annualized_6m / volatility
+                # KEY IMPROVEMENT: Use sqrt(volatility) instead of full volatility
+                # This is what makes Risk-Adj Mom so successful
+                risk_adj_momentum = annualized_6m / ((volatility ** 0.5) + 0.001)
             else:
-                mom_vol_score = 0
+                risk_adj_momentum = 0
             
-            # Component 2: Dip ratio (1Y strength / 3M strength)
-            # Higher ratio = bigger dip opportunity (strong 1Y, weak 3M)
-            if perf_3m > 0:
-                dip_ratio = perf_1y / perf_3m
+            # Component 2: Volume quality check (like Risk-Adj Mom)
+            # Higher volume = more liquid and reliable
+            volume_score = min(avg_volume / 1000000, 2.0)  # Cap at 2x bonus
+            
+            # Component 3: Dip ratio (1Y strength / 3M strength)
+            # Tighter range than before (0.1 to 3.0 instead of 0.5 to 5.0)
+            if perf_3m > 0 and perf_1y > 0:
+                dip_ratio = (perf_1y - perf_3m) / perf_3m
+                dip_ratio = max(min(dip_ratio, 3.0), 0.1)
             else:
-                # If 3M is negative, use 1Y performance directly
-                dip_ratio = max(perf_1y / 10, 0.1)  # Scale down and avoid zero
+                dip_ratio = 0.1
             
-            # Normalize dip_ratio to reasonable range (0.5 to 5.0)
-            dip_ratio = max(min(dip_ratio, 5.0), 0.5)
+            # Elite Score: BEAT Risk-Adj Mom by exploiting dip opportunities
+            # Risk-Adj Mom weakness: Ignores stocks with strong 1Y but weak 3M (dip opportunities)
+            # Our advantage: Identify and capitalize on temporary dips in strong stocks
             
-            # Elite Score: Additive bonus approach
-            # Base score is mom-vol, with dip providing up to 150% bonus (0.3 * 5.0 = 1.5)
-            # This keeps momentum dominant while rewarding dip opportunities
-            elite_score = mom_vol_score * (1 + dip_ratio * 0.3)
+            base_score = risk_adj_momentum
             
-            # Bonus: Reward low volatility (< 50%)
-            if volatility < 0.5:
-                elite_score *= 1.1
+            # INNOVATION 1: Smart Dip Detection (what Risk-Adj Mom misses)
+            # Identify stocks with strong 1Y performance but temporary 3M weakness
+            # These are high-quality stocks on sale!
+            if perf_1y > 20 and perf_3m < 10 and perf_3m > 0:
+                # Strong 1Y (>20%), weak 3M (<10%) = BUY THE DIP opportunity
+                dip_opportunity_bonus = 1.3  # 30% bonus for dip opportunities
+            elif perf_1y > 30 and perf_3m < 5:
+                # Very strong 1Y (>30%), very weak 3M (<5%) = STRONG BUY
+                dip_opportunity_bonus = 1.5  # 50% bonus for strong dips
+            elif perf_1y > 10 and perf_3m < 0:
+                # Good 1Y (>10%), negative 3M = Potential reversal
+                dip_opportunity_bonus = 1.2  # 20% bonus
+            else:
+                # Normal momentum - use standard dip ratio
+                dip_opportunity_bonus = 1 + dip_ratio * 0.1
+            
+            # INNOVATION 2: Volume Quality (better than Risk-Adj Mom's simple filter)
+            # High volume + tight spread = institutional interest
+            if avg_volume > 5000000:  # Very high volume
+                volume_bonus = 1.15  # 15% bonus
+            elif avg_volume > 2000000:  # High volume
+                volume_bonus = 1.10  # 10% bonus
+            elif avg_volume > 1000000:  # Good volume
+                volume_bonus = 1.05  # 5% bonus
+            else:
+                volume_bonus = 1.0  # No bonus for low volume
+            
+            # INNOVATION 3: Volatility Sweet Spot (Risk-Adj Mom treats all vol equally)
+            # Too low vol = no opportunity, too high vol = too risky
+            # Sweet spot: 20-40% volatility
+            if 0.20 <= volatility <= 0.40:
+                volatility_bonus = 1.10  # 10% bonus for optimal volatility
+            elif volatility < 0.15:
+                volatility_bonus = 0.95  # Penalize too-low volatility (no opportunity)
+            elif volatility > 0.60:
+                volatility_bonus = 0.90  # Penalize too-high volatility (too risky)
+            else:
+                volatility_bonus = 1.0
+            
+            # Combined Elite Score: Base + 3 innovations
+            elite_score = base_score * dip_opportunity_bonus * volume_bonus * volatility_bonus
             
             candidates.append({
                 'ticker': ticker,

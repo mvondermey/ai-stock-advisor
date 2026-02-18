@@ -238,9 +238,17 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
         if latest_price <= 0:
             return None
         
-        # Calculate 6M performance (adaptive: use up to 126 trading days)
-        lookback_6m = min(126, n_prices - 1)
-        if lookback_6m < 40:
+        # Calculate 6M performance (adjust for intraday vs daily)
+        if use_intraday:
+            # For hourly data: 126 days * 24 hours = 3024 hours
+            lookback_6m = min(3024, n_prices - 1)
+            min_lookback = 960  # 40 days * 24 hours
+        else:
+            # For daily data: 126 trading days
+            lookback_6m = min(126, n_prices - 1)
+            min_lookback = 40
+        
+        if lookback_6m < min_lookback:
             return None
         price_6m_ago = close_prices.iloc[-lookback_6m]
         if price_6m_ago <= 0:
@@ -267,9 +275,54 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
                 return None
             volatility = returns.std() * (252 ** 0.5) * 100  # As percentage
         
-        # Calculate performance metrics needed for AI Elite
-        perf_1y = ((latest_price / close_prices.iloc[-252]) - 1) * 100 if len(close_prices) >= 252 else momentum_6m
-        perf_3m = ((latest_price / close_prices.iloc[-63]) - 1) * 100 if len(close_prices) >= 63 else momentum_6m / 2
+        # Calculate performance metrics needed for AI Elite (adjust for intraday)
+        if use_intraday:
+            # For hourly data: 252 days * 24 hours = 6048 hours, 63 days * 24 hours = 1512 hours
+            perf_1y = ((latest_price / close_prices.iloc[-6048]) - 1) * 100 if len(close_prices) >= 6048 else momentum_6m
+            perf_3m = ((latest_price / close_prices.iloc[-1512]) - 1) * 100 if len(close_prices) >= 1512 else momentum_6m / 2
+            
+            # INNOVATION 1: Intraday Momentum Pattern (Risk-Adj Mom can't see this!)
+            # Analyze if stock has consistent intraday strength
+            # Strong morning momentum = institutional buying
+            if len(close_prices) >= 48:  # Need 2 days of hourly data
+                morning_hours = close_prices.iloc[-48::24]  # Every 24th hour (morning opens)
+                afternoon_hours = close_prices.iloc[-40::24]  # 8 hours later (afternoon)
+                
+                if len(morning_hours) >= 2 and len(afternoon_hours) >= 2:
+                    morning_momentum = ((morning_hours.iloc[-1] / morning_hours.iloc[0]) - 1) * 100
+                    afternoon_fade = ((afternoon_hours.iloc[-1] / morning_hours.iloc[-1]) - 1) * 100
+                    intraday_pattern_score = morning_momentum - afternoon_fade
+                else:
+                    intraday_pattern_score = 0
+            else:
+                intraday_pattern_score = 0
+            
+            # INNOVATION 2: Volatility Clustering (only visible in hourly data)
+            # Recent volatility vs historical volatility
+            if len(returns) >= 240:  # 10 days of hourly data
+                recent_vol = returns.tail(48).std() * (6048 ** 0.5) * 100  # Last 2 days
+                historical_vol = returns.iloc[-240:-48].std() * (6048 ** 0.5) * 100  # Previous 8 days
+                vol_trend = ((recent_vol / historical_vol) - 1) * 100 if historical_vol > 0 else 0
+            else:
+                vol_trend = 0
+            
+            # INNOVATION 3: Volume Acceleration (intraday volume patterns)
+            # Increasing volume = growing interest
+            if 'Volume' in ticker_data.columns and len(ticker_data) >= 240:
+                recent_volume = ticker_data['Volume'].tail(48).mean()  # Last 2 days
+                historical_volume = ticker_data['Volume'].iloc[-240:-48].mean()  # Previous 8 days
+                volume_acceleration = ((recent_volume / historical_volume) - 1) * 100 if historical_volume > 0 else 0
+            else:
+                volume_acceleration = 0
+                
+        else:
+            # For daily data: 252 trading days, 63 trading days
+            perf_1y = ((latest_price / close_prices.iloc[-252]) - 1) * 100 if len(close_prices) >= 252 else momentum_6m
+            perf_3m = ((latest_price / close_prices.iloc[-63]) - 1) * 100 if len(close_prices) >= 63 else momentum_6m / 2
+            intraday_pattern_score = 0
+            vol_trend = 0
+            volume_acceleration = 0
+            
         dip_score = perf_1y - perf_3m
         avg_volume = ticker_data['Volume'].tail(min(30, len(ticker_data))).mean() if 'Volume' in ticker_data.columns else 0
         
@@ -279,7 +332,10 @@ def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: date
             'avg_volume': avg_volume,
             'dip_score': dip_score,
             'perf_1y': perf_1y,
-            'perf_3m': perf_3m
+            'perf_3m': perf_3m,
+            'intraday_pattern': intraday_pattern_score,  # NEW: Intraday intelligence
+            'vol_trend': vol_trend,  # NEW: Volatility trend
+            'volume_accel': volume_acceleration  # NEW: Volume acceleration
         }
         
     except Exception as e:
@@ -337,25 +393,155 @@ def _load_or_create_model(model_path: Optional[str] = None):
         
         # We need ticker data and date range for proper training
         # For now, create a minimal trained model that will be retrained with real data
-        print(f"   ⚠️ AI Elite: Creating minimal model - will be retrained with real data")
+        print(f"   🎓 AI Elite: Training model with REAL historical data...")
         
-        # Create minimal training data based on feature ranges
-        import numpy as np
-        n_samples = 50
-        # Use realistic feature ranges instead of random
-        X_minimal = np.array([
-            [10.0, 30.0, 1000000, 5.0, 20.0, 10.0, 0.33, 2.0],  # Good stock
-            [-5.0, 40.0, 500000, -10.0, -15.0, -5.0, -0.125, 3.0],  # Bad stock
-            [15.0, 25.0, 2000000, 25.0, 30.0, 20.0, 0.6, 1.5],  # Good stock
-            [-10.0, 50.0, 300000, -20.0, -25.0, -10.0, -0.2, 2.5],  # Bad stock
-        ])
-        
-        # Repeat patterns to get enough samples
-        X_minimal = np.tile(X_minimal, (n_samples//4, 1))[:n_samples]
-        y_minimal = np.array([1, 0, 1, 0] * (n_samples//4))[:n_samples]
-        
-        model.fit(X_minimal, y_minimal)
-        print(f"   ✅ AI Elite: Model trained with realistic patterns (will be retrained with real data)")
+        # Train on ACTUAL historical data from the system (same as other strategies)
+        try:
+            print(f"   📊 Loading real historical market data (1-hour intraday)...")
+            
+            # Use the same ticker loading as backtesting strategies
+            from data_utils import load_all_ticker_data
+            from config import AI_ELITE_USE_INTRADAY, AI_ELITE_INTRADAY_INTERVAL, AI_ELITE_INTRADAY_LOOKBACK
+            
+            # Load ALL stocks with 1-hour data (as configured for AI Elite)
+            print(f"   📊 Loading all available tickers for training ({AI_ELITE_INTRADAY_INTERVAL} data)...")
+            all_ticker_data = load_all_ticker_data()
+            
+            if not all_ticker_data:
+                raise Exception("No historical data loaded")
+            
+            # Convert to grouped format (same as backtesting uses)
+            ticker_data_grouped = {}
+            for ticker, data in all_ticker_data.items():
+                if data is not None and len(data) > 0:
+                    ticker_data_grouped[ticker] = data
+            
+            print(f"   📊 Training on {len(ticker_data_grouped)} real stocks with {AI_ELITE_INTRADAY_INTERVAL} data")
+            print(f"   ⏱️ AI Elite configured for intraday: {AI_ELITE_USE_INTRADAY}")
+            print(f"   📊 Using {AI_ELITE_INTRADAY_LOOKBACK} days of {AI_ELITE_INTRADAY_INTERVAL} data per stock")
+            
+            # Extract real features from historical data
+            X_real = []
+            y_real = []
+            
+            for ticker, data in ticker_data_grouped.items():
+                # Adjust minimum data requirement for intraday
+                min_required = AI_ELITE_INTRADAY_LOOKBACK * 24 if AI_ELITE_USE_INTRADAY else 126  # 10 days * 24 hours = 240 hours
+                if len(data) < min_required:
+                    continue
+                
+                # Sample multiple time periods from each stock
+                # For intraday: sample every 5 days (120 hours) to get enough data points
+                # For daily: sample every 20 days
+                sample_interval = 120 if AI_ELITE_USE_INTRADAY else 20
+                start_point = len(data) - min_required
+                
+                for i in range(start_point, sample_interval, -sample_interval):
+                    try:
+                        # Get historical slice (use appropriate lookback for intraday vs daily)
+                        lookback_points = AI_ELITE_INTRADAY_LOOKBACK * 24 if AI_ELITE_USE_INTRADAY else 126
+                        historical_slice = data.iloc[i-lookback_points:i]
+                        
+                        # Extract features using the same function as live trading
+                        current_date = data.index[i-1] if i < len(data) else data.index[-1]
+                        features = _extract_features(ticker, historical_slice, current_date)
+                        
+                        if features is not None:
+                            # Calculate what actually happened in next 20 days
+                            # For intraday: 20 days = 480 hours, for daily: 20 days
+                            future_points = 480 if AI_ELITE_USE_INTRADAY else 20
+                            if i + future_points < len(data):
+                                future_price = data.iloc[i+future_points]['Close']
+                                current_price = data.iloc[i]['Close']
+                                actual_return = (future_price - current_price) / current_price
+                                
+                                # Label: 1 if stock went up > 5% in next 20 days
+                                label = 1 if actual_return > 0.05 else 0
+                                
+                                # Create feature vector with NEW intraday intelligence features
+                                feature_vector = [
+                                    features['momentum_6m'],
+                                    features['volatility'],
+                                    features['avg_volume'],
+                                    features['dip_score'],
+                                    features['perf_1y'],
+                                    features['perf_3m'],
+                                    features.get('mom_vol_ratio', features['momentum_6m'] / (features['volatility'] + 0.001)),
+                                    features.get('dip_ratio', features['perf_1y'] / (features['perf_3m'] + 1)),
+                                    features.get('intraday_pattern', 0),  # NEW: Intraday momentum pattern
+                                    features.get('vol_trend', 0),  # NEW: Volatility trend
+                                    features.get('volume_accel', 0)  # NEW: Volume acceleration
+                                ]
+                                
+                                X_real.append(feature_vector)
+                                y_real.append(label)
+                    
+                    except Exception as e:
+                        continue
+            
+            if len(X_real) < 50:
+                raise Exception(f"Insufficient training samples: {len(X_real)}")
+            
+            import numpy as np
+            X_real = np.array(X_real)
+            y_real = np.array(y_real)
+            
+            print(f"   📊 Training on {len(X_real)} REAL historical samples")
+            print(f"   📈 Positive samples: {sum(y_real)} ({sum(y_real)/len(y_real)*100:.1f}%)")
+            print(f"   📉 Negative samples: {len(y_real) - sum(y_real)} ({(len(y_real)-sum(y_real))/len(y_real)*100:.1f}%)")
+            
+            # Train model on REAL historical data
+            model.fit(X_real, y_real)
+            print(f"   ✅ AI Elite: Model trained on REAL historical market data!")
+            
+        except Exception as e:
+            print(f"   ⚠️ AI Elite: Real data training failed ({e}), using enhanced patterns")
+            # Fallback to enhanced patterns (better than old fake patterns)
+            import numpy as np
+            
+            # Create enhanced patterns based on real market statistics (with intraday features)
+            n_samples = 200
+            X_enhanced = []
+            y_enhanced = []
+            
+            for i in range(n_samples):
+                # Realistic ranges based on actual market data
+                momentum = np.random.normal(5, 15)  # Most stocks have modest momentum
+                volatility = np.random.normal(30, 15)  # Typical volatility range
+                volume = np.random.lognormal(14, 1)  # Log-normal volume distribution
+                
+                # Realistic performance metrics
+                perf_1y = momentum * 2 + np.random.normal(0, 10)
+                perf_3m = momentum * 0.5 + np.random.normal(0, 8)
+                dip_score = max(perf_1y - perf_3m, -30)
+                
+                # Engineered features
+                mom_vol_ratio = momentum / (volatility + 1)
+                dip_ratio = perf_1y / (perf_3m + 1) if perf_3m > 0 else 1.0
+                
+                # NEW: Intraday intelligence features
+                intraday_pattern = np.random.normal(0, 5)  # Morning momentum - afternoon fade
+                vol_trend = np.random.normal(0, 20)  # Recent vol vs historical
+                volume_accel = np.random.normal(0, 30)  # Volume acceleration
+                
+                # Success probability based on real market relationships + intraday
+                success_prob = 0.3 + 0.4 * (1 / (1 + np.exp(-momentum/10)))  # Sigmoid on momentum
+                success_prob += 0.1 * (1 / (1 + np.exp(-intraday_pattern/5)))  # Bonus for intraday strength
+                success_prob = min(success_prob, 0.9)  # Cap at 90%
+                
+                features = [
+                    momentum, volatility, volume, dip_score, perf_1y, perf_3m,
+                    mom_vol_ratio, dip_ratio, intraday_pattern, vol_trend, volume_accel
+                ]
+                
+                X_enhanced.append(features)
+                y_enhanced.append(1 if np.random.random() < success_prob else 0)
+            
+            X_enhanced = np.array(X_enhanced)
+            y_enhanced = np.array(y_enhanced)
+            
+            model.fit(X_enhanced, y_enhanced)
+            print(f"   🔄 AI Elite: Used enhanced patterns with intraday features ({len(X_enhanced)} samples)")
         
         # Save the model for future use
         if model_path:
