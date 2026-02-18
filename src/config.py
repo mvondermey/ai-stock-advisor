@@ -291,8 +291,9 @@ ENABLE_ADAPTIVE_STRATEGY = True   # ENABLED - Adaptive Meta-Ensemble Strategy
 ENABLE_VOLATILITY_ENSEMBLE = True   # ENABLED - Volatility-Adjusted Ensemble Strategy (risk-managed position sizing)
 ENABLE_ENHANCED_VOLATILITY = True   # ENABLED - Enhanced Volatility Trader (ATR stops + take profits)
 ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble Strategy (diversification-focused)
-ENABLE_SENTIMENT_ENSEMBLE = True   # ENABLED - Mom-Vol Hybrid 6M + Sentiment (was Sentiment Ensemble)
-ENABLE_ELITE_HYBRID_SENTIMENT = True   # NEW - Elite Hybrid + Sentiment Strategy
+ENABLE_SENTIMENT_ENSEMBLE = False   # DISABLED - Replaced by Risk-Adj Mom Sentiment
+ENABLE_ELITE_HYBRID_SENTIMENT = False   # DISABLED - Replaced by Risk-Adj Mom Sentiment
+ENABLE_RISK_ADJ_MOM_SENTIMENT = True   # NEW - Risk-Adjusted Momentum + Sentiment Strategy
 ENABLE_DYNAMIC_POOL = True   # ENABLED - Dynamic Strategy Pool Strategy
 
 # --- Multi-Timeframe Ensemble Strategy ---
@@ -432,6 +433,7 @@ STRATEGY_STOP_LOSS_PCT = {
     'Mom Acceleration': MOM_ACCELERATION_STOP_LOSS,
     'Mean Reversion': MEAN_REVERSION_STOP_LOSS,
     'Risk-Adj Mom': RISK_ADJ_MOM_STOP_LOSS,
+    'Risk-Adj Mom Sentiment': RISK_ADJ_MOM_STOP_LOSS,
     'Quality Momentum': QUALITY_MOMENTUM_STOP_LOSS,
     'Momentum 6M': MOMENTUM_6M_STOP_LOSS,
     'Trend Following ATR': TREND_FOLLOWING_ATR_STOP_LOSS,
