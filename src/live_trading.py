@@ -496,6 +496,14 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
         # AI Elite Strategy: ML-powered scoring of momentum + dip opportunities
         return get_ai_elite_tickers(all_tickers, all_tickers_data)
 
+    elif strategy == 'risk_adj_mom_6m':
+        # Risk-Adj Mom 6M Strategy: 6-month risk-adjusted momentum
+        return get_risk_adj_mom_6m_tickers(all_tickers, all_tickers_data)
+
+    elif strategy == 'risk_adj_mom_3m':
+        # Risk-Adj Mom 3M Strategy: 3-month risk-adjusted momentum
+        return get_risk_adj_mom_3m_tickers(all_tickers, all_tickers_data)
+
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
         return get_dynamic_bh_tickers(all_tickers, '3m', all_tickers_data)
@@ -525,12 +533,10 @@ def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     print(f"   [DEBUG] Risk-Adj Mom: Processing {len(all_tickers)} tickers")
     print(f"   [DEBUG] Risk-Adj Mom: Data available: {all_tickers_data is not None}")
     
-    # Use shared helper to prepare data with date as index
+    # Use shared helper to prepare data with date as index (same as backtesting)
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Risk-Adj Mom")
     
-    # Pass required date parameters
     current_date = datetime.now(timezone.utc)
-    
     selected = select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, 
                                           current_date=current_date, 
                                           top_n=PORTFOLIO_SIZE)
@@ -538,9 +544,10 @@ def get_risk_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     if selected:
         print(f"   [PASS] Risk-Adj Mom: Selected {len(selected)} stocks: {selected}")
     else:
+        from config import RISK_ADJ_MOM_MIN_SCORE
         print(f"   [WARN]  Risk-Adj Mom: No stocks selected!")
         print(f"      - Check if data has 'Close' column")
-        print(f"      - Check if stocks meet min score threshold (30.0)")
+        print(f"      - Check if stocks meet min score threshold ({RISK_ADJ_MOM_MIN_SCORE})")
     
     return selected
 
@@ -563,7 +570,7 @@ def get_volatility_adj_mom_tickers(all_tickers: List[str], all_tickers_data: pd.
     print(f"   [DEBUG] Vol-Adj Mom: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Vol-Adj Mom")
     
-    current_date = _get_latest_data_date(ticker_data_grouped, all_tickers)
+    current_date = datetime.now(timezone.utc)
     return select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -614,7 +621,7 @@ def get_quality_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.Da
     print(f"   [DEBUG] Quality+Mom: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Quality+Mom")
     
-    current_date = _get_latest_data_date(ticker_data_grouped, all_tickers)
+    current_date = datetime.now(timezone.utc)
     return select_quality_momentum_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -783,8 +790,7 @@ def get_elite_hybrid_sentiment_tickers(all_tickers: List[str], all_tickers_data:
     print(f"   [DEBUG] Elite Hybrid Sentiment: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Elite Hybrid Sentiment")
     
-    # Use latest available data date instead of current_date
-    current_date = _get_latest_data_date(ticker_data_grouped, all_tickers)
+    current_date = datetime.now(timezone.utc)
     return select_elite_hybrid_sentiment_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -964,7 +970,7 @@ def get_elite_hybrid_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     print(f"   [INFO] Elite Hybrid: Processing {len(all_tickers)} tickers")
     ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Elite Hybrid")
     
-    current_date = _get_latest_data_date(ticker_data_grouped, all_tickers)
+    current_date = datetime.now(timezone.utc)
     return select_elite_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
@@ -1023,7 +1029,9 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
         'ml_ensemble': 'ML Ensemble (Multi-Model Voting)',
         'price_acceleration': 'Price Acceleration (Physics-Based Momentum)',
         'voting_ensemble': 'Voting Ensemble (Consensus from Multiple Strategies)',
-        'dual_momentum': 'Dual Momentum (Absolute + Relative)'
+        'dual_momentum': 'Dual Momentum (Absolute + Relative)',
+        'risk_adj_mom_6m': 'Risk-Adj Mom 6M (6-Month Risk-Adjusted Momentum)',
+        'risk_adj_mom_3m': 'Risk-Adj Mom 3M (3-Month Risk-Adjusted Momentum)'
     }
 
     strategy_name = strategy_names.get(LIVE_TRADING_STRATEGY, LIVE_TRADING_STRATEGY)
@@ -1058,8 +1066,8 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
     print(f"    Available tickers: {len(valid_tickers)}")
     
     # Pass downloaded data if available for strategies that need it
-    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble', 'ai_elite'] and all_tickers_data_for_strategy is not None else None
-    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble', 'ai_elite']:
+    all_tickers_data_for_strategy = all_tickers_data_for_strategy if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'risk_adj_mom_6m', 'risk_adj_mom_3m', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk'] and all_tickers_data_for_strategy is not None else None
+    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'risk_adj_mom_6m', 'risk_adj_mom_3m', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk']:
         print(f"    Data available: {all_tickers_data_for_strategy is not None}")
     
     target_tickers = get_strategy_tickers(LIVE_TRADING_STRATEGY, valid_tickers, all_tickers_data_for_strategy)
@@ -1181,6 +1189,28 @@ def get_ai_elite_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame 
         print(f"   [WARN] AI Elite: No stocks selected")
     
     return selected
+
+
+def get_risk_adj_mom_6m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Risk-Adj Mom 6M Strategy: 6-month risk-adjusted momentum (return/vol^0.5)."""
+    from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
+    
+    print(f"   📊 Risk-Adj Mom 6M: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Risk-Adj Mom 6M")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_risk_adj_mom_6m_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_risk_adj_mom_3m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+    """Risk-Adj Mom 3M Strategy: 3-month risk-adjusted momentum (return/vol^0.5)."""
+    from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
+    
+    print(f"   📊 Risk-Adj Mom 3M: Processing {len(all_tickers)} tickers")
+    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Risk-Adj Mom 3M")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 

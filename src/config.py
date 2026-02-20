@@ -15,6 +15,14 @@ DATA_PROVIDER           = 'yahoo' # 'stooq', 'yahoo', 'alpaca', or 'twelvedata'
 USE_YAHOO_FALLBACK      = True       # let Yahoo fill gaps if Twelvedata thin
 DATA_INTERVAL           = '1h'       # '1m', '5m', '15m', '30m', '1h', '1d', '1wk', '1mo'
 DATA_CACHE_DIR          = Path("data_cache")
+
+def get_data_lookback_days():
+    """Get the number of days to look back for data downloads based on DATA_INTERVAL."""
+    MAX_LOOKBACK_DAYS = 730  # 2 years of historical data
+    if DATA_INTERVAL in ['1h', '30m', '15m', '5m', '1m']:
+        return 729  # Stay within Yahoo's 730-day limit for intraday
+    else:
+        return MAX_LOOKBACK_DAYS + 60  # Add buffer for weekends/holidays
 TOP_CACHE_PATH          = Path("logs/top_tickers_cache.json")
 VALID_TICKERS_CACHE_PATH = Path("logs/valid_tickers.json")
 CACHE_DAYS              = 7
@@ -311,17 +319,19 @@ ENABLE_CONCENTRATED_3M = True   # NEW - Concentrated 3M + Vol Filter (fewer posi
 ENABLE_DUAL_MOMENTUM = True   # NEW - Dual Momentum (absolute + relative momentum)
 ENABLE_TREND_FOLLOWING_ATR = True   # NEW - Trend Following with ATR Trailing Stop
 ENABLE_ELITE_HYBRID = True   # NEW - Elite Hybrid (Mom-Vol 6M + 1Y/3M Ratio - combines top 2 most consistent strategies)
+ENABLE_ELITE_RISK = True   # NEW - Elite Risk (Risk-Adj Mom base + Elite Hybrid dip/vol bonuses)
+ENABLE_RISK_ADJ_MOM_6M = True   # NEW - Risk-Adj Mom 6M (same as Risk-Adj Mom but 6M window)
+ENABLE_RISK_ADJ_MOM_3M = True   # NEW - Risk-Adj Mom 3M (same as Risk-Adj Mom but 3M window)
 ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip opportunities)
 ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (not implemented)
 
 # AI Elite Parameters
 AI_ELITE_RETRAIN_DAYS = 1  # Retrain model every N days
 AI_ELITE_TRAINING_LOOKBACK = 20  # Use fixed 20-day window for training
-AI_ELITE_FORWARD_DAYS = 20  # Predict performance over next N days
+AI_ELITE_FORWARD_DAYS = 5  # Predict performance over next N days
 
 # AI Elite Intraday Configuration
-AI_ELITE_USE_INTRADAY = True  # Use hourly data for richer training
-AI_ELITE_INTRADAY_INTERVAL = "1h"  # Use 1-hour data for maximum granularity
+AI_ELITE_INTRADAY_INTERVAL = "1h"  # Use 1-hour data for intraday features
 AI_ELITE_INTRADAY_LOOKBACK = 10  # Days of hourly data to use (240 data points per stock)
 
 # Momentum Acceleration Parameters

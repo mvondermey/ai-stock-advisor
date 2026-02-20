@@ -33,7 +33,7 @@ from config import (
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
     CALENDAR_DAYS_PER_YEAR,
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
-    ENABLE_ELITE_HYBRID, ENABLE_AI_ELITE,
+    ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_3M, ENABLE_AI_ELITE,
     CONCENTRATED_3M_REBALANCE_DAYS,
     AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS
 )
@@ -325,18 +325,6 @@ def _smart_rebalance_portfolio(
     
     print(f"   📊 {strategy_name} Rebalance summary (buffer={effective_buffer_size}): {len(positions_to_keep)} keep, {len(positions_to_sell)} sell, {len(positions_to_buy)} buy")
     
-    # Calculate capital per stock (only for new positions)
-    if positions_to_buy:
-        # Get current portfolio value
-        total_portfolio_value = cash + sum(
-            positions[ticker]['shares'] * ticker_data_grouped[ticker].loc[:current_date]['Close'].dropna().iloc[-1]
-            for ticker in positions_to_keep
-            if ticker in ticker_data_grouped and ticker in positions
-        )
-        capital_per_stock = total_portfolio_value / len(new_stocks) if new_stocks else 0
-    else:
-        capital_per_stock = 0
-    
     total_transaction_costs = 0.0
     updated_positions = positions.copy()
     updated_cash = cash
@@ -404,6 +392,19 @@ def _smart_rebalance_portfolio(
                     # Keep this position in final list
                     final_stocks.append(ticker)
                     kept_unprofitable_positions.append(ticker)
+    
+    # Calculate capital per stock AFTER sells (so freed-up cash is included)
+    if positions_to_buy:
+        # Get current portfolio value (cash after sells + value of kept positions)
+        kept_positions_value = sum(
+            updated_positions[ticker]['shares'] * ticker_data_grouped[ticker].loc[:current_date]['Close'].dropna().iloc[-1]
+            for ticker in positions_to_keep
+            if ticker in ticker_data_grouped and ticker in updated_positions
+        )
+        total_portfolio_value = updated_cash + kept_positions_value
+        capital_per_stock = total_portfolio_value / len(new_stocks) if new_stocks else 0
+    else:
+        capital_per_stock = 0
     
     # Buy new positions - but skip some if we kept unprofitable positions to maintain target portfolio size
     num_positions_to_skip = len(kept_unprofitable_positions)
@@ -1608,6 +1609,28 @@ def _run_portfolio_backtest_walk_forward(
     current_elite_hybrid_stocks = []
     elite_hybrid_last_rebalance_value = initial_capital_needed
 
+    # ELITE RISK: Initialize portfolio tracking
+    elite_risk_portfolio_value = initial_capital_needed
+    elite_risk_portfolio_history = [elite_risk_portfolio_value]
+    elite_risk_positions = {}
+    elite_risk_cash = initial_capital_needed
+    current_elite_risk_stocks = []
+    elite_risk_last_rebalance_value = initial_capital_needed
+
+    # RISK-ADJ MOM 6M: Initialize portfolio tracking
+    risk_adj_mom_6m_portfolio_value = initial_capital_needed
+    risk_adj_mom_6m_portfolio_history = [risk_adj_mom_6m_portfolio_value]
+    risk_adj_mom_6m_positions = {}
+    risk_adj_mom_6m_cash = initial_capital_needed
+    current_risk_adj_mom_6m_stocks = []
+
+    # RISK-ADJ MOM 3M: Initialize portfolio tracking
+    risk_adj_mom_3m_portfolio_value = initial_capital_needed
+    risk_adj_mom_3m_portfolio_history = [risk_adj_mom_3m_portfolio_value]
+    risk_adj_mom_3m_positions = {}
+    risk_adj_mom_3m_cash = initial_capital_needed
+    current_risk_adj_mom_3m_stocks = []
+
     # AI ELITE: Initialize portfolio tracking
     ai_elite_portfolio_value = initial_capital_needed
     ai_elite_portfolio_history = [ai_elite_portfolio_value]
@@ -1695,6 +1718,9 @@ def _run_portfolio_backtest_walk_forward(
     dual_mom_transaction_costs = 0.0
     trend_atr_transaction_costs = 0.0
     elite_hybrid_transaction_costs = 0.0
+    elite_risk_transaction_costs = 0.0
+    risk_adj_mom_6m_transaction_costs = 0.0
+    risk_adj_mom_3m_transaction_costs = 0.0
     ai_elite_transaction_costs = 0.0
 
     # Cash utilization tracking - track actual capital deployed for each strategy
@@ -4258,6 +4284,97 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Elite Hybrid error: {e}")
 
+        # ELITE RISK STRATEGY (Risk-Adj Mom base + Elite Hybrid dip/vol bonuses)
+        if ENABLE_ELITE_RISK:
+            try:
+                from elite_risk_strategy import select_elite_risk_stocks
+
+                new_elite_risk_stocks = select_elite_risk_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE
+                )
+
+                if new_elite_risk_stocks:
+                    elite_risk_positions, elite_risk_cash, current_elite_risk_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        strategy_name="Elite Risk",
+                        current_stocks=current_elite_risk_stocks,
+                        new_stocks=new_elite_risk_stocks,
+                        positions=elite_risk_positions,
+                        cash=elite_risk_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_elite_risk_stocks
+                    )
+                    elite_risk_transaction_costs += rebalance_costs
+                    elite_risk_last_rebalance_value = elite_risk_portfolio_value
+
+            except Exception as e:
+                print(f"   ⚠️ Elite Risk error: {e}")
+
+        # RISK-ADJ MOM 6M STRATEGY
+        if ENABLE_RISK_ADJ_MOM_6M:
+            try:
+                from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
+
+                new_risk_adj_mom_6m_stocks = select_risk_adj_mom_6m_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE
+                )
+
+                if new_risk_adj_mom_6m_stocks:
+                    risk_adj_mom_6m_positions, risk_adj_mom_6m_cash, current_risk_adj_mom_6m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        strategy_name="Risk-Adj Mom 6M",
+                        current_stocks=current_risk_adj_mom_6m_stocks,
+                        new_stocks=new_risk_adj_mom_6m_stocks,
+                        positions=risk_adj_mom_6m_positions,
+                        cash=risk_adj_mom_6m_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_risk_adj_mom_6m_stocks
+                    )
+                    risk_adj_mom_6m_transaction_costs += rebalance_costs
+
+            except Exception as e:
+                print(f"   ⚠️ Risk-Adj Mom 6M error: {e}")
+
+        # RISK-ADJ MOM 3M STRATEGY
+        if ENABLE_RISK_ADJ_MOM_3M:
+            try:
+                from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
+
+                new_risk_adj_mom_3m_stocks = select_risk_adj_mom_3m_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE
+                )
+
+                if new_risk_adj_mom_3m_stocks:
+                    risk_adj_mom_3m_positions, risk_adj_mom_3m_cash, current_risk_adj_mom_3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        strategy_name="Risk-Adj Mom 3M",
+                        current_stocks=current_risk_adj_mom_3m_stocks,
+                        new_stocks=new_risk_adj_mom_3m_stocks,
+                        positions=risk_adj_mom_3m_positions,
+                        cash=risk_adj_mom_3m_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_risk_adj_mom_3m_stocks
+                    )
+                    risk_adj_mom_3m_transaction_costs += rebalance_costs
+
+            except Exception as e:
+                print(f"   ⚠️ Risk-Adj Mom 3M error: {e}")
+
         # AI ELITE STRATEGY (ML-powered scoring)
         if ENABLE_AI_ELITE:
             try:
@@ -4278,8 +4395,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 # Train model if needed
                 if should_train:
-                    # Fixed 20-day training window for AI Elite
-                    # Always train on last 20 days, regardless of backtest day
+                    # Train on last AI_ELITE_TRAINING_LOOKBACK days of history
                     train_end = current_date
                     train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
                     
@@ -5439,6 +5555,72 @@ def _run_portfolio_backtest_walk_forward(
         elite_hybrid_portfolio_value = elite_hybrid_invested_value + elite_hybrid_cash
         elite_hybrid_portfolio_history.append(elite_hybrid_portfolio_value)
 
+        # Update ELITE RISK portfolio value daily
+        elite_risk_invested_value = 0.0
+        if ENABLE_ELITE_RISK:
+            for ticker in list(elite_risk_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = elite_risk_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            elite_risk_positions[ticker]['value'] = position_value
+                            elite_risk_invested_value += position_value
+                        else:
+                            elite_risk_invested_value += elite_risk_positions[ticker].get('value', 0.0)
+                    else:
+                        elite_risk_invested_value += elite_risk_positions[ticker].get('value', 0.0)
+                except Exception:
+                    elite_risk_invested_value += elite_risk_positions[ticker].get('value', 0.0)
+        elite_risk_portfolio_value = elite_risk_invested_value + elite_risk_cash
+        elite_risk_portfolio_history.append(elite_risk_portfolio_value)
+
+        # Update RISK-ADJ MOM 6M portfolio value daily
+        risk_adj_mom_6m_invested_value = 0.0
+        if ENABLE_RISK_ADJ_MOM_6M:
+            for ticker in list(risk_adj_mom_6m_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = risk_adj_mom_6m_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            risk_adj_mom_6m_positions[ticker]['value'] = position_value
+                            risk_adj_mom_6m_invested_value += position_value
+                        else:
+                            risk_adj_mom_6m_invested_value += risk_adj_mom_6m_positions[ticker].get('value', 0.0)
+                    else:
+                        risk_adj_mom_6m_invested_value += risk_adj_mom_6m_positions[ticker].get('value', 0.0)
+                except Exception:
+                    risk_adj_mom_6m_invested_value += risk_adj_mom_6m_positions[ticker].get('value', 0.0)
+        risk_adj_mom_6m_portfolio_value = risk_adj_mom_6m_invested_value + risk_adj_mom_6m_cash
+        risk_adj_mom_6m_portfolio_history.append(risk_adj_mom_6m_portfolio_value)
+
+        # Update RISK-ADJ MOM 3M portfolio value daily
+        risk_adj_mom_3m_invested_value = 0.0
+        if ENABLE_RISK_ADJ_MOM_3M:
+            for ticker in list(risk_adj_mom_3m_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = risk_adj_mom_3m_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            risk_adj_mom_3m_positions[ticker]['value'] = position_value
+                            risk_adj_mom_3m_invested_value += position_value
+                        else:
+                            risk_adj_mom_3m_invested_value += risk_adj_mom_3m_positions[ticker].get('value', 0.0)
+                    else:
+                        risk_adj_mom_3m_invested_value += risk_adj_mom_3m_positions[ticker].get('value', 0.0)
+                except Exception:
+                    risk_adj_mom_3m_invested_value += risk_adj_mom_3m_positions[ticker].get('value', 0.0)
+        risk_adj_mom_3m_portfolio_value = risk_adj_mom_3m_invested_value + risk_adj_mom_3m_cash
+        risk_adj_mom_3m_portfolio_history.append(risk_adj_mom_3m_portfolio_value)
+
         # Update AI ELITE portfolio value daily
         ai_elite_invested_value = 0.0
         if ENABLE_AI_ELITE:
@@ -5921,6 +6103,9 @@ def _run_portfolio_backtest_walk_forward(
                 ("Dual Momentum", dual_mom_portfolio_value if ENABLE_DUAL_MOMENTUM else None),
                 ("Trend ATR", trend_atr_portfolio_value if ENABLE_TREND_FOLLOWING_ATR else None),
                 ("Elite Hybrid", elite_hybrid_portfolio_value if ENABLE_ELITE_HYBRID else None),
+                ("Elite Risk", elite_risk_portfolio_value if ENABLE_ELITE_RISK else None),
+                ("Risk-Adj Mom 6M", risk_adj_mom_6m_portfolio_value if ENABLE_RISK_ADJ_MOM_6M else None),
+                ("Risk-Adj Mom 3M", risk_adj_mom_3m_portfolio_value if ENABLE_RISK_ADJ_MOM_3M else None),
                 ("AI Elite", ai_elite_portfolio_value if ENABLE_AI_ELITE else None),
                 ("BH 1Y Monthly", static_bh_1y_monthly_portfolio_value if ENABLE_STATIC_BH_1Y_MONTHLY else None),
                 ("BH 6M Monthly", static_bh_6m_monthly_portfolio_value if ENABLE_STATIC_BH_6M_MONTHLY else None),
@@ -6057,6 +6242,18 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = elite_hybrid_cash
                     num_positions = len(elite_hybrid_positions)
                     invested = value - strat_cash
+                elif name == "Elite Risk" and ENABLE_ELITE_RISK:
+                    strat_cash = elite_risk_cash
+                    num_positions = len(elite_risk_positions)
+                    invested = value - strat_cash
+                elif name == "Risk-Adj Mom 6M" and ENABLE_RISK_ADJ_MOM_6M:
+                    strat_cash = risk_adj_mom_6m_cash
+                    num_positions = len(risk_adj_mom_6m_positions)
+                    invested = value - strat_cash
+                elif name == "Risk-Adj Mom 3M" and ENABLE_RISK_ADJ_MOM_3M:
+                    strat_cash = risk_adj_mom_3m_cash
+                    num_positions = len(risk_adj_mom_3m_positions)
+                    invested = value - strat_cash
                 elif name == "AI Elite" and ENABLE_AI_ELITE:
                     strat_cash = ai_elite_cash
                     num_positions = len(ai_elite_positions)
@@ -6174,93 +6371,118 @@ def _run_portfolio_backtest_walk_forward(
         
         # Collect all strategy data for each day
         strategy_data = []
-    
-    # Filter out disabled strategies
-    active_strategies = [(name, history) for name, history in strategies if history is not None and len(history) > 0]
-    
-    if len(active_strategies) == 0:
-        print(f"⚠️ No strategies enabled for daily summary.")
-    else:
-        # Create dynamic header based on number of strategies
-        num_strategies = len(active_strategies)
-        header_parts = [f"{'Date':<12}"]
-        
-        # Add column for each strategy
-        for i, (name, _) in enumerate(active_strategies):
-            # Truncate strategy names to fit in columns
-            short_name = name[:15] if len(name) > 15 else name
-            header_parts.append(f"{short_name:<15}")
-        
-        header_parts.append(f"{'Best':<10} {'Worst':<10}")
-        header_line = " ".join(header_parts)
-        print(header_line)
-        print("-" * len(header_line))
-        
-        # Process each day - use the maximum history length among all strategies
-        max_days = max(len(history) for _, history in active_strategies)
-        for day_idx, current_date in enumerate(business_days[:max_days]):
-            daily_values = []
-            
-            # Get values for all active strategies on this day
-            for strategy_name, history in active_strategies:
-                if day_idx < len(history):
-                    value = history[day_idx]
-                    if not pd.isna(value) and value > 0:
-                        # Calculate daily return percentage
-                        if day_idx == 0:
-                            daily_return = 0.0  # First day, no return yet
-                        else:
-                            prev_value = history[day_idx - 1]
-                            if prev_value > 0 and not pd.isna(prev_value):
-                                daily_return = ((value - prev_value) / prev_value) * 100
-                            else:
-                                daily_return = 0.0
-                        
-                        daily_values.append((strategy_name, value, daily_return))
-            
-            # Sort by value to find best and worst
-            if len(daily_values) > 0:
-                daily_values.sort(key=lambda x: x[1], reverse=True)
-                best_strategy = daily_values[0][0]
-                worst_strategy = daily_values[-1][0]
-                
-                # Format the output
-                date_str = current_date.strftime('%Y-%m-%d')
-                line_parts = [f"{date_str:<12}"]
-                
-                # Add each strategy's value
+
+        # Build (name, history) list for the summary table
+        strategy_histories = [
+            ("Static BH 1Y",        static_bh_1y_portfolio_history        if ENABLE_STATIC_BH else None),
+            ("Static BH 6M",        static_bh_6m_portfolio_history        if ENABLE_STATIC_BH_6M else None),
+            ("Static BH 3M",        static_bh_3m_portfolio_history        if ENABLE_STATIC_BH else None),
+            ("Dynamic BH 1Y",       dynamic_bh_portfolio_history          if ENABLE_DYNAMIC_BH_1Y else None),
+            ("Dynamic BH 6M",       dynamic_bh_6m_portfolio_history       if ENABLE_DYNAMIC_BH_6M else None),
+            ("Dynamic BH 3M",       dynamic_bh_3m_portfolio_history       if ENABLE_DYNAMIC_BH_3M else None),
+            ("Dynamic BH 1M",       dynamic_bh_1m_portfolio_history       if ENABLE_DYNAMIC_BH_1M else None),
+            ("Risk-Adj Mom",        risk_adj_mom_portfolio_history        if ENABLE_RISK_ADJ_MOM else None),
+            ("Mean Reversion",      mean_reversion_portfolio_history      if ENABLE_MEAN_REVERSION else None),
+            ("Quality+Mom",         quality_momentum_portfolio_history    if ENABLE_QUALITY_MOM else None),
+            ("Mom-AI Hybrid",       momentum_ai_hybrid_portfolio_history  if ENABLE_MOMENTUM_AI_HYBRID else None),
+            ("Vol-Adj Mom",         volatility_adj_mom_portfolio_history  if ENABLE_VOLATILITY_ADJ_MOM else None),
+            ("1Y/3M Ratio",         ratio_1y_3m_portfolio_history         if ENABLE_3M_1Y_RATIO else None),
+            ("3M/1Y Ratio",         ratio_3m_1y_portfolio_history         if ENABLE_3M_1Y_RATIO else None),
+            ("Mom-Vol Hybrid",      momentum_volatility_hybrid_portfolio_history    if ENABLE_MOMENTUM_VOLATILITY_HYBRID else None),
+            ("Mom-Vol Hybrid 6M",   momentum_volatility_hybrid_6m_portfolio_history if ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M else None),
+            ("Mom-Vol Hybrid 1Y",   momentum_volatility_hybrid_1y_portfolio_history if ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y else None),
+            ("Mom-Vol Hybrid 1Y/3M",momentum_volatility_hybrid_1y3m_portfolio_history if ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M else None),
+            ("Enhanced Volatility", enhanced_volatility_portfolio_history if ENABLE_ENHANCED_VOLATILITY else None),
+            ("Trend ATR",           trend_atr_portfolio_history           if ENABLE_TREND_FOLLOWING_ATR else None),
+            ("Dual Momentum",       dual_mom_portfolio_history            if ENABLE_DUAL_MOMENTUM else None),
+            ("Mom Acceleration",    mom_accel_portfolio_history           if ENABLE_MOMENTUM_ACCELERATION else None),
+            ("Concentrated 3M",     concentrated_3m_portfolio_history     if ENABLE_CONCENTRATED_3M else None),
+            ("Price Acceleration",  price_acceleration_portfolio_history  if ENABLE_PRICE_ACCELERATION else None),
+            ("Elite Hybrid",        elite_hybrid_portfolio_history        if ENABLE_ELITE_HYBRID else None),
+            ("Elite Risk",          elite_risk_portfolio_history          if ENABLE_ELITE_RISK else None),
+            ("Risk-Adj Mom 6M",     risk_adj_mom_6m_portfolio_history     if ENABLE_RISK_ADJ_MOM_6M else None),
+            ("Risk-Adj Mom 3M",     risk_adj_mom_3m_portfolio_history     if ENABLE_RISK_ADJ_MOM_3M else None),
+            ("AI Elite",            ai_elite_portfolio_history            if ENABLE_AI_ELITE else None),
+            ("BH 1Y Monthly",       static_bh_1y_monthly_portfolio_history if ENABLE_STATIC_BH_1Y_MONTHLY else None),
+            ("BH 6M Monthly",       static_bh_6m_monthly_portfolio_history if ENABLE_STATIC_BH_6M_MONTHLY else None),
+            ("BH 3M Monthly",       static_bh_3m_monthly_portfolio_history if ENABLE_STATIC_BH_3M_MONTHLY else None),
+        ]
+
+        # Filter out disabled strategies
+        active_strategies = [(name, history) for name, history in strategy_histories if history is not None and len(history) > 0]
+
+        if len(active_strategies) == 0:
+            print(f"⚠️ No strategies enabled for daily summary.")
+        else:
+            # Create dynamic header based on number of strategies
+            num_strategies = len(active_strategies)
+            header_parts = [f"{'Date':<12}"]
+
+            # Add column for each strategy
+            for i, (name, _) in enumerate(active_strategies):
+                short_name = name[:15] if len(name) > 15 else name
+                header_parts.append(f"{short_name:<15}")
+
+            header_parts.append(f"{'Best':<10} {'Worst':<10}")
+            header_line = " ".join(header_parts)
+            print(header_line)
+            print("-" * len(header_line))
+
+            # Process each day
+            max_days = max(len(history) for _, history in active_strategies)
+            for day_idx, current_date in enumerate(business_days[:max_days]):
+                daily_values = []
+
                 for strategy_name, history in active_strategies:
                     if day_idx < len(history):
                         value = history[day_idx]
                         if not pd.isna(value) and value > 0:
-                            # Highlight best and worst with symbols
-                            display_value = f"${value:>8,.0f}"
-                            if strategy_name == best_strategy:
-                                display_value = "🥇" + display_value[1:]
-                            elif strategy_name == worst_strategy:
-                                display_value = "🔻" + display_value[1:]
-                            line_parts.append(f"{display_value:<15}")
+                            if day_idx == 0:
+                                daily_return = 0.0
+                            else:
+                                prev_value = history[day_idx - 1]
+                                if prev_value > 0 and not pd.isna(prev_value):
+                                    daily_return = ((value - prev_value) / prev_value) * 100
+                                else:
+                                    daily_return = 0.0
+                            daily_values.append((strategy_name, value, daily_return))
+
+                if len(daily_values) > 0:
+                    daily_values.sort(key=lambda x: x[1], reverse=True)
+                    best_strategy = daily_values[0][0]
+                    worst_strategy = daily_values[-1][0]
+
+                    date_str = current_date.strftime('%Y-%m-%d')
+                    line_parts = [f"{date_str:<12}"]
+
+                    for strategy_name, history in active_strategies:
+                        if day_idx < len(history):
+                            value = history[day_idx]
+                            if not pd.isna(value) and value > 0:
+                                display_value = f"${value:>8,.0f}"
+                                if strategy_name == best_strategy:
+                                    display_value = "🥇" + display_value[1:]
+                                elif strategy_name == worst_strategy:
+                                    display_value = "🔻" + display_value[1:]
+                                line_parts.append(f"{display_value:<15}")
+                            else:
+                                line_parts.append(f"{'N/A':<15}")
                         else:
-                            line_parts.append(f"{'N/A':<15}")
-                    else:
-                        line_parts.append(f"{'--':<15}")
-                
-                # Add best and worst strategy names (shortened)
-                best_short = best_strategy[:8] if len(best_strategy) > 8 else best_strategy
-                worst_short = worst_strategy[:8] if len(worst_strategy) > 8 else worst_strategy
-                line_parts.append(f"{best_short:<10} {worst_short:<10}")
-                
-                line = " ".join(line_parts)
-                print(line)
-        
-        print("-" * 120)
-        print(f"\n📈 Summary: Showing all strategies with best/worst identification for each trading day")
-        print(f"📊 Total strategies tracked: {len(active_strategies)}")
-        print(f"📅 Trading days analyzed: {len(business_days)}")
-        print(f"🥇 Best strategy each day marked with 🥇 symbol")
-        print(f"🔻 Worst strategy each day marked with 🔻 symbol")
-    
-    print("="*120)
+                            line_parts.append(f"{'--':<15}")
+
+                    best_short = best_strategy[:8] if len(best_strategy) > 8 else best_strategy
+                    worst_short = worst_strategy[:8] if len(worst_strategy) > 8 else worst_strategy
+                    line_parts.append(f"{best_short:<10} {worst_short:<10}")
+                    print(" ".join(line_parts))
+
+            print("-" * 120)
+            print(f"\n📈 Summary: Showing all strategies with best/worst identification for each trading day")
+            print(f"📊 Total strategies tracked: {len(active_strategies)}")
+            print(f"📅 Trading days analyzed: {len(business_days)}")
+            print(f"🥇 Best strategy each day marked with 🥇 symbol")
+            print(f"🔻 Worst strategy each day marked with 🔻 symbol")
+
+        print("="*120)
 
     # Build results dictionary - replaces the fragile 149-value return tuple
     # Each strategy has: value, history, costs, cash_deployed
@@ -6273,16 +6495,16 @@ def _run_portfolio_backtest_walk_forward(
             'final_strategy_value': total_portfolio_value,
             'portfolio_values_history': portfolio_values_history,
             'processed_tickers': initial_top_tickers,
-            'performance_metrics': performance_metrics,
+            'performance_metrics': [],
             'buy_hold_histories': {},
             'day_count': day_count,
         },
         'strategies': {
             'ai_strategy':              _strat(total_portfolio_value, portfolio_values_history, ai_transaction_costs, ai_cash_deployed),
-            'static_bh_1y':             _strat(bh_portfolio_value, static_bh_1y_portfolio_history, static_bh_transaction_costs, static_bh_cash_deployed),
-            'static_bh_6m':             _strat(bh_6m_portfolio_value, static_bh_6m_portfolio_history, static_bh_6m_transaction_costs, static_bh_6m_cash_deployed),
-            'static_bh_3m':             _strat(bh_3m_portfolio_value, static_bh_3m_portfolio_history, static_bh_3m_transaction_costs, static_bh_3m_cash_deployed),
-            'static_bh_1m':             _strat(bh_1m_portfolio_value, static_bh_1m_portfolio_history, static_bh_1m_transaction_costs, static_bh_1m_cash_deployed),
+            'static_bh_1y':             _strat(static_bh_1y_portfolio_value, static_bh_1y_portfolio_history, static_bh_transaction_costs, static_bh_cash_deployed),
+            'static_bh_6m':             _strat(static_bh_6m_portfolio_value, static_bh_6m_portfolio_history, static_bh_6m_transaction_costs, static_bh_6m_cash_deployed),
+            'static_bh_3m':             _strat(static_bh_3m_portfolio_value, static_bh_3m_portfolio_history, static_bh_3m_transaction_costs, static_bh_3m_cash_deployed),
+            'static_bh_1m':             _strat(static_bh_1m_portfolio_value, static_bh_1m_portfolio_history, static_bh_1m_transaction_costs, static_bh_1m_cash_deployed),
             'dynamic_bh_1y':            _strat(dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_transaction_costs, dynamic_bh_1y_cash_deployed),
             'dynamic_bh_6m':            _strat(dynamic_bh_6m_portfolio_value, dynamic_bh_6m_portfolio_history, dynamic_bh_6m_transaction_costs, dynamic_bh_6m_cash_deployed),
             'dynamic_bh_3m':            _strat(dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_3m_transaction_costs, dynamic_bh_3m_cash_deployed),
@@ -6319,6 +6541,9 @@ def _run_portfolio_backtest_walk_forward(
             'dual_momentum':            _strat(dual_mom_portfolio_value, dual_mom_portfolio_history, dual_mom_transaction_costs, dual_mom_cash),
             'trend_atr':                _strat(trend_atr_portfolio_value, trend_atr_portfolio_history, trend_atr_transaction_costs, trend_atr_cash),
             'elite_hybrid':             _strat(elite_hybrid_portfolio_value, elite_hybrid_portfolio_history, elite_hybrid_transaction_costs, elite_hybrid_cash),
+            'elite_risk':               _strat(elite_risk_portfolio_value, elite_risk_portfolio_history, elite_risk_transaction_costs, elite_risk_cash),
+            'risk_adj_mom_6m':          _strat(risk_adj_mom_6m_portfolio_value, risk_adj_mom_6m_portfolio_history, risk_adj_mom_6m_transaction_costs, risk_adj_mom_6m_cash),
+            'risk_adj_mom_3m':          _strat(risk_adj_mom_3m_portfolio_value, risk_adj_mom_3m_portfolio_history, risk_adj_mom_3m_transaction_costs, risk_adj_mom_3m_cash),
             'ai_elite':                 _strat(ai_elite_portfolio_value, ai_elite_portfolio_history, ai_elite_transaction_costs, ai_elite_cash),
             'bh_1y_monthly':            _strat(static_bh_1y_monthly_portfolio_value, static_bh_1y_monthly_portfolio_history, static_bh_1y_monthly_transaction_costs, static_bh_1y_monthly_cash),
             'bh_6m_monthly':            _strat(static_bh_6m_monthly_portfolio_value, static_bh_6m_monthly_portfolio_history, static_bh_6m_monthly_transaction_costs, static_bh_6m_monthly_cash),
