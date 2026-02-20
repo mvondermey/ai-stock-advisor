@@ -74,28 +74,27 @@ def select_ai_elite_stocks(
                 fail_reasons['not_in_data'] += 1
                 continue
             
-            # Load raw 1-hour cached data (not the daily-converted data from backtesting)
-            from datetime import timedelta
-            ticker_data = _load_hourly_data_direct(
-                ticker, 
-                current_date - timedelta(days=180), 
+            # Daily data (always available - from ticker_data_grouped)
+            daily_data = ticker_data_grouped[ticker]
+            if daily_data is None or len(daily_data) == 0:
+                fail_reasons['empty'] += 1
+                continue
+
+            # Hourly data (optional - for intraday features)
+            hourly_data = _load_hourly_data_direct(
+                ticker,
+                current_date - timedelta(days=30),
                 current_date
             )
             
-            # Skip ticker if no hourly data available
-            if ticker_data is None or len(ticker_data) == 0:
-                fail_reasons['empty'] += 1
-                continue
-            
             # Debug first 3 tickers
             if debug_count < 3:
-                print(f"   🔍 AI Elite DEBUG {ticker}: index_type={type(ticker_data.index).__name__}, "
-                      f"len={len(ticker_data)}, cols={list(ticker_data.columns[:5])}, "
-                      f"index[0]={ticker_data.index[0]}, index[-1]={ticker_data.index[-1]}")
+                has_hourly = hourly_data is not None and len(hourly_data) > 0
+                print(f"   🔍 AI Elite DEBUG {ticker}: daily={len(daily_data)} rows, hourly={'yes' if has_hourly else 'no'}")
                 debug_count += 1
             
-            # Calculate all features (using 1-hour data for real intraday intelligence)
-            features = _extract_features(ticker, ticker_data, current_date)
+            # Extract features using both data sources
+            features = _extract_features(ticker, hourly_data, current_date, daily_data=daily_data)
             if features is None:
                 fail_reasons['features_none'] += 1
                 continue
@@ -119,27 +118,19 @@ def select_ai_elite_stocks(
     if model is None:
         model = _load_or_create_model(model_path)
     
-    # Score candidates using ML model (trained on 6 features)
-    if model is not None:
-        candidates_df = pd.DataFrame(candidates)
-        
-        # Use simplified 6-feature model
-        feature_cols = ['perf_forward', 'volatility', 'avg_volume', 
-                        'overnight_gap', 'intraday_range', 'last_hour_momentum']
-        
-        try:
-            X = candidates_df[feature_cols].values
-            scores = model.predict_proba(X)[:, 1]  # Probability of positive class
-            candidates_df['ai_score'] = scores
-            
-        except Exception as e:
-            print(f"   ⚠️ AI Elite error: {e}")
-            candidates_df['ai_score'] = _fallback_scoring(candidates_df)
-    else:
-        # No model available, use fallback
-        print(f"   ⚠️ AI Elite: No model available, using fallback scoring")
-        candidates_df = pd.DataFrame(candidates)
-        candidates_df['ai_score'] = _fallback_scoring(candidates_df)
+    # Score candidates using ML model (14 features: 5 daily + 3 intraday + 6 derived)
+    feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
+                    'overnight_gap', 'intraday_range', 'last_hour_momentum',
+                    'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
+                    'volume_ratio', 'rsi_14']
+
+    if model is None:
+        raise RuntimeError("AI Elite: model is None - training must have failed")
+
+    candidates_df = pd.DataFrame(candidates)
+    X = candidates_df[feature_cols].values
+    scores = model.predict_proba(X)[:, 1]
+    candidates_df['ai_score'] = scores
     
     # Sort by AI score
     candidates_df = candidates_df.sort_values('ai_score', ascending=False)
@@ -148,180 +139,185 @@ def select_ai_elite_stocks(
     print(f"   ✅ AI Elite: Found {len(candidates_df)} candidates")
     for i, row in candidates_df.head(5).iterrows():
         print(f"      {i+1}. {row['ticker']}: AI Score={row['ai_score']:.3f}, "
-              f"Perf={row['perf_forward']:+.1f}%, Vol={row['volatility']:.1f}%, "
-              f"Gap={row['overnight_gap']:+.2f}%, Range={row['intraday_range']:.1f}%")
+              f"3M={row['perf_3m']:+.1f}%, 6M={row['perf_6m']:+.1f}%, 1Y={row['perf_1y']:+.1f}%, "
+              f"Vol={row['volatility']:.1f}%, Gap={row['overnight_gap']:+.2f}%")
     
     # Return top N tickers
     selected = candidates_df.head(top_n)['ticker'].tolist()
     return selected
 
 
-def _extract_features(ticker: str, ticker_data: pd.DataFrame, current_date: datetime) -> Optional[Dict]:
+def _extract_features(ticker: str, hourly_data: Optional[pd.DataFrame], current_date: datetime,
+                      daily_data: Optional[pd.DataFrame] = None) -> Optional[Dict]:
     """
-    Extract ML features from ticker data using 1-hour intraday data.
+    Extract ML features using BOTH data sources:
+    - hourly_data: intraday features (overnight gap, intraday range, last-hour momentum)
+    - daily_data:  daily features (3m/6m/1y performance, volatility, volume)
     
-    Features:
-    - perf_forward: Performance over AI_ELITE_FORWARD_DAYS
-    - volatility: Annualized volatility
-    - avg_volume: Average trading volume
-    - overnight_gap: Overnight gap behavior (intraday)
-    - intraday_range: Intraday volatility pattern (intraday)
-    - last_hour_momentum: Last hour rally/fade (intraday)
+    If hourly_data is None, intraday features default to 0.
+    daily_data is required - returns None if missing.
     """
     try:
-        # ✅ FIX: Deduplicate index (hourly data combined creates duplicates)
-        if ticker_data.index.duplicated().any():
-            ticker_data = ticker_data[~ticker_data.index.duplicated(keep='last')]
-        
         from config import AI_ELITE_INTRADAY_LOOKBACK
-        
-        # ✅ FIX: Filter data up to current_date to avoid temporal leakage
-        if current_date is not None:
-            current_ts = pd.Timestamp(current_date)
-            # Ensure both are UTC-aware for proper comparison
-            if current_ts.tz is None:
-                current_ts = current_ts.tz_localize('UTC')
-            elif str(current_ts.tz) != 'UTC':
-                current_ts = current_ts.tz_convert('UTC')
-            
-            # Ensure index is also UTC-aware
-            if ticker_data.index.tz is None:
-                ticker_data = ticker_data.copy()
-                ticker_data.index = ticker_data.index.tz_localize('UTC')
-            elif str(ticker_data.index.tz) != 'UTC':
-                ticker_data = ticker_data.copy()
-                ticker_data.index = ticker_data.index.tz_convert('UTC')
-            
-            # Use boolean indexing (safe for non-unique indices)
-            ticker_data_filtered = ticker_data[ticker_data.index <= current_ts]
+
+        # --- Normalise current_date to UTC timestamp ---
+        current_ts = pd.Timestamp(current_date)
+        if current_ts.tz is None:
+            current_ts = current_ts.tz_localize('UTC')
         else:
-            ticker_data_filtered = ticker_data
-        
-        # Use dropna'd Close series for all calculations (adaptive approach)
-        close_col = ticker_data_filtered['Close']
-        # Handle case where Close is a DataFrame (multiple columns) instead of Series
-        if isinstance(close_col, pd.DataFrame):
-            close_col = close_col.iloc[:, 0]
-        close_prices = close_col.dropna()
-        n_prices = len(close_prices)
-        
-        # Debug: Check data length for first few tickers
-        if ticker in ['SNDK', 'ZEC-USD', 'WDC'] and hasattr(_extract_features, '_debug_count2'):
-            if _extract_features._debug_count2 < 3:
-                print(f"   🔍 FEAT DEBUG2 {ticker}: n_prices={n_prices}, filtered_len={len(ticker_data_filtered)}, "
-                      f"duplicated={ticker_data.index.duplicated().any()}")
-                _extract_features._debug_count2 += 1
-        if not hasattr(_extract_features, '_debug_count2'):
-            _extract_features._debug_count2 = 0
-            print(f"   🔍 FEAT DEBUG2 {ticker}: n_prices={n_prices}, filtered_len={len(ticker_data_filtered)}, "
-                  f"duplicated={ticker_data.index.duplicated().any()}")
-            _extract_features._debug_count2 = 1
-        
-        # Minimum data requirements for 1-hour data
-        min_data_points = AI_ELITE_INTRADAY_LOOKBACK * 24  # 10 days * 24 hours = 240 points
-        if n_prices < min_data_points:
+            current_ts = current_ts.tz_convert('UTC')
+
+        # ------------------------------------------------------------------ #
+        # DAILY FEATURES  (3m / 6m / 1y performance, volatility, volume)     #
+        # ------------------------------------------------------------------ #
+        if daily_data is None or len(daily_data) == 0:
             return None
-        
-        # Get latest price
-        latest_price = close_prices.iloc[-1]
+
+        # Deduplicate and sort
+        if daily_data.index.duplicated().any():
+            daily_data = daily_data[~daily_data.index.duplicated(keep='last')]
+        daily_data = daily_data.sort_index()
+
+        # Ensure UTC
+        if daily_data.index.tz is None:
+            daily_data = daily_data.copy()
+            daily_data.index = daily_data.index.tz_localize('UTC')
+        else:
+            daily_data = daily_data.copy()
+            daily_data.index = daily_data.index.tz_convert('UTC')
+
+        daily_filtered = daily_data[daily_data.index <= current_ts]
+        if len(daily_filtered) < 20:
+            return None
+
+        close_daily = daily_filtered['Close']
+        if isinstance(close_daily, pd.DataFrame):
+            close_daily = close_daily.iloc[:, 0]
+        close_daily = close_daily.dropna()
+        if len(close_daily) < 20:
+            return None
+
+        latest_price = close_daily.iloc[-1]
         if latest_price <= 0:
             return None
-        
-        # Calculate performance over AI_ELITE_FORWARD_DAYS (main feature for AI Elite)
-        from config import AI_ELITE_FORWARD_DAYS
-        
-        # For hourly data: AI_ELITE_FORWARD_DAYS * 24 hours
-        lookback_forward = min(AI_ELITE_FORWARD_DAYS * 24, n_prices - 1)
-        min_lookback = AI_ELITE_INTRADAY_LOOKBACK * 24  # Minimum from config
-        
-        if lookback_forward < min_lookback:
-            return None
-        price_forward_ago = close_prices.iloc[-lookback_forward]
-        if price_forward_ago <= 0:
-            return None
-        
-        # Feature 1: Performance over AI_ELITE_FORWARD_DAYS (main momentum feature)
-        perf_forward = ((latest_price - price_forward_ago) / price_forward_ago) * 100
-        
-        # Feature 2: Volatility (annualized from 1-hour data)
-        returns = close_prices.pct_change().dropna()
-        
-        # 24 hours/day * 252 trading days/year = 6048 hours/year
-        min_returns = AI_ELITE_INTRADAY_LOOKBACK * 24  # 10 days * 24 hours = 240
-        if len(returns) < min_returns:
-            return None
-        volatility = returns.std() * (6048 ** 0.5) * 100  # Annualized hourly volatility
-        
-        # REAL INTRADAY INTELLIGENCE: Time-of-day patterns (1-hour data)
-        if len(ticker_data) >= 240:  # Need 10 days of hourly data
+
+        def _perf(days):
+            idx = min(days, len(close_daily) - 1)
+            p = close_daily.iloc[-idx]
+            return ((latest_price - p) / p * 100) if p > 0 else 0.0
+
+        perf_3m  = _perf(63)
+        perf_6m  = _perf(126)
+        perf_1y  = _perf(252)
+
+        # Annualised daily volatility (252 trading days)
+        daily_returns = close_daily.pct_change().dropna()
+        volatility_daily = daily_returns.std() * (252 ** 0.5) * 100 if len(daily_returns) >= 10 else 0.0
+        daily_vol_pct = daily_returns.std() * 100 if len(daily_returns) >= 10 else 0.0
+
+        # Average volume (daily)
+        avg_volume = daily_filtered['Volume'].tail(30).mean() if 'Volume' in daily_filtered.columns else 0.0
+
+        # Volume ratio: recent 20d avg vs prior historical avg (rising volume = conviction)
+        volume_ratio = 1.0
+        if 'Volume' in daily_filtered.columns:
+            vol_series = daily_filtered['Volume'].dropna()
+            if len(vol_series) >= 40:
+                recent_vol = vol_series.tail(20).mean()
+                prior_vol = vol_series.iloc[:-20].mean()
+                if prior_vol > 0:
+                    volume_ratio = recent_vol / prior_vol
+
+        # Risk-Adj Mom core signal: return / sqrt(daily_vol_pct)
+        risk_adj_score = perf_1y / (daily_vol_pct ** 0.5 + 0.001) if daily_vol_pct > 0 else 0.0
+
+        # Elite Hybrid dip signal: strong 1Y but weak 3M
+        dip_score = perf_1y - perf_3m
+
+        # Momentum acceleration: recent 3M vs prior 3M (6M - 3M)
+        mom_accel = perf_3m - perf_6m
+
+        # Volatility sweet-spot: 1 if annualised vol is 20-40% (Elite Hybrid bonus zone)
+        vol_sweet_spot = 1.0 if 20.0 <= volatility_daily <= 40.0 else 0.0
+
+        # RSI-14: Relative Strength Index (overbought >70, oversold <30)
+        rsi_14 = 50.0  # neutral default
+        if len(daily_returns) >= 14:
+            gains = daily_returns.clip(lower=0)
+            losses = (-daily_returns).clip(lower=0)
+            avg_gain = gains.tail(14).mean()
+            avg_loss = losses.tail(14).mean()
+            if avg_loss > 0:
+                rs = avg_gain / avg_loss
+                rsi_14 = 100.0 - (100.0 / (1.0 + rs))
+            elif avg_gain > 0:
+                rsi_14 = 100.0  # no losses = max RSI
+
+        # ------------------------------------------------------------------ #
+        # INTRADAY FEATURES  (overnight gap, intraday range, last-hour mom)   #
+        # ------------------------------------------------------------------ #
+        avg_gap = 0.0
+        avg_intraday_range = 0.0
+        avg_last_hour_momentum = 0.0
+
+        if hourly_data is not None and len(hourly_data) >= AI_ELITE_INTRADAY_LOOKBACK * 24:
             try:
-                # Get recent 10 days of hourly data
-                recent_data = ticker_data.tail(240)
-                
-                # Feature 1: Overnight Gap Behavior
-                # Compare first hour of each day vs last hour of previous day
-                # Positive gap = stock gaps up overnight (bullish)
-                daily_opens = recent_data.iloc[::24]['Close'].values  # First hour of each day
-                daily_closes = recent_data.iloc[23::24]['Close'].values  # Last hour of each day
-                if len(daily_opens) > 1 and len(daily_closes) > 1:
-                    # Align arrays (opens[1:] vs closes[:-1])
-                    gaps = (daily_opens[1:] - daily_closes[:-1]) / daily_closes[:-1] * 100
-                    avg_gap = gaps.mean() if len(gaps) > 0 else 0
+                if hourly_data.index.duplicated().any():
+                    hourly_data = hourly_data[~hourly_data.index.duplicated(keep='last')]
+                if hourly_data.index.tz is None:
+                    hourly_data = hourly_data.copy()
+                    hourly_data.index = hourly_data.index.tz_localize('UTC')
                 else:
-                    avg_gap = 0
-                
-                # Feature 2: Intraday Volatility Pattern
-                # High intraday volatility = more trading opportunity
-                # Calculate average intraday range (high-low within each day)
-                intraday_ranges = []
-                for day_start in range(0, len(recent_data) - 24, 24):
-                    day_data = recent_data.iloc[day_start:day_start+24]
-                    if len(day_data) >= 24:
-                        day_high = day_data['High'].max()
-                        day_low = day_data['Low'].min()
-                        day_open = day_data['Open'].iloc[0]
-                        if day_open > 0:
-                            intraday_range = (day_high - day_low) / day_open * 100
-                            intraday_ranges.append(intraday_range)
-                
-                avg_intraday_range = sum(intraday_ranges) / len(intraday_ranges) if intraday_ranges else 0
-                
-                # Feature 3: Last Hour Momentum
-                # Does stock rally or fade in the last hour of trading?
-                # Positive = tends to rally into close (institutional accumulation)
-                last_hour_moves = []
-                for day_start in range(0, len(recent_data) - 24, 24):
-                    day_data = recent_data.iloc[day_start:day_start+24]
-                    if len(day_data) >= 24:
-                        second_last_hour = day_data['Close'].iloc[-2]
-                        last_hour = day_data['Close'].iloc[-1]
-                        if second_last_hour > 0:
-                            last_hour_move = (last_hour - second_last_hour) / second_last_hour * 100
-                            last_hour_moves.append(last_hour_move)
-                
-                avg_last_hour_momentum = sum(last_hour_moves) / len(last_hour_moves) if last_hour_moves else 0
-                
-            except Exception as e:
-                avg_gap = 0
-                avg_intraday_range = 0
-                avg_last_hour_momentum = 0
-        else:
-            avg_gap = 0
-            avg_intraday_range = 0
-            avg_last_hour_momentum = 0
-        
-        # Average volume
-        avg_volume = ticker_data['Volume'].tail(min(30, len(ticker_data))).mean() if 'Volume' in ticker_data.columns else 0
-        
+                    hourly_data = hourly_data.copy()
+                    hourly_data.index = hourly_data.index.tz_convert('UTC')
+
+                recent_h = hourly_data[hourly_data.index <= current_ts].tail(AI_ELITE_INTRADAY_LOOKBACK * 24)
+
+                if len(recent_h) >= AI_ELITE_INTRADAY_LOOKBACK * 24:
+                    # Overnight gap
+                    daily_opens_h  = recent_h.iloc[::24]['Close'].values
+                    daily_closes_h = recent_h.iloc[23::24]['Close'].values
+                    min_len = min(len(daily_opens_h), len(daily_closes_h))
+                    if min_len > 1:
+                        gaps = (daily_opens_h[1:min_len] - daily_closes_h[:min_len-1]) / daily_closes_h[:min_len-1] * 100
+                        avg_gap = float(gaps.mean()) if len(gaps) > 0 else 0.0
+
+                    # Intraday range
+                    ranges = []
+                    for ds in range(0, len(recent_h) - 24, 24):
+                        day = recent_h.iloc[ds:ds+24]
+                        if len(day) >= 24 and day['Open'].iloc[0] > 0:
+                            ranges.append((day['High'].max() - day['Low'].min()) / day['Open'].iloc[0] * 100)
+                    avg_intraday_range = float(np.mean(ranges)) if ranges else 0.0
+
+                    # Last-hour momentum
+                    lh_moves = []
+                    for ds in range(0, len(recent_h) - 24, 24):
+                        day = recent_h.iloc[ds:ds+24]
+                        if len(day) >= 24 and day['Close'].iloc[-2] > 0:
+                            lh_moves.append((day['Close'].iloc[-1] - day['Close'].iloc[-2]) / day['Close'].iloc[-2] * 100)
+                    avg_last_hour_momentum = float(np.mean(lh_moves)) if lh_moves else 0.0
+
+            except Exception:
+                pass  # intraday features stay 0
+
         return {
-            'perf_forward': perf_forward,  # Performance over AI_ELITE_FORWARD_DAYS
-            'volatility': volatility,
-            'avg_volume': avg_volume,
-            'overnight_gap': avg_gap,  # Overnight gap behavior (intraday)
-            'intraday_range': avg_intraday_range,  # Intraday volatility (intraday)
-            'last_hour_momentum': avg_last_hour_momentum  # Last hour rally/fade (intraday)
+            'perf_3m':               perf_3m,
+            'perf_6m':               perf_6m,
+            'perf_1y':               perf_1y,
+            'volatility':            volatility_daily,
+            'avg_volume':            avg_volume,
+            'overnight_gap':         avg_gap,
+            'intraday_range':        avg_intraday_range,
+            'last_hour_momentum':    avg_last_hour_momentum,
+            'risk_adj_score':        risk_adj_score,
+            'dip_score':             dip_score,
+            'mom_accel':             mom_accel,
+            'vol_sweet_spot':        vol_sweet_spot,
+            'volume_ratio':          volume_ratio,
+            'rsi_14':                rsi_14,
         }
-        
+
     except Exception as e:
         if not hasattr(_extract_features, '_err_logged') or _extract_features._err_logged < 3:
             print(f"   ❌ FEAT EXCEPTION {ticker}: {type(e).__name__}: {e}")
@@ -358,7 +354,7 @@ def _load_hourly_data_direct(ticker: str, start: datetime, end: datetime) -> Opt
         end_utc = _to_utc(end)
         result = cached_df.loc[(cached_df.index >= start_utc) & (cached_df.index <= end_utc)].copy()
         
-        if len(result) >= 240:  # Need at least 10 days of hourly data
+        if len(result) >= 120:  # Need at least 20 trading days of hourly data (~6 hours/day)
             return result
         
         return None
@@ -490,14 +486,16 @@ def _load_or_create_model(model_path: Optional[str] = None):
                                 # Label: 1 if stock went up > 5% in next 20 days
                                 label = 1 if actual_return > 0.05 else 0
                                 
-                                # Create feature vector with REAL intraday intelligence (6 features)
+                                # Create feature vector (8 features: 5 daily + 3 intraday)
                                 feature_vector = [
-                                    features['perf_forward'],  # Performance over AI_ELITE_FORWARD_DAYS
+                                    features.get('perf_3m', 0),
+                                    features.get('perf_6m', 0),
+                                    features.get('perf_1y', 0),
                                     features['volatility'],
                                     features['avg_volume'],
-                                    features.get('overnight_gap', 0),  # Overnight gap behavior
-                                    features.get('intraday_range', 0),  # Intraday volatility
-                                    features.get('last_hour_momentum', 0)  # Last hour momentum
+                                    features.get('overnight_gap', 0),
+                                    features.get('intraday_range', 0),
+                                    features.get('last_hour_momentum', 0)
                                 ]
                                 
                                 X_real.append(feature_vector)
@@ -532,25 +530,23 @@ def _load_or_create_model(model_path: Optional[str] = None):
             y_enhanced = []
             
             for i in range(n_samples):
-                # Realistic ranges based on actual market data
-                perf_forward = np.random.normal(5, 15)  # Performance over AI_ELITE_FORWARD_DAYS
-                volatility = np.random.normal(30, 15)  # Typical volatility range
-                volume = np.random.lognormal(14, 1)  # Log-normal volume distribution
+                perf_3m  = np.random.normal(5, 15)
+                perf_6m  = np.random.normal(10, 20)
+                perf_1y  = np.random.normal(15, 30)
+                volatility = np.random.normal(30, 15)
+                volume = np.random.lognormal(14, 1)
+                overnight_gap = np.random.normal(0.2, 1.5)
+                intraday_range = np.random.normal(3.0, 2.0)
+                last_hour_momentum = np.random.normal(0.1, 0.5)
                 
-                # REAL intraday intelligence features
-                overnight_gap = np.random.normal(0.2, 1.5)  # Overnight gap behavior
-                intraday_range = np.random.normal(3.0, 2.0)  # Intraday volatility (% range)
-                last_hour_momentum = np.random.normal(0.1, 0.5)  # Last hour rally/fade
+                success_prob = 0.3 + 0.3 * (1 / (1 + np.exp(-perf_6m/10)))
+                success_prob += 0.05 * (1 / (1 + np.exp(-overnight_gap)))
+                success_prob += 0.05 * (1 / (1 + np.exp(-last_hour_momentum*10)))
+                success_prob = min(success_prob, 0.9)
                 
-                # Success probability based on forward performance + real intraday
-                success_prob = 0.3 + 0.4 * (1 / (1 + np.exp(-perf_forward/10)))  # Sigmoid on forward perf
-                success_prob += 0.05 * (1 / (1 + np.exp(-overnight_gap)))  # Bonus for positive gaps
-                success_prob += 0.05 * (1 / (1 + np.exp(-last_hour_momentum*10)))  # Bonus for last hour strength
-                success_prob = min(success_prob, 0.9)  # Cap at 90%
-                
-                # Feature vector with REAL intraday intelligence (6 features)
+                # Feature vector (8 features: 5 daily + 3 intraday)
                 features = [
-                    perf_forward, volatility, volume,
+                    perf_3m, perf_6m, perf_1y, volatility, volume,
                     overnight_gap, intraday_range, last_hour_momentum
                 ]
                 
@@ -580,25 +576,6 @@ def _load_or_create_model(model_path: Optional[str] = None):
         print(f"   ⚠️ AI Elite: Failed to create model: {e}")
         return None
 
-
-def _fallback_scoring(candidates_df: pd.DataFrame) -> np.ndarray:
-    """
-    Fallback scoring when ML model is not available.
-    Uses simplified performance/volatility ratio with intraday bonuses.
-    """
-    # Base score: performance / volatility
-    base_score = candidates_df['perf_forward'] / (candidates_df['volatility'] + 1)
-    
-    # Bonus for positive overnight gaps (bullish)
-    gap_bonus = np.where(candidates_df['overnight_gap'] > 0, 1.1, 1.0)
-    
-    # Bonus for positive last hour momentum (institutional accumulation)
-    last_hour_bonus = np.where(candidates_df['last_hour_momentum'] > 0, 1.05, 1.0)
-    
-    # Combined score with intraday intelligence
-    scores = base_score * gap_bonus * last_hour_bonus
-    
-    return scores
 
 
 def train_ai_elite_model(
@@ -651,13 +628,16 @@ def train_ai_elite_model(
     
     # Collect training samples
     training_data = []
+
+    from config import AI_ELITE_INTRADAY_LOOKBACK
+    hourly_cache: Dict[str, Optional[pd.DataFrame]] = {}
     
-    # Sample dates from training period (every 5 days to reduce computation)
+    # Sample dates from training period (every 2 days for more samples)
     current_date = train_start_date
     sample_dates = []
     while current_date <= train_end_date:
         sample_dates.append(current_date)
-        current_date += timedelta(days=5)
+        current_date += timedelta(days=2)
     
     print(f"   📊 AI Elite: Sampling {len(sample_dates)} dates for training...")
     print(f"   📊 AI Elite: Sample dates: {[d.date() for d in sample_dates]}")
@@ -666,50 +646,74 @@ def train_ai_elite_model(
     features_none_count = 0
     forward_none_count = 0
     
+    # Pre-calculate market returns for all sample dates
+    market_returns = {}
+    print(f"   📊 AI Elite: Calculating market returns for relative labeling...")
+    for sample_date in sample_dates:
+        market_ret = _calculate_market_return(ticker_data_grouped, sample_date, forward_days)
+        market_returns[sample_date] = market_ret
+    
     for sample_date in sample_dates:
         # Extract features for all tickers on this date
         for ticker in all_tickers:
             try:
                 if ticker not in ticker_data_grouped:
                     continue
-                
-                ticker_data = ticker_data_grouped[ticker]
-                if len(ticker_data) == 0:
+
+                # Daily data (always available)
+                daily_data = ticker_data_grouped[ticker]
+                if daily_data is None or len(daily_data) == 0:
                     continue
-                
+
+                # Hourly data (optional - load once per ticker into cache)
+                if ticker not in hourly_cache:
+                    load_start = train_start_date - timedelta(days=AI_ELITE_INTRADAY_LOOKBACK + 5)
+                    load_end = train_end_date + timedelta(days=forward_days + 2)
+                    hourly_cache[ticker] = _load_hourly_data_direct(ticker, load_start, load_end)
+                hourly_data = hourly_cache[ticker]
+
                 # Debug first few tickers on first sample date
                 if debug_count < 3 and sample_date == sample_dates[0]:
-                    print(f"   🔍 TRAIN DEBUG {ticker}: index.tz={ticker_data.index.tz}, "
-                          f"cols={list(ticker_data.columns[:5])}, shape={ticker_data.shape}, "
-                          f"sample_date={sample_date}, sample_date.tz={sample_date.tzinfo}")
-                
-                # Extract features (uses adaptive lookback, min 60 days)
-                features = _extract_features(ticker, ticker_data, sample_date)
+                    has_h = hourly_data is not None and len(hourly_data) > 0
+                    print(f"   🔍 TRAIN DEBUG {ticker}: daily={len(daily_data)} rows, hourly={'yes' if has_h else 'no'}")
+                    debug_count += 1
+
+                # Extract features using both data sources
+                features = _extract_features(ticker, hourly_data, sample_date, daily_data=daily_data)
                 if features is None:
-                    if debug_count < 3 and sample_date == sample_dates[0]:
-                        print(f"   🔍 TRAIN DEBUG {ticker}: _extract_features returned None")
-                        debug_count += 1
                     features_none_count += 1
                     continue
                 
-                # Calculate forward return (label)
+                # Calculate forward return from daily data (label)
                 forward_return = _calculate_forward_return(
-                    ticker_data, sample_date, forward_days
+                    daily_data, sample_date, forward_days
                 )
                 if forward_return is None:
                     forward_none_count += 1
                     continue
                 
-                # Store training sample (label will be assigned after collecting all samples)
+                # Get market return for this sample date
+                market_return = market_returns.get(sample_date, 0.0)
+                
+                # Store training sample
                 training_data.append({
-                    'perf_forward': features['perf_forward'],
-                    'volatility': features['volatility'],
-                    'avg_volume': features['avg_volume'],
-                    'overnight_gap': features.get('overnight_gap', 0),
-                    'intraday_range': features.get('intraday_range', 0),
+                    'perf_3m':            features['perf_3m'],
+                    'perf_6m':            features['perf_6m'],
+                    'perf_1y':            features['perf_1y'],
+                    'volatility':         features['volatility'],
+                    'avg_volume':         features['avg_volume'],
+                    'overnight_gap':      features.get('overnight_gap', 0),
+                    'intraday_range':     features.get('intraday_range', 0),
                     'last_hour_momentum': features.get('last_hour_momentum', 0),
-                    'forward_return': forward_return,
-                    'sample_date': sample_date
+                    'risk_adj_score':     features.get('risk_adj_score', 0),
+                    'dip_score':          features.get('dip_score', 0),
+                    'mom_accel':          features.get('mom_accel', 0),
+                    'vol_sweet_spot':     features.get('vol_sweet_spot', 0),
+                    'volume_ratio':       features.get('volume_ratio', 1.0),
+                    'rsi_14':             features.get('rsi_14', 50.0),
+                    'forward_return':     forward_return,
+                    'market_return':      market_return,
+                    'sample_date':        sample_date
                 })
                 
             except Exception as e:
@@ -727,77 +731,171 @@ def train_ai_elite_model(
     
     print(f"   📈 AI Elite: Collected {len(train_df)} training samples")
     
-    # Assign labels based on absolute returns (making money focus)
-    # Positive returns = 1, Negative returns = 0
-    train_df['label'] = (train_df['forward_return'] > 0).astype(int)
+    # Assign labels based on relative performance vs market
+    # Stock beats market = 1, underperforms market = 0
+    train_df['excess_return'] = train_df['forward_return'] - train_df['market_return']
+    train_df['label'] = (train_df['excess_return'] > 0).astype(int)
     
     # Remove stocks with minimal returns (to avoid noise)
     min_return_threshold = 0.5  # 0.5% minimum return
     train_df = train_df[abs(train_df['forward_return']) >= min_return_threshold]
     
-    print(f"   📊 AI Elite: Using absolute returns labeling")
-    print(f"   📊 AI Elite: Positive returns: {train_df['label'].sum()} ({train_df['label'].mean()*100:.1f}%)")
-    print(f"   📊 AI Elite: Average return: {train_df['forward_return'].mean():.2f}%")
+    print(f"   📊 AI Elite: Using relative performance labeling (vs market)")
+    print(f"   📊 AI Elite: Market-beating: {train_df['label'].sum()} ({train_df['label'].mean()*100:.1f}%)")
+    print(f"   📊 AI Elite: Average stock return: {train_df['forward_return'].mean():.2f}%")
+    print(f"   📊 AI Elite: Average market return: {train_df['market_return'].mean():.2f}%")
+    print(f"   📊 AI Elite: Average excess return: {train_df['excess_return'].mean():.2f}%")
     print(f"   📊 AI Elite: Training on {len(train_df)} samples")
     
-    # Use new 6-feature model with real intraday intelligence
-    print(f"   📊 AI Elite: Using 6 features with intraday intelligence")
+    print(f"   📊 AI Elite: Using 14 features (5 daily + 3 intraday + 6 derived)")
     
     # Prepare features and labels
-    feature_cols = ['perf_forward', 'volatility', 'avg_volume', 
-                    'overnight_gap', 'intraday_range', 'last_hour_momentum']
+    feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
+                    'overnight_gap', 'intraday_range', 'last_hour_momentum',
+                    'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
+                    'volume_ratio', 'rsi_14']
     X = train_df[feature_cols].values
     y = train_df['label'].values
     
-    # Train model
+    # Build candidate models
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import cross_val_score
+    from sklearn.preprocessing import StandardScaler
+    import warnings
+
+    candidates = {}
+
     if xgb_available:
-        # Use XGBoost for GPU acceleration
         device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
-        model = xgb.XGBClassifier(
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.1,
-            subsample=0.8,
+        candidates['XGBoost'] = xgb.XGBClassifier(
+            n_estimators=100, 
+            max_depth=3,              # Reduce from 4 to 3
+            learning_rate=0.05,       # Reduce from 0.1 to 0.05
+            subsample=0.7,            # Reduce from 0.8 to 0.7
+            colsample_bytree=0.7,      # Add column sampling
+            reg_alpha=0.1,            # Add L1 regularization
+            reg_lambda=0.1,           # Add L2 regularization
             random_state=42,
-            tree_method='hist' if device == 'cuda' else 'hist',
-            device=device,
-            verbosity=0,
-            n_jobs=1  # Prevent multiprocessing conflicts
+            tree_method='hist', 
+            device=device, 
+            verbosity=0, 
+            n_jobs=1
         )
-    else:
-        # Fallback to sklearn
-        model = GradientBoostingClassifier(
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.1,
-            subsample=0.8,
-            random_state=42,
-            verbose=0
+
+    candidates['GradientBoosting'] = GradientBoostingClassifier(
+        n_estimators=100, max_depth=4, learning_rate=0.1,
+        subsample=0.8, random_state=42, verbose=0
+    )
+    candidates['RandomForest'] = RandomForestClassifier(
+        n_estimators=100, max_depth=6, random_state=42, n_jobs=1
+    )
+
+    # Logistic Regression needs scaled features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    candidates['LogisticRegression'] = LogisticRegression(
+        max_iter=500, random_state=42, n_jobs=1
+    )
+
+    # Cross-validate each model and pick the best
+    best_model = None
+    best_name = None
+    best_score = -1.0
+    cv_folds = min(3, len(np.unique(y)))  # at least 3-fold, but respect class count
+
+    print(f"   🏆 AI Elite: Selecting best model via {cv_folds}-fold cross-validation...")
+    for name, m in candidates.items():
+        try:
+            X_input = X_scaled if name == 'LogisticRegression' else X
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                scores = cross_val_score(m, X_input, y, cv=cv_folds, scoring='accuracy', n_jobs=1)
+            mean_score = scores.mean()
+            print(f"      {name}: CV accuracy = {mean_score*100:.1f}%")
+            if mean_score > best_score:
+                best_score = mean_score
+                best_name = name
+                best_model = m
+        except Exception as e:
+            print(f"      {name}: failed ({e})")
+
+    if best_model is None:
+        print(f"   ⚠️ AI Elite: All models failed CV, falling back to GradientBoosting")
+        best_model = GradientBoostingClassifier(
+            n_estimators=100, max_depth=4, learning_rate=0.1,
+            subsample=0.8, random_state=42, verbose=0
         )
-    
-    model.fit(X, y)
-    
-    # Calculate training accuracy
-    train_accuracy = model.score(X, y)
-    print(f"   ✅ AI Elite: Model trained! Accuracy: {train_accuracy*100:.1f}%")
-    
-    # Show feature importances
-    importances = model.feature_importances_
-    for i, col in enumerate(feature_cols):
-        print(f"      {col}: {importances[i]:.3f}")
+        best_name = 'GradientBoosting'
+
+    print(f"   ✅ AI Elite: Best model = {best_name} (CV accuracy {best_score*100:.1f}%)")
+
+    # Fit best model on full training data
+    X_input = X_scaled if best_name == 'LogisticRegression' else X
+    best_model.fit(X_input, y)
+    train_accuracy = best_model.score(X_input, y)
+    print(f"   ✅ AI Elite: Final model trained! Train accuracy: {train_accuracy*100:.1f}%")
+
+    # Show feature importances (tree models only)
+    if hasattr(best_model, 'feature_importances_'):
+        importances = best_model.feature_importances_
+        sorted_feats = sorted(zip(feature_cols, importances), key=lambda x: x[1], reverse=True)
+        print(f"   📊 AI Elite: Top features:")
+        for col, imp in sorted_feats[:5]:
+            print(f"      {col}: {imp:.3f}")
+
+    # Wrap LogisticRegression with scaler so predict_proba works on raw X
+    if best_name == 'LogisticRegression':
+        from sklearn.pipeline import Pipeline
+        best_model = Pipeline([('scaler', scaler), ('clf', best_model)])
+        best_model.fit(X, y)  # refit pipeline on raw X
+
+    # Save model if path provided
+    if save_path:
+        try:
+            import os
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            with open(save_path, 'wb') as f:
+                pickle.dump(best_model, f)
+            print(f"   💾 AI Elite: Model saved to {save_path}")
+        except Exception as e:
+            print(f"   ⚠️ AI Elite: Failed to save model: {e}")
+
+    return best_model
+
+
+def _calculate_market_return(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    forward_days: int,
+    market_ticker: str = 'SPY'  # Use SPY as market proxy
+) -> Optional[float]:
+    """
+    Calculate market return for the same period.
+    Uses SPY as market proxy, falls back to equal-weighted average of available stocks.
+    """
+    try:
+        # Try SPY first
+        if market_ticker in ticker_data_grouped:
+            market_data = ticker_data_grouped[market_ticker]
+            market_return = _calculate_forward_return(market_data, current_date, forward_days)
+            if market_return is not None:
+                return market_return
         
-        # Save model if path provided
-        if save_path:
-            try:
-                import os
-                os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                with open(save_path, 'wb') as f:
-                    pickle.dump(model, f)
-                print(f"   💾 AI Elite: Model saved to {save_path}")
-            except Exception as e:
-                print(f"   ⚠️ AI Elite: Failed to save model: {e}")
+        # Fallback: equal-weighted average of all available stocks
+        returns = []
+        for ticker, data in ticker_data_grouped.items():
+            if len(data) > 0:
+                ret = _calculate_forward_return(data, current_date, forward_days)
+                if ret is not None:
+                    returns.append(ret)
         
-        return model
+        if returns:
+            return np.mean(returns)
+        return None
+        
+    except Exception:
+        return None
 
 
 def _calculate_forward_return(
