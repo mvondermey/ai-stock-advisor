@@ -115,7 +115,6 @@ enhanced_volatility_transaction_costs = 0
 correlation_ensemble_transaction_costs = 0
 dynamic_pool_transaction_costs = 0
 sentiment_ensemble_transaction_costs = 0
-elite_hybrid_sentiment_transaction_costs = 0
 voting_ensemble_transaction_costs = 0
 momentum_volatility_hybrid_transaction_costs = 0
 momentum_volatility_hybrid_6m_transaction_costs = 0
@@ -1711,7 +1710,6 @@ def _run_portfolio_backtest_walk_forward(
     correlation_ensemble_transaction_costs = 0.0
     dynamic_pool_transaction_costs = 0.0
     sentiment_ensemble_transaction_costs = 0.0
-    elite_hybrid_sentiment_transaction_costs = 0.0
     voting_ensemble_transaction_costs = 0.0
     mom_accel_transaction_costs = 0.0
     concentrated_3m_transaction_costs = 0.0
@@ -1765,7 +1763,6 @@ def _run_portfolio_backtest_walk_forward(
     correlation_ensemble_cash_deployed = 0.0
     dynamic_pool_cash_deployed = 0.0
     sentiment_ensemble_cash_deployed = 0.0
-    elite_hybrid_sentiment_cash_deployed = 0.0
     ai_classification_cash_deployed = 0.0
     ai_classification_transaction_costs = 0.0
 
@@ -6534,7 +6531,6 @@ def _run_portfolio_backtest_walk_forward(
             'correlation_ensemble':     _strat(correlation_ensemble_portfolio_value, correlation_ensemble_portfolio_history, correlation_ensemble_transaction_costs, correlation_ensemble_cash_deployed),
             'dynamic_pool':             _strat(dynamic_pool_portfolio_value, dynamic_pool_portfolio_history, dynamic_pool_transaction_costs, dynamic_pool_cash_deployed),
             'sentiment_ensemble':       _strat(sentiment_ensemble_portfolio_value, sentiment_ensemble_portfolio_history, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash_deployed),
-            'elite_hybrid_sentiment':   _strat(elite_hybrid_sentiment_portfolio_value, elite_hybrid_sentiment_portfolio_history, elite_hybrid_sentiment_transaction_costs, elite_hybrid_sentiment_cash_deployed),
             'voting_ensemble':          _strat(voting_ensemble_portfolio_value, voting_ensemble_portfolio_history, voting_ensemble_transaction_costs, voting_ensemble_cash),
             'mom_accel':                _strat(mom_accel_portfolio_value, mom_accel_portfolio_history, mom_accel_transaction_costs, mom_accel_cash),
             'concentrated_3m':          _strat(concentrated_3m_portfolio_value, concentrated_3m_portfolio_history, concentrated_3m_transaction_costs, concentrated_3m_cash),

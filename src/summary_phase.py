@@ -159,8 +159,6 @@ def print_final_summary(
     dynamic_pool_1y_return: float = None,
     final_sentiment_ensemble_value_1y: float = None,
     sentiment_ensemble_1y_return: float = None,
-    final_elite_hybrid_sentiment_value_1y: float = None,
-    elite_hybrid_sentiment_1y_return: float = None,
     final_voting_ensemble_value_1y: float = None,
     voting_ensemble_1y_return: float = None,
     final_ai_classification_value_1y: float = None,
@@ -172,7 +170,6 @@ def print_final_summary(
     correlation_ensemble_transaction_costs: float = None,
     dynamic_pool_transaction_costs: float = None,
     sentiment_ensemble_transaction_costs: float = None,
-    elite_hybrid_sentiment_transaction_costs: float = None,
     voting_ensemble_transaction_costs: float = None,
     ai_classification_transaction_costs: float = None,
     adaptive_ensemble_cash_deployed: float = None,
@@ -182,7 +179,6 @@ def print_final_summary(
     correlation_ensemble_cash_deployed: float = None,
     dynamic_pool_cash_deployed: float = None,
     sentiment_ensemble_cash_deployed: float = None,
-    elite_hybrid_sentiment_cash_deployed: float = None,
     voting_ensemble_cash_deployed: float = None,
     ai_classification_cash_deployed: float = None,
     # Rebalance horizon optimization results
@@ -313,7 +309,6 @@ def print_final_summary(
     strategies_data.append(('Correlation Ensemble', final_correlation_ensemble_value_1y, correlation_ensemble_1y_return, correlation_ensemble_transaction_costs, correlation_ensemble_cash_deployed))
     strategies_data.append(('Dynamic Pool', final_dynamic_pool_value_1y, dynamic_pool_1y_return, dynamic_pool_transaction_costs, dynamic_pool_cash_deployed))
     strategies_data.append(('Sentiment Ensemble', final_sentiment_ensemble_value_1y, sentiment_ensemble_1y_return, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash_deployed))
-    strategies_data.append(('Elite Hybrid Sentiment', final_elite_hybrid_sentiment_value_1y, elite_hybrid_sentiment_1y_return, elite_hybrid_sentiment_transaction_costs, elite_hybrid_sentiment_cash_deployed))
     strategies_data.append(('Voting Ensemble', final_voting_ensemble_value_1y, voting_ensemble_1y_return, voting_ensemble_transaction_costs, voting_ensemble_cash_deployed))
     strategies_data.append(('Mom Acceleration', final_mom_accel_value_1y, mom_accel_1y_return, mom_accel_transaction_costs, mom_accel_cash_deployed))
     strategies_data.append(('Concentrated 3M', final_concentrated_3m_value_1y, concentrated_3m_1y_return, concentrated_3m_transaction_costs, concentrated_3m_cash_deployed))

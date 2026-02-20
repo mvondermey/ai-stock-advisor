@@ -188,6 +188,10 @@ from io import StringIO
 from multiprocessing import Pool, cpu_count, current_process
 import joblib # Added for model saving/loading
 import warnings # Added for warning suppression
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = lambda x, **kwargs: x  # Fallback: no progress bar
 from data_utils import (
     load_prices, fetch_training_data, load_prices_robust, _ensure_dir, 
     _download_batch_robust, _fetch_financial_data, _fetch_financial_data_from_alpaca,
@@ -225,7 +229,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import yfinance as yf
-from tqdm import tqdm
 from datetime import datetime, timedelta, timezone
 
 # Optional Stooq provider
@@ -516,70 +519,13 @@ def main(
         print(" No tickers found from market selection. Aborting.")
         return (None,) * 15
 
-    # Determine cache start date - ALWAYS use maximum range regardless of backtest settings
-    # This ensures consistent data availability and eliminates backtest parameter dependency
-    MAX_LOOKBACK_DAYS = 730  # 2 years of historical data for all possible analysis needs (calendar days)
+    # Use shared data loading function (same for backtesting and live trading)
+    print(f"🚀 Step 1: Loading market data...")
+    from data_utils import load_all_market_data
+    all_tickers_data = load_all_market_data(all_available_tickers, end_date=today_for_data_fetch)
     
-    # For intraday data, Yahoo Finance only allows the last 730 days from today
-    # No buffer allowed - must stay within 730 days
-    if DATA_INTERVAL in ['1h', '30m', '15m', '5m', '1m']:
-        print(f"🕰️ Intraday data detected ({DATA_INTERVAL}): Limited to 729 days due to Yahoo Finance API restriction")
-        MAX_LOOKBACK_CALENDAR_DAYS = 729  # Stay within Yahoo's 730-day limit
-    else:
-        # Use calendar days directly - Yahoo Finance will handle market holidays automatically
-        MAX_LOOKBACK_CALENDAR_DAYS = MAX_LOOKBACK_DAYS + 60  # Add buffer for weekends/holidays
-    
-    # Fixed cache range that covers all possible scenarios
-    cache_start_date = today_for_data_fetch - timedelta(days=MAX_LOOKBACK_CALENDAR_DAYS)
-    actual_start_date = cache_start_date
-
-    days_back = (today_for_data_fetch - cache_start_date).days
-    print(f"🚀 Step 1: Batch downloading data for {len(all_available_tickers)} tickers from {cache_start_date.date()} to {today_for_data_fetch.date()}...")
-    print(f"  (Requesting {days_back} days of data - fixed maximum range for consistency)")
-
-    all_tickers_data_list = []
-    
-    # Add progress bar for batch downloads
-    try:
-        from tqdm import tqdm
-        batch_iterator = range(0, len(all_available_tickers), BATCH_DOWNLOAD_SIZE)
-        batch_iterator = tqdm(batch_iterator, desc="  [INFO] Downloading batches", ncols=100)
-    except ImportError:
-        batch_iterator = range(0, len(all_available_tickers), BATCH_DOWNLOAD_SIZE)
-        print("  [INFO] Note: Install tqdm for progress bars: pip install tqdm")
-    
-    for i in batch_iterator:
-        batch = all_available_tickers[i:i + BATCH_DOWNLOAD_SIZE]
-        batch_num = i//BATCH_DOWNLOAD_SIZE + 1
-        total_batches = (len(all_available_tickers) + BATCH_DOWNLOAD_SIZE - 1)//BATCH_DOWNLOAD_SIZE
-        print(f"  - Batch {batch_num}/{total_batches}: {len(batch)} tickers")
-        batch_data = _download_batch_robust(batch, start=cache_start_date, end=today_for_data_fetch)
-        if not batch_data.empty:
-            # Filter to only the date range we actually need for analysis
-            # Keep the expanded range in cache for future use
-
-            # Ensure date column is timezone-aware for proper comparison
-            if 'date' in batch_data.columns:
-                batch_data['date'] = pd.to_datetime(batch_data['date'], utc=True)
-
-            filtered_batch_data = batch_data[
-                (batch_data['date'] >= _to_utc(actual_start_date)) &
-                (batch_data['date'] <= _to_utc(today_for_data_fetch))
-            ]
-            if not filtered_batch_data.empty:
-                all_tickers_data_list.append(filtered_batch_data)
-        if i + BATCH_DOWNLOAD_SIZE < len(all_available_tickers):
-            print(f"  - Pausing for {PAUSE_BETWEEN_BATCHES} seconds before next batch...")
-            time.sleep(PAUSE_BETWEEN_BATCHES)
-
-    if not all_tickers_data_list:
-        print("❌ Comprehensive batch download failed. Aborting.")
-        return (None,) * 15
-
-    all_tickers_data = pd.concat(all_tickers_data_list, axis=0)
-
     if all_tickers_data.empty:
-        print("❌ Comprehensive batch download failed. Aborting.")
+        print("❌ Data loading failed. Aborting.")
         return (None,) * 15
     
     # Data is in long format with date and ticker columns
@@ -670,8 +616,12 @@ def main(
         training_end_date = bt_end_with_horizon
 
     # --- Fetch SPY data for Market Momentum feature ---
+    # Use shared function to calculate start date
+    from config import get_data_lookback_days
+    data_start_date = today_for_data_fetch - timedelta(days=get_data_lookback_days())
+    
     print("🔍 Fetching SPY data for Market Momentum feature...")
-    spy_df = load_prices_robust('SPY', cache_start_date, today_for_data_fetch)
+    spy_df = load_prices_robust('SPY', data_start_date, today_for_data_fetch)
     if not spy_df.empty:
         spy_df['SPY_Returns'] = spy_df['Close'].pct_change()
         spy_df['Market_Momentum_SPY'] = spy_df['SPY_Returns'].rolling(window=FEAT_VOL_WINDOW).mean()
@@ -693,7 +643,7 @@ def main(
 
     # --- Fetch and merge intermarket data ---
     print("🔍 Fetching intermarket data...")
-    intermarket_df = _fetch_intermarket_data(cache_start_date, today_for_data_fetch)
+    intermarket_df = _fetch_intermarket_data(data_start_date, today_for_data_fetch)
     if not intermarket_df.empty:
         # ✅ FIX 3: Ensure intermarket_df index is timezone-aware before merge
         if intermarket_df.index.tzinfo is None:
@@ -763,12 +713,7 @@ def main(
             import functools
             
             # Add progress bar
-            try:
-                from tqdm import tqdm
-                progress_bar = tqdm(total=len(all_available_tickers), desc="   [INFO] Validating tickers", ncols=100)
-            except ImportError:
-                progress_bar = None
-                print("   [INFO] Note: Install tqdm for progress bars: pip install tqdm")
+            progress_bar = tqdm(total=len(all_available_tickers), desc="   [INFO] Validating tickers", ncols=100)
             
             # Partial function to pass ticker_counts
             validate_func = functools.partial(validate_single_ticker, ticker_counts=ticker_counts)
@@ -785,15 +730,8 @@ def main(
                     data_summaries = list(pool.imap(validate_func, all_available_tickers))
         else:
             # Sequential for small lists
-            data_summaries = []
-            try:
-                from tqdm import tqdm
-                data_summaries = [validate_single_ticker(ticker, ticker_counts) 
-                                 for ticker in tqdm(all_available_tickers, desc="   [INFO] Quick validation", ncols=100)]
-            except ImportError:
-                data_summaries = [validate_single_ticker(ticker, ticker_counts) 
-                                 for ticker in all_available_tickers]
-                print("   [INFO] Note: Install tqdm for progress bars: pip install tqdm")
+            data_summaries = [validate_single_ticker(ticker, ticker_counts) 
+                             for ticker in tqdm(all_available_tickers, desc="   [INFO] Quick validation", ncols=100)]
         
         # Print summary stats
         ok_count = sum(1 for s in data_summaries if s['status'] == 'OK')
@@ -1539,8 +1477,6 @@ def main(
         dynamic_pool_1y_return=_ret('dynamic_pool'),
         final_sentiment_ensemble_value_1y=s['sentiment_ensemble']['value'],
         sentiment_ensemble_1y_return=_ret('sentiment_ensemble'),
-        final_elite_hybrid_sentiment_value_1y=s['elite_hybrid_sentiment']['value'],
-        elite_hybrid_sentiment_1y_return=_ret('elite_hybrid_sentiment'),
         final_voting_ensemble_value_1y=s['voting_ensemble']['value'],
         voting_ensemble_1y_return=_ret('voting_ensemble'),
                 # Ensemble transaction costs
@@ -1551,7 +1487,6 @@ def main(
         correlation_ensemble_transaction_costs=s['correlation_ensemble']['costs'],
         dynamic_pool_transaction_costs=s['dynamic_pool']['costs'],
         sentiment_ensemble_transaction_costs=s['sentiment_ensemble']['costs'],
-        elite_hybrid_sentiment_transaction_costs=s['elite_hybrid_sentiment']['costs'],
         voting_ensemble_transaction_costs=s['voting_ensemble']['costs'],
                 # Ensemble cash deployed
         adaptive_ensemble_cash_deployed=s['adaptive_ensemble']['cash_deployed'],
@@ -1561,7 +1496,6 @@ def main(
         correlation_ensemble_cash_deployed=s['correlation_ensemble']['cash_deployed'],
         dynamic_pool_cash_deployed=s['dynamic_pool']['cash_deployed'],
         sentiment_ensemble_cash_deployed=s['sentiment_ensemble']['cash_deployed'],
-        elite_hybrid_sentiment_cash_deployed=s['elite_hybrid_sentiment']['cash_deployed'],
         voting_ensemble_cash_deployed=s['voting_ensemble']['cash_deployed'],
                 # Rebalance horizon optimization results
         static_bh_1y_best_horizon=rebalance_optimization_results['1Y']['best_horizon'] if rebalance_optimization_results and '1Y' in rebalance_optimization_results else None,
@@ -1795,88 +1729,66 @@ if __name__ == "__main__":
         print(f"💡 Example: python src/main.py --live-trading --strategy volatility_ensemble")
         print("=" * 80)
         
-        # Do the same filtering as backtesting
-        print("\n🔍 Step 1: Fetching and filtering tickers (same as backtest)...")
+        # Download data using same shared function as backtesting
+        print("\n🔍 Loading market data (same as backtesting)...")
+        from ticker_selection import get_all_tickers
+        from data_utils import load_all_market_data
+        
+        all_available_tickers = get_all_tickers()
+        print(f"   Found {len(all_available_tickers)} tickers in universe")
+        
+        all_tickers_data = load_all_market_data(all_available_tickers)
+        
+        if all_tickers_data is None or all_tickers_data.empty:
+            print("   ❌ No data available")
+            sys.exit(1)
+        
+        # Get all available tickers from data
+        if 'ticker' in all_tickers_data.columns:
+            all_available_tickers = sorted(all_tickers_data['ticker'].unique().tolist())
+        else:
+            all_available_tickers = sorted(all_tickers_data.columns.tolist())
+        
+        print(f"   ✅ Loaded data for {len(all_available_tickers)} tickers from backtesting")
+        
+        # Filter to top performers using backtest data
         try:
-            from ticker_selection import get_all_tickers, find_top_performers
-            from data_utils import _download_batch_robust
+            from ticker_selection import find_top_performers
             
-            # Get all tickers from market selection (same as backtest)
-            all_available_tickers = get_all_tickers()
-            print(f"   Found {len(all_available_tickers)} tickers in universe")
-            
-            # Download data (same as backtest)
-            from data_utils import _get_last_trading_day
-            last_trading_day = _get_last_trading_day()
-            end_date = datetime.combine(last_trading_day, datetime.min.time(), tzinfo=timezone.utc)
-            start_date = end_date - timedelta(days=365)
-            print(f"   Downloading data from {start_date.date()} to {end_date.date()}... (Last trading day: {last_trading_day})")
-            
-            batch_size = 100
-            all_data_list = []
-            for i in range(0, len(all_available_tickers), batch_size):
-                batch = all_available_tickers[i:i + batch_size]
-                try:
-                    batch_data = _download_batch_robust(batch, start_date, end_date)
-                    if batch_data is not None and not batch_data.empty:
-                        all_data_list.append(batch_data)
-                except Exception as e:
-                    print(f"     ⚠️ Batch {i//batch_size + 1} failed: {e}")
-            
-            if all_data_list:
-                all_tickers_data = pd.concat(all_data_list, ignore_index=False)
-                
-                # Use ALL tickers that have data, not just the ones from get_all_tickers()
-                # yfinance batch downloads can return extra tickers (aliases, related)
-                if 'ticker' in all_tickers_data.columns:
-                    tickers_with_data = sorted(all_tickers_data['ticker'].unique().tolist())
-                else:
-                    tickers_with_data = sorted(all_tickers_data.columns.tolist())
-                print(f"   ✅ Downloaded data for {len(tickers_with_data)} tickers")
-                
-                # Check for tickers in data but not in original list
-                extra_tickers = set(tickers_with_data) - set(all_available_tickers)
-                if extra_tickers:
-                    print(f"   ℹ️ Found {len(extra_tickers)} extra tickers in data not in original list: {sorted(extra_tickers)[:10]}{'...' if len(extra_tickers) > 10 else ''}")
-                    all_available_tickers = sorted(set(all_available_tickers) | extra_tickers)
-                    print(f"   ℹ️ Expanded ticker universe to {len(all_available_tickers)} tickers")
-                
-                # Use the same long format data for both live trading and filtering
-                all_tickers_data_for_filtering = all_tickers_data
-                
-                # Filter to top performers (same as backtest)
-                print(f"   🔍 Filtering to top {N_TOP_TICKERS} performers...")
-                # Use naive datetime for comparison (same as backtest)
-                naive_end_date = end_date.replace(tzinfo=None)
-                market_selected_performers = find_top_performers(
-                    all_available_tickers=all_available_tickers,
-                    all_tickers_data=all_tickers_data_for_filtering,
-                    return_tickers=True,
-                    n_top=N_TOP_TICKERS,
-                    performance_end_date=naive_end_date
-                )
-                
-                if market_selected_performers:
-                    # Extract just ticker strings from (ticker, performance) tuples
-                    market_selected_performers = [ticker for ticker, _ in market_selected_performers]
-                    print(f"   ✅ Filtered to {len(market_selected_performers)} top performers")
-                else:
-                    print(f"   ⚠️ No top performers found, using all tickers")
-                    market_selected_performers = all_available_tickers[:N_TOP_TICKERS]
+            # Get latest date from data
+            if 'date' in all_tickers_data.columns:
+                latest_date = all_tickers_data['date'].max()
+                naive_end_date = pd.Timestamp(latest_date).replace(tzinfo=None)
             else:
-                print("   ❌ No data downloaded")
+                naive_end_date = datetime.now().replace(tzinfo=None)
+            
+            market_selected_performers = find_top_performers(
+                all_available_tickers=all_available_tickers,
+                all_tickers_data=all_tickers_data,
+                return_tickers=True,
+                n_top=N_TOP_TICKERS,
+                performance_end_date=naive_end_date
+            )
+            
+            if market_selected_performers:
+                market_selected_performers = [ticker for ticker, _ in market_selected_performers]
+                print(f"   ✅ Filtered to {len(market_selected_performers)} top performers")
+            else:
+                print(f"   ⚠️ No top performers found, using all tickers")
                 market_selected_performers = all_available_tickers[:N_TOP_TICKERS]
                 
         except Exception as e:
             print(f"   ❌ Ticker filtering failed: {e}")
+            import traceback
+            traceback.print_exc()
             market_selected_performers = all_available_tickers[:N_TOP_TICKERS]
+        
+        # Check if multiple strategies requested (comma-separated)
+        strategies = [s.strip() for s in args.strategy.split(',')]
         
         # Use the live trading implementation with filtered tickers
         try:
             from live_trading import run_live_trading_with_filtered_tickers, get_strategy_tickers
-            
-            # Check if multiple strategies requested (comma-separated)
-            strategies = [s.strip() for s in args.strategy.split(',')]
             
             if len(strategies) > 1:
                 # Multi-strategy mode: just show selected tickers for each

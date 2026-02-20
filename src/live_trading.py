@@ -440,10 +440,6 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], all_tickers_data
         # Mom-Vol Hybrid 6M + Sentiment Strategy: Incorporates news sentiment
         return get_sentiment_ensemble_tickers(all_tickers, all_tickers_data)
     
-    elif strategy == 'elite_hybrid_sentiment':
-        # Elite Hybrid + Sentiment Strategy: Elite Hybrid with news sentiment
-        return get_elite_hybrid_sentiment_tickers(all_tickers, all_tickers_data)
-    
     elif strategy == 'momentum_breakout':
         # Momentum Breakout Strategy: 52-week high breakouts with volume
         return get_momentum_breakout_tickers(all_tickers, all_tickers_data)
@@ -783,17 +779,6 @@ def _get_latest_data_date(ticker_data_grouped: Dict, all_tickers: List[str]) -> 
         return datetime.now(timezone.utc)
 
 
-def get_elite_hybrid_sentiment_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
-    """Elite Hybrid + Sentiment Strategy: Elite Hybrid with news sentiment."""
-    from elite_hybrid_sentiment import select_elite_hybrid_sentiment_stocks
-    
-    print(f"   [DEBUG] Elite Hybrid Sentiment: Processing {len(all_tickers)} tickers")
-    ticker_data_grouped = _prepare_ticker_data_grouped(all_tickers, all_tickers_data, "Elite Hybrid Sentiment")
-    
-    current_date = datetime.now(timezone.utc)
-    return select_elite_hybrid_sentiment_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
-
-
 def get_momentum_breakout_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
     """Momentum Breakout Strategy: 52-week high breakouts with volume confirmation."""
     from momentum_breakout import select_momentum_breakout_stocks
@@ -1019,7 +1004,6 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], all_tick
         'ai_elite': 'AI Elite (ML-Powered Momentum + Dip Scoring)',
         'dynamic_pool': 'Dynamic Pool (Adaptive)',
         'sentiment_ensemble': 'Mom-Vol 6M Sentiment (News-Enhanced)',
-        'elite_hybrid_sentiment': 'Elite Hybrid Sentiment (News-Enhanced)',
         'momentum_breakout': 'Momentum Breakout (52-Week High)',
         'factor_rotation': 'Factor Rotation (Value/Growth/Mom/Quality)',
         'pairs_trading': 'Pairs Trading (Statistical Arbitrage)',
