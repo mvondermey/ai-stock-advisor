@@ -153,16 +153,16 @@ def select_ai_elite_stocks(
     weighted_class_score = np.dot(proba, class_weights) / max_class  # Normalize to 0-1
     candidates_df['ai_score'] = weighted_class_score
     
-    # IMPROVED: Hybrid scoring - 50% AI score + 50% risk-adjusted momentum rank
-    # Risk-Adj Mom 3M beats us because it uses return/volatility - so we weight that higher
-    candidates_df['final_score'] = 0.5 * candidates_df['ai_score'] + 0.5 * candidates_df['risk_adj_mom_rank']
+    # Pure AI scoring - the model is trained on risk-adjusted return labels,
+    # so it already captures momentum + volatility internally
+    candidates_df['final_score'] = candidates_df['ai_score']
     
     # Sort by final hybrid score
     candidates_df = candidates_df.sort_values('final_score', ascending=False)
     
     # Debug: show top candidates with momentum rank
     print(f"   ✅ AI Elite: Found {len(candidates_df)} candidates")
-    print(f"   📊 AI Elite: Scoring = 50% ML prediction + 50% risk-adj momentum rank (3M/vol^0.5 percentile)")
+    print(f"   📊 AI Elite: Scoring = 100% ML prediction (trained on risk-adjusted return quintiles)")
     for i, row in candidates_df.head(5).iterrows():
         print(f"      {i+1}. {row['ticker']}: Final={row['final_score']:.3f} (AI={row['ai_score']:.3f}, RiskAdjMom={row['risk_adj_mom_rank']:.3f}), "
               f"3M={row['perf_3m']:+.1f}%, Vol={row['volatility']:.1f}%, RiskAdj={row['risk_adj_mom_3m']:.2f})")
