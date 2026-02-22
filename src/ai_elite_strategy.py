@@ -134,6 +134,11 @@ def select_ai_elite_stocks(
     # This captures what Risk-Adj Mom 3M does well - pure momentum ranking
     candidates_df['momentum_rank'] = candidates_df['perf_3m'].rank(pct=True)
     
+    # IMPROVED: Risk-adjusted momentum rank (like Risk-Adj Mom 3M: return / sqrt(volatility))
+    # This is the core signal that beats raw momentum
+    candidates_df['risk_adj_mom_3m'] = candidates_df['perf_3m'] / (candidates_df['volatility'] ** 0.5)
+    candidates_df['risk_adj_mom_rank'] = candidates_df['risk_adj_mom_3m'].rank(pct=True)
+    
     # Get ML prediction probabilities (ordinal ranking: up to 5 classes)
     proba = model.predict_proba(X)
     n_classes = proba.shape[1]
@@ -147,19 +152,19 @@ def select_ai_elite_stocks(
     weighted_class_score = np.dot(proba, class_weights) / max_class  # Normalize to 0-1
     candidates_df['ai_score'] = weighted_class_score
     
-    # IMPROVED: Hybrid scoring - 70% AI score + 30% momentum rank
-    # This combines ML sophistication with proven momentum signal
-    candidates_df['final_score'] = 0.7 * candidates_df['ai_score'] + 0.3 * candidates_df['momentum_rank']
+    # IMPROVED: Hybrid scoring - 50% AI score + 50% risk-adjusted momentum rank
+    # Risk-Adj Mom 3M beats us because it uses return/volatility - so we weight that higher
+    candidates_df['final_score'] = 0.5 * candidates_df['ai_score'] + 0.5 * candidates_df['risk_adj_mom_rank']
     
     # Sort by final hybrid score
     candidates_df = candidates_df.sort_values('final_score', ascending=False)
     
     # Debug: show top candidates with momentum rank
     print(f"   ✅ AI Elite: Found {len(candidates_df)} candidates")
-    print(f"   📊 AI Elite: Scoring = 70% ML prediction + 30% momentum rank (3M performance percentile)")
+    print(f"   📊 AI Elite: Scoring = 50% ML prediction + 50% risk-adj momentum rank (3M/vol^0.5 percentile)")
     for i, row in candidates_df.head(5).iterrows():
-        print(f"      {i+1}. {row['ticker']}: Final={row['final_score']:.3f} (AI={row['ai_score']:.3f}, MomRank={row['momentum_rank']:.3f}), "
-              f"3M={row['perf_3m']:+.1f}%, Vol={row['volatility']:.1f}%")
+        print(f"      {i+1}. {row['ticker']}: Final={row['final_score']:.3f} (AI={row['ai_score']:.3f}, RiskAdjMom={row['risk_adj_mom_rank']:.3f}), "
+              f"3M={row['perf_3m']:+.1f}%, Vol={row['volatility']:.1f}%, RiskAdj={row['risk_adj_mom_3m']:.2f})")
     
     # Return top N tickers by final hybrid score
     selected = candidates_df.head(top_n)['ticker'].tolist()
