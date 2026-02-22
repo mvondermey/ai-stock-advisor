@@ -546,9 +546,15 @@ def _load_or_create_model(model_path: Optional[str] = None):
             
             # Compute risk-adjusted return: excess_return / sqrt(volatility)
             # For fallback, we use raw return minus a fixed market estimate (~2%)
-            # and divide by sqrt(volatility)
+            # Floor volatility at 5% to prevent extreme outliers
             excess_return = y_series - 2.0  # Rough market return estimate
-            risk_adj_return = excess_return / (X_df['volatility'] ** 0.5 + 0.001)
+            vol_floored = X_df['volatility'].clip(lower=5.0)
+            risk_adj_return = excess_return / (vol_floored ** 0.5)
+            # Clip extreme outliers
+            mean_ra = risk_adj_return.mean()
+            std_ra = risk_adj_return.std()
+            if std_ra > 0:
+                risk_adj_return = risk_adj_return.clip(lower=mean_ra - 3*std_ra, upper=mean_ra + 3*std_ra)
             
             # Convert to ordinal labels based on risk-adjusted return
             y_ordinal = pd.qcut(risk_adj_return, q=5, labels=[0, 1, 2, 3, 4], duplicates='drop')
@@ -611,8 +617,15 @@ def _load_or_create_model(model_path: Optional[str] = None):
             ])
             y_series = pd.Series(returns_enhanced)
             # Risk-adjusted: excess return / sqrt(volatility)
+            # Floor volatility at 5% to prevent extreme outliers
             excess_return = y_series - 2.0  # Rough market return estimate
-            risk_adj_return = excess_return / (X_df['volatility'] ** 0.5 + 0.001)
+            vol_floored = X_df['volatility'].clip(lower=5.0)
+            risk_adj_return = excess_return / (vol_floored ** 0.5)
+            # Clip extreme outliers
+            mean_ra = risk_adj_return.mean()
+            std_ra = risk_adj_return.std()
+            if std_ra > 0:
+                risk_adj_return = risk_adj_return.clip(lower=mean_ra - 3*std_ra, upper=mean_ra + 3*std_ra)
             y_ordinal = pd.qcut(risk_adj_return, q=5, labels=[0, 1, 2, 3, 4], duplicates='drop')
             y_enhanced = y_ordinal.astype(int).values
             
@@ -711,7 +724,7 @@ def train_ai_elite_model(
     print(f"   📊 AI Elite: Calculating market returns for relative labeling...")
     for sample_date in sample_dates:
         market_ret = _calculate_market_return(ticker_data_grouped, sample_date, forward_days)
-        market_returns[sample_date] = market_ret
+        market_returns[sample_date] = market_ret if market_ret is not None else 0.0
     
     for sample_date in sample_dates:
         # Extract features for all tickers on this date
@@ -797,7 +810,16 @@ def train_ai_elite_model(
     # IMPROVED: Compute risk-adjusted return (excess_return / sqrt(volatility))
     # This teaches the model to prefer efficient returns per unit of risk
     # Same formula that makes Risk-Adj Mom 3M successful: return / sqrt(volatility)
-    train_df['risk_adj_return'] = train_df['excess_return'] / (train_df['volatility'] ** 0.5 + 0.001)
+    # Floor volatility at 5% to prevent extreme outliers when vol=0 (5478x normal)
+    vol_floored = train_df['volatility'].clip(lower=5.0)
+    train_df['risk_adj_return'] = train_df['excess_return'] / (vol_floored ** 0.5)
+    # Clip extreme outliers (>3 std from mean) to prevent quintile corruption
+    mean_ra = train_df['risk_adj_return'].mean()
+    std_ra = train_df['risk_adj_return'].std()
+    if std_ra > 0:
+        train_df['risk_adj_return'] = train_df['risk_adj_return'].clip(
+            lower=mean_ra - 3 * std_ra, upper=mean_ra + 3 * std_ra
+        )
     
     print(f"   📊 AI Elite: Average stock return: {train_df['forward_return'].mean():.2f}%")
     print(f"   📊 AI Elite: Average market return: {train_df['market_return'].mean():.2f}%")
