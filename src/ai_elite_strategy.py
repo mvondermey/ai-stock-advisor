@@ -134,11 +134,17 @@ def select_ai_elite_stocks(
     # This captures what Risk-Adj Mom 3M does well - pure momentum ranking
     candidates_df['momentum_rank'] = candidates_df['perf_3m'].rank(pct=True)
     
-    # Get ML prediction probabilities for all 5 classes (ordinal ranking)
+    # Get ML prediction probabilities (ordinal ranking: up to 5 classes)
     proba = model.predict_proba(X)
+    n_classes = proba.shape[1]
     # Weighted score: higher probability for higher classes = better stock
-    # Classes are [0, 1, 2, 3, 4] where 4 is best
-    weighted_class_score = np.dot(proba, [0, 1, 2, 3, 4]) / 4.0  # Normalize to 0-1
+    # Use actual model classes (may be fewer than 5 if pd.qcut dropped duplicates or fallback binary model)
+    if hasattr(model, 'classes_'):
+        class_weights = np.array(model.classes_, dtype=float)
+    else:
+        class_weights = np.arange(n_classes, dtype=float)
+    max_class = class_weights.max() if class_weights.max() > 0 else 1.0
+    weighted_class_score = np.dot(proba, class_weights) / max_class  # Normalize to 0-1
     candidates_df['ai_score'] = weighted_class_score
     
     # IMPROVED: Hybrid scoring - 70% AI score + 30% momentum rank
@@ -494,12 +500,9 @@ def _load_or_create_model(model_path: Optional[str] = None):
                             if i + future_points < len(data):
                                 future_price = data.iloc[i+future_points]['Close']
                                 current_price = data.iloc[i]['Close']
-                                actual_return = (future_price - current_price) / current_price
+                                actual_return = (future_price - current_price) / current_price * 100
                                 
-                                # Label: 1 if stock went up > 5% in next 20 days
-                                label = 1 if actual_return > 0.05 else 0
-                                
-                                # Create feature vector (8 features: 5 daily + 3 intraday)
+                                # Create feature vector (14 features: 5 daily + 3 intraday + 6 derived)
                                 feature_vector = [
                                     features.get('perf_3m', 0),
                                     features.get('perf_6m', 0),
@@ -508,11 +511,17 @@ def _load_or_create_model(model_path: Optional[str] = None):
                                     features['avg_volume'],
                                     features.get('overnight_gap', 0),
                                     features.get('intraday_range', 0),
-                                    features.get('last_hour_momentum', 0)
+                                    features.get('last_hour_momentum', 0),
+                                    features.get('risk_adj_score', 0),
+                                    features.get('dip_score', 0),
+                                    features.get('mom_accel', 0),
+                                    features.get('vol_sweet_spot', 0),
+                                    features.get('volume_ratio', 1.0),
+                                    features.get('rsi_14', 50.0),
                                 ]
                                 
                                 X_real.append(feature_vector)
-                                y_real.append(label)
+                                y_real.append(actual_return)  # Store raw return for ordinal ranking
                     
                     except Exception as e:
                         continue
@@ -525,52 +534,67 @@ def _load_or_create_model(model_path: Optional[str] = None):
             y_real = np.array(y_real)
             
             print(f"   📊 Training on {len(X_real)} REAL historical samples")
-            print(f"   📈 Positive samples: {sum(y_real)} ({sum(y_real)/len(y_real)*100:.1f}%)")
-            print(f"   📉 Negative samples: {len(y_real) - sum(y_real)} ({(len(y_real)-sum(y_real))/len(y_real)*100:.1f}%)")
             
-            # Train model on REAL historical data
+            # Convert raw returns to ordinal labels (same as main training)
+            y_series = pd.Series(y_real)
+            y_ordinal = pd.qcut(y_series, q=5, labels=[0, 1, 2, 3, 4], duplicates='drop')
+            y_real = y_ordinal.astype(int).values
+            n_classes = len(np.unique(y_real))
+            print(f"   📊 Ordinal labels: {n_classes} classes, distribution: {dict(zip(*np.unique(y_real, return_counts=True)))}")
+            
+            # Train model on REAL historical data with ordinal labels
             model.fit(X_real, y_real)
             print(f"   ✅ AI Elite: Model trained on REAL historical market data!")
             
         except Exception as e:
             print(f"   ⚠️ AI Elite: Real data training failed ({e}), using enhanced patterns")
-            # Fallback to enhanced patterns (better than old fake patterns)
+            # Fallback to enhanced patterns with 14 features and ordinal labels
             import numpy as np
             
-            # Create enhanced patterns based on real market statistics (with intraday features)
-            n_samples = 200
+            n_samples = 500
             X_enhanced = []
-            y_enhanced = []
+            returns_enhanced = []
             
             for i in range(n_samples):
                 perf_3m  = np.random.normal(5, 15)
                 perf_6m  = np.random.normal(10, 20)
                 perf_1y  = np.random.normal(15, 30)
-                volatility = np.random.normal(30, 15)
+                volatility = max(5.0, np.random.normal(30, 15))
                 volume = np.random.lognormal(14, 1)
                 overnight_gap = np.random.normal(0.2, 1.5)
                 intraday_range = np.random.normal(3.0, 2.0)
                 last_hour_momentum = np.random.normal(0.1, 0.5)
+                daily_vol_pct = volatility / (252 ** 0.5)
+                risk_adj_score = perf_1y / (daily_vol_pct ** 0.5 + 0.001) if daily_vol_pct > 0 else 0.0
+                dip_score = perf_1y - perf_3m
+                mom_accel = perf_3m - perf_6m
+                vol_sweet_spot = 1.0 if 20.0 <= volatility <= 40.0 else 0.0
+                volume_ratio = max(0.5, np.random.normal(1.0, 0.3))
+                rsi_14 = np.clip(np.random.normal(50, 15), 10, 90)
                 
-                success_prob = 0.3 + 0.3 * (1 / (1 + np.exp(-perf_6m/10)))
-                success_prob += 0.05 * (1 / (1 + np.exp(-overnight_gap)))
-                success_prob += 0.05 * (1 / (1 + np.exp(-last_hour_momentum*10)))
-                success_prob = min(success_prob, 0.9)
+                # Simulate forward return based on features
+                simulated_return = (perf_3m * 0.3 + perf_6m * 0.2 + risk_adj_score * 0.1 
+                                   + np.random.normal(0, 10))
                 
-                # Feature vector (8 features: 5 daily + 3 intraday)
+                # Feature vector (14 features: matching select_ai_elite_stocks)
                 features = [
                     perf_3m, perf_6m, perf_1y, volatility, volume,
-                    overnight_gap, intraday_range, last_hour_momentum
+                    overnight_gap, intraday_range, last_hour_momentum,
+                    risk_adj_score, dip_score, mom_accel, vol_sweet_spot,
+                    volume_ratio, rsi_14
                 ]
                 
                 X_enhanced.append(features)
-                y_enhanced.append(1 if np.random.random() < success_prob else 0)
+                returns_enhanced.append(simulated_return)
             
             X_enhanced = np.array(X_enhanced)
-            y_enhanced = np.array(y_enhanced)
+            # Convert to ordinal labels (same as main training)
+            y_series = pd.Series(returns_enhanced)
+            y_ordinal = pd.qcut(y_series, q=5, labels=[0, 1, 2, 3, 4], duplicates='drop')
+            y_enhanced = y_ordinal.astype(int).values
             
             model.fit(X_enhanced, y_enhanced)
-            print(f"   🔄 AI Elite: Used enhanced patterns with intraday features ({len(X_enhanced)} samples)")
+            print(f"   🔄 AI Elite: Used enhanced patterns with 14 features + ordinal labels ({len(X_enhanced)} samples)")
         
         # Save the model for future use
         if model_path:
@@ -744,16 +768,24 @@ def train_ai_elite_model(
     
     print(f"   📈 AI Elite: Collected {len(train_df)} training samples")
     
+    # Compute excess return vs market (needed for ordinal ranking)
+    train_df['excess_return'] = train_df['forward_return'] - train_df['market_return']
+    
+    print(f"   📊 AI Elite: Average stock return: {train_df['forward_return'].mean():.2f}%")
+    print(f"   📊 AI Elite: Average market return: {train_df['market_return'].mean():.2f}%")
+    print(f"   📊 AI Elite: Average excess return: {train_df['excess_return'].mean():.2f}%")
+    
     # IMPROVED: Use ordinal ranking instead of binary classification
     # This captures magnitude of outperformance, not just binary beat/miss market
     # Top 20% = label 4, next 20% = 3, middle 20% = 2, next 20% = 1, bottom 20% = 0
     train_df['label'] = pd.qcut(train_df['excess_return'], 
                                 q=5, 
                                 labels=[0, 1, 2, 3, 4],
-                                duplicates='drop')
+                                duplicates='drop').astype(int)
     
-    print(f"   📊 AI Elite: Ordinal ranking labels (0=worst, 4=best):")
-    for label in [4, 3, 2, 1, 0]:
+    n_label_classes = train_df['label'].nunique()
+    print(f"   📊 AI Elite: Ordinal ranking labels (0=worst, 4=best), {n_label_classes} classes:")
+    for label in sorted(train_df['label'].unique(), reverse=True):
         count = (train_df['label'] == label).sum()
         avg_excess = train_df[train_df['label'] == label]['excess_return'].mean()
         print(f"      Label {label}: {count} samples, avg excess return: {avg_excess:.2f}%")
@@ -825,7 +857,7 @@ def train_ai_elite_model(
     best_model = None
     best_name = None
     best_score = -1.0
-    cv_folds = min(3, len(np.unique(y)))  # at least 3-fold, but respect class count
+    cv_folds = max(2, min(3, len(np.unique(y))))  # 2-3 folds, respect class count
 
     print(f"   🏆 AI Elite: Selecting best model via {cv_folds}-fold cross-validation (weighted kappa for ordinal ranking)...")
     for name, m in candidates.items():
