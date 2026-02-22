@@ -1529,7 +1529,50 @@ def main(
         final_enhanced_volatility_value_1y=s['enhanced_volatility']['value'],
         enhanced_volatility_1y_return=_ret('enhanced_volatility'),
         enhanced_volatility_transaction_costs=s['enhanced_volatility']['costs'],
-        enhanced_volatility_cash_deployed=s['enhanced_volatility']['cash_deployed']
+        enhanced_volatility_cash_deployed=s['enhanced_volatility']['cash_deployed'],
+        # Elite Hybrid
+        final_elite_hybrid_value_1y=s['elite_hybrid']['value'],
+        elite_hybrid_1y_return=_ret('elite_hybrid'),
+        elite_hybrid_transaction_costs=s['elite_hybrid']['costs'],
+        elite_hybrid_cash=s['elite_hybrid']['cash_deployed'],
+        # AI Elite
+        final_ai_elite_value_1y=s['ai_elite']['value'],
+        ai_elite_1y_return=_ret('ai_elite'),
+        ai_elite_transaction_costs=s['ai_elite']['costs'],
+        ai_elite_cash=s['ai_elite']['cash_deployed'],
+        # Elite Risk
+        final_elite_risk_value_1y=s['elite_risk']['value'],
+        elite_risk_1y_return=_ret('elite_risk'),
+        elite_risk_transaction_costs=s['elite_risk']['costs'],
+        elite_risk_cash=s['elite_risk']['cash_deployed'],
+        # Risk-Adj Mom 6M
+        final_risk_adj_mom_6m_value_1y=s['risk_adj_mom_6m']['value'],
+        risk_adj_mom_6m_1y_return=_ret('risk_adj_mom_6m'),
+        risk_adj_mom_6m_transaction_costs=s['risk_adj_mom_6m']['costs'],
+        risk_adj_mom_6m_cash=s['risk_adj_mom_6m']['cash_deployed'],
+        # Risk-Adj Mom 3M
+        final_risk_adj_mom_3m_value_1y=s['risk_adj_mom_3m']['value'],
+        risk_adj_mom_3m_1y_return=_ret('risk_adj_mom_3m'),
+        risk_adj_mom_3m_transaction_costs=s['risk_adj_mom_3m']['costs'],
+        risk_adj_mom_3m_cash=s['risk_adj_mom_3m']['cash_deployed'],
+        # Risk-Adj Mom Sentiment
+        final_risk_adj_mom_sentiment_value_1y=s['risk_adj_mom_sentiment']['value'],
+        risk_adj_mom_sentiment_1y_return=_ret('risk_adj_mom_sentiment'),
+        risk_adj_mom_sentiment_transaction_costs=s['risk_adj_mom_sentiment']['costs'],
+        risk_adj_mom_sentiment_cash=s['risk_adj_mom_sentiment']['cash_deployed'],
+        # Monthly rebalance variants
+        final_bh_1y_monthly_value_1y=s['bh_1y_monthly']['value'],
+        bh_1y_monthly_1y_return=_ret('bh_1y_monthly'),
+        bh_1y_monthly_transaction_costs=s['bh_1y_monthly']['costs'],
+        bh_1y_monthly_cash=s['bh_1y_monthly']['cash_deployed'],
+        final_bh_6m_monthly_value_1y=s['bh_6m_monthly']['value'],
+        bh_6m_monthly_1y_return=_ret('bh_6m_monthly'),
+        bh_6m_monthly_transaction_costs=s['bh_6m_monthly']['costs'],
+        bh_6m_monthly_cash=s['bh_6m_monthly']['cash_deployed'],
+        final_bh_3m_monthly_value_1y=s['bh_3m_monthly']['value'],
+        bh_3m_monthly_1y_return=_ret('bh_3m_monthly'),
+        bh_3m_monthly_transaction_costs=s['bh_3m_monthly']['costs'],
+        bh_3m_monthly_cash=s['bh_3m_monthly']['cash_deployed']
     )
     print("\n✅ Final summary prepared and printed.")
 
@@ -1893,7 +1936,20 @@ if __name__ == "__main__":
                 print("=" * 80)
             else:
                 # Single strategy: run full live trading
-                run_live_trading_with_filtered_tickers(market_selected_performers, all_tickers_data)
+                # Prepare ticker_data_grouped once (same format as backtesting)
+                print(f"\n   📦 Preparing ticker data grouped by ticker...")
+                ticker_data_grouped = {}
+                for ticker in market_selected_performers:
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                    if not ticker_data.empty:
+                        if 'date' in ticker_data.columns:
+                            ticker_data['date'] = pd.to_datetime(ticker_data['date'])
+                            ticker_data = ticker_data.set_index('date')
+                        ticker_data = ticker_data.drop('ticker', axis=1, errors='ignore')
+                        ticker_data_grouped[ticker] = ticker_data
+                print(f"   ✅ Prepared data for {len(ticker_data_grouped)} tickers")
+                
+                run_live_trading_with_filtered_tickers(market_selected_performers, ticker_data_grouped)
         except Exception as e:
             print(f"❌ Live trading failed: {e}")
     else:

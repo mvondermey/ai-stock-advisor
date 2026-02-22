@@ -1217,25 +1217,6 @@ def _run_portfolio_backtest_walk_forward(
         print(f"   📊 Running comparison strategies only (BH_3m, Dynamic BH, etc.)")
         print(f"   ⚠️  AI Strategy disabled (using saved models only)")
     
-    # ✅ FIX 7: Add data structure validation
-    print(f"\n🔍 Validating input data structure...")
-    print(f"   - all_tickers_data type: {type(all_tickers_data)}")
-    print(f"   - all_tickers_data shape: {all_tickers_data.shape}")
-    print(f"   - all_tickers_data columns: {list(all_tickers_data.columns)}")
-    
-    if 'ticker' in all_tickers_data.columns:
-        print(f"   ✅ 'ticker' column found")
-        print(f"   - Unique tickers in data: {len(all_tickers_data['ticker'].unique())}")
-        print(f"   - Sample tickers: {list(all_tickers_data['ticker'].unique())[:5]}")
-    else:
-        print(f"   ❌ 'ticker' column NOT found! This will cause prediction failures.")
-        # MultiIndex removed - no longer needed
-        
-    if 'date' in all_tickers_data.columns:
-        print(f"   ✅ 'date' column found")
-    else:
-        print(f"   ❌ 'date' column NOT found!")
-
     
     # Initialize
     current_models = initial_models.copy()  # Single regression models
@@ -1548,6 +1529,7 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_sentiment_cash = initial_capital_needed  # Start with same capital as AI
     current_risk_adj_mom_sentiment_stocks = []  # Current top stocks held by risk adj mom sentiment
     risk_adj_mom_sentiment_last_rebalance_value = initial_capital_needed  # Transaction cost guard
+    risk_adj_mom_sentiment_transaction_costs = 0.0
 
     # VOTING ENSEMBLE: Initialize portfolio tracking
     voting_ensemble_portfolio_value = initial_capital_needed
@@ -1837,33 +1819,14 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance_1y:
-                # Calculate top PORTFOLIO_SIZE by 1-year performance
-                from config import PARALLEL_THRESHOLD
-                if len(initial_top_tickers) > PARALLEL_THRESHOLD:
-                    from parallel_backtest import calculate_parallel_performance
-                    perf_1y_list = calculate_parallel_performance(
-                        initial_top_tickers,
-                        ticker_data_grouped,
-                        current_date,
-                        period_days=365
-                    )
-                else:
-                    # Sequential for small lists
-                    perf_1y_list = []
-                    for ticker in initial_top_tickers:
-                        if ticker not in ticker_data_grouped:
-                            continue
-                        ticker_data = ticker_data_grouped[ticker]
-                        perf_start = current_date - timedelta(days=365)
-                        perf_data = ticker_data.loc[perf_start:current_date]
-                        if len(perf_data) >= 50:
-                            valid_close = perf_data['Close'].dropna()
-                            if len(valid_close) >= 2:
-                                start_p = valid_close.iloc[0]
-                                end_p = valid_close.iloc[-1]
-                                if start_p > 0:
-                                    perf_pct = ((end_p - start_p) / start_p) * 100
-                                    perf_1y_list.append((ticker, perf_pct))
+                # Calculate top PORTFOLIO_SIZE by 1-year performance (always parallel)
+                from parallel_backtest import calculate_parallel_performance
+                perf_1y_list = calculate_parallel_performance(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date,
+                    period_days=365
+                )
                 
                 if perf_1y_list:
                     perf_1y_list.sort(key=lambda x: x[1], reverse=True)
@@ -2060,38 +2023,8 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_STATIC_BH_1Y_MONTHLY:
             should_rebalance_1y_monthly = (not static_bh_1y_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_1y_monthly:
-                from config import PARALLEL_THRESHOLD
-                if len(initial_top_tickers) > PARALLEL_THRESHOLD:
-                    from parallel_backtest import calculate_parallel_performance
-                    perf_1y_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 365)
-                else:
-                    perf_1y_m_list = []
-                    _debug_skip_reasons = {'not_in_data': 0, 'too_few_rows': 0, 'too_few_close': 0, 'zero_price': 0, 'ok': 0}
-                    for ticker in initial_top_tickers:
-                        if ticker not in ticker_data_grouped:
-                            _debug_skip_reasons['not_in_data'] += 1
-                            continue
-                        ticker_data = ticker_data_grouped[ticker]
-                        perf_start = current_date - timedelta(days=365)
-                        perf_data = ticker_data.loc[perf_start:current_date]
-                        if len(perf_data) >= 50:
-                            valid_close = perf_data['Close'].dropna()
-                            if len(valid_close) >= 2:
-                                start_p, end_p = valid_close.iloc[0], valid_close.iloc[-1]
-                                if start_p > 0:
-                                    perf_1y_m_list.append((ticker, ((end_p - start_p) / start_p) * 100))
-                                    _debug_skip_reasons['ok'] += 1
-                                else:
-                                    _debug_skip_reasons['zero_price'] += 1
-                            else:
-                                _debug_skip_reasons['too_few_close'] += 1
-                        else:
-                            _debug_skip_reasons['too_few_rows'] += 1
-                    if not static_bh_1y_monthly_initialized:
-                        print(f"   🔍 BH 1Y Monthly DEBUG: date={current_date.date()}, perf_start={perf_start}, tickers={len(initial_top_tickers)}, passed={len(perf_1y_m_list)}, skip_reasons={_debug_skip_reasons}")
-                        if initial_top_tickers and initial_top_tickers[0] in ticker_data_grouped:
-                            _sample = ticker_data_grouped[initial_top_tickers[0]]
-                            print(f"   🔍 BH 1Y Monthly DEBUG: sample ticker={initial_top_tickers[0]}, index_range={_sample.index.min()} to {_sample.index.max()}, rows={len(_sample)}")
+                from parallel_backtest import calculate_parallel_performance
+                perf_1y_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 365)
                 if perf_1y_m_list:
                     perf_1y_m_list.sort(key=lambda x: x[1], reverse=True)
                     new_stocks = [t for t, _ in perf_1y_m_list[:PORTFOLIO_SIZE]]
@@ -2113,24 +2046,8 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_STATIC_BH_6M_MONTHLY:
             should_rebalance_6m_monthly = (not static_bh_6m_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_6m_monthly:
-                from config import PARALLEL_THRESHOLD
-                if len(initial_top_tickers) > PARALLEL_THRESHOLD:
-                    from parallel_backtest import calculate_parallel_performance
-                    perf_6m_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 180)
-                else:
-                    perf_6m_m_list = []
-                    for ticker in initial_top_tickers:
-                        if ticker not in ticker_data_grouped:
-                            continue
-                        ticker_data = ticker_data_grouped[ticker]
-                        perf_start = current_date - timedelta(days=180)
-                        perf_data = ticker_data.loc[perf_start:current_date]
-                        if len(perf_data) >= 30:
-                            valid_close = perf_data['Close'].dropna()
-                            if len(valid_close) >= 2:
-                                start_p, end_p = valid_close.iloc[0], valid_close.iloc[-1]
-                                if start_p > 0:
-                                    perf_6m_m_list.append((ticker, ((end_p - start_p) / start_p) * 100))
+                from parallel_backtest import calculate_parallel_performance
+                perf_6m_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 180)
                 if perf_6m_m_list:
                     perf_6m_m_list.sort(key=lambda x: x[1], reverse=True)
                     new_stocks = [t for t, _ in perf_6m_m_list[:PORTFOLIO_SIZE]]
@@ -2152,24 +2069,8 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_STATIC_BH_3M_MONTHLY:
             should_rebalance_3m_monthly = (not static_bh_3m_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_3m_monthly:
-                from config import PARALLEL_THRESHOLD
-                if len(initial_top_tickers) > PARALLEL_THRESHOLD:
-                    from parallel_backtest import calculate_parallel_performance
-                    perf_3m_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 90)
-                else:
-                    perf_3m_m_list = []
-                    for ticker in initial_top_tickers:
-                        if ticker not in ticker_data_grouped:
-                            continue
-                        ticker_data = ticker_data_grouped[ticker]
-                        perf_start = current_date - timedelta(days=90)
-                        perf_data = ticker_data.loc[perf_start:current_date]
-                        if len(perf_data) >= 20:
-                            valid_close = perf_data['Close'].dropna()
-                            if len(valid_close) >= 2:
-                                start_p, end_p = valid_close.iloc[0], valid_close.iloc[-1]
-                                if start_p > 0:
-                                    perf_3m_m_list.append((ticker, ((end_p - start_p) / start_p) * 100))
+                from parallel_backtest import calculate_parallel_performance
+                perf_3m_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 90)
                 if perf_3m_m_list:
                     perf_3m_m_list.sort(key=lambda x: x[1], reverse=True)
                     new_stocks = [t for t, _ in perf_3m_m_list[:PORTFOLIO_SIZE]]
@@ -2201,46 +2102,14 @@ def _run_portfolio_backtest_walk_forward(
                 # Calculate current top N performers based on 1-year performance
                 current_top_performers = []
 
-                # Calculate performances (parallel only for large lists)
-                from config import PARALLEL_THRESHOLD
-                if len(filtered_tickers_1y) > PARALLEL_THRESHOLD:
-                    from parallel_backtest import calculate_parallel_performance
-                    current_top_performers = calculate_parallel_performance(
-                        filtered_tickers_1y,
-                        ticker_data_grouped,
-                        current_date,
-                        period_days=365
-                    )
-                else:
-                    # Sequential for small lists
-                    current_top_performers = []
-                    for ticker in filtered_tickers_1y:
-                        try:
-                            if ticker not in ticker_data_grouped:
-                                continue
-                            ticker_data = ticker_data_grouped[ticker]
-                            
-                            # Use 1-year performance (same as initial selection) but updated daily
-                            perf_start_date = current_date - timedelta(days=MIN_DATA_DAYS_1Y)
-                            perf_data = ticker_data.loc[perf_start_date:current_date]
-
-                            if len(perf_data) >= MIN_DATA_DAYS_1Y:  # Need minimum data
-                                # Drop NaN values for valid calculation
-                                valid_close = perf_data['Close'].dropna()
-                                if len(valid_close) >= 2:
-                                    start_price = valid_close.iloc[0]
-                                    end_price = valid_close.iloc[-1]
-
-                                    if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
-                                        perf_pct = ((end_price - start_price) / start_price) * 100
-                                        current_top_performers.append((ticker, perf_pct))
-
-                        except Exception as e:
-                            print(f"   ⚠️ Error calculating 1Y performance for {ticker}: {e}")
-                            continue
-
-                        except Exception as e:
-                            continue
+                # Calculate performances (always parallel)
+                from parallel_backtest import calculate_parallel_performance
+                current_top_performers = calculate_parallel_performance(
+                    filtered_tickers_1y,
+                    ticker_data_grouped,
+                    current_date,
+                    period_days=365
+                )
 
                 # Sort by performance and get top N
                 if current_top_performers and ENABLE_DYNAMIC_BH_1Y:
@@ -2281,32 +2150,10 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, ticker_data_grouped, current_date, "Dynamic BH 6M"
                 )
                 
-                # Calculate current top N performers based on 6-month performance
-                from config import PARALLEL_THRESHOLD
-                if len(filtered_tickers_6m) > PARALLEL_THRESHOLD:
-                    from parallel_backtest import calculate_parallel_performance
-                    current_top_performers_6m = calculate_parallel_performance(
-                        filtered_tickers_6m, ticker_data_grouped, current_date, 180)
-                else:
-                    current_top_performers_6m = []
-                    for ticker in filtered_tickers_6m:
-                        try:
-                            if ticker not in ticker_data_grouped:
-                                continue
-                            ticker_data = ticker_data_grouped[ticker]
-                            perf_start_date_6m = current_date - timedelta(days=MIN_DATA_DAYS_6M)
-                            perf_data_6m = ticker_data.loc[perf_start_date_6m:current_date]
-                            if len(perf_data_6m) >= MIN_DATA_DAYS_6M:
-                                valid_close = perf_data_6m['Close'].dropna()
-                                if len(valid_close) >= 2:
-                                    start_price = valid_close.iloc[0]
-                                    end_price = valid_close.iloc[-1]
-                                    if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
-                                        perf_pct = ((end_price - start_price) / start_price) * 100
-                                        current_top_performers_6m.append((ticker, perf_pct))
-                        except Exception as e:
-                            print(f"   ⚠️ Error calculating 6M performance for {ticker}: {e}")
-                            continue
+                # Calculate current top N performers based on 6-month performance (always parallel)
+                from parallel_backtest import calculate_parallel_performance
+                current_top_performers_6m = calculate_parallel_performance(
+                    filtered_tickers_6m, ticker_data_grouped, current_date, 180)
 
                 # Sort by performance and get top N
                 if current_top_performers_6m:
@@ -2345,31 +2192,9 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             print(f"   🔍 Dynamic BH 3M: Processing {len(filtered_tickers_3m)} tickers (filtered from {len(initial_top_tickers)}) for 3-month performance...")
-            from config import PARALLEL_THRESHOLD
-            if len(filtered_tickers_3m) > PARALLEL_THRESHOLD:
-                from parallel_backtest import calculate_parallel_performance
-                current_top_performers_3m = calculate_parallel_performance(
-                    filtered_tickers_3m, ticker_data_grouped, current_date, 90)
-            else:
-                current_top_performers_3m = []
-                for ticker in filtered_tickers_3m:
-                    try:
-                        if ticker not in ticker_data_grouped:
-                            continue
-                        ticker_data = ticker_data_grouped[ticker]
-                        perf_start_date_3m = current_date - timedelta(days=MIN_DATA_DAYS_3M)
-                        perf_data_3m = ticker_data.loc[perf_start_date_3m:current_date]
-                        if len(perf_data_3m) >= MIN_DATA_DAYS_3M:
-                            valid_close = perf_data_3m['Close'].dropna()
-                            if len(valid_close) >= 2:
-                                start_price = valid_close.iloc[0]
-                                end_price = valid_close.iloc[-1]
-                                if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
-                                    perf_pct = ((end_price - start_price) / start_price) * 100
-                                    current_top_performers_3m.append((ticker, perf_pct))
-                    except Exception as e:
-                        print(f"   ⚠️ Error calculating 3M performance for {ticker}: {e}")
-                        continue
+            from parallel_backtest import calculate_parallel_performance
+            current_top_performers_3m = calculate_parallel_performance(
+                filtered_tickers_3m, ticker_data_grouped, current_date, 90)
 
             # Sort by performance and get top N
             if current_top_performers_3m:
@@ -2404,32 +2229,9 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             print(f"   🔍 Dynamic BH 1M: Processing {len(filtered_tickers_1m)} tickers (filtered from {len(initial_top_tickers)}) for 1-month performance...")
-            from config import PARALLEL_THRESHOLD
-            if len(filtered_tickers_1m) > PARALLEL_THRESHOLD:
-                from parallel_backtest import calculate_parallel_performance
-                current_top_performers_1m = calculate_parallel_performance(
-                    filtered_tickers_1m, ticker_data_grouped, current_date, 21)
-            else:
-                current_top_performers_1m = []
-                for ticker in filtered_tickers_1m:
-                    try:
-                        if ticker not in ticker_data_grouped:
-                            continue
-                        ticker_data = ticker_data_grouped[ticker]
-                        perf_start_date_1m = current_date - timedelta(days=MIN_DATA_DAYS_1M)
-                        perf_data_1m = ticker_data.loc[perf_start_date_1m:current_date]
-                        if len(perf_data_1m) >= MIN_DATA_DAYS_1M:
-                            valid_close = perf_data_1m['Close'].dropna()
-                            if len(valid_close) >= 2:
-                                start_price = valid_close.iloc[0]
-                                end_price = valid_close.iloc[-1]
-                                if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
-                                    perf_pct = ((end_price - start_price) / start_price) * 100
-                                    if perf_pct > 0:
-                                        current_top_performers_1m.append((ticker, perf_pct))
-                    except Exception as e:
-                        print(f"   ⚠️ Error calculating 1M performance for {ticker}: {e}")
-                        continue
+            from parallel_backtest import calculate_parallel_performance
+            current_top_performers_1m = calculate_parallel_performance(
+                filtered_tickers_1m, ticker_data_grouped, current_date, 21)
 
             # Sort by performance and get top N
             if current_top_performers_1m:
@@ -2456,428 +2258,228 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
         # DYNAMIC BH 1Y + VOLATILITY FILTER: Same as Dynamic BH 1Y but with volatility filter
-                if ENABLE_DYNAMIC_BH_1Y_VOL_FILTER:
-                    current_top_performers_vol_filter = []
-                    stocks_evaluated = 0
-                    stocks_passed_vol_filter = 0
+        if ENABLE_DYNAMIC_BH_1Y_VOL_FILTER:
+            current_top_performers_vol_filter = []
+            stocks_evaluated = 0
+            stocks_passed_vol_filter = 0
+            
+            # Calculate performances (always parallel)
+            from parallel_backtest import calculate_parallel_performance
+            base_performances = calculate_parallel_performance(
+                initial_top_tickers,
+                ticker_data_grouped,
+                current_date,
+                period_days=365
+            )
+            
+            # Apply volatility filter
+            for ticker, perf_pct in base_performances:
+                try:
+                    ticker_data = ticker_data_grouped[ticker]
+                    perf_start_date = current_date - timedelta(days=MIN_DATA_DAYS_1Y)
+                    perf_data = ticker_data.loc[perf_start_date:current_date]
                     
-                    # Calculate performances (parallel only for large lists)
-                    if len(initial_top_tickers) > 200:
-                        from parallel_backtest import calculate_parallel_performance
-                        base_performances = calculate_parallel_performance(
-                            initial_top_tickers,
-                            ticker_data_grouped,
-                            current_date,
-                            period_days=365
-                        )
-                    else:
-                        # Sequential for small lists
-                        base_performances = []
-                        for ticker in initial_top_tickers:
-                            try:
-                                if ticker not in ticker_data_grouped:
-                                    continue
-                                ticker_data = ticker_data_grouped[ticker]
+                    if len(perf_data) >= 50:
+                        valid_close = perf_data['Close'].dropna()
+                        if len(valid_close) >= 2:
+                            # Calculate annualized volatility
+                            daily_returns = valid_close.pct_change(fill_method=None).dropna()
+                            if len(daily_returns) > 10:
+                                # Annualize volatility: std_dev * sqrt(252) * 100%
+                                annualized_volatility = daily_returns.std() * (252 ** 0.5) * 100
                                 
-                                perf_start_date = current_date - timedelta(days=MIN_DATA_DAYS_1Y)
-                                perf_data = ticker_data.loc[perf_start_date:current_date]
-                                
-                                if len(perf_data) >= 50:
-                                    valid_close = perf_data['Close'].dropna()
-                                    if len(valid_close) >= 2:
-                                        start_price = valid_close.iloc[0]
-                                        end_price = valid_close.iloc[-1]
-                                        
-                                        if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
-                                            perf_pct = ((end_price - start_price) / start_price) * 100
-                                            base_performances.append((ticker, perf_pct))
-                            except Exception:
-                                continue
-                    
-                    # Apply volatility filter
-                    for ticker, perf_pct in base_performances:
-                        try:
-                            ticker_data = ticker_data_grouped[ticker]
-                            perf_start_date = current_date - timedelta(days=MIN_DATA_DAYS_1Y)
-                            perf_data = ticker_data.loc[perf_start_date:current_date]
-                            
-                            if len(perf_data) >= 50:
-                                valid_close = perf_data['Close'].dropna()
-                                if len(valid_close) >= 2:
-                                    # Calculate annualized volatility
-                                    daily_returns = valid_close.pct_change(fill_method=None).dropna()
-                                    if len(daily_returns) > 10:
-                                        # Annualize volatility: std_dev * sqrt(252) * 100%
-                                        annualized_volatility = daily_returns.std() * (252 ** 0.5) * 100
-                                        
-                                        # Apply volatility filter
-                                        if annualized_volatility <= DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY:
-                                            current_top_performers_vol_filter.append((ticker, perf_pct, annualized_volatility))
-                                            stocks_passed_vol_filter += 1
-                        except Exception:
-                            continue
+                                # Apply volatility filter
+                                if annualized_volatility <= DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY:
+                                    current_top_performers_vol_filter.append((ticker, perf_pct, annualized_volatility))
+                                    stocks_passed_vol_filter += 1
+                except Exception:
+                    continue
 
-                    # Sort by performance and get top N (from filtered list)
-                    if current_top_performers_vol_filter:
-                        current_top_performers_vol_filter.sort(key=lambda x: x[1], reverse=True)
-                        new_dynamic_bh_1y_vol_filter_stocks = [ticker for ticker, perf, vol in current_top_performers_vol_filter[:PORTFOLIO_SIZE]]
-                        
-                        # Show volatility info
-                        vol_info = [(ticker, f"{perf:.1f}%", f"{vol:.1f}%") for ticker, perf, vol in current_top_performers_vol_filter[:PORTFOLIO_SIZE]]
-                        print(f"   🎯 Top {PORTFOLIO_SIZE} performers (1Y + Vol Filter): {', '.join([f'{t}({p}/{v})' for t, p, v in vol_info])}")
-                        print(f"   🔍 Filter stats: {stocks_passed_vol_filter}/{stocks_evaluated} stocks passed volatility filter")
+            # Sort by performance and get top N (from filtered list)
+            if current_top_performers_vol_filter:
+                current_top_performers_vol_filter.sort(key=lambda x: x[1], reverse=True)
+                new_dynamic_bh_1y_vol_filter_stocks = [ticker for ticker, perf, vol in current_top_performers_vol_filter[:PORTFOLIO_SIZE]]
+                
+                # Show volatility info
+                vol_info = [(ticker, f"{perf:.1f}%", f"{vol:.1f}%") for ticker, perf, vol in current_top_performers_vol_filter[:PORTFOLIO_SIZE]]
+                print(f"   🎯 Top {PORTFOLIO_SIZE} performers (1Y + Vol Filter): {', '.join([f'{t}({p}/{v})' for t, p, v in vol_info])}")
+                print(f"   🔍 Filter stats: {stocks_passed_vol_filter}/{stocks_evaluated} stocks passed volatility filter")
 
-                        # Use universal smart rebalancing function
-                        dynamic_bh_1y_vol_filter_positions, dynamic_bh_1y_vol_filter_cash, current_dynamic_bh_1y_vol_filter_stocks, rebalance_costs = _smart_rebalance_portfolio(
-                            strategy_name="Dynamic BH 1Y+Vol",
-                            current_stocks=current_dynamic_bh_1y_vol_filter_stocks,
-                            new_stocks=new_dynamic_bh_1y_vol_filter_stocks,
-                            positions=dynamic_bh_1y_vol_filter_positions,
-                            cash=dynamic_bh_1y_vol_filter_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not current_dynamic_bh_1y_vol_filter_stocks  # Force initial allocation
-                        )
-                        dynamic_bh_1y_vol_filter_transaction_costs += rebalance_costs
-                        dynamic_bh_1y_vol_filter_last_rebalance_value = _mark_to_market_value(
-                            dynamic_bh_1y_vol_filter_positions, dynamic_bh_1y_vol_filter_cash, ticker_data_grouped, current_date
-                        )
-                    else:
-                        print(f"   ⚠️ No stocks passed volatility filter (max {DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY:.1f}% annualized)")
-                        print(f"   🔍 Filter stats: {stocks_passed_vol_filter}/{stocks_evaluated} stocks passed volatility filter")
-                        # Debug: show what volatilities we saw
-                        if current_top_performers_vol_filter:
-                            vol_debug = [(ticker, f"{vol:.1f}%") for ticker, perf, vol in current_top_performers_vol_filter[:5]]
-                            print(f"   🔍 Sample volatilities: {', '.join([f'{t}({v})' for t, v in vol_debug])}")
-                        else:
-                            print(f"   🔍 No stocks had valid volatility calculations")
-
-                # DYNAMIC BH 1Y + TRAILING STOP: Same as Dynamic BH 1Y but with 20% trailing stop
-                if ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP:
-                    # First, check trailing stops on existing positions
-                    positions_to_sell = []
-                    for ticker in list(current_dynamic_bh_1y_trailing_stop_stocks):
-                        if ticker in dynamic_bh_1y_trailing_stop_positions:
-                            try:
-                                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                                ticker_data = ticker_data[ticker_data['date'] == current_date]
-                                if len(ticker_data) > 0:
-                                    current_price = ticker_data['Close'].iloc[0]
-                                    position = dynamic_bh_1y_trailing_stop_positions[ticker]
-                                    peak_price = position.get('peak_price', position['entry_price'])
-                                    
-                                    # Update peak price if current price is higher
-                                    if current_price > peak_price:
-                                        dynamic_bh_1y_trailing_stop_positions[ticker]['peak_price'] = current_price
-                                        peak_price = current_price
-                                    
-                                    # Check if trailing stop triggered (20% drop from peak)
-                                    stop_price = peak_price * (1 - DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT / 100)
-                                    if current_price <= stop_price:
-                                        positions_to_sell.append(ticker)
-                                        print(f"   🛑 Trailing stop triggered for {ticker}: ${current_price:.2f} <= ${stop_price:.2f} (peak: ${peak_price:.2f})")
-                            except Exception as e:
-                                continue
-                    
-                    # Sell positions that hit trailing stop
-                    for ticker in positions_to_sell:
-                        if ticker in dynamic_bh_1y_trailing_stop_positions:
-                            position = dynamic_bh_1y_trailing_stop_positions[ticker]
-                            shares = position['shares']
-                            try:
-                                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                                ticker_data = ticker_data[ticker_data['date'] == current_date]
-                                if len(ticker_data) > 0:
-                                    current_price = ticker_data['Close'].iloc[0]
-                                    sell_value = shares * current_price
-                                    sell_cost = sell_value * TRANSACTION_COST
-                                    dynamic_bh_1y_trailing_stop_transaction_costs += sell_cost
-                                    dynamic_bh_1y_trailing_stop_cash += (sell_value - sell_cost)
-                                    del dynamic_bh_1y_trailing_stop_positions[ticker]
-                                    current_dynamic_bh_1y_trailing_stop_stocks.remove(ticker)
-                            except Exception as e:
-                                continue
-                    
-                    # Regular rebalancing (same as Dynamic BH 1Y)
-                    current_top_performers_ts = []
-                    for ticker in initial_top_tickers:
-                        try:
-                            if ticker not in ticker_data_grouped:
-                                continue
-                            ticker_data = ticker_data_grouped[ticker]
-                            perf_start_date = current_date - timedelta(days=MIN_DATA_DAYS_1Y)
-                            perf_data = ticker_data.loc[perf_start_date:current_date]
-                            if len(perf_data) >= 50:
-                                valid_close = perf_data['Close'].dropna()
-                                if len(valid_close) >= 2:
-                                    start_price = valid_close.iloc[0]
-                                    end_price = valid_close.iloc[-1]
-                                    if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
-                                        perf_pct = ((end_price - start_price) / start_price) * 100
-                                        current_top_performers_ts.append((ticker, perf_pct))
-                        except Exception as e:
-                            continue
-
-                    if current_top_performers_ts:
-                        current_top_performers_ts.sort(key=lambda x: x[1], reverse=True)
-                        new_dynamic_bh_1y_trailing_stop_stocks = [ticker for ticker, perf in current_top_performers_ts[:PORTFOLIO_SIZE]]
-                        print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-year + Trailing Stop): {', '.join(new_dynamic_bh_1y_trailing_stop_stocks)}")
-
-                        # Use universal smart rebalancing function
-                        dynamic_bh_1y_trailing_stop_positions, dynamic_bh_1y_trailing_stop_cash, current_dynamic_bh_1y_trailing_stop_stocks, rebalance_costs = _smart_rebalance_portfolio(
-                            strategy_name="Dynamic BH 1Y+TS",
-                            current_stocks=current_dynamic_bh_1y_trailing_stop_stocks,
-                            new_stocks=new_dynamic_bh_1y_trailing_stop_stocks,
-                            positions=dynamic_bh_1y_trailing_stop_positions,
-                            cash=dynamic_bh_1y_trailing_stop_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not current_dynamic_bh_1y_trailing_stop_stocks  # Force initial allocation
-                        )
-                        dynamic_bh_1y_trailing_stop_transaction_costs += rebalance_costs
-                        dynamic_bh_1y_trailing_stop_last_rebalance_value = _mark_to_market_value(
-                            dynamic_bh_1y_trailing_stop_positions, dynamic_bh_1y_trailing_stop_cash, ticker_data_grouped, current_date
-                        )
-
-                # SECTOR ROTATION: Rebalance to top performing sector ETFs
-                if ENABLE_SECTOR_ROTATION:
-                    # Check if it's time to rebalance (or if this is initial allocation)
-                    days_since_rebalance = (current_date - sector_rotation_last_rebalance_date).days if 'sector_rotation_last_rebalance_date' in locals() else AI_REBALANCE_FREQUENCY_DAYS
-                    is_initial_allocation = not current_sector_rotation_etfs  # Force day 1 investment
-                    
-                    if is_initial_allocation or days_since_rebalance >= AI_REBALANCE_FREQUENCY_DAYS:
-                        print(f"   🏢 Sector Rotation rebalancing (every {AI_REBALANCE_FREQUENCY_DAYS} days)...")
-                        
-                        # Select top sector ETFs based on momentum
-                        from shared_strategies import select_sector_rotation_etfs
-                        new_sector_rotation_etfs = select_sector_rotation_etfs(
-                            initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
-                        )
-                        
-                        if new_sector_rotation_etfs:
-                            # Use universal smart rebalancing function
-                            sector_rotation_positions, sector_rotation_cash, current_sector_rotation_etfs, rebalance_costs = _smart_rebalance_portfolio(
-                                strategy_name="Sector Rotation",
-                                current_stocks=current_sector_rotation_etfs,
-                                new_stocks=new_sector_rotation_etfs,
-                                positions=sector_rotation_positions,
-                                cash=sector_rotation_cash,
-                                ticker_data_grouped=ticker_data_grouped,
-                                current_date=current_date,
-                                transaction_cost=TRANSACTION_COST,
-                                portfolio_size=PORTFOLIO_SIZE,
-                                force_rebalance=not current_sector_rotation_etfs  # Force initial allocation
-                            )
-                            sector_rotation_transaction_costs += rebalance_costs
-                            sector_rotation_last_rebalance_date = current_date
-                            sector_rotation_last_rebalance_value = _mark_to_market_value(
-                                sector_rotation_positions, sector_rotation_cash, ticker_data_grouped, current_date
-                            )
-                        else:
-                            print(f"   ❌ No sector ETFs selected for rotation")
-                    else:
-                        print(f"   ⏭️ Skip Sector Rotation rebalance: {days_since_rebalance} days since last (rebalance every {AI_REBALANCE_FREQUENCY_DAYS} days)")
-
-                # DYNAMIC BH 6-MONTH: Rebalance to current top PORTFOLIO_SIZE based on 6-month performance
-                if ENABLE_DYNAMIC_BH_6M:
-                    print(f"   🔍 Dynamic BH 6M: Processing {len(initial_top_tickers)} tickers for 6-month performance...")
-                    current_top_performers_6m = []
-
-                    # ✅ OPTIMIZED: Use pre-grouped data (fast lookup instead of slow filter)
-                    for ticker in initial_top_tickers:
-                        try:
-                            if ticker not in ticker_data_grouped:
-                                continue
-                            ticker_data = ticker_data_grouped[ticker]
-                            
-                            # Use 6-month (180-day) performance for selection
-                            perf_start_date_6m = current_date - timedelta(days=MIN_DATA_DAYS_6M)
-                            perf_data_6m = ticker_data.loc[perf_start_date_6m:current_date]
-
-                            if len(perf_data_6m) >= 60:  # Need at least 60 days
-                                # Drop NaN values for valid calculation
-                                valid_close_6m = perf_data_6m['Close'].dropna()
-                                if len(valid_close_6m) >= 2:
-                                    start_price = valid_close_6m.iloc[0]
-                                    end_price = valid_close_6m.iloc[-1]
-                                    if start_price > 0:
-                                        perf_6m = ((end_price - start_price) / start_price) * 100
-                                        current_top_performers_6m.append((ticker, perf_6m))
-                        except Exception as e:
-                            print(f"      ⚠️ {ticker}: 6M performance calc failed: {e}")
-                            continue
-
-                    # Sort by 6M performance and get top N
-                    if current_top_performers_6m:
-                        current_top_performers_6m.sort(key=lambda x: x[1], reverse=True)
-                        new_dynamic_bh_6m_stocks = [ticker for ticker, perf in current_top_performers_6m[:PORTFOLIO_SIZE]]
-
-                        # Use universal smart rebalancing function
-                        dynamic_bh_6m_positions, dynamic_bh_6m_cash, current_dynamic_bh_6m_stocks, rebalance_costs = _smart_rebalance_portfolio(
-                            strategy_name="Dynamic BH 6M",
-                            current_stocks=current_dynamic_bh_6m_stocks,
-                            new_stocks=new_dynamic_bh_6m_stocks,
-                            positions=dynamic_bh_6m_positions,
-                            cash=dynamic_bh_6m_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not current_dynamic_bh_6m_stocks
-                        )
-                        dynamic_bh_6m_transaction_costs += rebalance_costs
-                        dynamic_bh_6m_last_rebalance_value = _mark_to_market_value(
-                            dynamic_bh_6m_positions, dynamic_bh_6m_cash, ticker_data_grouped, current_date
-                        )
-
-                # DYNAMIC BH 3-MONTH: Rebalance to current top PORTFOLIO_SIZE based on 3-month performance
-                if ENABLE_DYNAMIC_BH_3M:
-                    print(f"   🔍 Dynamic BH 3M: Processing {len(initial_top_tickers)} tickers for 3-month performance...")
-                    current_top_performers_3m = []
-
-                    # ✅ OPTIMIZED: Use pre-grouped data (fast lookup instead of slow filter)
-                    for ticker in initial_top_tickers:
-                        try:
-                            if ticker not in ticker_data_grouped:
-                                continue
-                            ticker_data = ticker_data_grouped[ticker]
-                            
-                            # Use 3-month (90-day) performance for selection
-                            perf_start_date_3m = current_date - timedelta(days=MIN_DATA_DAYS_3M)
-                            perf_data_3m = ticker_data.loc[perf_start_date_3m:current_date]
-
-                            if len(perf_data_3m) >= 30:  # Need at least 30 days
-                                # Drop NaN values for valid calculation
-                                valid_close_3m = perf_data_3m['Close'].dropna()
-                                if len(valid_close_3m) >= 2:
-                                    start_price = valid_close_3m.iloc[0]
-                                    end_price = valid_close_3m.iloc[-1]
-
-                                    if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
-                                        perf_pct_3m = ((end_price - start_price) / start_price) * 100
-                                        current_top_performers_3m.append((ticker, perf_pct_3m))
-
-                        except Exception as e:
-                            continue
-
-                    # Select stocks for BH_3m using traditional top N selection
-                    print(f"   🔍 Dynamic BH 3M: Found {len(current_top_performers_3m)} performers with 3-month data")
-                    if current_top_performers_3m:
-                        current_top_performers_3m.sort(key=lambda x: x[1], reverse=True)
-                        new_dynamic_bh_3m_stocks = [ticker for ticker, perf in current_top_performers_3m[:PORTFOLIO_SIZE]]
-                        print(f"   🏆 Top {PORTFOLIO_SIZE} performers (3-month): {', '.join(new_dynamic_bh_3m_stocks)}")
-                        
-                        # Use universal smart rebalancing function
-                        dynamic_bh_3m_positions, dynamic_bh_3m_cash, current_dynamic_bh_3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
-                            strategy_name="Dynamic BH 3M",
-                            current_stocks=current_dynamic_bh_3m_stocks,
-                            new_stocks=new_dynamic_bh_3m_stocks,
-                            positions=dynamic_bh_3m_positions,
-                            cash=dynamic_bh_3m_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not current_dynamic_bh_3m_stocks
-                        )
-                        dynamic_bh_3m_transaction_costs += rebalance_costs
-                        dynamic_bh_3m_last_rebalance_value = _mark_to_market_value(
-                            dynamic_bh_3m_positions, dynamic_bh_3m_cash, ticker_data_grouped, current_date
-                        )
-                    else:
-                        print(f"   ❌ Dynamic BH 3M: No performers found with sufficient 3-month data!")
-
-                # DYNAMIC BH 1-MONTH: Rebalance to current top PORTFOLIO_SIZE based on 1-month performance
-                if ENABLE_DYNAMIC_BH_1M:
-                    current_top_performers_1m = []
-
-                    # ✅ OPTIMIZED: Use pre-grouped data (fast lookup instead of slow filter)
-                    for ticker in initial_top_tickers:
-                        try:
-                            if ticker not in ticker_data_grouped:
-                                continue
-                            ticker_data = ticker_data_grouped[ticker]
-                            
-                            # Use 1-month (30-day) performance for selection
-                            perf_start_date_1m = current_date - timedelta(days=30)
-                            perf_data_1m = ticker_data.loc[perf_start_date_1m:current_date]
-
-                            if len(perf_data_1m) >= 10:  # Need at least 10 days
-                                # Drop NaN values for valid calculation
-                                valid_close_1m = perf_data_1m['Close'].dropna()
-                                if len(valid_close_1m) >= 2:
-                                    start_price = valid_close_1m.iloc[0]
-                                    end_price = valid_close_1m.iloc[-1]
-
-                                    if not pd.isna(start_price) and not pd.isna(end_price) and start_price > 0:
-                                        perf_pct_1m = ((end_price - start_price) / start_price) * 100
-                                        current_top_performers_1m.append((ticker, perf_pct_1m))
-
-                        except Exception as e:
-                            continue
-
-                    # Sort by 1-month performance and get top N
-                    if current_top_performers_1m:
-                        current_top_performers_1m.sort(key=lambda x: x[1], reverse=True)
-                        new_dynamic_bh_1m_stocks = [ticker for ticker, perf in current_top_performers_1m[:PORTFOLIO_SIZE]]
-
-                        print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-month): {', '.join(new_dynamic_bh_1m_stocks)}")
-
-                        # Use universal smart rebalancing function
-                        dynamic_bh_1m_positions, dynamic_bh_1m_cash, current_dynamic_bh_1m_stocks, rebalance_costs = _smart_rebalance_portfolio(
-                            strategy_name="Dynamic BH 1M",
-                            current_stocks=current_dynamic_bh_1m_stocks,
-                            new_stocks=new_dynamic_bh_1m_stocks,
-                            positions=dynamic_bh_1m_positions,
-                            cash=dynamic_bh_1m_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not current_dynamic_bh_1m_stocks
-                        )
-                        dynamic_bh_1m_transaction_costs += rebalance_costs
-                        dynamic_bh_1m_last_rebalance_value = _mark_to_market_value(
-                            dynamic_bh_1m_positions, dynamic_bh_1m_cash, ticker_data_grouped, current_date
-                        )
-
-                # RISK-ADJUSTED MOMENTUM: Rebalance to current top 3 using shared strategy
-                if ENABLE_RISK_ADJ_MOM:
-                    from shared_strategies import select_risk_adj_mom_stocks
-                    
-                    # Use shared strategy for consistent selection
-                    new_risk_adj_mom_stocks = select_risk_adj_mom_stocks(
-                        initial_top_tickers, 
-                        ticker_data_grouped, 
-                        current_date,
-                        top_n=PORTFOLIO_SIZE
-                    )
-
-                    if new_risk_adj_mom_stocks:
-                        # Use universal smart rebalancing function
-                        risk_adj_mom_positions, risk_adj_mom_cash, current_risk_adj_mom_stocks, rebalance_costs = _smart_rebalance_portfolio(
-                            strategy_name="Risk-Adj Mom",
-                            current_stocks=current_risk_adj_mom_stocks,
-                            new_stocks=new_risk_adj_mom_stocks,
-                            positions=risk_adj_mom_positions,
-                            cash=risk_adj_mom_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not current_risk_adj_mom_stocks  # Force initial allocation
-                        )
-                        risk_adj_mom_transaction_costs += rebalance_costs
-                        risk_adj_mom_last_rebalance_value = _mark_to_market_value(
-                            risk_adj_mom_positions, risk_adj_mom_cash, ticker_data_grouped, current_date
-                        )
-
+                # Use universal smart rebalancing function
+                dynamic_bh_1y_vol_filter_positions, dynamic_bh_1y_vol_filter_cash, current_dynamic_bh_1y_vol_filter_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    strategy_name="Dynamic BH 1Y+Vol",
+                    current_stocks=current_dynamic_bh_1y_vol_filter_stocks,
+                    new_stocks=new_dynamic_bh_1y_vol_filter_stocks,
+                    positions=dynamic_bh_1y_vol_filter_positions,
+                    cash=dynamic_bh_1y_vol_filter_cash,
+                    ticker_data_grouped=ticker_data_grouped,
+                    current_date=current_date,
+                    transaction_cost=TRANSACTION_COST,
+                    portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not current_dynamic_bh_1y_vol_filter_stocks  # Force initial allocation
+                )
+                dynamic_bh_1y_vol_filter_transaction_costs += rebalance_costs
+                dynamic_bh_1y_vol_filter_last_rebalance_value = _mark_to_market_value(
+                    dynamic_bh_1y_vol_filter_positions, dynamic_bh_1y_vol_filter_cash, ticker_data_grouped, current_date
+                )
+            else:
+                print(f"   ⚠️ No stocks passed volatility filter (max {DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY:.1f}% annualized)")
+                print(f"   🔍 Filter stats: {stocks_passed_vol_filter}/{stocks_evaluated} stocks passed volatility filter")
+                # Debug: show what volatilities we saw
+                if current_top_performers_vol_filter:
+                    vol_debug = [(ticker, f"{vol:.1f}%") for ticker, perf, vol in current_top_performers_vol_filter[:5]]
+                    print(f"   🔍 Sample volatilities: {', '.join([f'{t}({v})' for t, v in vol_debug])}")
                 else:
-                    print(f"   ⚠️ No valid performance data for risk-adjusted momentum rebalancing")
+                    print(f"   🔍 No stocks had valid volatility calculations")
+
+        # DYNAMIC BH 1Y + TRAILING STOP: Same as Dynamic BH 1Y but with 20% trailing stop
+        if ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP:
+            # First, check trailing stops on existing positions
+            positions_to_sell = []
+            for ticker in list(current_dynamic_bh_1y_trailing_stop_stocks):
+                if ticker in dynamic_bh_1y_trailing_stop_positions:
+                    try:
+                        ticker_data = ticker_data_grouped.get(ticker)
+                        if ticker_data is None or ticker_data.empty:
+                            continue
+                        ticker_data = ticker_data.loc[ticker_data.index == current_date]
+                        if len(ticker_data) > 0:
+                            current_price = ticker_data['Close'].iloc[0]
+                            position = dynamic_bh_1y_trailing_stop_positions[ticker]
+                            peak_price = position.get('peak_price', position['entry_price'])
+                            
+                            # Update peak price if current price is higher
+                            if current_price > peak_price:
+                                dynamic_bh_1y_trailing_stop_positions[ticker]['peak_price'] = current_price
+                                peak_price = current_price
+                            
+                            # Check if trailing stop triggered (20% drop from peak)
+                            stop_price = peak_price * (1 - DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT / 100)
+                            if current_price <= stop_price:
+                                positions_to_sell.append(ticker)
+                                print(f"   🛑 Trailing stop triggered for {ticker}: ${current_price:.2f} <= ${stop_price:.2f} (peak: ${peak_price:.2f})")
+                    except Exception as e:
+                        continue
+            
+            # Sell positions that hit trailing stop
+            for ticker in positions_to_sell:
+                if ticker in dynamic_bh_1y_trailing_stop_positions:
+                    position = dynamic_bh_1y_trailing_stop_positions[ticker]
+                    shares = position['shares']
+                    try:
+                        ticker_data = ticker_data_grouped.get(ticker)
+                        if ticker_data is None or ticker_data.empty:
+                            continue
+                        ticker_data = ticker_data.loc[ticker_data.index == current_date]
+                        if len(ticker_data) > 0:
+                            current_price = ticker_data['Close'].iloc[0]
+                            sell_value = shares * current_price
+                            sell_cost = sell_value * TRANSACTION_COST
+                            dynamic_bh_1y_trailing_stop_transaction_costs += sell_cost
+                            dynamic_bh_1y_trailing_stop_cash += (sell_value - sell_cost)
+                            del dynamic_bh_1y_trailing_stop_positions[ticker]
+                            current_dynamic_bh_1y_trailing_stop_stocks.remove(ticker)
+                    except Exception as e:
+                        continue
+            
+            # Regular rebalancing (same as Dynamic BH 1Y) - always parallel
+            from parallel_backtest import calculate_parallel_performance
+            current_top_performers_ts = calculate_parallel_performance(
+                initial_top_tickers, ticker_data_grouped, current_date, period_days=365
+            )
+
+            if current_top_performers_ts:
+                current_top_performers_ts.sort(key=lambda x: x[1], reverse=True)
+                new_dynamic_bh_1y_trailing_stop_stocks = [ticker for ticker, perf in current_top_performers_ts[:PORTFOLIO_SIZE]]
+                print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-year + Trailing Stop): {', '.join(new_dynamic_bh_1y_trailing_stop_stocks)}")
+
+                # Use universal smart rebalancing function
+                dynamic_bh_1y_trailing_stop_positions, dynamic_bh_1y_trailing_stop_cash, current_dynamic_bh_1y_trailing_stop_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    strategy_name="Dynamic BH 1Y+TS",
+                    current_stocks=current_dynamic_bh_1y_trailing_stop_stocks,
+                    new_stocks=new_dynamic_bh_1y_trailing_stop_stocks,
+                    positions=dynamic_bh_1y_trailing_stop_positions,
+                    cash=dynamic_bh_1y_trailing_stop_cash,
+                    ticker_data_grouped=ticker_data_grouped,
+                    current_date=current_date,
+                    transaction_cost=TRANSACTION_COST,
+                    portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not current_dynamic_bh_1y_trailing_stop_stocks  # Force initial allocation
+                )
+                dynamic_bh_1y_trailing_stop_transaction_costs += rebalance_costs
+                dynamic_bh_1y_trailing_stop_last_rebalance_value = _mark_to_market_value(
+                    dynamic_bh_1y_trailing_stop_positions, dynamic_bh_1y_trailing_stop_cash, ticker_data_grouped, current_date
+                )
+
+        # SECTOR ROTATION: Rebalance to top performing sector ETFs
+        if ENABLE_SECTOR_ROTATION:
+            # Check if it's time to rebalance (or if this is initial allocation)
+            days_since_rebalance = (current_date - sector_rotation_last_rebalance_date).days if 'sector_rotation_last_rebalance_date' in locals() else AI_REBALANCE_FREQUENCY_DAYS
+            is_initial_allocation = not current_sector_rotation_etfs  # Force day 1 investment
+            
+            if is_initial_allocation or days_since_rebalance >= AI_REBALANCE_FREQUENCY_DAYS:
+                print(f"   🏢 Sector Rotation rebalancing (every {AI_REBALANCE_FREQUENCY_DAYS} days)...")
+                
+                # Select top sector ETFs based on momentum
+                from shared_strategies import select_sector_rotation_etfs
+                new_sector_rotation_etfs = select_sector_rotation_etfs(
+                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                )
+                
+                if new_sector_rotation_etfs:
+                    # Use universal smart rebalancing function
+                    sector_rotation_positions, sector_rotation_cash, current_sector_rotation_etfs, rebalance_costs = _smart_rebalance_portfolio(
+                        strategy_name="Sector Rotation",
+                        current_stocks=current_sector_rotation_etfs,
+                        new_stocks=new_sector_rotation_etfs,
+                        positions=sector_rotation_positions,
+                        cash=sector_rotation_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_sector_rotation_etfs  # Force initial allocation
+                    )
+                    sector_rotation_transaction_costs += rebalance_costs
+                    sector_rotation_last_rebalance_date = current_date
+                    sector_rotation_last_rebalance_value = _mark_to_market_value(
+                        sector_rotation_positions, sector_rotation_cash, ticker_data_grouped, current_date
+                    )
+                else:
+                    print(f"   ❌ No sector ETFs selected for rotation")
+            else:
+                print(f"   ⏭️ Skip Sector Rotation rebalance: {days_since_rebalance} days since last (rebalance every {AI_REBALANCE_FREQUENCY_DAYS} days)")
+
+        # RISK-ADJUSTED MOMENTUM: Rebalance to current top N using shared strategy
+        if ENABLE_RISK_ADJ_MOM:
+            from shared_strategies import select_risk_adj_mom_stocks
+            
+            # Use shared strategy for consistent selection
+            new_risk_adj_mom_stocks = select_risk_adj_mom_stocks(
+                initial_top_tickers, 
+                ticker_data_grouped, 
+                current_date,
+                top_n=PORTFOLIO_SIZE
+            )
+
+            if new_risk_adj_mom_stocks:
+                # Use universal smart rebalancing function
+                risk_adj_mom_positions, risk_adj_mom_cash, current_risk_adj_mom_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    strategy_name="Risk-Adj Mom",
+                    current_stocks=current_risk_adj_mom_stocks,
+                    new_stocks=new_risk_adj_mom_stocks,
+                    positions=risk_adj_mom_positions,
+                    cash=risk_adj_mom_cash,
+                    ticker_data_grouped=ticker_data_grouped,
+                    current_date=current_date,
+                    transaction_cost=TRANSACTION_COST,
+                    portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not current_risk_adj_mom_stocks  # Force initial allocation
+                )
+                risk_adj_mom_transaction_costs += rebalance_costs
+                risk_adj_mom_last_rebalance_value = _mark_to_market_value(
+                    risk_adj_mom_positions, risk_adj_mom_cash, ticker_data_grouped, current_date
+                )
 
         # === MULTI-TASK LEARNING STRATEGY ===
         # Runs independently of Dynamic BH performance data
@@ -3460,7 +3062,7 @@ def _run_portfolio_backtest_walk_forward(
                         strategy_stop_loss=STRATEGY_STOP_LOSS_PCT.get('Risk-Adj Mom Sentiment', STOP_LOSS_PCT)
                     )
                     
-                    risk_adj_mom_sentiment_portfolio_value -= rebalance_costs
+                    risk_adj_mom_sentiment_transaction_costs += rebalance_costs
                     risk_adj_mom_sentiment_last_rebalance_value = risk_adj_mom_sentiment_portfolio_value
                 
             except Exception as e:
@@ -4592,9 +4194,9 @@ def _run_portfolio_backtest_walk_forward(
                             # ✅ FIX: Use different variable name to avoid overwriting main ticker_data_grouped
                             rebal_ticker_data = {}
                             for ticker in set(current_portfolio_stocks) | set(selected_stocks):
-                                ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                                if not ticker_data.empty:
-                                    rebal_ticker_data[ticker] = ticker_data.set_index('date')
+                                ticker_data = ticker_data_grouped.get(ticker)
+                                if ticker_data is not None and not ticker_data.empty:
+                                    rebal_ticker_data[ticker] = ticker_data
                             
                             # Apply transaction cost guard (same as Dynamic BH and other strategies)
                             should_rebal, reason = _should_rebalance_by_profit_since_last_rebalance(
@@ -4621,9 +4223,8 @@ def _run_portfolio_backtest_walk_forward(
                                 for t, pos in positions.items():
                                     try:
                                         if pos and pos.get('shares', 0) > 0:
-                                            td = all_tickers_data[(all_tickers_data['ticker'] == t)]
-                                            if not td.empty:
-                                                td = td.set_index('date')
+                                            td = ticker_data_grouped.get(t)
+                                            if td and not td.empty:
                                                 current_price_data = td.loc[:current_date]
                                                 if not current_price_data.empty:
                                                     current_price = current_price_data['Close'].dropna().iloc[-1]
@@ -4694,9 +4295,9 @@ def _run_portfolio_backtest_walk_forward(
                             if ticker in positions and positions[ticker]['shares'] > 0:
                                 # Get current price
                                 try:
-                                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                                    if not ticker_data.empty:
-                                        ticker_data = ticker_data.set_index('date')
+                                    ticker_data = ticker_data_grouped.get(ticker)
+                                    if ticker_data is not None and not ticker_data.empty:
+                                        # ticker_data already has date as index
                                         current_price_data = ticker_data.loc[:current_date]
                                         if not current_price_data.empty:
                                             current_price = current_price_data['Close'].dropna().iloc[-1]
@@ -4747,9 +4348,9 @@ def _run_portfolio_backtest_walk_forward(
           print(f"   🔧 DEBUG: Dyn BH 1Y - iterating over {len(dynamic_bh_positions)} positions")
           for ticker in list(dynamic_bh_positions.keys()):
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             # Drop NaN values to avoid NaN propagation
@@ -4776,9 +4377,9 @@ def _run_portfolio_backtest_walk_forward(
           # Iterate over actual positions, not just current stocks list
           for ticker in list(dynamic_bh_1y_vol_filter_positions.keys()):
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             # Drop NaN values to avoid NaN propagation
@@ -4805,9 +4406,9 @@ def _run_portfolio_backtest_walk_forward(
           # Iterate over actual positions, not just current stocks list
           for ticker in list(dynamic_bh_1y_trailing_stop_positions.keys()):
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             valid_prices = current_price_data['Close'].dropna()
@@ -4833,11 +4434,11 @@ def _run_portfolio_backtest_walk_forward(
             for etf in current_sector_rotation_etfs:
                 if etf in sector_rotation_positions:
                     try:
-                        etf_data = all_tickers_data[all_tickers_data['ticker'] == etf]
-                        current_price_data = etf_data[etf_data['date'] == current_date]
-                        
-                        if len(current_price_data) > 0:
-                            valid_prices = current_price_data['Close'].dropna()
+                        etf_data = ticker_data_grouped.get(etf)
+                        if etf_data and not etf_data.empty:
+                            current_price_data = etf_data.loc[etf_data.index == current_date]
+                            if len(current_price_data) > 0:
+                                valid_prices = current_price_data['Close'].dropna()
                             if len(valid_prices) > 0:
                                 current_price = valid_prices.iloc[-1]
                                 if not pd.isna(current_price) and current_price > 0:
@@ -4862,9 +4463,9 @@ def _run_portfolio_backtest_walk_forward(
           # Iterate over actual positions, not just current stocks list
           for ticker in list(dynamic_bh_6m_positions.keys()):
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             valid_prices = current_price_data['Close'].dropna()
@@ -4887,9 +4488,9 @@ def _run_portfolio_backtest_walk_forward(
           # Iterate over actual positions, not just current stocks list
           for ticker in list(dynamic_bh_3m_positions.keys()):
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             # Drop NaN values to avoid NaN propagation
@@ -4919,9 +4520,9 @@ def _run_portfolio_backtest_walk_forward(
           # Iterate over actual positions, not just current stocks list
           for ticker in list(dynamic_bh_1m_positions.keys()):
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             # Drop NaN values to avoid NaN propagation
@@ -4948,9 +4549,9 @@ def _run_portfolio_backtest_walk_forward(
           # Iterate over actual positions, not just current stocks list
           for ticker in list(risk_adj_mom_positions.keys()):
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             # Drop NaN values to avoid NaN propagation
@@ -4976,9 +4577,9 @@ def _run_portfolio_backtest_walk_forward(
             risk_adj_mom_sentiment_invested_value = 0.0
             for ticker in list(risk_adj_mom_sentiment_positions.keys()):
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             valid_prices = current_price_data['Close'].dropna()
@@ -5004,9 +4605,9 @@ def _run_portfolio_backtest_walk_forward(
             # Iterate over actual positions, not just current stocks list
             for ticker in list(multitask_positions.keys()):
                     try:
-                        ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                        if not ticker_data.empty:
-                            ticker_data = ticker_data.set_index('date')
+                        ticker_data = ticker_data_grouped.get(ticker)
+                        if ticker_data is not None and not ticker_data.empty:
+                            # ticker_data already has date as index
                             current_price_data = ticker_data.loc[:current_date]
                             if not current_price_data.empty:
                                 # Drop NaN values to avoid NaN propagation
@@ -5070,22 +4671,7 @@ def _run_portfolio_backtest_walk_forward(
                             else:
                                 momentum_volatility_hybrid_invested_value += momentum_volatility_hybrid_positions[ticker].get('value', 0.0)
                         else:
-                            # Fallback to all_tickers_data if available
-                            current_price = all_tickers_data[
-                                (all_tickers_data['ticker'] == ticker) &
-                                (all_tickers_data['date'] == current_date)
-                            ]['Close'].iloc[0] if not all_tickers_data[
-                                (all_tickers_data['ticker'] == ticker) &
-                                (all_tickers_data['date'] == current_date)
-                            ].empty else None
-                            
-                            if current_price is not None and not pd.isna(current_price):
-                                shares = momentum_volatility_hybrid_positions[ticker]['shares']
-                                position_value = shares * current_price
-                                momentum_volatility_hybrid_positions[ticker]['value'] = position_value
-                                momentum_volatility_hybrid_invested_value += position_value
-                            else:
-                                momentum_volatility_hybrid_invested_value += momentum_volatility_hybrid_positions[ticker].get('value', 0.0)
+                            momentum_volatility_hybrid_invested_value += momentum_volatility_hybrid_positions[ticker].get('value', 0.0)
                     except Exception as e:
                         print(f"   ⚠️ Error updating Momentum-Volatility Hybrid position for {ticker}: {e}")
                         # Use previous value as fallback
@@ -5346,9 +4932,9 @@ def _run_portfolio_backtest_walk_forward(
             # Iterate over actual positions, not just current stocks list
             for ticker in list(multi_tf_ensemble_positions.keys()):
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             # Drop NaN values to avoid NaN propagation
@@ -5646,13 +5232,15 @@ def _run_portfolio_backtest_walk_forward(
             # Iterate over actual positions, not just current stocks list
             for ticker in list(mean_reversion_positions.keys()):
                     try:
-                        current_price = all_tickers_data[
-                            (all_tickers_data['ticker'] == ticker) &
-                            (all_tickers_data['date'] == current_date)
-                        ]['Close'].iloc[0] if not all_tickers_data[
-                            (all_tickers_data['ticker'] == ticker) &
-                            (all_tickers_data['date'] == current_date)
-                        ].empty else None
+                        ticker_data = ticker_data_grouped.get(ticker)
+                        if ticker_data is not None and not ticker_data.empty:
+                            current_price_data = ticker_data.loc[ticker_data.index == current_date]
+                            if not current_price_data.empty:
+                                current_price = current_price_data['Close'].iloc[0]
+                            else:
+                                current_price = None
+                        else:
+                            current_price = None
 
                         if current_price is not None and current_price > 0:
                             shares = mean_reversion_positions[ticker]['shares']
@@ -5671,13 +5259,15 @@ def _run_portfolio_backtest_walk_forward(
             # Iterate over actual positions, not just current stocks list
             for ticker in list(quality_momentum_positions.keys()):
                     try:
-                        current_price = all_tickers_data[
-                            (all_tickers_data['ticker'] == ticker) &
-                            (all_tickers_data['date'] == current_date)
-                        ]['Close'].iloc[0] if not all_tickers_data[
-                            (all_tickers_data['ticker'] == ticker) &
-                            (all_tickers_data['date'] == current_date)
-                        ].empty else None
+                        ticker_data = ticker_data_grouped.get(ticker)
+                        if ticker_data is not None and not ticker_data.empty:
+                            current_price_data = ticker_data.loc[ticker_data.index == current_date]
+                            if not current_price_data.empty:
+                                current_price = current_price_data['Close'].iloc[0]
+                            else:
+                                current_price = None
+                        else:
+                            current_price = None
 
                         if current_price is not None and current_price > 0:
                             shares = quality_momentum_positions[ticker]['shares']
@@ -5696,13 +5286,18 @@ def _run_portfolio_backtest_walk_forward(
             for ticker, pos in volatility_adj_mom_positions.items():
                 try:
                     # Get current price
-                    ticker_data = all_tickers_data[
-                        (all_tickers_data['ticker'] == ticker) &
-                        (all_tickers_data['date'] == current_date)
-                    ]['Close']
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price_data = ticker_data.loc[ticker_data.index == current_date]
+                        if not current_price_data.empty:
+                            price_data = current_price_data['Close']
+                        else:
+                            price_data = pd.Series()
+                    else:
+                        price_data = pd.Series()
                     
-                    if not ticker_data.empty:
-                        current_price = ticker_data.iloc[0]
+                    if not price_data.empty:
+                        current_price = price_data.iloc[0]
                         position_value = pos['shares'] * current_price
                         volatility_adj_mom_invested_value += position_value
                         
@@ -5747,9 +5342,9 @@ def _run_portfolio_backtest_walk_forward(
             # Iterate over actual positions, not just current stocks list
             for ticker in list(static_bh_1y_positions.keys()):
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             valid_prices = current_price_data['Close'].dropna()
@@ -5801,9 +5396,9 @@ def _run_portfolio_backtest_walk_forward(
             # Iterate over actual positions, not just current stocks list
             for ticker in list(static_bh_3m_positions.keys()):
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             valid_prices = current_price_data['Close'].dropna()
@@ -5829,9 +5424,9 @@ def _run_portfolio_backtest_walk_forward(
             # Iterate over actual positions, not just current stocks list
             for ticker in list(static_bh_1m_positions.keys()):
                     try:
-                        ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                        if not ticker_data.empty:
-                            ticker_data = ticker_data.set_index('date')
+                        ticker_data = ticker_data_grouped.get(ticker)
+                        if ticker_data is not None and not ticker_data.empty:
+                            # ticker_data already has date as index
                             current_price_data = ticker_data.loc[:current_date]
                             if not current_price_data.empty:
                                 # Drop NaN values to avoid NaN propagation
@@ -5894,9 +5489,9 @@ def _run_portfolio_backtest_walk_forward(
             if ticker in positions and positions[ticker]['shares'] > 0:
                 # Get current price
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        ticker_data = ticker_data.set_index('date')
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        # ticker_data already has date as index
                         current_price_data = ticker_data.loc[:current_date]
                         if not current_price_data.empty:
                             # Drop NaN values to avoid NaN propagation
@@ -6541,6 +6136,7 @@ def _run_portfolio_backtest_walk_forward(
             'risk_adj_mom_6m':          _strat(risk_adj_mom_6m_portfolio_value, risk_adj_mom_6m_portfolio_history, risk_adj_mom_6m_transaction_costs, risk_adj_mom_6m_cash),
             'risk_adj_mom_3m':          _strat(risk_adj_mom_3m_portfolio_value, risk_adj_mom_3m_portfolio_history, risk_adj_mom_3m_transaction_costs, risk_adj_mom_3m_cash),
             'ai_elite':                 _strat(ai_elite_portfolio_value, ai_elite_portfolio_history, ai_elite_transaction_costs, ai_elite_cash),
+            'risk_adj_mom_sentiment':   _strat(risk_adj_mom_sentiment_portfolio_value, risk_adj_mom_sentiment_portfolio_history, risk_adj_mom_sentiment_transaction_costs, risk_adj_mom_sentiment_cash),
             'bh_1y_monthly':            _strat(static_bh_1y_monthly_portfolio_value, static_bh_1y_monthly_portfolio_history, static_bh_1y_monthly_transaction_costs, static_bh_1y_monthly_cash),
             'bh_6m_monthly':            _strat(static_bh_6m_monthly_portfolio_value, static_bh_6m_monthly_portfolio_history, static_bh_6m_monthly_transaction_costs, static_bh_6m_monthly_cash),
             'bh_3m_monthly':            _strat(static_bh_3m_monthly_portfolio_value, static_bh_3m_monthly_portfolio_history, static_bh_3m_monthly_transaction_costs, static_bh_3m_monthly_cash),
@@ -6550,256 +6146,6 @@ def _run_portfolio_backtest_walk_forward(
     return results
 
 
-def _get_current_risk_adj_mom_selections(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
-    """
-    Get current Risk-Adjusted Momentum stock selections using shared logic.
-    This ensures identical behavior between backtesting and live trading.
-    """
-    from shared_strategies import select_risk_adj_mom_stocks
-    
-    # Group data by ticker for shared strategy
-    ticker_data_grouped = {}
-    if all_tickers_data is not None:
-        # Helper function to process ticker data
-        def process_ticker_data(ticker, group):
-            """Process a single ticker's data group."""
-            group_copy = group.copy()
-            if 'date' in group_copy.columns:
-                group_copy['date'] = pd.to_datetime(group_copy['date'])
-                group_copy = group_copy.set_index('date')
-                # Remove ticker column if it exists
-                if 'ticker' in group_copy.columns:
-                    group_copy = group_copy.drop('ticker', axis=1)
-            return group_copy
-        
-        # Handle long format data (with 'ticker' column)
-        if 'ticker' in all_tickers_data.columns:
-            # Long format: group by ticker
-            for ticker, group in all_tickers_data.groupby('ticker'):
-                ticker_data_grouped[ticker] = process_ticker_data(ticker, group)
-        elif 'ticker' in all_tickers_data.index.names:
-            # Long format: ticker in index
-            for ticker, group in all_tickers_data.groupby('ticker'):
-                ticker_data_grouped[ticker] = process_ticker_data(ticker, group)
-        else:
-            # Assume ticker columns (fallback for old format)
-            for ticker in all_tickers:
-                if ticker in all_tickers_data.columns:
-                    ticker_data_grouped[ticker] = all_tickers_data[[ticker]].copy()
-                    ticker_data_grouped[ticker].columns = ['Close']
-    
-    # Use shared strategy logic
-    return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, top_n=PORTFOLIO_SIZE)
-
-
-
-
-def _rebalance_momentum_volatility_hybrid_portfolio(momentum_stocks, current_date, all_tickers_data,
-                                          momentum_volatility_hybrid_positions, momentum_volatility_hybrid_cash,
-                                          models, scalers, y_scalers, capital_per_stock):
-    """
-    Rebalance Momentum + Volatility Hybrid portfolio using AI predictions for entry/exit timing.
-    - Select from top momentum stocks
-    - Only buy if AI confidence > threshold
-    - Sell if AI confidence < threshold OR stop loss triggered
-    
-    Returns: Updated cash balance
-    """
-    global momentum_volatility_hybrid_transaction_costs
-    try:
-        from config import MOMENTUM_VOLATILITY_HYBRID_BUY_THRESHOLD, MOMENTUM_VOLATILITY_HYBRID_SELL_THRESHOLD
-        from config import MOMENTUM_VOLATILITY_HYBRID_STOP_LOSS, MOMENTUM_VOLATILITY_HYBRID_TRAILING_STOP
-        from config import PORTFOLIO_SIZE, BACKTEST_DAYS
-        
-        # Define horizon_days for AI predictions (same as other strategies)
-        horizon_days = 3  # Default prediction horizon (days)
-        
-        target_allocation = capital_per_stock  # Equal weight per position
-        
-        # Step 1: Check current positions for SELL signals (AI confidence drop OR stop loss)
-        positions_to_check = list(momentum_volatility_hybrid_positions.keys())
-        for ticker in positions_to_check:
-            should_sell = False
-            sell_reason = ""
-            
-            try:
-                # Get current price
-                price_data = all_tickers_data[
-                    (all_tickers_data['ticker'] == ticker) &
-                    (all_tickers_data['date'] == current_date)
-                ]['Close']
-                
-                if price_data.empty:
-                    continue
-                    
-                current_price = price_data.iloc[0]
-                
-                if current_price <= 0:
-                    continue
-                
-                position = momentum_volatility_hybrid_positions[ticker]
-                entry_price = position['entry_price']
-                peak_price = position.get('peak_price', entry_price)
-                
-                # Update peak price if current is higher
-                if current_price > peak_price:
-                    momentum_volatility_hybrid_positions[ticker]['peak_price'] = current_price
-                    peak_price = current_price
-                
-                # Check stop loss (from entry)
-                pct_from_entry = (current_price - entry_price) / entry_price
-                if pct_from_entry < -MOMENTUM_VOLATILITY_HYBRID_STOP_LOSS:
-                    should_sell = True
-                    sell_reason = f"Stop loss ({pct_from_entry*100:.1f}%)"
-                
-                # Check trailing stop (from peak, only if in profit)
-                if not should_sell and peak_price > entry_price * 1.05:  # Only trail if >5% profit
-                    pct_from_peak = (current_price - peak_price) / peak_price
-                    if pct_from_peak < -MOMENTUM_VOLATILITY_HYBRID_TRAILING_STOP:
-                        should_sell = True
-                        sell_reason = f"Trailing stop ({pct_from_peak*100:.1f}% from peak)"
-                
-                # Check AI sell signal
-                if not should_sell and ticker in models and ticker in scalers:
-                    # Get AI prediction (regression model output)
-                    prediction = _get_ai_prediction_for_ticker(
-                        ticker, current_date, all_tickers_data, models, scalers, y_scalers, horizon_days
-                    )
-                    
-                    if prediction is not None and prediction < MOMENTUM_VOLATILITY_HYBRID_SELL_THRESHOLD:
-                        should_sell = True
-                        sell_reason = f"AI sell signal (pred={prediction:.2f})"
-                
-                # Execute sell
-                if should_sell:
-                    shares = position['shares']
-                    proceeds = shares * current_price
-                    sell_cost = proceeds * TRANSACTION_COST
-                    net_proceeds = proceeds - sell_cost
-                    momentum_volatility_hybrid_transaction_costs += sell_cost
-                    momentum_volatility_hybrid_cash += net_proceeds
-                    
-                    profit = proceeds - position['value']
-                    print(f"   💰 Mom+Vol sold {ticker}: {shares:.0f} shares @ ${current_price:.2f} = ${proceeds:,.0f} ({sell_reason}, P/L: ${profit:,.0f})")
-                    
-                    del momentum_volatility_hybrid_positions[ticker]
-                    
-            except Exception as e:
-                print(f"   ⚠️ Error checking/selling {ticker}: {e}")
-        
-        # Step 2: Consider buying from momentum stocks (up to portfolio size limit)
-        current_positions = len(momentum_volatility_hybrid_positions)
-        slots_available = PORTFOLIO_SIZE - current_positions
-        
-        if slots_available > 0:
-            # Evaluate each momentum stock with AI
-            buy_candidates = []
-            
-            print(f"   🔍 Evaluating {len(momentum_stocks)} momentum stocks for AI buy signals...")
-            print(f"   🔍 Available models: {list(models.keys())[:5]}...")
-            
-            for ticker in momentum_stocks:
-                if ticker in momentum_volatility_hybrid_positions:
-                    print(f"      ⏭️  {ticker}: Already holding, skip")
-                    continue  # Already holding
-                
-                if ticker not in models or ticker not in scalers:
-                    print(f"      ❌ {ticker}: No model (in models={ticker in models}, in scalers={ticker in scalers})")
-                    continue  # No AI model available
-                
-                try:
-                    # Get AI prediction
-                    prediction = _get_ai_prediction_for_ticker(
-                        ticker, current_date, all_tickers_data, models, scalers, y_scalers, horizon_days
-                    )
-                    
-                    if prediction is not None and prediction > MOMENTUM_VOLATILITY_HYBRID_BUY_THRESHOLD:
-                        buy_candidates.append((ticker, prediction))
-                        print(f"         ✅ {ticker} qualifies for buying!")
-                        
-                except Exception as e:
-                    print(f"      ⚠️ {ticker}: Exception evaluating - {str(e)[:100]}")
-            
-            # Sort by AI confidence (highest first)
-            buy_candidates.sort(key=lambda x: x[1], reverse=True)
-            
-            # Buy top N candidates (up to available slots)
-            for ticker, prediction in buy_candidates[:slots_available]:
-                try:
-                    price_data = all_tickers_data[
-                        (all_tickers_data['ticker'] == ticker) &
-                        (all_tickers_data['date'] == current_date)
-                    ]['Close']
-                    
-                    if price_data.empty:
-                        continue
-                        
-                    current_price = price_data.iloc[0]
-                    
-                    if current_price > 0 and momentum_volatility_hybrid_cash >= target_allocation:
-                        buy_value = target_allocation
-                        buy_cost = buy_value * TRANSACTION_COST
-                        total_buy_cost = buy_value + buy_cost
-                        
-                        if total_buy_cost <= momentum_volatility_hybrid_cash:
-                            shares_to_buy = buy_value / current_price
-                            momentum_volatility_hybrid_positions[ticker] = {
-                                'shares': shares_to_buy,
-                                'entry_price': current_price,
-                                'value': buy_value,
-                                'entry_date': current_date,
-                                'peak_price': current_price
-                            }
-                            momentum_volatility_hybrid_cash -= total_buy_cost
-                            momentum_volatility_hybrid_transaction_costs += buy_cost
-                            
-                            print(f"   🛒 Mom+Vol bought {ticker}: {shares_to_buy:.0f} shares @ ${current_price:.2f} (AI={prediction:.2f}) = ${buy_value:,.0f} (+${buy_cost:.2f} cost)")
-                            
-                except Exception as e:
-                    print(f"   ⚠️ Error buying {ticker}: {e}")
-        
-        # Update position values based on current prices
-        for ticker in momentum_volatility_hybrid_positions:
-            try:
-                price_data = all_tickers_data[
-                    (all_tickers_data['ticker'] == ticker) &
-                    (all_tickers_data['date'] == current_date)
-                ]['Close']
-                
-                if price_data.empty:
-                    continue
-                    
-                current_price = price_data.iloc[0]
-                
-                if current_price > 0:
-                    shares = momentum_volatility_hybrid_positions[ticker]['shares']
-                    momentum_volatility_hybrid_positions[ticker]['value'] = shares * current_price
-                    
-            except Exception:
-                pass
-        
-        invested = sum(pos['value'] for pos in momentum_volatility_hybrid_positions.values())
-        print(f"   📊 Momentum+Volatility Hybrid portfolio: ${invested:,.0f} invested ({len(momentum_volatility_hybrid_positions)} stocks) + ${momentum_volatility_hybrid_cash:,.0f} cash")
-        
-    except Exception as e:
-        print(f"   ⚠️ Momentum-volatility hybrid rebalancing failed: {e}")
-    
-    return momentum_volatility_hybrid_cash, momentum_volatility_hybrid_positions
-
-
-def _rebalance_adaptive_ensemble_portfolio(new_stocks, current_date, all_tickers_data,
-                                       adaptive_ensemble_positions, adaptive_ensemble_cash, capital_per_stock):
-    """
-    Rebalance adaptive ensemble portfolio to hold the new top N stocks.
-    Uses combined quality+momentum scoring for stock selection.
-    """
-    try:
-        # Use generic rebalancing for the portfolio update
-        return _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data, 
-                                           adaptive_ensemble_positions, adaptive_ensemble_cash, capital_per_stock)
-    except Exception as e:
-        print(f"   ⚠️ Adaptive ensemble rebalancing failed: {e}")
-        return adaptive_ensemble_cash, adaptive_ensemble_positions
 
 
 def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y_scaler, horizon_days: int) -> float:
@@ -6999,335 +6345,6 @@ def _quick_predict_return(ticker: str, df_recent: pd.DataFrame, model, scaler, y
         return -np.inf
 
 
-def _run_portfolio_backtest_chunk(
-    all_tickers_data: pd.DataFrame,
-    chunk_start: datetime,
-    chunk_end: datetime,
-    current_top_tickers: List[str],
-    models: Dict,  
-    scalers: Dict,
-    y_scalers: Dict,
-    capital_allocation: float,
-    period_name: str,
-    top_performers_data: List[Tuple],
-    horizon_days: int = 20
-) -> Optional[Tuple[float, List[float], List[str], List[Dict], Dict[str, List[float]]]]:
-    """Run a single chunk of the walk-forward backtest with pre-selected stocks."""
-    num_processes = max(1, cpu_count() - 5)
-
-    # For chunks, we skip the stock selection step and directly backtest the given stocks
-    backtest_params = []
-    processed_tickers = []
-    performance_metrics = []
-    buy_hold_histories_per_ticker = {}
-
-    # Prepare backtest data for each pre-selected ticker
-    for ticker in current_top_tickers:
-        try:
-            ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-            if ticker_data.empty:
-                continue
-
-            ticker_data = ticker_data.set_index('date')
-            ticker_backtest_data = ticker_data.loc[chunk_start:chunk_end]
-
-            if ticker_backtest_data.empty or len(ticker_backtest_data) < 5:
-                continue
-
-        except (KeyError, IndexError):
-            continue
-
-        # Prepare backtest parameters for this chunk
-        model_prepared = _prepare_model_for_multiprocessing(models.get(ticker))
-
-        backtest_params.append((
-            ticker, ticker_backtest_data.copy(), capital_allocation,
-            model_prepared, scalers.get(ticker), y_scalers.get(ticker),
-            [], -1.0, 1.0, target_percentage,  # Buy immediately, sell never (hold strategy)
-            top_performers_data, False, horizon_days
-        ))
-
-    # Run backtests for this chunk
-    portfolio_values = []
-    total_value = 0.0
-
-    if backtest_params:
-        if len(backtest_params) > 1 and num_processes > 1:
-            # Parallel execution
-            with Pool(processes=min(num_processes, len(backtest_params))) as pool:
-                results = pool.imap(backtest_worker, backtest_params)
-                for result in results:
-                    if result:
-                        ticker, final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, shares_before_liquidation, buy_hold_history = result
-                        processed_tickers.append(ticker)
-                        portfolio_values.append(final_val)
-                        buy_hold_histories_per_ticker[ticker] = buy_hold_history
-
-                        perf_metrics = _calculate_performance_metrics(trade_log, buy_hold_history, final_val, capital_allocation)
-                        perf_metrics.update({
-                            'ticker': ticker,
-                            'last_ai_action': last_ai_action,
-                            'last_buy_prob': last_buy_prob,
-                            'last_sell_prob': last_sell_prob,
-                            'final_shares': shares_before_liquidation
-                        })
-                        performance_metrics.append(perf_metrics)
-        else:
-            # Sequential execution
-            for params in backtest_params:
-                result = backtest_worker(params)
-                if result:
-                    ticker, final_val, trade_log, last_ai_action, last_buy_prob, last_sell_prob, shares_before_liquidation, buy_hold_history = result
-                    processed_tickers.append(ticker)
-                    portfolio_values.append(final_val)
-                    buy_hold_histories_per_ticker[ticker] = buy_hold_history
-
-                    perf_metrics = _calculate_performance_metrics(trade_log, buy_hold_history, final_val, capital_allocation)
-                    perf_metrics.update({
-                        'ticker': ticker,
-                        'last_ai_action': last_ai_action,
-                        'last_buy_prob': last_buy_prob,
-                        'last_sell_prob': last_sell_prob,
-                        'final_shares': shares_before_liquidation
-                    })
-                    performance_metrics.append(perf_metrics)
-
-        total_value = sum(portfolio_values) if portfolio_values else capital_allocation * len(current_top_tickers)
-
-    return total_value, portfolio_values, processed_tickers, performance_metrics, buy_hold_histories_per_ticker
-
-    backtest_params = []
-    preview_predictions: List[Tuple[str, float]] = []
-
-    def quick_last_prediction(ticker: str, df_slice: pd.DataFrame, model, scaler, y_scaler, feature_set, horizon_days: int):
-        """
-        Use the trained model to predict returns for ranking.
-        Engineers features from raw OHLCV data first.
-        """
-        try:
-            if model is None or scaler is None:
-                # For simple rule strategy, allow neutral score so tickers are retained
-                if use_simple_rule_strategy:
-                    return 0.0
-                return -np.inf
-            
-            # Check if we have required OHLCV data
-            required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-            if not all(col in df_slice.columns for col in required_cols):
-                return -np.inf
-            
-            # STEP 1: Engineer features from raw OHLCV data
-            df_with_features = df_slice.copy()
-            df_with_features = _calculate_technical_indicators(df_with_features)
-            
-            # Only drop rows with NaN if we have enough rows to spare
-            rows_before = len(df_with_features)
-            df_with_features = df_with_features.dropna()
-            rows_after = len(df_with_features)
-
-            # If not enough rows remain after feature calc, bail out early
-            if df_with_features.empty or rows_after == 0:
-                print(f"   ⚠️ All rows dropped during feature engineering ({rows_before} -> {rows_after})")
-                return -np.inf
-
-            # STEP 2: Prepare feature columns
-            if feature_set:
-                # Use only features that exist and match what model was trained on
-                cols_to_use = [c for c in feature_set if c in df_with_features.columns]
-            else:
-                # Fallback: use all feature columns (exclude OHLCV and targets)
-                cols_to_use = [c for c in df_with_features.columns if c not in 
-                              ['Open', 'High', 'Low', 'Close', 'Volume', 'TargetReturnBuy', 'TargetReturnSell', 'Target']]
-            
-            if not cols_to_use:
-                return -np.inf
-            
-            # STEP 3: Get model type and predict
-            model_type = type(model).__name__
-            
-            if model_type in ['GRURegressor', 'GRUClassifier', 'LSTMClassifier']:
-                if len(df_with_features) < SEQUENCE_LENGTH:
-                    return -np.inf
-                # GRU/LSTM: Use sequence (last SEQUENCE_LENGTH rows)
-                df_feats = df_with_features[cols_to_use].tail(SEQUENCE_LENGTH).copy()
-                for col in df_feats.columns:
-                    df_feats[col] = pd.to_numeric(df_feats[col], errors='coerce').fillna(0.0)
-                if df_feats.empty or len(df_feats) < SEQUENCE_LENGTH:
-                    return -np.inf
-                X_scaled = scaler.transform(df_feats)
-                import torch
-                model.eval()
-                with torch.no_grad():
-                    X_tensor = torch.tensor(X_scaled, dtype=torch.float32).unsqueeze(0)
-                    out = model(X_tensor)
-                    pred_scaled = float(out.cpu().numpy()[0][0])
-                    if y_scaler is not None:
-                        # Clip to [-1, 1] before inverse transform to prevent extrapolation
-                        pred_scaled_clipped = np.clip(pred_scaled, -1.0, 1.0)
-                        pred = y_scaler.inverse_transform([[pred_scaled_clipped]])[0][0]
-                    else:
-                        pred = pred_scaled
-                    # Clip to reasonable return range (-100% to +200%)
-                    pred = np.clip(float(pred), -1.0, 2.0)
-                    return float(pred * 100)  # Return as percentage
-            else:
-                # XGBoost/RandomForest: Use last row only (no sequence length requirement)
-                df_feats = df_with_features[cols_to_use].tail(1).copy()
-                for col in df_feats.columns:
-                    df_feats[col] = pd.to_numeric(df_feats[col], errors='coerce').fillna(0.0)
-                if df_feats.empty:
-                    return -np.inf
-                X_scaled = scaler.transform(df_feats)
-                # Preserve feature names when predicting
-                X_scaled_df = pd.DataFrame(X_scaled, columns=df_feats.columns)
-                pred = float(model.predict(X_scaled_df)[0])
-                return float(pred * 100)  # Return as percentage
-            
-        except Exception as e:
-            # Log the error for debugging
-            import sys
-            sys.stderr.write(f"  ⚠️ quick_last_prediction error for {ticker}: {e}\n")
-            sys.stderr.flush()
-            return -np.inf
-    for ticker in top_tickers:
-        # Use optimized parameters if available, otherwise fall back to global defaults
-        # Probability thresholds removed - using simplified trading logic
-        min_proba_buy_ticker = 0.0  # Disabled
-        min_proba_sell_ticker = 1.0  # Disabled
-        target_percentage_ticker = optimized_params_per_ticker.get(ticker, {}).get('target_percentage', target_percentage)
-
-        # Ensure feature_set is passed to backtest_worker
-        feature_set_for_worker = scalers.get(ticker).feature_names_in_ if scalers.get(ticker) and hasattr(scalers.get(ticker), 'feature_names_in_') else None
-        
-        # Slice the main DataFrame for the backtest period for this specific ticker
-        try:
-            ticker_backtest_data = all_tickers_data.loc[start_date:end_date, (slice(None), ticker)]
-            ticker_backtest_data.columns = ticker_backtest_data.columns.droplevel(1)
-            if ticker_backtest_data.empty:
-                print(f"  ⚠️ Sliced backtest data for {ticker} for period {period_name} is empty. Skipping.")
-                continue
-        except (KeyError, IndexError):
-            print(f"  ⚠️ Could not slice backtest data for {ticker} for period {period_name}. Skipping.")
-            continue
-
-        # Quick prediction for ranking (use buy model)
-        preview_pred = quick_last_prediction(
-            ticker,
-            ticker_backtest_data,
-            models.get(ticker),
-            scalers.get(ticker),
-            y_scalers.get(ticker),
-            feature_set_for_worker,
-            horizon_days
-        )
-        preview_predictions.append((ticker, preview_pred))
-
-        # Prepare PyTorch models for multiprocessing
-        model_prepared = _prepare_model_for_multiprocessing(models.get(ticker))
-        
-        backtest_params.append((
-            ticker, ticker_backtest_data.copy(), capital_per_stock,
-            model_prepared, scalers.get(ticker), y_scalers.get(ticker),  # ✅ Added y_scaler
-            feature_set_for_worker, min_proba_buy_ticker, min_proba_sell_ticker, target_percentage_ticker,
-            top_performers_data, use_simple_rule_strategy, horizon_days
-        ))
-
-    # Keep only top N tickers by AI-predicted return
-    preview_predictions = sorted(preview_predictions, key=lambda x: x[1], reverse=True)
-    allowed_tickers = set([t for t, _ in preview_predictions[:PORTFOLIO_SIZE]])
-    # DEBUG: show all candidate predictions and the selected top N
-    print(f"\n[DEBUG] Candidate predicted returns for {period_name}:")
-    for t, p in preview_predictions:
-        print(f"  - {t}: {p:.4f}")
-    print(f"[DEBUG] Selected top {PORTFOLIO_SIZE} for backtest: {list(allowed_tickers)}")
-
-    backtest_params = [p for p in backtest_params if p[0] in allowed_tickers]
-    top_tickers = [p[0] for p in backtest_params]
-
-    portfolio_values = []
-    processed_tickers = []
-    performance_metrics = []
-    buy_hold_histories_per_ticker: Dict[str, List[float]] = {}
-    
-    total_tickers_to_process = len(top_tickers)
-    processed_count = 0
-
-    if run_parallel:
-        print(f"📈 Running {period_name} backtest in parallel for {total_tickers_to_process} tickers using {num_processes} processes...")
-        with Pool(processes=num_processes) as pool:
-            results = []
-            for res in tqdm(pool.imap(backtest_worker, backtest_params), total=total_tickers_to_process, desc=f"Backtesting {period_name}"):
-                if res:
-                    print(f"  [DEBUG] Ticker: {res['ticker']}, Final Value: {res['final_val']}")
-                    portfolio_values.append(res['final_val'])
-                    processed_tickers.append(res['ticker'])
-                    performance_metrics.append(res)
-                    buy_hold_histories_per_ticker[res['ticker']] = res.get('buy_hold_history', [])
-                    
-                    perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
-                    for t, p1y, pytd in top_performers_data:
-                        if t == res['ticker']:
-                            perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
-                            perf_ytd_benchmark = pytd if np.isfinite(pytd) else np.nan
-                            break
-                    
-                    print(f"\n📈 Individual Stock Performance for {res['ticker']} ({period_name}):")
-                    print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
-                    print(f"  - AI Sharpe Ratio: {res['perf_data']['sharpe_ratio']:.2f}")
-                    print(f"  - Last AI Action: {res['last_ai_action']}")
-                    
-                    # ✅ FIX 3: Add diagnostic for 0 trades
-                    total_trades = res.get('perf_data', {}).get('total_trades', 0)
-                    if total_trades == 0 and res.get('last_ai_action') == 'HOLD':
-                        buy_prob = res.get('buy_prob', 0.0)
-                        sell_prob = res.get('sell_prob', 0.0)
-                        print(f"\n  ⚠️  WARNING: {res['ticker']} made 0 trades!")
-                        print(f"      Last Buy Probability: {buy_prob:.4f}")
-                        print(f"      Last Sell Probability: {sell_prob:.4f}")
-                    
-                    print("-" * 40)
-                processed_count += 1
-    else:
-        print(f"📈 Running {period_name} backtest sequentially for {total_tickers_to_process} tickers...")
-        results = []
-        for res in tqdm(backtest_params, desc=f"Backtesting {period_name}"):
-            worker_result = backtest_worker(res)
-            if worker_result:
-                print(f"  [DEBUG] Ticker: {worker_result['ticker']}, Final Value: {worker_result['final_val']}")
-                portfolio_values.append(worker_result['final_val'])
-                processed_tickers.append(worker_result['ticker'])
-                performance_metrics.append(worker_result)
-                buy_hold_histories_per_ticker[worker_result['ticker']] = worker_result.get('buy_hold_history', [])
-                
-                perf_1y_benchmark, perf_ytd_benchmark = np.nan, np.nan
-                for t, p1y, pytd in top_performers_data:
-                    if t == worker_result['ticker']:
-                        perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
-                        break
-                
-                print(f"\n📈 Individual Stock Performance for {worker_result['ticker']} ({period_name}):")
-                print(f"  - 1-Year Performance: {perf_1y_benchmark:.2f}%" if pd.notna(perf_1y_benchmark) else "  - 1-Year Performance: N/A")
-                print(f"  - AI Sharpe Ratio: {worker_result['perf_data']['sharpe_ratio']:.2f}")
-                print(f"  - Last AI Action: {worker_result['last_ai_action']}")
-                
-                # ✅ FIX 3: Add diagnostic for 0 trades
-                total_trades = worker_result.get('perf_data', {}).get('total_trades', 0)
-                if total_trades == 0 and worker_result.get('last_ai_action') == 'HOLD':
-                    buy_prob = worker_result.get('buy_prob', 0.0)
-                    sell_prob = worker_result.get('sell_prob', 0.0)
-                    print(f"\n  ⚠️  WARNING: {worker_result['ticker']} made 0 trades!")
-                    print(f"      Last Buy Probability: {buy_prob:.4f}")
-                    print(f"      Last Sell Probability: {sell_prob:.4f}")
-                
-                print("-" * 40)
-            processed_count += 1
-
-    valid_portfolio_values = [v for v in portfolio_values if v is not None and np.isfinite(v)]
-    
-    final_portfolio_value = sum(valid_portfolio_values) + (total_tickers_to_process - len(processed_tickers)) * capital_per_stock
-    print(f"✅ {period_name} Backtest complete. Final portfolio value: ${final_portfolio_value:,.2f}\n")
-    return final_portfolio_value, portfolio_values, processed_tickers, performance_metrics, buy_hold_histories_per_ticker
-
 # -----------------------------------------------------------------------------
 # Final Summary Printing
 # -----------------------------------------------------------------------------
@@ -7483,7 +6500,7 @@ def print_final_summary(
 from shared_strategies import calculate_volatility_adjusted_momentum
 
 
-def _rebalance_volatility_adj_mom_portfolio(new_stocks, current_date, all_tickers_data,
+def _rebalance_volatility_adj_mom_portfolio(new_stocks, current_date, ticker_data_grouped,
                                            volatility_adj_mom_positions, volatility_adj_mom_cash, capital_per_stock):
     """
     Rebalance volatility-adjusted momentum portfolio to hold the new top N stocks.
@@ -7491,7 +6508,7 @@ def _rebalance_volatility_adj_mom_portfolio(new_stocks, current_date, all_ticker
     Args:
         new_stocks: List of tickers to hold
         current_date: Current date for rebalancing
-        all_tickers_data: All price data
+        ticker_data_grouped: Dict of ticker DataFrames indexed by date
         volatility_adj_mom_positions: Current positions dictionary
         volatility_adj_mom_cash: Available cash
         capital_per_stock: Target investment per stock
@@ -7506,12 +6523,11 @@ def _rebalance_volatility_adj_mom_portfolio(new_stocks, current_date, all_ticker
     for ticker in stocks_to_sell:
         try:
             # Get current price
-            ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker]
-            if ticker_df.empty:
+            ticker_df = ticker_data_grouped.get(ticker)
+            if ticker_df is None or ticker_df.empty:
                 print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping sell")
                 continue
 
-            ticker_df = ticker_df.set_index('date')
             price_data = ticker_df.loc[:current_date]
             if price_data.empty:
                 print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping sell")
@@ -7542,12 +6558,11 @@ def _rebalance_volatility_adj_mom_portfolio(new_stocks, current_date, all_ticker
         
         for ticker in stocks_to_buy:
             try:
-                ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                if ticker_df.empty:
+                ticker_df = ticker_data_grouped.get(ticker)
+                if ticker_df is None or ticker_df.empty:
                     print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping buy")
                     continue
 
-                ticker_df = ticker_df.set_index('date')
                 price_data = ticker_df.loc[:current_date]
                 if price_data.empty:
                     print(f"   ⚠️ No price data for {ticker} up to {current_date.date()}, skipping buy")
@@ -8514,19 +7529,19 @@ def _rebalance_sentiment_ensemble_portfolio(new_stocks, current_date, ticker_dat
 
 
 # Missing rebalancing functions - simple implementations
-def _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock, strategy_name=None):
+def _rebalance_generic_portfolio(new_stocks, current_date, ticker_data_grouped, positions, cash, capital_per_stock, strategy_name=None):
     """Generic rebalancing function for strategies without specific implementations."""
     try:
         # Sell existing positions not in new_stocks
         for ticker in list(positions.keys()):
             if ticker not in new_stocks:
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
                         # 🔧 FIX: Get price up to current_date, not last price in dataset
-                        if 'date' in ticker_data.columns:
-                            ticker_data = ticker_data[ticker_data['date'] <= current_date]
-                        if not ticker_data.empty:
+                        # ticker_data already has date as index, use loc for filtering
+                        ticker_data = ticker_data.loc[ticker_data.index <= current_date]
+                        if ticker_data is not None and not ticker_data.empty:
                             current_price = ticker_data['Close'].iloc[-1]
                             shares = positions[ticker]['shares']
                             gross_sale = shares * current_price
@@ -8540,12 +7555,12 @@ def _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data, pos
         for ticker in new_stocks:
             if ticker not in positions and capital_per_stock > 0:
                 try:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-                    if not ticker_data.empty:
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
                         # 🔧 FIX: Get price up to current_date, not last price in dataset
-                        if 'date' in ticker_data.columns:
-                            ticker_data = ticker_data[ticker_data['date'] <= current_date]
-                        if not ticker_data.empty:
+                        # ticker_data already has date as index, use loc for filtering
+                        ticker_data = ticker_data.loc[ticker_data.index <= current_date]
+                        if ticker_data is not None and not ticker_data.empty:
                             current_price = ticker_data['Close'].iloc[-1]
                             if current_price > 0:
                                 shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
@@ -8571,31 +7586,31 @@ def _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data, pos
     return cash, positions
 
 
-def _rebalance_sector_rotation_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock):
+def _rebalance_sector_rotation_portfolio(new_stocks, current_date, ticker_data_grouped, positions, cash, capital_per_stock):
     """Sector rotation rebalancing function."""
-    return _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock)
+    return _rebalance_generic_portfolio(new_stocks, current_date, ticker_data_grouped, positions, cash, capital_per_stock)
 
 
-def _rebalance_multitask_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock):
+def _rebalance_multitask_portfolio(new_stocks, current_date, ticker_data_grouped, positions, cash, capital_per_stock):
     """Multi-task learning rebalancing function."""
-    return _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock)
+    return _rebalance_generic_portfolio(new_stocks, current_date, ticker_data_grouped, positions, cash, capital_per_stock)
 
 
-def _rebalance_mean_reversion_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock):
+def _rebalance_mean_reversion_portfolio(new_stocks, current_date, ticker_data_grouped, positions, cash, capital_per_stock):
     """Mean reversion rebalancing function."""
-    return _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock)
+    return _rebalance_generic_portfolio(new_stocks, current_date, ticker_data_grouped, positions, cash, capital_per_stock)
 
 
-def _rebalance_quality_momentum_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock):
+def _rebalance_quality_momentum_portfolio(new_stocks, current_date, ticker_data_grouped, positions, cash, capital_per_stock):
     """Quality+Momentum rebalancing function."""
-    return _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock)
+    return _rebalance_generic_portfolio(new_stocks, current_date, ticker_data_grouped, positions, cash, capital_per_stock)
 
 
 
 
-def _rebalance_risk_adj_mom_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock):
+def _rebalance_risk_adj_mom_portfolio(new_stocks, current_date, ticker_data_grouped, positions, cash, capital_per_stock):
     """Risk-Adjusted Momentum rebalancing function."""
-    return _rebalance_generic_portfolio(new_stocks, current_date, all_tickers_data, positions, cash, capital_per_stock)
+    return _rebalance_generic_portfolio(new_stocks, current_date, ticker_data_grouped, positions, cash, capital_per_stock)
 
 
 # Module for backtesting functions - not meant to be run directly
