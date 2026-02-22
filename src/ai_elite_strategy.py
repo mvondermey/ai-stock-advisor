@@ -535,12 +535,26 @@ def _load_or_create_model(model_path: Optional[str] = None):
             
             print(f"   📊 Training on {len(X_real)} REAL historical samples")
             
-            # Convert raw returns to ordinal labels (same as main training)
+            # Convert to DataFrame to compute risk-adjusted returns
+            X_df = pd.DataFrame(X_real, columns=[
+                'perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
+                'overnight_gap', 'intraday_range', 'last_hour_momentum',
+                'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
+                'volume_ratio', 'rsi_14'
+            ])
             y_series = pd.Series(y_real)
-            y_ordinal = pd.qcut(y_series, q=5, labels=[0, 1, 2, 3, 4], duplicates='drop')
+            
+            # Compute risk-adjusted return: excess_return / sqrt(volatility)
+            # For fallback, we use raw return minus a fixed market estimate (~2%)
+            # and divide by sqrt(volatility)
+            excess_return = y_series - 2.0  # Rough market return estimate
+            risk_adj_return = excess_return / (X_df['volatility'] ** 0.5 + 0.001)
+            
+            # Convert to ordinal labels based on risk-adjusted return
+            y_ordinal = pd.qcut(risk_adj_return, q=5, labels=[0, 1, 2, 3, 4], duplicates='drop')
             y_real = y_ordinal.astype(int).values
             n_classes = len(np.unique(y_real))
-            print(f"   📊 Ordinal labels: {n_classes} classes, distribution: {dict(zip(*np.unique(y_real, return_counts=True)))}")
+            print(f"   📊 Risk-adjusted ordinal labels: {n_classes} classes, distribution: {dict(zip(*np.unique(y_real, return_counts=True)))}")
             
             # Train model on REAL historical data with ordinal labels
             model.fit(X_real, y_real)
@@ -588,13 +602,22 @@ def _load_or_create_model(model_path: Optional[str] = None):
                 returns_enhanced.append(simulated_return)
             
             X_enhanced = np.array(X_enhanced)
-            # Convert to ordinal labels (same as main training)
+            # Convert to risk-adjusted ordinal labels (same as main training)
+            X_df = pd.DataFrame(X_enhanced, columns=[
+                'perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
+                'overnight_gap', 'intraday_range', 'last_hour_momentum',
+                'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
+                'volume_ratio', 'rsi_14'
+            ])
             y_series = pd.Series(returns_enhanced)
-            y_ordinal = pd.qcut(y_series, q=5, labels=[0, 1, 2, 3, 4], duplicates='drop')
+            # Risk-adjusted: excess return / sqrt(volatility)
+            excess_return = y_series - 2.0  # Rough market return estimate
+            risk_adj_return = excess_return / (X_df['volatility'] ** 0.5 + 0.001)
+            y_ordinal = pd.qcut(risk_adj_return, q=5, labels=[0, 1, 2, 3, 4], duplicates='drop')
             y_enhanced = y_ordinal.astype(int).values
             
             model.fit(X_enhanced, y_enhanced)
-            print(f"   🔄 AI Elite: Used enhanced patterns with 14 features + ordinal labels ({len(X_enhanced)} samples)")
+            print(f"   🔄 AI Elite: Used enhanced patterns with 14 features + risk-adjusted ordinal labels ({len(X_enhanced)} samples)")
         
         # Save the model for future use
         if model_path:
@@ -771,24 +794,34 @@ def train_ai_elite_model(
     # Compute excess return vs market (needed for ordinal ranking)
     train_df['excess_return'] = train_df['forward_return'] - train_df['market_return']
     
+    # IMPROVED: Compute risk-adjusted return (excess_return / sqrt(volatility))
+    # This teaches the model to prefer efficient returns per unit of risk
+    # Same formula that makes Risk-Adj Mom 3M successful: return / sqrt(volatility)
+    train_df['risk_adj_return'] = train_df['excess_return'] / (train_df['volatility'] ** 0.5 + 0.001)
+    
     print(f"   📊 AI Elite: Average stock return: {train_df['forward_return'].mean():.2f}%")
     print(f"   📊 AI Elite: Average market return: {train_df['market_return'].mean():.2f}%")
     print(f"   📊 AI Elite: Average excess return: {train_df['excess_return'].mean():.2f}%")
+    print(f"   📊 AI Elite: Average volatility: {train_df['volatility'].mean():.1f}%")
+    print(f"   📊 AI Elite: Average risk-adjusted return: {train_df['risk_adj_return'].mean():.2f}")
     
-    # IMPROVED: Use ordinal ranking instead of binary classification
-    # This captures magnitude of outperformance, not just binary beat/miss market
+    # IMPROVED: Use risk-adjusted return for ordinal ranking
+    # This captures efficiency of outperformance, not just magnitude
+    # Stocks with same excess return but lower volatility get higher labels
     # Top 20% = label 4, next 20% = 3, middle 20% = 2, next 20% = 1, bottom 20% = 0
-    train_df['label'] = pd.qcut(train_df['excess_return'], 
+    train_df['label'] = pd.qcut(train_df['risk_adj_return'], 
                                 q=5, 
                                 labels=[0, 1, 2, 3, 4],
                                 duplicates='drop').astype(int)
     
     n_label_classes = train_df['label'].nunique()
-    print(f"   📊 AI Elite: Ordinal ranking labels (0=worst, 4=best), {n_label_classes} classes:")
+    print(f"   📊 AI Elite: Risk-adjusted quintile labels (0=worst, 4=best), {n_label_classes} classes:")
     for label in sorted(train_df['label'].unique(), reverse=True):
         count = (train_df['label'] == label).sum()
+        avg_risk_adj = train_df[train_df['label'] == label]['risk_adj_return'].mean()
         avg_excess = train_df[train_df['label'] == label]['excess_return'].mean()
-        print(f"      Label {label}: {count} samples, avg excess return: {avg_excess:.2f}%")
+        avg_vol = train_df[train_df['label'] == label]['volatility'].mean()
+        print(f"      Label {label}: {count} samples, risk_adj={avg_risk_adj:.2f}, excess={avg_excess:.1f}%, vol={avg_vol:.1f}%")
     
     # Remove stocks with minimal returns (to avoid noise)
     min_return_threshold = 0.5  # 0.5% minimum return
