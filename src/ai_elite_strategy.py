@@ -118,11 +118,12 @@ def select_ai_elite_stocks(
     if model is None:
         model = _load_or_create_model(model_path)
     
-    # Score candidates using ML model (14 features: 5 daily + 3 intraday + 6 derived)
+    # Score candidates using ML model (16 features: 5 daily + 3 intraday + 6 derived + 2 sentiment proxy)
     feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
                     'overnight_gap', 'intraday_range', 'last_hour_momentum',
                     'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
-                    'volume_ratio', 'rsi_14']
+                    'volume_ratio', 'rsi_14',
+                    'short_term_reversal', 'volume_sentiment']
 
     if model is None:
         raise RuntimeError("AI Elite: model is None - training must have failed")
@@ -279,6 +280,28 @@ def _extract_features(ticker: str, hourly_data: Optional[pd.DataFrame], current_
                 rsi_14 = 100.0  # no losses = max RSI
 
         # ------------------------------------------------------------------ #
+        # SENTIMENT PROXY FEATURES  (price-derived, no API needed)            #
+        # ------------------------------------------------------------------ #
+        # Short-term reversal: 5-day return minus 20-day return
+        # Positive = recent acceleration (bullish sentiment), negative = fading (bearish)
+        perf_5d = _perf(5)
+        perf_20d = _perf(20)
+        short_term_reversal = perf_5d - perf_20d
+
+        # Volume sentiment: volume surge signed by price direction
+        # High volume on up-moves = bullish conviction, high volume on down-moves = panic
+        volume_sentiment = 0.0
+        if 'Volume' in daily_filtered.columns and len(close_daily) >= 20:
+            vol_series = daily_filtered['Volume'].dropna()
+            if len(vol_series) >= 20:
+                recent_5d_vol = vol_series.tail(5).mean()
+                avg_20d_vol = vol_series.tail(20).mean()
+                vol_surge = (recent_5d_vol / avg_20d_vol) - 1.0 if avg_20d_vol > 0 else 0.0
+                # Sign by 5-day price direction
+                price_direction = 1.0 if perf_5d > 0 else (-1.0 if perf_5d < 0 else 0.0)
+                volume_sentiment = vol_surge * price_direction
+
+        # ------------------------------------------------------------------ #
         # INTRADAY FEATURES  (overnight gap, intraday range, last-hour mom)   #
         # ------------------------------------------------------------------ #
         avg_gap = 0.0
@@ -341,6 +364,8 @@ def _extract_features(ticker: str, hourly_data: Optional[pd.DataFrame], current_
             'vol_sweet_spot':        vol_sweet_spot,
             'volume_ratio':          volume_ratio,
             'rsi_14':                rsi_14,
+            'short_term_reversal':   short_term_reversal,
+            'volume_sentiment':      volume_sentiment,
         }
 
     except Exception as e:
@@ -508,7 +533,7 @@ def _load_or_create_model(model_path: Optional[str] = None):
                                 current_price = data.iloc[i]['Close']
                                 actual_return = (future_price - current_price) / current_price * 100
                                 
-                                # Create feature vector (14 features: 5 daily + 3 intraday + 6 derived)
+                                # Create feature vector (16 features: 5 daily + 3 intraday + 6 derived + 2 sentiment proxy)
                                 feature_vector = [
                                     features.get('perf_3m', 0),
                                     features.get('perf_6m', 0),
@@ -524,6 +549,8 @@ def _load_or_create_model(model_path: Optional[str] = None):
                                     features.get('vol_sweet_spot', 0),
                                     features.get('volume_ratio', 1.0),
                                     features.get('rsi_14', 50.0),
+                                    features.get('short_term_reversal', 0),
+                                    features.get('volume_sentiment', 0),
                                 ]
                                 
                                 X_real.append(feature_vector)
@@ -546,7 +573,8 @@ def _load_or_create_model(model_path: Optional[str] = None):
                 'perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
                 'overnight_gap', 'intraday_range', 'last_hour_momentum',
                 'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
-                'volume_ratio', 'rsi_14'
+                'volume_ratio', 'rsi_14',
+                'short_term_reversal', 'volume_sentiment'
             ])
             y_series = pd.Series(y_real)
             
@@ -574,7 +602,7 @@ def _load_or_create_model(model_path: Optional[str] = None):
             
         except Exception as e:
             print(f"   ⚠️ AI Elite: Real data training failed ({e}), using enhanced patterns")
-            # Fallback to enhanced patterns with 14 features and ordinal labels
+            # Fallback to enhanced patterns with 16 features and ordinal labels
             import numpy as np
             
             n_samples = 500
@@ -597,17 +625,23 @@ def _load_or_create_model(model_path: Optional[str] = None):
                 vol_sweet_spot = 1.0 if 20.0 <= volatility <= 40.0 else 0.0
                 volume_ratio = max(0.5, np.random.normal(1.0, 0.3))
                 rsi_14 = np.clip(np.random.normal(50, 15), 10, 90)
+                short_term_reversal = np.random.normal(0, 5)  # 5d vs 20d return diff
+                # Volume sentiment: volume surge * price direction
+                vol_surge = max(-0.5, np.random.normal(0, 0.3))
+                price_dir = 1.0 if perf_3m > 0 else -1.0
+                volume_sentiment = vol_surge * price_dir
                 
                 # Simulate forward return based on features
                 simulated_return = (perf_3m * 0.3 + perf_6m * 0.2 + risk_adj_score * 0.1 
                                    + np.random.normal(0, 10))
                 
-                # Feature vector (14 features: matching select_ai_elite_stocks)
+                # Feature vector (16 features: matching select_ai_elite_stocks)
                 features = [
                     perf_3m, perf_6m, perf_1y, volatility, volume,
                     overnight_gap, intraday_range, last_hour_momentum,
                     risk_adj_score, dip_score, mom_accel, vol_sweet_spot,
-                    volume_ratio, rsi_14
+                    volume_ratio, rsi_14,
+                    short_term_reversal, volume_sentiment
                 ]
                 
                 X_enhanced.append(features)
@@ -619,7 +653,8 @@ def _load_or_create_model(model_path: Optional[str] = None):
                 'perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
                 'overnight_gap', 'intraday_range', 'last_hour_momentum',
                 'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
-                'volume_ratio', 'rsi_14'
+                'volume_ratio', 'rsi_14',
+                'short_term_reversal', 'volume_sentiment'
             ])
             y_series = pd.Series(returns_enhanced)
             # Risk-adjusted: excess return / sqrt(volatility)
@@ -636,7 +671,7 @@ def _load_or_create_model(model_path: Optional[str] = None):
             y_enhanced = y_ordinal.astype(int).values
             
             model.fit(X_enhanced, y_enhanced)
-            print(f"   🔄 AI Elite: Used enhanced patterns with 14 features + risk-adjusted ordinal labels ({len(X_enhanced)} samples)")
+            print(f"   🔄 AI Elite: Used enhanced patterns with 16 features + risk-adjusted ordinal labels ({len(X_enhanced)} samples)")
         
         # Save the model for future use
         if model_path:
@@ -790,6 +825,8 @@ def train_ai_elite_model(
                     'vol_sweet_spot':     features.get('vol_sweet_spot', 0),
                     'volume_ratio':       features.get('volume_ratio', 1.0),
                     'rsi_14':             features.get('rsi_14', 50.0),
+                    'short_term_reversal': features.get('short_term_reversal', 0),
+                    'volume_sentiment':   features.get('volume_sentiment', 0),
                     'forward_return':     forward_return,
                     'market_return':      market_return,
                     'sample_date':        sample_date
@@ -855,13 +892,14 @@ def train_ai_elite_model(
     min_return_threshold = 0.5  # 0.5% minimum return
     train_df = train_df[abs(train_df['forward_return']) >= min_return_threshold]
     
-    print(f"   📊 AI Elite: Using 14 features (5 daily + 3 intraday + 6 derived)")
+    print(f"   📊 AI Elite: Using 16 features (5 daily + 3 intraday + 6 derived + 2 sentiment proxy)")
     
     # Prepare features and labels
     feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
                     'overnight_gap', 'intraday_range', 'last_hour_momentum',
                     'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
-                    'volume_ratio', 'rsi_14']
+                    'volume_ratio', 'rsi_14',
+                    'short_term_reversal', 'volume_sentiment']
     X = train_df[feature_cols].values
     y = train_df['label'].values
     
