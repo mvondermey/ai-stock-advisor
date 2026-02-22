@@ -1,11 +1,10 @@
 """
 Mom-Vol Hybrid 6M Sentiment Strategy
 
-Combines Mom-Vol Hybrid 6M (best performer +48.8%) with real news sentiment analysis.
+Combines Mom-Vol Hybrid 6M (best performer +48.8%) with price-derived sentiment analysis.
 Features:
 - Mom-Vol Hybrid 6M base selection (6-month momentum with volatility adjustment)
-- Real news sentiment from Alpha Vantage API (FREE tier)
-- Reddit sentiment from public API
+- Price-derived sentiment proxy (short-term reversal + volume sentiment)
 - Sentiment filtering and score boosting
 """
 
@@ -22,9 +21,6 @@ from config import (
     TRANSACTION_COST,
     PORTFOLIO_SIZE,
 )
-
-# Import real sentiment fetcher
-from sentiment_fetcher import get_sentiment_fetcher
 
 # Import existing strategies
 from shared_strategies import (
@@ -59,17 +55,89 @@ class SentimentEnhancedEnsemble:
     """
     Sentiment-Enhanced Ensemble that combines:
     1. Traditional strategy picks
-    2. Real news sentiment from Alpha Vantage API
-    3. Reddit sentiment from public API
-    4. Risk-adjusted sentiment weighting
+    2. Price-derived sentiment proxy (no API calls needed)
+    3. Risk-adjusted sentiment weighting
     """
     
     def __init__(self):
-        self.sentiment_fetcher = get_sentiment_fetcher()
+        pass  # No API fetcher needed - sentiment is derived from price data
         
-    def calculate_combined_sentiment(self, ticker: str, current_date: datetime) -> Dict:
-        """Get combined sentiment from real APIs."""
-        return self.sentiment_fetcher.get_combined_sentiment(ticker, current_date)
+    def calculate_combined_sentiment(self, ticker: str, current_date: datetime,
+                                     ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> Dict:
+        """
+        Calculate sentiment from price data (no API calls).
+        Uses short-term reversal and volume sentiment as proxy signals.
+        """
+        if ticker_data_grouped is None or ticker not in ticker_data_grouped:
+            return {'combined': 0.0, 'confidence': 0.0, 'sources': ['none'],
+                    'short_term_reversal': 0.0, 'volume_sentiment': 0.0}
+        
+        try:
+            data = ticker_data_grouped[ticker]
+            if data is None or len(data) < 20:
+                return {'combined': 0.0, 'confidence': 0.0, 'sources': ['price'],
+                        'short_term_reversal': 0.0, 'volume_sentiment': 0.0}
+            
+            # Ensure UTC
+            current_ts = pd.Timestamp(current_date)
+            if current_ts.tz is None:
+                current_ts = current_ts.tz_localize('UTC')
+            if data.index.tz is None:
+                data = data.copy()
+                data.index = data.index.tz_localize('UTC')
+            
+            filtered = data[data.index <= current_ts]
+            if len(filtered) < 20:
+                return {'combined': 0.0, 'confidence': 0.0, 'sources': ['price'],
+                        'short_term_reversal': 0.0, 'volume_sentiment': 0.0}
+            
+            close = filtered['Close']
+            if isinstance(close, pd.DataFrame):
+                close = close.iloc[:, 0]
+            close = close.dropna()
+            if len(close) < 20:
+                return {'combined': 0.0, 'confidence': 0.0, 'sources': ['price'],
+                        'short_term_reversal': 0.0, 'volume_sentiment': 0.0}
+            
+            latest = close.iloc[-1]
+            if latest <= 0:
+                return {'combined': 0.0, 'confidence': 0.0, 'sources': ['price'],
+                        'short_term_reversal': 0.0, 'volume_sentiment': 0.0}
+            
+            # Short-term reversal: 5d return minus 20d return
+            p5 = close.iloc[-min(5, len(close))]
+            p20 = close.iloc[-min(20, len(close))]
+            ret_5d = ((latest - p5) / p5 * 100) if p5 > 0 else 0.0
+            ret_20d = ((latest - p20) / p20 * 100) if p20 > 0 else 0.0
+            short_term_reversal = ret_5d - ret_20d
+            
+            # Volume sentiment: volume surge signed by price direction
+            volume_sentiment = 0.0
+            if 'Volume' in filtered.columns:
+                vol_series = filtered['Volume'].dropna()
+                if len(vol_series) >= 20:
+                    recent_5d_vol = vol_series.tail(5).mean()
+                    avg_20d_vol = vol_series.tail(20).mean()
+                    vol_surge = (recent_5d_vol / avg_20d_vol) - 1.0 if avg_20d_vol > 0 else 0.0
+                    price_dir = 1.0 if ret_5d > 0 else (-1.0 if ret_5d < 0 else 0.0)
+                    volume_sentiment = vol_surge * price_dir
+            
+            # Combined sentiment: normalize to roughly -1 to +1 range
+            # short_term_reversal is in % (typically -10 to +10), scale by /10
+            # volume_sentiment is typically -1 to +1
+            combined = np.clip(short_term_reversal / 10.0 * 0.6 + volume_sentiment * 0.4, -1.0, 1.0)
+            confidence = 0.8  # Price data is always reliable
+            
+            return {
+                'combined': combined,
+                'confidence': confidence,
+                'sources': ['price'],
+                'short_term_reversal': short_term_reversal,
+                'volume_sentiment': volume_sentiment
+            }
+        except Exception:
+            return {'combined': 0.0, 'confidence': 0.0, 'sources': ['price'],
+                    'short_term_reversal': 0.0, 'volume_sentiment': 0.0}
     
     def get_strategy_picks(self, strategy_name: str, all_tickers: List[str],
                           ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -138,14 +206,14 @@ class SentimentEnhancedEnsemble:
                               ticker_data_grouped: Dict[str, pd.DataFrame],
                               current_date: datetime,
                               min_sentiment_threshold: float = -0.1) -> List[Tuple[str, float]]:
-        """Apply sentiment filtering to candidates."""
+        """Apply sentiment filtering to candidates using price-derived sentiment."""
         filtered_candidates = []
         
-        print(f"   � Applying sentiment filter to {len(candidates)} candidates...")
+        print(f"   💭 Applying price-derived sentiment filter to {len(candidates)} candidates...")
         
         for ticker, ensemble_score in candidates[:20]:  # Analyze top 20
             try:
-                sentiment_data = self.calculate_combined_sentiment(ticker, current_date)
+                sentiment_data = self.calculate_combined_sentiment(ticker, current_date, ticker_data_grouped)
                 
                 # Check if sentiment data is valid
                 if sentiment_data and 'combined' in sentiment_data and sentiment_data['combined'] is not None:
@@ -236,14 +304,14 @@ class SentimentEnhancedEnsemble:
         # 6. Display results
         print(f"   ✅ Selected {len(final_selection)} stocks:")
         for ticker, final_score in sentiment_filtered[:top_n]:
-            sentiment_data = self.calculate_combined_sentiment(ticker, current_date)
+            sentiment_data = self.calculate_combined_sentiment(ticker, current_date, ticker_data_grouped)
             print(f"      {ticker}: final_score={final_score:.3f}, sentiment={sentiment_data['combined']:.2f}")
         
         # 7. Display sentiment summary
         positive_count = sum(1 for t in final_selection 
-                           if self.calculate_combined_sentiment(t, current_date)['combined'] > 0.1)
+                           if self.calculate_combined_sentiment(t, current_date, ticker_data_grouped)['combined'] > 0.1)
         negative_count = sum(1 for t in final_selection 
-                           if self.calculate_combined_sentiment(t, current_date)['combined'] < -0.1)
+                           if self.calculate_combined_sentiment(t, current_date, ticker_data_grouped)['combined'] < -0.1)
         neutral_count = len(final_selection) - positive_count - negative_count
         
         print(f"   📊 Sentiment breakdown: {positive_count} positive, {neutral_count} neutral, {negative_count} negative")
