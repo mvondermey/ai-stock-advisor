@@ -131,14 +131,8 @@ def select_ai_elite_stocks(
     candidates_df = pd.DataFrame(candidates)
     X = candidates_df[feature_cols].values
     
-    # IMPROVED: Add explicit momentum rank feature (percentile based on 3M performance)
-    # This captures what Risk-Adj Mom 3M does well - pure momentum ranking
+    # Debug-only ranks (NOT ML features - risk_adj_mom_3m is already in feature_cols from _extract_features)
     candidates_df['momentum_rank'] = candidates_df['perf_3m'].rank(pct=True)
-    
-    # IMPROVED: Risk-adjusted momentum rank (like Risk-Adj Mom 3M: return / sqrt(volatility))
-    # This is the core signal that beats raw momentum
-    # Floor volatility at 5% to prevent inf/NaN when vol=0
-    candidates_df['risk_adj_mom_3m'] = candidates_df['perf_3m'] / (candidates_df['volatility'].clip(lower=5.0) ** 0.5)
     candidates_df['risk_adj_mom_rank'] = candidates_df['risk_adj_mom_3m'].rank(pct=True)
     
     # Get ML prediction probabilities (ordinal ranking: up to 5 classes)
