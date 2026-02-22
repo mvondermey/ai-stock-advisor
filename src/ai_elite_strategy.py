@@ -129,20 +129,33 @@ def select_ai_elite_stocks(
 
     candidates_df = pd.DataFrame(candidates)
     X = candidates_df[feature_cols].values
-    scores = model.predict_proba(X)[:, 1]
-    candidates_df['ai_score'] = scores
     
-    # Sort by AI score
-    candidates_df = candidates_df.sort_values('ai_score', ascending=False)
+    # IMPROVED: Add explicit momentum rank feature (percentile based on 3M performance)
+    # This captures what Risk-Adj Mom 3M does well - pure momentum ranking
+    candidates_df['momentum_rank'] = candidates_df['perf_3m'].rank(pct=True)
     
-    # Debug: show top candidates
+    # Get ML prediction probabilities for all 5 classes (ordinal ranking)
+    proba = model.predict_proba(X)
+    # Weighted score: higher probability for higher classes = better stock
+    # Classes are [0, 1, 2, 3, 4] where 4 is best
+    weighted_class_score = np.dot(proba, [0, 1, 2, 3, 4]) / 4.0  # Normalize to 0-1
+    candidates_df['ai_score'] = weighted_class_score
+    
+    # IMPROVED: Hybrid scoring - 70% AI score + 30% momentum rank
+    # This combines ML sophistication with proven momentum signal
+    candidates_df['final_score'] = 0.7 * candidates_df['ai_score'] + 0.3 * candidates_df['momentum_rank']
+    
+    # Sort by final hybrid score
+    candidates_df = candidates_df.sort_values('final_score', ascending=False)
+    
+    # Debug: show top candidates with momentum rank
     print(f"   ✅ AI Elite: Found {len(candidates_df)} candidates")
+    print(f"   📊 AI Elite: Scoring = 70% ML prediction + 30% momentum rank (3M performance percentile)")
     for i, row in candidates_df.head(5).iterrows():
-        print(f"      {i+1}. {row['ticker']}: AI Score={row['ai_score']:.3f}, "
-              f"3M={row['perf_3m']:+.1f}%, 6M={row['perf_6m']:+.1f}%, 1Y={row['perf_1y']:+.1f}%, "
-              f"Vol={row['volatility']:.1f}%, Gap={row['overnight_gap']:+.2f}%")
+        print(f"      {i+1}. {row['ticker']}: Final={row['final_score']:.3f} (AI={row['ai_score']:.3f}, MomRank={row['momentum_rank']:.3f}), "
+              f"3M={row['perf_3m']:+.1f}%, Vol={row['volatility']:.1f}%")
     
-    # Return top N tickers
+    # Return top N tickers by final hybrid score
     selected = candidates_df.head(top_n)['ticker'].tolist()
     return selected
 
@@ -731,21 +744,23 @@ def train_ai_elite_model(
     
     print(f"   📈 AI Elite: Collected {len(train_df)} training samples")
     
-    # Assign labels based on relative performance vs market
-    # Stock beats market = 1, underperforms market = 0
-    train_df['excess_return'] = train_df['forward_return'] - train_df['market_return']
-    train_df['label'] = (train_df['excess_return'] > 0).astype(int)
+    # IMPROVED: Use ordinal ranking instead of binary classification
+    # This captures magnitude of outperformance, not just binary beat/miss market
+    # Top 20% = label 4, next 20% = 3, middle 20% = 2, next 20% = 1, bottom 20% = 0
+    train_df['label'] = pd.qcut(train_df['excess_return'], 
+                                q=5, 
+                                labels=[0, 1, 2, 3, 4],
+                                duplicates='drop')
+    
+    print(f"   📊 AI Elite: Ordinal ranking labels (0=worst, 4=best):")
+    for label in [4, 3, 2, 1, 0]:
+        count = (train_df['label'] == label).sum()
+        avg_excess = train_df[train_df['label'] == label]['excess_return'].mean()
+        print(f"      Label {label}: {count} samples, avg excess return: {avg_excess:.2f}%")
     
     # Remove stocks with minimal returns (to avoid noise)
     min_return_threshold = 0.5  # 0.5% minimum return
     train_df = train_df[abs(train_df['forward_return']) >= min_return_threshold]
-    
-    print(f"   📊 AI Elite: Using relative performance labeling (vs market)")
-    print(f"   📊 AI Elite: Market-beating: {train_df['label'].sum()} ({train_df['label'].mean()*100:.1f}%)")
-    print(f"   📊 AI Elite: Average stock return: {train_df['forward_return'].mean():.2f}%")
-    print(f"   📊 AI Elite: Average market return: {train_df['market_return'].mean():.2f}%")
-    print(f"   📊 AI Elite: Average excess return: {train_df['excess_return'].mean():.2f}%")
-    print(f"   📊 AI Elite: Training on {len(train_df)} samples")
     
     print(f"   📊 AI Elite: Using 14 features (5 daily + 3 intraday + 6 derived)")
     
@@ -799,20 +814,29 @@ def train_ai_elite_model(
     )
 
     # Cross-validate each model and pick the best
+    # IMPROVED: Use kappa scoring for ordinal ranking instead of binary accuracy
+    from sklearn.metrics import cohen_kappa_score, make_scorer
+    
+    # Custom scorer: weighted kappa (accounts for ordinality - being off by 1 is better than off by 4)
+    def weighted_kappa(y_true, y_pred):
+        return cohen_kappa_score(y_true, y_pred, weights='quadratic')
+    kappa_scorer = make_scorer(weighted_kappa)
+    
     best_model = None
     best_name = None
     best_score = -1.0
     cv_folds = min(3, len(np.unique(y)))  # at least 3-fold, but respect class count
 
-    print(f"   🏆 AI Elite: Selecting best model via {cv_folds}-fold cross-validation...")
+    print(f"   🏆 AI Elite: Selecting best model via {cv_folds}-fold cross-validation (weighted kappa for ordinal ranking)...")
     for name, m in candidates.items():
         try:
             X_input = X_scaled if name == 'LogisticRegression' else X
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                scores = cross_val_score(m, X_input, y, cv=cv_folds, scoring='accuracy', n_jobs=1)
+                # Use kappa scorer for ordinal ranking instead of accuracy
+                scores = cross_val_score(m, X_input, y, cv=cv_folds, scoring=kappa_scorer, n_jobs=1)
             mean_score = scores.mean()
-            print(f"      {name}: CV accuracy = {mean_score*100:.1f}%")
+            print(f"      {name}: CV weighted kappa = {mean_score:.3f}")
             if mean_score > best_score:
                 best_score = mean_score
                 best_name = name
@@ -828,13 +852,13 @@ def train_ai_elite_model(
         )
         best_name = 'GradientBoosting'
 
-    print(f"   ✅ AI Elite: Best model = {best_name} (CV accuracy {best_score*100:.1f}%)")
+    print(f"   ✅ AI Elite: Best model = {best_name} (CV weighted kappa {best_score:.3f})")
 
     # Fit best model on full training data
     X_input = X_scaled if best_name == 'LogisticRegression' else X
     best_model.fit(X_input, y)
-    train_accuracy = best_model.score(X_input, y)
-    print(f"   ✅ AI Elite: Final model trained! Train accuracy: {train_accuracy*100:.1f}%")
+    train_kappa = weighted_kappa(y, best_model.predict(X_input))
+    print(f"   ✅ AI Elite: Final model trained! Train weighted kappa: {train_kappa:.3f}")
 
     # Show feature importances (tree models only)
     if hasattr(best_model, 'feature_importances_'):
