@@ -1548,7 +1548,6 @@ def _run_portfolio_backtest_walk_forward(
     ai_classification_positions = {}
     ai_classification_cash = 0
     ai_classification_transaction_costs = 0
-    ai_classification_cash_deployed = 0
 
     # MOMENTUM ACCELERATION: Initialize portfolio tracking
     mom_accel_portfolio_value = initial_capital_needed
@@ -1703,49 +1702,15 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_3m_transaction_costs = 0.0
     ai_elite_transaction_costs = 0.0
 
-    # Cash utilization tracking - track actual capital deployed for each strategy
-    ai_cash_deployed = 0.0
-    static_bh_cash_deployed = 0.0
-    static_bh_6m_cash_deployed = 0.0
-    static_bh_3m_cash_deployed = 0.0
-    static_bh_1m_cash_deployed = 0.0
-    dynamic_bh_1y_cash_deployed = 0.0
-    dynamic_bh_6m_cash_deployed = 0.0
-    dynamic_bh_3m_cash_deployed = 0.0
-    dynamic_bh_1m_cash_deployed = 0.0
-    risk_adj_mom_cash_deployed = 0.0
-    mean_reversion_cash_deployed = 0.0
-    quality_momentum_cash_deployed = 0.0
-    volatility_adj_mom_cash_deployed = 0.0
-    momentum_ai_hybrid_cash_deployed = 0.0
-    dynamic_bh_1y_vol_filter_cash_deployed = 0.0
-    dynamic_bh_1y_trailing_stop_cash_deployed = 0.0
-    multitask_cash_deployed = 0.0
-    sector_rotation_cash_deployed = 0.0
-    ratio_3m_1y_cash_deployed = 0.0
+    # Transaction cost tracking for strategies that don't initialize it elsewhere
     ratio_3m_1y_transaction_costs = 0.0
-    ratio_1y_3m_cash_deployed = 0.0
     ratio_1y_3m_transaction_costs = 0.0
-    momentum_volatility_hybrid_cash_deployed = 0.0
     momentum_volatility_hybrid_transaction_costs = 0.0
-    momentum_volatility_hybrid_6m_cash_deployed = 0.0
     momentum_volatility_hybrid_6m_transaction_costs = 0.0
-    momentum_volatility_hybrid_1y_cash_deployed = 0.0
     momentum_volatility_hybrid_1y_transaction_costs = 0.0
-    momentum_volatility_hybrid_1y3m_cash_deployed = 0.0
     momentum_volatility_hybrid_1y3m_transaction_costs = 0.0
-    price_acceleration_cash_deployed = 0.0
     price_acceleration_transaction_costs = 0.0
-    turnaround_cash_deployed = 0.0
     turnaround_transaction_costs = 0.0
-    adaptive_ensemble_cash_deployed = 0.0
-    volatility_ensemble_cash_deployed = 0.0
-    ai_volatility_ensemble_cash_deployed = 0.0
-    multi_tf_ensemble_cash_deployed = 0.0
-    correlation_ensemble_cash_deployed = 0.0
-    dynamic_pool_cash_deployed = 0.0
-    sentiment_ensemble_cash_deployed = 0.0
-    ai_classification_cash_deployed = 0.0
     ai_classification_transaction_costs = 0.0
 
     all_processed_tickers = []
@@ -6092,40 +6057,40 @@ def _run_portfolio_backtest_walk_forward(
             'day_count': day_count,
         },
         'strategies': {
-            'ai_strategy':              _strat(total_portfolio_value, portfolio_values_history, ai_transaction_costs, ai_cash_deployed),
-            'static_bh_1y':             _strat(static_bh_1y_portfolio_value, static_bh_1y_portfolio_history, static_bh_transaction_costs, static_bh_cash_deployed),
-            'static_bh_6m':             _strat(static_bh_6m_portfolio_value, static_bh_6m_portfolio_history, static_bh_6m_transaction_costs, static_bh_6m_cash_deployed),
-            'static_bh_3m':             _strat(static_bh_3m_portfolio_value, static_bh_3m_portfolio_history, static_bh_3m_transaction_costs, static_bh_3m_cash_deployed),
-            'static_bh_1m':             _strat(static_bh_1m_portfolio_value, static_bh_1m_portfolio_history, static_bh_1m_transaction_costs, static_bh_1m_cash_deployed),
-            'dynamic_bh_1y':            _strat(dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_transaction_costs, dynamic_bh_1y_cash_deployed),
-            'dynamic_bh_6m':            _strat(dynamic_bh_6m_portfolio_value, dynamic_bh_6m_portfolio_history, dynamic_bh_6m_transaction_costs, dynamic_bh_6m_cash_deployed),
-            'dynamic_bh_3m':            _strat(dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_3m_transaction_costs, dynamic_bh_3m_cash_deployed),
-            'dynamic_bh_1m':            _strat(dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, dynamic_bh_1m_transaction_costs, dynamic_bh_1m_cash_deployed),
-            'dynamic_bh_1y_vol_filter': _strat(dynamic_bh_1y_vol_filter_portfolio_value, dynamic_bh_1y_vol_filter_portfolio_history, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_vol_filter_cash_deployed),
-            'dynamic_bh_1y_trailing_stop': _strat(dynamic_bh_1y_trailing_stop_portfolio_value, dynamic_bh_1y_trailing_stop_portfolio_history, dynamic_bh_1y_trailing_stop_transaction_costs, dynamic_bh_1y_trailing_stop_cash_deployed),
-            'risk_adj_mom':             _strat(risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, risk_adj_mom_transaction_costs, risk_adj_mom_cash_deployed),
-            'multitask':                _strat(multitask_portfolio_value, multitask_portfolio_history, multitask_transaction_costs, multitask_cash_deployed),
-            'mean_reversion':           _strat(mean_reversion_portfolio_value, mean_reversion_portfolio_history, mean_reversion_transaction_costs, mean_reversion_cash_deployed),
-            'quality_momentum':         _strat(quality_momentum_portfolio_value, quality_momentum_portfolio_history, quality_momentum_transaction_costs, quality_momentum_cash_deployed),
-            'momentum_ai_hybrid':       _strat(momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, momentum_ai_hybrid_transaction_costs, momentum_ai_hybrid_cash_deployed),
-            'volatility_adj_mom':       _strat(volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, volatility_adj_mom_transaction_costs, volatility_adj_mom_cash_deployed),
-            'sector_rotation':          _strat(sector_rotation_portfolio_value, sector_rotation_portfolio_history, sector_rotation_transaction_costs, sector_rotation_cash_deployed),
-            'ratio_3m_1y':              _strat(ratio_3m_1y_portfolio_value, ratio_3m_1y_portfolio_history, ratio_3m_1y_transaction_costs, ratio_3m_1y_cash_deployed),
-            'ratio_1y_3m':              _strat(ratio_1y_3m_portfolio_value, ratio_1y_3m_portfolio_history, ratio_1y_3m_transaction_costs, ratio_1y_3m_cash_deployed),
-            'momentum_volatility_hybrid': _strat(momentum_volatility_hybrid_portfolio_value, momentum_volatility_hybrid_portfolio_history, momentum_volatility_hybrid_transaction_costs, momentum_volatility_hybrid_cash_deployed),
-            'momentum_volatility_hybrid_6m': _strat(momentum_volatility_hybrid_6m_portfolio_value, momentum_volatility_hybrid_6m_portfolio_history, momentum_volatility_hybrid_6m_transaction_costs, momentum_volatility_hybrid_6m_cash_deployed),
-            'momentum_volatility_hybrid_1y': _strat(momentum_volatility_hybrid_1y_portfolio_value, momentum_volatility_hybrid_1y_portfolio_history, momentum_volatility_hybrid_1y_transaction_costs, momentum_volatility_hybrid_1y_cash_deployed),
-            'momentum_volatility_hybrid_1y3m': _strat(momentum_volatility_hybrid_1y3m_portfolio_value, momentum_volatility_hybrid_1y3m_portfolio_history, momentum_volatility_hybrid_1y3m_transaction_costs, momentum_volatility_hybrid_1y3m_cash_deployed),
-            'price_acceleration':       _strat(price_acceleration_portfolio_value, price_acceleration_portfolio_history, price_acceleration_transaction_costs, price_acceleration_cash_deployed),
-            'turnaround':               _strat(turnaround_portfolio_value, turnaround_portfolio_history, turnaround_transaction_costs, turnaround_cash_deployed),
-            'adaptive_ensemble':        _strat(adaptive_ensemble_portfolio_value, adaptive_ensemble_portfolio_history, adaptive_ensemble_transaction_costs, adaptive_ensemble_cash_deployed),
-            'volatility_ensemble':      _strat(volatility_ensemble_portfolio_value, volatility_ensemble_portfolio_history, volatility_ensemble_transaction_costs, volatility_ensemble_cash_deployed),
+            'ai_strategy':              _strat(total_portfolio_value, portfolio_values_history, ai_transaction_costs, initial_capital_needed),
+            'static_bh_1y':             _strat(static_bh_1y_portfolio_value, static_bh_1y_portfolio_history, static_bh_transaction_costs, static_bh_1y_cash),
+            'static_bh_6m':             _strat(static_bh_6m_portfolio_value, static_bh_6m_portfolio_history, static_bh_6m_transaction_costs, static_bh_6m_cash),
+            'static_bh_3m':             _strat(static_bh_3m_portfolio_value, static_bh_3m_portfolio_history, static_bh_3m_transaction_costs, static_bh_3m_cash),
+            'static_bh_1m':             _strat(static_bh_1m_portfolio_value, static_bh_1m_portfolio_history, static_bh_1m_transaction_costs, static_bh_1m_cash),
+            'dynamic_bh_1y':            _strat(dynamic_bh_portfolio_value, dynamic_bh_portfolio_history, dynamic_bh_transaction_costs, dynamic_bh_cash),
+            'dynamic_bh_6m':            _strat(dynamic_bh_6m_portfolio_value, dynamic_bh_6m_portfolio_history, dynamic_bh_6m_transaction_costs, dynamic_bh_6m_cash),
+            'dynamic_bh_3m':            _strat(dynamic_bh_3m_portfolio_value, dynamic_bh_3m_portfolio_history, dynamic_bh_3m_transaction_costs, dynamic_bh_3m_cash),
+            'dynamic_bh_1m':            _strat(dynamic_bh_1m_portfolio_value, dynamic_bh_1m_portfolio_history, dynamic_bh_1m_transaction_costs, dynamic_bh_1m_cash),
+            'dynamic_bh_1y_vol_filter': _strat(dynamic_bh_1y_vol_filter_portfolio_value, dynamic_bh_1y_vol_filter_portfolio_history, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_vol_filter_cash),
+            'dynamic_bh_1y_trailing_stop': _strat(dynamic_bh_1y_trailing_stop_portfolio_value, dynamic_bh_1y_trailing_stop_portfolio_history, dynamic_bh_1y_trailing_stop_transaction_costs, dynamic_bh_1y_trailing_stop_cash),
+            'risk_adj_mom':             _strat(risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, risk_adj_mom_transaction_costs, risk_adj_mom_cash),
+            'multitask':                _strat(multitask_portfolio_value, multitask_portfolio_history, multitask_transaction_costs, multitask_cash),
+            'mean_reversion':           _strat(mean_reversion_portfolio_value, mean_reversion_portfolio_history, mean_reversion_transaction_costs, mean_reversion_cash),
+            'quality_momentum':         _strat(quality_momentum_portfolio_value, quality_momentum_portfolio_history, quality_momentum_transaction_costs, quality_momentum_cash),
+            'momentum_ai_hybrid':       _strat(momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, momentum_ai_hybrid_transaction_costs, momentum_ai_hybrid_cash),
+            'volatility_adj_mom':       _strat(volatility_adj_mom_portfolio_value, volatility_adj_mom_portfolio_history, volatility_adj_mom_transaction_costs, volatility_adj_mom_cash),
+            'sector_rotation':          _strat(sector_rotation_portfolio_value, sector_rotation_portfolio_history, sector_rotation_transaction_costs, sector_rotation_cash),
+            'ratio_3m_1y':              _strat(ratio_3m_1y_portfolio_value, ratio_3m_1y_portfolio_history, ratio_3m_1y_transaction_costs, ratio_3m_1y_cash),
+            'ratio_1y_3m':              _strat(ratio_1y_3m_portfolio_value, ratio_1y_3m_portfolio_history, ratio_1y_3m_transaction_costs, ratio_1y_3m_cash),
+            'momentum_volatility_hybrid': _strat(momentum_volatility_hybrid_portfolio_value, momentum_volatility_hybrid_portfolio_history, momentum_volatility_hybrid_transaction_costs, momentum_volatility_hybrid_cash),
+            'momentum_volatility_hybrid_6m': _strat(momentum_volatility_hybrid_6m_portfolio_value, momentum_volatility_hybrid_6m_portfolio_history, momentum_volatility_hybrid_6m_transaction_costs, momentum_volatility_hybrid_6m_cash),
+            'momentum_volatility_hybrid_1y': _strat(momentum_volatility_hybrid_1y_portfolio_value, momentum_volatility_hybrid_1y_portfolio_history, momentum_volatility_hybrid_1y_transaction_costs, momentum_volatility_hybrid_1y_cash),
+            'momentum_volatility_hybrid_1y3m': _strat(momentum_volatility_hybrid_1y3m_portfolio_value, momentum_volatility_hybrid_1y3m_portfolio_history, momentum_volatility_hybrid_1y3m_transaction_costs, momentum_volatility_hybrid_1y3m_cash),
+            'price_acceleration':       _strat(price_acceleration_portfolio_value, price_acceleration_portfolio_history, price_acceleration_transaction_costs, price_acceleration_cash),
+            'turnaround':               _strat(turnaround_portfolio_value, turnaround_portfolio_history, turnaround_transaction_costs, turnaround_cash),
+            'adaptive_ensemble':        _strat(adaptive_ensemble_portfolio_value, adaptive_ensemble_portfolio_history, adaptive_ensemble_transaction_costs, adaptive_ensemble_cash),
+            'volatility_ensemble':      _strat(volatility_ensemble_portfolio_value, volatility_ensemble_portfolio_history, volatility_ensemble_transaction_costs, volatility_ensemble_cash),
             'enhanced_volatility':      _strat(enhanced_volatility_portfolio_value, enhanced_volatility_portfolio_history, enhanced_volatility_transaction_costs, enhanced_volatility_cash),
-            'ai_volatility_ensemble':   _strat(ai_volatility_ensemble_portfolio_value, ai_volatility_ensemble_portfolio_history, ai_volatility_ensemble_transaction_costs, ai_volatility_ensemble_cash_deployed),
-            'multi_tf_ensemble':        _strat(multi_tf_ensemble_portfolio_value, multi_tf_ensemble_portfolio_history, multi_tf_ensemble_transaction_costs, multi_tf_ensemble_cash_deployed),
-            'correlation_ensemble':     _strat(correlation_ensemble_portfolio_value, correlation_ensemble_portfolio_history, correlation_ensemble_transaction_costs, correlation_ensemble_cash_deployed),
-            'dynamic_pool':             _strat(dynamic_pool_portfolio_value, dynamic_pool_portfolio_history, dynamic_pool_transaction_costs, dynamic_pool_cash_deployed),
-            'sentiment_ensemble':       _strat(sentiment_ensemble_portfolio_value, sentiment_ensemble_portfolio_history, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash_deployed),
+            'ai_volatility_ensemble':   _strat(ai_volatility_ensemble_portfolio_value, ai_volatility_ensemble_portfolio_history, ai_volatility_ensemble_transaction_costs, ai_volatility_ensemble_cash),
+            'multi_tf_ensemble':        _strat(multi_tf_ensemble_portfolio_value, multi_tf_ensemble_portfolio_history, multi_tf_ensemble_transaction_costs, multi_tf_ensemble_cash),
+            'correlation_ensemble':     _strat(correlation_ensemble_portfolio_value, correlation_ensemble_portfolio_history, correlation_ensemble_transaction_costs, correlation_ensemble_cash),
+            'dynamic_pool':             _strat(dynamic_pool_portfolio_value, dynamic_pool_portfolio_history, dynamic_pool_transaction_costs, dynamic_pool_cash),
+            'sentiment_ensemble':       _strat(sentiment_ensemble_portfolio_value, sentiment_ensemble_portfolio_history, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash),
             'voting_ensemble':          _strat(voting_ensemble_portfolio_value, voting_ensemble_portfolio_history, voting_ensemble_transaction_costs, voting_ensemble_cash),
             'mom_accel':                _strat(mom_accel_portfolio_value, mom_accel_portfolio_history, mom_accel_transaction_costs, mom_accel_cash),
             'concentrated_3m':          _strat(concentrated_3m_portfolio_value, concentrated_3m_portfolio_history, concentrated_3m_transaction_costs, concentrated_3m_cash),

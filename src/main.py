@@ -1122,7 +1122,9 @@ def main(
         print("="*100 + "\n")
         raise
     
-    ai_1y_return = ((final_strategy_value_1y - initial_capital_1y) / initial_capital_1y) * 100
+    # AI Strategy removed - compute return using portfolio initial capital for consistency
+    portfolio_initial_capital_for_ret = INVESTMENT_PER_STOCK * PORTFOLIO_SIZE
+    ai_1y_return = ((final_strategy_value_1y - portfolio_initial_capital_for_ret) / portfolio_initial_capital_for_ret) * 100 if portfolio_initial_capital_for_ret != 0 else 0.0
     prediction_stats_1y = {}  # Not provided by this function
     strategy_results_1y = []  # Per-ticker results in performance_metrics_1y
     
@@ -1325,8 +1327,9 @@ def main(
     print(f"  - top_tickers sample: {top_tickers[:5]}")
     print(f"  - processed_tickers_1y sample: {processed_tickers_1y[:5] if processed_tickers_1y else 'None'}")
 
-    # ✅ FIX: Use the same initial capital that was allocated to the portfolio backtest
-    actual_initial_capital_1y = initial_capital_1y
+    # ✅ FIX: Use the portfolio initial capital (10 stocks), not the AI comparison capital (3 stocks)
+    portfolio_initial_capital = INVESTMENT_PER_STOCK * PORTFOLIO_SIZE
+    actual_initial_capital_1y = portfolio_initial_capital
     # ✅ FIX: Use ALL top tickers for the summary, not just AI-processed ones
     actual_tickers_analyzed = len(top_tickers)
     
@@ -1335,8 +1338,6 @@ def main(
     print(f"   📅 Actual backtest days: {actual_backtest_days} (config BACKTEST_DAYS={BACKTEST_DAYS})")
     
     # Helper: get return % for a strategy from the results dict
-    # Use the actual portfolio initial capital (10 stocks) not the comparison initial capital (3 stocks)
-    portfolio_initial_capital = INVESTMENT_PER_STOCK * PORTFOLIO_SIZE
     def _ret(name):
         v = s[name]['value']
         return ((v - portfolio_initial_capital) / abs(portfolio_initial_capital)) * 100 if portfolio_initial_capital != 0 else 0.0
@@ -1665,10 +1666,9 @@ def main(
         
         # Prepare strategy results for email
         strategy_results = {}
-        if 'final_strategy_value_1y' in locals() and 'initial_capital_1y' in locals():
-            strategy_results['AI Strategy'] = {'return': ((final_strategy_value_1y - initial_capital_1y) / initial_capital_1y) * 100}
-        if 'final_buy_hold_value_1y' in locals() and 'initial_capital_1y' in locals():
-            strategy_results['Buy & Hold'] = {'return': ((final_buy_hold_value_1y - initial_capital_1y) / initial_capital_1y) * 100}
+        if 'final_buy_hold_value_1y' in locals():
+            portfolio_cap = INVESTMENT_PER_STOCK * PORTFOLIO_SIZE
+            strategy_results['Buy & Hold'] = {'return': ((final_buy_hold_value_1y - portfolio_cap) / portfolio_cap) * 100 if portfolio_cap != 0 else 0.0}
         
         send_backtesting_notification(
             strategy_results=strategy_results,

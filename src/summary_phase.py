@@ -207,7 +207,50 @@ def print_final_summary(
     final_enhanced_volatility_value_1y: float = None,
     enhanced_volatility_1y_return: float = None,
     enhanced_volatility_transaction_costs: float = None,
-    enhanced_volatility_cash_deployed: float = None
+    enhanced_volatility_cash_deployed: float = None,
+    # Elite Hybrid
+    final_elite_hybrid_value_1y: float = None,
+    elite_hybrid_1y_return: float = None,
+    elite_hybrid_transaction_costs: float = None,
+    elite_hybrid_cash: float = None,
+    # AI Elite
+    final_ai_elite_value_1y: float = None,
+    ai_elite_1y_return: float = None,
+    ai_elite_transaction_costs: float = None,
+    ai_elite_cash: float = None,
+    # Elite Risk
+    final_elite_risk_value_1y: float = None,
+    elite_risk_1y_return: float = None,
+    elite_risk_transaction_costs: float = None,
+    elite_risk_cash: float = None,
+    # Risk-Adj Mom 6M
+    final_risk_adj_mom_6m_value_1y: float = None,
+    risk_adj_mom_6m_1y_return: float = None,
+    risk_adj_mom_6m_transaction_costs: float = None,
+    risk_adj_mom_6m_cash: float = None,
+    # Risk-Adj Mom 3M
+    final_risk_adj_mom_3m_value_1y: float = None,
+    risk_adj_mom_3m_1y_return: float = None,
+    risk_adj_mom_3m_transaction_costs: float = None,
+    risk_adj_mom_3m_cash: float = None,
+    # Risk-Adj Mom Sentiment
+    final_risk_adj_mom_sentiment_value_1y: float = None,
+    risk_adj_mom_sentiment_1y_return: float = None,
+    risk_adj_mom_sentiment_transaction_costs: float = None,
+    risk_adj_mom_sentiment_cash: float = None,
+    # Monthly rebalance variants
+    final_bh_1y_monthly_value_1y: float = None,
+    bh_1y_monthly_1y_return: float = None,
+    bh_1y_monthly_transaction_costs: float = None,
+    bh_1y_monthly_cash: float = None,
+    final_bh_6m_monthly_value_1y: float = None,
+    bh_6m_monthly_1y_return: float = None,
+    bh_6m_monthly_transaction_costs: float = None,
+    bh_6m_monthly_cash: float = None,
+    final_bh_3m_monthly_value_1y: float = None,
+    bh_3m_monthly_1y_return: float = None,
+    bh_3m_monthly_transaction_costs: float = None,
+    bh_3m_monthly_cash: float = None
 ) -> None:
     """Prints the final summary of the backtest results."""
     
@@ -275,11 +318,16 @@ def print_final_summary(
     def safe_return(ret):
         return ret if ret is not None else -999999
     
-    # Add all strategies to the list
-    strategies_data.append(('AI Strategy', final_strategy_value_1y, ai_1y_return, ai_transaction_costs, ai_cash_deployed))
-    strategies_data.append(('Static BH 1Y', final_buy_hold_value_1y, ((final_buy_hold_value_1y - initial_balance_used) / abs(initial_balance_used)) * 100 if initial_balance_used != 0 else None, static_bh_transaction_costs, static_bh_cash_deployed))
+    # Helper to compute return % consistently for all strategies
+    def _calc_ret(value):
+        if value is not None and initial_balance_used != 0:
+            return ((value - initial_balance_used) / abs(initial_balance_used)) * 100
+        return None
+    
+    # Add all strategies to the list (AI Strategy removed - no longer in codebase)
+    strategies_data.append(('Static BH 1Y', final_buy_hold_value_1y, _calc_ret(final_buy_hold_value_1y), static_bh_transaction_costs, static_bh_cash_deployed))
     strategies_data.append(('Static BH 6M', final_static_bh_6m_value_1y, static_bh_6m_1y_return, static_bh_6m_transaction_costs, static_bh_6m_cash_deployed))
-    strategies_data.append(('Static BH 3M', final_buy_hold_value_3m, ((final_buy_hold_value_3m - initial_balance_used) / abs(initial_balance_used)) * 100 if (final_buy_hold_value_3m and initial_balance_used != 0) else None, static_bh_3m_transaction_costs, static_bh_3m_cash_deployed))
+    strategies_data.append(('Static BH 3M', final_buy_hold_value_3m, _calc_ret(final_buy_hold_value_3m), static_bh_3m_transaction_costs, static_bh_3m_cash_deployed))
     strategies_data.append(('Static BH 1M', final_static_bh_1m_value_1y, static_bh_1m_1y_return, static_bh_1m_transaction_costs, static_bh_1m_cash_deployed))
     strategies_data.append(('Dyn BH 1Y', final_dynamic_bh_value_1y, dynamic_bh_1y_return, dynamic_bh_1y_transaction_costs, dynamic_bh_1y_cash_deployed))
     strategies_data.append(('Dyn BH 6M', final_dynamic_bh_6m_value_1y, dynamic_bh_6m_1y_return, dynamic_bh_6m_transaction_costs, dynamic_bh_6m_cash_deployed))
@@ -316,6 +364,13 @@ def print_final_summary(
     strategies_data.append(('Trend ATR', final_trend_atr_value_1y, trend_atr_1y_return, trend_atr_transaction_costs, trend_atr_cash_deployed))
     strategies_data.append(('Elite Hybrid', final_elite_hybrid_value_1y, elite_hybrid_1y_return, elite_hybrid_transaction_costs, elite_hybrid_cash))
     strategies_data.append(('AI Elite', final_ai_elite_value_1y, ai_elite_1y_return, ai_elite_transaction_costs, ai_elite_cash))
+    strategies_data.append(('Elite Risk', final_elite_risk_value_1y, elite_risk_1y_return, elite_risk_transaction_costs, elite_risk_cash))
+    strategies_data.append(('Risk-Adj Mom 6M', final_risk_adj_mom_6m_value_1y, risk_adj_mom_6m_1y_return, risk_adj_mom_6m_transaction_costs, risk_adj_mom_6m_cash))
+    strategies_data.append(('Risk-Adj Mom 3M', final_risk_adj_mom_3m_value_1y, risk_adj_mom_3m_1y_return, risk_adj_mom_3m_transaction_costs, risk_adj_mom_3m_cash))
+    strategies_data.append(('Risk-Adj Mom Sentiment', final_risk_adj_mom_sentiment_value_1y, risk_adj_mom_sentiment_1y_return, risk_adj_mom_sentiment_transaction_costs, risk_adj_mom_sentiment_cash))
+    strategies_data.append(('Static BH 1Y Monthly', final_bh_1y_monthly_value_1y, bh_1y_monthly_1y_return, bh_1y_monthly_transaction_costs, bh_1y_monthly_cash))
+    strategies_data.append(('Static BH 6M Monthly', final_bh_6m_monthly_value_1y, bh_6m_monthly_1y_return, bh_6m_monthly_transaction_costs, bh_6m_monthly_cash))
+    strategies_data.append(('Static BH 3M Monthly', final_bh_3m_monthly_value_1y, bh_3m_monthly_1y_return, bh_3m_monthly_transaction_costs, bh_3m_monthly_cash))
     
     # Filter out disabled strategies (where value is None)
     strategies_data = [(name, value, ret, costs, cash) for (name, value, ret, costs, cash) in strategies_data if value is not None]
