@@ -237,7 +237,8 @@ def _extract_features(ticker: str, hourly_data: Optional[pd.DataFrame], current_
 
         # Risk-Adj Mom 3M explicit feature (the winning signal): return / sqrt(volatility)
         # Floor volatility at 5% to prevent extreme values
-        risk_adj_mom_3m = perf_3m / (max(volatility_daily, 5.0) ** 0.5)
+        # Normalize by /10 to bring to similar scale as other features (~0-10 range instead of 0-100)
+        risk_adj_mom_3m = perf_3m / (max(volatility_daily, 5.0) ** 0.5) / 10.0
 
         # Average volume (daily)
         avg_volume = daily_filtered['Volume'].tail(30).mean() if 'Volume' in daily_filtered.columns else 0.0
@@ -631,7 +632,8 @@ def _load_or_create_model(model_path: Optional[str] = None):
                 price_dir = 1.0 if perf_3m > 0 else -1.0
                 volume_sentiment = vol_surge * price_dir
                 # Risk-Adj Mom 3M explicit feature
-                risk_adj_mom_3m = perf_3m / (max(volatility, 5.0) ** 0.5)
+                # Normalize by /10 to bring to similar scale as other features (~0-10 range instead of 0-100)
+                risk_adj_mom_3m = perf_3m / (max(volatility, 5.0) ** 0.5) / 10.0
                 
                 # Simulate forward return based on features
                 simulated_return = (perf_3m * 0.3 + perf_6m * 0.2 + risk_adj_score * 0.1 
