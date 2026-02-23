@@ -327,7 +327,7 @@ ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (not implemented)
 
 # AI Elite Parameters
 AI_ELITE_RETRAIN_DAYS = 1  # Retrain model every N days
-AI_ELITE_TRAINING_LOOKBACK = 20  # Use fixed 20-day window for training
+AI_ELITE_TRAINING_LOOKBACK = 90  # Use fixed 90-day window for training
 AI_ELITE_FORWARD_DAYS = 5  # Predict performance over next N days
 
 # AI Elite Intraday Configuration

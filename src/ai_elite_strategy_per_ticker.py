@@ -122,8 +122,8 @@ def train_ai_elite_model_per_ticker(
                 continue
         
         # Per-ticker needs fewer samples than shared model (100 is for all tickers combined)
-        # With 20-day lookback sampling every 2 days, max ~11 samples per ticker
-        MIN_PER_TICKER_SAMPLES = 5
+        # With 90-day lookback sampling every 2 days, ~45 samples per ticker
+        MIN_PER_TICKER_SAMPLES = 10
         if len(training_data) < MIN_PER_TICKER_SAMPLES:
             print(f"   ⚠️ AI Elite: Insufficient training data for {ticker} ({len(training_data)} samples, need {MIN_PER_TICKER_SAMPLES})")
             return None
@@ -143,8 +143,8 @@ def train_ai_elite_model_per_ticker(
                 lower=mean_ra - 3 * std_ra, upper=mean_ra + 3 * std_ra
             )
         
-        # Create ordinal labels (3 bins for small per-ticker samples, not 5)
-        n_bins = min(3, len(train_df) // 2)  # At least 2 samples per bin
+        # Create ordinal labels (adaptive bins based on sample count)
+        n_bins = min(5, len(train_df) // 3)  # At least 3 samples per bin
         n_bins = max(2, n_bins)  # At least 2 bins
         train_df['label'] = pd.qcut(train_df['risk_adj_return'], 
                                     q=n_bins, 
