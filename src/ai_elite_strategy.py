@@ -934,25 +934,20 @@ def train_ai_elite_model(
         subsample=0.8, random_state=42, verbose=0
     )
     
-    # Add LightGBM with GPU support
+    # Add LightGBM (CPU - LightGBM GPU requires OpenCL, not available on CUDA-only systems)
     try:
         import lightgbm as lgb
-        from config import XGBOOST_USE_GPU  # Reuse same GPU flag
-        lgbm_device = 'gpu' if XGBOOST_USE_GPU else 'cpu'
         candidates['LightGBM'] = lgb.LGBMClassifier(
             n_estimators=100,
             max_depth=4,
             learning_rate=0.1,
             subsample=0.8,
             random_state=42,
-            device=lgbm_device,
             verbose=-1  # Suppress LightGBM output
         )
-        print(f"   🚀 AI Elite: Using LightGBM ({lgbm_device.upper()})")
+        print(f"   🚀 AI Elite: LightGBM available (CPU)")
     except ImportError:
-        print(f"   ⚠️ AI Elite: LightGBM not available, will use sklearn GradientBoosting (CPU only)")
-    except Exception as e:
-        print(f"   ⚠️ AI Elite: LightGBM failed to initialize ({e}), will use sklearn GradientBoosting")
+        print(f"   ⚠️ AI Elite: LightGBM not available")
     candidates['RandomForest'] = RandomForestClassifier(
         n_estimators=100, max_depth=6, random_state=42, n_jobs=1
     )
