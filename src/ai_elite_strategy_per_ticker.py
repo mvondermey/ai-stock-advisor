@@ -17,7 +17,8 @@ def train_ai_elite_model_per_ticker(
     train_end_date: datetime,
     save_path: str = None,
     forward_days: int = 20,
-    existing_model: any = None
+    existing_model: any = None,
+    hourly_cache: dict = None
 ):
     """
     Train ML model for a single ticker (or continue training existing model).
@@ -30,6 +31,7 @@ def train_ai_elite_model_per_ticker(
         save_path: Path to save trained model
         forward_days: Days ahead to predict (default 20)
         existing_model: Pre-trained model to continue training (optional)
+        hourly_cache: Pre-loaded hourly data dict (optional, for parallel training)
         
     Returns:
         Trained model or None if training fails
@@ -70,7 +72,9 @@ def train_ai_elite_model_per_ticker(
         # Collect training samples for this ticker
         training_data = []
         
-        hourly_cache = {ticker: _load_hourly_data_direct(ticker, train_start_date - timedelta(days=AI_ELITE_INTRADAY_LOOKBACK + 5), train_end_date + timedelta(days=forward_days + 2))}
+        # Use pre-loaded hourly cache if provided (for parallel training)
+        if hourly_cache is None:
+            hourly_cache = {ticker: _load_hourly_data_direct(ticker, train_start_date - timedelta(days=AI_ELITE_INTRADAY_LOOKBACK + 5), train_end_date + timedelta(days=forward_days + 2))}
         
         # Sample dates from training period (every 2 days)
         current_date = train_start_date

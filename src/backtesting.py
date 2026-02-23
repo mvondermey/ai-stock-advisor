@@ -3966,6 +3966,15 @@ def _run_portfolio_backtest_walk_forward(
                             except Exception:
                                 pass
                 
+                # Pre-load hourly data for all tickers to avoid I/O bottleneck in threads
+                from ai_elite_strategy import _load_hourly_data_direct
+                hourly_cache = {}
+                hourly_start = train_start - timedelta(days=AI_ELITE_INTRADAY_LOOKBACK + 5)
+                hourly_end = train_end + timedelta(days=AI_ELITE_FORWARD_DAYS + 2)
+                print(f"   📊 AI Elite: Pre-loading hourly data for {len(initial_top_tickers)} tickers...")
+                for ticker in initial_top_tickers:
+                    hourly_cache[ticker] = _load_hourly_data_direct(ticker, hourly_start, hourly_end)
+                
                 # Parallel training using threads (shared memory, no pickling needed)
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 
@@ -3979,7 +3988,8 @@ def _run_portfolio_backtest_walk_forward(
                         train_end_date=train_end,
                         save_path=model_path,
                         forward_days=AI_ELITE_FORWARD_DAYS,
-                        existing_model=existing_model
+                        existing_model=existing_model,
+                        hourly_cache=hourly_cache  # Pass pre-loaded data
                     )
                     return ticker, model
                 
