@@ -121,8 +121,11 @@ def train_ai_elite_model_per_ticker(
             except Exception as e:
                 continue
         
-        if len(training_data) < MIN_TRAINING_SAMPLES_AI_ELITE:
-            print(f"   ⚠️ AI Elite: Insufficient training data for {ticker} ({len(training_data)} samples)")
+        # Per-ticker needs fewer samples than shared model (100 is for all tickers combined)
+        # With 20-day lookback sampling every 2 days, max ~11 samples per ticker
+        MIN_PER_TICKER_SAMPLES = 5
+        if len(training_data) < MIN_PER_TICKER_SAMPLES:
+            print(f"   ⚠️ AI Elite: Insufficient training data for {ticker} ({len(training_data)} samples, need {MIN_PER_TICKER_SAMPLES})")
             return None
         
         # Convert to DataFrame
@@ -140,10 +143,12 @@ def train_ai_elite_model_per_ticker(
                 lower=mean_ra - 3 * std_ra, upper=mean_ra + 3 * std_ra
             )
         
-        # Create ordinal labels
+        # Create ordinal labels (3 bins for small per-ticker samples, not 5)
+        n_bins = min(3, len(train_df) // 2)  # At least 2 samples per bin
+        n_bins = max(2, n_bins)  # At least 2 bins
         train_df['label'] = pd.qcut(train_df['risk_adj_return'], 
-                                    q=5, 
-                                    labels=[0, 1, 2, 3, 4],
+                                    q=n_bins, 
+                                    labels=list(range(n_bins)),
                                     duplicates='drop').astype(int)
         
         # Remove stocks with minimal returns
@@ -218,7 +223,7 @@ def train_ai_elite_model_per_ticker(
             best_model = None
             best_name = None
             best_score = -1.0
-            cv_folds = max(2, min(3, len(np.unique(y))))
+            cv_folds = 2  # Only 2 folds for small per-ticker datasets (~11 samples)
             
             for name, m in candidates.items():
                 try:
