@@ -28,9 +28,11 @@ def collect_ticker_training_data(
     train_start_date: datetime,
     train_end_date: datetime,
     forward_days: int = 5,
-    hourly_cache: dict = None
+    hourly_cache: dict = None,
+    market_returns: dict = None
 ) -> List[dict]:
-    """Collect training samples for a single ticker. Returns list of dicts."""
+    """Collect training samples for a single ticker. Returns list of dicts.
+    market_returns: dict mapping sample_date -> market return (pre-computed)."""
     if ticker_data is None or len(ticker_data) == 0:
         return []
 
@@ -39,6 +41,9 @@ def collect_ticker_training_data(
         from config import AI_ELITE_INTRADAY_LOOKBACK
     except ImportError:
         return []
+
+    if market_returns is None:
+        market_returns = {}
 
     if train_start_date.tzinfo is None:
         train_start_date = train_start_date.replace(tzinfo=timezone.utc)
@@ -86,6 +91,7 @@ def collect_ticker_training_data(
                 'volume_sentiment':   features.get('volume_sentiment', 0),
                 'risk_adj_mom_3m':    features.get('risk_adj_mom_3m', 0),
                 'forward_return':     forward_return,
+                'market_return':      market_returns.get(current_date, 0.0),
             })
         except Exception:
             pass
@@ -95,9 +101,10 @@ def collect_ticker_training_data(
 
 
 def _prepare_labels(train_df: pd.DataFrame) -> pd.DataFrame:
-    """Compute risk-adjusted return and ordinal labels."""
+    """Compute risk-adjusted EXCESS return and ordinal labels."""
+    train_df['excess_return'] = train_df['forward_return'] - train_df['market_return']
     vol_floored = train_df['volatility'].clip(lower=5.0)
-    train_df['risk_adj_return'] = train_df['forward_return'] / (vol_floored ** 0.5)
+    train_df['risk_adj_return'] = train_df['excess_return'] / (vol_floored ** 0.5)
 
     mean_ra = train_df['risk_adj_return'].mean()
     std_ra = train_df['risk_adj_return'].std()
@@ -251,8 +258,10 @@ def fine_tune_per_ticker(
     try:
         train_df = pd.DataFrame(ticker_samples)
 
+        mr = train_df['market_return'] if 'market_return' in train_df.columns else 0.0
+        train_df['excess_return'] = train_df['forward_return'] - mr
         vol_floored = train_df['volatility'].clip(lower=5.0)
-        train_df['risk_adj_return'] = train_df['forward_return'] / (vol_floored ** 0.5)
+        train_df['risk_adj_return'] = train_df['excess_return'] / (vol_floored ** 0.5)
 
         mean_ra = train_df['risk_adj_return'].mean()
         std_ra = train_df['risk_adj_return'].std()

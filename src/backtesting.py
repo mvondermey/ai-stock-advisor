@@ -129,12 +129,12 @@ multi_tf_ensemble_transaction_costs = 0
 
 def _collect_data_worker(args):
     """Top-level worker for ProcessPoolExecutor - collects training data for one ticker."""
-    ticker, ticker_data, train_start, train_end, forward_days = args
+    ticker, ticker_data, train_start, train_end, forward_days, market_returns = args
     from ai_elite_strategy_per_ticker import collect_ticker_training_data
     samples = collect_ticker_training_data(
         ticker=ticker, ticker_data=ticker_data,
         train_start_date=train_start, train_end_date=train_end,
-        forward_days=forward_days
+        forward_days=forward_days, market_returns=market_returns
     )
     return ticker, samples
 
@@ -3981,10 +3981,19 @@ def _run_portfolio_backtest_walk_forward(
                 from concurrent.futures import ProcessPoolExecutor, as_completed
                 n_workers = min(TRAINING_NUM_PROCESSES, len(initial_top_tickers))
                 
+                # Pre-compute market returns for all sample dates (needed for excess return labels)
+                from ai_elite_strategy import _calculate_market_return
+                market_returns = {}
+                sample_date_iter = train_start
+                while sample_date_iter <= train_end:
+                    mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
+                    market_returns[sample_date_iter] = mr if mr is not None else 0.0
+                    sample_date_iter += timedelta(days=2)
+                
                 # Step 1: Collect training data from ALL tickers in parallel
                 print(f"   📊 AI Elite: Collecting data from {len(initial_top_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
                 collect_args = [
-                    (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS)
+                    (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS, market_returns)
                     for t in initial_top_tickers
                 ]
                 
