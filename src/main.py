@@ -1839,11 +1839,24 @@ if __name__ == "__main__":
                 print("📊 MULTI-STRATEGY TICKER SELECTION")
                 print("=" * 80)
                 
+                # Prepare ticker_data_grouped once (same format as backtesting and single-strategy)
+                print(f"\n   📦 Preparing ticker data grouped by ticker...")
+                ticker_data_grouped = {}
+                for ticker in market_selected_performers:
+                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                    if not ticker_data.empty:
+                        if 'date' in ticker_data.columns:
+                            ticker_data['date'] = pd.to_datetime(ticker_data['date'])
+                            ticker_data = ticker_data.set_index('date')
+                        ticker_data = ticker_data.drop('ticker', axis=1, errors='ignore')
+                        ticker_data_grouped[ticker] = ticker_data
+                print(f"   ✅ Prepared data for {len(ticker_data_grouped)} tickers")
+                
                 all_selections = {}
                 for strategy in strategies:
                     print(f"\n🎯 Strategy: {strategy}")
                     print("-" * 40)
-                    selected = get_strategy_tickers(strategy, market_selected_performers, all_tickers_data)
+                    selected = get_strategy_tickers(strategy, market_selected_performers, ticker_data_grouped)
                     all_selections[strategy] = set(selected) if selected else set()
                     if selected:
                         print(f"   Selected {len(selected)} tickers: {selected}")

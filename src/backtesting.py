@@ -1763,6 +1763,7 @@ def _run_portfolio_backtest_walk_forward(
             ticker_df = grouped.get_group(ticker).copy()
             if 'date' in ticker_df.columns:
                 ticker_df = ticker_df.set_index('date')
+            ticker_df = ticker_df.drop('ticker', axis=1, errors='ignore')
             ticker_data_grouped[ticker] = ticker_df
         except KeyError:
             missing_tickers.append(ticker)
