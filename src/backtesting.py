@@ -4029,7 +4029,7 @@ def _run_portfolio_backtest_walk_forward(
                     ai_elite_models['_shared_base'] = base_model
                     
                     # Use shared base model for ALL tickers (skip per-ticker fine-tuning to avoid overfitting)
-                    print(f"   ✅ AI Elite: Using shared base model for all tickers (kappa {base_kappa:.3f})")
+                    print(f"   ✅ AI Elite: Using shared base model for all tickers (R² {base_kappa:.3f})")
                     for ticker in initial_top_tickers:
                         ai_elite_models[ticker] = base_model
                         ai_elite_last_train_days[ticker] = day_count
