@@ -101,11 +101,12 @@ def collect_ticker_training_data(
 
 
 def _prepare_labels(train_df: pd.DataFrame) -> pd.DataFrame:
-    """Compute risk-adjusted EXCESS return and ordinal labels."""
+    """Compute risk-adjusted EXCESS return for regression target."""
     train_df['excess_return'] = train_df['forward_return'] - train_df['market_return']
     vol_floored = train_df['volatility'].clip(lower=5.0)
     train_df['risk_adj_return'] = train_df['excess_return'] / (vol_floored ** 0.5)
 
+    # Clip extreme outliers for stability
     mean_ra = train_df['risk_adj_return'].mean()
     std_ra = train_df['risk_adj_return'].std()
     if std_ra > 0:
@@ -113,11 +114,8 @@ def _prepare_labels(train_df: pd.DataFrame) -> pd.DataFrame:
             lower=mean_ra - 3 * std_ra, upper=mean_ra + 3 * std_ra
         )
 
-    n_bins = 5  # Full 5 quintiles for shared model (thousands of samples)
-    train_df['label'] = pd.qcut(
-        train_df['risk_adj_return'], q=n_bins,
-        labels=list(range(n_bins)), duplicates='drop'
-    ).astype(int)
+    # Regression target: predict risk_adj_return directly (not quintile labels)
+    train_df['label'] = train_df['risk_adj_return']
     return train_df
 
 
@@ -127,7 +125,7 @@ def train_shared_base_model(
     existing_model=None
 ):
     """
-    Train ONE shared base model on data from ALL tickers.
+    Train ONE shared base model on data from ALL tickers (REGRESSION version).
     
     Args:
         all_training_data: Combined list of sample dicts from all tickers
@@ -135,7 +133,7 @@ def train_shared_base_model(
         existing_model: Existing base model to continue training
         
     Returns:
-        (model, kappa_score) or (None, 0.0)
+        (model, r2_score) or (None, 0.0)
     """
     from config import MIN_TRAINING_SAMPLES_AI_ELITE, XGBOOST_USE_GPU
 
@@ -147,16 +145,16 @@ def train_shared_base_model(
     train_df = _prepare_labels(train_df)
 
     X = train_df[FEATURE_COLS]
-    y = train_df['label'].values
+    y = train_df['label'].values  # Continuous risk_adj_return values
 
     print(f"   📊 AI Elite: Shared base model training on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
 
-    # Build candidate models (prefer fast models for 37K+ samples)
+    # Build candidate models (REGRESSORS)
     candidates = {}
     try:
         import xgboost as xgb
         device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
-        candidates['XGBoost'] = xgb.XGBClassifier(
+        candidates['XGBoost'] = xgb.XGBRegressor(
             n_estimators=100, max_depth=4, learning_rate=0.1,
             subsample=0.8, random_state=42,
             tree_method='hist', device=device, verbosity=0, n_jobs=-1
@@ -166,17 +164,17 @@ def train_shared_base_model(
 
     try:
         import lightgbm as lgb
-        candidates['LightGBM'] = lgb.LGBMClassifier(
+        candidates['LightGBM'] = lgb.LGBMRegressor(
             n_estimators=100, max_depth=4, learning_rate=0.1,
             subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
         )
     except ImportError:
         pass
 
-    # GradientBoosting is too slow for 37K+ samples, only use as last resort
-    from sklearn.ensemble import GradientBoostingClassifier
+    # GradientBoosting as fallback
+    from sklearn.ensemble import GradientBoostingRegressor
     if not candidates:
-        candidates['GradientBoosting'] = GradientBoostingClassifier(
+        candidates['GradientBoosting'] = GradientBoostingRegressor(
             n_estimators=100, max_depth=4, learning_rate=0.1,
             subsample=0.8, random_state=42, verbose=0
         )
@@ -185,22 +183,20 @@ def train_shared_base_model(
     if existing_model is not None:
         print(f"   🔄 AI Elite: Continuing shared base model training")
         existing_model.fit(X, y)
-        from sklearn.metrics import cohen_kappa_score
+        from sklearn.metrics import r2_score
         y_pred = existing_model.predict(X)
-        score = cohen_kappa_score(y, y_pred, weights='quadratic')
+        score = r2_score(y, y_pred)
         if save_path:
             _save_model(existing_model, save_path)
-        print(f"   ✅ AI Elite: Shared base model updated (kappa {score:.3f})")
+        print(f"   ✅ AI Elite: Shared base model updated (R² {score:.3f})")
         return existing_model, score
 
     # Cross-validate to pick best model type
-    from sklearn.metrics import cohen_kappa_score, make_scorer
+    from sklearn.metrics import r2_score, make_scorer
     from sklearn.model_selection import cross_val_score
     import warnings
 
-    def weighted_kappa(y_true, y_pred):
-        return cohen_kappa_score(y_true, y_pred, weights='quadratic')
-    kappa_scorer = make_scorer(weighted_kappa)
+    r2_scorer = make_scorer(r2_score)
 
     best_model = None
     best_name = None
@@ -211,9 +207,9 @@ def train_shared_base_model(
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                scores = cross_val_score(m, X, y, cv=cv_folds, scoring=kappa_scorer, n_jobs=1)
+                scores = cross_val_score(m, X, y, cv=cv_folds, scoring=r2_scorer, n_jobs=1)
             mean_score = scores.mean()
-            print(f"      {name}: CV kappa = {mean_score:.3f}")
+            print(f"      {name}: CV R² = {mean_score:.3f}")
             if mean_score > best_score:
                 best_score = mean_score
                 best_name = name
@@ -223,7 +219,7 @@ def train_shared_base_model(
             continue
 
     if best_model is None:
-        best_model = GradientBoostingClassifier(
+        best_model = GradientBoostingRegressor(
             n_estimators=100, max_depth=4, learning_rate=0.1,
             subsample=0.8, random_state=42, verbose=0
         )
@@ -234,7 +230,7 @@ def train_shared_base_model(
     if save_path:
         _save_model(best_model, save_path)
 
-    print(f"   ✅ AI Elite: Shared base model trained! Best: {best_name} (CV kappa {best_score:.3f})")
+    print(f"   ✅ AI Elite: Shared base model trained! Best: {best_name} (CV R² {best_score:.3f})")
     return best_model, best_score
 
 
@@ -270,23 +266,11 @@ def fine_tune_per_ticker(
                 lower=mean_ra - 3 * std_ra, upper=mean_ra + 3 * std_ra
             )
 
-        # Use same 5 bins as shared model for label compatibility
-        n_bins = 5
-        try:
-            train_df['label'] = pd.qcut(
-                train_df['risk_adj_return'], q=n_bins,
-                labels=list(range(n_bins)), duplicates='drop'
-            ).astype(int)
-        except ValueError:
-            # Not enough unique values for 5 bins, use fewer
-            n_bins = max(2, train_df['risk_adj_return'].nunique())
-            train_df['label'] = pd.qcut(
-                train_df['risk_adj_return'], q=n_bins,
-                labels=list(range(n_bins)), duplicates='drop'
-            ).astype(int)
+        # Regression target: predict risk_adj_return directly
+        train_df['label'] = train_df['risk_adj_return']
 
         X = train_df[FEATURE_COLS]
-        y = train_df['label'].values
+        y = train_df['label'].values  # Continuous values for regression
 
         # Deep copy the base model and fine-tune with fewer rounds
         ft_model = copy.deepcopy(base_model)

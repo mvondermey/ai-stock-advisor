@@ -125,7 +125,7 @@ def select_ai_elite_stocks(
     candidates_df['momentum_rank'] = candidates_df['perf_3m'].rank(pct=True)
     candidates_df['risk_adj_mom_rank'] = candidates_df['risk_adj_mom_3m'].rank(pct=True)
     
-    # Score each ticker with its own model
+    # Score each ticker with its own model (REGRESSION - predict risk_adj_return directly)
     ai_scores = []
     for idx, row in candidates_df.iterrows():
         ticker = row['ticker']
@@ -141,26 +141,17 @@ def select_ai_elite_stocks(
         # Extract features for this ticker (keep as DataFrame for feature name compatibility)
         X_ticker = pd.DataFrame([row[feature_cols].values], columns=feature_cols)
         
-        # Get ML prediction probability
+        # Get ML prediction (REGRESSION - predict continuous value)
         try:
-            proba = ticker_model.predict_proba(X_ticker)
-            n_classes = proba.shape[1]
-            # Weighted score: higher probability for higher classes = better stock
-            if hasattr(ticker_model, 'classes_'):
-                class_weights = np.array(ticker_model.classes_, dtype=float)
-            else:
-                class_weights = np.arange(n_classes, dtype=float)
-            max_class = class_weights.max() if class_weights.max() > 0 else 1.0
-            weighted_class_score = np.dot(proba, class_weights) / max_class  # Normalize to 0-1
-            ai_scores.append(weighted_class_score[0])
+            pred_return = ticker_model.predict(X_ticker)[0]  # Single prediction
+            ai_scores.append(float(pred_return))
         except Exception as e:
             print(f"   ⚠️ AI Elite: Failed to score {ticker}: {e}")
             ai_scores.append(0.0)
     
     candidates_df['ai_score'] = ai_scores
     
-    # Pure AI scoring - the model is trained on risk-adjusted return labels,
-    # so it already captures momentum + volatility internally
+    # Pure AI scoring - the model predicts expected risk-adjusted return directly
     candidates_df['final_score'] = candidates_df['ai_score']
     
     # Sort by final hybrid score
@@ -168,9 +159,9 @@ def select_ai_elite_stocks(
     
     # Debug: show top candidates with momentum rank
     print(f"   ✅ AI Elite: Found {len(candidates_df)} candidates")
-    print(f"   📊 AI Elite: Scoring = 100% ML prediction (trained on risk-adjusted return quintiles)")
+    print(f"   📊 AI Elite: Scoring = ML regression (predicts risk-adjusted return)")
     for i, row in candidates_df.head(5).iterrows():
-        print(f"      {i+1}. {row['ticker']}: Final={row['final_score']:.3f} (AI={row['ai_score']:.3f}, RiskAdjMom={row['risk_adj_mom_rank']:.3f}), "
+        print(f"      {i+1}. {row['ticker']}: PredRiskAdj={row['final_score']:+.2f} (RiskAdjMom={row['risk_adj_mom_rank']:.3f}), "
               f"3M={row['perf_3m']:+.1f}%, Vol={row['volatility']:.1f}%, RiskAdj={row['risk_adj_mom_3m']:.2f})")
     
     # Return top N tickers by final hybrid score
@@ -446,10 +437,10 @@ def _load_or_create_model(model_path: Optional[str] = None):
         import xgboost as xgb
         from config import XGBOOST_USE_GPU
         
-        # Create a simple XGBoost model for live trading
+        # Create a simple XGBoost model for live trading (REGRESSION)
         # This will be trained on the fly with available data
         device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
-        model = xgb.XGBClassifier(
+        model = xgb.XGBRegressor(
             n_estimators=100,
             max_depth=4,
             learning_rate=0.1,
@@ -565,7 +556,7 @@ def _load_or_create_model(model_path: Optional[str] = None):
                                 ]
                                 
                                 X_real.append(feature_vector)
-                                y_real.append(actual_return)  # Store raw return for ordinal ranking
+                                y_real.append(actual_return)  # Raw return for regression target
                     
                     except Exception as e:
                         continue
@@ -601,13 +592,11 @@ def _load_or_create_model(model_path: Optional[str] = None):
             if std_ra > 0:
                 risk_adj_return = risk_adj_return.clip(lower=mean_ra - 3*std_ra, upper=mean_ra + 3*std_ra)
             
-            # Convert to ordinal labels based on risk-adjusted return
-            y_ordinal = pd.qcut(risk_adj_return, q=5, labels=[0, 1, 2, 3, 4], duplicates='drop')
-            y_real = y_ordinal.astype(int).values
-            n_classes = len(np.unique(y_real))
-            print(f"   📊 Risk-adjusted ordinal labels: {n_classes} classes, distribution: {dict(zip(*np.unique(y_real, return_counts=True)))}")
+            # REGRESSION: Use risk_adj_return directly as target (not ordinal bins)
+            y_real = risk_adj_return.values
+            print(f"   📊 Risk-adjusted return target (regression): mean={mean_ra:.2f}, std={std_ra:.2f}")
             
-            # Train model on REAL historical data with ordinal labels
+            # Train model on REAL historical data with regression target
             model.fit(X_real, y_real)
             print(f"   ✅ AI Elite: Model trained on REAL historical market data!")
             
@@ -661,30 +650,27 @@ def _load_or_create_model(model_path: Optional[str] = None):
                 returns_enhanced.append(simulated_return)
             
             X_enhanced = np.array(X_enhanced)
-            # Convert to risk-adjusted ordinal labels (same as main training)
-            X_df = pd.DataFrame(X_enhanced, columns=[
+            # Convert to risk-adjusted return values (REGRESSION target)
+            X_enh_df = pd.DataFrame(X_enhanced, columns=[
                 'perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
                 'overnight_gap', 'intraday_range', 'last_hour_momentum',
                 'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
                 'volume_ratio', 'rsi_14',
                 'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m'
             ])
-            y_series = pd.Series(returns_enhanced)
-            # Risk-adjusted: excess return / sqrt(volatility)
-            # Floor volatility at 5% to prevent extreme outliers
-            excess_return = y_series - 2.0  # Rough market return estimate
-            vol_floored = X_df['volatility'].clip(lower=5.0)
+            y_enh_series = pd.Series(returns_enhanced)
+            excess_return = y_enh_series - 2.0  # Rough market return estimate
+            vol_floored = X_enh_df['volatility'].clip(lower=5.0)
             risk_adj_return = excess_return / (vol_floored ** 0.5)
             # Clip extreme outliers
             mean_ra = risk_adj_return.mean()
             std_ra = risk_adj_return.std()
             if std_ra > 0:
                 risk_adj_return = risk_adj_return.clip(lower=mean_ra - 3*std_ra, upper=mean_ra + 3*std_ra)
-            y_ordinal = pd.qcut(risk_adj_return, q=5, labels=[0, 1, 2, 3, 4], duplicates='drop')
-            y_enhanced = y_ordinal.astype(int).values
+            y_enhanced = risk_adj_return.values  # Continuous values for regression
             
             model.fit(X_enhanced, y_enhanced)
-            print(f"   🔄 AI Elite: Used enhanced patterns with 17 features + risk-adjusted ordinal labels ({len(X_enhanced)} samples)")
+            print(f"   🔄 AI Elite: Used enhanced patterns with 17 features + regression target ({len(X_enhanced)} samples)")
         
         # Save the model for future use
         if model_path:
@@ -719,7 +705,7 @@ def train_ai_elite_model(
     Uses walk-forward approach:
     1. For each date in training period, extract features for all stocks
     2. Label stocks based on their performance over next forward_days
-    3. Train GradientBoostingClassifier to predict outperformance
+    3. Train GradientBoostingRegressor to predict risk-adjusted return (REGRESSION)
     
     Args:
         ticker_data_grouped: Historical ticker data
@@ -743,7 +729,7 @@ def train_ai_elite_model(
         print(f"   ⚠️ AI Elite: XGBoost not available, will use sklearn GradientBoosting (CPU only)")
     
     # Always import sklearn as fallback
-    from sklearn.ensemble import GradientBoostingClassifier
+    from sklearn.ensemble import GradientBoostingRegressor
     
     print(f"   🎓 AI Elite: Training ML model on {train_start_date.date()} to {train_end_date.date()}...")
     
@@ -861,46 +847,26 @@ def train_ai_elite_model(
     
     print(f"   📈 AI Elite: Collected {len(train_df)} training samples")
     
-    # Compute excess return vs market (needed for ordinal ranking)
+    # Compute excess return vs market
     train_df['excess_return'] = train_df['forward_return'] - train_df['market_return']
     
-    # IMPROVED: Compute risk-adjusted return (excess_return / sqrt(volatility))
-    # This teaches the model to prefer efficient returns per unit of risk
-    # Same formula that makes Risk-Adj Mom 3M successful: return / sqrt(volatility)
-    # Floor volatility at 5% to prevent extreme outliers when vol=0 (5478x normal)
+    # Compute risk-adjusted return (excess_return / sqrt(volatility))
     vol_floored = train_df['volatility'].clip(lower=5.0)
     train_df['risk_adj_return'] = train_df['excess_return'] / (vol_floored ** 0.5)
-    # Clip extreme outliers (>3 std from mean) to prevent quintile corruption
+    
+    # Clip extreme outliers
     mean_ra = train_df['risk_adj_return'].mean()
     std_ra = train_df['risk_adj_return'].std()
     if std_ra > 0:
         train_df['risk_adj_return'] = train_df['risk_adj_return'].clip(
-            lower=mean_ra - 3 * std_ra, upper=mean_ra + 3 * std_ra
+            lower=mean_ra - 3*std_ra, upper=mean_ra + 3*std_ra
         )
     
-    print(f"   📊 AI Elite: Average stock return: {train_df['forward_return'].mean():.2f}%")
-    print(f"   📊 AI Elite: Average market return: {train_df['market_return'].mean():.2f}%")
-    print(f"   📊 AI Elite: Average excess return: {train_df['excess_return'].mean():.2f}%")
-    print(f"   📊 AI Elite: Average volatility: {train_df['volatility'].mean():.1f}%")
-    print(f"   📊 AI Elite: Average risk-adjusted return: {train_df['risk_adj_return'].mean():.2f}")
+    # REGRESSION: Use risk_adj_return directly as continuous target
+    train_df['label'] = train_df['risk_adj_return']
     
-    # IMPROVED: Use risk-adjusted return for ordinal ranking
-    # This captures efficiency of outperformance, not just magnitude
-    # Stocks with same excess return but lower volatility get higher labels
-    # Top 20% = label 4, next 20% = 3, middle 20% = 2, next 20% = 1, bottom 20% = 0
-    train_df['label'] = pd.qcut(train_df['risk_adj_return'], 
-                                q=5, 
-                                labels=[0, 1, 2, 3, 4],
-                                duplicates='drop').astype(int)
-    
-    n_label_classes = train_df['label'].nunique()
-    print(f"   📊 AI Elite: Risk-adjusted quintile labels (0=worst, 4=best), {n_label_classes} classes:")
-    for label in sorted(train_df['label'].unique(), reverse=True):
-        count = (train_df['label'] == label).sum()
-        avg_risk_adj = train_df[train_df['label'] == label]['risk_adj_return'].mean()
-        avg_excess = train_df[train_df['label'] == label]['excess_return'].mean()
-        avg_vol = train_df[train_df['label'] == label]['volatility'].mean()
-        print(f"      Label {label}: {count} samples, risk_adj={avg_risk_adj:.2f}, excess={avg_excess:.1f}%, vol={avg_vol:.1f}%")
+    print(f"   📊 AI Elite: Training regression model on {len(train_df)} samples")
+    print(f"   📊 AI Elite: Risk-adjusted return stats: mean={mean_ra:.2f}, std={std_ra:.2f}")
     
     # Remove stocks with minimal returns (to avoid noise)
     min_return_threshold = 0.5  # 0.5% minimum return
@@ -908,18 +874,18 @@ def train_ai_elite_model(
     
     print(f"   📊 AI Elite: Using 17 features (5 daily + 3 intraday + 6 derived + 2 sentiment proxy + 1 risk_adj_mom_3m)")
     
-    # Prepare features and labels
+    # Prepare features and target
     feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
                     'overnight_gap', 'intraday_range', 'last_hour_momentum',
                     'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
                     'volume_ratio', 'rsi_14',
                     'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m']
     X = train_df[feature_cols].values
-    y = train_df['label'].values
+    y = train_df['label'].values  # Continuous risk-adjusted return values
     
-    # Build candidate models
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.linear_model import LogisticRegression
+    # Build candidate REGRESSOR models
+    from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+    from sklearn.linear_model import Ridge
     from sklearn.model_selection import cross_val_score
     from sklearn.preprocessing import StandardScaler
     import warnings
@@ -928,7 +894,7 @@ def train_ai_elite_model(
 
     if xgb_available:
         device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
-        candidates['XGBoost'] = xgb.XGBClassifier(
+        candidates['XGBoost'] = xgb.XGBRegressor(
             n_estimators=100, 
             max_depth=4,
             learning_rate=0.1,
@@ -940,60 +906,54 @@ def train_ai_elite_model(
             n_jobs=1
         )
 
-    candidates['GradientBoosting'] = GradientBoostingClassifier(
+    candidates['GradientBoosting'] = GradientBoostingRegressor(
         n_estimators=100, max_depth=4, learning_rate=0.1,
         subsample=0.8, random_state=42, verbose=0
     )
     
-    # Add LightGBM (CPU - LightGBM GPU requires OpenCL, not available on CUDA-only systems)
+    # Add LightGBM
     try:
         import lightgbm as lgb
-        candidates['LightGBM'] = lgb.LGBMClassifier(
+        candidates['LightGBM'] = lgb.LGBMRegressor(
             n_estimators=100,
             max_depth=4,
             learning_rate=0.1,
             subsample=0.8,
             random_state=42,
-            verbose=-1  # Suppress LightGBM output
+            verbose=-1
         )
         print(f"   🚀 AI Elite: LightGBM available (CPU)")
     except ImportError:
         print(f"   ⚠️ AI Elite: LightGBM not available")
-    candidates['RandomForest'] = RandomForestClassifier(
+    
+    candidates['RandomForest'] = RandomForestRegressor(
         n_estimators=100, max_depth=6, random_state=42, n_jobs=1
     )
 
-    # Logistic Regression needs scaled features
+    # Ridge regression needs scaled features
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    candidates['LogisticRegression'] = LogisticRegression(
-        max_iter=500, random_state=42, n_jobs=1
-    )
+    candidates['Ridge'] = Ridge(alpha=1.0, random_state=42)
 
-    # Cross-validate each model and pick the best
-    # IMPROVED: Use kappa scoring for ordinal ranking instead of binary accuracy
-    from sklearn.metrics import cohen_kappa_score, make_scorer
+    # Cross-validate each model (R² for regression)
+    from sklearn.metrics import r2_score, make_scorer
     
-    # Custom scorer: weighted kappa (accounts for ordinality - being off by 1 is better than off by 4)
-    def weighted_kappa(y_true, y_pred):
-        return cohen_kappa_score(y_true, y_pred, weights='quadratic')
-    kappa_scorer = make_scorer(weighted_kappa)
+    r2_scorer = make_scorer(r2_score)
     
     best_model = None
     best_name = None
     best_score = -1.0
-    cv_folds = max(2, min(3, len(np.unique(y))))  # 2-3 folds, respect class count
+    cv_folds = 3
 
-    print(f"   🏆 AI Elite: Selecting best model via {cv_folds}-fold cross-validation (weighted kappa for ordinal ranking)...")
+    print(f"   🏆 AI Elite: Selecting best model via {cv_folds}-fold cross-validation (R² for regression)...")
     for name, m in candidates.items():
         try:
-            X_input = X_scaled if name == 'LogisticRegression' else X
+            X_input = X_scaled if name == 'Ridge' else X
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                # Use kappa scorer for ordinal ranking instead of accuracy
-                scores = cross_val_score(m, X_input, y, cv=cv_folds, scoring=kappa_scorer, n_jobs=1)
+                scores = cross_val_score(m, X_input, y, cv=cv_folds, scoring=r2_scorer, n_jobs=1)
             mean_score = scores.mean()
-            print(f"      {name}: CV weighted kappa = {mean_score:.3f}")
+            print(f"      {name}: CV R² = {mean_score:.3f}")
             if mean_score > best_score:
                 best_score = mean_score
                 best_name = name
@@ -1003,19 +963,19 @@ def train_ai_elite_model(
 
     if best_model is None:
         print(f"   ⚠️ AI Elite: All models failed CV, falling back to GradientBoosting")
-        best_model = GradientBoostingClassifier(
+        best_model = GradientBoostingRegressor(
             n_estimators=100, max_depth=4, learning_rate=0.1,
             subsample=0.8, random_state=42, verbose=0
         )
         best_name = 'GradientBoosting'
 
-    print(f"   ✅ AI Elite: Best model = {best_name} (CV weighted kappa {best_score:.3f})")
+    print(f"   ✅ AI Elite: Best model = {best_name} (CV R² {best_score:.3f})")
 
     # Fit best model on full training data
-    X_input = X_scaled if best_name == 'LogisticRegression' else X
+    X_input = X_scaled if best_name == 'Ridge' else X
     best_model.fit(X_input, y)
-    train_kappa = weighted_kappa(y, best_model.predict(X_input))
-    print(f"   ✅ AI Elite: Final model trained! Train weighted kappa: {train_kappa:.3f}")
+    train_r2 = r2_score(y, best_model.predict(X_input))
+    print(f"   ✅ AI Elite: Final model trained! Train R²: {train_r2:.3f}")
 
     # Show feature importances (tree models only)
     if hasattr(best_model, 'feature_importances_'):
@@ -1025,11 +985,11 @@ def train_ai_elite_model(
         for col, imp in sorted_feats[:5]:
             print(f"      {col}: {imp:.3f}")
 
-    # Wrap LogisticRegression with scaler so predict_proba works on raw X
-    if best_name == 'LogisticRegression':
+    # Wrap Ridge with scaler so predict works on raw X
+    if best_name == 'Ridge':
         from sklearn.pipeline import Pipeline
-        best_model = Pipeline([('scaler', scaler), ('clf', best_model)])
-        best_model.fit(X, y)  # refit pipeline on raw X
+        best_model = Pipeline([('scaler', scaler), ('reg', best_model)])
+        best_model.fit(X, y)
 
     # Save model if path provided
     if save_path:
