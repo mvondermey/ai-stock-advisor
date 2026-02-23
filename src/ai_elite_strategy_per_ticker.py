@@ -144,33 +144,35 @@ def train_shared_base_model(
 
     print(f"   📊 AI Elite: Shared base model training on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
 
-    # Build candidate models
+    # Build candidate models (prefer fast models for 37K+ samples)
     candidates = {}
     try:
         import xgboost as xgb
         device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
         candidates['XGBoost'] = xgb.XGBClassifier(
-            n_estimators=200, max_depth=5, learning_rate=0.1,
+            n_estimators=100, max_depth=4, learning_rate=0.1,
             subsample=0.8, random_state=42,
-            tree_method='hist', device=device, verbosity=0, n_jobs=1
+            tree_method='hist', device=device, verbosity=0, n_jobs=-1
         )
     except ImportError:
         pass
-
-    from sklearn.ensemble import GradientBoostingClassifier
-    candidates['GradientBoosting'] = GradientBoostingClassifier(
-        n_estimators=200, max_depth=5, learning_rate=0.1,
-        subsample=0.8, random_state=42, verbose=0
-    )
 
     try:
         import lightgbm as lgb
         candidates['LightGBM'] = lgb.LGBMClassifier(
-            n_estimators=200, max_depth=5, learning_rate=0.1,
-            subsample=0.8, random_state=42, verbose=-1
+            n_estimators=100, max_depth=4, learning_rate=0.1,
+            subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
         )
     except ImportError:
         pass
+
+    # GradientBoosting is too slow for 37K+ samples, only use as last resort
+    from sklearn.ensemble import GradientBoostingClassifier
+    if not candidates:
+        candidates['GradientBoosting'] = GradientBoostingClassifier(
+            n_estimators=100, max_depth=4, learning_rate=0.1,
+            subsample=0.8, random_state=42, verbose=0
+        )
 
     # If continuing from existing model, just refit on new data
     if existing_model is not None:
@@ -196,7 +198,7 @@ def train_shared_base_model(
     best_model = None
     best_name = None
     best_score = -1.0
-    cv_folds = min(5, max(2, len(np.unique(y))))
+    cv_folds = 3  # 3-fold is enough for 37K+ samples
 
     for name, m in candidates.items():
         try:
@@ -209,12 +211,13 @@ def train_shared_base_model(
                 best_score = mean_score
                 best_name = name
                 best_model = m
-        except Exception:
+        except Exception as e:
+            print(f"      {name}: CV failed: {e}")
             continue
 
     if best_model is None:
         best_model = GradientBoostingClassifier(
-            n_estimators=200, max_depth=5, learning_rate=0.1,
+            n_estimators=100, max_depth=4, learning_rate=0.1,
             subsample=0.8, random_state=42, verbose=0
         )
         best_name = 'GradientBoosting'
