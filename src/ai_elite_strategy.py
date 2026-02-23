@@ -919,12 +919,9 @@ def train_ai_elite_model(
         device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
         candidates['XGBoost'] = xgb.XGBClassifier(
             n_estimators=100, 
-            max_depth=3,              # Reduce from 4 to 3
-            learning_rate=0.05,       # Reduce from 0.1 to 0.05
-            subsample=0.7,            # Reduce from 0.8 to 0.7
-            colsample_bytree=0.7,      # Add column sampling
-            reg_alpha=0.1,            # Add L1 regularization
-            reg_lambda=0.1,           # Add L2 regularization
+            max_depth=4,
+            learning_rate=0.1,
+            subsample=0.8,
             random_state=42,
             tree_method='hist', 
             device=device, 
