@@ -84,6 +84,7 @@ from config import (
     RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION, RISK_ADJ_MOM_CONFIRM_SHORT, RISK_ADJ_MOM_CONFIRM_MEDIUM, RISK_ADJ_MOM_CONFIRM_LONG, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
     RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER,
     OPTIMIZE_REBALANCE_HORIZON,
+    TRAINING_NUM_PROCESSES,
 )
 from scipy.stats import uniform, beta
 
@@ -3982,7 +3983,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     return ticker, model
                 
-                n_workers = min(8, len(initial_top_tickers))
+                n_workers = min(TRAINING_NUM_PROCESSES, len(initial_top_tickers))
                 print(f"   🎓 AI Elite: Training {len(initial_top_tickers)} per-ticker models ({n_workers} threads, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
                 
                 with ThreadPoolExecutor(max_workers=n_workers) as executor:
