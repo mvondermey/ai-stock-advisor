@@ -127,6 +127,34 @@ ai_volatility_ensemble_transaction_costs = 0
 multi_tf_ensemble_transaction_costs = 0
 
 
+def _train_ticker_worker(args):
+    """Top-level worker for ProcessPoolExecutor - trains one ticker model.
+    Loads existing model from disk, trains, saves back, returns (ticker, model)."""
+    ticker, ticker_data, train_start, train_end, model_path, forward_days = args
+    import pickle, os
+    from ai_elite_strategy_per_ticker import train_ai_elite_model_per_ticker
+    
+    # Load existing model from disk if available
+    existing_model = None
+    if os.path.exists(model_path):
+        try:
+            with open(model_path, 'rb') as f:
+                existing_model = pickle.load(f)
+        except Exception:
+            pass
+    
+    model = train_ai_elite_model_per_ticker(
+        ticker=ticker,
+        ticker_data=ticker_data,
+        train_start_date=train_start,
+        train_end_date=train_end,
+        save_path=model_path,
+        forward_days=forward_days,
+        existing_model=existing_model
+    )
+    return ticker, model
+
+
 def _last_valid_close_up_to(ticker_df: pd.DataFrame, current_date: datetime) -> Optional[float]:
     try:
         s = ticker_df.loc[:current_date, "Close"].dropna()
@@ -3955,56 +3983,39 @@ def _run_portfolio_backtest_walk_forward(
                 train_end = current_date
                 train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
                 
-                # Load existing models from disk first
+                # Parallel training using processes (true parallelism, bypasses GIL)
+                # Workers load existing models from disk themselves
+                from concurrent.futures import ProcessPoolExecutor, as_completed
+                
+                # Build args list for each ticker
+                train_args = []
                 for ticker in initial_top_tickers:
-                    if ticker not in ai_elite_models:
-                        model_path = os.path.join(models_dir, f"{ticker}_ai_elite.joblib")
-                        if os.path.exists(model_path):
-                            try:
-                                with open(model_path, 'rb') as f:
-                                    ai_elite_models[ticker] = pickle.load(f)
-                            except Exception:
-                                pass
-                
-                # Pre-load hourly data for all tickers to avoid I/O bottleneck in threads
-                from ai_elite_strategy import _load_hourly_data_direct
-                hourly_cache = {}
-                hourly_start = train_start - timedelta(days=AI_ELITE_INTRADAY_LOOKBACK + 5)
-                hourly_end = train_end + timedelta(days=AI_ELITE_FORWARD_DAYS + 2)
-                print(f"   📊 AI Elite: Pre-loading hourly data for {len(initial_top_tickers)} tickers...")
-                for ticker in initial_top_tickers:
-                    hourly_cache[ticker] = _load_hourly_data_direct(ticker, hourly_start, hourly_end)
-                
-                # Parallel training using threads (shared memory, no pickling needed)
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-                
-                def _train_one_ticker(ticker):
                     model_path = os.path.join(models_dir, f"{ticker}_ai_elite.joblib")
-                    existing_model = ai_elite_models.get(ticker)
-                    model = train_ai_elite_model_per_ticker(
-                        ticker=ticker,
-                        ticker_data=ticker_data_grouped.get(ticker),
-                        train_start_date=train_start,
-                        train_end_date=train_end,
-                        save_path=model_path,
-                        forward_days=AI_ELITE_FORWARD_DAYS,
-                        existing_model=existing_model,
-                        hourly_cache=hourly_cache  # Pass pre-loaded data
-                    )
-                    return ticker, model
+                    train_args.append((
+                        ticker,
+                        ticker_data_grouped.get(ticker),
+                        train_start,
+                        train_end,
+                        model_path,
+                        AI_ELITE_FORWARD_DAYS
+                    ))
                 
                 n_workers = min(TRAINING_NUM_PROCESSES, len(initial_top_tickers))
-                print(f"   🎓 AI Elite: Training {len(initial_top_tickers)} per-ticker models ({n_workers} threads, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
+                print(f"   🎓 AI Elite: Training {len(initial_top_tickers)} per-ticker models ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
                 
-                with ThreadPoolExecutor(max_workers=n_workers) as executor:
-                    futures = {executor.submit(_train_one_ticker, t): t for t in initial_top_tickers}
+                with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                    futures = {executor.submit(_train_ticker_worker, args): args[0] for args in train_args}
                     trained = 0
                     for future in as_completed(futures):
-                        ticker, model = future.result()
-                        if model:
-                            ai_elite_models[ticker] = model
-                            ai_elite_last_train_days[ticker] = day_count
-                            trained += 1
+                        ticker_name = futures[future]
+                        try:
+                            ticker, model = future.result()
+                            if model:
+                                ai_elite_models[ticker] = model
+                                ai_elite_last_train_days[ticker] = day_count
+                                trained += 1
+                        except Exception as e:
+                            print(f"   ⚠️ AI Elite: Worker failed for {ticker_name}: {e}")
                 
                 print(f"   ✅ AI Elite: {trained}/{len(initial_top_tickers)} models trained")
                 
