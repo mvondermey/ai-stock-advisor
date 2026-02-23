@@ -419,19 +419,25 @@ def _is_cache_current(last_cached_date, ticker_symbol=None):
         except:
             return False
     
-    # Simple logic: For EU stocks, cache with newer data is OK (we can use subset)
-    # For US stocks, use strict US trading day check
+    # Proper trading day validation for different markets
     if ticker_symbol and any(suffix in ticker_symbol for suffix in ['.SW', '.DE', '.PA', '.MI', '.MC', '.L']):
-        # EU stocks - if cache has data >= last trading day, it's current
-        # Even if cache has newer data (like Feb 17), we can use data up to Feb 13
+        # EU stocks - check if cache date is a valid trading day AND recent enough
+        # Allow cache date to be newer than last US trading day (time zone differences)
+        # But ensure cache date itself is a weekday (not weekend)
+        
+        if cached_date.weekday() >= 5:  # Weekend (Saturday=5, Sunday=6)
+            print(f"  [DEBUG] {ticker_symbol}: EU Cache on weekend ({cached_date}) - not valid")
+            return False
+        
+        # Check if cache has data up to or after last US trading day
         if cached_date >= last_trading_day:
-            print(f"  [DEBUG] {ticker_symbol}: EU Cache OK ({cached_date} >= {last_trading_day})")
-            return True  # Cache has data we need (even if newer)
+            print(f"  [DEBUG] {ticker_symbol}: EU Cache OK ({cached_date} >= {last_trading_day}, weekday)")
+            return True  # Cache has data we need and is on a trading day
         else:
             print(f"  [DEBUG] {ticker_symbol}: EU Cache too old ({cached_date} < {last_trading_day})")
             return False  # Cache doesn't have recent enough data
     else:
-        # US stocks - strict check
+        # US stocks - strict check (already validated by _get_last_trading_day)
         is_current = cached_date >= last_trading_day
         print(f"  [DEBUG] {ticker_symbol}: US cache check {cached_date} >= {last_trading_day} = {is_current}")
         return is_current
@@ -486,6 +492,15 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 else:
                     cached_df.index = cached_df.index.tz_convert('UTC')
                 
+                # Clean up tuple columns from yfinance MultiIndex (e.g., "('close', 'aapl')")
+                tuple_cols = [c for c in cached_df.columns if c.startswith("('")]
+                if tuple_cols:
+                    cached_df = cached_df.drop(columns=tuple_cols)
+                
+                # Drop rows where core OHLCV data is missing (bad cache entries)
+                if 'Close' in cached_df.columns:
+                    cached_df = cached_df.dropna(subset=['Close'])
+                
                 cached_df = cached_df.sort_index()
                 
                 if not cached_df.empty:
@@ -496,7 +511,9 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                     
                     # [PASS] FIX: Use proper trading day check to avoid fetching on weekends
                     is_current = _is_cache_current(last_cached_date, ticker)
-                    print(f"  [DEBUG] Cache check for {ticker}: last_cached={last_cached_date.date()}, is_current={is_current}")
+                    # Reduced logging - only show for problematic cases
+                    if not is_current or ticker.endswith(('.SW', '.DE', '.PA', '.MI', '.MC', '.L')):
+                        print(f"  [DEBUG] Cache check for {ticker}: last_cached={last_cached_date.date()}, is_current={is_current}")
                     if is_current:
                         # Cache already has data up to the last trading day
                         needs_fetch = False
@@ -545,7 +562,8 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 # Suppress yfinance stderr output for delisted tickers
                 with suppress_yfinance_output():
                     downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, 
-                                               interval=DATA_INTERVAL, auto_adjust=True, progress=False)
+                                               interval=DATA_INTERVAL, auto_adjust=True, progress=False,
+                                               multi_level_index=False)
                 if downloaded_df is not None and not downloaded_df.empty:
                     new_df = downloaded_df.dropna()
             except Exception:
@@ -555,7 +573,9 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     
     # Clean up new data (only if we fetched anything)
     if not new_df.empty:
-        # MultiIndex removed - data is now in long format
+        # Handle MultiIndex columns from yfinance (e.g., ('Close', 'AAPL') -> 'Close')
+        if isinstance(new_df.columns, pd.MultiIndex):
+            new_df.columns = [col[0] if isinstance(col, tuple) else col for col in new_df.columns]
         new_df.columns = [str(col).capitalize() for col in new_df.columns]
         if "Close" not in new_df.columns and "Adj close" in new_df.columns:
             new_df = new_df.rename(columns={"Adj close": "Close"})
@@ -1279,5 +1299,84 @@ def _fetch_intermarket_data(start: datetime = None, end: datetime = None) -> pd.
             return pd.concat(all_data, axis=1)
         else:
             return pd.DataFrame()
-    except Exception:
+    except Exception as e:
+        print(f"  [ERROR] Failed to fetch intermarket data: {e}")
         return pd.DataFrame()
+
+
+def load_all_market_data(all_tickers: list, end_date: datetime = None) -> pd.DataFrame:
+    """
+    Load market data for all tickers.
+    Shared function used by both backtesting and live trading.
+    
+    Args:
+        all_tickers: List of ticker symbols to download
+        end_date: End date for data (defaults to last trading day)
+    
+    Returns:
+        DataFrame with all ticker data in long format (with 'ticker' and 'date' columns)
+    """
+    from config import DATA_INTERVAL, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES
+    from utils import _to_utc
+    import time
+    
+    if end_date is None:
+        end_date = _get_last_trading_day()
+        end_date = datetime.combine(end_date, datetime.min.time(), tzinfo=timezone.utc)
+    
+    # Use shared function to determine lookback period
+    from config import get_data_lookback_days
+    lookback_days = get_data_lookback_days()
+    start_date = end_date - timedelta(days=lookback_days)
+    days_back = (end_date - start_date).days
+    
+    print(f"🚀 Batch downloading data for {len(all_tickers)} tickers from {start_date.date()} to {end_date.date()}...")
+    print(f"  (Requesting {days_back} days of data - fixed maximum range for consistency)")
+    
+    all_tickers_data_list = []
+    
+    # Add progress bar for batch downloads
+    try:
+        from tqdm import tqdm
+        batch_iterator = range(0, len(all_tickers), BATCH_DOWNLOAD_SIZE)
+        batch_iterator = tqdm(batch_iterator, desc="  [INFO] Downloading batches", ncols=100)
+    except ImportError:
+        batch_iterator = range(0, len(all_tickers), BATCH_DOWNLOAD_SIZE)
+        print("  [INFO] Note: Install tqdm for progress bars: pip install tqdm")
+    
+    for i in batch_iterator:
+        batch = all_tickers[i:i + BATCH_DOWNLOAD_SIZE]
+        batch_num = i//BATCH_DOWNLOAD_SIZE + 1
+        total_batches = (len(all_tickers) + BATCH_DOWNLOAD_SIZE - 1)//BATCH_DOWNLOAD_SIZE
+        print(f"  - Batch {batch_num}/{total_batches}: {len(batch)} tickers")
+        batch_data = _download_batch_robust(batch, start=start_date, end=end_date)
+        if not batch_data.empty:
+            # Ensure date column is timezone-aware
+            if 'date' in batch_data.columns:
+                batch_data['date'] = pd.to_datetime(batch_data['date'], utc=True)
+            
+            filtered_batch_data = batch_data[
+                (batch_data['date'] >= _to_utc(start_date)) &
+                (batch_data['date'] <= _to_utc(end_date))
+            ]
+            if not filtered_batch_data.empty:
+                all_tickers_data_list.append(filtered_batch_data)
+        
+        if i + BATCH_DOWNLOAD_SIZE < len(all_tickers):
+            print(f"  - Pausing for {PAUSE_BETWEEN_BATCHES} seconds before next batch...")
+            time.sleep(PAUSE_BETWEEN_BATCHES)
+    
+    if not all_tickers_data_list:
+        print("❌ Batch download failed - no data retrieved")
+        return pd.DataFrame()
+    
+    all_tickers_data = pd.concat(all_tickers_data_list, axis=0)
+    
+    if all_tickers_data.empty:
+        print("❌ Batch download failed - empty data")
+        return pd.DataFrame()
+    
+    print(f"   📊 Data shape: {all_tickers_data.shape}")
+    print(f"   📊 Columns: {list(all_tickers_data.columns[:5])}")
+    
+    return all_tickers_data

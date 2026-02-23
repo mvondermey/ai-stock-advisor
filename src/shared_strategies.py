@@ -15,7 +15,7 @@ from config import (
     RISK_ADJ_MOM_CONFIRM_MEDIUM, RISK_ADJ_MOM_CONFIRM_LONG, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
     RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER,
     RISK_ADJ_MOM_MIN_SCORE, VOLATILITY_ADJ_MOM_LOOKBACK, VOLATILITY_ADJ_MOM_VOL_WINDOW,
-    VOLATILITY_ADJ_MOM_MIN_SCORE, PARALLEL_THRESHOLD, DATA_FRESHNESS_MAX_DAYS,
+    VOLATILITY_ADJ_MOM_MIN_SCORE, DATA_FRESHNESS_MAX_DAYS,
     ENABLE_MULTITASK_LEARNING,
     MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M, MIN_DATA_DAYS_GENERAL
 )
@@ -24,9 +24,14 @@ from config import (
 MULTITASK_AVAILABLE = False
 
 
-def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_date: datetime = None) -> tuple:
+def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_date: datetime = None, skip_freshness_check: bool = False) -> tuple:
     """
     Calculate risk-adjusted momentum score for a ticker.
+    
+    Args:
+        ticker_data: DataFrame with price data indexed by date
+        current_date: Current date for analysis (None uses data's max date)
+        skip_freshness_check: If True, skip data freshness validation (for live trading)
     
     Returns:
         tuple: (score, return_pct, volatility_pct) or (0, 0, 0) if insufficient data
@@ -54,10 +59,11 @@ def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_da
                     current_ts = current_ts.tz_convert(ticker_data.index.tz)
             
             # Check data freshness - warn if data is older than configured limit
-            data_age_days = (current_ts - end_date).total_seconds() / 86400
-            if data_age_days > DATA_FRESHNESS_MAX_DAYS:
-                # Data is stale - raise error to be caught by caller
-                raise ValueError(f"Data too old: {data_age_days:.1f} days (max {DATA_FRESHNESS_MAX_DAYS} days)")
+            if not skip_freshness_check:
+                data_age_days = (current_ts - end_date).total_seconds() / 86400
+                if data_age_days > DATA_FRESHNESS_MAX_DAYS:
+                    # Data is stale - raise error to be caught by caller
+                    raise ValueError(f"Data too old: {data_age_days:.1f} days (max {DATA_FRESHNESS_MAX_DAYS} days). Data end: {end_date}, Current: {current_ts}")
         except ValueError:
             # Re-raise ValueError (stale data error) so caller can handle it
             raise
@@ -339,101 +345,45 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
     
     current_top_performers = []
     
-    # Use parallel processing for large ticker lists
-    from config import PARALLEL_THRESHOLD
-    use_parallel = False
+    # Always use parallel processing
+    from parallel_backtest import calculate_parallel_risk_adjusted_scores
     
-    if len(filtered_tickers) > PARALLEL_THRESHOLD:  # Use parallel only for large lists
+    scores_data = calculate_parallel_risk_adjusted_scores(
+        filtered_tickers,
+        ticker_data_grouped,
+        current_date
+    )
+    
+    # Apply filters
+    momentum_filtered = 0
+    volume_filtered = 0
+    data_issues = 0
+    
+    for ticker, score, return_pct, volatility_pct in scores_data:
         try:
-            from parallel_backtest import calculate_parallel_risk_adj_momentum
-            from config import NUM_PROCESSES
+            ticker_data = ticker_data_grouped[ticker]
             
-            # Calculate scores in parallel
-            scores_data = calculate_parallel_risk_adj_momentum(
-                    filtered_tickers,
-                    ticker_data_grouped,
-                    current_date
-                )
-            use_parallel = True
+            # Check momentum confirmation
+            momentum_confirmations = check_momentum_confirmation(ticker_data, current_date)
             
-            # Apply filters
-            momentum_filtered = 0
-            volume_filtered = 0
-            data_issues = 0
-            
-            for ticker, score, return_pct, volatility_pct in scores_data:
-                try:
-                    ticker_data = ticker_data_grouped[ticker]
-                    
-                    # Check momentum confirmation
-                    momentum_confirmations = check_momentum_confirmation(ticker_data, current_date)
-                    
-                    if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
-                        if momentum_confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
-                            momentum_filtered += 1
-                            continue
-                    
-                    # Check volume confirmation
-                    if not check_volume_confirmation(ticker_data):
-                        volume_filtered += 1
-                        continue
-                    
-                    if score > RISK_ADJ_MOM_MIN_SCORE:
-                        current_top_performers.append((ticker, score, return_pct, volatility_pct))
-                        
-                except Exception:
-                    data_issues += 1
+            if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
+                if momentum_confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
+                    momentum_filtered += 1
                     continue
             
-            analyzed_count = len(scores_data)
-            
-        except (ImportError, Exception):
-            # Fallback to sequential if parallel module not available or error
-            use_parallel = False
-    
-    # Sequential processing (for small lists or if parallel failed)
-    if not use_parallel:
-        momentum_filtered = 0
-        volume_filtered = 0
-        data_issues = 0
-        analyzed_count = 0
-        
-        for ticker in filtered_tickers:
-            try:
-                if ticker not in ticker_data_grouped:
-                    continue
-                
-                ticker_data = ticker_data_grouped[ticker]
-                analyzed_count += 1
-                
-                # Calculate risk-adjusted momentum score
-                score, return_pct, volatility_pct = calculate_risk_adjusted_momentum_score(
-                    ticker_data, current_date
-                )
-                
-                if score is None:
-                    data_issues += 1
-                    continue
-                
-                # Check momentum confirmation
-                momentum_confirmations = check_momentum_confirmation(ticker_data, current_date)
-                
-                if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
-                    if momentum_confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
-                        momentum_filtered += 1
-                        continue
-                
-                # Check volume confirmation
-                if not check_volume_confirmation(ticker_data):
-                    volume_filtered += 1
-                    continue
-                
-                if score > RISK_ADJ_MOM_MIN_SCORE:
-                    current_top_performers.append((ticker, score, return_pct, volatility_pct))
-                    
-            except Exception:
-                data_issues += 1
+            # Check volume confirmation
+            if not check_volume_confirmation(ticker_data):
+                volume_filtered += 1
                 continue
+            
+            if score > RISK_ADJ_MOM_MIN_SCORE:
+                current_top_performers.append((ticker, score, return_pct, volatility_pct))
+                
+        except Exception:
+            data_issues += 1
+            continue
+    
+    analyzed_count = len(scores_data)
     
     # Sort by risk-adjusted score and get top N
     if current_top_performers:
@@ -456,6 +406,7 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
         return selected_tickers
     else:
         print(f"   ❌ No stocks passed filtering criteria (analyzed: {analyzed_count})")
+        print(f"   🔍 Debug: {momentum_filtered} momentum filtered, {volume_filtered} volume filtered, {data_issues} data issues, min_score={RISK_ADJ_MOM_MIN_SCORE}")
         return []
 
 

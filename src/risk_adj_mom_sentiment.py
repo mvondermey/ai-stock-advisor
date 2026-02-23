@@ -14,7 +14,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from shared_strategies import select_risk_adj_mom_stocks
-from sentiment_ensemble import select_sentiment_ensemble_stocks
+from sentiment_ensemble import get_sentiment_ensemble_instance
 
 
 def select_risk_adj_mom_sentiment_stocks(
@@ -58,14 +58,21 @@ def select_risk_adj_mom_sentiment_stocks(
         
         print(f"   📈 Risk-Adj Mom Sentiment: Found {len(risk_adj_mom_stocks)} Risk-Adj Mom candidates")
         
-        # Get Sentiment analysis on the Risk-Adj Mom candidates
+        # Apply sentiment filtering directly to Risk-Adj Mom candidates
+        # (NOT via select_sentiment_ensemble_stocks which runs its own Mom-Vol Hybrid 6M selection)
         print(f"   💭 Risk-Adj Mom Sentiment: Applying sentiment analysis...")
-        sentiment_filtered_stocks = select_sentiment_ensemble_stocks(
-            risk_adj_mom_stocks,
-            ticker_data_grouped,
-            current_date,
-            top_n=top_n
+        ensemble = get_sentiment_ensemble_instance()
+        
+        # Convert stock list to (ticker, rank_score) tuples for sentiment filter
+        candidates_with_scores = [(ticker, 1.0 / (i + 1)) for i, ticker in enumerate(risk_adj_mom_stocks)]
+        
+        sentiment_filtered = ensemble.apply_sentiment_filter(
+            candidates_with_scores, ticker_data_grouped, current_date
         )
+        
+        # Sort by final score and extract tickers
+        sentiment_filtered.sort(key=lambda x: x[1], reverse=True)
+        sentiment_filtered_stocks = [ticker for ticker, score in sentiment_filtered[:top_n]]
         
         print(f"   ✅ Risk-Adj Mom Sentiment: Selected {len(sentiment_filtered_stocks)} stocks")
         

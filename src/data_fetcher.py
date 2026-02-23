@@ -563,7 +563,8 @@ def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: dateti
                     auto_adjust=True,
                     progress=show_progress,
                     threads=True,  # ✅ Enable yfinance internal threading
-                    keepna=False
+                    keepna=False,
+                    multi_level_index=False
                 )
                 
                 if not yf_data.empty and not yf_data.isnull().all().all():

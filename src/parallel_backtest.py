@@ -7,6 +7,7 @@ from multiprocessing import Pool, cpu_count
 from functools import partial
 from typing import List, Tuple, Dict
 import pandas as pd
+import time
 from datetime import datetime, timedelta
 
 
@@ -87,6 +88,47 @@ def calculate_parallel_performance(tickers: List[str],
     return performances
 
 
+def _calculate_single_risk_adj(args):
+    """Module-level worker for parallel risk-adjusted score calculation."""
+    ticker, ticker_data, current_date = args
+    
+    try:
+        if len(ticker_data) < 100:
+            return None
+            
+        end_date = current_date or ticker_data.index.max()
+        start_date = end_date - timedelta(days=365)  # Risk-adj uses 1-year
+        
+        perf_data = ticker_data.loc[start_date:end_date]
+        if len(perf_data) < 50:
+            return None
+        
+        valid_close = perf_data['Close'].dropna()
+        if len(valid_close) < 10:
+            return None
+        
+        start_price = valid_close.iloc[0]
+        end_price = valid_close.iloc[-1]
+        
+        if start_price <= 0 or pd.isna(start_price) or pd.isna(end_price):
+            return None
+        
+        # Calculate return and volatility
+        basic_return = ((end_price - start_price) / start_price) * 100
+        daily_returns = valid_close.pct_change().dropna()
+        
+        if len(daily_returns) <= 5:
+            return None
+        
+        volatility = daily_returns.std() * 100
+        risk_adj_score = basic_return / (volatility**0.5 + 0.001)
+        
+        return (ticker, risk_adj_score, basic_return, volatility)
+        
+    except Exception:
+        return None
+
+
 def calculate_parallel_risk_adjusted_scores(tickers: List[str],
                                            ticker_data_grouped: Dict[str, pd.DataFrame],
                                            current_date: datetime,
@@ -101,44 +143,7 @@ def calculate_parallel_risk_adjusted_scores(tickers: List[str],
         from config import NUM_PROCESSES
         num_processes = max(1, NUM_PROCESSES)
     
-    def calculate_single_risk_adj(args):
-        ticker, ticker_data, current_date = args
-        
-        try:
-            if len(ticker_data) < 100:
-                return None
-                
-            end_date = current_date or ticker_data.index.max()
-            start_date = end_date - timedelta(days=365)  # Risk-adj uses 1-year
-            
-            perf_data = ticker_data.loc[start_date:end_date]
-            if len(perf_data) < 50:
-                return None
-            
-            valid_close = perf_data['Close'].dropna()
-            if len(valid_close) < 10:
-                return None
-            
-            start_price = valid_close.iloc[0]
-            end_price = valid_close.iloc[-1]
-            
-            if start_price <= 0 or pd.isna(start_price) or pd.isna(end_price):
-                return None
-            
-            # Calculate return and volatility
-            basic_return = ((end_price - start_price) / start_price) * 100
-            daily_returns = valid_close.pct_change().dropna()
-            
-            if len(daily_returns) <= 5:
-                return None
-            
-            volatility = daily_returns.std() * 100
-            risk_adj_score = basic_return / (volatility**0.5 + 0.001)
-            
-            return (ticker, risk_adj_score, basic_return, volatility)
-            
-        except Exception:
-            return None
+    start_time = time.time()
     
     # Prepare arguments
     args_list = []
@@ -148,7 +153,7 @@ def calculate_parallel_risk_adjusted_scores(tickers: List[str],
     
     # Process in parallel
     with Pool(processes=num_processes) as pool:
-        results = pool.map(calculate_single_risk_adj, args_list)
+        results = pool.map(_calculate_single_risk_adj, args_list)
     elapsed = time.time() - start_time
     print(f"   ⏱️ Parallel risk-adjusted: {len(tickers)} tickers in {elapsed:.2f}s ({num_processes} processes)")
     
