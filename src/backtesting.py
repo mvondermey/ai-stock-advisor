@@ -4024,34 +4024,12 @@ def _run_portfolio_backtest_walk_forward(
                 if base_model:
                     ai_elite_models['_shared_base'] = base_model
                     
-                    # Step 3: Fine-tune per ticker in parallel
-                    print(f"   🎯 AI Elite: Fine-tuning {len(ticker_samples_map)} per-ticker models ({n_workers} processes)...")
-                    ft_args = [
-                        (t, samples, base_model, os.path.join(models_dir, f"{t}_ai_elite.joblib"))
-                        for t, samples in ticker_samples_map.items()
-                    ]
-                    
-                    trained = 0
-                    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-                        futures = {executor.submit(_fine_tune_worker, a): a[0] for a in ft_args}
-                        for future in as_completed(futures):
-                            ticker_name = futures[future]
-                            try:
-                                ticker, model = future.result()
-                                if model:
-                                    ai_elite_models[ticker] = model
-                                    ai_elite_last_train_days[ticker] = day_count
-                                    trained += 1
-                                else:
-                                    # Use base model as fallback
-                                    ai_elite_models[ticker_name] = base_model
-                                    ai_elite_last_train_days[ticker_name] = day_count
-                                    trained += 1
-                            except Exception as e:
-                                print(f"   ⚠️ AI Elite: Fine-tune failed for {ticker_name}: {e}")
-                                ai_elite_models[ticker_name] = base_model
-                    
-                    print(f"   ✅ AI Elite: {trained}/{len(ticker_samples_map)} models fine-tuned (base kappa {base_kappa:.3f})")
+                    # Use shared base model for ALL tickers (skip per-ticker fine-tuning to avoid overfitting)
+                    print(f"   ✅ AI Elite: Using shared base model for all tickers (kappa {base_kappa:.3f})")
+                    for ticker in initial_top_tickers:
+                        ai_elite_models[ticker] = base_model
+                        ai_elite_last_train_days[ticker] = day_count
+                    trained = len(initial_top_tickers)
                 
                 # Select stocks using ML model (or fallback if in warmup)
                 print(f"   🤖 AI Elite: Analyzing {len(initial_top_tickers)} tickers...")
