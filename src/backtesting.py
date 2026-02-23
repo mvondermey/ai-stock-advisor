@@ -3950,36 +3950,52 @@ def _run_portfolio_backtest_walk_forward(
                 models_dir = "logs/models"
                 os.makedirs(models_dir, exist_ok=True)
                 
-                # Train/retrain per-ticker models
+                # Train/retrain per-ticker models IN PARALLEL
                 train_end = current_date
                 train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
                 
-                print(f"   🎓 AI Elite: Training per-ticker models with {AI_ELITE_TRAINING_LOOKBACK} days of data...")
+                # Load existing models from disk first
                 for ticker in initial_top_tickers:
-                    # Always load latest model from disk before training
-                    # (recovers state if backtesting crashed mid-run)
+                    if ticker not in ai_elite_models:
+                        model_path = os.path.join(models_dir, f"{ticker}_ai_elite.joblib")
+                        if os.path.exists(model_path):
+                            try:
+                                with open(model_path, 'rb') as f:
+                                    ai_elite_models[ticker] = pickle.load(f)
+                            except Exception:
+                                pass
+                
+                # Parallel training using threads (shared memory, no pickling needed)
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                
+                def _train_one_ticker(ticker):
                     model_path = os.path.join(models_dir, f"{ticker}_ai_elite.joblib")
-                    if ticker not in ai_elite_models and os.path.exists(model_path):
-                        try:
-                            with open(model_path, 'rb') as f:
-                                ai_elite_models[ticker] = pickle.load(f)
-                        except Exception:
-                            pass  # Will train fresh
-                    
-                    # Continue training existing model (or train new)
                     existing_model = ai_elite_models.get(ticker)
                     model = train_ai_elite_model_per_ticker(
                         ticker=ticker,
                         ticker_data=ticker_data_grouped.get(ticker),
                         train_start_date=train_start,
                         train_end_date=train_end,
-                        save_path=model_path,  # Save to disk after training
+                        save_path=model_path,
                         forward_days=AI_ELITE_FORWARD_DAYS,
                         existing_model=existing_model
                     )
-                    if model:
-                        ai_elite_models[ticker] = model
-                        ai_elite_last_train_days[ticker] = day_count
+                    return ticker, model
+                
+                n_workers = min(8, len(initial_top_tickers))
+                print(f"   🎓 AI Elite: Training {len(initial_top_tickers)} per-ticker models ({n_workers} threads, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
+                
+                with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                    futures = {executor.submit(_train_one_ticker, t): t for t in initial_top_tickers}
+                    trained = 0
+                    for future in as_completed(futures):
+                        ticker, model = future.result()
+                        if model:
+                            ai_elite_models[ticker] = model
+                            ai_elite_last_train_days[ticker] = day_count
+                            trained += 1
+                
+                print(f"   ✅ AI Elite: {trained}/{len(initial_top_tickers)} models trained")
                 
                 # Select stocks using ML model (or fallback if in warmup)
                 print(f"   🤖 AI Elite: Analyzing {len(initial_top_tickers)} tickers...")
