@@ -91,7 +91,7 @@ def collect_ticker_training_data(
                 'volume_sentiment':   features.get('volume_sentiment', 0),
                 'risk_adj_mom_3m':    features.get('risk_adj_mom_3m', 0),
                 'forward_return':     forward_return,
-                'market_return':      market_returns.get(current_date, 0.0),
+                'market_return':      market_returns.get(current_date.replace(tzinfo=None), 0.0),
             })
         except Exception:
             pass
