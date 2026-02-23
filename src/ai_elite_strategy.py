@@ -138,8 +138,8 @@ def select_ai_elite_stocks(
             ai_scores.append(0.0)
             continue
         
-        # Extract features for this ticker
-        X_ticker = row[feature_cols].values.reshape(1, -1)
+        # Extract features for this ticker (keep as DataFrame for feature name compatibility)
+        X_ticker = pd.DataFrame([row[feature_cols].values], columns=feature_cols)
         
         # Get ML prediction probability
         try:

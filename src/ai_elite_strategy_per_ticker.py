@@ -139,7 +139,7 @@ def train_shared_base_model(
     train_df = pd.DataFrame(all_training_data)
     train_df = _prepare_labels(train_df)
 
-    X = train_df[FEATURE_COLS].values
+    X = train_df[FEATURE_COLS]
     y = train_df['label'].values
 
     print(f"   📊 AI Elite: Shared base model training on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
@@ -273,7 +273,7 @@ def fine_tune_per_ticker(
                 labels=list(range(n_bins)), duplicates='drop'
             ).astype(int)
 
-        X = train_df[FEATURE_COLS].values
+        X = train_df[FEATURE_COLS]
         y = train_df['label'].values
 
         # Deep copy the base model and fine-tune with fewer rounds
