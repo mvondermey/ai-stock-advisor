@@ -3983,11 +3983,14 @@ def _run_portfolio_backtest_walk_forward(
                 
                 # Pre-compute market returns for all sample dates (needed for excess return labels)
                 from ai_elite_strategy import _calculate_market_return
+                from datetime import timezone as tz_utc
                 market_returns = {}
                 sample_date_iter = train_start
                 while sample_date_iter <= train_end:
                     mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
-                    market_returns[sample_date_iter] = mr if mr is not None else 0.0
+                    # Store with UTC key to match collect_ticker_training_data's UTC dates
+                    utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
+                    market_returns[utc_key] = mr if mr is not None else 0.0
                     sample_date_iter += timedelta(days=2)
                 
                 # Step 1: Collect training data from ALL tickers in parallel
