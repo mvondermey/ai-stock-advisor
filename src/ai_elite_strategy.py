@@ -26,8 +26,6 @@ def select_ai_elite_stocks(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
     top_n: int = 10,
-    model_path: str = None,
-    model = None,
     per_ticker_models: Dict[str, any] = None
 ) -> List[str]:
     """
@@ -38,8 +36,7 @@ def select_ai_elite_stocks(
         ticker_data_grouped: Dict of ticker -> DataFrame
         current_date: Current date for analysis
         top_n: Number of stocks to select
-        model_path: Path to saved ML model (optional)
-        model: Pre-trained model object (optional, takes precedence over model_path)
+        per_ticker_models: Dict of ticker -> trained model
         
     Returns:
         List of selected ticker symbols
@@ -134,15 +131,7 @@ def select_ai_elite_stocks(
         ticker = row['ticker']
         
         # Get per-ticker model
-        ticker_model = None
-        if per_ticker_models and ticker in per_ticker_models:
-            ticker_model = per_ticker_models[ticker]
-        elif model is not None:
-            # Fallback to shared model if provided
-            ticker_model = model
-        else:
-            # Load fallback model
-            ticker_model = _load_or_create_model(model_path)
+        ticker_model = per_ticker_models.get(ticker) if per_ticker_models else None
         
         if ticker_model is None:
             print(f"   ⚠️ AI Elite: No model available for {ticker}, using score 0")

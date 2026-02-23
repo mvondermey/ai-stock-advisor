@@ -3989,8 +3989,7 @@ def _run_portfolio_backtest_walk_forward(
                     ticker_data_grouped,
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE,
-                    model_path=None,
-                    per_ticker_models=ai_elite_models  # Pass per-ticker models
+                    per_ticker_models=ai_elite_models
                 )
                 
                 if new_ai_elite_stocks:
