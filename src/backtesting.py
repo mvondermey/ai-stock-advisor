@@ -127,30 +127,25 @@ ai_volatility_ensemble_transaction_costs = 0
 multi_tf_ensemble_transaction_costs = 0
 
 
-def _train_ticker_worker(args):
-    """Top-level worker for ProcessPoolExecutor - trains one ticker model.
-    Loads existing model from disk, trains, saves back, returns (ticker, model)."""
-    ticker, ticker_data, train_start, train_end, model_path, forward_days = args
-    import pickle, os
-    from ai_elite_strategy_per_ticker import train_ai_elite_model_per_ticker
-    
-    # Load existing model from disk if available
-    existing_model = None
-    if os.path.exists(model_path):
-        try:
-            with open(model_path, 'rb') as f:
-                existing_model = pickle.load(f)
-        except Exception:
-            pass
-    
-    model = train_ai_elite_model_per_ticker(
-        ticker=ticker,
-        ticker_data=ticker_data,
-        train_start_date=train_start,
-        train_end_date=train_end,
-        save_path=model_path,
-        forward_days=forward_days,
-        existing_model=existing_model
+def _collect_data_worker(args):
+    """Top-level worker for ProcessPoolExecutor - collects training data for one ticker."""
+    ticker, ticker_data, train_start, train_end, forward_days = args
+    from ai_elite_strategy_per_ticker import collect_ticker_training_data
+    samples = collect_ticker_training_data(
+        ticker=ticker, ticker_data=ticker_data,
+        train_start_date=train_start, train_end_date=train_end,
+        forward_days=forward_days
+    )
+    return ticker, samples
+
+
+def _fine_tune_worker(args):
+    """Top-level worker for ProcessPoolExecutor - fine-tunes base model for one ticker."""
+    ticker, ticker_samples, base_model, save_path = args
+    from ai_elite_strategy_per_ticker import fine_tune_per_ticker
+    model = fine_tune_per_ticker(
+        ticker=ticker, ticker_samples=ticker_samples,
+        base_model=base_model, save_path=save_path
     )
     return ticker, model
 
@@ -3972,52 +3967,82 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_AI_ELITE:
             try:
                 from ai_elite_strategy import select_ai_elite_stocks
-                from ai_elite_strategy_per_ticker import train_ai_elite_model_per_ticker
+                from ai_elite_strategy_per_ticker import train_shared_base_model
                 import os
                 import pickle
                 
                 models_dir = "logs/models"
                 os.makedirs(models_dir, exist_ok=True)
                 
-                # Train/retrain per-ticker models IN PARALLEL
+                # HYBRID: shared base model + per-ticker fine-tuning
                 train_end = current_date
                 train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
                 
-                # Parallel training using processes (true parallelism, bypasses GIL)
-                # Workers load existing models from disk themselves
                 from concurrent.futures import ProcessPoolExecutor, as_completed
-                
-                # Build args list for each ticker
-                train_args = []
-                for ticker in initial_top_tickers:
-                    model_path = os.path.join(models_dir, f"{ticker}_ai_elite.joblib")
-                    train_args.append((
-                        ticker,
-                        ticker_data_grouped.get(ticker),
-                        train_start,
-                        train_end,
-                        model_path,
-                        AI_ELITE_FORWARD_DAYS
-                    ))
-                
                 n_workers = min(TRAINING_NUM_PROCESSES, len(initial_top_tickers))
-                print(f"   🎓 AI Elite: Training {len(initial_top_tickers)} per-ticker models ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
+                
+                # Step 1: Collect training data from ALL tickers in parallel
+                print(f"   📊 AI Elite: Collecting data from {len(initial_top_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
+                collect_args = [
+                    (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS)
+                    for t in initial_top_tickers
+                ]
+                
+                all_training_data = []
+                ticker_samples_map = {}  # ticker -> its samples
                 
                 with ProcessPoolExecutor(max_workers=n_workers) as executor:
-                    futures = {executor.submit(_train_ticker_worker, args): args[0] for args in train_args}
-                    trained = 0
+                    futures = {executor.submit(_collect_data_worker, a): a[0] for a in collect_args}
                     for future in as_completed(futures):
-                        ticker_name = futures[future]
                         try:
-                            ticker, model = future.result()
-                            if model:
-                                ai_elite_models[ticker] = model
-                                ai_elite_last_train_days[ticker] = day_count
-                                trained += 1
+                            ticker, samples = future.result()
+                            if samples:
+                                all_training_data.extend(samples)
+                                ticker_samples_map[ticker] = samples
                         except Exception as e:
-                            print(f"   ⚠️ AI Elite: Worker failed for {ticker_name}: {e}")
+                            print(f"   ⚠️ AI Elite: Data collection failed for {futures[future]}: {e}")
                 
-                print(f"   ✅ AI Elite: {trained}/{len(initial_top_tickers)} models trained")
+                print(f"   📊 AI Elite: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers")
+                
+                # Step 2: Train shared base model on ALL data (single process, large dataset)
+                base_model_path = os.path.join(models_dir, "_shared_base_ai_elite.joblib")
+                existing_base = ai_elite_models.get('_shared_base')
+                base_model, base_kappa = train_shared_base_model(
+                    all_training_data, save_path=base_model_path,
+                    existing_model=existing_base
+                )
+                
+                if base_model:
+                    ai_elite_models['_shared_base'] = base_model
+                    
+                    # Step 3: Fine-tune per ticker in parallel
+                    print(f"   🎯 AI Elite: Fine-tuning {len(ticker_samples_map)} per-ticker models ({n_workers} processes)...")
+                    ft_args = [
+                        (t, samples, base_model, os.path.join(models_dir, f"{t}_ai_elite.joblib"))
+                        for t, samples in ticker_samples_map.items()
+                    ]
+                    
+                    trained = 0
+                    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                        futures = {executor.submit(_fine_tune_worker, a): a[0] for a in ft_args}
+                        for future in as_completed(futures):
+                            ticker_name = futures[future]
+                            try:
+                                ticker, model = future.result()
+                                if model:
+                                    ai_elite_models[ticker] = model
+                                    ai_elite_last_train_days[ticker] = day_count
+                                    trained += 1
+                                else:
+                                    # Use base model as fallback
+                                    ai_elite_models[ticker_name] = base_model
+                                    ai_elite_last_train_days[ticker_name] = day_count
+                                    trained += 1
+                            except Exception as e:
+                                print(f"   ⚠️ AI Elite: Fine-tune failed for {ticker_name}: {e}")
+                                ai_elite_models[ticker_name] = base_model
+                    
+                    print(f"   ✅ AI Elite: {trained}/{len(ticker_samples_map)} models fine-tuned (base kappa {base_kappa:.3f})")
                 
                 # Select stocks using ML model (or fallback if in warmup)
                 print(f"   🤖 AI Elite: Analyzing {len(initial_top_tickers)} tickers...")
