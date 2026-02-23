@@ -646,11 +646,11 @@ def get_quality_momentum_tickers(all_tickers: List[str], ticker_data_grouped: Di
     return select_quality_momentum_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_multitask_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_multitask_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Multi-Task Learning Strategy: DISABLED - fallback to momentum."""
     print(f"   [WARN] Multi-Task strategy disabled, falling back to momentum-based selection")
     try:
-        return get_dynamic_bh_1y_tickers(all_tickers, all_tickers_data)
+        return get_dynamic_bh_1y_tickers(all_tickers, ticker_data_grouped)
     except Exception as e:
         print(f"   [FAIL] Multi-Task failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
         return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
@@ -724,7 +724,7 @@ def get_momentum_volatility_hybrid_1y3m_tickers(all_tickers: List[str], ticker_d
     return select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_adaptive_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_adaptive_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Adaptive Ensemble Strategy: Meta-ensemble combining multiple strategies dynamically."""
     from adaptive_ensemble import select_adaptive_ensemble_stocks
     
@@ -735,7 +735,7 @@ def get_adaptive_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.D
     return select_adaptive_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_volatility_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_volatility_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Volatility-Adjusted Ensemble Strategy: Risk-managed position sizing."""
     from volatility_ensemble import select_volatility_ensemble_stocks
     
@@ -746,17 +746,17 @@ def get_volatility_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd
     return select_volatility_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_ai_volatility_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_ai_volatility_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """AI-Enhanced Volatility Ensemble Strategy: DISABLED - fallback to regular volatility ensemble."""
     print(f"   [WARN] AI Volatility Ensemble disabled, falling back to regular Volatility Ensemble")
     try:
-        return get_volatility_ensemble_tickers(all_tickers, all_tickers_data)
+        return get_volatility_ensemble_tickers(all_tickers, ticker_data_grouped)
     except Exception as e:
         print(f"   [FAIL] AI Volatility Ensemble failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
         return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
-def get_correlation_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_correlation_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Correlation-Filtered Ensemble Strategy: Diversification-focused."""
     from correlation_ensemble import select_correlation_ensemble_stocks
     
@@ -767,7 +767,7 @@ def get_correlation_ensemble_tickers(all_tickers: List[str], all_tickers_data: p
     return select_correlation_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_dynamic_pool_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_dynamic_pool_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Dynamic Strategy Pool Strategy: Rotates strategies based on performance."""
     from dynamic_pool import select_dynamic_pool_stocks
     
@@ -778,7 +778,7 @@ def get_dynamic_pool_tickers(all_tickers: List[str], all_tickers_data: pd.DataFr
     return select_dynamic_pool_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_sentiment_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_sentiment_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Mom-Vol Hybrid 6M + Sentiment Strategy: Incorporates news sentiment."""
     from sentiment_ensemble import select_sentiment_ensemble_stocks
     
@@ -804,7 +804,7 @@ def _get_latest_data_date(ticker_data_grouped: Dict, all_tickers: List[str]) -> 
         return datetime.now(timezone.utc)
 
 
-def get_momentum_breakout_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_momentum_breakout_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Momentum Breakout Strategy: 52-week high breakouts with volume confirmation."""
     from momentum_breakout import select_momentum_breakout_stocks
     
@@ -815,7 +815,7 @@ def get_momentum_breakout_tickers(all_tickers: List[str], all_tickers_data: pd.D
     return select_momentum_breakout_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_enhanced_volatility_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_enhanced_volatility_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Enhanced Volatility Trader: Combines volatility_ensemble + static_bh_3m with ATR stops."""
     from enhanced_volatility_trader import select_enhanced_volatility_stocks
     
@@ -827,7 +827,7 @@ def get_enhanced_volatility_tickers(all_tickers: List[str], all_tickers_data: pd
                                            current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_factor_rotation_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_factor_rotation_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Factor Rotation Strategy: Rotates between Value/Growth/Momentum/Quality based on regime."""
     from factor_rotation import select_factor_rotation_stocks
     
@@ -838,7 +838,7 @@ def get_factor_rotation_tickers(all_tickers: List[str], all_tickers_data: pd.Dat
     return select_factor_rotation_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_pairs_trading_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_pairs_trading_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Pairs Trading Strategy: Statistical arbitrage on correlated pairs."""
     from pairs_trading import select_pairs_trading_stocks
     
@@ -849,7 +849,7 @@ def get_pairs_trading_tickers(all_tickers: List[str], all_tickers_data: pd.DataF
     return select_pairs_trading_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_earnings_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_earnings_momentum_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Earnings Momentum (PEAD) Strategy: Post-earnings announcement drift."""
     from earnings_momentum import select_earnings_momentum_stocks
     
@@ -860,7 +860,7 @@ def get_earnings_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.D
     return select_earnings_momentum_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_insider_trading_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_insider_trading_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Insider Trading Signal Strategy: Follow insider buying patterns."""
     from insider_trading import select_insider_trading_stocks
     
@@ -871,7 +871,7 @@ def get_insider_trading_tickers(all_tickers: List[str], all_tickers_data: pd.Dat
     return select_insider_trading_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_options_sentiment_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_options_sentiment_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Options-Based Sentiment Strategy: Put/call ratios and unusual activity."""
     from options_sentiment import select_options_sentiment_stocks
     
@@ -882,17 +882,17 @@ def get_options_sentiment_tickers(all_tickers: List[str], all_tickers_data: pd.D
     return select_options_sentiment_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_ml_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_ml_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """ML Ensemble Strategy: DISABLED - fallback to momentum."""
     print(f"   [WARN] ML Ensemble disabled, falling back to momentum-based selection")
     try:
-        return get_dynamic_bh_1y_tickers(all_tickers, all_tickers_data)
+        return get_dynamic_bh_1y_tickers(all_tickers, ticker_data_grouped)
     except Exception as e:
         print(f"   [FAIL] ML Ensemble failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
         return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
 
 
-def get_price_acceleration_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_price_acceleration_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Price Acceleration Strategy: Physics-based velocity (price change) and acceleration (velocity change)."""
     from shared_strategies import select_price_acceleration_stocks
     
@@ -903,7 +903,7 @@ def get_price_acceleration_tickers(all_tickers: List[str], all_tickers_data: pd.
     return select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_voting_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_voting_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Voting Ensemble Strategy: Consensus picks from multiple strategies."""
     from shared_strategies import select_voting_ensemble_stocks
     
@@ -914,7 +914,7 @@ def get_voting_ensemble_tickers(all_tickers: List[str], all_tickers_data: pd.Dat
     return select_voting_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_dual_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_dual_momentum_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Dual Momentum Strategy: Antonacci style absolute + relative momentum."""
     from new_strategies import select_dual_momentum_stocks
     
@@ -932,7 +932,7 @@ def get_dual_momentum_tickers(all_tickers: List[str], all_tickers_data: pd.DataF
     return selected
 
 
-def get_momentum_ai_hybrid_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_momentum_ai_hybrid_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Momentum AI Hybrid Strategy: Selects top momentum stocks with AI filtering."""
     from config import MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK
     
@@ -973,7 +973,7 @@ def get_momentum_ai_hybrid_tickers(all_tickers: List[str], all_tickers_data: pd.
     return []
 
 
-def get_elite_hybrid_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_elite_hybrid_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Elite Hybrid Strategy: Advanced multi-factor ensemble."""
     from elite_hybrid_strategy import select_elite_hybrid_stocks
     
@@ -1134,7 +1134,7 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
     print("=" * 80)
 
 
-def get_ai_elite_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_ai_elite_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """AI Elite Strategy: ML-powered scoring of momentum + dip opportunities.
     Trains the ML model on recent data, then scores all tickers."""
     from ai_elite_strategy import select_ai_elite_stocks, train_ai_elite_model
@@ -1142,10 +1142,7 @@ def get_ai_elite_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame 
     import os
     
     print(f"   🤖 AI Elite: Processing {len(all_tickers)} tickers")
-    print(f"   🤖 AI Elite: Data available: {all_tickers_data is not None}")
-    
-    # Use shared helper to prepare data with date as index
-    # ticker_data_grouped already prepared in main.py "AI Elite")
+    print(f"   🤖 AI Elite: Data available: {ticker_data_grouped is not None}")
     
     model_path = "models/ai_elite_live_model.pkl"
     
@@ -1189,23 +1186,21 @@ def get_ai_elite_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame 
     return selected
 
 
-def get_risk_adj_mom_6m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_risk_adj_mom_6m_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Risk-Adj Mom 6M Strategy: 6-month risk-adjusted momentum (return/vol^0.5)."""
     from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
     
     print(f"   📊 Risk-Adj Mom 6M: Processing {len(all_tickers)} tickers")
-    # ticker_data_grouped already prepared in main.py "Risk-Adj Mom 6M")
     
     current_date = datetime.now(timezone.utc)
     return select_risk_adj_mom_6m_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_risk_adj_mom_3m_tickers(all_tickers: List[str], all_tickers_data: pd.DataFrame = None) -> List[str]:
+def get_risk_adj_mom_3m_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Risk-Adj Mom 3M Strategy: 3-month risk-adjusted momentum (return/vol^0.5)."""
     from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
     
     print(f"   📊 Risk-Adj Mom 3M: Processing {len(all_tickers)} tickers")
-    # ticker_data_grouped already prepared in main.py "Risk-Adj Mom 3M")
     
     current_date = datetime.now(timezone.utc)
     return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
