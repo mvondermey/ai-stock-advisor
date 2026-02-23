@@ -155,9 +155,6 @@ def train_ai_elite_model_per_ticker(
                                     labels=list(range(n_bins)),
                                     duplicates='drop').astype(int)
         
-        # Remove stocks with minimal returns
-        train_df = train_df[abs(train_df['forward_return']) >= 0.5]
-        
         # Prepare features and labels
         feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
                         'overnight_gap', 'intraday_range', 'last_hour_momentum',
@@ -204,7 +201,6 @@ def train_ai_elite_model_per_ticker(
             pass
         
         # Use existing model if provided, otherwise train new model
-        best_score = 0.0  # Default score for existing model path
         if existing_model is not None:
             print(f"   🔄 AI Elite: Continuing training {ticker} with existing model")
             best_model = existing_model
@@ -212,6 +208,11 @@ def train_ai_elite_model_per_ticker(
             
             # Continue training on new data
             best_model.fit(X, y)
+            
+            # Measure actual kappa on training data
+            from sklearn.metrics import cohen_kappa_score
+            y_pred = best_model.predict(X)
+            best_score = cohen_kappa_score(y, y_pred, weights='quadratic')
         else:
             print(f"   🆕 AI Elite: Training new model for {ticker}")
             
