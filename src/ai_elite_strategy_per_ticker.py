@@ -6,7 +6,7 @@ Separated from main ai_elite_strategy.py to avoid circular imports.
 import pandas as pd
 import numpy as np
 import pickle
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 
@@ -63,9 +63,9 @@ def train_ai_elite_model_per_ticker(
         
         # Ensure dates are timezone-aware
         if train_start_date.tzinfo is None:
-            train_start_date = train_start_date.replace(tzinfo=datetime.timezone.utc)
+            train_start_date = train_start_date.replace(tzinfo=timezone.utc)
         if train_end_date.tzinfo is None:
-            train_end_date = train_end_date.replace(tzinfo=datetime.timezone.utc)
+            train_end_date = train_end_date.replace(tzinfo=timezone.utc)
         
         # Collect training samples for this ticker
         training_data = []
@@ -195,6 +195,7 @@ def train_ai_elite_model_per_ticker(
             pass
         
         # Use existing model if provided, otherwise train new model
+        best_score = 0.0  # Default score for existing model path
         if existing_model is not None:
             print(f"   🔄 AI Elite: Continuing training {ticker} with existing model")
             best_model = existing_model

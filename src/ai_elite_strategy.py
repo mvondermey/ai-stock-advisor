@@ -27,7 +27,8 @@ def select_ai_elite_stocks(
     current_date: datetime = None,
     top_n: int = 10,
     model_path: str = None,
-    model = None
+    model = None,
+    per_ticker_models: Dict[str, any] = None
 ) -> List[str]:
     """
     AI Elite Strategy: ML-based scoring of momentum + dip opportunities
@@ -114,39 +115,60 @@ def select_ai_elite_stocks(
         print(f"   🔍 AI Elite: Fail reasons: {fail_reasons}")
         return []
     
-    # Use provided model or load from path
-    if model is None:
-        model = _load_or_create_model(model_path)
-    
-    # Score candidates using ML model (17 features: 5 daily + 3 intraday + 6 derived + 2 sentiment proxy + 1 risk_adj_mom_3m)
+    # Score candidates using PER-TICKER models
     feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
                     'overnight_gap', 'intraday_range', 'last_hour_momentum',
                     'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
                     'volume_ratio', 'rsi_14',
                     'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m']
 
-    if model is None:
-        raise RuntimeError("AI Elite: model is None - training must have failed")
-
     candidates_df = pd.DataFrame(candidates)
-    X = candidates_df[feature_cols].values
     
     # Debug-only ranks (NOT ML features - risk_adj_mom_3m is already in feature_cols from _extract_features)
     candidates_df['momentum_rank'] = candidates_df['perf_3m'].rank(pct=True)
     candidates_df['risk_adj_mom_rank'] = candidates_df['risk_adj_mom_3m'].rank(pct=True)
     
-    # Get ML prediction probabilities (ordinal ranking: up to 5 classes)
-    proba = model.predict_proba(X)
-    n_classes = proba.shape[1]
-    # Weighted score: higher probability for higher classes = better stock
-    # Use actual model classes (may be fewer than 5 if pd.qcut dropped duplicates or fallback binary model)
-    if hasattr(model, 'classes_'):
-        class_weights = np.array(model.classes_, dtype=float)
-    else:
-        class_weights = np.arange(n_classes, dtype=float)
-    max_class = class_weights.max() if class_weights.max() > 0 else 1.0
-    weighted_class_score = np.dot(proba, class_weights) / max_class  # Normalize to 0-1
-    candidates_df['ai_score'] = weighted_class_score
+    # Score each ticker with its own model
+    ai_scores = []
+    for idx, row in candidates_df.iterrows():
+        ticker = row['ticker']
+        
+        # Get per-ticker model
+        ticker_model = None
+        if per_ticker_models and ticker in per_ticker_models:
+            ticker_model = per_ticker_models[ticker]
+        elif model is not None:
+            # Fallback to shared model if provided
+            ticker_model = model
+        else:
+            # Load fallback model
+            ticker_model = _load_or_create_model(model_path)
+        
+        if ticker_model is None:
+            print(f"   ⚠️ AI Elite: No model available for {ticker}, using score 0")
+            ai_scores.append(0.0)
+            continue
+        
+        # Extract features for this ticker
+        X_ticker = row[feature_cols].values.reshape(1, -1)
+        
+        # Get ML prediction probability
+        try:
+            proba = ticker_model.predict_proba(X_ticker)
+            n_classes = proba.shape[1]
+            # Weighted score: higher probability for higher classes = better stock
+            if hasattr(ticker_model, 'classes_'):
+                class_weights = np.array(ticker_model.classes_, dtype=float)
+            else:
+                class_weights = np.arange(n_classes, dtype=float)
+            max_class = class_weights.max() if class_weights.max() > 0 else 1.0
+            weighted_class_score = np.dot(proba, class_weights) / max_class  # Normalize to 0-1
+            ai_scores.append(weighted_class_score[0])
+        except Exception as e:
+            print(f"   ⚠️ AI Elite: Failed to score {ticker}: {e}")
+            ai_scores.append(0.0)
+    
+    candidates_df['ai_score'] = ai_scores
     
     # Pure AI scoring - the model is trained on risk-adjusted return labels,
     # so it already captures momentum + volatility internally
