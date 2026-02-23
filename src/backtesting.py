@@ -1618,8 +1618,8 @@ def _run_portfolio_backtest_walk_forward(
     ai_elite_cash = initial_capital_needed
     current_ai_elite_stocks = []
     ai_elite_last_rebalance_value = initial_capital_needed
-    ai_elite_model = None  # ML model (trained during backtest)
-    ai_elite_last_train_day = -999  # Track when model was last trained
+    ai_elite_models = {}  # Per-ticker models: ticker -> model
+    ai_elite_last_train_days = {}  # Per-ticker training tracking: ticker -> last_train_day
 
     # MEAN REVERSION: Initialize portfolio tracking
     mean_reversion_portfolio_value = initial_capital_needed
@@ -3939,39 +3939,54 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Risk-Adj Mom 3M error: {e}")
 
-        # AI ELITE STRATEGY (ML-powered scoring)
+        # AI ELITE STRATEGY (ML-powered scoring) - PER-TICKER MODELS
         if ENABLE_AI_ELITE:
             try:
-                from ai_elite_strategy import select_ai_elite_stocks, train_ai_elite_model
+                from ai_elite_strategy import select_ai_elite_stocks
+                from ai_elite_strategy_per_ticker import train_ai_elite_model_per_ticker
+                import os
+                import pickle
                 
-                # Check if we need to train/retrain the model
-                should_train = False
-                
-                # Initial training on day 1
-                if day_count == 1 and ai_elite_model is None:
-                    should_train = True
-                    print(f"   🎓 AI Elite: Initial training on day {day_count} with {AI_ELITE_TRAINING_LOOKBACK} days of data...")
-                
-                # Periodic retraining every 20 days (day 21, 41, 61, 81, etc.)
-                elif ai_elite_model is not None and (day_count - ai_elite_last_train_day) >= AI_ELITE_RETRAIN_DAYS:
-                    should_train = True
-                    print(f"   🔄 AI Elite: Retraining on day {day_count} with {AI_ELITE_TRAINING_LOOKBACK} days of data...")
-                
-                # Train model if needed
-                if should_train:
-                    # Train on last AI_ELITE_TRAINING_LOOKBACK days of history
-                    train_end = current_date
-                    train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
+                # Load existing models on day 1
+                if day_count == 1:
+                    print(f"   🎓 AI Elite: Loading per-ticker models...")
+                    models_dir = "logs/models"
+                    os.makedirs(models_dir, exist_ok=True)
                     
-                    ai_elite_model = train_ai_elite_model(
-                        ticker_data_grouped=ticker_data_grouped,
-                        all_tickers=initial_top_tickers,
-                        train_start_date=train_start,
-                        train_end_date=train_end,
-                        save_path=None,  # Don't save during backtest
-                        forward_days=AI_ELITE_FORWARD_DAYS
-                    )
-                    ai_elite_last_train_day = day_count
+                    for ticker in initial_top_tickers:
+                        model_path = os.path.join(models_dir, f"{ticker}_ai_elite.joblib")
+                        if os.path.exists(model_path):
+                            try:
+                                with open(model_path, 'rb') as f:
+                                    ai_elite_models[ticker] = pickle.load(f)
+                                ai_elite_last_train_days[ticker] = 0  # Mark as loaded
+                            except Exception as e:
+                                print(f"   ⚠️ AI Elite: Failed to load model for {ticker}: {e}")
+                
+                # Train/retrain models as needed (every day for fresh training)
+                train_end = current_date
+                train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
+                
+                print(f"   🎓 AI Elite: Training per-ticker models with {AI_ELITE_TRAINING_LOOKBACK} days of data...")
+                for ticker in initial_top_tickers:
+                    should_train = True  # Always train fresh per user request
+                    
+                    if should_train:
+                        # Continue training single ticker model (or train new if none exists)
+                        model_path = os.path.join("logs/models", f"{ticker}_ai_elite.joblib")
+                        existing_model = ai_elite_models.get(ticker)  # Get loaded model
+                        model = train_ai_elite_model_per_ticker(
+                            ticker=ticker,
+                            ticker_data=ticker_data_grouped.get(ticker),
+                            train_start_date=train_start,
+                            train_end_date=train_end,
+                            save_path=model_path,
+                            forward_days=AI_ELITE_FORWARD_DAYS,
+                            existing_model=existing_model  # Continue training
+                        )
+                        if model:
+                            ai_elite_models[ticker] = model
+                            ai_elite_last_train_days[ticker] = day_count
                 
                 # Select stocks using ML model (or fallback if in warmup)
                 print(f"   🤖 AI Elite: Analyzing {len(initial_top_tickers)} tickers...")
@@ -3982,7 +3997,7 @@ def _run_portfolio_backtest_walk_forward(
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE,
                     model_path=None,
-                    model=ai_elite_model  # Pass trained model directly
+                    per_ticker_models=ai_elite_models  # Pass per-ticker models
                 )
                 
                 if new_ai_elite_stocks:
