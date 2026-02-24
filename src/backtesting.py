@@ -4022,18 +4022,31 @@ def _run_portfolio_backtest_walk_forward(
                 models_dir = "logs/models"
                 os.makedirs(models_dir, exist_ok=True)
                 
-                # Check if we should train (day 1 always trains, otherwise check retrain interval)
+                # Try loading model from disk if not in memory
+                base_model_path = os.path.join(models_dir, "_shared_base_ai_elite.joblib")
+                if ai_elite_models.get('_shared_base') is None and os.path.exists(base_model_path):
+                    try:
+                        with open(base_model_path, 'rb') as f:
+                            loaded_model = pickle.load(f)
+                        ai_elite_models['_shared_base'] = loaded_model
+                        for ticker in initial_top_tickers:
+                            ai_elite_models[ticker] = loaded_model
+                            ai_elite_last_train_days[ticker] = 0  # Mark as loaded from disk (day 0)
+                        print(f"   ✅ AI Elite: Loaded model from disk for {len(initial_top_tickers)} tickers")
+                    except Exception as e:
+                        print(f"   ⚠️ AI Elite: Failed to load model from disk: {e}")
+                
+                # Check if we should train (day 1 always trains if no model loaded, otherwise check retrain interval)
                 should_train_ai_elite = False
-                if day_count == 1:
-                    should_train_ai_elite = True  # Always train on day 1 (initialization)
-                elif ai_elite_models.get('_shared_base') is None:
-                    should_train_ai_elite = True  # No model exists, need to train
+                if ai_elite_models.get('_shared_base') is None:
+                    should_train_ai_elite = True  # No model exists (in memory or disk), need to train
                 else:
-                    # Check if any ticker needs retraining based on AI_ELITE_RETRAIN_DAYS
+                    # Check retraining based on AI_ELITE_RETRAIN_DAYS
                     last_train_day = max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 0
                     days_since_train = day_count - last_train_day
                     if days_since_train >= AI_ELITE_RETRAIN_DAYS:
                         should_train_ai_elite = True
+                        print(f"   📊 AI Elite: Retraining triggered (day {day_count}, last train day {last_train_day}, interval {AI_ELITE_RETRAIN_DAYS})")
                 
                 if should_train_ai_elite:
                     # HYBRID: shared base model + per-ticker fine-tuning
@@ -4098,8 +4111,13 @@ def _run_portfolio_backtest_walk_forward(
                     else:
                         print(f"   ⚠️ AI Elite: Training failed, no model produced")
                 else:
-                    # Using existing model, no retraining needed
-                    print(f"   📊 AI Elite: Using existing model (trained {day_count - max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 'N/A'} days ago)")
+                    # Using existing model (loaded from disk or trained earlier), no retraining needed
+                    last_train_day = max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 0
+                    if last_train_day == 0:
+                        print(f"   📊 AI Elite: Using model loaded from disk (fresh load)")
+                    else:
+                        days_ago = day_count - last_train_day
+                        print(f"   📊 AI Elite: Using existing model (trained {days_ago} days ago, day {last_train_day})")
                 
                 # Select stocks using ML model (always runs - with fresh or existing model)
                 print(f"   🤖 AI Elite: Analyzing {len(initial_top_tickers)} tickers...")
