@@ -4036,9 +4036,12 @@ def _run_portfolio_backtest_walk_forward(
                     except Exception as e:
                         print(f"   ⚠️ AI Elite: Failed to load model from disk: {e}")
                 
-                # Check if we should train (day 1 always trains if no model loaded, otherwise check retrain interval)
+                # Check if we should train (day 1 ALWAYS trains, otherwise check retrain interval)
                 should_train_ai_elite = False
-                if ai_elite_models.get('_shared_base') is None:
+                if day_count == 1:
+                    should_train_ai_elite = True  # Always train on day 1
+                    print(f"   📊 AI Elite: Day 1 - forced training (warm-start from {'disk model' if ai_elite_models.get('_shared_base') is not None else 'scratch'})")
+                elif ai_elite_models.get('_shared_base') is None:
                     should_train_ai_elite = True  # No model exists (in memory or disk), need to train
                 else:
                     # Check retraining based on AI_ELITE_RETRAIN_DAYS
