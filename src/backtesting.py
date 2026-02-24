@@ -33,7 +33,7 @@ from config import (
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
     CALENDAR_DAYS_PER_YEAR,
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
-    ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_3M, ENABLE_AI_ELITE,
+    ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_AI_ELITE,
     CONCENTRATED_3M_REBALANCE_DAYS,
     AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, AI_ELITE_INTRADAY_LOOKBACK
 )
@@ -1635,6 +1635,15 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_3m_cash = initial_capital_needed
     current_risk_adj_mom_3m_stocks = []
 
+    # RISK-ADJ MOM 3M MONTHLY: Initialize portfolio tracking (rebalance start of month only)
+    risk_adj_mom_3m_monthly_portfolio_value = initial_capital_needed
+    risk_adj_mom_3m_monthly_portfolio_history = [risk_adj_mom_3m_monthly_portfolio_value]
+    risk_adj_mom_3m_monthly_positions = {}
+    risk_adj_mom_3m_monthly_cash = initial_capital_needed
+    current_risk_adj_mom_3m_monthly_stocks = []
+    risk_adj_mom_3m_monthly_initialized = False
+    risk_adj_mom_3m_monthly_last_month = None
+
     # AI ELITE: Initialize portfolio tracking
     ai_elite_portfolio_value = initial_capital_needed
     ai_elite_portfolio_history = [ai_elite_portfolio_value]
@@ -1724,6 +1733,7 @@ def _run_portfolio_backtest_walk_forward(
     elite_risk_transaction_costs = 0.0
     risk_adj_mom_6m_transaction_costs = 0.0
     risk_adj_mom_3m_transaction_costs = 0.0
+    risk_adj_mom_3m_monthly_transaction_costs = 0.0
     ai_elite_transaction_costs = 0.0
 
     # Transaction cost tracking for strategies that don't initialize it elsewhere
@@ -3964,6 +3974,43 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Risk-Adj Mom 3M error: {e}")
 
+        # RISK-ADJ MOM 3M MONTHLY STRATEGY (same scoring, rebalance start of month only)
+        if ENABLE_RISK_ADJ_MOM_3M_MONTHLY:
+            should_rebalance_3m_mom_monthly = (not risk_adj_mom_3m_monthly_initialized) or is_first_trading_day_of_month
+            if should_rebalance_3m_mom_monthly:
+                try:
+                    from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
+
+                    new_stocks = select_risk_adj_mom_3m_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE
+                    )
+
+                    if new_stocks:
+                        if not risk_adj_mom_3m_monthly_initialized:
+                            print(f"   🎯 Risk-Adj Mom 3M Monthly: Initializing with {new_stocks}")
+                        else:
+                            print(f"   🔄 Risk-Adj Mom 3M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
+                        risk_adj_mom_3m_monthly_positions, risk_adj_mom_3m_monthly_cash, current_risk_adj_mom_3m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                            strategy_name="RiskAdj 3M Mth",
+                            current_stocks=current_risk_adj_mom_3m_monthly_stocks,
+                            new_stocks=new_stocks,
+                            positions=risk_adj_mom_3m_monthly_positions,
+                            cash=risk_adj_mom_3m_monthly_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not risk_adj_mom_3m_monthly_initialized)
+                        risk_adj_mom_3m_monthly_transaction_costs += rc
+                        risk_adj_mom_3m_monthly_initialized = True
+                        risk_adj_mom_3m_monthly_last_month = current_date.month
+
+                except Exception as e:
+                    print(f"   ⚠️ Risk-Adj Mom 3M Monthly error: {e}")
+
         # AI ELITE STRATEGY (ML-powered scoring) - PER-TICKER MODELS
         if ENABLE_AI_ELITE:
             try:
@@ -5230,6 +5277,28 @@ def _run_portfolio_backtest_walk_forward(
         risk_adj_mom_3m_portfolio_value = risk_adj_mom_3m_invested_value + risk_adj_mom_3m_cash
         risk_adj_mom_3m_portfolio_history.append(risk_adj_mom_3m_portfolio_value)
 
+        # Update RISK-ADJ MOM 3M MONTHLY portfolio value daily
+        risk_adj_mom_3m_monthly_invested_value = 0.0
+        if ENABLE_RISK_ADJ_MOM_3M_MONTHLY:
+            for ticker in list(risk_adj_mom_3m_monthly_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = risk_adj_mom_3m_monthly_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            risk_adj_mom_3m_monthly_positions[ticker]['value'] = position_value
+                            risk_adj_mom_3m_monthly_invested_value += position_value
+                        else:
+                            risk_adj_mom_3m_monthly_invested_value += risk_adj_mom_3m_monthly_positions[ticker].get('value', 0.0)
+                    else:
+                        risk_adj_mom_3m_monthly_invested_value += risk_adj_mom_3m_monthly_positions[ticker].get('value', 0.0)
+                except Exception:
+                    risk_adj_mom_3m_monthly_invested_value += risk_adj_mom_3m_monthly_positions[ticker].get('value', 0.0)
+        risk_adj_mom_3m_monthly_portfolio_value = risk_adj_mom_3m_monthly_invested_value + risk_adj_mom_3m_monthly_cash
+        risk_adj_mom_3m_monthly_portfolio_history.append(risk_adj_mom_3m_monthly_portfolio_value)
+
         # Update AI ELITE portfolio value daily
         ai_elite_invested_value = 0.0
         if ENABLE_AI_ELITE:
@@ -5724,6 +5793,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("Elite Risk", elite_risk_portfolio_value if ENABLE_ELITE_RISK else None),
                 ("Risk-Adj Mom 6M", risk_adj_mom_6m_portfolio_value if ENABLE_RISK_ADJ_MOM_6M else None),
                 ("Risk-Adj Mom 3M", risk_adj_mom_3m_portfolio_value if ENABLE_RISK_ADJ_MOM_3M else None),
+                ("RiskAdj 3M Mth", risk_adj_mom_3m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_3M_MONTHLY else None),
                 ("AI Elite", ai_elite_portfolio_value if ENABLE_AI_ELITE else None),
                 ("BH 1Y Monthly", static_bh_1y_monthly_portfolio_value if ENABLE_STATIC_BH_1Y_MONTHLY else None),
                 ("BH 6M Monthly", static_bh_6m_monthly_portfolio_value if ENABLE_STATIC_BH_6M_MONTHLY else None),
@@ -5871,6 +5941,10 @@ def _run_portfolio_backtest_walk_forward(
                 elif name == "Risk-Adj Mom 3M" and ENABLE_RISK_ADJ_MOM_3M:
                     strat_cash = risk_adj_mom_3m_cash
                     num_positions = len(risk_adj_mom_3m_positions)
+                    invested = value - strat_cash
+                elif name == "RiskAdj 3M Mth" and ENABLE_RISK_ADJ_MOM_3M_MONTHLY:
+                    strat_cash = risk_adj_mom_3m_monthly_cash
+                    num_positions = len(risk_adj_mom_3m_monthly_positions)
                     invested = value - strat_cash
                 elif name == "AI Elite" and ENABLE_AI_ELITE:
                     strat_cash = ai_elite_cash
@@ -6020,6 +6094,7 @@ def _run_portfolio_backtest_walk_forward(
             ("Elite Risk",          elite_risk_portfolio_history          if ENABLE_ELITE_RISK else None),
             ("Risk-Adj Mom 6M",     risk_adj_mom_6m_portfolio_history     if ENABLE_RISK_ADJ_MOM_6M else None),
             ("Risk-Adj Mom 3M",     risk_adj_mom_3m_portfolio_history     if ENABLE_RISK_ADJ_MOM_3M else None),
+            ("RiskAdj 3M Mth",     risk_adj_mom_3m_monthly_portfolio_history if ENABLE_RISK_ADJ_MOM_3M_MONTHLY else None),
             ("AI Elite",            ai_elite_portfolio_history            if ENABLE_AI_ELITE else None),
             ("BH 1Y Monthly",       static_bh_1y_monthly_portfolio_history if ENABLE_STATIC_BH_1Y_MONTHLY else None),
             ("BH 6M Monthly",       static_bh_6m_monthly_portfolio_history if ENABLE_STATIC_BH_6M_MONTHLY else None),
@@ -6161,6 +6236,7 @@ def _run_portfolio_backtest_walk_forward(
             'elite_risk':               _strat(elite_risk_portfolio_value, elite_risk_portfolio_history, elite_risk_transaction_costs, elite_risk_cash),
             'risk_adj_mom_6m':          _strat(risk_adj_mom_6m_portfolio_value, risk_adj_mom_6m_portfolio_history, risk_adj_mom_6m_transaction_costs, risk_adj_mom_6m_cash),
             'risk_adj_mom_3m':          _strat(risk_adj_mom_3m_portfolio_value, risk_adj_mom_3m_portfolio_history, risk_adj_mom_3m_transaction_costs, risk_adj_mom_3m_cash),
+            'risk_adj_mom_3m_monthly':  _strat(risk_adj_mom_3m_monthly_portfolio_value, risk_adj_mom_3m_monthly_portfolio_history, risk_adj_mom_3m_monthly_transaction_costs, risk_adj_mom_3m_monthly_cash),
             'ai_elite':                 _strat(ai_elite_portfolio_value, ai_elite_portfolio_history, ai_elite_transaction_costs, ai_elite_cash),
             'risk_adj_mom_sentiment':   _strat(risk_adj_mom_sentiment_portfolio_value, risk_adj_mom_sentiment_portfolio_history, risk_adj_mom_sentiment_transaction_costs, risk_adj_mom_sentiment_cash),
             'bh_1y_monthly':            _strat(static_bh_1y_monthly_portfolio_value, static_bh_1y_monthly_portfolio_history, static_bh_1y_monthly_transaction_costs, static_bh_1y_monthly_cash),

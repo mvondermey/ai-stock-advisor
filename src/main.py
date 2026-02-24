@@ -1556,6 +1556,11 @@ def main(
         risk_adj_mom_3m_1y_return=_ret('risk_adj_mom_3m'),
         risk_adj_mom_3m_transaction_costs=s['risk_adj_mom_3m']['costs'],
         risk_adj_mom_3m_cash=s['risk_adj_mom_3m']['cash_deployed'],
+        # Risk-Adj Mom 3M Monthly
+        final_risk_adj_mom_3m_monthly_value_1y=s['risk_adj_mom_3m_monthly']['value'],
+        risk_adj_mom_3m_monthly_1y_return=_ret('risk_adj_mom_3m_monthly'),
+        risk_adj_mom_3m_monthly_transaction_costs=s['risk_adj_mom_3m_monthly']['costs'],
+        risk_adj_mom_3m_monthly_cash=s['risk_adj_mom_3m_monthly']['cash_deployed'],
         # Risk-Adj Mom Sentiment
         final_risk_adj_mom_sentiment_value_1y=s['risk_adj_mom_sentiment']['value'],
         risk_adj_mom_sentiment_1y_return=_ret('risk_adj_mom_sentiment'),
