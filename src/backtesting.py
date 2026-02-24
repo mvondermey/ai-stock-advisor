@@ -4095,6 +4095,8 @@ def _run_portfolio_backtest_walk_forward(
                             ai_elite_models[ticker] = base_model
                             ai_elite_last_train_days[ticker] = day_count
                         trained = len(initial_top_tickers)
+                    else:
+                        print(f"   ⚠️ AI Elite: Training failed, no model produced")
                 else:
                     # Using existing model, no retraining needed
                     print(f"   📊 AI Elite: Using existing model (trained {day_count - max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 'N/A'} days ago)")
