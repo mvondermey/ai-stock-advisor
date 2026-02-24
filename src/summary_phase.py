@@ -233,6 +233,11 @@ def print_final_summary(
     risk_adj_mom_3m_1y_return: float = None,
     risk_adj_mom_3m_transaction_costs: float = None,
     risk_adj_mom_3m_cash: float = None,
+    # Risk-Adj Mom 3M Monthly
+    final_risk_adj_mom_3m_monthly_value_1y: float = None,
+    risk_adj_mom_3m_monthly_1y_return: float = None,
+    risk_adj_mom_3m_monthly_transaction_costs: float = None,
+    risk_adj_mom_3m_monthly_cash: float = None,
     # Risk-Adj Mom Sentiment
     final_risk_adj_mom_sentiment_value_1y: float = None,
     risk_adj_mom_sentiment_1y_return: float = None,
@@ -367,6 +372,7 @@ def print_final_summary(
     strategies_data.append(('Elite Risk', final_elite_risk_value_1y, elite_risk_1y_return, elite_risk_transaction_costs, elite_risk_cash))
     strategies_data.append(('Risk-Adj Mom 6M', final_risk_adj_mom_6m_value_1y, risk_adj_mom_6m_1y_return, risk_adj_mom_6m_transaction_costs, risk_adj_mom_6m_cash))
     strategies_data.append(('Risk-Adj Mom 3M', final_risk_adj_mom_3m_value_1y, risk_adj_mom_3m_1y_return, risk_adj_mom_3m_transaction_costs, risk_adj_mom_3m_cash))
+    strategies_data.append(('RiskAdj 3M Mth', final_risk_adj_mom_3m_monthly_value_1y, risk_adj_mom_3m_monthly_1y_return, risk_adj_mom_3m_monthly_transaction_costs, risk_adj_mom_3m_monthly_cash))
     strategies_data.append(('Risk-Adj Mom Sentiment', final_risk_adj_mom_sentiment_value_1y, risk_adj_mom_sentiment_1y_return, risk_adj_mom_sentiment_transaction_costs, risk_adj_mom_sentiment_cash))
     strategies_data.append(('Static BH 1Y Monthly', final_bh_1y_monthly_value_1y, bh_1y_monthly_1y_return, bh_1y_monthly_transaction_costs, bh_1y_monthly_cash))
     strategies_data.append(('Static BH 6M Monthly', final_bh_6m_monthly_value_1y, bh_6m_monthly_1y_return, bh_6m_monthly_transaction_costs, bh_6m_monthly_cash))
