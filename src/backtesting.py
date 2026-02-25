@@ -6064,10 +6064,14 @@ def _run_portfolio_backtest_walk_forward(
             # Sort by value and display
             strategy_details.sort(key=lambda x: x[1], reverse=True)
             for i, (name, value, strat_cash, num_pos, invested) in enumerate(strategy_details, 1):
-                return_pct = ((value - initial_capital_needed) / initial_capital_needed) * 100
+                # Use TOTAL_CAPITAL as the starting capital for return calculation
+                # (all strategies start with the same initial investment)
+                from config import TOTAL_CAPITAL
+                starting_capital = TOTAL_CAPITAL
+                return_pct = ((value - starting_capital) / starting_capital) * 100
                 # Calculate annualized return: (1 + total_return)^(252/days) - 1
                 if day_count > 0:
-                    total_return_multiplier = value / initial_capital_needed
+                    total_return_multiplier = value / starting_capital
                     annualized_return = (total_return_multiplier ** (252.0 / day_count) - 1) * 100
                 else:
                     annualized_return = 0.0
