@@ -2226,3 +2226,300 @@ def select_voting_ensemble_stocks(all_tickers, ticker_data_grouped, current_date
         print(f"   ❌ No stocks received votes from any strategy")
     
     return top_voted_stocks
+
+
+def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days, top_n=10,
+                          apply_performance_filter=False, filter_label="Strategy"):
+    """
+    Shared stock selection by historical performance: calculate_parallel_performance + sort + top N.
+    
+    This is the SINGLE source of truth for performance-based stock selection.
+    Used by Static BH, Dynamic BH, Monthly variants, and their extensions.
+    
+    Args:
+        all_tickers: List of ticker symbols
+        ticker_data_grouped: Dict of ticker -> DataFrame  
+        current_date: Current date for analysis
+        lookback_days: Number of days to look back for performance (365=1Y, 180=6M, 90=3M, 30=1M)
+        top_n: Number of stocks to select
+        apply_performance_filter: If True, apply performance_filters before ranking
+        filter_label: Label for performance filter logging
+        
+    Returns:
+        List of selected ticker symbols (top performers)
+    """
+    from parallel_backtest import calculate_parallel_performance
+    
+    tickers_to_rank = all_tickers
+    if apply_performance_filter:
+        from performance_filters import filter_tickers_by_performance
+        tickers_to_rank = filter_tickers_by_performance(
+            all_tickers, ticker_data_grouped, current_date, filter_label
+        )
+    
+    performances = calculate_parallel_performance(
+        tickers_to_rank, ticker_data_grouped, current_date, period_days=lookback_days
+    )
+    
+    if performances:
+        performances.sort(key=lambda x: x[1], reverse=True)
+        return [ticker for ticker, _ in performances[:top_n]]
+    
+    return []
+
+
+def select_top_performers_with_scores(all_tickers, ticker_data_grouped, current_date, lookback_days, top_n=10,
+                                       apply_performance_filter=False, filter_label="Strategy"):
+    """
+    Same as select_top_performers but also returns performance scores.
+    
+    Returns:
+        List of (ticker, performance_pct) tuples, sorted descending
+    """
+    from parallel_backtest import calculate_parallel_performance
+    
+    tickers_to_rank = all_tickers
+    if apply_performance_filter:
+        from performance_filters import filter_tickers_by_performance
+        tickers_to_rank = filter_tickers_by_performance(
+            all_tickers, ticker_data_grouped, current_date, filter_label
+        )
+    
+    performances = calculate_parallel_performance(
+        tickers_to_rank, ticker_data_grouped, current_date, period_days=lookback_days
+    )
+    
+    if performances:
+        performances.sort(key=lambda x: x[1], reverse=True)
+        return performances[:top_n]
+    
+    return []
+
+
+def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current_date, lookback_days,
+                                        max_volatility, top_n=10):
+    """
+    Performance-based stock selection with volatility filter.
+    Calculates performances, filters by max annualized volatility, then returns top N.
+    
+    Args:
+        all_tickers: List of ticker symbols
+        ticker_data_grouped: Dict of ticker -> DataFrame
+        current_date: Current date for analysis
+        lookback_days: Number of days for performance calculation
+        max_volatility: Maximum annualized volatility (%) to pass filter
+        top_n: Number of stocks to select
+        
+    Returns:
+        (selected_tickers, stocks_passed, stocks_evaluated) tuple
+    """
+    import pandas as pd
+    from parallel_backtest import calculate_parallel_performance
+    from datetime import timedelta
+    
+    performances = calculate_parallel_performance(
+        all_tickers, ticker_data_grouped, current_date, period_days=lookback_days
+    )
+    
+    filtered = []
+    stocks_evaluated = 0
+    stocks_passed = 0
+    
+    for ticker, perf_pct in performances:
+        try:
+            ticker_data = ticker_data_grouped[ticker]
+            perf_start_date = current_date - timedelta(days=lookback_days)
+            perf_data = ticker_data.loc[perf_start_date:current_date]
+            
+            if len(perf_data) >= 50:
+                valid_close = perf_data['Close'].dropna()
+                if len(valid_close) >= 2:
+                    stocks_evaluated += 1
+                    daily_returns = valid_close.pct_change(fill_method=None).dropna()
+                    if len(daily_returns) > 10:
+                        annualized_volatility = daily_returns.std() * (252 ** 0.5) * 100
+                        if annualized_volatility <= max_volatility:
+                            filtered.append((ticker, perf_pct, annualized_volatility))
+                            stocks_passed += 1
+        except Exception:
+            continue
+    
+    if filtered:
+        filtered.sort(key=lambda x: x[1], reverse=True)
+        selected = [ticker for ticker, _, _ in filtered[:top_n]]
+        return selected, stocks_passed, stocks_evaluated
+    
+    return [], stocks_passed, stocks_evaluated
+
+
+def select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=10):
+    """
+    Momentum AI Hybrid Strategy: Selects top momentum stocks based on lookback period.
+    
+    Shared function used by both backtesting and live trading.
+    
+    Args:
+        all_tickers: List of ticker symbols
+        ticker_data_grouped: Dict of ticker -> DataFrame
+        current_date: Current date for analysis
+        top_n: Number of stocks to select
+        
+    Returns:
+        List of selected ticker symbols
+    """
+    import pandas as pd
+    from config import MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK
+    
+    momentum_scores = []
+    
+    for ticker in all_tickers:
+        try:
+            if ticker not in ticker_data_grouped:
+                continue
+            ticker_history = ticker_data_grouped[ticker]
+            
+            # Filter to current date
+            if current_date is not None:
+                current_ts = pd.Timestamp(current_date)
+                ticker_history = ticker_history[ticker_history.index <= current_ts]
+            
+            ticker_history = ticker_history.tail(MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK + 10)
+            
+            if len(ticker_history) >= MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK:
+                lookback_data = ticker_history.tail(MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK)
+                start_price = lookback_data.iloc[0]['Close']
+                end_price = lookback_data.iloc[-1]['Close']
+                
+                if start_price > 0:
+                    momentum_return = (end_price - start_price) / start_price
+                    momentum_scores.append((ticker, momentum_return))
+        
+        except Exception:
+            continue
+    
+    if momentum_scores:
+        momentum_scores.sort(key=lambda x: x[1], reverse=True)
+        top_stocks = [ticker for ticker, score in momentum_scores[:top_n]]
+        print(f"   📈 Momentum AI Hybrid: Top {top_n} stocks: {[(t, f'{s*100:.1f}%') for t, s in momentum_scores[:top_n]]}")
+        return top_stocks
+    
+    return []
+
+
+def select_ai_elite_with_training(
+    all_tickers: list,
+    ticker_data_grouped: dict,
+    current_date=None,
+    top_n: int = 10,
+    ai_elite_models: dict = None,
+    force_train: bool = False
+) -> tuple:
+    """
+    AI Elite Strategy: Full pipeline — load model, train if needed, select stocks.
+    
+    This is the SINGLE source of truth for AI Elite. Both backtesting and live trading call this.
+    
+    Args:
+        all_tickers: List of ticker symbols
+        ticker_data_grouped: Dict of ticker -> DataFrame
+        current_date: Current date for analysis
+        top_n: Number of stocks to select
+        ai_elite_models: Dict of models (mutated in-place). Pass {} on first call.
+        force_train: If True, always retrain even if model exists on disk
+        
+    Returns:
+        (selected_stocks, ai_elite_models) — selected tickers and updated models dict
+    """
+    from ai_elite_strategy import select_ai_elite_stocks, _calculate_market_return
+    from ai_elite_strategy_per_ticker import train_shared_base_model, collect_ticker_training_data
+    from config import AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS
+    import os
+    import pickle
+    from datetime import timedelta, timezone as tz_utc
+    
+    if ai_elite_models is None:
+        ai_elite_models = {}
+    
+    models_dir = "logs/models"
+    base_model_path = os.path.join(models_dir, "_shared_base_ai_elite.joblib")
+    
+    # Step 1: Try loading saved model from disk if not already in memory
+    if ai_elite_models.get('_shared_base') is None and not force_train:
+        if os.path.exists(base_model_path):
+            try:
+                with open(base_model_path, 'rb') as f:
+                    loaded_model = pickle.load(f)
+                ai_elite_models['_shared_base'] = loaded_model
+                for ticker in all_tickers:
+                    ai_elite_models[ticker] = loaded_model
+                print(f"   ✅ AI Elite: Loaded model from {base_model_path}")
+            except Exception as e:
+                print(f"   ⚠️ AI Elite: Failed to load model: {e}")
+    
+    # Step 2: Train if no model loaded (or force_train)
+    if ai_elite_models.get('_shared_base') is None or force_train:
+        print(f"   🎓 AI Elite: Training shared base model...")
+        
+        # Determine training window
+        if current_date is None:
+            import pandas as pd
+            from datetime import datetime
+            current_date = datetime.now(tz_utc.utc)
+        
+        train_end = current_date
+        train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
+        
+        # Pre-compute market returns (same as backtesting)
+        market_returns = {}
+        sample_date_iter = train_start
+        while sample_date_iter <= train_end:
+            mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
+            utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
+            market_returns[utc_key] = mr if mr is not None else 0.0
+            sample_date_iter += timedelta(days=2)
+        
+        # Collect training data from all tickers
+        print(f"   📊 AI Elite: Collecting data from {len(all_tickers)} tickers ({AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
+        all_training_data = []
+        ticker_samples_map = {}
+        
+        for t in all_tickers:
+            try:
+                samples = collect_ticker_training_data(
+                    ticker=t, ticker_data=ticker_data_grouped.get(t),
+                    train_start_date=train_start, train_end_date=train_end,
+                    forward_days=AI_ELITE_FORWARD_DAYS, market_returns=market_returns
+                )
+                if samples:
+                    all_training_data.extend(samples)
+                    ticker_samples_map[t] = samples
+            except Exception:
+                pass
+        
+        print(f"   📊 AI Elite: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers")
+        
+        # Train shared base model
+        os.makedirs(models_dir, exist_ok=True)
+        existing_base = ai_elite_models.get('_shared_base')
+        base_model, base_r2 = train_shared_base_model(
+            all_training_data, save_path=base_model_path,
+            existing_model=existing_base
+        )
+        
+        if base_model:
+            ai_elite_models['_shared_base'] = base_model
+            for ticker in all_tickers:
+                ai_elite_models[ticker] = base_model
+            print(f"   ✅ AI Elite: Model trained (R² {base_r2:.3f})")
+        else:
+            print(f"   ⚠️ AI Elite: Training failed, no model produced")
+    
+    # Step 3: Select stocks using trained model
+    selected = select_ai_elite_stocks(
+        all_tickers, ticker_data_grouped,
+        current_date=current_date,
+        top_n=top_n,
+        per_ticker_models=ai_elite_models
+    )
+    
+    return selected, ai_elite_models

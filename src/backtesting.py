@@ -34,6 +34,7 @@ from config import (
     CALENDAR_DAYS_PER_YEAR,
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
     ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_AI_ELITE,
+    ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_REGIME, ENABLE_AI_REGIME_MONTHLY, ENABLE_UNIVERSAL_MODEL,
     CONCENTRATED_3M_REBALANCE_DAYS,
     AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, AI_ELITE_INTRADAY_LOOKBACK
 )
@@ -80,12 +81,12 @@ from config import (
     ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M, ENABLE_ADAPTIVE_STRATEGY,
     ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_RISK_ADJ_MOM_SENTIMENT,
     ENABLE_TURNAROUND, ENABLE_VOTING_ENSEMBLE,
-    ENABLE_STATIC_BH_1Y_MONTHLY, ENABLE_STATIC_BH_6M_MONTHLY, ENABLE_STATIC_BH_3M_MONTHLY,
+    ENABLE_STATIC_BH_1Y_MONTHLY, ENABLE_STATIC_BH_6M_MONTHLY, ENABLE_STATIC_BH_3M_MONTHLY, ENABLE_STATIC_BH_1M_MONTHLY,
     RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION, RISK_ADJ_MOM_CONFIRM_SHORT, RISK_ADJ_MOM_CONFIRM_MEDIUM, RISK_ADJ_MOM_CONFIRM_LONG, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
     RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER,
     OPTIMIZE_REBALANCE_HORIZON,
     TRAINING_NUM_PROCESSES,
-    ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_REGIME,
+    ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_REGIME, ENABLE_UNIVERSAL_MODEL,
 )
 from scipy.stats import uniform, beta
 
@@ -1211,9 +1212,6 @@ def _run_portfolio_backtest_walk_forward(
     backtest_start_date: datetime,
     backtest_end_date: datetime,
     initial_top_tickers: List[str],
-    initial_models: Dict,  # Single regression models
-    initial_scalers: Dict,
-    initial_y_scalers: Dict,
     capital_per_stock: float,
     period_name: str,
     top_performers_data: List[Tuple],
@@ -1234,24 +1232,7 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   💰 Running all enabled strategies")
     
     
-    # Initialize
-    current_models = initial_models.copy()  # Single regression models
-    current_scalers = initial_scalers.copy()
-    current_y_scalers = initial_y_scalers.copy()
-
-    # Debug: Check initial models/scalers
-    print(f"   🔍 Initial models: {len(current_models)} tickers, sample: {list(current_models.keys())[:3]}")
-    print(f"   🔍 Initial scalers: {len(current_scalers)} tickers, sample: {list(current_scalers.keys())[:3]}")
-    print(f"   🔍 Initial y_scalers: {len(current_y_scalers)} tickers, sample: {list(current_y_scalers.keys())[:3]}")
-
-    # Check if any models are None
-    none_models = [t for t, m in current_models.items() if m is None]
-    if none_models:
-        print(f"   ⚠️ Warning: {len(none_models)} models are None: {none_models[:5]}...")
-
-    none_scalers = [t for t, s in current_scalers.items() if s is None]
-    if none_scalers:
-        print(f"   ⚠️ Warning: {len(none_scalers)} scalers are None: {none_scalers[:5]}...")
+    # Initialize - AI Elite models are trained during walk-forward, not loaded upfront
 
     # Track current portfolio (starts empty)
     current_portfolio_stocks = []
@@ -1334,6 +1315,16 @@ def _run_portfolio_backtest_walk_forward(
     static_bh_3m_monthly_initialized = False
     static_bh_3m_monthly_transaction_costs = 0.0
     static_bh_3m_monthly_last_month = None
+
+    # Static BH 1M Monthly
+    static_bh_1m_monthly_portfolio_value = initial_capital_needed
+    static_bh_1m_monthly_portfolio_history = [static_bh_1m_monthly_portfolio_value]
+    static_bh_1m_monthly_positions = {}
+    static_bh_1m_monthly_cash = initial_capital_needed
+    current_static_bh_1m_monthly_stocks = []
+    static_bh_1m_monthly_initialized = False
+    static_bh_1m_monthly_transaction_costs = 0.0
+    static_bh_1m_monthly_last_month = None
 
     # Track DYNAMIC BH PORTFOLIO (rebalances to top N performers periodically)
     dynamic_bh_portfolio_value = initial_capital_needed
@@ -1676,6 +1667,27 @@ def _run_portfolio_backtest_walk_forward(
     ai_regime_allocator = None  # Will be initialized on first use
     ai_regime_current_strategy = 'risk_adj_mom_3m'  # Default strategy
 
+    # AI REGIME MONTHLY: Initialize portfolio tracking (same as AI Regime but monthly rebalance)
+    ai_regime_monthly_portfolio_value = initial_capital_needed
+    ai_regime_monthly_portfolio_history = [ai_regime_monthly_portfolio_value]
+    ai_regime_monthly_positions = {}
+    ai_regime_monthly_cash = initial_capital_needed
+    current_ai_regime_monthly_stocks = []
+    ai_regime_monthly_transaction_costs = 0.0
+    ai_regime_monthly_initialized = False
+    ai_regime_monthly_allocator = None  # Will be initialized on first use
+    ai_regime_monthly_current_strategy = 'risk_adj_mom_3m'  # Default strategy
+
+    # UNIVERSAL MODEL: Initialize portfolio tracking (single ML model for all tickers)
+    universal_model_portfolio_value = initial_capital_needed
+    universal_model_portfolio_history = [universal_model_portfolio_value]
+    universal_model_positions = {}
+    universal_model_cash = initial_capital_needed
+    current_universal_model_stocks = []
+    universal_model_transaction_costs = 0.0
+    universal_model_initialized = False
+    universal_model_strategy = None  # Will be initialized on first use
+
     # MEAN REVERSION: Initialize portfolio tracking
     mean_reversion_portfolio_value = initial_capital_needed
     mean_reversion_portfolio_history = [mean_reversion_portfolio_value]
@@ -1840,18 +1852,12 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance_1y:
-                # Calculate top PORTFOLIO_SIZE by 1-year performance (always parallel)
-                from parallel_backtest import calculate_parallel_performance
-                perf_1y_list = calculate_parallel_performance(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date,
-                    period_days=365
+                from shared_strategies import select_top_performers
+                new_static_bh_1y_stocks = select_top_performers(
+                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE
                 )
                 
-                if perf_1y_list:
-                    perf_1y_list.sort(key=lambda x: x[1], reverse=True)
-                    new_static_bh_1y_stocks = [t for t, _ in perf_1y_list[:PORTFOLIO_SIZE]]
+                if new_static_bh_1y_stocks:
                     
                     if new_static_bh_1y_stocks != current_static_bh_1y_stocks:
                         if not static_bh_1y_initialized:
@@ -1884,50 +1890,34 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance_3m:
-                # Calculate top PORTFOLIO_SIZE by 3-month performance
-                perf_3m_list = []
-                for ticker in initial_top_tickers:
-                    if ticker not in ticker_data_grouped:
-                        continue
-                    ticker_data = ticker_data_grouped[ticker]
-                    perf_start = current_date - timedelta(days=90)
-                    perf_data = ticker_data.loc[perf_start:current_date]
-                    if len(perf_data) >= 30:
-                        valid_close = perf_data['Close'].dropna()
-                        if len(valid_close) >= 2:
-                            start_p = valid_close.iloc[0]
-                            end_p = valid_close.iloc[-1]
-                            if start_p > 0:
-                                perf_pct = ((end_p - start_p) / start_p) * 100
-                                perf_3m_list.append((ticker, perf_pct))
+                from shared_strategies import select_top_performers
+                new_static_bh_3m_stocks = select_top_performers(
+                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=PORTFOLIO_SIZE
+                )
                 
-                if perf_3m_list:
-                    perf_3m_list.sort(key=lambda x: x[1], reverse=True)
-                    new_static_bh_3m_stocks = [t for t, _ in perf_3m_list[:PORTFOLIO_SIZE]]
+                if new_static_bh_3m_stocks:
+                    if not static_bh_3m_initialized:
+                        print(f"   🎯 Static BH 3M: Initializing with top {len(new_static_bh_3m_stocks)} by 3M performance: {new_static_bh_3m_stocks}")
+                    else:
+                        print(f"   🔄 Static BH 3M: Smart rebalancing to top {len(new_static_bh_3m_stocks)} by 3M performance: {new_static_bh_3m_stocks}")
                     
-                    if new_static_bh_3m_stocks:
-                        if not static_bh_3m_initialized:
-                            print(f"   🎯 Static BH 3M: Initializing with top {len(new_static_bh_3m_stocks)} by 3M performance: {new_static_bh_3m_stocks}")
-                        else:
-                            print(f"   🔄 Static BH 3M: Smart rebalancing to top {len(new_static_bh_3m_stocks)} by 3M performance: {new_static_bh_3m_stocks}")
-                        
-                        # Use universal smart rebalancing function
-                        static_bh_3m_positions, static_bh_3m_cash, current_static_bh_3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
-                            strategy_name="Static BH 3M",
-                            current_stocks=current_static_bh_3m_stocks,
-                            new_stocks=new_static_bh_3m_stocks,
-                            positions=static_bh_3m_positions,
-                            cash=static_bh_3m_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not static_bh_3m_initialized  # Force initial allocation
-                        )
-                        static_bh_transaction_costs += rebalance_costs
-                        
-                        static_bh_3m_initialized = True
-                        static_bh_3m_days_since_rebalance = 0
+                    # Use universal smart rebalancing function
+                    static_bh_3m_positions, static_bh_3m_cash, current_static_bh_3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        strategy_name="Static BH 3M",
+                        current_stocks=current_static_bh_3m_stocks,
+                        new_stocks=new_static_bh_3m_stocks,
+                        positions=static_bh_3m_positions,
+                        cash=static_bh_3m_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not static_bh_3m_initialized  # Force initial allocation
+                    )
+                    static_bh_transaction_costs += rebalance_costs
+                    
+                    static_bh_3m_initialized = True
+                    static_bh_3m_days_since_rebalance = 0
             
             # STATIC BH 6M: Initialize on day 1, then rebalance every N days if configured
         if ENABLE_STATIC_BH_6M:
@@ -1937,21 +1927,10 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance_6m:
-                # Calculate top PORTFOLIO_SIZE by 6-month performance
-                perf_6m_list = []
-                for ticker in initial_top_tickers:
-                    if ticker not in ticker_data_grouped:
-                        continue
-                    ticker_data = ticker_data_grouped[ticker]
-                    
-                    # Calculate 6-month performance (126 trading days ~ 6 months)
-                    perf_6m = _return_over_lookback(ticker_data, current_date, 126)
-                    if perf_6m is not None:
-                        perf_6m_list.append((ticker, perf_6m))
-                
-                # Sort by 6-month performance (best first) and take top PORTFOLIO_SIZE
-                perf_6m_list.sort(key=lambda x: x[1], reverse=True)
-                new_static_bh_6m_stocks = [ticker for ticker, _ in perf_6m_list[:PORTFOLIO_SIZE]]
+                from shared_strategies import select_top_performers
+                new_static_bh_6m_stocks = select_top_performers(
+                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=PORTFOLIO_SIZE
+                )
                 
                 if new_static_bh_6m_stocks:
                     if not static_bh_6m_initialized:
@@ -1984,159 +1963,133 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance_1m:
-                # Calculate top PORTFOLIO_SIZE by 1-month performance
-                perf_1m_list = []
-                for ticker in initial_top_tickers:
-                    if ticker not in ticker_data_grouped:
-                        continue
-                    ticker_data = ticker_data_grouped[ticker]
-                    
-                    # Calculate 1-month performance (21 trading days ~ 1 month)
-                    perf_start_date = current_date - timedelta(days=21)
-                    perf_data = ticker_data.loc[perf_start_date:current_date]
-                    
-                    if len(perf_data) >= MIN_DATA_DAYS_1M:  # Need minimum data for 1-month
-                        valid_close = perf_data['Close'].dropna()
-                        if len(valid_close) >= 2:
-                            start_p = valid_close.iloc[0]
-                            end_p = valid_close.iloc[-1]
-                            if start_p > 0:
-                                perf_pct = ((end_p - start_p) / start_p) * 100
-                                # Only include stocks with positive momentum
-                                if perf_pct > 0:
-                                    perf_1m_list.append((ticker, perf_pct))
+                from shared_strategies import select_top_performers
+                new_static_bh_1m_stocks = select_top_performers(
+                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=30, top_n=PORTFOLIO_SIZE
+                )
                 
-                if perf_1m_list:
-                    perf_1m_list.sort(key=lambda x: x[1], reverse=True)
-                    new_static_bh_1m_stocks = [t for t, _ in perf_1m_list[:PORTFOLIO_SIZE]]
+                if new_static_bh_1m_stocks:
+                    if not static_bh_1m_initialized:
+                        print(f"   🎯 Static BH 1M: Initializing with top {len(new_static_bh_1m_stocks)} by 1M performance: {new_static_bh_1m_stocks}")
+                    else:
+                        print(f"   🔄 Static BH 1M: Smart rebalancing to top {len(new_static_bh_1m_stocks)} by 1M performance: {new_static_bh_1m_stocks}")
                     
-                    if new_static_bh_1m_stocks:
-                        if not static_bh_1m_initialized:
-                            print(f"   🎯 Static BH 1M: Initializing with top {len(new_static_bh_1m_stocks)} by 1M performance: {new_static_bh_1m_stocks}")
-                        else:
-                            print(f"   🔄 Static BH 1M: Smart rebalancing to top {len(new_static_bh_1m_stocks)} by 1M performance: {new_static_bh_1m_stocks}")
-                        
-                        # Use universal smart rebalancing function
-                        static_bh_1m_positions, static_bh_1m_cash, current_static_bh_1m_stocks, rebalance_costs = _smart_rebalance_portfolio(
-                            strategy_name="Static BH 1M",
-                            current_stocks=current_static_bh_1m_stocks,
-                            new_stocks=new_static_bh_1m_stocks,
-                            positions=static_bh_1m_positions,
-                            cash=static_bh_1m_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not static_bh_1m_initialized  # Force initial allocation
-                        )
-                        static_bh_1m_transaction_costs += rebalance_costs
-                        
-                        static_bh_1m_initialized = True
-                        static_bh_1m_days_since_rebalance = 0
+                    # Use universal smart rebalancing function
+                    static_bh_1m_positions, static_bh_1m_cash, current_static_bh_1m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        strategy_name="Static BH 1M",
+                        current_stocks=current_static_bh_1m_stocks,
+                        new_stocks=new_static_bh_1m_stocks,
+                        positions=static_bh_1m_positions,
+                        cash=static_bh_1m_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not static_bh_1m_initialized  # Force initial allocation
+                    )
+                    static_bh_1m_transaction_costs += rebalance_costs
+                    
+                    static_bh_1m_initialized = True
+                    static_bh_1m_days_since_rebalance = 0
 
         # STATIC BH MONTHLY REBALANCE VARIANTS: Rebalance on first trading day of each month
         is_first_trading_day_of_month = (
             (day_count == 1) or  # First day of backtest
-            (current_date.month != (business_days[business_days.index(current_date) - 1].month if business_days.index(current_date) > 0 else current_date.month))
+            (day_count > 1 and current_date.month != business_days[day_count - 2].month)  # Month changed from previous trading day
         )
 
         # Static BH 1Y Monthly
         if ENABLE_STATIC_BH_1Y_MONTHLY:
             should_rebalance_1y_monthly = (not static_bh_1y_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_1y_monthly:
-                from parallel_backtest import calculate_parallel_performance
-                perf_1y_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 365)
-                if perf_1y_m_list:
-                    perf_1y_m_list.sort(key=lambda x: x[1], reverse=True)
-                    new_stocks = [t for t, _ in perf_1y_m_list[:PORTFOLIO_SIZE]]
-                    if new_stocks:
-                        if not static_bh_1y_monthly_initialized:
-                            print(f"   🎯 Static BH 1Y Monthly: Initializing with {new_stocks}")
-                        else:
-                            print(f"   🔄 Static BH 1Y Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
-                        static_bh_1y_monthly_positions, static_bh_1y_monthly_cash, current_static_bh_1y_monthly_stocks, rc = _smart_rebalance_portfolio(
-                            strategy_name="Static BH 1Y Mth", current_stocks=current_static_bh_1y_monthly_stocks,
-                            new_stocks=new_stocks, positions=static_bh_1y_monthly_positions, cash=static_bh_1y_monthly_cash,
-                            ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_1y_monthly_initialized)
-                        static_bh_1y_monthly_transaction_costs += rc
-                        static_bh_1y_monthly_initialized = True
-                        static_bh_1y_monthly_last_month = current_date.month
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+                if new_stocks:
+                    if not static_bh_1y_monthly_initialized:
+                        print(f"   🎯 Static BH 1Y Monthly: Initializing with {new_stocks}")
+                    else:
+                        print(f"   🔄 Static BH 1Y Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
+                    static_bh_1y_monthly_positions, static_bh_1y_monthly_cash, current_static_bh_1y_monthly_stocks, rc = _smart_rebalance_portfolio(
+                        strategy_name="Static BH 1Y Mth", current_stocks=current_static_bh_1y_monthly_stocks,
+                        new_stocks=new_stocks, positions=static_bh_1y_monthly_positions, cash=static_bh_1y_monthly_cash,
+                        ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_1y_monthly_initialized)
+                    static_bh_1y_monthly_transaction_costs += rc
+                    static_bh_1y_monthly_initialized = True
+                    static_bh_1y_monthly_last_month = current_date.month
 
         # Static BH 6M Monthly
         if ENABLE_STATIC_BH_6M_MONTHLY:
             should_rebalance_6m_monthly = (not static_bh_6m_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_6m_monthly:
-                from parallel_backtest import calculate_parallel_performance
-                perf_6m_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 180)
-                if perf_6m_m_list:
-                    perf_6m_m_list.sort(key=lambda x: x[1], reverse=True)
-                    new_stocks = [t for t, _ in perf_6m_m_list[:PORTFOLIO_SIZE]]
-                    if new_stocks:
-                        if not static_bh_6m_monthly_initialized:
-                            print(f"   🎯 Static BH 6M Monthly: Initializing with {new_stocks}")
-                        else:
-                            print(f"   🔄 Static BH 6M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
-                        static_bh_6m_monthly_positions, static_bh_6m_monthly_cash, current_static_bh_6m_monthly_stocks, rc = _smart_rebalance_portfolio(
-                            strategy_name="Static BH 6M Mth", current_stocks=current_static_bh_6m_monthly_stocks,
-                            new_stocks=new_stocks, positions=static_bh_6m_monthly_positions, cash=static_bh_6m_monthly_cash,
-                            ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_6m_monthly_initialized)
-                        static_bh_6m_monthly_transaction_costs += rc
-                        static_bh_6m_monthly_initialized = True
-                        static_bh_6m_monthly_last_month = current_date.month
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=PORTFOLIO_SIZE)
+                if new_stocks:
+                    if not static_bh_6m_monthly_initialized:
+                        print(f"   🎯 Static BH 6M Monthly: Initializing with {new_stocks}")
+                    else:
+                        print(f"   🔄 Static BH 6M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
+                    static_bh_6m_monthly_positions, static_bh_6m_monthly_cash, current_static_bh_6m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                        strategy_name="Static BH 6M Mth", current_stocks=current_static_bh_6m_monthly_stocks,
+                        new_stocks=new_stocks, positions=static_bh_6m_monthly_positions, cash=static_bh_6m_monthly_cash,
+                        ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_6m_monthly_initialized)
+                    static_bh_6m_monthly_transaction_costs += rc
+                    static_bh_6m_monthly_initialized = True
+                    static_bh_6m_monthly_last_month = current_date.month
 
         # Static BH 3M Monthly
         if ENABLE_STATIC_BH_3M_MONTHLY:
             should_rebalance_3m_monthly = (not static_bh_3m_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_3m_monthly:
-                from parallel_backtest import calculate_parallel_performance
-                perf_3m_m_list = calculate_parallel_performance(initial_top_tickers, ticker_data_grouped, current_date, 90)
-                if perf_3m_m_list:
-                    perf_3m_m_list.sort(key=lambda x: x[1], reverse=True)
-                    new_stocks = [t for t, _ in perf_3m_m_list[:PORTFOLIO_SIZE]]
-                    if new_stocks:
-                        if not static_bh_3m_monthly_initialized:
-                            print(f"   🎯 Static BH 3M Monthly: Initializing with {new_stocks}")
-                        else:
-                            print(f"   🔄 Static BH 3M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
-                        static_bh_3m_monthly_positions, static_bh_3m_monthly_cash, current_static_bh_3m_monthly_stocks, rc = _smart_rebalance_portfolio(
-                            strategy_name="Static BH 3M Mth", current_stocks=current_static_bh_3m_monthly_stocks,
-                            new_stocks=new_stocks, positions=static_bh_3m_monthly_positions, cash=static_bh_3m_monthly_cash,
-                            ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_3m_monthly_initialized)
-                        static_bh_3m_monthly_transaction_costs += rc
-                        static_bh_3m_monthly_initialized = True
-                        static_bh_3m_monthly_last_month = current_date.month
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=PORTFOLIO_SIZE)
+                if new_stocks:
+                    if not static_bh_3m_monthly_initialized:
+                        print(f"   🎯 Static BH 3M Monthly: Initializing with {new_stocks}")
+                    else:
+                        print(f"   🔄 Static BH 3M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
+                    static_bh_3m_monthly_positions, static_bh_3m_monthly_cash, current_static_bh_3m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                        strategy_name="Static BH 3M Mth", current_stocks=current_static_bh_3m_monthly_stocks,
+                        new_stocks=new_stocks, positions=static_bh_3m_monthly_positions, cash=static_bh_3m_monthly_cash,
+                        ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_3m_monthly_initialized)
+                    static_bh_3m_monthly_transaction_costs += rc
+                    static_bh_3m_monthly_initialized = True
+                    static_bh_3m_monthly_last_month = current_date.month
+
+        # Static BH 1M Monthly
+        if ENABLE_STATIC_BH_1M_MONTHLY:
+            should_rebalance_1m_monthly = (not static_bh_1m_monthly_initialized) or is_first_trading_day_of_month
+            if should_rebalance_1m_monthly:
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=30, top_n=PORTFOLIO_SIZE)
+                if new_stocks:
+                    if not static_bh_1m_monthly_initialized:
+                        print(f"   🎯 Static BH 1M Monthly: Initializing with {new_stocks}")
+                    else:
+                        print(f"   🔄 Static BH 1M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
+                    static_bh_1m_monthly_positions, static_bh_1m_monthly_cash, current_static_bh_1m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                        strategy_name="Static BH 1M Mth", current_stocks=current_static_bh_1m_monthly_stocks,
+                        new_stocks=new_stocks, positions=static_bh_1m_monthly_positions, cash=static_bh_1m_monthly_cash,
+                        ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_1m_monthly_initialized)
+                    static_bh_1m_monthly_transaction_costs += rc
+                    static_bh_1m_monthly_initialized = True
+                    static_bh_1m_monthly_last_month = current_date.month
 
         # DYNAMIC BH 1Y PORTFOLIO: Rebalance to current top N performers DAILY
         if ENABLE_DYNAMIC_BH_1Y:
             print(f"\n🔄 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): Dynamic BH 1Y Rebalancing...")
 
             try:
-                # Apply performance filters if enabled
-                from performance_filters import filter_tickers_by_performance
-                filtered_tickers_1y = filter_tickers_by_performance(
-                    initial_top_tickers, ticker_data_grouped, current_date, "Dynamic BH 1Y"
-                )
-                
-                # Calculate current top N performers based on 1-year performance
-                current_top_performers = []
-
-                # Calculate performances (always parallel)
-                from parallel_backtest import calculate_parallel_performance
-                current_top_performers = calculate_parallel_performance(
-                    filtered_tickers_1y,
-                    ticker_data_grouped,
-                    current_date,
-                    period_days=365
+                from shared_strategies import select_top_performers
+                new_dynamic_bh_stocks = select_top_performers(
+                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE,
+                    apply_performance_filter=True, filter_label="Dynamic BH 1Y"
                 )
 
-                # Sort by performance and get top N
-                if current_top_performers and ENABLE_DYNAMIC_BH_1Y:
-                    current_top_performers.sort(key=lambda x: x[1], reverse=True)
-                    new_dynamic_bh_stocks = [ticker for ticker, perf in current_top_performers[:PORTFOLIO_SIZE]]
-
+                if new_dynamic_bh_stocks:
                     print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-year): {', '.join(new_dynamic_bh_stocks)}")
 
                     # Use universal smart rebalancing function
@@ -2165,22 +2118,13 @@ def _run_portfolio_backtest_walk_forward(
             print(f"\n🔄 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): Dynamic BH 6M Rebalancing...")
 
             try:
-                # Apply performance filters if enabled
-                from performance_filters import filter_tickers_by_performance
-                filtered_tickers_6m = filter_tickers_by_performance(
-                    initial_top_tickers, ticker_data_grouped, current_date, "Dynamic BH 6M"
+                from shared_strategies import select_top_performers
+                new_dynamic_bh_6m_stocks = select_top_performers(
+                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=PORTFOLIO_SIZE,
+                    apply_performance_filter=True, filter_label="Dynamic BH 6M"
                 )
-                
-                # Calculate current top N performers based on 6-month performance (always parallel)
-                from parallel_backtest import calculate_parallel_performance
-                current_top_performers_6m = calculate_parallel_performance(
-                    filtered_tickers_6m, ticker_data_grouped, current_date, 180)
 
-                # Sort by performance and get top N
-                if current_top_performers_6m:
-                    current_top_performers_6m.sort(key=lambda x: x[1], reverse=True)
-                    new_dynamic_bh_6m_stocks = [ticker for ticker, perf in current_top_performers_6m[:PORTFOLIO_SIZE]]
-
+                if new_dynamic_bh_6m_stocks:
                     print(f"   🏆 Top {PORTFOLIO_SIZE} performers (6-month): {', '.join(new_dynamic_bh_6m_stocks)}")
 
                     # Use universal smart rebalancing function
@@ -2206,21 +2150,13 @@ def _run_portfolio_backtest_walk_forward(
 
         # DYNAMIC BH 3M PORTFOLIO: Rebalance to current top N performers DAILY
         if ENABLE_DYNAMIC_BH_3M:
-            # Apply performance filters if enabled
-            from performance_filters import filter_tickers_by_performance
-            filtered_tickers_3m = filter_tickers_by_performance(
-                initial_top_tickers, ticker_data_grouped, current_date, "Dynamic BH 3M"
+            from shared_strategies import select_top_performers
+            new_dynamic_bh_3m_stocks = select_top_performers(
+                initial_top_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=PORTFOLIO_SIZE,
+                apply_performance_filter=True, filter_label="Dynamic BH 3M"
             )
-            
-            print(f"   🔍 Dynamic BH 3M: Processing {len(filtered_tickers_3m)} tickers (filtered from {len(initial_top_tickers)}) for 3-month performance...")
-            from parallel_backtest import calculate_parallel_performance
-            current_top_performers_3m = calculate_parallel_performance(
-                filtered_tickers_3m, ticker_data_grouped, current_date, 90)
 
-            # Sort by performance and get top N
-            if current_top_performers_3m:
-                current_top_performers_3m.sort(key=lambda x: x[1], reverse=True)
-                new_dynamic_bh_3m_stocks = [ticker for ticker, perf in current_top_performers_3m[:PORTFOLIO_SIZE]]
+            if new_dynamic_bh_3m_stocks:
                 print(f"   🏆 Top {PORTFOLIO_SIZE} performers (3-month): {', '.join(new_dynamic_bh_3m_stocks)}")
                 
                 # Use universal smart rebalancing function
@@ -2243,21 +2179,13 @@ def _run_portfolio_backtest_walk_forward(
 
         # DYNAMIC BH 1M PORTFOLIO: Rebalance to current top N performers DAILY
         if ENABLE_DYNAMIC_BH_1M:
-            # Apply performance filters if enabled
-            from performance_filters import filter_tickers_by_performance
-            filtered_tickers_1m = filter_tickers_by_performance(
-                initial_top_tickers, ticker_data_grouped, current_date, "Dynamic BH 1M"
+            from shared_strategies import select_top_performers
+            new_dynamic_bh_1m_stocks = select_top_performers(
+                initial_top_tickers, ticker_data_grouped, current_date, lookback_days=21, top_n=PORTFOLIO_SIZE,
+                apply_performance_filter=True, filter_label="Dynamic BH 1M"
             )
-            
-            print(f"   🔍 Dynamic BH 1M: Processing {len(filtered_tickers_1m)} tickers (filtered from {len(initial_top_tickers)}) for 1-month performance...")
-            from parallel_backtest import calculate_parallel_performance
-            current_top_performers_1m = calculate_parallel_performance(
-                filtered_tickers_1m, ticker_data_grouped, current_date, 21)
 
-            # Sort by performance and get top N
-            if current_top_performers_1m:
-                current_top_performers_1m.sort(key=lambda x: x[1], reverse=True)
-                new_dynamic_bh_1m_stocks = [ticker for ticker, perf in current_top_performers_1m[:PORTFOLIO_SIZE]]
+            if new_dynamic_bh_1m_stocks:
                 print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-month): {', '.join(new_dynamic_bh_1m_stocks)}")
                 
                 # Use universal smart rebalancing function
@@ -2280,50 +2208,14 @@ def _run_portfolio_backtest_walk_forward(
 
         # DYNAMIC BH 1Y + VOLATILITY FILTER: Same as Dynamic BH 1Y but with volatility filter
         if ENABLE_DYNAMIC_BH_1Y_VOL_FILTER:
-            current_top_performers_vol_filter = []
-            stocks_evaluated = 0
-            stocks_passed_vol_filter = 0
-            
-            # Calculate performances (always parallel)
-            from parallel_backtest import calculate_parallel_performance
-            base_performances = calculate_parallel_performance(
-                initial_top_tickers,
-                ticker_data_grouped,
-                current_date,
-                period_days=365
+            from shared_strategies import select_top_performers_vol_filtered
+            new_dynamic_bh_1y_vol_filter_stocks, stocks_passed_vol_filter, stocks_evaluated = select_top_performers_vol_filtered(
+                initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365,
+                max_volatility=DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY, top_n=PORTFOLIO_SIZE
             )
-            
-            # Apply volatility filter
-            for ticker, perf_pct in base_performances:
-                try:
-                    ticker_data = ticker_data_grouped[ticker]
-                    perf_start_date = current_date - timedelta(days=MIN_DATA_DAYS_1Y)
-                    perf_data = ticker_data.loc[perf_start_date:current_date]
-                    
-                    if len(perf_data) >= 50:
-                        valid_close = perf_data['Close'].dropna()
-                        if len(valid_close) >= 2:
-                            # Calculate annualized volatility
-                            daily_returns = valid_close.pct_change(fill_method=None).dropna()
-                            if len(daily_returns) > 10:
-                                # Annualize volatility: std_dev * sqrt(252) * 100%
-                                annualized_volatility = daily_returns.std() * (252 ** 0.5) * 100
-                                
-                                # Apply volatility filter
-                                if annualized_volatility <= DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY:
-                                    current_top_performers_vol_filter.append((ticker, perf_pct, annualized_volatility))
-                                    stocks_passed_vol_filter += 1
-                except Exception:
-                    continue
 
-            # Sort by performance and get top N (from filtered list)
-            if current_top_performers_vol_filter:
-                current_top_performers_vol_filter.sort(key=lambda x: x[1], reverse=True)
-                new_dynamic_bh_1y_vol_filter_stocks = [ticker for ticker, perf, vol in current_top_performers_vol_filter[:PORTFOLIO_SIZE]]
-                
-                # Show volatility info
-                vol_info = [(ticker, f"{perf:.1f}%", f"{vol:.1f}%") for ticker, perf, vol in current_top_performers_vol_filter[:PORTFOLIO_SIZE]]
-                print(f"   🎯 Top {PORTFOLIO_SIZE} performers (1Y + Vol Filter): {', '.join([f'{t}({p}/{v})' for t, p, v in vol_info])}")
+            if new_dynamic_bh_1y_vol_filter_stocks:
+                print(f"   🎯 Top {PORTFOLIO_SIZE} performers (1Y + Vol Filter): {', '.join(new_dynamic_bh_1y_vol_filter_stocks)}")
                 print(f"   🔍 Filter stats: {stocks_passed_vol_filter}/{stocks_evaluated} stocks passed volatility filter")
 
                 # Use universal smart rebalancing function
@@ -2403,15 +2295,13 @@ def _run_portfolio_backtest_walk_forward(
                     except Exception as e:
                         continue
             
-            # Regular rebalancing (same as Dynamic BH 1Y) - always parallel
-            from parallel_backtest import calculate_parallel_performance
-            current_top_performers_ts = calculate_parallel_performance(
-                initial_top_tickers, ticker_data_grouped, current_date, period_days=365
+            # Regular rebalancing (same as Dynamic BH 1Y)
+            from shared_strategies import select_top_performers
+            new_dynamic_bh_1y_trailing_stop_stocks = select_top_performers(
+                initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE
             )
 
-            if current_top_performers_ts:
-                current_top_performers_ts.sort(key=lambda x: x[1], reverse=True)
-                new_dynamic_bh_1y_trailing_stop_stocks = [ticker for ticker, perf in current_top_performers_ts[:PORTFOLIO_SIZE]]
+            if new_dynamic_bh_1y_trailing_stop_stocks:
                 print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-year + Trailing Stop): {', '.join(new_dynamic_bh_1y_trailing_stop_stocks)}")
 
                 # Use universal smart rebalancing function
@@ -3626,38 +3516,12 @@ def _run_portfolio_backtest_walk_forward(
                 if last_momentum_ai_hybrid_rebalance_day == 0 or (day_count - last_momentum_ai_hybrid_rebalance_day) >= AI_REBALANCE_FREQUENCY_DAYS:
                     print(f"\n🔄 Momentum+AI Hybrid: Evaluating portfolio (Day {day_count})...")
                     
-                    # Calculate momentum for all available tickers
-                    momentum_scores = []
-                    # Use initial_top_tickers (the tickers we trained models for)
-                    available_tickers = initial_top_tickers if initial_top_tickers else []
-                    # ✅ OPTIMIZED: Use pre-grouped data
-                    for ticker in available_tickers:
-                        try:
-                            if ticker not in ticker_data_grouped:
-                                continue
-                            ticker_history = ticker_data_grouped[ticker].reset_index()
-                            ticker_history = ticker_history[ticker_history['date'] <= current_date].tail(MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK + 10)
-                            
-                            if len(ticker_history) >= MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK:
-                                lookback_data = ticker_history.tail(MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK)
-                                start_price = lookback_data.iloc[0]['Close']
-                                end_price = lookback_data.iloc[-1]['Close']
-                                
-                                if start_price > 0:
-                                    momentum_return = (end_price - start_price) / start_price
-                                    momentum_scores.append((ticker, momentum_return))
-                        
-                        except Exception:
-                            continue
+                    from shared_strategies import select_momentum_ai_hybrid_stocks
+                    top_momentum_stocks = select_momentum_ai_hybrid_stocks(
+                        initial_top_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE
+                    )
                     
-                    if momentum_scores:
-                        # Sort by momentum (descending)
-                        momentum_scores.sort(key=lambda x: x[1], reverse=True)
-                        top_momentum_stocks = [ticker for ticker, score in momentum_scores[:PORTFOLIO_SIZE]]
-                        
-                        print(f"   📈 Top {PORTFOLIO_SIZE} momentum stocks: {[(t, f'{s*100:.1f}%') for t, s in momentum_scores[:PORTFOLIO_SIZE]]}")
-                        
-                        # Rebalance using AI signals and universal smart rebalancing
+                    if top_momentum_stocks:
                         momentum_ai_hybrid_positions, momentum_ai_hybrid_cash, current_momentum_ai_hybrid_stocks, rebalance_costs = _smart_rebalance_portfolio(
                             strategy_name="Momentum+AI Hybrid",
                             current_stocks=current_momentum_ai_hybrid_stocks,
@@ -4035,124 +3899,41 @@ def _run_portfolio_backtest_walk_forward(
         # AI ELITE STRATEGY (ML-powered scoring) - PER-TICKER MODELS
         if ENABLE_AI_ELITE:
             try:
-                from ai_elite_strategy import select_ai_elite_stocks
-                from ai_elite_strategy_per_ticker import train_shared_base_model
-                import os
-                import pickle
+                from shared_strategies import select_ai_elite_with_training
                 
-                models_dir = "logs/models"
-                os.makedirs(models_dir, exist_ok=True)
-                
-                # Try loading model from disk if not in memory
-                base_model_path = os.path.join(models_dir, "_shared_base_ai_elite.joblib")
-                if ai_elite_models.get('_shared_base') is None and os.path.exists(base_model_path):
-                    try:
-                        with open(base_model_path, 'rb') as f:
-                            loaded_model = pickle.load(f)
-                        ai_elite_models['_shared_base'] = loaded_model
-                        for ticker in initial_top_tickers:
-                            ai_elite_models[ticker] = loaded_model
-                            ai_elite_last_train_days[ticker] = 0  # Mark as loaded from disk (day 0)
-                        print(f"   ✅ AI Elite: Loaded model from disk for {len(initial_top_tickers)} tickers")
-                    except Exception as e:
-                        print(f"   ⚠️ AI Elite: Failed to load model from disk: {e}")
-                
-                # Check if we should train (day 1 ALWAYS trains, otherwise check retrain interval)
+                # Determine if we should force retrain
                 should_train_ai_elite = False
                 if day_count == 1:
-                    should_train_ai_elite = True  # Always train on day 1
-                    print(f"   📊 AI Elite: Day 1 - forced training (warm-start from {'disk model' if ai_elite_models.get('_shared_base') is not None else 'scratch'})")
+                    should_train_ai_elite = True
+                    print(f"   📊 AI Elite: Day 1 - forced training")
                 elif ai_elite_models.get('_shared_base') is None:
-                    should_train_ai_elite = True  # No model exists (in memory or disk), need to train
+                    should_train_ai_elite = True
                 else:
-                    # Check retraining based on AI_ELITE_RETRAIN_DAYS
                     last_train_day = max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 0
                     days_since_train = day_count - last_train_day
                     if days_since_train >= AI_ELITE_RETRAIN_DAYS:
                         should_train_ai_elite = True
                         print(f"   📊 AI Elite: Retraining triggered (day {day_count}, last train day {last_train_day}, interval {AI_ELITE_RETRAIN_DAYS})")
                 
-                if should_train_ai_elite:
-                    # HYBRID: shared base model + per-ticker fine-tuning
-                    train_end = current_date
-                    train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
-                    
-                    from concurrent.futures import ProcessPoolExecutor, as_completed
-                    n_workers = min(TRAINING_NUM_PROCESSES, len(initial_top_tickers))
-                    
-                    # Pre-compute market returns for all sample dates (needed for excess return labels)
-                    from ai_elite_strategy import _calculate_market_return
-                    from datetime import timezone as tz_utc
-                    market_returns = {}
-                    sample_date_iter = train_start
-                    while sample_date_iter <= train_end:
-                        mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
-                        # Store with UTC key to match collect_ticker_training_data's UTC dates
-                        utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
-                        market_returns[utc_key] = mr if mr is not None else 0.0
-                        sample_date_iter += timedelta(days=2)
-                    
-                    # Step 1: Collect training data from ALL tickers in parallel
-                    print(f"   📊 AI Elite: Collecting data from {len(initial_top_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
-                    collect_args = [
-                        (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS, market_returns)
-                        for t in initial_top_tickers
-                    ]
-                    
-                    all_training_data = []
-                    ticker_samples_map = {}  # ticker -> its samples
-                    
-                    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-                        futures = {executor.submit(_collect_data_worker, a): a[0] for a in collect_args}
-                        for future in as_completed(futures):
-                            try:
-                                ticker, samples = future.result()
-                                if samples:
-                                    all_training_data.extend(samples)
-                                    ticker_samples_map[ticker] = samples
-                            except Exception as e:
-                                print(f"   ⚠️ AI Elite: Data collection failed for {futures[future]}: {e}")
-                    
-                    print(f"   📊 AI Elite: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers")
-                    
-                    # Step 2: Train shared base model on ALL data (single process, large dataset)
-                    base_model_path = os.path.join(models_dir, "_shared_base_ai_elite.joblib")
-                    existing_base = ai_elite_models.get('_shared_base')
-                    base_model, base_kappa = train_shared_base_model(
-                        all_training_data, save_path=base_model_path,
-                        existing_model=existing_base
-                    )
-                    
-                    if base_model:
-                        ai_elite_models['_shared_base'] = base_model
-                        
-                        # Use shared base model for ALL tickers (skip per-ticker fine-tuning to avoid overfitting)
-                        print(f"   ✅ AI Elite: Using shared base model for all tickers (R² {base_kappa:.3f})")
-                        for ticker in initial_top_tickers:
-                            ai_elite_models[ticker] = base_model
-                            ai_elite_last_train_days[ticker] = day_count
-                        trained = len(initial_top_tickers)
-                    else:
-                        print(f"   ⚠️ AI Elite: Training failed, no model produced")
-                else:
-                    # Using existing model (loaded from disk or trained earlier), no retraining needed
+                if not should_train_ai_elite:
                     last_train_day = max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 0
-                    if last_train_day == 0:
-                        print(f"   📊 AI Elite: Using model loaded from disk (fresh load)")
-                    else:
-                        days_ago = day_count - last_train_day
-                        print(f"   📊 AI Elite: Using existing model (trained {days_ago} days ago, day {last_train_day})")
+                    days_ago = day_count - last_train_day if last_train_day > 0 else 0
+                    print(f"   📊 AI Elite: Using existing model (trained {days_ago} days ago)")
                 
-                # Select stocks using ML model (always runs - with fresh or existing model)
-                print(f"   🤖 AI Elite: Analyzing {len(initial_top_tickers)} tickers...")
-                
-                new_ai_elite_stocks = select_ai_elite_stocks(
-                    initial_top_tickers, 
-                    ticker_data_grouped,
+                # Call shared function (handles load/train/select)
+                new_ai_elite_stocks, ai_elite_models = select_ai_elite_with_training(
+                    all_tickers=initial_top_tickers,
+                    ticker_data_grouped=ticker_data_grouped,
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE,
-                    per_ticker_models=ai_elite_models
+                    ai_elite_models=ai_elite_models,
+                    force_train=should_train_ai_elite
                 )
+                
+                # Update train day tracking
+                if should_train_ai_elite and ai_elite_models.get('_shared_base') is not None:
+                    for ticker in initial_top_tickers:
+                        ai_elite_last_train_days[ticker] = day_count
                 
                 if new_ai_elite_stocks:
                     ai_elite_positions, ai_elite_cash, current_ai_elite_stocks, rebalance_costs = _smart_rebalance_portfolio(
@@ -4325,6 +4106,8 @@ def _run_portfolio_backtest_walk_forward(
                 # Initialize allocator on first use
                 if ai_regime_allocator is None:
                     ai_regime_allocator = AIRegimeAllocator(retrain_days=1, forward_days=20)
+                    # Try to load existing model from disk
+                    ai_regime_allocator.load_model()
                 
                 # Record daily values for ALL sub-strategies (needed for training)
                 strategy_values_for_regime = {
@@ -4378,6 +4161,115 @@ def _run_portfolio_backtest_walk_forward(
                     
             except Exception as e:
                 print(f"   ⚠️ AI Regime error: {e}")
+
+        # AI REGIME MONTHLY STRATEGY (same as AI Regime but monthly rebalance)
+        if ENABLE_AI_REGIME_MONTHLY:
+            try:
+                from ai_regime_strategy import AIRegimeMonthlyAllocator, select_ai_regime_stocks
+                
+                # Initialize allocator on first use
+                if ai_regime_monthly_allocator is None:
+                    ai_regime_monthly_allocator = AIRegimeMonthlyAllocator(forward_days=20)
+                    # Try to load existing model from disk (same as daily AI Regime)
+                    ai_regime_monthly_allocator.load_model()
+                
+                # Record daily values for ALL sub-strategies (same as daily AI Regime)
+                strategy_values_for_regime = {
+                    'risk_adj_mom_3m': risk_adj_mom_3m_portfolio_value if ENABLE_RISK_ADJ_MOM_3M else None,
+                    'risk_adj_mom_6m': risk_adj_mom_6m_portfolio_value if ENABLE_RISK_ADJ_MOM_6M else None,
+                    'risk_adj_mom': risk_adj_mom_portfolio_value if ENABLE_RISK_ADJ_MOM else None,
+                    'elite_hybrid': elite_hybrid_portfolio_value if ENABLE_ELITE_HYBRID else None,
+                    'elite_risk': elite_risk_portfolio_value if ENABLE_ELITE_RISK else None,
+                    'ai_elite': ai_elite_portfolio_value if ENABLE_AI_ELITE else None,
+                    'momentum_volatility_hybrid_6m': momentum_volatility_hybrid_6m_portfolio_value if ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M else None,
+                    'trend_atr': trend_atr_portfolio_value if ENABLE_TREND_FOLLOWING_ATR else None,
+                    'dual_momentum': dual_mom_portfolio_value if ENABLE_DUAL_MOMENTUM else None,
+                    'static_bh_1y': static_bh_1y_portfolio_value if ENABLE_STATIC_BH else None,
+                    'static_bh_3m': static_bh_3m_portfolio_value if ENABLE_STATIC_BH else None,
+                }
+                ai_regime_monthly_allocator.record_daily_values(strategy_values_for_regime)
+                
+                # Check if we should retrain (monthly)
+                if ai_regime_monthly_allocator.should_retrain():
+                    print(f"   🧠 AI Regime Monthly: Training model (day {day_count})...")
+                    ai_regime_monthly_allocator.train_model(ticker_data_grouped, business_days[:day_count])
+                
+                # Predict best strategy every day (but only rebalance at month start)
+                ai_regime_monthly_current_strategy = ai_regime_monthly_allocator.predict_best_strategy(ticker_data_grouped, current_date)
+                
+                # Only rebalance at start of month
+                if ai_regime_monthly_allocator.should_rebalance(current_date):
+                    # Select stocks using predicted strategy
+                    new_ai_regime_monthly_stocks = select_ai_regime_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        PORTFOLIO_SIZE,
+                        ai_regime_monthly_current_strategy,
+                        ai_elite_models=ai_elite_models
+                    )
+                    
+                    if new_ai_regime_monthly_stocks:
+                        ai_regime_monthly_positions, ai_regime_monthly_cash, current_ai_regime_monthly_stocks, rc = _smart_rebalance_portfolio(
+                            strategy_name=f"AI Regime Mth ({ai_regime_monthly_current_strategy[:10]})",
+                            current_stocks=current_ai_regime_monthly_stocks,
+                            new_stocks=new_ai_regime_monthly_stocks,
+                            positions=ai_regime_monthly_positions,
+                            cash=ai_regime_monthly_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not ai_regime_monthly_initialized
+                        )
+                        ai_regime_monthly_transaction_costs += rc
+                        ai_regime_monthly_initialized = True
+                    
+            except Exception as e:
+                print(f"   ⚠️ AI Regime Monthly error: {e}")
+
+        # UNIVERSAL MODEL STRATEGY (single ML model for all tickers)
+        if ENABLE_UNIVERSAL_MODEL:
+            try:
+                from universal_model_strategy import UniversalModelStrategy, select_universal_model_stocks
+                
+                # Initialize strategy on first use
+                if universal_model_strategy is None:
+                    universal_model_strategy = UniversalModelStrategy(retrain_days=1, min_samples=200)
+                    # Try to load existing model from disk (for faster startup)
+                    universal_model_strategy.load_model()
+                
+                universal_model_strategy.increment_day()
+                
+                # Select stocks using universal model
+                new_universal_model_stocks = select_universal_model_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date,
+                    PORTFOLIO_SIZE,
+                    universal_model_strategy,
+                    business_days,
+                    day_count
+                )
+                
+                if new_universal_model_stocks:
+                    universal_model_positions, universal_model_cash, current_universal_model_stocks, rc = _smart_rebalance_portfolio(
+                        strategy_name="Universal Model",
+                        current_stocks=current_universal_model_stocks,
+                        new_stocks=new_universal_model_stocks,
+                        positions=universal_model_positions,
+                        cash=universal_model_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not universal_model_initialized
+                    )
+                    universal_model_transaction_costs += rc
+                    universal_model_initialized = True
+                    
+            except Exception as e:
+                print(f"   ⚠️ Universal Model error: {e}")
 
         # Update DYNAMIC BH 1Y portfolio value daily (skip if disabled)
         dynamic_bh_invested_value = 0.0
@@ -5352,6 +5244,50 @@ def _run_portfolio_backtest_walk_forward(
         ai_regime_portfolio_value = ai_regime_invested_value + ai_regime_cash
         ai_regime_portfolio_history.append(ai_regime_portfolio_value)
 
+        # Update AI REGIME MONTHLY portfolio value daily
+        ai_regime_monthly_invested_value = 0.0
+        if ENABLE_AI_REGIME_MONTHLY:
+            for ticker in list(ai_regime_monthly_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = ai_regime_monthly_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            ai_regime_monthly_positions[ticker]['value'] = position_value
+                            ai_regime_monthly_invested_value += position_value
+                        else:
+                            ai_regime_monthly_invested_value += ai_regime_monthly_positions[ticker].get('value', 0.0)
+                    else:
+                        ai_regime_monthly_invested_value += ai_regime_monthly_positions[ticker].get('value', 0.0)
+                except Exception:
+                    ai_regime_monthly_invested_value += ai_regime_monthly_positions[ticker].get('value', 0.0)
+        ai_regime_monthly_portfolio_value = ai_regime_monthly_invested_value + ai_regime_monthly_cash
+        ai_regime_monthly_portfolio_history.append(ai_regime_monthly_portfolio_value)
+
+        # Update UNIVERSAL MODEL portfolio value daily
+        universal_model_invested_value = 0.0
+        if ENABLE_UNIVERSAL_MODEL:
+            for ticker in list(universal_model_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = universal_model_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            universal_model_positions[ticker]['value'] = position_value
+                            universal_model_invested_value += position_value
+                        else:
+                            universal_model_invested_value += universal_model_positions[ticker].get('value', 0.0)
+                    else:
+                        universal_model_invested_value += universal_model_positions[ticker].get('value', 0.0)
+                except Exception:
+                    universal_model_invested_value += universal_model_positions[ticker].get('value', 0.0)
+        universal_model_portfolio_value = universal_model_invested_value + universal_model_cash
+        universal_model_portfolio_history.append(universal_model_portfolio_value)
+
         # Update MEAN REVERSION portfolio value daily (skip if disabled)
         mean_reversion_invested_value = 0.0
         if ENABLE_MEAN_REVERSION:
@@ -5578,6 +5514,7 @@ def _run_portfolio_backtest_walk_forward(
             ('1Y', ENABLE_STATIC_BH_1Y_MONTHLY, static_bh_1y_monthly_positions, 'static_bh_1y_monthly'),
             ('6M', ENABLE_STATIC_BH_6M_MONTHLY, static_bh_6m_monthly_positions, 'static_bh_6m_monthly'),
             ('3M', ENABLE_STATIC_BH_3M_MONTHLY, static_bh_3m_monthly_positions, 'static_bh_3m_monthly'),
+            ('1M', ENABLE_STATIC_BH_1M_MONTHLY, static_bh_1m_monthly_positions, 'static_bh_1m_monthly'),
         ]:
             label, enabled, positions_dict, var_prefix = monthly_var
             if enabled:
@@ -5608,6 +5545,9 @@ def _run_portfolio_backtest_walk_forward(
                 elif var_prefix == 'static_bh_3m_monthly':
                     static_bh_3m_monthly_portfolio_value = invested + static_bh_3m_monthly_cash
                     static_bh_3m_monthly_portfolio_history.append(static_bh_3m_monthly_portfolio_value)
+                elif var_prefix == 'static_bh_1m_monthly':
+                    static_bh_1m_monthly_portfolio_value = invested + static_bh_1m_monthly_cash
+                    static_bh_1m_monthly_portfolio_history.append(static_bh_1m_monthly_portfolio_value)
 
         # Update portfolio value (invested + cash) at end of each day
         invested_value = 0.0
@@ -5673,104 +5613,6 @@ def _run_portfolio_backtest_walk_forward(
 
         # Update portfolio value history
         portfolio_values_history.append(total_portfolio_value)
-
-        # ✅ NEW: Calculate actual returns vs predictions at end of each day
-        if day_predictions['predictions'] and day_count > 1:
-            # Calculate actual returns for the next prediction horizon (e.g., 20 days)
-            future_date = current_date + timedelta(days=horizon_days)
-            
-            prediction_results = []
-            # ✅ OPTIMIZED: Use pre-grouped data
-            for ticker, predicted_return in day_predictions['predictions']:
-                try:
-                    # Get current and future price
-                    if ticker not in ticker_data_grouped:
-                        continue
-                    ticker_data = ticker_data_grouped[ticker]
-                    
-                    # Current price
-                    current_data = ticker_data.loc[:current_date]
-                    if not current_data.empty:
-                        current_price = current_data['Close'].iloc[-1]
-                        
-                        # Validate current price
-                        if pd.isna(current_price) or current_price <= 0:
-                            # Skip if current price is invalid
-                            continue
-                        
-                        # Future price (if available in our data)
-                        future_data = ticker_data.loc[:future_date]
-                        if not future_data.empty and len(future_data) > len(current_data):
-                            future_price = future_data['Close'].iloc[-1]
-                            
-                            # Check if future price is valid
-                            if pd.isna(future_price) or future_price <= 0:
-                                # Future price exists but is invalid - mark as NaN
-                                actual_return = np.nan
-                                bh_return = np.nan
-                                future_price = np.nan
-                            else:
-                                actual_return = (future_price / current_price - 1)
-                                bh_return = actual_return  # Same as actual
-                            
-                            prediction_results.append({
-                                'ticker': ticker,
-                                'predicted_return': predicted_return,
-                                'actual_return': actual_return,
-                                'bh_return': bh_return,
-                                'prediction_error': abs(predicted_return - actual_return) if not pd.isna(actual_return) else np.nan,
-                                'current_price': current_price,
-                                'future_price': future_price,
-                                'model_status': '✅' if ticker in current_models and current_models[ticker] is not None else '❌'
-                            })
-                        else:
-                            # Future data not available yet - still show the prediction but mark actual as NaN
-                            prediction_results.append({
-                                'ticker': ticker,
-                                'predicted_return': predicted_return,
-                                'actual_return': np.nan,
-                                'bh_return': np.nan,
-                                'prediction_error': np.nan,
-                                'current_price': current_price,
-                                'future_price': np.nan,
-                                'model_status': '✅' if ticker in current_models and current_models[ticker] is not None else '❌'
-                            })
-                except Exception:
-                    continue
-            
-            # Store results
-            if prediction_results:
-                day_predictions['results'] = prediction_results
-                daily_prediction_log.append(day_predictions)
-                
-                # Print daily comparison (every day)
-                if True:  # Show every day for better visibility
-                    print(f"\n   📊 Day {day_count} - AI Predictions vs Buy & Hold (Next {horizon_days} days):")
-                    print(f"   {'Ticker':<8} {'AI Pred':<10} {'Buy & Hold':<12} {'Error':<10} {'Dir':<5} {'Models':<8} {'Port':<6}")
-                    print(f"   {'-'*75}")
-                    
-                    # Sort all predictions by AI performance (highest first)
-                    sorted_predictions = sorted(prediction_results, key=lambda x: x['predicted_return'], reverse=True)
-                    
-                    for i, res in enumerate(sorted_predictions):
-                        # Handle NaN values gracefully in display
-                        if pd.isna(res['bh_return']):
-                            bh_str = "N/A".rjust(10)
-                            error_str = "N/A".rjust(8)
-                            direction = "?"
-                        else:
-                            # Check if direction is correct
-                            pred_up = res['predicted_return'] > 0
-                            actual_up = res['bh_return'] > 0
-                            direction = "✓" if pred_up == actual_up else "✗"
-                            error_str = f"{abs(res['prediction_error']*100):.1f}%".rjust(8)
-                            bh_str = f"{res['bh_return']*100:+.2f}%".rjust(10)
-                        
-                        # Show if stock is in top 10 (selected for portfolio)
-                        portfolio_mark = "🟢" if i < PORTFOLIO_SIZE else "  "
-                        
-                        pred_str = f"{res['predicted_return']*100:+.1f}%".rjust(8)
-                        print(f"   {res['ticker']:<8} {pred_str} {bh_str} {error_str} {direction:<5} {res['model_status']:<8} {portfolio_mark}")
         
         # Periodic progress update
         if day_count % 50 == 0:
@@ -5829,9 +5671,12 @@ def _run_portfolio_backtest_walk_forward(
                 ("AI Elite Mth", ai_elite_monthly_portfolio_value if ENABLE_AI_ELITE_MONTHLY else None),
                 ("AI Elite Flt", ai_elite_filtered_portfolio_value if ENABLE_AI_ELITE_FILTERED else None),
                 ("AI Regime", ai_regime_portfolio_value if ENABLE_AI_REGIME else None),
+                ("AI Regime Mth", ai_regime_monthly_portfolio_value if ENABLE_AI_REGIME_MONTHLY else None),
+                ("Universal Model", universal_model_portfolio_value if ENABLE_UNIVERSAL_MODEL else None),
                 ("BH 1Y Monthly", static_bh_1y_monthly_portfolio_value if ENABLE_STATIC_BH_1Y_MONTHLY else None),
                 ("BH 6M Monthly", static_bh_6m_monthly_portfolio_value if ENABLE_STATIC_BH_6M_MONTHLY else None),
                 ("BH 3M Monthly", static_bh_3m_monthly_portfolio_value if ENABLE_STATIC_BH_3M_MONTHLY else None),
+                ("BH 1M Monthly", static_bh_1m_monthly_portfolio_value if ENABLE_STATIC_BH_1M_MONTHLY else None),
             ]
             
             # Filter out None values and sort by performance
@@ -5992,6 +5837,14 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = ai_regime_cash
                     num_positions = len(ai_regime_positions)
                     invested = value - strat_cash
+                elif name == "AI Regime Mth" and ENABLE_AI_REGIME_MONTHLY:
+                    strat_cash = ai_regime_monthly_cash
+                    num_positions = len(ai_regime_monthly_positions)
+                    invested = value - strat_cash
+                elif name == "Universal Model" and ENABLE_UNIVERSAL_MODEL:
+                    strat_cash = universal_model_cash
+                    num_positions = len(universal_model_positions)
+                    invested = value - strat_cash
                 elif name == "Risk-Adj Mom Sentiment" and ENABLE_RISK_ADJ_MOM_SENTIMENT:
                     strat_cash = risk_adj_mom_sentiment_cash
                     num_positions = len(risk_adj_mom_sentiment_positions)
@@ -6055,6 +5908,10 @@ def _run_portfolio_backtest_walk_forward(
                 elif name == "BH 3M Monthly" and ENABLE_STATIC_BH_3M_MONTHLY:
                     strat_cash = static_bh_3m_monthly_cash
                     num_positions = len(static_bh_3m_monthly_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1M Monthly" and ENABLE_STATIC_BH_1M_MONTHLY:
+                    strat_cash = static_bh_1m_monthly_cash
+                    num_positions = len(static_bh_1m_monthly_positions)
                     invested = value - strat_cash
                 elif name in ("Meta-Strategy ML", "Meta-Strategy Mom") and meta_allocator is not None:
                     strat_cash = 0
@@ -6136,6 +5993,7 @@ def _run_portfolio_backtest_walk_forward(
             ("BH 1Y Monthly",       static_bh_1y_monthly_portfolio_history if ENABLE_STATIC_BH_1Y_MONTHLY else None),
             ("BH 6M Monthly",       static_bh_6m_monthly_portfolio_history if ENABLE_STATIC_BH_6M_MONTHLY else None),
             ("BH 3M Monthly",       static_bh_3m_monthly_portfolio_history if ENABLE_STATIC_BH_3M_MONTHLY else None),
+            ("BH 1M Monthly",       static_bh_1m_monthly_portfolio_history if ENABLE_STATIC_BH_1M_MONTHLY else None),
         ]
 
         # Filter out disabled strategies
@@ -6277,10 +6135,13 @@ def _run_portfolio_backtest_walk_forward(
             'ai_elite_monthly':         _strat(ai_elite_monthly_portfolio_value, ai_elite_monthly_portfolio_history, ai_elite_monthly_transaction_costs, ai_elite_monthly_cash),
             'ai_elite_filtered':        _strat(ai_elite_filtered_portfolio_value, ai_elite_filtered_portfolio_history, ai_elite_filtered_transaction_costs, ai_elite_filtered_cash),
             'ai_regime':                _strat(ai_regime_portfolio_value, ai_regime_portfolio_history, ai_regime_transaction_costs, ai_regime_cash),
+            'ai_regime_monthly':        _strat(ai_regime_monthly_portfolio_value, ai_regime_monthly_portfolio_history, ai_regime_monthly_transaction_costs, ai_regime_monthly_cash),
+            'universal_model':          _strat(universal_model_portfolio_value, universal_model_portfolio_history, universal_model_transaction_costs, universal_model_cash),
             'risk_adj_mom_sentiment':   _strat(risk_adj_mom_sentiment_portfolio_value, risk_adj_mom_sentiment_portfolio_history, risk_adj_mom_sentiment_transaction_costs, risk_adj_mom_sentiment_cash),
             'bh_1y_monthly':            _strat(static_bh_1y_monthly_portfolio_value, static_bh_1y_monthly_portfolio_history, static_bh_1y_monthly_transaction_costs, static_bh_1y_monthly_cash),
             'bh_6m_monthly':            _strat(static_bh_6m_monthly_portfolio_value, static_bh_6m_monthly_portfolio_history, static_bh_6m_monthly_transaction_costs, static_bh_6m_monthly_cash),
             'bh_3m_monthly':            _strat(static_bh_3m_monthly_portfolio_value, static_bh_3m_monthly_portfolio_history, static_bh_3m_monthly_transaction_costs, static_bh_3m_monthly_cash),
+            'bh_1m_monthly':            _strat(static_bh_1m_monthly_portfolio_value, static_bh_1m_monthly_portfolio_history, static_bh_1m_monthly_transaction_costs, static_bh_1m_monthly_cash),
         }
     }
 

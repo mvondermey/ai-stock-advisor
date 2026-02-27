@@ -587,54 +587,59 @@ def get_volatility_adj_mom_tickers(all_tickers: List[str], ticker_data_grouped: 
 
 def get_dynamic_bh_tickers(all_tickers: List[str], period: str, ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Dynamic Buy & Hold Strategy: Use shared strategy logic."""
-    from shared_strategies import select_dynamic_bh_stocks
+    from shared_strategies import select_top_performers
     
     print(f"   [DEBUG] Dynamic BH ({period}): Processing {len(all_tickers)} tickers")
     print(f"   [DEBUG] Dynamic BH ({period}): Data available: {ticker_data_grouped is not None}")
     
     current_date = datetime.now(timezone.utc)
     if period == '1y':
-        return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, current_date=current_date, 
-                                       lookback_days=365, top_n=PORTFOLIO_SIZE)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, 
+                                    lookback_days=365, top_n=PORTFOLIO_SIZE, apply_performance_filter=True, 
+                                    filter_label="Dynamic BH 1Y")
     elif period == '6m':
-        return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, current_date=current_date, 
-                                       lookback_days=180, top_n=PORTFOLIO_SIZE)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, 
+                                    lookback_days=180, top_n=PORTFOLIO_SIZE, apply_performance_filter=True,
+                                    filter_label="Dynamic BH 6M")
     elif period == '3m':
-        return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, current_date=current_date, 
-                                       lookback_days=90, top_n=PORTFOLIO_SIZE)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, 
+                                    lookback_days=90, top_n=PORTFOLIO_SIZE, apply_performance_filter=True,
+                                    filter_label="Dynamic BH 3M")
     elif period == '1m':
-        return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, current_date=current_date, 
-                                       lookback_days=30, top_n=PORTFOLIO_SIZE)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, 
+                                    lookback_days=30, top_n=PORTFOLIO_SIZE, apply_performance_filter=True,
+                                    filter_label="Dynamic BH 1M")
     else:
         print(f"   [WARN] Unknown period: {period}, defaulting to 1y")
-        return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, current_date=current_date, 
-                                       lookback_days=365, top_n=PORTFOLIO_SIZE)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, 
+                                    lookback_days=365, top_n=PORTFOLIO_SIZE, apply_performance_filter=True,
+                                    filter_label="Dynamic BH 1Y")
 
 
 def get_static_bh_tickers(all_tickers: List[str], period: str, ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Static Buy & Hold Strategy: Select top performers based on period and hold them."""
-    from shared_strategies import select_dynamic_bh_stocks
+    from shared_strategies import select_top_performers
     
     print(f"   [DEBUG] Static BH ({period}): Processing {len(all_tickers)} tickers")
     print(f"   [DEBUG] Static BH ({period}): Data available: {ticker_data_grouped is not None}")
     
     current_date = datetime.now(timezone.utc)
     if period == '1y':
-        return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, current_date=current_date, 
-                                       lookback_days=365, top_n=PORTFOLIO_SIZE)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, 
+                                    lookback_days=365, top_n=PORTFOLIO_SIZE)
     elif period == '6m':
-        return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, current_date=current_date, 
-                                       lookback_days=180, top_n=PORTFOLIO_SIZE)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, 
+                                    lookback_days=180, top_n=PORTFOLIO_SIZE)
     elif period == '3m':
-        return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, current_date=current_date, 
-                                       lookback_days=90, top_n=PORTFOLIO_SIZE)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, 
+                                    lookback_days=90, top_n=PORTFOLIO_SIZE)
     elif period == '1m':
-        return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, current_date=current_date, 
-                                       lookback_days=30, top_n=PORTFOLIO_SIZE)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, 
+                                    lookback_days=30, top_n=PORTFOLIO_SIZE)
     else:
         print(f"   [WARN] Unknown period: {period}, defaulting to 1y")
-        return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, current_date=current_date, 
-                                       lookback_days=365, top_n=PORTFOLIO_SIZE)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, 
+                                    lookback_days=365, top_n=PORTFOLIO_SIZE)
 
 
 def get_quality_momentum_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -933,44 +938,11 @@ def get_dual_momentum_tickers(all_tickers: List[str], ticker_data_grouped: Dict[
 
 
 def get_momentum_ai_hybrid_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
-    """Momentum AI Hybrid Strategy: Selects top momentum stocks with AI filtering."""
-    from config import MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK
-    
-    print(f"   🤖 Momentum AI Hybrid: Processing {len(all_tickers)} tickers")
-    # ticker_data_grouped already prepared in main.py "Momentum AI Hybrid")
+    """Momentum AI Hybrid Strategy: Calls shared function (same as backtesting)."""
+    from shared_strategies import select_momentum_ai_hybrid_stocks
     
     current_date = datetime.now(timezone.utc)
-    momentum_scores = []
-    
-    for ticker in all_tickers:
-        try:
-            if ticker in ticker_data_grouped:
-                ticker_history = ticker_data_grouped[ticker]
-                
-                # Filter to lookback period
-                ticker_history = ticker_history[ticker_history.index <= pd.Timestamp(current_date)].tail(MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK + 10)
-                
-                if len(ticker_history) >= MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK:
-                    lookback_data = ticker_history.tail(MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK)
-                    start_price = lookback_data.iloc[0]['Close']
-                    end_price = lookback_data.iloc[-1]['Close']
-                    
-                    if start_price > 0:
-                        momentum_return = (end_price - start_price) / start_price
-                        momentum_scores.append((ticker, momentum_return))
-            
-        except Exception:
-            continue
-    
-    if momentum_scores:
-        # Sort by momentum (descending)
-        momentum_scores.sort(key=lambda x: x[1], reverse=True)
-        top_stocks = [ticker for ticker, score in momentum_scores[:PORTFOLIO_SIZE]]
-        
-        print(f"   [INFO] Top {PORTFOLIO_SIZE} momentum stocks: {[(t, f'{s*100:.1f}%') for t, s in momentum_scores[:PORTFOLIO_SIZE]]}")
-        return top_stocks
-    
-    return []
+    return select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 def get_elite_hybrid_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -1135,54 +1107,16 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
 
 
 def get_ai_elite_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
-    """AI Elite Strategy: ML-powered scoring of momentum + dip opportunities.
-    Trains the ML model on recent data, then scores all tickers."""
-    from ai_elite_strategy import select_ai_elite_stocks, train_ai_elite_model
-    from config import AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS
-    import os
+    """AI Elite Strategy: Calls shared function (same as backtesting)."""
+    from shared_strategies import select_ai_elite_with_training
     
-    print(f"   🤖 AI Elite: Processing {len(all_tickers)} tickers")
-    print(f"   🤖 AI Elite: Data available: {ticker_data_grouped is not None}")
-    
-    model_path = "models/ai_elite_live_model.pkl"
-    
-    # Step 1: Train the ML model on recent historical data
-    # Use latest available data date, not current_date (which may be in the future)
-    latest_data_date = _get_latest_data_date(ticker_data_grouped, all_tickers)
-    
-    # Train_end must be early enough to have forward_days of future data
-    # Subtract forward_days to ensure we can calculate forward returns
-    train_end = latest_data_date - timedelta(days=AI_ELITE_FORWARD_DAYS)
-    train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
-    
-    # For scoring, use the latest available data date
-    scoring_date = latest_data_date
-    
-    print(f"   🎓 AI Elite: Training ML model on {train_start.date()} to {train_end.date()}...")
-    model = train_ai_elite_model(
-        ticker_data_grouped=ticker_data_grouped,
+    current_date = _get_latest_data_date(ticker_data_grouped, all_tickers)
+    selected, _ = select_ai_elite_with_training(
         all_tickers=all_tickers,
-        train_start_date=train_start,
-        train_end_date=train_end,
-        save_path=model_path,
-        forward_days=AI_ELITE_FORWARD_DAYS
+        ticker_data_grouped=ticker_data_grouped,
+        current_date=current_date,
+        top_n=PORTFOLIO_SIZE
     )
-    
-    if model is None:
-        print(f"   [WARN] AI Elite: Training failed, using fallback scoring")
-    
-    # Step 2: Score tickers using the trained model
-    # Use scoring_date (latest available data) for scoring
-    selected = select_ai_elite_stocks(all_tickers, ticker_data_grouped, 
-                                      current_date=scoring_date, 
-                                      top_n=PORTFOLIO_SIZE,
-                                      model=model)
-    
-    if selected:
-        print(f"   [PASS] AI Elite: Selected {len(selected)} stocks: {selected}")
-    else:
-        print(f"   [WARN] AI Elite: No stocks selected")
-    
     return selected
 
 
