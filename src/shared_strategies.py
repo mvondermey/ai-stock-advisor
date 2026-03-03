@@ -2448,11 +2448,42 @@ def select_ai_elite_with_training(
         if os.path.exists(base_model_path):
             try:
                 with open(base_model_path, 'rb') as f:
-                    loaded_model = pickle.load(f)
+                    model_data = pickle.load(f)
+                
+                # Handle both old format (direct model) and new format (model + metadata)
+                if isinstance(model_data, dict) and 'model' in model_data:
+                    loaded_model = model_data['model']
+                    metadata = model_data.get('metadata', {})
+                    
+                    # Display training/update info
+                    if 'trained' in metadata:
+                        trained_date = metadata['trained'][:10]  # YYYY-MM-DD format
+                        msg = f"   ✅ AI Elite: Loaded model from {base_model_path} (trained {trained_date}"
+                        if 'train_start' in metadata and 'train_end' in metadata:
+                            start_date = metadata['train_start'][:10]
+                            end_date = metadata['train_end'][:10]
+                            msg += f", data {start_date} to {end_date}"
+                        msg += ")"
+                        print(msg)
+                    elif 'updated' in metadata:
+                        updated_date = metadata['updated'][:10]
+                        msg = f"   ✅ AI Elite: Loaded model from {base_model_path} (updated {updated_date}"
+                        if 'train_start' in metadata and 'train_end' in metadata:
+                            start_date = metadata['train_start'][:10]
+                            end_date = metadata['train_end'][:10]
+                            msg += f", data {start_date} to {end_date}"
+                        msg += ")"
+                        print(msg)
+                    else:
+                        print(f"   ✅ AI Elite: Loaded model from {base_model_path}")
+                else:
+                    # Old format - direct model
+                    loaded_model = model_data
+                    print(f"   ✅ AI Elite: Loaded model from {base_model_path} (legacy format)")
+                
                 ai_elite_models['_shared_base'] = loaded_model
                 for ticker in all_tickers:
                     ai_elite_models[ticker] = loaded_model
-                print(f"   ✅ AI Elite: Loaded model from {base_model_path}")
             except Exception as e:
                 print(f"   ⚠️ AI Elite: Failed to load model: {e}")
     
@@ -2503,7 +2534,7 @@ def select_ai_elite_with_training(
         existing_base = ai_elite_models.get('_shared_base')
         base_model, base_r2 = train_shared_base_model(
             all_training_data, save_path=base_model_path,
-            existing_model=existing_base
+            existing_model=existing_base, train_start=train_start, train_end=train_end
         )
         
         if base_model:

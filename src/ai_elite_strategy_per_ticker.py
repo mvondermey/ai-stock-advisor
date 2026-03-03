@@ -18,7 +18,9 @@ FEATURE_COLS = [
     'overnight_gap', 'intraday_range', 'last_hour_momentum',
     'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
     'volume_ratio', 'rsi_14',
-    'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m'
+    'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m',
+    # NEW: Mean reversion features
+    'bollinger_position', 'sma20_distance', 'sma50_distance', 'macd'
 ]
 
 
@@ -90,6 +92,11 @@ def collect_ticker_training_data(
                 'short_term_reversal': features.get('short_term_reversal', 0),
                 'volume_sentiment':   features.get('volume_sentiment', 0),
                 'risk_adj_mom_3m':    features.get('risk_adj_mom_3m', 0),
+                # NEW: Mean reversion features
+                'bollinger_position': features.get('bollinger_position', 0.5),
+                'sma20_distance':     features.get('sma20_distance', 0),
+                'sma50_distance':     features.get('sma50_distance', 0),
+                'macd':               features.get('macd', 0),
                 'forward_return':     forward_return,
                 'market_return':      market_returns.get(current_date, 0.0),
             })
@@ -122,18 +129,22 @@ def _prepare_labels(train_df: pd.DataFrame) -> pd.DataFrame:
 def train_shared_base_model(
     all_training_data: List[dict],
     save_path: str = None,
-    existing_model=None
+    existing_model=None,
+    train_start: datetime = None,
+    train_end: datetime = None
 ):
     """
-    Train ONE shared base model on data from ALL tickers (REGRESSION version).
+    Train ENSEMBLE of models on data from ALL tickers (REGRESSION version).
+    Returns ensemble of top 3 models for more robust predictions.
     
     Args:
         all_training_data: Combined list of sample dicts from all tickers
-        save_path: Path to save the shared base model
-        existing_model: Existing base model to continue training
+        save_path: Path to save the ensemble
+        existing_model: Existing ensemble to continue training (not used for ensembles)
         
     Returns:
-        (model, r2_score) or (None, 0.0)
+        (ensemble_dict, avg_r2_score) or (None, 0.0)
+        ensemble_dict contains {'models': [model1, model2, ...], 'weights': [w1, w2, ...]}
     """
     from config import MIN_TRAINING_SAMPLES_AI_ELITE, XGBOOST_USE_GPU
 
@@ -145,16 +156,16 @@ def train_shared_base_model(
     train_df = _prepare_labels(train_df)
 
     X = train_df[FEATURE_COLS]
-    y = train_df['label'].values  # Continuous risk_adj_return values
+    y = train_df['label'].values
 
-    print(f"   📊 AI Elite: Shared base model training on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
+    print(f"   📊 AI Elite: Training model ensemble on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
 
-    # Build candidate models (REGRESSORS)
-    candidates = {}
+    # Build ALL available models for ensemble
+    models = {}
     try:
         import xgboost as xgb
         device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
-        candidates['XGBoost'] = xgb.XGBRegressor(
+        models['XGBoost'] = xgb.XGBRegressor(
             n_estimators=100, max_depth=4, learning_rate=0.1,
             subsample=0.8, random_state=42,
             tree_method='hist', device=device, verbosity=0, n_jobs=-1
@@ -164,74 +175,104 @@ def train_shared_base_model(
 
     try:
         import lightgbm as lgb
-        candidates['LightGBM'] = lgb.LGBMRegressor(
+        models['LightGBM'] = lgb.LGBMRegressor(
             n_estimators=100, max_depth=4, learning_rate=0.1,
             subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
         )
     except ImportError:
         pass
 
-    # GradientBoosting as fallback
-    from sklearn.ensemble import GradientBoostingRegressor
-    if not candidates:
-        candidates['GradientBoosting'] = GradientBoostingRegressor(
-            n_estimators=100, max_depth=4, learning_rate=0.1,
-            subsample=0.8, random_state=42, verbose=0
-        )
+    # Always include sklearn models
+    from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+    from sklearn.linear_model import Ridge
+    
+    models['GradientBoosting'] = GradientBoostingRegressor(
+        n_estimators=100, max_depth=4, learning_rate=0.1,
+        subsample=0.8, random_state=42, verbose=0
+    )
+    
+    models['RandomForest'] = RandomForestRegressor(
+        n_estimators=100, max_depth=6, random_state=42, n_jobs=-1
+    )
+    
+    models['Ridge'] = Ridge(alpha=1.0, random_state=42)
 
-    # If continuing from existing model, just refit on new data
-    if existing_model is not None:
-        print(f"   🔄 AI Elite: Continuing shared base model training")
-        existing_model.fit(X, y)
-        from sklearn.metrics import r2_score
-        y_pred = existing_model.predict(X)
-        score = r2_score(y, y_pred)
-        if save_path:
-            _save_model(existing_model, save_path)
-        print(f"   ✅ AI Elite: Shared base model updated (R² {score:.3f})")
-        return existing_model, score
-
-    # Cross-validate to pick best model type
+    # Train all models and evaluate with cross-validation
     from sklearn.metrics import r2_score, make_scorer
     from sklearn.model_selection import cross_val_score
     import warnings
 
     r2_scorer = make_scorer(r2_score)
+    cv_folds = 3
+    
+    trained_models = []
+    model_scores = []
+    model_names = []
 
-    best_model = None
-    best_name = None
-    best_score = -1.0
-    cv_folds = 3  # 3-fold is enough for 37K+ samples
-
-    for name, m in candidates.items():
+    for name, m in models.items():
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
+                # Train on full data
+                m.fit(X, y)
+                # Cross-validate
                 scores = cross_val_score(m, X, y, cv=cv_folds, scoring=r2_scorer, n_jobs=1)
             mean_score = scores.mean()
             print(f"      {name}: CV R² = {mean_score:.3f}")
-            if mean_score > best_score:
-                best_score = mean_score
-                best_name = name
-                best_model = m
+            trained_models.append(m)
+            model_scores.append(mean_score)
+            model_names.append(name)
         except Exception as e:
-            print(f"      {name}: CV failed: {e}")
+            print(f"      {name}: Training failed: {e}")
             continue
 
-    if best_model is None:
-        best_model = GradientBoostingRegressor(
-            n_estimators=100, max_depth=4, learning_rate=0.1,
-            subsample=0.8, random_state=42, verbose=0
-        )
-        best_name = 'GradientBoosting'
+    if not trained_models:
+        print(f"   ⚠️ AI Elite: No models trained successfully")
+        return None, 0.0
 
-    best_model.fit(X, y)
+    # Create ensemble: use top 3 models weighted by their CV R²
+    # Sort by score descending
+    sorted_indices = sorted(range(len(model_scores)), key=lambda i: model_scores[i], reverse=True)
+    
+    # Take top 3 (or all if less than 3)
+    top_n = min(3, len(trained_models))
+    top_indices = sorted_indices[:top_n]
+    
+    ensemble_models = [trained_models[i] for i in top_indices]
+    ensemble_scores = [max(0, model_scores[i]) for i in top_indices]  # Clip negative scores to 0
+    ensemble_names = [model_names[i] for i in top_indices]
+    
+    # Normalize weights
+    total_score = sum(ensemble_scores)
+    if total_score > 0:
+        ensemble_weights = [s / total_score for s in ensemble_scores]
+    else:
+        ensemble_weights = [1.0 / len(ensemble_scores)] * len(ensemble_scores)
+    
+    # Create ensemble dict
+    ensemble = {
+        'models': ensemble_models,
+        'weights': ensemble_weights,
+        'names': ensemble_names,
+        'feature_cols': FEATURE_COLS
+    }
+    
+    avg_r2 = sum(ensemble_scores) / len(ensemble_scores)
 
     if save_path:
-        _save_model(best_model, save_path)
+        metadata = {
+            'trained': datetime.now(timezone.utc).isoformat(),
+            'ensemble_names': ensemble_names,
+            'ensemble_scores': ensemble_scores,
+            'avg_r2': avg_r2
+        }
+        if train_start and train_end:
+            metadata['train_start'] = train_start.isoformat()
+            metadata['train_end'] = train_end.isoformat()
+        _save_model(ensemble, save_path, metadata)
 
-    print(f"   ✅ AI Elite: Shared base model trained! Best: {best_name} (CV R² {best_score:.3f})")
-    return best_model, best_score
+    print(f"   ✅ AI Elite: Ensemble trained! Models: {ensemble_names}, Weights: {[f'{w:.2f}' for w in ensemble_weights]}, Avg R² {avg_r2:.3f}")
+    return ensemble, avg_r2
 
 
 def fine_tune_per_ticker(
@@ -293,11 +334,16 @@ def fine_tune_per_ticker(
         return None
 
 
-def _save_model(model, path: str):
-    """Save model to disk."""
+def _save_model(model, path: str, metadata: dict = None):
+    """Save model to disk with optional metadata."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        # Save model with metadata
+        model_data = {
+            'model': model,
+            'metadata': metadata or {}
+        }
         with open(path, 'wb') as f:
-            pickle.dump(model, f)
+            pickle.dump(model_data, f)
     except Exception as e:
         print(f"   ⚠️ AI Elite: Failed to save model to {path}: {e}")

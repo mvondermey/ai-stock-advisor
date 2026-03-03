@@ -255,7 +255,38 @@ def print_final_summary(
     final_bh_3m_monthly_value_1y: float = None,
     bh_3m_monthly_1y_return: float = None,
     bh_3m_monthly_transaction_costs: float = None,
-    bh_3m_monthly_cash: float = None
+    bh_3m_monthly_cash: float = None,
+    # AI Elite Monthly
+    final_ai_elite_monthly_value_1y: float = None,
+    ai_elite_monthly_1y_return: float = None,
+    ai_elite_monthly_transaction_costs: float = None,
+    ai_elite_monthly_cash: float = None,
+    # AI Elite Filtered
+    final_ai_elite_filtered_value_1y: float = None,
+    ai_elite_filtered_1y_return: float = None,
+    ai_elite_filtered_transaction_costs: float = None,
+    ai_elite_filtered_cash: float = None,
+    # AI Regime
+    final_ai_regime_value_1y: float = None,
+    ai_regime_1y_return: float = None,
+    ai_regime_transaction_costs: float = None,
+    ai_regime_cash: float = None,
+    # AI Regime Monthly
+    final_ai_regime_monthly_value_1y: float = None,
+    ai_regime_monthly_1y_return: float = None,
+    ai_regime_monthly_transaction_costs: float = None,
+    ai_regime_monthly_cash: float = None,
+    # BH 1M Monthly
+    final_bh_1m_monthly_value_1y: float = None,
+    bh_1m_monthly_1y_return: float = None,
+    bh_1m_monthly_transaction_costs: float = None,
+    bh_1m_monthly_cash: float = None,
+    # Universal Model
+    final_universal_model_value_1y: float = None,
+    universal_model_1y_return: float = None,
+    universal_model_transaction_costs: float = None,
+    universal_model_cash: float = None,
+    **kwargs  # Accept any additional arguments
 ) -> None:
     """Prints the final summary of the backtest results."""
     

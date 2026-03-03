@@ -117,7 +117,9 @@ def select_ai_elite_stocks(
                     'overnight_gap', 'intraday_range', 'last_hour_momentum',
                     'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
                     'volume_ratio', 'rsi_14',
-                    'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m']
+                    'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m',
+                    # NEW: Mean reversion features
+                    'bollinger_position', 'sma20_distance', 'sma50_distance', 'macd']
 
     candidates_df = pd.DataFrame(candidates)
     
@@ -142,8 +144,20 @@ def select_ai_elite_stocks(
         X_ticker = pd.DataFrame([row[feature_cols].values], columns=feature_cols)
         
         # Get ML prediction (REGRESSION - predict continuous value)
+        # Handle both single models and ensemble dictionaries
         try:
-            pred_return = ticker_model.predict(X_ticker)[0]  # Single prediction
+            if isinstance(ticker_model, dict) and 'models' in ticker_model:
+                # Ensemble prediction: weighted average of all models
+                models = ticker_model['models']
+                weights = ticker_model['weights']
+                ensemble_pred = 0.0
+                for model, weight in zip(models, weights):
+                    pred = model.predict(X_ticker)[0]
+                    ensemble_pred += pred * weight
+                pred_return = ensemble_pred
+            else:
+                # Single model prediction
+                pred_return = ticker_model.predict(X_ticker)[0]
             ai_scores.append(float(pred_return))
         except Exception as e:
             print(f"   ⚠️ AI Elite: Failed to score {ticker}: {e}")
@@ -280,6 +294,44 @@ def _extract_features(ticker: str, hourly_data: Optional[pd.DataFrame], current_
                 rsi_14 = 100.0  # no losses = max RSI
 
         # ------------------------------------------------------------------ #
+        # NEW: BOLLINGER BANDS & SMA DISTANCES (Mean Reversion Indicators)     #
+        # ------------------------------------------------------------------ #
+        # Bollinger position: 0 = at lower band, 1 = at upper band, 0.5 = at SMA
+        bollinger_position = 0.5  # neutral default
+        sma20_distance = 0.0  # neutral default (price vs SMA20 as %)
+        sma50_distance = 0.0  # neutral default (price vs SMA50 as %)
+        
+        if len(close_daily) >= 20:
+            sma20 = close_daily.tail(20).mean()
+            std20 = close_daily.tail(20).std()
+            if std20 > 0 and sma20 > 0:
+                # Bollinger position: (price - lower) / (upper - lower)
+                upper_band = sma20 + 2 * std20
+                lower_band = sma20 - 2 * std20
+                bollinger_position = (latest_price - lower_band) / (upper_band - lower_band)
+                bollinger_position = max(0.0, min(1.0, bollinger_position))  # Clip to [0, 1]
+                
+                # SMA20 distance: (price - SMA20) / SMA20 * 100
+                sma20_distance = ((latest_price - sma20) / sma20) * 100
+        
+        if len(close_daily) >= 50:
+            sma50 = close_daily.tail(50).mean()
+            if sma50 > 0:
+                # SMA50 distance: (price - SMA50) / SMA50 * 100
+                sma50_distance = ((latest_price - sma50) / sma50) * 100
+
+        # MACD: MACD line - Signal line (momentum indicator)
+        macd = 0.0  # neutral default
+        if len(close_daily) >= 26:
+            ema12 = close_daily.tail(26).ewm(span=12, adjust=False).mean().iloc[-1]
+            ema26 = close_daily.tail(26).ewm(span=26, adjust=False).mean().iloc[-1]
+            macd_line = ema12 - ema26
+            # Signal line is 9-day EMA of MACD line
+            macd_series = close_daily.tail(35).ewm(span=12, adjust=False).mean() - close_daily.tail(35).ewm(span=26, adjust=False).mean()
+            signal_line = macd_series.ewm(span=9, adjust=False).mean().iloc[-1]
+            macd = macd_line - signal_line
+
+        # ------------------------------------------------------------------ #
         # SENTIMENT PROXY FEATURES  (price-derived, no API needed)            #
         # ------------------------------------------------------------------ #
         # Short-term reversal: 5-day return minus 20-day return
@@ -367,6 +419,11 @@ def _extract_features(ticker: str, hourly_data: Optional[pd.DataFrame], current_
             'short_term_reversal':   short_term_reversal,
             'volume_sentiment':      volume_sentiment,
             'risk_adj_mom_3m':       risk_adj_mom_3m,
+            # NEW: Mean reversion features
+            'bollinger_position':    bollinger_position,
+            'sma20_distance':        sma20_distance,
+            'sma50_distance':        sma50_distance,
+            'macd':                  macd,
         }
 
     except Exception as e:
@@ -419,8 +476,23 @@ def _load_or_create_model(model_path: Optional[str] = None):
     if model_path and os.path.exists(model_path):
         try:
             with open(model_path, 'rb') as f:
-                model = pickle.load(f)
-            print(f"   ✅ AI Elite: Loaded ML model from {model_path}")
+                model_data = pickle.load(f)
+            # Handle both old format (direct model) and new format (model + metadata)
+            if isinstance(model_data, dict) and 'model' in model_data:
+                model = model_data['model']
+                metadata = model_data.get('metadata', {})
+                info_parts = []
+                if 'trained' in metadata:
+                    info_parts.append(f"trained {metadata['trained'][:10]}")
+                elif 'updated' in metadata:
+                    info_parts.append(f"updated {metadata['updated'][:10]}")
+                if 'train_start' in metadata and 'train_end' in metadata:
+                    info_parts.append(f"data {metadata['train_start'][:10]} to {metadata['train_end'][:10]}")
+                info_str = f" ({', '.join(info_parts)})" if info_parts else ""
+                print(f"   ✅ AI Elite: Loaded ML model from {model_path}{info_str}")
+            else:
+                model = model_data
+                print(f"   ✅ AI Elite: Loaded ML model from {model_path} (legacy format)")
             return model
         except Exception as e:
             print(f"   ⚠️ AI Elite: Failed to load model: {e}")
@@ -567,6 +639,11 @@ def train_ai_elite_model(
                     'short_term_reversal': features.get('short_term_reversal', 0),
                     'volume_sentiment':   features.get('volume_sentiment', 0),
                     'risk_adj_mom_3m':    features.get('risk_adj_mom_3m', 0),
+                    # NEW: Mean reversion features
+                    'bollinger_position': features.get('bollinger_position', 0.5),
+                    'sma20_distance':     features.get('sma20_distance', 0),
+                    'sma50_distance':     features.get('sma50_distance', 0),
+                    'macd':               features.get('macd', 0),
                     'forward_return':     forward_return,
                     'market_return':      market_return,
                     'sample_date':        sample_date
@@ -612,14 +689,16 @@ def train_ai_elite_model(
     min_return_threshold = 0.5  # 0.5% minimum return
     train_df = train_df[abs(train_df['forward_return']) >= min_return_threshold]
     
-    print(f"   📊 AI Elite: Using 17 features (5 daily + 3 intraday + 6 derived + 2 sentiment proxy + 1 risk_adj_mom_3m)")
+    print(f"   📊 AI Elite: Using 21 features (5 daily + 3 intraday + 6 derived + 2 sentiment proxy + 1 risk_adj_mom_3m + 4 mean reversion)")
     
     # Prepare features and target
     feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
                     'overnight_gap', 'intraday_range', 'last_hour_momentum',
                     'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
                     'volume_ratio', 'rsi_14',
-                    'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m']
+                    'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m',
+                    # NEW: Mean reversion features
+                    'bollinger_position', 'sma20_distance', 'sma50_distance', 'macd']
     X = train_df[feature_cols].values
     y = train_df['label'].values  # Continuous risk-adjusted return values
     

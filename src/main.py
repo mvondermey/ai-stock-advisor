@@ -929,59 +929,11 @@ def main(
         else:
             print(f"   ℹ️  Models directory doesn't exist. Will create during training.")
     
-    # --- Step 3: Load existing models or prepare for training ---
-    print(f"\n🔄 Loading existing models...")
-    training_results = []
-    
-    # Try to load existing models
-    from prediction import load_models_for_tickers
-    
-    # Get all available tickers with models
-    import os
-    
-    models_dir = Path("logs/models")
-    available_model_files = []
-    
-    if models_dir.exists():
-        for file in models_dir.glob("*_TargetReturn_model.joblib"):
-            ticker = file.stem.replace("_TargetReturn_model", "")
-            available_model_files.append(ticker)
-    
-    print(f"   📁 Found {len(available_model_files)} existing models")
-    
-    if available_model_files:
-        print(f"   🔄 Loading models for {len(available_model_files)} tickers...")
-        try:
-            models, scalers, y_scalers = load_models_for_tickers(available_model_files)
-            print(f"   ✅ Loaded {len(models)} models, {len(scalers)} scalers, {len(y_scalers)} y_scalers")
-        except Exception as e:
-            print(f"   ⚠️ Error loading models: {e}")
-            models, scalers, y_scalers = {}, {}, {}
-    else:
-        print(f"   ⚠️ No existing models found - will train during walk-forward")
-        models, scalers, y_scalers = {}, {}, {}
-    
-    # AI Strategy removed - always disabled
+    # --- Step 3: Prepare for walk-forward backtest ---
+    # Per-ticker models removed - AI Elite uses shared base model trained during backtest
     from config import ENABLE_WALK_FORWARD_RETRAINING
-    ai_strategy_available = False  # AI Strategy removed
-    failed_training_tickers_1y = {}
-    top_tickers_ai_filtered = top_tickers  # All tickers available for AI when trained
     
-    # Send training completion notification
-    if training_start_time:
-        training_time_minutes = (time.time() - training_start_time) / 60
-        trained_count = len(models)
-        total_count = len(top_tickers) * 5  # Approximate (5 models per ticker)
-        
-        send_training_notification(
-            models_trained=trained_count,
-            total_models=total_count,
-            training_time_minutes=training_time_minutes,
-            failed_models=failed_training_tickers_1y if 'failed_training_tickers_1y' in locals() else None
-        )
-        
-    # All tickers available for both AI and non-AI strategies
-    # Models will be trained during walk-forward backtest
+    # All tickers available for strategies
     top_tickers_ai_filtered = top_tickers
     top_tickers_1y_filtered = top_tickers
     
@@ -1059,10 +1011,6 @@ def main(
         import traceback
         traceback.print_exc()
     
-    # DEBUG: Check what's in models dictionaries
-    print(f"\n[DEBUG MAIN] 1-Year models keys: {list(models.keys())}")
-    print(f"[DEBUG MAIN] 1-Year models values types: {[type(v).__name__ if v else 'None' for v in models.values()]}")
-
     # AI Strategy removed - running comparison strategies only
     print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (comparison strategies only)...")
     
@@ -1076,14 +1024,10 @@ def main(
             backtest_start_date=bt_start_1y,
             backtest_end_date=bt_end,
             initial_top_tickers=top_tickers,
-            initial_models=models,
-            initial_scalers=scalers,
-            initial_y_scalers=y_scalers,
             capital_per_stock=capital_per_stock_1y,
             period_name=actual_period_name,
             top_performers_data=top_performers_data,
             horizon_days=PERIOD_HORIZONS.get("1-Year", 10),  # 10 calendar days from config
-            enable_ai_strategy=False  # AI Strategy removed
         )
         
         if result is None:
@@ -1343,7 +1287,7 @@ def main(
         return ((v - portfolio_initial_capital) / abs(portfolio_initial_capital)) * 100 if portfolio_initial_capital != 0 else 0.0
     
     print_final_summary(
-        sorted_final_results, models, scalers, optimized_params_per_ticker,
+        sorted_final_results, {}, {}, optimized_params_per_ticker,
         final_strategy_value_1y, final_buy_hold_value_1y, ai_1y_return,
         actual_initial_capital_1y,
         actual_tickers_analyzed,
@@ -1397,7 +1341,7 @@ def main(
         final_turnaround_value_1y=s['turnaround']['value'],
         turnaround_1y_return=_ret('turnaround'),
         # Transaction costs - all from dict
-        ai_transaction_costs=s['ai_strategy']['costs'],
+        ai_transaction_costs=0,  # AI Strategy removed
         static_bh_transaction_costs=s['static_bh_1y']['costs'],
         static_bh_6m_transaction_costs=s['static_bh_6m']['costs'],
         static_bh_3m_transaction_costs=s['static_bh_3m']['costs'],
@@ -1437,7 +1381,7 @@ def main(
         final_rule_value_1y=None,
         rule_1y_return=None,
         # Cash deployed - all from dict
-        ai_cash_deployed=s['ai_strategy']['cash_deployed'],
+        ai_cash_deployed=0,  # AI Strategy removed
         static_bh_cash_deployed=s['static_bh_1y']['cash_deployed'],
         static_bh_6m_cash_deployed=s['static_bh_6m']['cash_deployed'],
         static_bh_3m_cash_deployed=s['static_bh_3m']['cash_deployed'],
@@ -1541,6 +1485,21 @@ def main(
         ai_elite_1y_return=_ret('ai_elite'),
         ai_elite_transaction_costs=s['ai_elite']['costs'],
         ai_elite_cash=s['ai_elite']['cash_deployed'],
+        # AI Elite Monthly
+        final_ai_elite_monthly_value_1y=s['ai_elite_monthly']['value'],
+        ai_elite_monthly_1y_return=_ret('ai_elite_monthly'),
+        ai_elite_monthly_transaction_costs=s['ai_elite_monthly']['costs'],
+        ai_elite_monthly_cash=s['ai_elite_monthly']['cash_deployed'],
+        # AI Elite Filtered
+        final_ai_elite_filtered_value_1y=s['ai_elite_filtered']['value'],
+        ai_elite_filtered_1y_return=_ret('ai_elite_filtered'),
+        ai_elite_filtered_transaction_costs=s['ai_elite_filtered']['costs'],
+        ai_elite_filtered_cash=s['ai_elite_filtered']['cash_deployed'],
+        # AI Regime
+        final_ai_regime_value_1y=s['ai_regime']['value'],
+        ai_regime_1y_return=_ret('ai_regime'),
+        ai_regime_transaction_costs=s['ai_regime']['costs'],
+        ai_regime_cash=s['ai_regime']['cash_deployed'],
         # Elite Risk
         final_elite_risk_value_1y=s['elite_risk']['value'],
         elite_risk_1y_return=_ret('elite_risk'),
@@ -1694,7 +1653,7 @@ def main(
 • Total Runtime: {total_time_minutes:.1f} minutes
 • Training: {'Completed' if training_start_time else 'Skipped'}
 • Backtesting: {'Completed' if backtest_start_time else 'Skipped'}
-• Models Available: {len(models) if 'models' in locals() else 0}
+• AI Elite models trained during walk-forward backtest
 
 📈 Ready for live trading or analysis!
         """.strip(),
@@ -1709,27 +1668,8 @@ def main(
     
     best_period_name = max(performance_values, key=performance_values.get)
     
-    # Get the models and scalers corresponding to the best period (only 1-Year available)
-    best_models_dict = models  # Single model per stock
-    best_scalers_dict = scalers
-
-    # Save the best models and scalers for each ticker to the paths used by live_trading.py
-    models_dir = Path("logs/models")
-    _ensure_dir(models_dir) # Ensure the directory exists
-
-    print(f"\n🏆 Saving best performing models for live trading from {best_period_name} period...")
-
-    for ticker in best_models_dict.keys():
-        try:
-            model = best_models_dict[ticker]
-            scaler = best_scalers_dict[ticker]
-            
-            # Skip saving - models are already saved by training_phase.py with proper serialization
-            # Re-saving here with joblib would corrupt PyTorch models
-            print(f"  ✅ Using model for {ticker} from {best_period_name} period (already saved by training phase).")
-            
-        except Exception as e:
-            print(f"  ⚠️ Error processing model for {ticker} from {best_period_name} period: {e}")
+    # AI Elite models are saved during walk-forward backtest to logs/models/
+    print(f"\n🏆 AI Elite models saved during walk-forward backtest")
     
     # Return all_tickers_data for performance table
     return all_tickers_data

@@ -4278,7 +4278,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 # Initialize allocator on first use
                 if ai_regime_allocator is None:
-                    ai_regime_allocator = AIRegimeAllocator(retrain_days=1, forward_days=20)
+                    ai_regime_allocator = AIRegimeAllocator(retrain_days=1, forward_days=1)
                     # Try to load existing model from disk
                     ai_regime_allocator.load_model()
                 
@@ -4342,7 +4342,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 # Initialize allocator on first use
                 if ai_regime_monthly_allocator is None:
-                    ai_regime_monthly_allocator = AIRegimeMonthlyAllocator(forward_days=20)
+                    ai_regime_monthly_allocator = AIRegimeMonthlyAllocator(forward_days=1)
                     # Try to load existing model from disk (same as daily AI Regime)
                     ai_regime_monthly_allocator.load_model()
                 
