@@ -295,6 +295,12 @@ class AIRegimeAllocator:
         le = LabelEncoder()
         y = le.fit_transform(train_df['label'])
         
+        # Check we have at least 2 classes (classifier requirement)
+        n_classes = len(np.unique(y))
+        if n_classes < 2:
+            print(f"   ⚠️ AI Regime: Only {n_classes} class in training data, need at least 2")
+            return False
+        
         # Feature columns (exclude label)
         feature_cols = [c for c in train_df.columns if c != 'label']
         X = train_df[feature_cols].values
