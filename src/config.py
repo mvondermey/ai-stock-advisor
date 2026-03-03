@@ -82,7 +82,7 @@ USE_LSTM = True
 USE_GRU = False
 
 # --- Volatility Ensemble Parameters ---
-MAX_PORTFOLIO_VOLATILITY = 0.60  # 60% annualized max portfolio volatility (allows 10 positions with volatile stocks)
+MAX_PORTFOLIO_VOLATILITY = 0.80  # 80% annualized max portfolio volatility (allows 10 positions with volatile stocks)
 MAX_SINGLE_STOCK_VOLATILITY = 0.50  # 50% annualized max for any single stock
 VOLATILITY_LOOKBACK_DAYS = 30  # Days to calculate volatility
 
@@ -214,7 +214,7 @@ TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
 USE_UNIFIED_PARALLEL_TRAINING = True
 
 # --- Backtest windows
-BACKTEST_DAYS           = 90      # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           = 90     # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 
 # --- Calendar days ---
@@ -321,14 +321,22 @@ ENABLE_TREND_FOLLOWING_ATR = True   # NEW - Trend Following with ATR Trailing St
 ENABLE_ELITE_HYBRID = True   # NEW - Elite Hybrid (Mom-Vol 6M + 1Y/3M Ratio - combines top 2 most consistent strategies)
 ENABLE_ELITE_RISK = True   # NEW - Elite Risk (Risk-Adj Mom base + Elite Hybrid dip/vol bonuses)
 ENABLE_RISK_ADJ_MOM_6M = True   # NEW - Risk-Adj Mom 6M (same as Risk-Adj Mom but 6M window)
+ENABLE_RISK_ADJ_MOM_6M_MONTHLY = True   # NEW - Risk-Adj Mom 6M Monthly (same scoring, rebalance start of month only)
 ENABLE_RISK_ADJ_MOM_3M = True   # NEW - Risk-Adj Mom 3M (same as Risk-Adj Mom but 3M window)
 ENABLE_RISK_ADJ_MOM_3M_MONTHLY = True   # NEW - Risk-Adj Mom 3M Monthly (same scoring, rebalance start of month only)
+ENABLE_RISK_ADJ_MOM_1M = True   # NEW - Risk-Adj Mom 1M (same as Risk-Adj Mom but 1M window)
+ENABLE_RISK_ADJ_MOM_1M_MONTHLY = True   # NEW - Risk-Adj Mom 1M Monthly (same scoring, rebalance start of month only)
 ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip opportunities)
+ENABLE_AI_ELITE_MONTHLY = True   # NEW - AI Elite Monthly (same ML scoring, retrain + rebalance start of month only)
+ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre-filter + AI Elite re-rank)
+ENABLE_AI_REGIME = True   # NEW - AI Regime (ML predicts which strategy to use based on market conditions)
+ENABLE_AI_REGIME_MONTHLY = True   # NEW - AI Regime Monthly (same as AI Regime but rebalance start of month only)
+ENABLE_UNIVERSAL_MODEL = True   # NEW - Universal Model (single ML model for all tickers)
 ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (not implemented)
 
 # AI Elite Parameters
-AI_ELITE_RETRAIN_DAYS = 1  # Retrain model every N days
-AI_ELITE_TRAINING_LOOKBACK = 90  # Use fixed 90-day window for training
+AI_ELITE_RETRAIN_DAYS = 1  # Retrain model every 1 days
+AI_ELITE_TRAINING_LOOKBACK = 90  # Days of history to use for training
 AI_ELITE_FORWARD_DAYS = 5  # Predict performance over next N days
 
 # AI Elite Intraday Configuration
@@ -535,16 +543,17 @@ RISK_ADJ_MOM_MIN_SCORE = 10.0  # FIXED: Lowered from 30.0 to allow more candidat
 # Set to 0 to maintain true buy & hold behavior (no rebalancing)
 # These are default values - if OPTIMIZE_REBALANCE_HORIZON is True, the system will
 # test multiple horizons (30-90 days) and pick the best one
-STATIC_BH_1Y_REBALANCE_DAYS = 0   # Default rebalance period for 1Y selection
-STATIC_BH_3M_REBALANCE_DAYS = 0   # Default rebalance period for 3M selection
-STATIC_BH_1M_REBALANCE_DAYS = 0   # Default rebalance period for 1M selection
-STATIC_BH_6M_REBALANCE_DAYS = 0   # Default rebalance period for 6M selection
+STATIC_BH_1Y_REBALANCE_DAYS = 22  # Optimal rebalance period for 1Y selection
+STATIC_BH_3M_REBALANCE_DAYS = 37  # Optimal rebalance period for 3M selection
+STATIC_BH_1M_REBALANCE_DAYS = 27  # Optimal rebalance period for 1M selection
+STATIC_BH_6M_REBALANCE_DAYS = 34  # Optimal rebalance period for 6M selection
 
 # --- Static BH Monthly Rebalance Variants ---
 # These are separate strategies that rebalance on the first trading day of each month
 ENABLE_STATIC_BH_1Y_MONTHLY = True   # Static BH 1Y with monthly rebalance
 ENABLE_STATIC_BH_6M_MONTHLY = True   # Static BH 6M with monthly rebalance
 ENABLE_STATIC_BH_3M_MONTHLY = True   # Static BH 3M with monthly rebalance
+ENABLE_STATIC_BH_1M_MONTHLY = True   # Static BH 1M with monthly rebalance
 
 # --- Rebalance Horizon Optimization ---
 # If True, test all rebalance horizons from 20 to 40 days for static strategies

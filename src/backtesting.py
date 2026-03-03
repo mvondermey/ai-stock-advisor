@@ -33,7 +33,7 @@ from config import (
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
     CALENDAR_DAYS_PER_YEAR,
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
-    ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_AI_ELITE,
+    ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_6M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_RISK_ADJ_MOM_1M, ENABLE_RISK_ADJ_MOM_1M_MONTHLY, ENABLE_AI_ELITE,
     ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_REGIME, ENABLE_AI_REGIME_MONTHLY, ENABLE_UNIVERSAL_MODEL,
     CONCENTRATED_3M_REBALANCE_DAYS,
     AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, AI_ELITE_INTRADAY_LOOKBACK
@@ -442,6 +442,7 @@ def _smart_rebalance_portfolio(
     else:
         positions_to_actually_buy = positions_to_buy_list
     
+    newly_bought = []
     for ticker in positions_to_actually_buy:
         if ticker in ticker_data_grouped:
             price_data = ticker_data_grouped[ticker].loc[:current_date]
@@ -460,8 +461,32 @@ def _smart_rebalance_portfolio(
                         updated_cash -= total_cost
                         updated_positions[ticker] = {'shares': shares, 'entry_price': current_price}
                         final_stocks.append(ticker)
+                        newly_bought.append(ticker)
                     else:
                         print(f"   ❌ {strategy_name} Insufficient cash for {ticker}: need ${total_cost:,.0f}, have ${updated_cash:,.0f}")
+    
+    # Second pass: try to buy stocks that failed in first pass due to insufficient per-stock allocation
+    skipped_tickers = [t for t in positions_to_actually_buy if t not in newly_bought and t not in final_stocks]
+    for ticker in skipped_tickers:
+        if updated_cash <= 0:
+            break
+        if ticker in ticker_data_grouped:
+            price_data = ticker_data_grouped[ticker].loc[:current_date]
+            if not price_data.empty:
+                current_price = price_data['Close'].dropna().iloc[-1]
+                if current_price > 0:
+                    shares = int(updated_cash / (current_price * (1 + transaction_cost)))
+                    if shares > 0:
+                        buy_value = shares * current_price
+                        buy_cost = buy_value * transaction_cost
+                        total_cost = buy_value + buy_cost
+                        if total_cost <= updated_cash:
+                            print(f"   🛒 {strategy_name} Buying {ticker} (2nd pass): {shares} shares @ ${current_price:.2f}")
+                            total_transaction_costs += buy_cost
+                            updated_cash -= total_cost
+                            updated_positions[ticker] = {'shares': shares, 'entry_price': current_price}
+                            final_stocks.append(ticker)
+                            newly_bought.append(ticker)
     
     # Log skipped positions
     if num_positions_to_skip > 0 and num_positions_to_skip < len(positions_to_buy_list):
@@ -1609,6 +1634,15 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_6m_cash = initial_capital_needed
     current_risk_adj_mom_6m_stocks = []
 
+    # RISK-ADJ MOM 6M MONTHLY: Initialize portfolio tracking (rebalance start of month only)
+    risk_adj_mom_6m_monthly_portfolio_value = initial_capital_needed
+    risk_adj_mom_6m_monthly_portfolio_history = [risk_adj_mom_6m_monthly_portfolio_value]
+    risk_adj_mom_6m_monthly_positions = {}
+    risk_adj_mom_6m_monthly_cash = initial_capital_needed
+    current_risk_adj_mom_6m_monthly_stocks = []
+    risk_adj_mom_6m_monthly_initialized = False
+    risk_adj_mom_6m_monthly_last_month = None
+
     # RISK-ADJ MOM 3M: Initialize portfolio tracking
     risk_adj_mom_3m_portfolio_value = initial_capital_needed
     risk_adj_mom_3m_portfolio_history = [risk_adj_mom_3m_portfolio_value]
@@ -1624,6 +1658,22 @@ def _run_portfolio_backtest_walk_forward(
     current_risk_adj_mom_3m_monthly_stocks = []
     risk_adj_mom_3m_monthly_initialized = False
     risk_adj_mom_3m_monthly_last_month = None
+
+    # RISK-ADJ MOM 1M: Initialize portfolio tracking
+    risk_adj_mom_1m_portfolio_value = initial_capital_needed
+    risk_adj_mom_1m_portfolio_history = [risk_adj_mom_1m_portfolio_value]
+    risk_adj_mom_1m_positions = {}
+    risk_adj_mom_1m_cash = initial_capital_needed
+    current_risk_adj_mom_1m_stocks = []
+
+    # RISK-ADJ MOM 1M MONTHLY: Initialize portfolio tracking (rebalance start of month only)
+    risk_adj_mom_1m_monthly_portfolio_value = initial_capital_needed
+    risk_adj_mom_1m_monthly_portfolio_history = [risk_adj_mom_1m_monthly_portfolio_value]
+    risk_adj_mom_1m_monthly_positions = {}
+    risk_adj_mom_1m_monthly_cash = initial_capital_needed
+    current_risk_adj_mom_1m_monthly_stocks = []
+    risk_adj_mom_1m_monthly_initialized = False
+    risk_adj_mom_1m_monthly_last_month = None
 
     # AI ELITE: Initialize portfolio tracking
     ai_elite_portfolio_value = initial_capital_needed
@@ -1765,8 +1815,11 @@ def _run_portfolio_backtest_walk_forward(
     elite_hybrid_transaction_costs = 0.0
     elite_risk_transaction_costs = 0.0
     risk_adj_mom_6m_transaction_costs = 0.0
+    risk_adj_mom_6m_monthly_transaction_costs = 0.0
     risk_adj_mom_3m_transaction_costs = 0.0
     risk_adj_mom_3m_monthly_transaction_costs = 0.0
+    risk_adj_mom_1m_transaction_costs = 0.0
+    risk_adj_mom_1m_monthly_transaction_costs = 0.0
     ai_elite_transaction_costs = 0.0
 
     # Transaction cost tracking for strategies that don't initialize it elsewhere
@@ -3829,6 +3882,43 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Risk-Adj Mom 6M error: {e}")
 
+        # RISK-ADJ MOM 6M MONTHLY STRATEGY (same scoring, rebalance start of month only)
+        if ENABLE_RISK_ADJ_MOM_6M_MONTHLY:
+            should_rebalance_6m_mom_monthly = (not risk_adj_mom_6m_monthly_initialized) or is_first_trading_day_of_month
+            if should_rebalance_6m_mom_monthly:
+                try:
+                    from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
+
+                    new_stocks = select_risk_adj_mom_6m_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE
+                    )
+
+                    if new_stocks:
+                        if not risk_adj_mom_6m_monthly_initialized:
+                            print(f"   🎯 Risk-Adj Mom 6M Monthly: Initializing with {new_stocks}")
+                        else:
+                            print(f"   🔄 Risk-Adj Mom 6M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
+                        risk_adj_mom_6m_monthly_positions, risk_adj_mom_6m_monthly_cash, current_risk_adj_mom_6m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                            strategy_name="RiskAdj 6M Mth",
+                            current_stocks=current_risk_adj_mom_6m_monthly_stocks,
+                            new_stocks=new_stocks,
+                            positions=risk_adj_mom_6m_monthly_positions,
+                            cash=risk_adj_mom_6m_monthly_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not risk_adj_mom_6m_monthly_initialized)
+                        risk_adj_mom_6m_monthly_transaction_costs += rc
+                        risk_adj_mom_6m_monthly_initialized = True
+                        risk_adj_mom_6m_monthly_last_month = current_date.month
+
+                except Exception as e:
+                    print(f"   ⚠️ Risk-Adj Mom 6M Monthly error: {e}")
+
         # RISK-ADJ MOM 3M STRATEGY
         if ENABLE_RISK_ADJ_MOM_3M:
             try:
@@ -3896,6 +3986,73 @@ def _run_portfolio_backtest_walk_forward(
                 except Exception as e:
                     print(f"   ⚠️ Risk-Adj Mom 3M Monthly error: {e}")
 
+        # RISK-ADJ MOM 1M STRATEGY
+        if ENABLE_RISK_ADJ_MOM_1M:
+            try:
+                from risk_adj_mom_1m_strategy import select_risk_adj_mom_1m_stocks
+
+                new_risk_adj_mom_1m_stocks = select_risk_adj_mom_1m_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE
+                )
+
+                if new_risk_adj_mom_1m_stocks:
+                    risk_adj_mom_1m_positions, risk_adj_mom_1m_cash, current_risk_adj_mom_1m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        strategy_name="Risk-Adj Mom 1M",
+                        current_stocks=current_risk_adj_mom_1m_stocks,
+                        new_stocks=new_risk_adj_mom_1m_stocks,
+                        positions=risk_adj_mom_1m_positions,
+                        cash=risk_adj_mom_1m_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_risk_adj_mom_1m_stocks
+                    )
+                    risk_adj_mom_1m_transaction_costs += rebalance_costs
+
+            except Exception as e:
+                print(f"   ⚠️ Risk-Adj Mom 1M error: {e}")
+
+        # RISK-ADJ MOM 1M MONTHLY STRATEGY (same scoring, rebalance start of month only)
+        if ENABLE_RISK_ADJ_MOM_1M_MONTHLY:
+            should_rebalance_1m_mom_monthly = (not risk_adj_mom_1m_monthly_initialized) or is_first_trading_day_of_month
+            if should_rebalance_1m_mom_monthly:
+                try:
+                    from risk_adj_mom_1m_strategy import select_risk_adj_mom_1m_stocks
+
+                    new_stocks = select_risk_adj_mom_1m_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE
+                    )
+
+                    if new_stocks:
+                        if not risk_adj_mom_1m_monthly_initialized:
+                            print(f"   🎯 Risk-Adj Mom 1M Monthly: Initializing with {new_stocks}")
+                        else:
+                            print(f"   🔄 Risk-Adj Mom 1M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
+                        risk_adj_mom_1m_monthly_positions, risk_adj_mom_1m_monthly_cash, current_risk_adj_mom_1m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                            strategy_name="RiskAdj 1M Mth",
+                            current_stocks=current_risk_adj_mom_1m_monthly_stocks,
+                            new_stocks=new_stocks,
+                            positions=risk_adj_mom_1m_monthly_positions,
+                            cash=risk_adj_mom_1m_monthly_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not risk_adj_mom_1m_monthly_initialized)
+                        risk_adj_mom_1m_monthly_transaction_costs += rc
+                        risk_adj_mom_1m_monthly_initialized = True
+                        risk_adj_mom_1m_monthly_last_month = current_date.month
+
+                except Exception as e:
+                    print(f"   ⚠️ Risk-Adj Mom 1M Monthly error: {e}")
+
         # AI ELITE STRATEGY (ML-powered scoring) - PER-TICKER MODELS
         if ENABLE_AI_ELITE:
             try:
@@ -3903,11 +4060,9 @@ def _run_portfolio_backtest_walk_forward(
                 
                 # Determine if we should force retrain
                 should_train_ai_elite = False
-                if day_count == 1:
-                    should_train_ai_elite = True
-                    print(f"   📊 AI Elite: Day 1 - forced training")
-                elif ai_elite_models.get('_shared_base') is None:
-                    should_train_ai_elite = True
+                if ai_elite_models.get('_shared_base') is None:
+                    # No model loaded yet - let select_ai_elite_with_training load from disk first
+                    should_train_ai_elite = False
                 else:
                     last_train_day = max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 0
                     days_since_train = day_count - last_train_day
@@ -3915,7 +4070,7 @@ def _run_portfolio_backtest_walk_forward(
                         should_train_ai_elite = True
                         print(f"   📊 AI Elite: Retraining triggered (day {day_count}, last train day {last_train_day}, interval {AI_ELITE_RETRAIN_DAYS})")
                 
-                if not should_train_ai_elite:
+                if not should_train_ai_elite and ai_elite_models.get('_shared_base') is not None:
                     last_train_day = max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 0
                     days_ago = day_count - last_train_day if last_train_day > 0 else 0
                     print(f"   📊 AI Elite: Using existing model (trained {days_ago} days ago)")
@@ -3969,72 +4124,90 @@ def _run_portfolio_backtest_walk_forward(
 
                     # Try loading model from disk if not in memory
                     base_model_path_monthly = os.path.join(models_dir, "_shared_base_ai_elite_monthly.joblib")
+                    model_loaded = False
                     if ai_elite_monthly_models.get('_shared_base') is None and os.path.exists(base_model_path_monthly):
                         try:
                             with open(base_model_path_monthly, 'rb') as f:
-                                loaded_model = pickle.load(f)
+                                model_data = pickle.load(f)
+                            # Handle both old format (direct model) and new format (model + metadata)
+                            if isinstance(model_data, dict) and 'model' in model_data:
+                                loaded_model = model_data['model']
+                                metadata = model_data.get('metadata', {})
+                                info_parts = []
+                                if 'trained' in metadata:
+                                    info_parts.append(f"trained {metadata['trained'][:10]}")
+                                elif 'updated' in metadata:
+                                    info_parts.append(f"updated {metadata['updated'][:10]}")
+                                if 'train_start' in metadata and 'train_end' in metadata:
+                                    info_parts.append(f"data {metadata['train_start'][:10]} to {metadata['train_end'][:10]}")
+                                info_str = f" ({', '.join(info_parts)})" if info_parts else ""
+                            else:
+                                loaded_model = model_data
+                                info_str = " (legacy format)"
                             ai_elite_monthly_models['_shared_base'] = loaded_model
                             for ticker in initial_top_tickers:
                                 ai_elite_monthly_models[ticker] = loaded_model
                                 ai_elite_monthly_last_train_days[ticker] = 0
-                            print(f"   ✅ AI Elite Monthly: Loaded model from disk for {len(initial_top_tickers)} tickers")
+                            print(f"   ✅ AI Elite Monthly: Loaded model from disk for {len(initial_top_tickers)} tickers{info_str}")
+                            model_loaded = True
                         except Exception as e:
                             print(f"   ⚠️ AI Elite Monthly: Failed to load model from disk: {e}")
 
-                    # Always retrain at start of month (or first time)
-                    print(f"   📊 AI Elite Monthly: {'Initializing' if not ai_elite_monthly_initialized else 'Start-of-month retrain'} ({current_date.strftime('%b %Y')})")
-
-                    train_end = current_date
-                    train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
-
-                    from concurrent.futures import ProcessPoolExecutor, as_completed
-                    n_workers = min(TRAINING_NUM_PROCESSES, len(initial_top_tickers))
-
-                    from ai_elite_strategy import _calculate_market_return
-                    from datetime import timezone as tz_utc
-                    market_returns = {}
-                    sample_date_iter = train_start
-                    while sample_date_iter <= train_end:
-                        mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
-                        utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
-                        market_returns[utc_key] = mr if mr is not None else 0.0
-                        sample_date_iter += timedelta(days=2)
-
-                    print(f"   📊 AI Elite Monthly: Collecting data from {len(initial_top_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
-                    collect_args = [
-                        (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS, market_returns)
-                        for t in initial_top_tickers
-                    ]
-
-                    all_training_data = []
-                    ticker_samples_map = {}
-
-                    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-                        futures = {executor.submit(_collect_data_worker, a): a[0] for a in collect_args}
-                        for future in as_completed(futures):
-                            try:
-                                ticker, samples = future.result()
-                                if samples:
-                                    all_training_data.extend(samples)
-                                    ticker_samples_map[ticker] = samples
-                            except Exception as e:
-                                print(f"   ⚠️ AI Elite Monthly: Data collection failed for {futures[future]}: {e}")
-
-                    print(f"   📊 AI Elite Monthly: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers")
-
-                    base_model_path_monthly = os.path.join(models_dir, "_shared_base_ai_elite_monthly.joblib")
-                    existing_base = ai_elite_monthly_models.get('_shared_base')
-                    base_model, base_r2 = train_shared_base_model(
-                        all_training_data, save_path=base_model_path_monthly,
-                        existing_model=existing_base
-                    )
-
-                    if base_model:
-                        ai_elite_monthly_models['_shared_base'] = base_model
-                        print(f"   ✅ AI Elite Monthly: Model trained (R² {base_r2:.3f})")
-                        for ticker in initial_top_tickers:
-                            ai_elite_monthly_models[ticker] = base_model
-                            ai_elite_monthly_last_train_days[ticker] = day_count
+                    # Only train if we didn't just load a model and it's time to rebalance
+                    if not model_loaded:
+                        print(f"   📊 AI Elite Monthly: {'Initializing' if not ai_elite_monthly_initialized else 'Start-of-month retrain'} ({current_date.strftime('%b %Y')})")
+                        
+                        train_end = current_date
+                        train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
+    
+                        from concurrent.futures import ProcessPoolExecutor, as_completed
+                        n_workers = min(TRAINING_NUM_PROCESSES, len(initial_top_tickers))
+    
+                        from ai_elite_strategy import _calculate_market_return
+                        from datetime import timezone as tz_utc
+                        market_returns = {}
+                        sample_date_iter = train_start
+                        while sample_date_iter <= train_end:
+                            mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
+                            utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
+                            market_returns[utc_key] = mr if mr is not None else 0.0
+                            sample_date_iter += timedelta(days=2)
+    
+                        print(f"   📊 AI Elite Monthly: Collecting data from {len(initial_top_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
+                        collect_args = [
+                            (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS, market_returns)
+                            for t in initial_top_tickers
+                        ]
+    
+                        all_training_data = []
+                        ticker_samples_map = {}
+    
+                        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                            futures = {executor.submit(_collect_data_worker, a): a[0] for a in collect_args}
+                            for future in as_completed(futures):
+                                try:
+                                    ticker, samples = future.result()
+                                    if samples:
+                                        all_training_data.extend(samples)
+                                        ticker_samples_map[ticker] = samples
+                                except Exception as e:
+                                    print(f"   ⚠️ AI Elite Monthly: Data collection failed for {futures[future]}: {e}")
+    
+                        print(f"   📊 AI Elite Monthly: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers")
+    
+                        base_model_path_monthly = os.path.join(models_dir, "_shared_base_ai_elite_monthly.joblib")
+                        existing_base = ai_elite_monthly_models.get('_shared_base')
+                        base_model, base_r2 = train_shared_base_model(
+                            all_training_data, save_path=base_model_path_monthly,
+                            existing_model=existing_base, train_start=train_start, train_end=train_end
+                        )
+    
+                        if base_model:
+                            ai_elite_monthly_models['_shared_base'] = base_model
+                            print(f"   ✅ AI Elite Monthly: Model trained (R² {base_r2:.3f})")
+                            for ticker in initial_top_tickers:
+                                ai_elite_monthly_models[ticker] = base_model
+                                ai_elite_monthly_last_train_days[ticker] = day_count
 
                     # Select and rebalance
                     new_stocks = select_ai_elite_stocks(
@@ -5112,6 +5285,28 @@ def _run_portfolio_backtest_walk_forward(
         risk_adj_mom_6m_portfolio_value = risk_adj_mom_6m_invested_value + risk_adj_mom_6m_cash
         risk_adj_mom_6m_portfolio_history.append(risk_adj_mom_6m_portfolio_value)
 
+        # Update RISK-ADJ MOM 6M MONTHLY portfolio value daily
+        risk_adj_mom_6m_monthly_invested_value = 0.0
+        if ENABLE_RISK_ADJ_MOM_6M_MONTHLY:
+            for ticker in list(risk_adj_mom_6m_monthly_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = risk_adj_mom_6m_monthly_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            risk_adj_mom_6m_monthly_positions[ticker]['value'] = position_value
+                            risk_adj_mom_6m_monthly_invested_value += position_value
+                        else:
+                            risk_adj_mom_6m_monthly_invested_value += risk_adj_mom_6m_monthly_positions[ticker].get('value', 0.0)
+                    else:
+                        risk_adj_mom_6m_monthly_invested_value += risk_adj_mom_6m_monthly_positions[ticker].get('value', 0.0)
+                except Exception:
+                    risk_adj_mom_6m_monthly_invested_value += risk_adj_mom_6m_monthly_positions[ticker].get('value', 0.0)
+        risk_adj_mom_6m_monthly_portfolio_value = risk_adj_mom_6m_monthly_invested_value + risk_adj_mom_6m_monthly_cash
+        risk_adj_mom_6m_monthly_portfolio_history.append(risk_adj_mom_6m_monthly_portfolio_value)
+
         # Update RISK-ADJ MOM 3M portfolio value daily
         risk_adj_mom_3m_invested_value = 0.0
         if ENABLE_RISK_ADJ_MOM_3M:
@@ -5155,6 +5350,50 @@ def _run_portfolio_backtest_walk_forward(
                     risk_adj_mom_3m_monthly_invested_value += risk_adj_mom_3m_monthly_positions[ticker].get('value', 0.0)
         risk_adj_mom_3m_monthly_portfolio_value = risk_adj_mom_3m_monthly_invested_value + risk_adj_mom_3m_monthly_cash
         risk_adj_mom_3m_monthly_portfolio_history.append(risk_adj_mom_3m_monthly_portfolio_value)
+
+        # Update RISK-ADJ MOM 1M portfolio value daily
+        risk_adj_mom_1m_invested_value = 0.0
+        if ENABLE_RISK_ADJ_MOM_1M:
+            for ticker in list(risk_adj_mom_1m_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = risk_adj_mom_1m_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            risk_adj_mom_1m_positions[ticker]['value'] = position_value
+                            risk_adj_mom_1m_invested_value += position_value
+                        else:
+                            risk_adj_mom_1m_invested_value += risk_adj_mom_1m_positions[ticker].get('value', 0.0)
+                    else:
+                        risk_adj_mom_1m_invested_value += risk_adj_mom_1m_positions[ticker].get('value', 0.0)
+                except Exception:
+                    risk_adj_mom_1m_invested_value += risk_adj_mom_1m_positions[ticker].get('value', 0.0)
+        risk_adj_mom_1m_portfolio_value = risk_adj_mom_1m_invested_value + risk_adj_mom_1m_cash
+        risk_adj_mom_1m_portfolio_history.append(risk_adj_mom_1m_portfolio_value)
+
+        # Update RISK-ADJ MOM 1M MONTHLY portfolio value daily
+        risk_adj_mom_1m_monthly_invested_value = 0.0
+        if ENABLE_RISK_ADJ_MOM_1M_MONTHLY:
+            for ticker in list(risk_adj_mom_1m_monthly_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = risk_adj_mom_1m_monthly_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            risk_adj_mom_1m_monthly_positions[ticker]['value'] = position_value
+                            risk_adj_mom_1m_monthly_invested_value += position_value
+                        else:
+                            risk_adj_mom_1m_monthly_invested_value += risk_adj_mom_1m_monthly_positions[ticker].get('value', 0.0)
+                    else:
+                        risk_adj_mom_1m_monthly_invested_value += risk_adj_mom_1m_monthly_positions[ticker].get('value', 0.0)
+                except Exception:
+                    risk_adj_mom_1m_monthly_invested_value += risk_adj_mom_1m_monthly_positions[ticker].get('value', 0.0)
+        risk_adj_mom_1m_monthly_portfolio_value = risk_adj_mom_1m_monthly_invested_value + risk_adj_mom_1m_monthly_cash
+        risk_adj_mom_1m_monthly_portfolio_history.append(risk_adj_mom_1m_monthly_portfolio_value)
 
         # Update AI ELITE portfolio value daily
         ai_elite_invested_value = 0.0
@@ -5665,8 +5904,11 @@ def _run_portfolio_backtest_walk_forward(
                 ("Elite Hybrid", elite_hybrid_portfolio_value if ENABLE_ELITE_HYBRID else None),
                 ("Elite Risk", elite_risk_portfolio_value if ENABLE_ELITE_RISK else None),
                 ("Risk-Adj Mom 6M", risk_adj_mom_6m_portfolio_value if ENABLE_RISK_ADJ_MOM_6M else None),
+                ("RiskAdj 6M Mth", risk_adj_mom_6m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_6M_MONTHLY else None),
                 ("Risk-Adj Mom 3M", risk_adj_mom_3m_portfolio_value if ENABLE_RISK_ADJ_MOM_3M else None),
                 ("RiskAdj 3M Mth", risk_adj_mom_3m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_3M_MONTHLY else None),
+                ("Risk-Adj Mom 1M", risk_adj_mom_1m_portfolio_value if ENABLE_RISK_ADJ_MOM_1M else None),
+                ("RiskAdj 1M Mth", risk_adj_mom_1m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_1M_MONTHLY else None),
                 ("AI Elite", ai_elite_portfolio_value if ENABLE_AI_ELITE else None),
                 ("AI Elite Mth", ai_elite_monthly_portfolio_value if ENABLE_AI_ELITE_MONTHLY else None),
                 ("AI Elite Flt", ai_elite_filtered_portfolio_value if ENABLE_AI_ELITE_FILTERED else None),
@@ -5813,6 +6055,10 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = risk_adj_mom_6m_cash
                     num_positions = len(risk_adj_mom_6m_positions)
                     invested = value - strat_cash
+                elif name == "RiskAdj 6M Mth" and ENABLE_RISK_ADJ_MOM_6M_MONTHLY:
+                    strat_cash = risk_adj_mom_6m_monthly_cash
+                    num_positions = len(risk_adj_mom_6m_monthly_positions)
+                    invested = value - strat_cash
                 elif name == "Risk-Adj Mom 3M" and ENABLE_RISK_ADJ_MOM_3M:
                     strat_cash = risk_adj_mom_3m_cash
                     num_positions = len(risk_adj_mom_3m_positions)
@@ -5820,6 +6066,14 @@ def _run_portfolio_backtest_walk_forward(
                 elif name == "RiskAdj 3M Mth" and ENABLE_RISK_ADJ_MOM_3M_MONTHLY:
                     strat_cash = risk_adj_mom_3m_monthly_cash
                     num_positions = len(risk_adj_mom_3m_monthly_positions)
+                    invested = value - strat_cash
+                elif name == "Risk-Adj Mom 1M" and ENABLE_RISK_ADJ_MOM_1M:
+                    strat_cash = risk_adj_mom_1m_cash
+                    num_positions = len(risk_adj_mom_1m_positions)
+                    invested = value - strat_cash
+                elif name == "RiskAdj 1M Mth" and ENABLE_RISK_ADJ_MOM_1M_MONTHLY:
+                    strat_cash = risk_adj_mom_1m_monthly_cash
+                    num_positions = len(risk_adj_mom_1m_monthly_positions)
                     invested = value - strat_cash
                 elif name == "AI Elite" and ENABLE_AI_ELITE:
                     strat_cash = ai_elite_cash
@@ -5987,8 +6241,11 @@ def _run_portfolio_backtest_walk_forward(
             ("Elite Hybrid",        elite_hybrid_portfolio_history        if ENABLE_ELITE_HYBRID else None),
             ("Elite Risk",          elite_risk_portfolio_history          if ENABLE_ELITE_RISK else None),
             ("Risk-Adj Mom 6M",     risk_adj_mom_6m_portfolio_history     if ENABLE_RISK_ADJ_MOM_6M else None),
+            ("RiskAdj 6M Mth",     risk_adj_mom_6m_monthly_portfolio_history if ENABLE_RISK_ADJ_MOM_6M_MONTHLY else None),
             ("Risk-Adj Mom 3M",     risk_adj_mom_3m_portfolio_history     if ENABLE_RISK_ADJ_MOM_3M else None),
             ("RiskAdj 3M Mth",     risk_adj_mom_3m_monthly_portfolio_history if ENABLE_RISK_ADJ_MOM_3M_MONTHLY else None),
+            ("Risk-Adj Mom 1M",     risk_adj_mom_1m_portfolio_history     if ENABLE_RISK_ADJ_MOM_1M else None),
+            ("RiskAdj 1M Mth",     risk_adj_mom_1m_monthly_portfolio_history if ENABLE_RISK_ADJ_MOM_1M_MONTHLY else None),
             ("AI Elite",            ai_elite_portfolio_history            if ENABLE_AI_ELITE else None),
             ("BH 1Y Monthly",       static_bh_1y_monthly_portfolio_history if ENABLE_STATIC_BH_1Y_MONTHLY else None),
             ("BH 6M Monthly",       static_bh_6m_monthly_portfolio_history if ENABLE_STATIC_BH_6M_MONTHLY else None),
@@ -6129,8 +6386,11 @@ def _run_portfolio_backtest_walk_forward(
             'elite_hybrid':             _strat(elite_hybrid_portfolio_value, elite_hybrid_portfolio_history, elite_hybrid_transaction_costs, elite_hybrid_cash),
             'elite_risk':               _strat(elite_risk_portfolio_value, elite_risk_portfolio_history, elite_risk_transaction_costs, elite_risk_cash),
             'risk_adj_mom_6m':          _strat(risk_adj_mom_6m_portfolio_value, risk_adj_mom_6m_portfolio_history, risk_adj_mom_6m_transaction_costs, risk_adj_mom_6m_cash),
+            'risk_adj_mom_6m_monthly':  _strat(risk_adj_mom_6m_monthly_portfolio_value, risk_adj_mom_6m_monthly_portfolio_history, risk_adj_mom_6m_monthly_transaction_costs, risk_adj_mom_6m_monthly_cash),
             'risk_adj_mom_3m':          _strat(risk_adj_mom_3m_portfolio_value, risk_adj_mom_3m_portfolio_history, risk_adj_mom_3m_transaction_costs, risk_adj_mom_3m_cash),
             'risk_adj_mom_3m_monthly':  _strat(risk_adj_mom_3m_monthly_portfolio_value, risk_adj_mom_3m_monthly_portfolio_history, risk_adj_mom_3m_monthly_transaction_costs, risk_adj_mom_3m_monthly_cash),
+            'risk_adj_mom_1m':          _strat(risk_adj_mom_1m_portfolio_value, risk_adj_mom_1m_portfolio_history, risk_adj_mom_1m_transaction_costs, risk_adj_mom_1m_cash),
+            'risk_adj_mom_1m_monthly':  _strat(risk_adj_mom_1m_monthly_portfolio_value, risk_adj_mom_1m_monthly_portfolio_history, risk_adj_mom_1m_monthly_transaction_costs, risk_adj_mom_1m_monthly_cash),
             'ai_elite':                 _strat(ai_elite_portfolio_value, ai_elite_portfolio_history, ai_elite_transaction_costs, ai_elite_cash),
             'ai_elite_monthly':         _strat(ai_elite_monthly_portfolio_value, ai_elite_monthly_portfolio_history, ai_elite_monthly_transaction_costs, ai_elite_monthly_cash),
             'ai_elite_filtered':        _strat(ai_elite_filtered_portfolio_value, ai_elite_filtered_portfolio_history, ai_elite_filtered_transaction_costs, ai_elite_filtered_cash),
