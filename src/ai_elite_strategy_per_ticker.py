@@ -108,21 +108,18 @@ def collect_ticker_training_data(
 
 
 def _prepare_labels(train_df: pd.DataFrame) -> pd.DataFrame:
-    """Compute risk-adjusted EXCESS return for regression target."""
-    train_df['excess_return'] = train_df['forward_return'] - train_df['market_return']
-    vol_floored = train_df['volatility'].clip(lower=5.0)
-    train_df['risk_adj_return'] = train_df['excess_return'] / (vol_floored ** 0.5)
-
+    """Compute forward return for regression target (simpler, more predictable)."""
+    # Use raw forward return as target - more predictable than risk-adjusted
+    train_df['label'] = train_df['forward_return']
+    
     # Clip extreme outliers for stability
-    mean_ra = train_df['risk_adj_return'].mean()
-    std_ra = train_df['risk_adj_return'].std()
-    if std_ra > 0:
-        train_df['risk_adj_return'] = train_df['risk_adj_return'].clip(
-            lower=mean_ra - 3 * std_ra, upper=mean_ra + 3 * std_ra
+    mean_ret = train_df['label'].mean()
+    std_ret = train_df['label'].std()
+    if std_ret > 0:
+        train_df['label'] = train_df['label'].clip(
+            lower=mean_ret - 3 * std_ret, upper=mean_ret + 3 * std_ret
         )
-
-    # Regression target: predict risk_adj_return directly (not quintile labels)
-    train_df['label'] = train_df['risk_adj_return']
+    
     return train_df
 
 

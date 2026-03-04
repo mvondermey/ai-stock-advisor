@@ -165,7 +165,7 @@ def select_ai_elite_stocks(
     
     candidates_df['ai_score'] = ai_scores
     
-    # Pure AI scoring - the model predicts expected risk-adjusted return directly
+    # Pure AI scoring - the model predicts expected forward return directly
     candidates_df['final_score'] = candidates_df['ai_score']
     
     # Sort by final hybrid score
@@ -173,9 +173,9 @@ def select_ai_elite_stocks(
     
     # Debug: show top candidates with momentum rank
     print(f"   ✅ AI Elite: Found {len(candidates_df)} candidates")
-    print(f"   📊 AI Elite: Scoring = ML regression (predicts risk-adjusted return)")
+    print(f"   📊 AI Elite: Scoring = ML regression (predicts forward return)")
     for i, row in candidates_df.head(5).iterrows():
-        print(f"      {i+1}. {row['ticker']}: PredRiskAdj={row['final_score']:+.2f} (RiskAdjMom={row['risk_adj_mom_rank']:.3f}), "
+        print(f"      {i+1}. {row['ticker']}: PredReturn={row['final_score']:+.2f}% (RiskAdjMom={row['risk_adj_mom_rank']:.3f}), "
               f"3M={row['perf_3m']:+.1f}%, Vol={row['volatility']:.1f}%, RiskAdj={row['risk_adj_mom_3m']:.2f})")
     
     # Return top N tickers by final hybrid score
