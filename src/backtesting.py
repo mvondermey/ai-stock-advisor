@@ -6287,7 +6287,7 @@ def _run_portfolio_backtest_walk_forward(
                 std_dev = calculate_std_dev(strategy_to_history.get(name, []))
                 
                 allocation_pct = (invested / value * 100) if value > 0 and invested > 0 else 0
-                print(f"{i:<5} {name:<20} ${value:<11,.0f} {return_pct:+.1f}% {std_dev:<8.1f}% {annualized_return:+.1f}% ${strat_cash:<11,.0f} {num_pos:<10} ({allocation_pct:.0f}%)")
+                print(f"{i:<5} {name:<20} ${value:<11,.0f} {return_pct:+.1f}% {std_dev:<7.1f}% {annualized_return:+.1f}% ${strat_cash:<11,.0f} {num_pos:<10} ({allocation_pct:.0f}%)")
             
             
             # Show Top 5 Consistency Score
