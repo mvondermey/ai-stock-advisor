@@ -6270,7 +6270,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("BH 3M Monthly", static_bh_3m_monthly_portfolio_history) if ENABLE_STATIC_BH_3M_MONTHLY else None,
                 ("BH 1M Monthly", static_bh_1m_monthly_portfolio_history) if ENABLE_STATIC_BH_1M_MONTHLY else None,
             ]
-            strategy_to_history = {name: history for name, history in strategy_history_pairs if name is not None and history is not None}
+            strategy_to_history = {pair[0]: pair[1] for pair in strategy_history_pairs if pair is not None and pair[1] is not None}
             
             # Sort by value and display
             strategy_details.sort(key=lambda x: x[1], reverse=True)
