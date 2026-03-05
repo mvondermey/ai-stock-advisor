@@ -569,8 +569,26 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             except Exception:
                 pass
         
-        # Fallback to daily data if hourly data is empty (some ETFs don't have intraday data)
-        if new_df.empty and DATA_INTERVAL in ['1h', '30m', '15m', '5m', '1m']:
+        # Fallback to daily data if hourly data is empty (only for ETFs, not stocks)
+        # ETFs are identified by: inverse ETFs list, or common ETF patterns (3-4 letter tickers without dots)
+        def _is_likely_etf(t: str) -> bool:
+            from config import INVERSE_ETFS
+            # Known inverse ETFs
+            if t in INVERSE_ETFS:
+                return True
+            # Common ETF patterns: 2-4 uppercase letters, no dots (not European stocks)
+            # Excludes crypto (-USD), European (.DE, .PA, etc.)
+            if '.' in t or '-' in t:
+                return False
+            # Known ETF tickers (leveraged, sector, index)
+            known_etfs = {'SPY', 'QQQ', 'DIA', 'IWM', 'VOO', 'VTI', 'VEA', 'VWO',
+                         'XLK', 'XLF', 'XLE', 'XLV', 'XLI', 'XLP', 'XLY', 'XLU', 'XLRE', 'XLC', 'XLB',
+                         'GDX', 'USO', 'TLT', 'AGG', 'BND', 'LQD', 'HYG', 'GLD', 'SLV', 'UNG',
+                         'EFA', 'EEM', 'FXI', 'EWJ', 'TQQQ', 'SQQQ', 'UPRO', 'SPXU',
+                         'TNA', 'TZA', 'TECL', 'TECS', 'FAS', 'FAZ', 'SOXL', 'SOXS'}
+            return t in known_etfs
+        
+        if new_df.empty and DATA_INTERVAL in ['1h', '30m', '15m', '5m', '1m'] and _is_likely_etf(ticker):
             try:
                 with suppress_yfinance_output():
                     downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, 
