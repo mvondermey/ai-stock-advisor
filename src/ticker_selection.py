@@ -28,7 +28,7 @@ from config import (
     PAUSE_BETWEEN_YF_CALLS, MARKET_SELECTION, USE_PERFORMANCE_BENCHMARK,
     ALPACA_API_KEY, ALPACA_SECRET_KEY, TOP_CACHE_PATH, VALID_TICKERS_CACHE_PATH,
     ALPACA_STOCKS_LIMIT, ALPACA_STOCKS_EXCHANGES, NUM_PROCESSES, PARALLEL_THRESHOLD,
-    TOP_TICKER_SELECTION_LOOKBACK
+    TOP_TICKER_SELECTION_LOOKBACK, ENABLE_INVERSE_ETFS, INVERSE_ETFS
 )
 from data_utils import load_prices_robust, _ensure_dir, _to_utc
 from utils import _normalize_symbol
@@ -234,6 +234,11 @@ def get_all_tickers() -> List[str]:
         ]
         all_tickers.update(custom_etfs)
         print(f" Added {len(custom_etfs)} custom ETFs (including leveraged ETFs like QQQ3, TQQQ, SQQQ)")
+
+    # Add inverse ETFs for bear market protection
+    if ENABLE_INVERSE_ETFS and INVERSE_ETFS:
+        all_tickers.update(INVERSE_ETFS)
+        print(f" Added {len(INVERSE_ETFS)} inverse ETFs for bear market protection: {', '.join(INVERSE_ETFS[:4])}...")
 
     if MARKET_SELECTION.get("CRYPTO"):
         try:

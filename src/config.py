@@ -214,7 +214,7 @@ TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
 USE_UNIFIED_PARALLEL_TRAINING = True
 
 # --- Backtest windows
-BACKTEST_DAYS           = 90     # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           = 30     # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 
 # --- Calendar days ---
@@ -358,6 +358,21 @@ DUAL_MOM_LOOKBACK_DAYS = 90  # 3-month momentum for relative comparison
 DUAL_MOM_ABSOLUTE_THRESHOLD = 0.0  # Must have positive absolute momentum
 # DUAL_MOM_POSITIONS removed - now uses PORTFOLIO_SIZE
 DUAL_MOM_RISK_OFF_TICKER = None  # Set to 'TLT' or 'SHY' for bonds, None for cash
+
+# --- Inverse ETFs (for bear market protection) ---
+ENABLE_INVERSE_ETFS = True  # Include inverse ETFs in ticker universe
+INVERSE_ETFS = [
+    # Standard inverse ETFs (1x short)
+    'SH',    # ProShares Short S&P 500
+    'PSQ',   # ProShares Short QQQ (Nasdaq-100)
+    'DOG',   # ProShares Short Dow 30
+    'RWM',   # ProShares Short Russell 2000
+    # 2x leveraged inverse ETFs (use with caution - decay over time)
+    'SDS',   # ProShares UltraShort S&P 500 (2x)
+    'QID',   # ProShares UltraShort QQQ (2x)
+    'DXD',   # ProShares UltraShort Dow 30 (2x)
+    'TWM',   # ProShares UltraShort Russell 2000 (2x)
+]
 
 # Trend Following ATR Parameters
 TREND_ATR_LOOKBACK_DAYS = 90  # 3-month for trend detection
