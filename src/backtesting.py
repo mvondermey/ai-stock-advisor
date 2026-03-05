@@ -15,6 +15,7 @@ from ml_models import initialize_ml_libraries, train_and_evaluate_models
 from data_utils import load_prices, fetch_training_data, _ensure_dir, _calculate_technical_indicators
 import logging
 from pathlib import Path
+from scipy import stats
 from config import (
     GRU_TARGET_PERCENTAGE_OPTIONS, GRU_CLASS_HORIZON_OPTIONS,
     TRANSACTION_COST, SEED, INVESTMENT_PER_STOCK, PORTFOLIO_SIZE,
@@ -44,6 +45,43 @@ from contextlib import contextmanager
 class PredictionTimeoutError(Exception):
     """Raised when a prediction takes too long."""
     pass
+
+def calculate_daily_returns(history: List[float]) -> List[float]:
+    """Calculate daily returns from portfolio history."""
+    returns = []
+    for i in range(1, len(history)):
+        if history[i-1] > 0 and not pd.isna(history[i-1]) and history[i] > 0 and not pd.isna(history[i]):
+            daily_ret = (history[i] - history[i-1]) / history[i-1] * 100
+            returns.append(daily_ret)
+    return returns
+
+def calculate_std_dev(history: List[float]) -> float:
+    """Calculate standard deviation of daily returns (annualized)."""
+    returns = calculate_daily_returns(history)
+    if len(returns) < 2:
+        return 0.0
+    return np.std(returns) * np.sqrt(252)  # Annualized
+
+def paired_t_test(history1: List[float], history2: List[float]) -> Tuple[float, float]:
+    """Perform paired t-test on two strategy returns.
+    Returns: (t_statistic, p_value)
+    """
+    returns1 = calculate_daily_returns(history1)
+    returns2 = calculate_daily_returns(history2)
+    
+    if len(returns1) < 2 or len(returns2) < 2:
+        return 0.0, 1.0
+    
+    # Ensure same length
+    min_len = min(len(returns1), len(returns2))
+    returns1 = returns1[:min_len]
+    returns2 = returns2[:min_len]
+    
+    if min_len < 2:
+        return 0.0, 1.0
+    
+    t_stat, p_value = stats.ttest_rel(returns1, returns2)
+    return t_stat, p_value
 
 @contextmanager
 def prediction_timeout(seconds: int, ticker: str):
@@ -5932,8 +5970,8 @@ def _run_portfolio_backtest_walk_forward(
                 top5_consistency_counts[name] += 1
             
             # Show ALL strategies (not just top 10) with cash and allocation info
-            print(f"{'Rank':<5} {'Strategy':<20} {'Value':<12} {'Return':<10} {'Ann. Ret':<10} {'Cash':<12} {'Positions':<10}")
-            print("-" * 85)
+            print(f"{'Rank':<5} {'Strategy':<20} {'Value':<12} {'Return':<10} {'Ann. Ret':<10} {'StdDev':<8} {'Cash':<12} {'Positions':<10}")
+            print("-" * 93)
             
             # Prepare strategy data with cash and position info
             strategy_details = []
@@ -6174,6 +6212,66 @@ def _run_portfolio_backtest_walk_forward(
                 
                 strategy_details.append((name, value, strat_cash, num_positions, invested))
             
+            # Create mapping from strategy name to history for std dev calculation
+            strategy_to_history = {
+                ("Static BH 1Y", static_bh_1y_portfolio_history) if ENABLE_STATIC_BH else None,
+                ("Static BH 6M", static_bh_6m_portfolio_history) if ENABLE_STATIC_BH_6M else None,
+                ("Static BH 3M", static_bh_3m_portfolio_history) if ENABLE_STATIC_BH else None,
+                ("Static BH 1M", static_bh_1m_portfolio_history) if ENABLE_STATIC_BH else None,
+                ("Dynamic BH 1Y", dynamic_bh_portfolio_history) if ENABLE_DYNAMIC_BH_1Y else None,
+                ("Dynamic BH 6M", dynamic_bh_6m_portfolio_history) if ENABLE_DYNAMIC_BH_6M else None,
+                ("Dynamic BH 3M", dynamic_bh_3m_portfolio_history) if ENABLE_DYNAMIC_BH_3M else None,
+                ("Dynamic BH 1M", dynamic_bh_1m_portfolio_history) if ENABLE_DYNAMIC_BH_1M else None,
+                ("Risk-Adj Mom", risk_adj_mom_portfolio_history) if ENABLE_RISK_ADJ_MOM else None,
+                ("Mean Reversion", mean_reversion_portfolio_history) if ENABLE_MEAN_REVERSION else None,
+                ("Quality+Mom", quality_momentum_portfolio_history) if ENABLE_QUALITY_MOM else None,
+                ("Momentum+AI", momentum_ai_hybrid_portfolio_history) if ENABLE_MOMENTUM_AI_HYBRID else None,
+                ("Vol-Adj Mom", volatility_adj_mom_portfolio_history) if ENABLE_VOLATILITY_ADJ_MOM else None,
+                ("Dynamic BH 1Y+Vol", dynamic_bh_1y_vol_filter_portfolio_history) if ENABLE_DYNAMIC_BH_1Y_VOL_FILTER else None,
+                ("Dynamic BH 1Y+TS", dynamic_bh_1y_trailing_stop_portfolio_history) if ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP else None,
+                ("Sector Rotation", sector_rotation_portfolio_history) if ENABLE_SECTOR_ROTATION else None,
+                ("Multi-Task", multitask_portfolio_history) if ENABLE_MULTITASK_LEARNING else None,
+                ("3M/1Y Ratio", ratio_3m_1y_portfolio_history) if ENABLE_3M_1Y_RATIO else None,
+                ("1Y/3M Ratio", ratio_1y_3m_portfolio_history) if ENABLE_1Y_3M_RATIO else None,
+                ("Mom-Vol Hybrid", momentum_volatility_hybrid_portfolio_history) if ENABLE_MOMENTUM_VOLATILITY_HYBRID else None,
+                ("Mom-Vol Hybrid 6M", momentum_volatility_hybrid_6m_portfolio_history) if ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M else None,
+                ("Mom-Vol Hybrid 1Y", momentum_volatility_hybrid_1y_portfolio_history) if ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y else None,
+                ("Mom-Vol Hybrid 1Y/3M", momentum_volatility_hybrid_1y3m_portfolio_history) if ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M else None,
+                ("Price Acceleration", price_acceleration_portfolio_history) if ENABLE_PRICE_ACCELERATION else None,
+                ("Turnaround", turnaround_portfolio_history) if ENABLE_TURNAROUND else None,
+                ("Adaptive Ensemble", adaptive_ensemble_portfolio_history) if ENABLE_ADAPTIVE_STRATEGY else None,
+                ("Volatility Ensemble", volatility_ensemble_portfolio_history) if ENABLE_VOLATILITY_ENSEMBLE else None,
+                ("Enhanced Volatility", enhanced_volatility_portfolio_history) if ENABLE_ENHANCED_VOLATILITY else None,
+                ("AI Volatility Ensemble", ai_volatility_ensemble_portfolio_history) if ENABLE_AI_VOLATILITY_ENSEMBLE else None,
+                ("Correlation Ensemble", correlation_ensemble_portfolio_history) if ENABLE_CORRELATION_ENSEMBLE else None,
+                ("Dynamic Pool", dynamic_pool_portfolio_history) if ENABLE_DYNAMIC_POOL else None,
+                ("Risk-Adj Mom Sentiment", risk_adj_mom_sentiment_portfolio_history) if ENABLE_RISK_ADJ_MOM_SENTIMENT else None,
+                ("Voting Ensemble", voting_ensemble_portfolio_history) if ENABLE_VOTING_ENSEMBLE else None,
+                ("Mom Acceleration", mom_accel_portfolio_history) if ENABLE_MOMENTUM_ACCELERATION else None,
+                ("Concentrated 3M", concentrated_3m_portfolio_history) if ENABLE_CONCENTRATED_3M else None,
+                ("Dual Momentum", dual_mom_portfolio_history) if ENABLE_DUAL_MOMENTUM else None,
+                ("Trend ATR", trend_atr_portfolio_history) if ENABLE_TREND_FOLLOWING_ATR else None,
+                ("Elite Hybrid", elite_hybrid_portfolio_history) if ENABLE_ELITE_HYBRID else None,
+                ("Elite Risk", elite_risk_portfolio_history) if ENABLE_ELITE_RISK else None,
+                ("Risk-Adj Mom 6M", risk_adj_mom_6m_portfolio_history) if ENABLE_RISK_ADJ_MOM_6M else None,
+                ("RiskAdj 6M Mth", risk_adj_mom_6m_monthly_portfolio_history) if ENABLE_RISK_ADJ_MOM_6M_MONTHLY else None,
+                ("Risk-Adj Mom 3M", risk_adj_mom_3m_portfolio_history) if ENABLE_RISK_ADJ_MOM_3M else None,
+                ("RiskAdj 3M Mth", risk_adj_mom_3m_monthly_portfolio_history) if ENABLE_RISK_ADJ_MOM_3M_MONTHLY else None,
+                ("Risk-Adj Mom 1M", risk_adj_mom_1m_portfolio_history) if ENABLE_RISK_ADJ_MOM_1M else None,
+                ("RiskAdj 1M Mth", risk_adj_mom_1m_monthly_portfolio_history) if ENABLE_RISK_ADJ_MOM_1M_MONTHLY else None,
+                ("AI Elite", ai_elite_portfolio_history) if ENABLE_AI_ELITE else None,
+                ("AI Elite Mth", ai_elite_monthly_portfolio_history) if ENABLE_AI_ELITE_MONTHLY else None,
+                ("AI Elite Flt", ai_elite_filtered_portfolio_history) if ENABLE_AI_ELITE_FILTERED else None,
+                ("AI Regime", ai_regime_portfolio_history) if ENABLE_AI_REGIME else None,
+                ("AI Regime Mth", ai_regime_monthly_portfolio_history) if ENABLE_AI_REGIME_MONTHLY else None,
+                ("Universal Model", universal_model_portfolio_history) if ENABLE_UNIVERSAL_MODEL else None,
+                ("BH 1Y Monthly", static_bh_1y_monthly_portfolio_history) if ENABLE_STATIC_BH_1Y_MONTHLY else None,
+                ("BH 6M Monthly", static_bh_6m_monthly_portfolio_history) if ENABLE_STATIC_BH_6M_MONTHLY else None,
+                ("BH 3M Monthly", static_bh_3m_monthly_portfolio_history) if ENABLE_STATIC_BH_3M_MONTHLY else None,
+                ("BH 1M Monthly", static_bh_1m_monthly_portfolio_history) if ENABLE_STATIC_BH_1M_MONTHLY else None,
+            }
+            strategy_to_history = {name: history for name, history in strategy_to_history if history is not None}
+            
             # Sort by value and display
             strategy_details.sort(key=lambda x: x[1], reverse=True)
             for i, (name, value, strat_cash, num_pos, invested) in enumerate(strategy_details, 1):
@@ -6184,8 +6282,12 @@ def _run_portfolio_backtest_walk_forward(
                     annualized_return = (total_return_multiplier ** (252.0 / day_count) - 1) * 100
                 else:
                     annualized_return = 0.0
+                
+                # Calculate standard deviation
+                std_dev = calculate_std_dev(strategy_to_history.get(name, []))
+                
                 allocation_pct = (invested / value * 100) if value > 0 and invested > 0 else 0
-                print(f"{i:<5} {name:<20} ${value:<11,.0f} {return_pct:+.1f}% {annualized_return:+.1f}% ${strat_cash:<11,.0f} {num_pos:<10} ({allocation_pct:.0f}%)")
+                print(f"{i:<5} {name:<20} ${value:<11,.0f} {return_pct:+.1f}% {annualized_return:+.1f}% {std_dev:<7.1f}% ${strat_cash:<11,.0f} {num_pos:<10} ({allocation_pct:.0f}%)")
             
             
             # Show Top 5 Consistency Score
@@ -6196,6 +6298,27 @@ def _run_portfolio_backtest_walk_forward(
                     pct = (count / day_count) * 100
                     bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
                     print(f"   {rank:<3} {strat_name:<20} {count:>3}/{day_count} days ({pct:>5.1f}%) {bar}")
+            
+            # Statistical Significance Testing
+            if day_count >= 10 and len(strategy_details) >= 2:
+                print(f"\n📊 STATISTICAL SIGNIFICANCE (Top strategy vs others):")
+                top_strategy_name = strategy_details[0][0]
+                top_history = strategy_to_history.get(top_strategy_name, [])
+                
+                for i in range(1, min(5, len(strategy_details))):  # Compare with top 4 others
+                    other_name = strategy_details[i][0]
+                    other_history = strategy_to_history.get(other_name, [])
+                    
+                    t_stat, p_value = paired_t_test(top_history, other_history)
+                    
+                    if p_value < 0.05:
+                        significance = "✅ SIGNIFICANT"
+                    elif p_value < 0.10:
+                        significance = "⚠️  MARGINAL"
+                    else:
+                        significance = "❌ NOT SIGNIFICANT"
+                    
+                    print(f"   {top_strategy_name[:15]:<15} vs {other_name[:15]:<15}: p={p_value:.3f} {significance}")
             
             print("=" * 80)
         else:
