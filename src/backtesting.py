@@ -6213,7 +6213,7 @@ def _run_portfolio_backtest_walk_forward(
                 strategy_details.append((name, value, strat_cash, num_positions, invested))
             
             # Create mapping from strategy name to history for std dev calculation
-            strategy_to_history = {
+            strategy_history_pairs = [
                 ("Static BH 1Y", static_bh_1y_portfolio_history) if ENABLE_STATIC_BH else None,
                 ("Static BH 6M", static_bh_6m_portfolio_history) if ENABLE_STATIC_BH_6M else None,
                 ("Static BH 3M", static_bh_3m_portfolio_history) if ENABLE_STATIC_BH else None,
@@ -6232,7 +6232,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("Sector Rotation", sector_rotation_portfolio_history) if ENABLE_SECTOR_ROTATION else None,
                 ("Multi-Task", multitask_portfolio_history) if ENABLE_MULTITASK_LEARNING else None,
                 ("3M/1Y Ratio", ratio_3m_1y_portfolio_history) if ENABLE_3M_1Y_RATIO else None,
-                ("1Y/3M Ratio", ratio_1y_3m_portfolio_history) if ENABLE_1Y_3M_RATIO else None,
+                ("1Y/3M Ratio", ratio_1y_3m_portfolio_history),
                 ("Mom-Vol Hybrid", momentum_volatility_hybrid_portfolio_history) if ENABLE_MOMENTUM_VOLATILITY_HYBRID else None,
                 ("Mom-Vol Hybrid 6M", momentum_volatility_hybrid_6m_portfolio_history) if ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M else None,
                 ("Mom-Vol Hybrid 1Y", momentum_volatility_hybrid_1y_portfolio_history) if ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y else None,
@@ -6269,8 +6269,8 @@ def _run_portfolio_backtest_walk_forward(
                 ("BH 6M Monthly", static_bh_6m_monthly_portfolio_history) if ENABLE_STATIC_BH_6M_MONTHLY else None,
                 ("BH 3M Monthly", static_bh_3m_monthly_portfolio_history) if ENABLE_STATIC_BH_3M_MONTHLY else None,
                 ("BH 1M Monthly", static_bh_1m_monthly_portfolio_history) if ENABLE_STATIC_BH_1M_MONTHLY else None,
-            }
-            strategy_to_history = {name: history for name, history in strategy_to_history if history is not None}
+            ]
+            strategy_to_history = {name: history for name, history in strategy_history_pairs if name is not None and history is not None}
             
             # Sort by value and display
             strategy_details.sort(key=lambda x: x[1], reverse=True)
