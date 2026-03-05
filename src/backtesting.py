@@ -5970,7 +5970,7 @@ def _run_portfolio_backtest_walk_forward(
                 top5_consistency_counts[name] += 1
             
             # Show ALL strategies (not just top 10) with cash and allocation info
-            print(f"{'Rank':<5} {'Strategy':<20} {'Value':<12} {'Return':<10} {'StdDev':<9} {'Ann. Ret':<10} {'Cash':<12} {'Positions':<10}")
+            print(f"{'Rank':<5} {'Strategy':<20} {'Value':<12} {'Return':<10} {'StdDev':<8} {'Ann. Ret':<10} {'Cash':<12} {'Positions':<10}")
             print("-" * 93)
             
             # Prepare strategy data with cash and position info
