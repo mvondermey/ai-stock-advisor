@@ -155,46 +155,52 @@ def train_shared_base_model(
     X = train_df[FEATURE_COLS]
     y = train_df['label'].values
 
-    print(f"   📊 AI Elite: Training model ensemble on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
+    # Check if we have existing models to continue training
+    has_existing = existing_model is not None and isinstance(existing_model, dict) and 'all_models' in existing_model
+    
+    if has_existing:
+        print(f"   📊 AI Elite: Continuing training on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
+        models = existing_model['all_models']  # Use loaded models
+    else:
+        print(f"   📊 AI Elite: Training NEW models on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
+        # Build ALL available models for ensemble
+        models = {}
+        try:
+            import xgboost as xgb
+            device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
+            models['XGBoost'] = xgb.XGBRegressor(
+                n_estimators=100, max_depth=4, learning_rate=0.1,
+                subsample=0.8, random_state=42,
+                tree_method='hist', device=device, verbosity=0, n_jobs=-1
+            )
+        except ImportError:
+            pass
 
-    # Build ALL available models for ensemble
-    models = {}
-    try:
-        import xgboost as xgb
-        device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
-        models['XGBoost'] = xgb.XGBRegressor(
+        try:
+            import lightgbm as lgb
+            models['LightGBM'] = lgb.LGBMRegressor(
+                n_estimators=100, max_depth=4, learning_rate=0.1,
+                subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
+            )
+        except ImportError:
+            pass
+
+        # Always include sklearn models
+        from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+        from sklearn.linear_model import Ridge
+        
+        models['GradientBoosting'] = GradientBoostingRegressor(
             n_estimators=100, max_depth=4, learning_rate=0.1,
-            subsample=0.8, random_state=42,
-            tree_method='hist', device=device, verbosity=0, n_jobs=-1
+            subsample=0.8, random_state=42, verbose=0
         )
-    except ImportError:
-        pass
-
-    try:
-        import lightgbm as lgb
-        models['LightGBM'] = lgb.LGBMRegressor(
-            n_estimators=100, max_depth=4, learning_rate=0.1,
-            subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
+        
+        models['RandomForest'] = RandomForestRegressor(
+            n_estimators=100, max_depth=6, random_state=42, n_jobs=-1
         )
-    except ImportError:
-        pass
+        
+        models['Ridge'] = Ridge(alpha=1.0, random_state=42)
 
-    # Always include sklearn models
-    from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
-    from sklearn.linear_model import Ridge
-    
-    models['GradientBoosting'] = GradientBoostingRegressor(
-        n_estimators=100, max_depth=4, learning_rate=0.1,
-        subsample=0.8, random_state=42, verbose=0
-    )
-    
-    models['RandomForest'] = RandomForestRegressor(
-        n_estimators=100, max_depth=6, random_state=42, n_jobs=-1
-    )
-    
-    models['Ridge'] = Ridge(alpha=1.0, random_state=42)
-
-    # Train all models and evaluate with cross-validation
+    # Train all models (continue training if existing, or fresh train)
     from sklearn.metrics import r2_score, make_scorer
     from sklearn.model_selection import cross_val_score
     import warnings
@@ -210,12 +216,17 @@ def train_shared_base_model(
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                # Train on full data
+                # For tree-based models with warm_start, enable it for incremental training
+                if has_existing and hasattr(m, 'warm_start'):
+                    m.warm_start = True
+                    m.n_estimators += 50  # Add more trees
+                # Train on new data (continues from existing weights for warm_start models)
                 m.fit(X, y)
                 # Cross-validate
                 scores = cross_val_score(m, X, y, cv=cv_folds, scoring=r2_scorer, n_jobs=1)
             mean_score = scores.mean()
-            print(f"      {name}: CV R² = {mean_score:.3f}")
+            status = "continued" if has_existing else "trained"
+            print(f"      {name}: CV R² = {mean_score:.3f} ({status})")
             trained_models.append(m)
             model_scores.append(mean_score)
             model_names.append(name)
