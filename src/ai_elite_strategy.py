@@ -144,12 +144,15 @@ def select_ai_elite_stocks(
         X_ticker = pd.DataFrame([row[feature_cols].values], columns=feature_cols)
         
         # Get ML prediction (REGRESSION - predict continuous value)
-        # Handle both single models and ensemble dictionaries
+        # Handle both new format (best_model) and legacy formats
         try:
-            if isinstance(ticker_model, dict) and 'models' in ticker_model:
-                # Ensemble prediction: weighted average of all models
+            if isinstance(ticker_model, dict) and 'best_model' in ticker_model:
+                # New format: use best_model directly
+                pred_return = ticker_model['best_model'].predict(X_ticker)[0]
+            elif isinstance(ticker_model, dict) and 'models' in ticker_model:
+                # Legacy ensemble format: use first model with weight 1.0
                 models = ticker_model['models']
-                weights = ticker_model['weights']
+                weights = ticker_model.get('weights', [1.0] * len(models))
                 ensemble_pred = 0.0
                 for model, weight in zip(models, weights):
                     pred = model.predict(X_ticker)[0]

@@ -227,18 +227,19 @@ def train_shared_base_model(
         print(f"   ⚠️ AI Elite: No models trained successfully")
         return None, 0.0
 
-    # Use BEST model only (not ensemble mean)
-    # Sort by score descending and pick the best one
+    # Save ALL trained models, use best for prediction
     best_idx = max(range(len(model_scores)), key=lambda i: model_scores[i])
-    best_model = trained_models[best_idx]
-    best_score = model_scores[best_idx]
     best_name = model_names[best_idx]
+    best_score = model_scores[best_idx]
+    best_model = trained_models[best_idx]
     
-    # Create model dict (single model, not ensemble)
+    # Create model dict with ALL models stored, best_model for prediction
     model_dict = {
-        'models': [best_model],
-        'weights': [1.0],
-        'names': [best_name],
+        'all_models': dict(zip(model_names, trained_models)),  # All models by name
+        'all_scores': dict(zip(model_names, model_scores)),    # All scores by name
+        'best_model': best_model,                               # Best model for prediction
+        'best_name': best_name,
+        'best_score': best_score,
         'feature_cols': FEATURE_COLS
     }
 
@@ -246,14 +247,15 @@ def train_shared_base_model(
         metadata = {
             'trained': datetime.now(timezone.utc).isoformat(),
             'best_model': best_name,
-            'best_r2': best_score
+            'best_r2': best_score,
+            'all_scores': dict(zip(model_names, model_scores))
         }
         if train_start and train_end:
             metadata['train_start'] = train_start.isoformat()
             metadata['train_end'] = train_end.isoformat()
         _save_model(model_dict, save_path, metadata)
 
-    print(f"   ✅ AI Elite: Best model = {best_name} (CV R² {best_score:.3f})")
+    print(f"   ✅ AI Elite: Saved {len(trained_models)} models. Best = {best_name} (CV R² {best_score:.3f})")
     return model_dict, best_score
 
 
