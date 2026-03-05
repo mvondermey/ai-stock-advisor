@@ -9,7 +9,9 @@ from datetime import datetime, timedelta
 from config import (
     MIN_PERFORMANCE_1Y, MIN_PERFORMANCE_6M, MIN_PERFORMANCE_3M,
     ENABLE_PERFORMANCE_FILTERS,
-    MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M
+    MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M,
+    INVERSE_ETFS, INVERSE_ETF_MIN_PERFORMANCE_1M, INVERSE_ETF_MIN_PERFORMANCE_3M,
+    INVERSE_ETF_SKIP_1Y_FILTER
 )
 
 
@@ -83,21 +85,53 @@ def apply_performance_filters(
                 print(f"   [WARN] {ticker}: Insufficient 3M data ({len(close_prices)} < {MIN_DATA_DAYS_3M} days)")
             return None  # Insufficient data for 3M
         
+        # Calculate 1M performance for inverse ETFs
+        min_data_1m = 21  # ~1 month of trading days
+        if len(close_prices) >= min_data_1m:
+            price_1m_ago = close_prices.iloc[-min_data_1m]
+            perf_1m = (price_current - price_1m_ago) / price_1m_ago
+        else:
+            perf_1m = 0.0
+        
+        # Check if this is an inverse ETF - use different filters
+        is_inverse_etf = ticker in INVERSE_ETFS
+        
         # Apply filters
-        if perf_1y < MIN_PERFORMANCE_1Y:
+        if is_inverse_etf:
+            # Inverse ETF filters: only check 1M and 3M, skip 1Y/6M
+            if not INVERSE_ETF_SKIP_1Y_FILTER and perf_1y < MIN_PERFORMANCE_1Y:
+                if debug_limit > 0:
+                    print(f"   [FAIL] {ticker}: Failed 1Y filter ({perf_1y:.1%} < {MIN_PERFORMANCE_1Y:.1%})")
+                return None
+            
+            if perf_3m < INVERSE_ETF_MIN_PERFORMANCE_3M:
+                if debug_limit > 0:
+                    print(f"   [FAIL] {ticker}: Failed inverse 3M filter ({perf_3m:.1%} < {INVERSE_ETF_MIN_PERFORMANCE_3M:.1%})")
+                return None
+            
+            if perf_1m < INVERSE_ETF_MIN_PERFORMANCE_1M:
+                if debug_limit > 0:
+                    print(f"   [FAIL] {ticker}: Failed inverse 1M filter ({perf_1m:.1%} < {INVERSE_ETF_MIN_PERFORMANCE_1M:.1%})")
+                return None
+            
             if debug_limit > 0:
-                print(f"   [FAIL] {ticker}: Failed 1Y filter ({perf_1y:.1%} < {MIN_PERFORMANCE_1Y:.1%})")
-            return None  # Failed 1Y filter
-        
-        if perf_6m < MIN_PERFORMANCE_6M:
-            if debug_limit > 0:
-                print(f"   [FAIL] {ticker}: Failed 6M filter ({perf_6m:.1%} < {MIN_PERFORMANCE_6M:.1%})")
-            return None  # Failed 6M filter
-        
-        if perf_3m < MIN_PERFORMANCE_3M:
-            if debug_limit > 0:
-                print(f"   [FAIL] {ticker}: Failed 3M filter ({perf_3m:.1%} < {MIN_PERFORMANCE_3M:.1%})")
-            return None  # Failed 3M filter
+                print(f"   [PASS] {ticker}: INVERSE ETF PASSED (1M={perf_1m:.1%}, 3M={perf_3m:.1%})")
+        else:
+            # Regular stock filters
+            if perf_1y < MIN_PERFORMANCE_1Y:
+                if debug_limit > 0:
+                    print(f"   [FAIL] {ticker}: Failed 1Y filter ({perf_1y:.1%} < {MIN_PERFORMANCE_1Y:.1%})")
+                return None  # Failed 1Y filter
+            
+            if perf_6m < MIN_PERFORMANCE_6M:
+                if debug_limit > 0:
+                    print(f"   [FAIL] {ticker}: Failed 6M filter ({perf_6m:.1%} < {MIN_PERFORMANCE_6M:.1%})")
+                return None  # Failed 6M filter
+            
+            if perf_3m < MIN_PERFORMANCE_3M:
+                if debug_limit > 0:
+                    print(f"   [FAIL] {ticker}: Failed 3M filter ({perf_3m:.1%} < {MIN_PERFORMANCE_3M:.1%})")
+                return None  # Failed 3M filter
         
         # Return performance metrics
         return {

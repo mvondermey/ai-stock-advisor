@@ -374,6 +374,12 @@ INVERSE_ETFS = [
     'TWM',   # ProShares UltraShort Russell 2000 (2x)
 ]
 
+# Inverse ETF Performance Filters (more lenient than regular stocks)
+# These ETFs should be selected when market is falling, so we use shorter lookbacks
+INVERSE_ETF_MIN_PERFORMANCE_1M = 0.02   # 2% minimum 1-month performance (market falling)
+INVERSE_ETF_MIN_PERFORMANCE_3M = 0.0    # 0% minimum 3-month (just needs to be flat/positive)
+INVERSE_ETF_SKIP_1Y_FILTER = True       # Skip 1Y filter (inverse ETFs lose in bull markets)
+
 # Trend Following ATR Parameters
 TREND_ATR_LOOKBACK_DAYS = 90  # 3-month for trend detection
 TREND_ATR_PERIOD = 14  # ATR calculation period
