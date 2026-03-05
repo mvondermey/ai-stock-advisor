@@ -3051,7 +3051,7 @@ def _run_portfolio_backtest_walk_forward(
                 if new_risk_adj_mom_sentiment_stocks:
                     # Use universal smart rebalancing function
                     risk_adj_mom_sentiment_positions, risk_adj_mom_sentiment_cash, current_risk_adj_mom_sentiment_stocks, rebalance_costs = _smart_rebalance_portfolio(
-                        strategy_name="Risk-Adj Mom Sentiment",
+                        strategy_name="RiskAdj Sent",
                         current_stocks=current_risk_adj_mom_sentiment_stocks,
                         new_stocks=new_risk_adj_mom_sentiment_stocks,
                         positions=risk_adj_mom_sentiment_positions,
@@ -5933,7 +5933,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("AI Volatility Ensemble", ai_volatility_ensemble_portfolio_value if ENABLE_AI_VOLATILITY_ENSEMBLE else None),
                 ("Correlation Ensemble", correlation_ensemble_portfolio_value if ENABLE_CORRELATION_ENSEMBLE else None),
                 ("Dynamic Pool", dynamic_pool_portfolio_value if ENABLE_DYNAMIC_POOL else None),
-                ("Risk-Adj Mom Sentiment", risk_adj_mom_sentiment_portfolio_value if ENABLE_RISK_ADJ_MOM_SENTIMENT else None),
+                ("RiskAdj Sent", risk_adj_mom_sentiment_portfolio_value if ENABLE_RISK_ADJ_MOM_SENTIMENT else None),
                 ("Voting Ensemble", voting_ensemble_portfolio_value if ENABLE_VOTING_ENSEMBLE else None),
                 ("Mom Acceleration", mom_accel_portfolio_value if ENABLE_MOMENTUM_ACCELERATION else None),
                 ("Concentrated 3M", concentrated_3m_portfolio_value if ENABLE_CONCENTRATED_3M else None),
@@ -6137,7 +6137,7 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = universal_model_cash
                     num_positions = len(universal_model_positions)
                     invested = value - strat_cash
-                elif name == "Risk-Adj Mom Sentiment" and ENABLE_RISK_ADJ_MOM_SENTIMENT:
+                elif name == "RiskAdj Sent" and ENABLE_RISK_ADJ_MOM_SENTIMENT:
                     strat_cash = risk_adj_mom_sentiment_cash
                     num_positions = len(risk_adj_mom_sentiment_positions)
                     invested = value - strat_cash
@@ -6245,7 +6245,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("AI Volatility Ensemble", ai_volatility_ensemble_portfolio_history) if ENABLE_AI_VOLATILITY_ENSEMBLE else None,
                 ("Correlation Ensemble", correlation_ensemble_portfolio_history) if ENABLE_CORRELATION_ENSEMBLE else None,
                 ("Dynamic Pool", dynamic_pool_portfolio_history) if ENABLE_DYNAMIC_POOL else None,
-                ("Risk-Adj Mom Sentiment", risk_adj_mom_sentiment_portfolio_history) if ENABLE_RISK_ADJ_MOM_SENTIMENT else None,
+                ("RiskAdj Sent", risk_adj_mom_sentiment_portfolio_history) if ENABLE_RISK_ADJ_MOM_SENTIMENT else None,
                 ("Voting Ensemble", voting_ensemble_portfolio_history) if ENABLE_VOTING_ENSEMBLE else None,
                 ("Mom Acceleration", mom_accel_portfolio_history) if ENABLE_MOMENTUM_ACCELERATION else None,
                 ("Concentrated 3M", concentrated_3m_portfolio_history) if ENABLE_CONCENTRATED_3M else None,

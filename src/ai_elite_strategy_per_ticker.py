@@ -227,49 +227,34 @@ def train_shared_base_model(
         print(f"   ⚠️ AI Elite: No models trained successfully")
         return None, 0.0
 
-    # Create ensemble: use top 3 models weighted by their CV R²
-    # Sort by score descending
-    sorted_indices = sorted(range(len(model_scores)), key=lambda i: model_scores[i], reverse=True)
+    # Use BEST model only (not ensemble mean)
+    # Sort by score descending and pick the best one
+    best_idx = max(range(len(model_scores)), key=lambda i: model_scores[i])
+    best_model = trained_models[best_idx]
+    best_score = model_scores[best_idx]
+    best_name = model_names[best_idx]
     
-    # Take top 3 (or all if less than 3)
-    top_n = min(3, len(trained_models))
-    top_indices = sorted_indices[:top_n]
-    
-    ensemble_models = [trained_models[i] for i in top_indices]
-    ensemble_scores = [max(0, model_scores[i]) for i in top_indices]  # Clip negative scores to 0
-    ensemble_names = [model_names[i] for i in top_indices]
-    
-    # Normalize weights
-    total_score = sum(ensemble_scores)
-    if total_score > 0:
-        ensemble_weights = [s / total_score for s in ensemble_scores]
-    else:
-        ensemble_weights = [1.0 / len(ensemble_scores)] * len(ensemble_scores)
-    
-    # Create ensemble dict
-    ensemble = {
-        'models': ensemble_models,
-        'weights': ensemble_weights,
-        'names': ensemble_names,
+    # Create model dict (single model, not ensemble)
+    model_dict = {
+        'models': [best_model],
+        'weights': [1.0],
+        'names': [best_name],
         'feature_cols': FEATURE_COLS
     }
-    
-    avg_r2 = sum(ensemble_scores) / len(ensemble_scores)
 
     if save_path:
         metadata = {
             'trained': datetime.now(timezone.utc).isoformat(),
-            'ensemble_names': ensemble_names,
-            'ensemble_scores': ensemble_scores,
-            'avg_r2': avg_r2
+            'best_model': best_name,
+            'best_r2': best_score
         }
         if train_start and train_end:
             metadata['train_start'] = train_start.isoformat()
             metadata['train_end'] = train_end.isoformat()
-        _save_model(ensemble, save_path, metadata)
+        _save_model(model_dict, save_path, metadata)
 
-    print(f"   ✅ AI Elite: Ensemble trained! Models: {ensemble_names}, Weights: {[f'{w:.2f}' for w in ensemble_weights]}, Avg R² {avg_r2:.3f}")
-    return ensemble, avg_r2
+    print(f"   ✅ AI Elite: Best model = {best_name} (CV R² {best_score:.3f})")
+    return model_dict, best_score
 
 
 def fine_tune_per_ticker(
