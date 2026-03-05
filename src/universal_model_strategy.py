@@ -162,6 +162,9 @@ class UniversalModelStrategy:
         self.retrain_days = retrain_days
         self.min_samples = min_samples
         self.model = None
+        self.all_models = None  # All trained models
+        self.all_scores = None  # All model scores
+        self.best_name = None   # Name of best model
         self.scaler = None
         self.feature_cols = None
         self.last_train_day = 0
@@ -238,21 +241,67 @@ class UniversalModelStrategy:
         self.scaler = StandardScaler()
         X_scaled = self.scaler.fit_transform(X)
         
-        # Train model
+        # Train ALL models and pick the best one
+        from sklearn.ensemble import RandomForestRegressor
+        from sklearn.linear_model import Ridge
+        from sklearn.model_selection import cross_val_score
+        from sklearn.metrics import make_scorer, r2_score
+        
+        # Build all models (use existing if available for incremental training)
+        if self.all_models is not None:
+            models = self.all_models
+            print(f"   📊 Universal Model: Continuing training on {len(X_list)} samples...")
+        else:
+            models = {
+                'GradientBoosting': GradientBoostingRegressor(
+                    n_estimators=100, max_depth=4, learning_rate=0.1,
+                    subsample=0.8, random_state=42, verbose=0
+                ),
+                'RandomForest': RandomForestRegressor(
+                    n_estimators=100, max_depth=6, random_state=42, n_jobs=-1
+                ),
+                'Ridge': Ridge(alpha=1.0, random_state=42)
+            }
+            print(f"   📊 Universal Model: Training NEW models on {len(X_list)} samples...")
+        
+        # Train all models and evaluate
+        trained_models = {}
+        model_scores = {}
+        r2_scorer = make_scorer(r2_score)
+        
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            self.model = GradientBoostingRegressor(
-                n_estimators=100,
-                max_depth=4,
-                learning_rate=0.1,
-                subsample=0.8,
-                random_state=42,
-                verbose=0
-            )
-            self.model.fit(X_scaled, y)
+            for name, m in models.items():
+                try:
+                    # Enable warm_start for incremental training
+                    if self.all_models is not None and hasattr(m, 'warm_start'):
+                        m.warm_start = True
+                        if hasattr(m, 'n_estimators'):
+                            m.n_estimators += 50
+                    m.fit(X_scaled, y)
+                    scores = cross_val_score(m, X_scaled, y, cv=3, scoring=r2_scorer, n_jobs=1)
+                    mean_score = scores.mean()
+                    status = "continued" if self.all_models is not None else "trained"
+                    print(f"      {name}: CV R² = {mean_score:.3f} ({status})")
+                    trained_models[name] = m
+                    model_scores[name] = mean_score
+                except Exception as e:
+                    print(f"      {name}: Training failed: {e}")
         
+        if not trained_models:
+            print(f"   ⚠️ Universal Model: No models trained successfully")
+            return False
+        
+        # Pick best model
+        best_name = max(model_scores, key=model_scores.get)
+        best_score = model_scores[best_name]
+        
+        self.all_models = trained_models
+        self.all_scores = model_scores
+        self.model = trained_models[best_name]
+        self.best_name = best_name
         self.last_train_day = self.day_count
-        print(f"   ✅ Universal Model: Trained on {len(X_list)} samples from {len(ticker_data_grouped)} tickers")
+        print(f"   ✅ Universal Model: Saved {len(trained_models)} models. Best = {best_name} (R² {best_score:.3f})")
         
         # Save model to disk
         self.save_model()
@@ -260,25 +309,45 @@ class UniversalModelStrategy:
         return True
     
     def save_model(self):
-        """Save model and scaler to disk."""
+        """Save all models and scaler to disk."""
         try:
             MODEL_SAVE_DIR.mkdir(parents=True, exist_ok=True)
-            joblib.dump(self.model, UNIVERSAL_MODEL_PATH)
-            joblib.dump(self.scaler, UNIVERSAL_SCALER_PATH)
-            print(f"   💾 Universal Model: Saved to {UNIVERSAL_MODEL_PATH}")
+            joblib.dump({
+                'all_models': self.all_models,
+                'all_scores': self.all_scores,
+                'best_name': self.best_name,
+                'model': self.model,
+                'scaler': self.scaler,
+                'feature_cols': self.feature_cols
+            }, UNIVERSAL_MODEL_PATH)
+            print(f"   💾 Universal Model: Saved {len(self.all_models)} models to {UNIVERSAL_MODEL_PATH}")
         except Exception as e:
             print(f"   ⚠️ Universal Model: Failed to save: {e}")
     
     def load_model(self) -> bool:
-        """Load model and scaler from disk."""
+        """Load all models and scaler from disk."""
         try:
-            if UNIVERSAL_MODEL_PATH.exists() and UNIVERSAL_SCALER_PATH.exists():
-                self.model = joblib.load(UNIVERSAL_MODEL_PATH)
-                self.scaler = joblib.load(UNIVERSAL_SCALER_PATH)
-                self.feature_cols = ['mom_5d', 'mom_10d', 'mom_20d', 'mom_60d', 'volatility_20d', 
-                                     'volatility_60d', 'price_vs_sma20', 'price_vs_sma50', 'sma_trend',
-                                     'vol_ratio', 'atr_pct', 'mom_accel', 'risk_adj_mom', 'drawdown', 'rsi']
-                print(f"   📂 Universal Model: Loaded from disk")
+            if UNIVERSAL_MODEL_PATH.exists():
+                data = joblib.load(UNIVERSAL_MODEL_PATH)
+                # Handle new format (dict with all_models)
+                if isinstance(data, dict) and 'all_models' in data:
+                    self.all_models = data['all_models']
+                    self.all_scores = data['all_scores']
+                    self.best_name = data['best_name']
+                    self.model = data['model']
+                    self.scaler = data['scaler']
+                    self.feature_cols = data['feature_cols']
+                    n_models = len(self.all_models) if self.all_models else 1
+                    print(f"   📂 Universal Model: Loaded {n_models} models from disk")
+                else:
+                    # Legacy format (single model)
+                    self.model = data
+                    if UNIVERSAL_SCALER_PATH.exists():
+                        self.scaler = joblib.load(UNIVERSAL_SCALER_PATH)
+                    self.feature_cols = ['mom_5d', 'mom_10d', 'mom_20d', 'mom_60d', 'volatility_20d', 
+                                         'volatility_60d', 'price_vs_sma20', 'price_vs_sma50', 'sma_trend',
+                                         'vol_ratio', 'atr_pct', 'mom_accel', 'risk_adj_mom', 'drawdown', 'rsi']
+                    print(f"   📂 Universal Model: Loaded from disk (legacy format)")
                 return True
         except Exception as e:
             print(f"   ⚠️ Universal Model: Failed to load: {e}")

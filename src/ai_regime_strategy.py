@@ -76,6 +76,9 @@ class AIRegimeAllocator:
         
         # Current ML model
         self.model = None
+        self.all_models = None  # All trained models
+        self.all_scores = None  # All model scores
+        self.best_name = None   # Name of best model
         self.last_train_day = 0
         
         # Current allocation
@@ -258,15 +261,19 @@ class AIRegimeAllocator:
         # Collect training samples
         training_samples = []
         
-        # Train from day 1 - need at least 2 days (1 for features, 1 for forward label)
-        min_day = min(REGIME_LOOKBACK, max(0, self.day_count - 2))
-        max_day = self.day_count - self.forward_days - 1  # forward_days=1, so need day_count >= 2
+        # We need: day_idx for features, day_idx + forward_days for label
+        # So max valid day_idx = day_count - forward_days - 1
+        # Start from day 0 (or 1 if we need previous day data)
+        min_day = 1  # Start from day 1 (need day 0 for comparison)
+        max_day = self.day_count - self.forward_days  # Last day we can get a forward label for
         
-        if max_day < min_day or self.day_count < 2:
+        if max_day <= min_day or self.day_count < 2:
             print(f"   ⚠️ AI Regime: Need at least 2 days of data (have {self.day_count})")
             return False
             
-        for day_idx in range(min_day, max_day, 2):  # Sample every 2 days
+        # Sample every day (or every 2 days if we have lots of data)
+        step = 2 if (max_day - min_day) > 20 else 1
+        for day_idx in range(min_day, max_day, step):
             # Get features for this day
             if day_idx >= len(business_days):
                 continue
@@ -305,16 +312,65 @@ class AIRegimeAllocator:
         feature_cols = [c for c in train_df.columns if c != 'label']
         X = train_df[feature_cols].values
         
-        # Train classifier (stronger model with regularization)
+        # Train ALL classifiers and pick the best one
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.model_selection import cross_val_score
+        
+        # Build all models (use existing if available for incremental training)
+        if self.all_models is not None:
+            models = self.all_models
+            print(f"   📊 AI Regime: Continuing training on {len(training_samples)} samples...")
+        else:
+            models = {
+                'GradientBoosting': GradientBoostingClassifier(
+                    n_estimators=150, max_depth=4, learning_rate=0.05,
+                    subsample=0.8, min_samples_leaf=5, random_state=42, verbose=0
+                ),
+                'RandomForest': RandomForestClassifier(
+                    n_estimators=100, max_depth=6, random_state=42, n_jobs=-1
+                ),
+                'LogisticRegression': LogisticRegression(
+                    max_iter=1000, random_state=42, n_jobs=-1
+                )
+            }
+            print(f"   📊 AI Regime: Training NEW models on {len(training_samples)} samples...")
+        
+        # Train all models and evaluate
+        trained_models = {}
+        model_scores = {}
+        
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            self.model = GradientBoostingClassifier(
-                n_estimators=150, max_depth=4, learning_rate=0.05,
-                subsample=0.8, min_samples_leaf=5,
-                random_state=42, verbose=0
-            )
-            self.model.fit(X, y)
+            for name, m in models.items():
+                try:
+                    # Enable warm_start for incremental training
+                    if self.all_models is not None and hasattr(m, 'warm_start'):
+                        m.warm_start = True
+                        if hasattr(m, 'n_estimators'):
+                            m.n_estimators += 50
+                    m.fit(X, y)
+                    scores = cross_val_score(m, X, y, cv=3, scoring='accuracy', n_jobs=1)
+                    mean_score = scores.mean()
+                    status = "continued" if self.all_models is not None else "trained"
+                    print(f"      {name}: CV Accuracy = {mean_score:.3f} ({status})")
+                    trained_models[name] = m
+                    model_scores[name] = mean_score
+                except Exception as e:
+                    print(f"      {name}: Training failed: {e}")
         
+        if not trained_models:
+            print(f"   ⚠️ AI Regime: No models trained successfully")
+            return False
+        
+        # Pick best model
+        best_name = max(model_scores, key=model_scores.get)
+        best_score = model_scores[best_name]
+        
+        self.all_models = trained_models
+        self.all_scores = model_scores
+        self.model = trained_models[best_name]
+        self.best_name = best_name
         self.label_encoder = le
         self.feature_cols = feature_cols
         self.last_train_day = self.day_count
@@ -322,7 +378,7 @@ class AIRegimeAllocator:
         # Show class distribution
         unique, counts = np.unique(y, return_counts=True)
         class_dist = {le.inverse_transform([u])[0]: c for u, c in zip(unique, counts)}
-        print(f"   ✅ AI Regime: Model trained on {len(training_samples)} samples")
+        print(f"   ✅ AI Regime: Saved {len(trained_models)} models. Best = {best_name} (Accuracy {best_score:.3f})")
         print(f"   📊 AI Regime: Class distribution: {class_dist}")
         
         # Save model to disk
@@ -331,27 +387,35 @@ class AIRegimeAllocator:
         return True
     
     def save_model(self):
-        """Save model and label encoder to disk."""
+        """Save all models and label encoder to disk."""
         try:
             MODEL_SAVE_DIR.mkdir(parents=True, exist_ok=True)
             joblib.dump({
+                'all_models': self.all_models,
+                'all_scores': self.all_scores,
+                'best_name': self.best_name,
                 'model': self.model,
                 'label_encoder': self.label_encoder,
                 'feature_cols': self.feature_cols
             }, AI_REGIME_MODEL_PATH)
-            print(f"   💾 AI Regime: Saved to {AI_REGIME_MODEL_PATH}")
+            print(f"   💾 AI Regime: Saved {len(self.all_models)} models to {AI_REGIME_MODEL_PATH}")
         except Exception as e:
             print(f"   ⚠️ AI Regime: Failed to save: {e}")
     
     def load_model(self) -> bool:
-        """Load model and label encoder from disk."""
+        """Load all models and label encoder from disk."""
         try:
             if AI_REGIME_MODEL_PATH.exists():
                 data = joblib.load(AI_REGIME_MODEL_PATH)
                 self.model = data['model']
                 self.label_encoder = data['label_encoder']
                 self.feature_cols = data['feature_cols']
-                print(f"   📂 AI Regime: Loaded from disk")
+                # Load all models if available (new format)
+                self.all_models = data.get('all_models')
+                self.all_scores = data.get('all_scores')
+                self.best_name = data.get('best_name')
+                n_models = len(self.all_models) if self.all_models else 1
+                print(f"   📂 AI Regime: Loaded {n_models} models from disk")
                 return True
         except Exception as e:
             print(f"   ⚠️ AI Regime: Failed to load: {e}")
@@ -527,11 +591,11 @@ def select_ai_regime_stocks(
         
     elif predicted_strategy == 'static_bh_1y':
         from shared_strategies import select_top_performers
-        return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=252)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=top_n)
         
     elif predicted_strategy == 'static_bh_3m':
         from shared_strategies import select_top_performers
-        return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=63)
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=63, top_n=top_n)
         
     else:
         # Fallback to risk_adj_mom_3m
