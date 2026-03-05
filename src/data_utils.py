@@ -568,6 +568,20 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                     new_df = downloaded_df.dropna()
             except Exception:
                 pass
+        
+        # Fallback to daily data if hourly data is empty (some ETFs don't have intraday data)
+        if new_df.empty and DATA_INTERVAL in ['1h', '30m', '15m', '5m', '1m']:
+            try:
+                with suppress_yfinance_output():
+                    downloaded_df = yf.download(ticker, start=start_utc, end=end_utc, 
+                                               interval='1d', auto_adjust=True, progress=False,
+                                               multi_level_index=False)
+                if downloaded_df is not None and not downloaded_df.empty:
+                    new_df = downloaded_df.dropna()
+                    if not new_df.empty:
+                        print(f"  [INFO] {ticker}: Using daily data fallback ({len(new_df)} rows)")
+            except Exception:
+                pass
     else:
         print(f"  [DEBUG] Skipping fetch for {ticker} - cache is current")
     
