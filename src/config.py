@@ -214,7 +214,7 @@ TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
 USE_UNIFIED_PARALLEL_TRAINING = True
 
 # --- Backtest windows
-BACKTEST_DAYS           = 30     # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           = 70     # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 
 # --- Calendar days ---
@@ -324,6 +324,7 @@ ENABLE_RISK_ADJ_MOM_6M = True   # NEW - Risk-Adj Mom 6M (same as Risk-Adj Mom bu
 ENABLE_RISK_ADJ_MOM_6M_MONTHLY = True   # NEW - Risk-Adj Mom 6M Monthly (same scoring, rebalance start of month only)
 ENABLE_RISK_ADJ_MOM_3M = True   # NEW - Risk-Adj Mom 3M (same as Risk-Adj Mom but 3M window)
 ENABLE_RISK_ADJ_MOM_3M_MONTHLY = True   # NEW - Risk-Adj Mom 3M Monthly (same scoring, rebalance start of month only)
+ENABLE_RISK_ADJ_MOM_3M_SENTIMENT = True   # NEW - Risk-Adj Mom 3M + Sentiment (momentum + price-derived sentiment)
 ENABLE_RISK_ADJ_MOM_1M = True   # NEW - Risk-Adj Mom 1M (same as Risk-Adj Mom but 1M window)
 ENABLE_RISK_ADJ_MOM_1M_MONTHLY = True   # NEW - Risk-Adj Mom 1M Monthly (same scoring, rebalance start of month only)
 ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip opportunities)
