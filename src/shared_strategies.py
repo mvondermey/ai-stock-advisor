@@ -88,17 +88,28 @@ def get_market_conditions(ticker_data_grouped: Dict[str, pd.DataFrame], current_
         'IWM': 'russell2000'
     }
     
+    # Convert current_date to pandas Timestamp
+    current_ts = pd.Timestamp(current_date)
+    
     for ticker, name in indices.items():
         if ticker in ticker_data_grouped:
             data = ticker_data_grouped[ticker]
-            if len(data) >= 63:  # Need 3 months of data
+            
+            # Filter data up to current_date (important for backtesting)
+            if hasattr(data.index, 'tz') and data.index.tz is not None:
+                if current_ts.tz is None:
+                    current_ts = current_ts.tz_localize(data.index.tz)
+            
+            data_until_now = data[data.index <= current_ts]
+            
+            if len(data_until_now) >= 63:  # Need 3 months of data
                 # 3-month performance
-                perf_3m = (data['Close'].iloc[-1] / data['Close'].iloc[-63] - 1)
+                perf_3m = (data_until_now['Close'].iloc[-1] / data_until_now['Close'].iloc[-63] - 1)
                 conditions[f'{name}_3m'] = perf_3m
                 
                 # 1-month performance
-                if len(data) >= 21:
-                    perf_1m = (data['Close'].iloc[-1] / data['Close'].iloc[-21] - 1)
+                if len(data_until_now) >= 21:
+                    perf_1m = (data_until_now['Close'].iloc[-1] / data_until_now['Close'].iloc[-21] - 1)
                     conditions[f'{name}_1m'] = perf_1m
     
     return conditions
