@@ -2412,7 +2412,8 @@ def select_ai_elite_with_training(
     current_date=None,
     top_n: int = 10,
     ai_elite_models: dict = None,
-    force_train: bool = False
+    force_train: bool = False,
+    model_path_suffix: str = ""
 ) -> tuple:
     """
     AI Elite Strategy: Full pipeline — load model, train if needed, select stocks.
@@ -2426,12 +2427,13 @@ def select_ai_elite_with_training(
         top_n: Number of stocks to select
         ai_elite_models: Dict of models (mutated in-place). Pass {} on first call.
         force_train: If True, always retrain even if model exists on disk
+        model_path_suffix: Suffix for model file (e.g. "_monthly" for AI Elite Monthly)
         
     Returns:
         (selected_stocks, ai_elite_models) — selected tickers and updated models dict
     """
-    from ai_elite_strategy import select_ai_elite_stocks, _calculate_market_return
     from ai_elite_strategy_per_ticker import train_shared_base_model, collect_ticker_training_data
+    from ai_elite_strategy import select_ai_elite_stocks
     from config import AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS
     import os
     import pickle
@@ -2441,7 +2443,7 @@ def select_ai_elite_with_training(
         ai_elite_models = {}
     
     models_dir = "logs/models"
-    base_model_path = os.path.join(models_dir, "_shared_base_ai_elite.joblib")
+    base_model_path = os.path.join(models_dir, f"_shared_base_ai_elite{model_path_suffix}.joblib")
     
     # Step 1: Try loading saved model from disk if not already in memory
     if ai_elite_models.get('_shared_base') is None and not force_train:
@@ -2509,36 +2511,31 @@ def select_ai_elite_with_training(
             market_returns[utc_key] = mr if mr is not None else 0.0
             sample_date_iter += timedelta(days=2)
         
-        # Collect training data from all tickers (PARALLEL)
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        # Collect training data from all tickers (PARALLEL with multiprocessing.Pool)
+        from multiprocessing import Pool, cpu_count
         import time
         
-        n_workers = min(32, len(all_tickers))
-        print(f"   📊 AI Elite: Collecting data from {len(all_tickers)} tickers ({n_workers} threads, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
+        n_workers = max(1, cpu_count() - 2)
+        print(f"   📊 AI Elite: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
         start_time = time.time()
         
         all_training_data = []
         ticker_samples_map = {}
         
-        def collect_one(t):
-            try:
-                samples = collect_ticker_training_data(
-                    ticker=t, ticker_data=ticker_data_grouped.get(t),
-                    train_start_date=train_start, train_end_date=train_end,
-                    forward_days=AI_ELITE_FORWARD_DAYS, market_returns=market_returns
-                )
-                return (t, samples) if samples else None
-            except Exception:
-                return None
+        # Prepare args for parallel workers
+        collect_args = [
+            (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS, market_returns)
+            for t in all_tickers
+        ]
         
-        with ThreadPoolExecutor(max_workers=n_workers) as executor:
-            futures = {executor.submit(collect_one, t): t for t in all_tickers}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    t, samples = result
-                    all_training_data.extend(samples)
-                    ticker_samples_map[t] = samples
+        with Pool(processes=n_workers) as pool:
+            from backtesting import _collect_data_worker
+            results = pool.map(_collect_data_worker, collect_args)
+        
+        for ticker, samples in results:
+            if samples:
+                all_training_data.extend(samples)
+                ticker_samples_map[ticker] = samples
         
         elapsed = time.time() - start_time
         print(f"   📊 AI Elite: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers ({elapsed:.1f}s)")

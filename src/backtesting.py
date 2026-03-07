@@ -4266,108 +4266,19 @@ def _run_portfolio_backtest_walk_forward(
             should_act_ai_elite_monthly = (not ai_elite_monthly_initialized) or is_first_trading_day_of_month
             if should_act_ai_elite_monthly:
                 try:
-                    from ai_elite_strategy import select_ai_elite_stocks
-                    from ai_elite_strategy_per_ticker import train_shared_base_model
-                    import os
-                    import pickle
-
-                    models_dir = "logs/models"
-                    os.makedirs(models_dir, exist_ok=True)
-
-                    # Try loading model from disk if not in memory
-                    base_model_path_monthly = os.path.join(models_dir, "_shared_base_ai_elite_monthly.joblib")
-                    model_loaded = False
-                    if ai_elite_monthly_models.get('_shared_base') is None and os.path.exists(base_model_path_monthly):
-                        try:
-                            with open(base_model_path_monthly, 'rb') as f:
-                                model_data = pickle.load(f)
-                            # Handle both old format (direct model) and new format (model + metadata)
-                            if isinstance(model_data, dict) and 'model' in model_data:
-                                loaded_model = model_data['model']
-                                metadata = model_data.get('metadata', {})
-                                info_parts = []
-                                if 'trained' in metadata:
-                                    info_parts.append(f"trained {metadata['trained'][:10]}")
-                                elif 'updated' in metadata:
-                                    info_parts.append(f"updated {metadata['updated'][:10]}")
-                                if 'train_start' in metadata and 'train_end' in metadata:
-                                    info_parts.append(f"data {metadata['train_start'][:10]} to {metadata['train_end'][:10]}")
-                                info_str = f" ({', '.join(info_parts)})" if info_parts else ""
-                            else:
-                                loaded_model = model_data
-                                info_str = " (legacy format)"
-                            ai_elite_monthly_models['_shared_base'] = loaded_model
-                            for ticker in initial_top_tickers:
-                                ai_elite_monthly_models[ticker] = loaded_model
-                                ai_elite_monthly_last_train_days[ticker] = 0
-                            print(f"   ✅ AI Elite Monthly: Loaded model from disk for {len(initial_top_tickers)} tickers{info_str}")
-                            model_loaded = True
-                        except Exception as e:
-                            print(f"   ⚠️ AI Elite Monthly: Failed to load model from disk: {e}")
-
-                    # Only train if we didn't just load a model and it's time to rebalance
-                    if not model_loaded:
-                        print(f"   📊 AI Elite Monthly: {'Initializing' if not ai_elite_monthly_initialized else 'Start-of-month retrain'} ({current_date.strftime('%b %Y')})")
-                        
-                        train_end = current_date
-                        train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
-    
-                        from concurrent.futures import ProcessPoolExecutor, as_completed
-                        n_workers = min(TRAINING_NUM_PROCESSES, len(initial_top_tickers))
-    
-                        from ai_elite_strategy import _calculate_market_return
-                        from datetime import timezone as tz_utc
-                        market_returns = {}
-                        sample_date_iter = train_start
-                        while sample_date_iter <= train_end:
-                            mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
-                            utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
-                            market_returns[utc_key] = mr if mr is not None else 0.0
-                            sample_date_iter += timedelta(days=2)
-    
-                        print(f"   📊 AI Elite Monthly: Collecting data from {len(initial_top_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
-                        collect_args = [
-                            (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS, market_returns)
-                            for t in initial_top_tickers
-                        ]
-    
-                        all_training_data = []
-                        ticker_samples_map = {}
-    
-                        with ProcessPoolExecutor(max_workers=n_workers) as executor:
-                            futures = {executor.submit(_collect_data_worker, a): a[0] for a in collect_args}
-                            for future in as_completed(futures):
-                                try:
-                                    ticker, samples = future.result()
-                                    if samples:
-                                        all_training_data.extend(samples)
-                                        ticker_samples_map[ticker] = samples
-                                except Exception as e:
-                                    print(f"   ⚠️ AI Elite Monthly: Data collection failed for {futures[future]}: {e}")
-    
-                        print(f"   📊 AI Elite Monthly: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers")
-    
-                        base_model_path_monthly = os.path.join(models_dir, "_shared_base_ai_elite_monthly.joblib")
-                        existing_base = ai_elite_monthly_models.get('_shared_base')
-                        base_model, base_r2 = train_shared_base_model(
-                            all_training_data, save_path=base_model_path_monthly,
-                            existing_model=existing_base, train_start=train_start, train_end=train_end
-                        )
-    
-                        if base_model:
-                            ai_elite_monthly_models['_shared_base'] = base_model
-                            print(f"   ✅ AI Elite Monthly: Model trained (R² {base_r2:.3f})")
-                            for ticker in initial_top_tickers:
-                                ai_elite_monthly_models[ticker] = base_model
-                                ai_elite_monthly_last_train_days[ticker] = day_count
-
-                    # Select and rebalance
-                    new_stocks = select_ai_elite_stocks(
-                        initial_top_tickers,
-                        ticker_data_grouped,
+                    from shared_strategies import select_ai_elite_with_training
+                    
+                    print(f"   📊 AI Elite Monthly: {'Initializing' if not ai_elite_monthly_initialized else 'Start-of-month'} ({current_date.strftime('%b %Y')})")
+                    
+                    # Use shared function (handles load/train/select) with monthly model path
+                    new_stocks, ai_elite_monthly_models = select_ai_elite_with_training(
+                        all_tickers=initial_top_tickers,
+                        ticker_data_grouped=ticker_data_grouped,
                         current_date=current_date,
                         top_n=PORTFOLIO_SIZE,
-                        per_ticker_models=ai_elite_monthly_models
+                        ai_elite_models=ai_elite_monthly_models,
+                        force_train=not ai_elite_monthly_initialized,
+                        model_path_suffix="_monthly"
                     )
 
                     if new_stocks:

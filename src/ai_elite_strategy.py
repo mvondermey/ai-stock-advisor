@@ -21,6 +21,49 @@ import pickle
 import os
 from pathlib import Path
 
+
+def _predict_ticker_worker(args):
+    """Top-level worker for multiprocessing - predicts score for one ticker."""
+    ticker, ticker_data, current_date, ticker_model = args
+    
+    try:
+        if ticker_data is None or len(ticker_data) == 0:
+            return ticker, None, 'empty'
+        
+        # Import functions inside worker (required for multiprocessing)
+        from ai_elite_strategy import _load_hourly_data_direct, _extract_features
+        from datetime import timedelta
+        import pandas as pd
+        
+        # Load hourly data
+        hourly_data = _load_hourly_data_direct(ticker, 
+            current_date - timedelta(days=30),
+            current_date + timedelta(days=5))
+        
+        # Extract features
+        features = _extract_features(ticker, hourly_data, current_date, daily_data=ticker_data)
+        if features is None:
+            return ticker, None, 'features_none'
+        
+        # Get model and predict
+        if ticker_model is None:
+            return ticker, 0.0, 'no_model'
+        
+        # Predict (keep as DataFrame for compatibility)
+        feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
+                        'overnight_gap', 'intraday_range', 'last_hour_momentum',
+                        'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
+                        'volume_ratio', 'rsi_14', 'short_term_reversal', 
+                        'volume_sentiment', 'risk_adj_mom_3m', 'bollinger_position',
+                        'sma20_distance', 'sma50_distance', 'macd']
+        X_ticker = pd.DataFrame([list(features.values())], columns=feature_cols)
+        ai_score = ticker_model.predict(X_ticker)[0]
+        
+        return ticker, ai_score, 'success'
+    except Exception as e:
+        return ticker, None, 'exception'
+
+
 def select_ai_elite_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -59,60 +102,45 @@ def select_ai_elite_stocks(
         all_tickers, ticker_data_grouped, current_date, "AI Elite"
     )
     
-    candidates = []
-    
     print(f"   🤖 AI Elite: Analyzing {len(filtered_tickers)} tickers with ML scoring (filtered from {len(all_tickers)})")
     
-    # Extract features for all candidates
-    debug_count = 0
-    fail_reasons = {'not_in_data': 0, 'empty': 0, 'features_none': 0, 'exception': 0}
-    for ticker in filtered_tickers:
-        try:
-            if ticker not in ticker_data_grouped:
-                fail_reasons['not_in_data'] += 1
-                continue
-            
-            # Daily data (always available - from ticker_data_grouped)
-            daily_data = ticker_data_grouped[ticker]
-            if daily_data is None or len(daily_data) == 0:
-                fail_reasons['empty'] += 1
-                continue
-
-            # Hourly data (optional - for intraday features)
-            hourly_data = _load_hourly_data_direct(
-                ticker,
-                current_date - timedelta(days=30),
-                current_date
-            )
-            
-            # Debug first 3 tickers
-            if debug_count < 3:
-                has_hourly = hourly_data is not None and len(hourly_data) > 0
-                print(f"   🔍 AI Elite DEBUG {ticker}: daily={len(daily_data)} rows, hourly={'yes' if has_hourly else 'no'}")
-                debug_count += 1
-            
-            # Extract features using both data sources
-            features = _extract_features(ticker, hourly_data, current_date, daily_data=daily_data)
-            if features is None:
-                fail_reasons['features_none'] += 1
-                continue
-            
-            # Add ticker to features for DataFrame
-            features['ticker'] = ticker
-            candidates.append(features)
-            
-        except Exception as e:
-            fail_reasons['exception'] += 1
-            if debug_count < 5:
-                print(f"   ⚠️ AI Elite DEBUG {ticker}: Exception: {e}")
-            continue
+    # Parallel prediction with multiprocessing.Pool
+    from multiprocessing import Pool, cpu_count
+    import time
     
-    if not candidates:
-        print(f"   ⚠️ AI Elite: No candidates found")
+    n_workers = max(1, cpu_count() - 2)
+    start_time = time.time()
+    
+    # Prepare args for parallel workers (pass ticker_data and model directly, not full dicts)
+    predict_args = [
+        (ticker, ticker_data_grouped.get(ticker), current_date, 
+         per_ticker_models.get(ticker) if per_ticker_models else None)
+        for ticker in filtered_tickers
+    ]
+    
+    ai_scores = {}
+    fail_reasons = {'not_in_data': 0, 'empty': 0, 'features_none': 0, 'no_model': 0, 'exception': 0}
+    
+    with Pool(processes=n_workers) as pool:
+        results = pool.map(_predict_ticker_worker, predict_args)
+    
+    for ticker, score, status in results:
+        if status == 'success':
+            ai_scores[ticker] = score
+        else:
+            fail_reasons[status] += 1
+            if status == 'no_model':
+                ai_scores[ticker] = 0.0
+    
+    elapsed = time.time() - start_time
+    print(f"   📊 AI Elite: Predicted {len(ai_scores)} tickers ({elapsed:.1f}s)")
+    
+    if not ai_scores:
+        print(f"   ⚠️ AI Elite: No predictions found")
         print(f"   🔍 AI Elite: Fail reasons: {fail_reasons}")
         return []
     
-    # Score candidates using PER-TICKER models
+    # Create candidates DataFrame from successful predictions
     feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
                     'overnight_gap', 'intraday_range', 'last_hour_momentum',
                     'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
@@ -120,53 +148,36 @@ def select_ai_elite_stocks(
                     'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m',
                     # NEW: Mean reversion features
                     'bollinger_position', 'sma20_distance', 'sma50_distance', 'macd']
-
+    
+    # Extract features for successful tickers (sequential - much faster now)
+    candidates = []
+    debug_count = 0
+    for ticker, ai_score in ai_scores.items():
+        try:
+            daily_data = ticker_data_grouped[ticker]
+            hourly_data = _load_hourly_data_direct(ticker, 
+                current_date - timedelta(days=30), current_date)
+            features = _extract_features(ticker, hourly_data, current_date, daily_data=daily_data)
+            if features is None:
+                continue
+            
+            features['ticker'] = ticker
+            features['ai_score'] = ai_score
+            candidates.append(features)
+            
+            # Debug first 3 tickers
+            if debug_count < 3:
+                has_hourly = hourly_data is not None and len(hourly_data) > 0
+                print(f"   🔍 AI Elite DEBUG {ticker}: daily={len(daily_data)} rows, hourly={'yes' if has_hourly else 'no'}")
+                debug_count += 1
+        except Exception:
+            continue
+    
     candidates_df = pd.DataFrame(candidates)
     
-    # Debug-only ranks (NOT ML features - risk_adj_mom_3m is already in feature_cols from _extract_features)
+    # Debug-only ranks
     candidates_df['momentum_rank'] = candidates_df['perf_3m'].rank(pct=True)
     candidates_df['risk_adj_mom_rank'] = candidates_df['risk_adj_mom_3m'].rank(pct=True)
-    
-    # Score each ticker with its own model (REGRESSION - predict risk_adj_return directly)
-    ai_scores = []
-    for idx, row in candidates_df.iterrows():
-        ticker = row['ticker']
-        
-        # Get per-ticker model
-        ticker_model = per_ticker_models.get(ticker) if per_ticker_models else None
-        
-        if ticker_model is None:
-            print(f"   ⚠️ AI Elite: No model available for {ticker}, using score 0")
-            ai_scores.append(0.0)
-            continue
-        
-        # Extract features for this ticker (keep as DataFrame for feature name compatibility)
-        X_ticker = pd.DataFrame([row[feature_cols].values], columns=feature_cols)
-        
-        # Get ML prediction (REGRESSION - predict continuous value)
-        # Handle both new format (best_model) and legacy formats
-        try:
-            if isinstance(ticker_model, dict) and 'best_model' in ticker_model:
-                # New format: use best_model directly
-                pred_return = ticker_model['best_model'].predict(X_ticker)[0]
-            elif isinstance(ticker_model, dict) and 'models' in ticker_model:
-                # Legacy ensemble format: use first model with weight 1.0
-                models = ticker_model['models']
-                weights = ticker_model.get('weights', [1.0] * len(models))
-                ensemble_pred = 0.0
-                for model, weight in zip(models, weights):
-                    pred = model.predict(X_ticker)[0]
-                    ensemble_pred += pred * weight
-                pred_return = ensemble_pred
-            else:
-                # Single model prediction
-                pred_return = ticker_model.predict(X_ticker)[0]
-            ai_scores.append(float(pred_return))
-        except Exception as e:
-            print(f"   ⚠️ AI Elite: Failed to score {ticker}: {e}")
-            ai_scores.append(0.0)
-    
-    candidates_df['ai_score'] = ai_scores
     
     # Pure AI scoring - the model predicts expected forward return directly
     candidates_df['final_score'] = candidates_df['ai_score']
@@ -504,306 +515,8 @@ def _load_or_create_model(model_path: Optional[str] = None):
     return None
 
 
-
-
-def train_ai_elite_model(
-    ticker_data_grouped: Dict[str, pd.DataFrame],
-    all_tickers: List[str],
-    train_start_date: datetime,
-    train_end_date: datetime,
-    save_path: str = None,
-    forward_days: int = 20
-):
-    """
-    Train ML model to predict stock outperformance based on features.
-    
-    Uses walk-forward approach:
-    1. For each date in training period, extract features for all stocks
-    2. Label stocks based on their performance over next forward_days
-    3. Train GradientBoostingRegressor to predict risk-adjusted return (REGRESSION)
-    
-    Args:
-        ticker_data_grouped: Historical ticker data
-        all_tickers: List of tickers to train on
-        train_start_date: Start of training period
-        train_end_date: End of training period
-        save_path: Path to save trained model
-        forward_days: Days ahead to predict (default 20)
-        
-    Returns:
-        Trained model or None if training fails
-    """
-    # Import both XGBoost and sklearn GradientBoosting
-    try:
-        import xgboost as xgb
-        from config import XGBOOST_USE_GPU
-        xgb_available = True
-        print(f"   🚀 AI Elite: Using XGBoost {'(GPU)' if XGBOOST_USE_GPU else '(CPU)'}")
-    except ImportError:
-        xgb_available = False
-        print(f"   ⚠️ AI Elite: XGBoost not available, will use sklearn GradientBoosting (CPU only)")
-    
-    # Always import sklearn as fallback
-    from sklearn.ensemble import GradientBoostingRegressor
-    
-    print(f"   🎓 AI Elite: Training ML model on {train_start_date.date()} to {train_end_date.date()}...")
-    
-    # Ensure dates are timezone-aware
-    if train_start_date.tzinfo is None:
-        train_start_date = train_start_date.replace(tzinfo=timezone.utc)
-    if train_end_date.tzinfo is None:
-        train_end_date = train_end_date.replace(tzinfo=timezone.utc)
-    
-    # Collect training samples
-    training_data = []
-
-    from config import AI_ELITE_INTRADAY_LOOKBACK
-    hourly_cache: Dict[str, Optional[pd.DataFrame]] = {}
-    
-    # Sample dates from training period (every 2 days for more samples)
-    current_date = train_start_date
-    sample_dates = []
-    while current_date <= train_end_date:
-        sample_dates.append(current_date)
-        current_date += timedelta(days=2)
-    
-    print(f"   📊 AI Elite: Sampling {len(sample_dates)} dates for training...")
-    print(f"   📊 AI Elite: Sample dates: {[d.date() for d in sample_dates]}")
-    
-    debug_count = 0
-    features_none_count = 0
-    forward_none_count = 0
-    
-    # Pre-calculate market returns for all sample dates
-    market_returns = {}
-    print(f"   📊 AI Elite: Calculating market returns for relative labeling...")
-    for sample_date in sample_dates:
-        market_ret = _calculate_market_return(ticker_data_grouped, sample_date, forward_days)
-        market_returns[sample_date] = market_ret if market_ret is not None else 0.0
-    
-    # Parallel data collection by ticker
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    import time
-    
-    def collect_ticker_data(ticker):
-        """Collect all training samples for one ticker across all sample dates."""
-        if ticker not in ticker_data_grouped:
-            return []
-        daily_data = ticker_data_grouped[ticker]
-        if daily_data is None or len(daily_data) == 0:
-            return []
-        
-        # Load hourly data once per ticker
-        load_start = train_start_date - timedelta(days=AI_ELITE_INTRADAY_LOOKBACK + 5)
-        load_end = train_end_date + timedelta(days=forward_days + 2)
-        hourly_data = _load_hourly_data_direct(ticker, load_start, load_end)
-        
-        samples = []
-        for sample_date in sample_dates:
-            try:
-                features = _extract_features(ticker, hourly_data, sample_date, daily_data=daily_data)
-                if features is None:
-                    continue
-                forward_return = _calculate_forward_return(daily_data, sample_date, forward_days)
-                if forward_return is None:
-                    continue
-                market_return = market_returns.get(sample_date, 0.0)
-                samples.append({
-                    'perf_3m': features['perf_3m'], 'perf_6m': features['perf_6m'],
-                    'perf_1y': features['perf_1y'], 'volatility': features['volatility'],
-                    'avg_volume': features['avg_volume'],
-                    'overnight_gap': features.get('overnight_gap', 0),
-                    'intraday_range': features.get('intraday_range', 0),
-                    'last_hour_momentum': features.get('last_hour_momentum', 0),
-                    'risk_adj_score': features.get('risk_adj_score', 0),
-                    'dip_score': features.get('dip_score', 0),
-                    'mom_accel': features.get('mom_accel', 0),
-                    'vol_sweet_spot': features.get('vol_sweet_spot', 0),
-                    'volume_ratio': features.get('volume_ratio', 1.0),
-                    'rsi_14': features.get('rsi_14', 50.0),
-                    'short_term_reversal': features.get('short_term_reversal', 0),
-                    'volume_sentiment': features.get('volume_sentiment', 0),
-                    'risk_adj_mom_3m': features.get('risk_adj_mom_3m', 0),
-                    'bollinger_position': features.get('bollinger_position', 0.5),
-                    'sma20_distance': features.get('sma20_distance', 0),
-                    'sma50_distance': features.get('sma50_distance', 0),
-                    'macd': features.get('macd', 0),
-                    'forward_return': forward_return, 'market_return': market_return,
-                    'sample_date': sample_date
-                })
-            except Exception:
-                continue
-        return samples
-    
-    n_workers = min(32, len(all_tickers))
-    start_time = time.time()
-    print(f"   📊 AI Elite: Collecting data from {len(all_tickers)} tickers ({n_workers} threads)...")
-    
-    with ThreadPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(collect_ticker_data, t): t for t in all_tickers}
-        for future in as_completed(futures):
-            samples = future.result()
-            training_data.extend(samples)
-    
-    elapsed = time.time() - start_time
-    print(f"   📊 AI Elite: Collected {len(training_data)} samples ({elapsed:.1f}s)")
-    
-    from config import MIN_TRAINING_SAMPLES_AI_ELITE
-    if len(training_data) < MIN_TRAINING_SAMPLES_AI_ELITE:
-        print(f"   ⚠️ AI Elite: Insufficient training data ({len(training_data)} samples), using fallback")
-        return None
-    
-    # Convert to DataFrame
-    train_df = pd.DataFrame(training_data)
-    
-    print(f"   📈 AI Elite: Collected {len(train_df)} training samples")
-    
-    # Compute excess return vs market
-    train_df['excess_return'] = train_df['forward_return'] - train_df['market_return']
-    
-    # Compute risk-adjusted return (excess_return / sqrt(volatility))
-    vol_floored = train_df['volatility'].clip(lower=5.0)
-    train_df['risk_adj_return'] = train_df['excess_return'] / (vol_floored ** 0.5)
-    
-    # Clip extreme outliers
-    mean_ra = train_df['risk_adj_return'].mean()
-    std_ra = train_df['risk_adj_return'].std()
-    if std_ra > 0:
-        train_df['risk_adj_return'] = train_df['risk_adj_return'].clip(
-            lower=mean_ra - 3*std_ra, upper=mean_ra + 3*std_ra
-        )
-    
-    # REGRESSION: Use risk_adj_return directly as continuous target
-    train_df['label'] = train_df['risk_adj_return']
-    
-    print(f"   📊 AI Elite: Training regression model on {len(train_df)} samples")
-    print(f"   📊 AI Elite: Risk-adjusted return stats: mean={mean_ra:.2f}, std={std_ra:.2f}")
-    
-    # Remove stocks with minimal returns (to avoid noise)
-    min_return_threshold = 0.5  # 0.5% minimum return
-    train_df = train_df[abs(train_df['forward_return']) >= min_return_threshold]
-    
-    print(f"   📊 AI Elite: Using 21 features (5 daily + 3 intraday + 6 derived + 2 sentiment proxy + 1 risk_adj_mom_3m + 4 mean reversion)")
-    
-    # Prepare features and target
-    feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
-                    'overnight_gap', 'intraday_range', 'last_hour_momentum',
-                    'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
-                    'volume_ratio', 'rsi_14',
-                    'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m',
-                    # NEW: Mean reversion features
-                    'bollinger_position', 'sma20_distance', 'sma50_distance', 'macd']
-    X = train_df[feature_cols].values
-    y = train_df['label'].values  # Continuous risk-adjusted return values
-    
-    # Build candidate REGRESSOR models (XGBoost + LightGBM + CatBoost - GPU + incremental)
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import r2_score
-    import warnings
-    import time
-
-    device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
-    candidates = {}
-
-    if xgb_available:
-        candidates['XGBoost'] = xgb.XGBRegressor(
-            n_estimators=100, max_depth=4, learning_rate=0.1,
-            subsample=0.8, random_state=42,
-            tree_method='hist', device=device, verbosity=0, n_jobs=-1
-        )
-
-    # Add LightGBM
-    try:
-        import lightgbm as lgb
-        candidates['LightGBM'] = lgb.LGBMRegressor(
-            n_estimators=100, max_depth=4, learning_rate=0.1,
-            subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
-        )
-    except ImportError:
-        pass
-    
-    # Add CatBoost if available
-    try:
-        import catboost as cb
-        task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
-        candidates['CatBoost'] = cb.CatBoostRegressor(
-            iterations=100, depth=4, learning_rate=0.1,
-            task_type=task_type, random_seed=42, verbose=0
-        )
-    except ImportError:
-        pass
-
-    print(f"   🚀 AI Elite: Training {list(candidates.keys())} ({device})...")
-
-    # Train/val split (faster than CV)
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    best_model = None
-    best_name = None
-    best_score = -float('inf')
-
-    for name, m in candidates.items():
-        try:
-            print(f"      🔄 {name}: Training...", end=" ", flush=True)
-            start_time = time.time()
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                m.fit(X_train, y_train)
-            y_pred = m.predict(X_val)
-            score = r2_score(y_val, y_pred)
-            elapsed = time.time() - start_time
-            print(f"R² = {score:.3f} ({elapsed:.1f}s)")
-            if score > best_score:
-                best_score = score
-                best_name = name
-                best_model = m
-        except Exception as e:
-            print(f"failed ({e})")
-
-    if best_model is None:
-        print(f"   ⚠️ AI Elite: All models failed, falling back to XGBoost")
-        best_model = xgb.XGBRegressor(
-            n_estimators=100, max_depth=4, learning_rate=0.1,
-            subsample=0.8, random_state=42,
-            tree_method='hist', device=device, verbosity=0, n_jobs=-1
-        )
-        best_name = 'XGBoost'
-        best_model.fit(X_train, y_train)
-        best_score = r2_score(y_val, best_model.predict(X_val))
-
-    print(f"   ✅ AI Elite: Best model = {best_name} (R² {best_score:.3f})")
-
-    # Fit best model on full training data
-    best_model.fit(X, y)
-    train_r2 = r2_score(y, best_model.predict(X))
-    print(f"   ✅ AI Elite: Final model trained! Train R²: {train_r2:.3f}")
-
-    # Show feature importances (tree models only)
-    if hasattr(best_model, 'feature_importances_'):
-        importances = best_model.feature_importances_
-        sorted_feats = sorted(zip(feature_cols, importances), key=lambda x: x[1], reverse=True)
-        print(f"   📊 AI Elite: Top features:")
-        for col, imp in sorted_feats[:5]:
-            print(f"      {col}: {imp:.3f}")
-
-    # Wrap Ridge with scaler so predict works on raw X
-    if best_name == 'Ridge':
-        from sklearn.pipeline import Pipeline
-        best_model = Pipeline([('scaler', scaler), ('reg', best_model)])
-        best_model.fit(X, y)
-
-    # Save model if path provided
-    if save_path:
-        try:
-            import os
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            with open(save_path, 'wb') as f:
-                pickle.dump(best_model, f)
-            print(f"   💾 AI Elite: Model saved to {save_path}")
-        except Exception as e:
-            print(f"   ⚠️ AI Elite: Failed to save model: {e}")
-
-    return best_model
+# NOTE: train_ai_elite_model was removed - training now happens in ai_elite_strategy_per_ticker.py
+# via train_shared_base_model(), called from shared_strategies.select_ai_elite_with_training()
 
 
 def _calculate_market_return(

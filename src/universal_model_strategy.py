@@ -196,18 +196,14 @@ class UniversalModelStrategy:
             current_day_idx = len(business_days) - 1
         current_date = business_days[current_day_idx] if current_day_idx >= 0 else business_days[0]
         
-        # Sample from HISTORICAL data (PARALLEL)
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        import time
-        
-        def collect_ticker_samples(ticker, data):
+        # Sample from HISTORICAL data (sequential - GIL blocks threading)
+        for ticker, data in ticker_data_grouped.items():
             if data is None or len(data) < LOOKBACK_DAYS + FORWARD_DAYS + 10:
-                return []
+                continue
             available_dates = data.index[data.index < current_date - timedelta(days=FORWARD_DAYS + 5)]
             if len(available_dates) < LOOKBACK_DAYS:
-                return []
+                continue
             sample_dates = available_dates[LOOKBACK_DAYS::5]
-            samples = []
             for sample_date in sample_dates[-100:]:
                 features = calculate_universal_features(ticker, data, sample_date)
                 if features is None:
@@ -215,24 +211,10 @@ class UniversalModelStrategy:
                 forward_ret = calculate_forward_return(data, sample_date, FORWARD_DAYS)
                 if forward_ret is None:
                     continue
-                samples.append((list(features.values()), forward_ret))
-            return samples
-        
-        n_workers = min(32, len(ticker_data_grouped))
-        start_time = time.time()
-        
-        with ThreadPoolExecutor(max_workers=n_workers) as executor:
-            futures = {executor.submit(collect_ticker_samples, t, d): t for t, d in ticker_data_grouped.items()}
-            for future in as_completed(futures):
-                samples = future.result()
-                for x, y_val in samples:
-                    X_list.append(x)
-                    y_list.append(y_val)
-                if len(X_list) >= 10000:
-                    break
-        
-        elapsed = time.time() - start_time
-        print(f"   📊 Universal Model: Collected {len(X_list)} samples ({elapsed:.1f}s)")
+                X_list.append(list(features.values()))
+                y_list.append(forward_ret)
+            if len(X_list) >= 10000:
+                break
         
         if len(X_list) < self.min_samples:
             print(f"   ⚠️ Universal Model: Not enough samples ({len(X_list)} < {self.min_samples})")
