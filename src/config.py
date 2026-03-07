@@ -418,6 +418,13 @@ ENABLE_STOP_LOSS        = False      # Global enable/disable stop loss protectio
 STOP_LOSS_PCT           = 0.05       # Default stop loss percentage (5%)
 ENABLE_PROFIT_GUARD     = False      # Sell stocks when not in top 10 (no profit/loss consideration)
 
+# --- Inverse ETF Hedge Strategy ---
+# Instead of stop losses, add inverse ETFs during market downturns
+ENABLE_INVERSE_ETF_HEDGE = True     # Add inverse ETFs when market crashes
+INVERSE_ETF_HEDGE_THRESHOLD = 0.10   # Add hedge when market down >10%
+INVERSE_ETF_HEDGE_ALLOCATION = 0.20  # Allocate 20% to inverse ETFs
+INVERSE_ETF_HEDGE_PREFERENCE = ['SOXS', 'SQQQ', 'SPXU', 'FAZ', 'SH', 'PSQ']  # Preferred hedge ETFs
+
 # --- Strategy-Specific Stop Loss Configuration ---
 # All stop loss values respect the global ENABLE_STOP_LOSS flag
 # Based on backtest analysis: Some strategies benefit from stop loss, others don't

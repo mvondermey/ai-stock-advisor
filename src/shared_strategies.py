@@ -17,11 +17,91 @@ from config import (
     RISK_ADJ_MOM_MIN_SCORE, VOLATILITY_ADJ_MOM_LOOKBACK, VOLATILITY_ADJ_MOM_VOL_WINDOW,
     VOLATILITY_ADJ_MOM_MIN_SCORE, DATA_FRESHNESS_MAX_DAYS,
     ENABLE_MULTITASK_LEARNING,
-    MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M, MIN_DATA_DAYS_GENERAL
+    MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M, MIN_DATA_DAYS_GENERAL,
+    ENABLE_INVERSE_ETF_HEDGE, INVERSE_ETF_HEDGE_THRESHOLD, INVERSE_ETF_HEDGE_ALLOCATION, INVERSE_ETF_HEDGE_PREFERENCE
 )
 
 # Multi-task learning strategy removed
 MULTITASK_AVAILABLE = False
+
+
+def apply_inverse_etf_hedge(
+    selected_stocks: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    portfolio_size: int = 10
+) -> List[str]:
+    """
+    Add inverse ETFs to selected stocks during market downturns.
+    
+    This replaces stop losses by hedging with inverse ETFs when market crashes.
+    
+    Args:
+        selected_stocks: Stocks selected by strategy
+        ticker_data_grouped: All ticker data
+        current_date: Current analysis date
+        portfolio_size: Target portfolio size
+        
+    Returns:
+        Updated stock list with inverse ETFs if market is down
+    """
+    if not ENABLE_INVERSE_ETF_HEDGE:
+        return selected_stocks
+    
+    # Get market conditions
+    market_conditions = get_market_conditions(ticker_data_grouped, current_date)
+    
+    # Check if market is down significantly
+    market_decline = 0
+    for metric, value in market_conditions.items():
+        if '_3m' in metric and value < 0:  # Negative 3-month performance
+            market_decline = max(market_decline, abs(value))
+    
+    # Add hedge if market is down more than threshold
+    if market_decline <= INVERSE_ETF_HEDGE_THRESHOLD:
+        return selected_stocks
+    
+    # Calculate how many positions to replace with hedge
+    num_hedge_positions = max(1, int(portfolio_size * INVERSE_ETF_HEDGE_ALLOCATION))
+    
+    # Remove worst performers to make room
+    updated_stocks = selected_stocks[:-num_hedge_positions] if len(selected_stocks) > portfolio_size - num_hedge_positions else selected_stocks.copy()
+    
+    # Add preferred inverse ETFs
+    for etf in INVERSE_ETF_HEDGE_PREFERENCE:
+        if etf not in updated_stocks and etf in ticker_data_grouped and len(updated_stocks) < portfolio_size:
+            updated_stocks.append(etf)
+            print(f"   🛡️ Adding hedge {etf} (market down {market_decline:.1%})")
+            break  # Add only one hedge ETF for simplicity
+    
+    return updated_stocks
+
+
+def get_market_conditions(ticker_data_grouped: Dict[str, pd.DataFrame], current_date: datetime) -> Dict[str, float]:
+    """Get current market conditions using major indices."""
+    conditions = {}
+    
+    # Check major indices
+    indices = {
+        'SPY': 'sp500',
+        'QQQ': 'nasdaq',
+        'IWM': 'russell2000'
+    }
+    
+    for ticker, name in indices.items():
+        if ticker in ticker_data_grouped:
+            data = ticker_data_grouped[ticker]
+            if len(data) >= 63:  # Need 3 months of data
+                # 3-month performance
+                perf_3m = (data['Close'].iloc[-1] / data['Close'].iloc[-63] - 1)
+                conditions[f'{name}_3m'] = perf_3m
+                
+                # 1-month performance
+                if len(data) >= 21:
+                    perf_1m = (data['Close'].iloc[-1] / data['Close'].iloc[-21] - 1)
+                    conditions[f'{name}_1m'] = perf_1m
+    
+    return conditions
 
 
 def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_date: datetime = None, skip_freshness_check: bool = False) -> tuple:
@@ -2263,7 +2343,12 @@ def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookba
     
     if performances:
         performances.sort(key=lambda x: x[1], reverse=True)
-        return [ticker for ticker, _ in performances[:top_n]]
+        selected = [ticker for ticker, _ in performances[:top_n]]
+        
+        # Apply inverse ETF hedge if enabled
+        selected = apply_inverse_etf_hedge(selected, ticker_data_grouped, current_date, top_n)
+        
+        return selected
     
     return []
 
