@@ -1294,6 +1294,9 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   📊 Universe: Top {len(initial_top_tickers)} stocks by momentum")
     print(f"   💰 Running all enabled strategies")
     
+    # Clear inverse ETF hedge log at start of backtest
+    from shared_strategies import clear_inverse_etf_hedge_log
+    clear_inverse_etf_hedge_log()
     
     # Initialize - AI Elite models are trained during walk-forward, not loaded upfront
 
@@ -6436,6 +6439,22 @@ def _run_portfolio_backtest_walk_forward(
             print(f"   📊 No strategies enabled for daily summary.")
             print("=" * 80)
         
+        # === INVERSE ETF HEDGE SUMMARY ===
+        from shared_strategies import get_inverse_etf_hedge_log, get_market_conditions
+        hedge_log = get_inverse_etf_hedge_log()
+        today_hedges = [h for h in hedge_log if h[0].date() == current_date.date()]
+        if today_hedges:
+            print(f"\n🛡️ INVERSE ETF HEDGES TODAY:")
+            for date, etf, decline in today_hedges:
+                print(f"   {etf}: Added as hedge (market down {decline:.1%})")
+        
+        # Show market conditions
+        market_cond = get_market_conditions(ticker_data_grouped, current_date)
+        if market_cond:
+            sp500_3m = market_cond.get('sp500_3m', 0)
+            nasdaq_3m = market_cond.get('nasdaq_3m', 0)
+            print(f"   📉 Market: SPY 3M={sp500_3m:+.1%}, QQQ 3M={nasdaq_3m:+.1%}")
+        
         # === DAILY ALL STRATEGIES SUMMARY TABLE ===
         print("\n" + "="*120)
         print("                     📊 DAILY ALL STRATEGIES PERFORMANCE SUMMARY 📊")
@@ -6888,6 +6907,30 @@ def print_final_summary(
     print("\n" + "="*80)
     print("                     🚀 AI-POWERED STOCK ADVISOR FINAL SUMMARY 🚀")
     print("="*80)
+
+    # === INVERSE ETF HEDGE SUMMARY ===
+    from shared_strategies import get_inverse_etf_hedge_log
+    hedge_log = get_inverse_etf_hedge_log()
+    if hedge_log:
+        print("\n🛡️ INVERSE ETF HEDGE SUMMARY:")
+        print("-" * 60)
+        # Count by ETF
+        etf_counts = {}
+        for date, etf, decline in hedge_log:
+            if etf not in etf_counts:
+                etf_counts[etf] = {'count': 0, 'max_decline': 0}
+            etf_counts[etf]['count'] += 1
+            etf_counts[etf]['max_decline'] = max(etf_counts[etf]['max_decline'], decline)
+        
+        print(f"  Total hedge activations: {len(hedge_log)}")
+        for etf, data in sorted(etf_counts.items(), key=lambda x: x[1]['count'], reverse=True):
+            print(f"  {etf}: {data['count']} times (max decline: {data['max_decline']:.1%})")
+        
+        # Show date range
+        first_date = min(h[0] for h in hedge_log)
+        last_date = max(h[0] for h in hedge_log)
+        print(f"  Period: {first_date.strftime('%Y-%m-%d')} to {last_date.strftime('%Y-%m-%d')}")
+        print("-" * 60)
 
     print("\n📊 Overall Portfolio Performance:")
     print(f"  Initial Capital: ${initial_balance_used:,.2f}")

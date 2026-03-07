@@ -25,6 +25,21 @@ from config import (
 MULTITASK_AVAILABLE = False
 
 
+# Global tracking for inverse ETF hedges used
+_inverse_etf_hedge_log = []  # List of (date, etf, market_decline) tuples
+
+
+def get_inverse_etf_hedge_log() -> List[tuple]:
+    """Get the log of inverse ETF hedges used."""
+    return _inverse_etf_hedge_log.copy()
+
+
+def clear_inverse_etf_hedge_log():
+    """Clear the inverse ETF hedge log (call at start of backtest)."""
+    global _inverse_etf_hedge_log
+    _inverse_etf_hedge_log = []
+
+
 def apply_inverse_etf_hedge(
     selected_stocks: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -45,6 +60,8 @@ def apply_inverse_etf_hedge(
     Returns:
         Updated stock list with inverse ETFs if market is down
     """
+    global _inverse_etf_hedge_log
+    
     if not ENABLE_INVERSE_ETF_HEDGE:
         return selected_stocks
     
@@ -72,6 +89,8 @@ def apply_inverse_etf_hedge(
         if etf not in updated_stocks and etf in ticker_data_grouped and len(updated_stocks) < portfolio_size:
             updated_stocks.append(etf)
             print(f"   🛡️ Adding hedge {etf} (market down {market_decline:.1%})")
+            # Log the hedge
+            _inverse_etf_hedge_log.append((current_date, etf, market_decline))
             break  # Add only one hedge ETF for simplicity
     
     return updated_stocks
