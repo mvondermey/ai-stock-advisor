@@ -394,9 +394,12 @@ class UniversalModelStrategy:
                 continue
                 
             try:
+                import warnings
                 X = np.array([list(features.values())])
                 X_scaled = self.scaler.transform(X)
-                pred = self.model.predict(X_scaled)[0]
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', message='X does not have valid feature names')
+                    pred = self.model.predict(X_scaled)[0]
                 predictions.append((ticker, pred))
             except Exception:
                 continue
