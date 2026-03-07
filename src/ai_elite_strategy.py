@@ -22,48 +22,6 @@ import os
 from pathlib import Path
 
 
-def _predict_ticker_worker(args):
-    """Top-level worker for multiprocessing - predicts score for one ticker."""
-    ticker, ticker_data, current_date, ticker_model = args
-    
-    try:
-        if ticker_data is None or len(ticker_data) == 0:
-            return ticker, None, 'empty'
-        
-        # Import functions inside worker (required for multiprocessing)
-        from ai_elite_strategy import _load_hourly_data_direct, _extract_features
-        from datetime import timedelta
-        import pandas as pd
-        
-        # Load hourly data
-        hourly_data = _load_hourly_data_direct(ticker, 
-            current_date - timedelta(days=30),
-            current_date + timedelta(days=5))
-        
-        # Extract features
-        features = _extract_features(ticker, hourly_data, current_date, daily_data=ticker_data)
-        if features is None:
-            return ticker, None, 'features_none'
-        
-        # Get model and predict
-        if ticker_model is None:
-            return ticker, 0.0, 'no_model'
-        
-        # Predict (keep as DataFrame for compatibility)
-        feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
-                        'overnight_gap', 'intraday_range', 'last_hour_momentum',
-                        'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
-                        'volume_ratio', 'rsi_14', 'short_term_reversal', 
-                        'volume_sentiment', 'risk_adj_mom_3m', 'bollinger_position',
-                        'sma20_distance', 'sma50_distance', 'macd']
-        X_ticker = pd.DataFrame([list(features.values())], columns=feature_cols)
-        ai_score = ticker_model.predict(X_ticker)[0]
-        
-        return ticker, ai_score, 'success'
-    except Exception as e:
-        return ticker, None, 'exception'
-
-
 def select_ai_elite_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -618,3 +576,40 @@ def _calculate_forward_return(
         
     except Exception as e:
         return None
+
+
+def _predict_ticker_worker(args):
+    """Top-level worker for multiprocessing - predicts score for one ticker."""
+    ticker, ticker_data, current_date, ticker_model = args
+    
+    try:
+        if ticker_data is None or len(ticker_data) == 0:
+            return ticker, None, 'empty'
+        
+        # Load hourly data
+        hourly_data = _load_hourly_data_direct(ticker, 
+            current_date - timedelta(days=30),
+            current_date + timedelta(days=5))
+        
+        # Extract features
+        features = _extract_features(ticker, hourly_data, current_date, daily_data=ticker_data)
+        if features is None:
+            return ticker, None, 'features_none'
+        
+        # Get model and predict
+        if ticker_model is None:
+            return ticker, 0.0, 'no_model'
+        
+        # Predict (keep as DataFrame for compatibility)
+        feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
+                        'overnight_gap', 'intraday_range', 'last_hour_momentum',
+                        'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
+                        'volume_ratio', 'rsi_14', 'short_term_reversal', 
+                        'volume_sentiment', 'risk_adj_mom_3m', 'bollinger_position',
+                        'sma20_distance', 'sma50_distance', 'macd']
+        X_ticker = pd.DataFrame([list(features.values())], columns=feature_cols)
+        ai_score = ticker_model.predict(X_ticker)[0]
+        
+        return ticker, ai_score, 'success'
+    except Exception as e:
+        return ticker, None, 'exception'
