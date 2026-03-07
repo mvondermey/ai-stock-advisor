@@ -158,77 +158,86 @@ def train_shared_base_model(
     # Check if we have existing models to continue training
     has_existing = existing_model is not None and isinstance(existing_model, dict) and 'all_models' in existing_model
     
+    status_msg = "Continuing" if has_existing else "Training NEW"
+    print(f"   📊 AI Elite: {status_msg} training on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
+    
+    # Use XGBoost + LightGBM + CatBoost (all support GPU + incremental training)
+    import xgboost as xgb
+    import lightgbm as lgb
+    import warnings
+    from sklearn.metrics import r2_score
+    from sklearn.model_selection import train_test_split
+    
+    device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
+    
     if has_existing:
-        print(f"   📊 AI Elite: Continuing training on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
-        models = existing_model['all_models']  # Use loaded models
+        # Load existing models for incremental training
+        models = existing_model['all_models']
+        print(f"   🚀 Incremental training: {len(models)} models on {device}")
     else:
-        print(f"   📊 AI Elite: Training NEW models on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
-        # Build ALL available models for ensemble
-        models = {}
-        try:
-            import xgboost as xgb
-            device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
-            models['XGBoost'] = xgb.XGBRegressor(
+        # Fresh training - create new models
+        models = {
+            'XGBoost': xgb.XGBRegressor(
                 n_estimators=100, max_depth=4, learning_rate=0.1,
                 subsample=0.8, random_state=42,
                 tree_method='hist', device=device, verbosity=0, n_jobs=-1
-            )
-        except ImportError:
-            pass
-
-        try:
-            import lightgbm as lgb
-            models['LightGBM'] = lgb.LGBMRegressor(
+            ),
+            'LightGBM': lgb.LGBMRegressor(
                 n_estimators=100, max_depth=4, learning_rate=0.1,
                 subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
             )
+        }
+        # Add CatBoost if available (GPU-accelerated, good with tabular data)
+        try:
+            import catboost as cb
+            task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
+            models['CatBoost'] = cb.CatBoostRegressor(
+                iterations=100, depth=4, learning_rate=0.1,
+                task_type=task_type, random_seed=42, verbose=0
+            )
         except ImportError:
             pass
+        print(f"   🚀 Fresh training: {list(models.keys())} ({device})")
 
-        # Always include sklearn models
-        from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
-        from sklearn.linear_model import Ridge
-        
-        models['GradientBoosting'] = GradientBoostingRegressor(
-            n_estimators=100, max_depth=4, learning_rate=0.1,
-            subsample=0.8, random_state=42, verbose=0
-        )
-        
-        models['RandomForest'] = RandomForestRegressor(
-            n_estimators=100, max_depth=6, random_state=42, n_jobs=-1
-        )
-        
-        models['Ridge'] = Ridge(alpha=1.0, random_state=42)
-
-    # Train all models (continue training if existing, or fresh train)
-    from sklearn.metrics import r2_score, make_scorer
-    from sklearn.model_selection import cross_val_score
-    import warnings
-
-    r2_scorer = make_scorer(r2_score)
-    cv_folds = 3
+    # Train with incremental learning (no CV for speed - just train/val split)
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+    print(f"   📊 Train/Val split: {len(X_train)} train, {len(X_val)} val samples")
     
     trained_models = []
     model_scores = []
     model_names = []
+    
+    import time
 
     for name, m in models.items():
         try:
+            print(f"      🔄 {name}: Training started...", end=" ", flush=True)
+            start_time = time.time()
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                # For tree-based models with warm_start, enable it for incremental training
-                if has_existing and hasattr(m, 'warm_start'):
-                    m.warm_start = True
-                    m.n_estimators += 50  # Add more trees
-                # Train on new data (continues from existing weights for warm_start models)
-                m.fit(X, y)
-                # Cross-validate
-                scores = cross_val_score(m, X, y, cv=cv_folds, scoring=r2_scorer, n_jobs=1)
-            mean_score = scores.mean()
-            status = "continued" if has_existing else "trained"
-            print(f"      {name}: CV R² = {mean_score:.3f} ({status})")
+                if has_existing:
+                    # True incremental training - continue from existing model
+                    if name == 'XGBoost':
+                        m.fit(X_train, y_train, xgb_model=m.get_booster())
+                    elif name == 'LightGBM':
+                        m.fit(X_train, y_train, init_model=m.booster_)
+                    elif name == 'CatBoost':
+                        m.fit(X_train, y_train, init_model=m)
+                    else:
+                        m.fit(X_train, y_train)
+                else:
+                    # Fresh training
+                    m.fit(X_train, y_train)
+                
+                # Validate on held-out set (faster than CV)
+                y_pred = m.predict(X_val)
+                score = r2_score(y_val, y_pred)
+            
+            elapsed = time.time() - start_time
+            status = "incremental" if has_existing else "fresh"
+            print(f"R² = {score:.3f} ({status}, {elapsed:.1f}s)")
             trained_models.append(m)
-            model_scores.append(mean_score)
+            model_scores.append(score)
             model_names.append(name)
         except Exception as e:
             print(f"      {name}: Training failed: {e}")

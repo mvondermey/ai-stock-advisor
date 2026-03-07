@@ -1,0 +1,40 @@
+{
+  "data_range": {
+    "start": "2025-01-08",
+    "end": "2026-01-08",
+    "description": "1-year performance from backtest data"
+  },
+  "performance": {
+    "DEBUG": 3.1,
+    "CVNA": 609.7,
+    "VST": 246.4,
+    "MSTR": 406.0,
+    "SMCI": 208.1,
+    "APP": 316.4,
+    "NVDA": 200.9,
+    "COIN": 176.8,
+    "CRWD": 131.7,
+    "NRG": 141.3,
+    "WSM": 123.9,
+    "DELL": 143.0,
+    "LLY": 101.2,
+    "EME": 116.2,
+    "PGR": 83.6,
+    "GDDY": 121.8,
+    "RHM.DE": 124.9,
+    "KKR": 126.9,
+    "ERIE": 85.8,
+    "HWM": 130.5,
+    "GE:": 117.8,
+    "FICO": 113.8,
+    "ALL": 78.6,
+    "FAS": 131.7,
+    "ENR.DE": 293.1,
+    "PLTR": 203.6,
+    "HOOD": 210.7,
+    "FIX": 168.9,
+    "RCL": 134.2
+  },
+  "total_stocks": 29,
+  "saved_at": "2026-01-08T20:34:42.356021"
+}

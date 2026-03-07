@@ -581,81 +581,72 @@ def train_ai_elite_model(
         market_ret = _calculate_market_return(ticker_data_grouped, sample_date, forward_days)
         market_returns[sample_date] = market_ret if market_ret is not None else 0.0
     
-    for sample_date in sample_dates:
-        # Extract features for all tickers on this date
-        for ticker in all_tickers:
+    # Parallel data collection by ticker
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time
+    
+    def collect_ticker_data(ticker):
+        """Collect all training samples for one ticker across all sample dates."""
+        if ticker not in ticker_data_grouped:
+            return []
+        daily_data = ticker_data_grouped[ticker]
+        if daily_data is None or len(daily_data) == 0:
+            return []
+        
+        # Load hourly data once per ticker
+        load_start = train_start_date - timedelta(days=AI_ELITE_INTRADAY_LOOKBACK + 5)
+        load_end = train_end_date + timedelta(days=forward_days + 2)
+        hourly_data = _load_hourly_data_direct(ticker, load_start, load_end)
+        
+        samples = []
+        for sample_date in sample_dates:
             try:
-                if ticker not in ticker_data_grouped:
-                    continue
-
-                # Daily data (always available)
-                daily_data = ticker_data_grouped[ticker]
-                if daily_data is None or len(daily_data) == 0:
-                    continue
-
-                # Hourly data (optional - load once per ticker into cache)
-                if ticker not in hourly_cache:
-                    load_start = train_start_date - timedelta(days=AI_ELITE_INTRADAY_LOOKBACK + 5)
-                    load_end = train_end_date + timedelta(days=forward_days + 2)
-                    hourly_cache[ticker] = _load_hourly_data_direct(ticker, load_start, load_end)
-                hourly_data = hourly_cache[ticker]
-
-                # Debug first few tickers on first sample date
-                if debug_count < 3 and sample_date == sample_dates[0]:
-                    has_h = hourly_data is not None and len(hourly_data) > 0
-                    print(f"   🔍 TRAIN DEBUG {ticker}: daily={len(daily_data)} rows, hourly={'yes' if has_h else 'no'}")
-                    debug_count += 1
-
-                # Extract features using both data sources
                 features = _extract_features(ticker, hourly_data, sample_date, daily_data=daily_data)
                 if features is None:
-                    features_none_count += 1
                     continue
-                
-                # Calculate forward return from daily data (label)
-                forward_return = _calculate_forward_return(
-                    daily_data, sample_date, forward_days
-                )
+                forward_return = _calculate_forward_return(daily_data, sample_date, forward_days)
                 if forward_return is None:
-                    forward_none_count += 1
                     continue
-                
-                # Get market return for this sample date
                 market_return = market_returns.get(sample_date, 0.0)
-                
-                # Store training sample
-                training_data.append({
-                    'perf_3m':            features['perf_3m'],
-                    'perf_6m':            features['perf_6m'],
-                    'perf_1y':            features['perf_1y'],
-                    'volatility':         features['volatility'],
-                    'avg_volume':         features['avg_volume'],
-                    'overnight_gap':      features.get('overnight_gap', 0),
-                    'intraday_range':     features.get('intraday_range', 0),
+                samples.append({
+                    'perf_3m': features['perf_3m'], 'perf_6m': features['perf_6m'],
+                    'perf_1y': features['perf_1y'], 'volatility': features['volatility'],
+                    'avg_volume': features['avg_volume'],
+                    'overnight_gap': features.get('overnight_gap', 0),
+                    'intraday_range': features.get('intraday_range', 0),
                     'last_hour_momentum': features.get('last_hour_momentum', 0),
-                    'risk_adj_score':     features.get('risk_adj_score', 0),
-                    'dip_score':          features.get('dip_score', 0),
-                    'mom_accel':          features.get('mom_accel', 0),
-                    'vol_sweet_spot':     features.get('vol_sweet_spot', 0),
-                    'volume_ratio':       features.get('volume_ratio', 1.0),
-                    'rsi_14':             features.get('rsi_14', 50.0),
+                    'risk_adj_score': features.get('risk_adj_score', 0),
+                    'dip_score': features.get('dip_score', 0),
+                    'mom_accel': features.get('mom_accel', 0),
+                    'vol_sweet_spot': features.get('vol_sweet_spot', 0),
+                    'volume_ratio': features.get('volume_ratio', 1.0),
+                    'rsi_14': features.get('rsi_14', 50.0),
                     'short_term_reversal': features.get('short_term_reversal', 0),
-                    'volume_sentiment':   features.get('volume_sentiment', 0),
-                    'risk_adj_mom_3m':    features.get('risk_adj_mom_3m', 0),
-                    # NEW: Mean reversion features
+                    'volume_sentiment': features.get('volume_sentiment', 0),
+                    'risk_adj_mom_3m': features.get('risk_adj_mom_3m', 0),
                     'bollinger_position': features.get('bollinger_position', 0.5),
-                    'sma20_distance':     features.get('sma20_distance', 0),
-                    'sma50_distance':     features.get('sma50_distance', 0),
-                    'macd':               features.get('macd', 0),
-                    'forward_return':     forward_return,
-                    'market_return':      market_return,
-                    'sample_date':        sample_date
+                    'sma20_distance': features.get('sma20_distance', 0),
+                    'sma50_distance': features.get('sma50_distance', 0),
+                    'macd': features.get('macd', 0),
+                    'forward_return': forward_return, 'market_return': market_return,
+                    'sample_date': sample_date
                 })
-                
-            except Exception as e:
+            except Exception:
                 continue
+        return samples
     
-    print(f"   📊 AI Elite: Training loop done - samples={len(training_data)}, features_none={features_none_count}, forward_none={forward_none_count}")
+    n_workers = min(32, len(all_tickers))
+    start_time = time.time()
+    print(f"   📊 AI Elite: Collecting data from {len(all_tickers)} tickers ({n_workers} threads)...")
+    
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(collect_ticker_data, t): t for t in all_tickers}
+        for future in as_completed(futures):
+            samples = future.result()
+            training_data.extend(samples)
+    
+    elapsed = time.time() - start_time
+    print(f"   📊 AI Elite: Collected {len(training_data)} samples ({elapsed:.1f}s)")
     
     from config import MIN_TRAINING_SAMPLES_AI_ELITE
     if len(training_data) < MIN_TRAINING_SAMPLES_AI_ELITE:
@@ -705,98 +696,86 @@ def train_ai_elite_model(
     X = train_df[feature_cols].values
     y = train_df['label'].values  # Continuous risk-adjusted return values
     
-    # Build candidate REGRESSOR models
-    from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
-    from sklearn.linear_model import Ridge
-    from sklearn.model_selection import cross_val_score
-    from sklearn.preprocessing import StandardScaler
+    # Build candidate REGRESSOR models (XGBoost + LightGBM + CatBoost - GPU + incremental)
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import r2_score
     import warnings
+    import time
 
+    device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
     candidates = {}
 
     if xgb_available:
-        device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
         candidates['XGBoost'] = xgb.XGBRegressor(
-            n_estimators=100, 
-            max_depth=4,
-            learning_rate=0.1,
-            subsample=0.8,
-            random_state=42,
-            tree_method='hist', 
-            device=device, 
-            verbosity=0, 
-            n_jobs=1
+            n_estimators=100, max_depth=4, learning_rate=0.1,
+            subsample=0.8, random_state=42,
+            tree_method='hist', device=device, verbosity=0, n_jobs=-1
         )
 
-    candidates['GradientBoosting'] = GradientBoostingRegressor(
-        n_estimators=100, max_depth=4, learning_rate=0.1,
-        subsample=0.8, random_state=42, verbose=0
-    )
-    
     # Add LightGBM
     try:
         import lightgbm as lgb
         candidates['LightGBM'] = lgb.LGBMRegressor(
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.1,
-            subsample=0.8,
-            random_state=42,
-            verbose=-1
+            n_estimators=100, max_depth=4, learning_rate=0.1,
+            subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
         )
-        print(f"   🚀 AI Elite: LightGBM available (CPU)")
     except ImportError:
-        print(f"   ⚠️ AI Elite: LightGBM not available")
+        pass
     
-    candidates['RandomForest'] = RandomForestRegressor(
-        n_estimators=100, max_depth=6, random_state=42, n_jobs=1
-    )
+    # Add CatBoost if available
+    try:
+        import catboost as cb
+        task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
+        candidates['CatBoost'] = cb.CatBoostRegressor(
+            iterations=100, depth=4, learning_rate=0.1,
+            task_type=task_type, random_seed=42, verbose=0
+        )
+    except ImportError:
+        pass
 
-    # Ridge regression needs scaled features
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    candidates['Ridge'] = Ridge(alpha=1.0, random_state=42)
+    print(f"   🚀 AI Elite: Training {list(candidates.keys())} ({device})...")
 
-    # Cross-validate each model (R² for regression)
-    from sklearn.metrics import r2_score, make_scorer
-    
-    r2_scorer = make_scorer(r2_score)
+    # Train/val split (faster than CV)
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
     
     best_model = None
     best_name = None
-    best_score = -1.0
-    cv_folds = 3
+    best_score = -float('inf')
 
-    print(f"   🏆 AI Elite: Selecting best model via {cv_folds}-fold cross-validation (R² for regression)...")
     for name, m in candidates.items():
         try:
-            X_input = X_scaled if name == 'Ridge' else X
+            print(f"      🔄 {name}: Training...", end=" ", flush=True)
+            start_time = time.time()
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                scores = cross_val_score(m, X_input, y, cv=cv_folds, scoring=r2_scorer, n_jobs=1)
-            mean_score = scores.mean()
-            print(f"      {name}: CV R² = {mean_score:.3f}")
-            if mean_score > best_score:
-                best_score = mean_score
+                m.fit(X_train, y_train)
+            y_pred = m.predict(X_val)
+            score = r2_score(y_val, y_pred)
+            elapsed = time.time() - start_time
+            print(f"R² = {score:.3f} ({elapsed:.1f}s)")
+            if score > best_score:
+                best_score = score
                 best_name = name
                 best_model = m
         except Exception as e:
-            print(f"      {name}: failed ({e})")
+            print(f"failed ({e})")
 
     if best_model is None:
-        print(f"   ⚠️ AI Elite: All models failed CV, falling back to GradientBoosting")
-        best_model = GradientBoostingRegressor(
+        print(f"   ⚠️ AI Elite: All models failed, falling back to XGBoost")
+        best_model = xgb.XGBRegressor(
             n_estimators=100, max_depth=4, learning_rate=0.1,
-            subsample=0.8, random_state=42, verbose=0
+            subsample=0.8, random_state=42,
+            tree_method='hist', device=device, verbosity=0, n_jobs=-1
         )
-        best_name = 'GradientBoosting'
+        best_name = 'XGBoost'
+        best_model.fit(X_train, y_train)
+        best_score = r2_score(y_val, best_model.predict(X_val))
 
-    print(f"   ✅ AI Elite: Best model = {best_name} (CV R² {best_score:.3f})")
+    print(f"   ✅ AI Elite: Best model = {best_name} (R² {best_score:.3f})")
 
     # Fit best model on full training data
-    X_input = X_scaled if best_name == 'Ridge' else X
-    best_model.fit(X_input, y)
-    train_r2 = r2_score(y, best_model.predict(X_input))
+    best_model.fit(X, y)
+    train_r2 = r2_score(y, best_model.predict(X))
     print(f"   ✅ AI Elite: Final model trained! Train R²: {train_r2:.3f}")
 
     # Show feature importances (tree models only)

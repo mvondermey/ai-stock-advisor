@@ -2509,25 +2509,39 @@ def select_ai_elite_with_training(
             market_returns[utc_key] = mr if mr is not None else 0.0
             sample_date_iter += timedelta(days=2)
         
-        # Collect training data from all tickers
-        print(f"   📊 AI Elite: Collecting data from {len(all_tickers)} tickers ({AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
+        # Collect training data from all tickers (PARALLEL)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import time
+        
+        n_workers = min(32, len(all_tickers))
+        print(f"   📊 AI Elite: Collecting data from {len(all_tickers)} tickers ({n_workers} threads, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
+        start_time = time.time()
+        
         all_training_data = []
         ticker_samples_map = {}
         
-        for t in all_tickers:
+        def collect_one(t):
             try:
                 samples = collect_ticker_training_data(
                     ticker=t, ticker_data=ticker_data_grouped.get(t),
                     train_start_date=train_start, train_end_date=train_end,
                     forward_days=AI_ELITE_FORWARD_DAYS, market_returns=market_returns
                 )
-                if samples:
+                return (t, samples) if samples else None
+            except Exception:
+                return None
+        
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {executor.submit(collect_one, t): t for t in all_tickers}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    t, samples = result
                     all_training_data.extend(samples)
                     ticker_samples_map[t] = samples
-            except Exception:
-                pass
         
-        print(f"   📊 AI Elite: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers")
+        elapsed = time.time() - start_time
+        print(f"   📊 AI Elite: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers ({elapsed:.1f}s)")
         
         # Train shared base model
         os.makedirs(models_dir, exist_ok=True)

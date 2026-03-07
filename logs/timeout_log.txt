@@ -1,0 +1,43 @@
+
+=== TIMEOUT LOG ===
+NTAP,XGBoost,Per-ticker timeout (30s)
+
+=== TIMEOUT LOG ===
+MCD,XGBoost,Per-ticker timeout (30s)
+
+=== TIMEOUT LOG ===
+NEM,XGBoost,Per-ticker timeout (30s)
+
+=== TIMEOUT LOG ===
+PDD,XGBoost,Per-ticker timeout (30s)
+PGR,XGBoost,Per-ticker timeout (30s)
+
+=== TIMEOUT LOG ===
+CVX,XGBoost,Per-ticker timeout (30s)
+
+=== TIMEOUT LOG ===
+DLTR,XGBoost,Per-ticker timeout (30s)
+
+=== TIMEOUT LOG ===
+MPWR,XGBoost,Per-ticker timeout (30s)
+
+=== TIMEOUT LOG ===
+CBOE,XGBoost,exceeded_90s
+SCYR.MC,XGBoost,exceeded_90s
+
+=== TIMEOUT LOG ===
+HUM,XGBoost,exceeded_90s
+CMG,XGBoost,exceeded_90s
+
+=== TIMEOUT LOG ===
+CVNA,LSTM,exceeded_90s
+CVNA,GRU,exceeded_90s
+VIE.PA,XGBoost,exceeded_90s
+
+=== TIMEOUT LOG ===
+AC.PA,XGBoost,exceeded_90s
+HNR1.DE,XGBoost,exceeded_90s
+SOXS,XGBoost,exceeded_90s
+
+=== TIMEOUT LOG ===
+WYNN,XGBoost,exceeded_90s

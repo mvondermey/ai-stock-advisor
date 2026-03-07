@@ -1,0 +1,27 @@
+=== Strategy Selections for Today (2025-12-18) ===
+
+Based on Day 9 performance:
+
+1. Mom-Vol Hybrid (+4.0%) - Best performer
+   - Combines momentum with volatility adjustment
+   - Handles volatile markets well
+   - Would select stocks with good momentum adjusted for volatility
+
+2. 3M/1Y Ratio (+3.2%) - Momentum ratio strategy
+   - Uses ratio of 3-month to 1-year performance
+   - Good for identifying momentum shifts
+   - Would select stocks with improving momentum
+
+3. Mean Reversion (+0.6%) - Contrarian plays
+   - Buys recent losers expecting bounce
+   - Only 63% invested - being selective
+   - Would select oversold stocks
+
+Important: The actual stock selections these strategies make TODAY would be different
+from what they selected on Day 1. To see current selections, you'd need to run the
+backtest with today's market data.
+
+Recommendation:
+- Primary: Mom-Vol Hybrid (best performer, handles volatility)
+- Secondary: 3M/1Y Ratio (momentum ratio approach)
+- Avoid: Pure momentum strategies (underperforming)

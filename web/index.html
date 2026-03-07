@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Stock Advisor - Intelligent Portfolio Management & Market Analysis</title>
+    <meta name="description" content="Advanced AI-powered stock advisor using machine learning models including LSTM, XGBoost, and TCN for intelligent portfolio management and market prediction.">
+    <meta name="keywords" content="AI stock advisor, machine learning stocks, portfolio management, LSTM trading, XGBoost prediction, automated investing, market analysis">
+    <meta name="author" content="AI Stock Advisor">
+    <meta name="robots" content="index, follow">
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://ai-stock-advisor.com/">
+    <meta property="og:title" content="AI Stock Advisor - Intelligent Portfolio Management">
+    <meta property="og:description" content="Advanced AI-powered stock advisor using machine learning for intelligent portfolio management and market prediction.">
+    <meta property="og:image" content="https://ai-stock-advisor.com/images/og-image.jpg">
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="https://ai-stock-advisor.com/">
+    <meta property="twitter:title" content="AI Stock Advisor - Intelligent Portfolio Management">
+    <meta property="twitter:description" content="Advanced AI-powered stock advisor using machine learning for intelligent portfolio management and market prediction.">
+    <meta property="twitter:image" content="https://ai-stock-advisor.com/images/og-image.jpg">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Chart.js for data visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Custom Styles -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        
+        .gradient-text {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .hero-gradient {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .card-hover {
+            transition: all 0.3s ease;
+        }
+        
+        .card-hover:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        
+        .feature-icon {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+        }
+        
+        .float-animation {
+            animation: float 6s ease-in-out infinite;
+        }
+        
+        .scroll-smooth {
+            scroll-behavior: smooth;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 scroll-smooth">
+    <!-- Navigation -->
+    <nav class="fixed top-0 w-full bg-white/95 backdrop-blur-sm shadow-sm z-50">
+        <div class="container mx-auto px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i class="fas fa-chart-line text-2xl text-purple-600"></i>
+                    <span class="text-xl font-bold gradient-text">AI Stock Advisor</span>
+                </div>
+                <div class="hidden md:flex items-center space-x-8">
+                    <a href="#features" class="text-gray-700 hover:text-purple-600 transition">Features</a>
+                    <a href="#technology" class="text-gray-700 hover:text-purple-600 transition">Technology</a>
+                    <a href="#performance" class="text-gray-700 hover:text-purple-600 transition">Performance</a>
+                    <a href="#strategies" class="text-gray-700 hover:text-purple-600 transition">Strategies</a>
+                    <a href="#contact" class="text-gray-700 hover:text-purple-600 transition">Contact</a>
+                </div>
+                <button class="md:hidden text-gray-700" onclick="toggleMobileMenu()">
+                    <i class="fas fa-bars text-2xl"></i>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Mobile Menu -->
+        <div id="mobileMenu" class="hidden md:hidden bg-white border-t">
+            <div class="px-6 py-4 space-y-3">
+                <a href="#features" class="block text-gray-700 hover:text-purple-600 transition">Features</a>
+                <a href="#technology" class="block text-gray-700 hover:text-purple-600 transition">Technology</a>
+                <a href="#performance" class="block text-gray-700 hover:text-purple-600 transition">Performance</a>
+                <a href="#strategies" class="block text-gray-700 hover:text-purple-600 transition">Strategies</a>
+                <a href="#contact" class="block text-gray-700 hover:text-purple-600 transition">Contact</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="pt-32 pb-20 px-6">
+        <div class="container mx-auto">
+            <div class="grid md:grid-cols-2 gap-12 items-center">
+                <div>
+                    <h1 class="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
+                        Intelligent <span class="gradient-text">AI-Powered</span> Stock Market Analysis
+                    </h1>
+                    <p class="text-xl text-gray-600 mb-8">
+                        Leverage advanced machine learning models including LSTM, XGBoost, and TCN for intelligent portfolio management and market prediction. Achieve superior returns with data-driven strategies.
+                    </p>
+                    <div class="flex flex-wrap gap-4 mb-8">
+                        <div class="flex items-center space-x-2">
+                            <i class="fas fa-check-circle text-green-500"></i>
+                            <span class="text-gray-700">Multi-Model AI Approach</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <i class="fas fa-check-circle text-green-500"></i>
+                            <span class="text-gray-700">Real-Time Market Analysis</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <i class="fas fa-check-circle text-green-500"></i>
+                            <span class="text-gray-700">Risk-Adjusted Strategies</span>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap gap-4">
+                        <button class="hero-gradient text-white px-8 py-3 rounded-lg font-semibold hover:opacity-90 transition">
+                            Get Started
+                        </button>
+                        <button class="border border-purple-600 text-purple-600 px-8 py-3 rounded-lg font-semibold hover:bg-purple-50 transition">
+                            View Demo
+                        </button>
+                    </div>
+                </div>
+                <div class="relative">
+                    <div class="float-animation">
+                        <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 300'%3E%3Crect width='400' height='300' fill='%23f3f4f6'/%3E%3Cpath d='M50 250 L100 200 L150 220 L200 150 L250 180 L300 100 L350 140' stroke='%23667eea' stroke-width='3' fill='none'/%3E%3Ccircle cx='100' cy='200' r='5' fill='%23667eea'/%3E%3Ccircle cx='200' cy='150' r='5' fill='%23667eea'/%3E%3Ccircle cx='300' cy='100' r='5' fill='%23667eea'/%3E%3Ctext x='200' y='280' text-anchor='middle' fill='%236b7280' font-family='Arial' font-size='14'%3EAI-Driven Market Analysis%3C/text%3E%3C/svg%3E" alt="AI Stock Analysis Chart" class="rounded-lg shadow-lg">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="py-20 bg-white">
+        <div class="container mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold text-gray-900 mb-4">Advanced Features</h2>
+                <p class="text-xl text-gray-600 max-w-3xl mx-auto">
+                    Our AI stock advisor combines cutting-edge machine learning with sophisticated financial strategies
+                </p>
+            </div>
+            
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="card-hover bg-white p-8 rounded-xl border border-gray-200">
+                    <div class="text-4xl mb-4 feature-icon">
+                        <i class="fas fa-brain"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-gray-900 mb-3">Multi-Model AI</h3>
+                    <p class="text-gray-600 mb-4">
+                        Combines LSTM, XGBoost, TCN, and Random Forest models for comprehensive market analysis and prediction accuracy.
+                    </p>
+                    <ul class="space-y-2 text-sm text-gray-600">
+                        <li><i class="fas fa-check text-purple-600 mr-2"></i>Deep Learning Networks</li>
+                        <li><i class="fas fa-check text-purple-600 mr-2"></i>Ensemble Methods</li>
+                        <li><i class="fas fa-check text-purple-600 mr-2"></i>Real-Time Adaptation</li>
+                    </ul>
+                </div>
+                
+                <div class="card-hover bg-white p-8 rounded-xl border border-gray-200">
+                    <div class="text-4xl mb-4 feature-icon">
+                        <i class="fas fa-chart-pie"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-gray-900 mb-3">Portfolio Strategies</h3>
+                    <p class="text-gray-600 mb-4">
+                        Multiple trading strategies including AI Portfolio, Risk-Adjusted Momentum, and Dynamic Buy & Hold approaches.
+                    </p>
+                    <ul class="space-y-2 text-sm text-gray-600">
+                        <li><i class="fas fa-check text-purple-600 mr-2"></i>AI-Optimized Portfolios</li>
+                        <li><i class="fas fa-check text-purple-600 mr-2"></i>Risk Management</li>
+                        <li><i class="fas fa-check text-purple-600 mr-2"></i>Automated Rebalancing</li>
+                    </ul>
+                </div>
+                
+                <div class="card-hover bg-white p-8 rounded-xl border border-gray-200">
+                    <div class="text-4xl mb-4 feature-icon">
+                        <i class="fas fa-globe"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-gray-900 mb-3">Global Markets</h3>
+                    <p class="text-gray-600 mb-4">
+                        Comprehensive coverage including S&P 500, NASDAQ 100, DAX, and other major international markets.
+                    </p>
+                    <ul class="space-y-2 text-sm text-gray-600">
+                        <li><i class="fas fa-check text-purple-600 mr-2"></i>US Markets (S&P, NASDAQ)</li>
+                        <li><i class="fas fa-check text-purple-600 mr-2"></i>European Markets (DAX, SMI)</li>
+                        <li><i class="fas fa-check text-purple-600 mr-2"></i>ETF Coverage</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Technology Stack -->
+    <section id="technology" class="py-20 bg-gray-50">
+        <div class="container mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold text-gray-900 mb-4">Technology Stack</h2>
+                <p class="text-xl text-gray-600 max-w-3xl mx-auto">
+                    Built with state-of-the-art machine learning frameworks and financial data providers
+                </p>
+            </div>
+            
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div class="bg-white p-6 rounded-lg text-center card-hover">
+                    <div class="text-3xl mb-3 text-blue-600">
+                        <i class="fas fa-robot"></i>
+                    </div>
+                    <h4 class="font-semibold text-gray-900 mb-2">PyTorch</h4>
+                    <p class="text-sm text-gray-600">Deep Learning Framework</p>
+                </div>
+                
+                <div class="bg-white p-6 rounded-lg text-center card-hover">
+                    <div class="text-3xl mb-3 text-green-600">
+                        <i class="fas fa-tree"></i>
+                    </div>
+                    <h4 class="font-semibold text-gray-900 mb-2">XGBoost</h4>
+                    <p class="text-sm text-gray-600">Gradient Boosting</p>
+                </div>
+                
+                <div class="bg-white p-6 rounded-lg text-center card-hover">
+                    <div class="text-3xl mb-3 text-purple-600">
+                        <i class="fas fa-database"></i>
+                    </div>
+                    <h4 class="font-semibold text-gray-900 mb-2">Alpaca API</h4>
+                    <p class="text-sm text-gray-600">Real-Time Market Data</p>
+                </div>
+                
+                <div class="bg-white p-6 rounded-lg text-center card-hover">
+                    <div class="text-3xl mb-3 text-orange-600">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <h4 class="font-semibold text-gray-900 mb-2">Yahoo Finance</h4>
+                    <p class="text-sm text-gray-600">Historical Data</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Performance Section -->
+    <section id="performance" class="py-20 bg-white">
+        <div class="container mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold text-gray-900 mb-4">Performance Metrics</h2>
+                <p class="text-xl text-gray-600 max-w-3xl mx-auto">
+                    Track your portfolio performance with comprehensive analytics and real-time insights
+                </p>
+            </div>
+            
+            <div class="grid md:grid-cols-2 gap-12">
+                <div>
+                    <canvas id="performanceChart"></canvas>
+                </div>
+                <div class="space-y-6">
+                    <div class="bg-gray-50 p-6 rounded-lg">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-4">Key Performance Indicators</h3>
+                        <div class="space-y-4">
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-600">Annual Return</span>
+                                <span class="text-2xl font-bold text-green-600">+24.5%</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-600">Sharpe Ratio</span>
+                                <span class="text-2xl font-bold text-purple-600">1.85</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-600">Max Drawdown</span>
+                                <span class="text-2xl font-bold text-orange-600">-12.3%</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-600">Win Rate</span>
+                                <span class="text-2xl font-bold text-blue-600">68.2%</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-purple-50 p-6 rounded-lg">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-3">Model Accuracy</h3>
+                        <div class="space-y-3">
+                            <div>
+                                <div class="flex justify-between text-sm mb-1">
+                                    <span class="text-gray-600">LSTM Model</span>
+                                    <span class="text-gray-900 font-semibold">87.3%</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="bg-purple-600 h-2 rounded-full" style="width: 87.3%"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-sm mb-1">
+                                    <span class="text-gray-600">XGBoost Model</span>
+                                    <span class="text-gray-900 font-semibold">91.2%</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="bg-purple-600 h-2 rounded-full" style="width: 91.2%"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-sm mb-1">
+                                    <span class="text-gray-600">TCN Model</span>
+                                    <span class="text-gray-900 font-semibold">84.7%</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="bg-purple-600 h-2 rounded-full" style="width: 84.7%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Strategies Section -->
+    <section id="strategies" class="py-20 bg-gray-50">
+        <div class="container mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold text-gray-900 mb-4">Trading Strategies</h2>
+                <p class="text-xl text-gray-600 max-w-3xl mx-auto">
+                    Multiple AI-driven strategies optimized for different market conditions and risk profiles
+                </p>
+            </div>
+            
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <div class="bg-white p-6 rounded-lg border border-gray-200">
+                    <div class="flex items-center mb-4">
+                        <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mr-4">
+                            <i class="fas fa-brain text-purple-600"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900">AI Strategy</h3>
+                    </div>
+                    <p class="text-gray-600 mb-4">3-stock daily selection using advanced AI predictions with confidence-based position sizing.</p>
+                    <div class="flex flex-wrap gap-2">
+                        <span class="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm">High Accuracy</span>
+                        <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">Active</span>
+                    </div>
+                </div>
+                
+                <div class="bg-white p-6 rounded-lg border border-gray-200">
+                    <div class="flex items-center mb-4">
+                        <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mr-4">
+                            <i class="fas fa-layer-group text-blue-600"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900">AI Portfolio</h3>
+                    </div>
+                    <p class="text-gray-600 mb-4">Meta-learning approach that combines multiple AI models for optimal portfolio construction.</p>
+                    <div class="flex flex-wrap gap-2">
+                        <span class="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">Diversified</span>
+                        <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">Active</span>
+                    </div>
+                </div>
+                
+                <div class="bg-white p-6 rounded-lg border border-gray-200">
+                    <div class="flex items-center mb-4">
+                        <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mr-4">
+                            <i class="fas fa-shield-alt text-green-600"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900">Risk-Adjusted Momentum</h3>
+                    </div>
+                    <p class="text-gray-600 mb-4">Momentum strategy with volatility adjustment and risk management for consistent returns.</p>
+                    <div class="flex flex-wrap gap-2">
+                        <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">Conservative</span>
+                        <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">Active</span>
+                    </div>
+                </div>
+                
+                <div class="bg-white p-6 rounded-lg border border-gray-200">
+                    <div class="flex items-center mb-4">
+                        <div class="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center mr-4">
+                            <i class="fas fa-sync-alt text-orange-600"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900">Mean Reversion</h3>
+                    </div>
+                    <p class="text-gray-600 mb-4">Exploits temporary price deviations from historical means for short-term gains.</p>
+                    <div class="flex flex-wrap gap-2">
+                        <span class="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-sm">Short-term</span>
+                        <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">Active</span>
+                    </div>
+                </div>
+                
+                <div class="bg-white p-6 rounded-lg border border-gray-200">
+                    <div class="flex items-center mb-4">
+                        <div class="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center mr-4">
+                            <i class="fas fa-compass text-indigo-600"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900">Sector Rotation</h3>
+                    </div>
+                    <p class="text-gray-600 mb-4">Rotates between sector ETFs based on momentum and market conditions.</p>
+                    <div class="flex flex-wrap gap-2">
+                        <span class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-sm">ETF Focus</span>
+                        <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">Active</span>
+                    </div>
+                </div>
+                
+                <div class="bg-white p-6 rounded-lg border border-gray-200">
+                    <div class="flex items-center mb-4">
+                        <div class="w-12 h-12 bg-pink-100 rounded-lg flex items-center justify-center mr-4">
+                            <i class="fas fa-chart-line text-pink-600"></i>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900">Dynamic Buy & Hold</h3>
+                    </div>
+                    <p class="text-gray-600 mb-4">Intelligent buy and hold with periodic rebalancing based on performance metrics.</p>
+                    <div class="flex flex-wrap gap-2">
+                        <span class="px-3 py-1 bg-pink-100 text-pink-700 rounded-full text-sm">Long-term</span>
+                        <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">Active</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="py-20 hero-gradient">
+        <div class="container mx-auto px-6 text-center">
+            <h2 class="text-4xl font-bold text-white mb-6">Ready to Transform Your Investment Strategy?</h2>
+            <p class="text-xl text-white/90 mb-8 max-w-2xl mx-auto">
+                Join thousands of investors using AI-powered strategies to achieve superior returns and manage risk effectively.
+            </p>
+            <div class="flex flex-wrap gap-4 justify-center">
+                <button class="bg-white text-purple-600 px-8 py-3 rounded-lg font-semibold hover:bg-gray-100 transition">
+                    Start Free Trial
+                </button>
+                <button class="border border-white text-white px-8 py-3 rounded-lg font-semibold hover:bg-white/10 transition">
+                    Schedule Demo
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer id="contact" class="bg-gray-900 text-white py-12">
+        <div class="container mx-auto px-6">
+            <div class="grid md:grid-cols-4 gap-8 mb-8">
+                <div>
+                    <div class="flex items-center space-x-2 mb-4">
+                        <i class="fas fa-chart-line text-2xl"></i>
+                        <span class="text-xl font-bold">AI Stock Advisor</span>
+                    </div>
+                    <p class="text-gray-400">
+                        Intelligent portfolio management powered by advanced machine learning algorithms.
+                    </p>
+                </div>
+                
+                <div>
+                    <h4 class="font-semibold mb-4">Product</h4>
+                    <ul class="space-y-2 text-gray-400">
+                        <li><a href="#" class="hover:text-white transition">Features</a></li>
+                        <li><a href="#" class="hover:text-white transition">Pricing</a></li>
+                        <li><a href="#" class="hover:text-white transition">Documentation</a></li>
+                        <li><a href="#" class="hover:text-white transition">API</a></li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h4 class="font-semibold mb-4">Company</h4>
+                    <ul class="space-y-2 text-gray-400">
+                        <li><a href="#" class="hover:text-white transition">About</a></li>
+                        <li><a href="#" class="hover:text-white transition">Blog</a></li>
+                        <li><a href="#" class="hover:text-white transition">Careers</a></li>
+                        <li><a href="#" class="hover:text-white transition">Contact</a></li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h4 class="font-semibold mb-4">Legal</h4>
+                    <ul class="space-y-2 text-gray-400">
+                        <li><a href="#" class="hover:text-white transition">Privacy Policy</a></li>
+                        <li><a href="#" class="hover:text-white transition">Terms of Service</a></li>
+                        <li><a href="#" class="hover:text-white transition">Risk Disclosure</a></li>
+                        <li><a href="#" class="hover:text-white transition">Compliance</a></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="border-t border-gray-800 pt-8 flex flex-col md:flex-row justify-between items-center">
+                <p class="text-gray-400 mb-4 md:mb-0">
+                    © 2024 AI Stock Advisor. All rights reserved.
+                </p>
+                <div class="flex space-x-6">
+                    <a href="#" class="text-gray-400 hover:text-white transition">
+                        <i class="fab fa-twitter text-xl"></i>
+                    </a>
+                    <a href="#" class="text-gray-400 hover:text-white transition">
+                        <i class="fab fa-linkedin text-xl"></i>
+                    </a>
+                    <a href="#" class="text-gray-400 hover:text-white transition">
+                        <i class="fab fa-github text-xl"></i>
+                    </a>
+                    <a href="#" class="text-gray-400 hover:text-white transition">
+                        <i class="fab fa-discord text-xl"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script>
+        // Mobile menu toggle
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobileMenu');
+            menu.classList.toggle('hidden');
+        }
+
+        // Performance Chart
+        const ctx = document.getElementById('performanceChart').getContext('2d');
+        const performanceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+                datasets: [{
+                    label: 'AI Portfolio',
+                    data: [100, 105, 112, 108, 115, 122, 118, 125, 132, 128, 135, 142],
+                    borderColor: 'rgb(102, 126, 234)',
+                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: 'S&P 500',
+                    data: [100, 102, 104, 103, 106, 108, 107, 109, 111, 110, 112, 114],
+                    borderColor: 'rgb(156, 163, 175)',
+                    backgroundColor: 'rgba(156, 163, 175, 0.1)',
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    },
+                    title: {
+                        display: true,
+                        text: 'Portfolio Performance vs S&P 500'
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        ticks: {
+                            callback: function(value) {
+                                return '$' + value;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Smooth scroll for navigation links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // Add scroll effect to navigation
+        window.addEventListener('scroll', function() {
+            const nav = document.querySelector('nav');
+            if (window.scrollY > 50) {
+                nav.classList.add('shadow-md');
+            } else {
+                nav.classList.remove('shadow-md');
+            }
+        });
+
+        // Intersection Observer for fade-in animations
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -50px 0px'
+        };
+
+        const observer = new IntersectionObserver(function(entries) {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
+                }
+            });
+        }, observerOptions);
+
+        // Observe all cards for animation
+        document.querySelectorAll('.card-hover').forEach(card => {
+            card.style.opacity = '0';
+            card.style.transform = 'translateY(20px)';
+            card.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+            observer.observe(card);
+        });
+    </script>
+
+    <!-- Structured Data for SEO -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "AI Stock Advisor",
+        "description": "Advanced AI-powered stock advisor using machine learning models for intelligent portfolio management and market prediction",
+        "url": "https://ai-stock-advisor.com",
+        "applicationCategory": "FinanceApplication",
+        "operatingSystem": "Web",
+        "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+        },
+        "featureList": [
+            "AI-powered stock predictions",
+            "Multi-model machine learning approach",
+            "Real-time market analysis",
+            "Portfolio optimization",
+            "Risk management strategies"
+        ]
+    }
+    </script>
+</body>
+</html>

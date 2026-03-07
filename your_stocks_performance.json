@@ -1,0 +1,26 @@
+{
+  "ROBINH.MKTS CL.A DL-,0001": {
+    "ticker": "HOOD",
+    "return_1y": 210.7
+  },
+  "APPLOVIN CORP.A  -,00003": {
+    "ticker": "APP",
+    "return_1y": 316.4
+  },
+  "RHEINMETALL AG": {
+    "ticker": "RHM.DE",
+    "return_1y": 124.9
+  },
+  "SIEMENS ENERGY AG NA O.N.": {
+    "ticker": "ENR.DE",
+    "return_1y": 293.1
+  },
+  "PALANTIR TECHNOLOGIES INC": {
+    "ticker": "PLTR",
+    "return_1y": 203.6
+  },
+  "HOWMET AEROSPACE   DL-,01": {
+    "ticker": "HWM",
+    "return_1y": 130.5
+  }
+}

@@ -312,29 +312,48 @@ class AIRegimeAllocator:
         feature_cols = [c for c in train_df.columns if c != 'label']
         X = train_df[feature_cols].values
         
-        # Train ALL classifiers and pick the best one
-        from sklearn.ensemble import RandomForestClassifier
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.model_selection import cross_val_score
+        # Train classifiers (XGBoost + LightGBM for GPU + incremental support)
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import accuracy_score
+        from config import XGBOOST_USE_GPU
+        import xgboost as xgb
+        import lightgbm as lgb
+        import time
         
-        # Build all models (use existing if available for incremental training)
-        if self.all_models is not None:
+        device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
+        has_existing = self.all_models is not None
+        
+        # Build models (XGBoost + LightGBM - both support incremental training)
+        if has_existing:
             models = self.all_models
-            print(f"   📊 AI Regime: Continuing training on {len(training_samples)} samples...")
+            print(f"   📊 AI Regime: Continuing training on {len(training_samples)} samples ({device})...")
         else:
             models = {
-                'GradientBoosting': GradientBoostingClassifier(
-                    n_estimators=150, max_depth=4, learning_rate=0.05,
-                    subsample=0.8, min_samples_leaf=5, random_state=42, verbose=0
+                'XGBoost': xgb.XGBClassifier(
+                    n_estimators=100, max_depth=4, learning_rate=0.1,
+                    subsample=0.8, random_state=42,
+                    tree_method='hist', device=device, verbosity=0, n_jobs=-1,
+                    use_label_encoder=False, eval_metric='mlogloss'
                 ),
-                'RandomForest': RandomForestClassifier(
-                    n_estimators=100, max_depth=6, random_state=42, n_jobs=-1
-                ),
-                'LogisticRegression': LogisticRegression(
-                    max_iter=1000, random_state=42, n_jobs=-1
+                'LightGBM': lgb.LGBMClassifier(
+                    n_estimators=100, max_depth=4, learning_rate=0.1,
+                    subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
                 )
             }
-            print(f"   📊 AI Regime: Training NEW models on {len(training_samples)} samples...")
+            # Add CatBoost if available
+            try:
+                import catboost as cb
+                task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
+                models['CatBoost'] = cb.CatBoostClassifier(
+                    iterations=100, depth=4, learning_rate=0.1,
+                    task_type=task_type, random_seed=42, verbose=0
+                )
+            except ImportError:
+                pass
+            print(f"   📊 AI Regime: Training NEW {list(models.keys())} on {len(training_samples)} samples ({device})...")
+        
+        # Train/val split (faster than CV)
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
         
         # Train all models and evaluate
         trained_models = {}
@@ -344,20 +363,33 @@ class AIRegimeAllocator:
             warnings.simplefilter("ignore")
             for name, m in models.items():
                 try:
-                    # Enable warm_start for incremental training
-                    if self.all_models is not None and hasattr(m, 'warm_start'):
-                        m.warm_start = True
-                        if hasattr(m, 'n_estimators'):
-                            m.n_estimators += 50
-                    m.fit(X, y)
-                    scores = cross_val_score(m, X, y, cv=3, scoring='accuracy', n_jobs=1)
-                    mean_score = scores.mean()
-                    status = "continued" if self.all_models is not None else "trained"
-                    print(f"      {name}: CV Accuracy = {mean_score:.3f} ({status})")
+                    print(f"      🔄 {name}: Training...", end=" ", flush=True)
+                    start_time = time.time()
+                    
+                    # True incremental training for supported models
+                    if has_existing:
+                        if name == 'XGBoost':
+                            m.fit(X_train, y_train, xgb_model=m.get_booster())
+                        elif name == 'LightGBM':
+                            m.fit(X_train, y_train, init_model=m.booster_)
+                        elif name == 'CatBoost':
+                            m.fit(X_train, y_train, init_model=m)
+                        else:
+                            m.fit(X_train, y_train)
+                    else:
+                        m.fit(X_train, y_train)
+                    
+                    # Validate on held-out set
+                    y_pred = m.predict(X_val)
+                    score = accuracy_score(y_val, y_pred)
+                    
+                    elapsed = time.time() - start_time
+                    status = "incremental" if has_existing else "fresh"
+                    print(f"Accuracy = {score:.3f} ({status}, {elapsed:.1f}s)")
                     trained_models[name] = m
-                    model_scores[name] = mean_score
+                    model_scores[name] = score
                 except Exception as e:
-                    print(f"      {name}: Training failed: {e}")
+                    print(f"failed: {e}")
         
         if not trained_models:
             print(f"   ⚠️ AI Regime: No models trained successfully")

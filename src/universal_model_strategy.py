@@ -196,34 +196,43 @@ class UniversalModelStrategy:
             current_day_idx = len(business_days) - 1
         current_date = business_days[current_day_idx] if current_day_idx >= 0 else business_days[0]
         
-        # Sample from HISTORICAL data (before backtest start) using ticker data directly
-        # This uses data that exists in ticker_data_grouped before current_date
-        for ticker, data in ticker_data_grouped.items():
+        # Sample from HISTORICAL data (PARALLEL)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import time
+        
+        def collect_ticker_samples(ticker, data):
             if data is None or len(data) < LOOKBACK_DAYS + FORWARD_DAYS + 10:
-                continue
-                
-            # Get dates from ticker data that are before current_date - FORWARD_DAYS (to have forward returns)
+                return []
             available_dates = data.index[data.index < current_date - timedelta(days=FORWARD_DAYS + 5)]
             if len(available_dates) < LOOKBACK_DAYS:
-                continue
-            
-            # Sample every 5th date to reduce size
+                return []
             sample_dates = available_dates[LOOKBACK_DAYS::5]
-            
-            for sample_date in sample_dates[-100:]:  # Use last 100 sample points per ticker
+            samples = []
+            for sample_date in sample_dates[-100:]:
                 features = calculate_universal_features(ticker, data, sample_date)
                 if features is None:
                     continue
-                    
                 forward_ret = calculate_forward_return(data, sample_date, FORWARD_DAYS)
                 if forward_ret is None:
                     continue
-                
-                X_list.append(list(features.values()))
-                y_list.append(forward_ret)
-                
-            if len(X_list) >= 10000:  # Cap at 10k samples
-                break
+                samples.append((list(features.values()), forward_ret))
+            return samples
+        
+        n_workers = min(32, len(ticker_data_grouped))
+        start_time = time.time()
+        
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {executor.submit(collect_ticker_samples, t, d): t for t, d in ticker_data_grouped.items()}
+            for future in as_completed(futures):
+                samples = future.result()
+                for x, y_val in samples:
+                    X_list.append(x)
+                    y_list.append(y_val)
+                if len(X_list) >= 10000:
+                    break
+        
+        elapsed = time.time() - start_time
+        print(f"   📊 Universal Model: Collected {len(X_list)} samples ({elapsed:.1f}s)")
         
         if len(X_list) < self.min_samples:
             print(f"   ⚠️ Universal Model: Not enough samples ({len(X_list)} < {self.min_samples})")
@@ -242,51 +251,82 @@ class UniversalModelStrategy:
         X_scaled = self.scaler.fit_transform(X)
         
         # Train ALL models and pick the best one
-        from sklearn.ensemble import RandomForestRegressor
-        from sklearn.linear_model import Ridge
-        from sklearn.model_selection import cross_val_score
-        from sklearn.metrics import make_scorer, r2_score
+        from sklearn.metrics import r2_score
+        from sklearn.model_selection import train_test_split
+        from config import XGBOOST_USE_GPU
+        import xgboost as xgb
+        import lightgbm as lgb
+        import time
         
-        # Build all models (use existing if available for incremental training)
-        if self.all_models is not None:
+        device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
+        has_existing = self.all_models is not None
+        
+        # Build models (XGBoost + LightGBM + CatBoost - all support GPU/incremental)
+        if has_existing:
             models = self.all_models
-            print(f"   📊 Universal Model: Continuing training on {len(X_list)} samples...")
+            print(f"   📊 Universal Model: Continuing training on {len(X_list)} samples ({device})...")
         else:
             models = {
-                'GradientBoosting': GradientBoostingRegressor(
+                'XGBoost': xgb.XGBRegressor(
                     n_estimators=100, max_depth=4, learning_rate=0.1,
-                    subsample=0.8, random_state=42, verbose=0
+                    subsample=0.8, random_state=42,
+                    tree_method='hist', device=device, verbosity=0, n_jobs=-1
                 ),
-                'RandomForest': RandomForestRegressor(
-                    n_estimators=100, max_depth=6, random_state=42, n_jobs=-1
-                ),
-                'Ridge': Ridge(alpha=1.0, random_state=42)
+                'LightGBM': lgb.LGBMRegressor(
+                    n_estimators=100, max_depth=4, learning_rate=0.1,
+                    subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
+                )
             }
-            print(f"   📊 Universal Model: Training NEW models on {len(X_list)} samples...")
+            # Add CatBoost if available
+            try:
+                import catboost as cb
+                task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
+                models['CatBoost'] = cb.CatBoostRegressor(
+                    iterations=100, depth=4, learning_rate=0.1,
+                    task_type=task_type, random_seed=42, verbose=0
+                )
+            except ImportError:
+                pass
+            print(f"   📊 Universal Model: Training NEW {list(models.keys())} on {len(X_list)} samples ({device})...")
+        
+        # Train/val split (faster than CV)
+        X_train, X_val, y_train, y_val = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
         
         # Train all models and evaluate
         trained_models = {}
         model_scores = {}
-        r2_scorer = make_scorer(r2_score)
         
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             for name, m in models.items():
                 try:
-                    # Enable warm_start for incremental training
-                    if self.all_models is not None and hasattr(m, 'warm_start'):
-                        m.warm_start = True
-                        if hasattr(m, 'n_estimators'):
-                            m.n_estimators += 50
-                    m.fit(X_scaled, y)
-                    scores = cross_val_score(m, X_scaled, y, cv=3, scoring=r2_scorer, n_jobs=1)
-                    mean_score = scores.mean()
-                    status = "continued" if self.all_models is not None else "trained"
-                    print(f"      {name}: CV R² = {mean_score:.3f} ({status})")
+                    print(f"      🔄 {name}: Training...", end=" ", flush=True)
+                    start_time = time.time()
+                    
+                    # True incremental training for supported models
+                    if has_existing:
+                        if name == 'XGBoost':
+                            m.fit(X_train, y_train, xgb_model=m.get_booster())
+                        elif name == 'LightGBM':
+                            m.fit(X_train, y_train, init_model=m.booster_)
+                        elif name == 'CatBoost':
+                            m.fit(X_train, y_train, init_model=m)
+                        else:
+                            m.fit(X_train, y_train)
+                    else:
+                        m.fit(X_train, y_train)
+                    
+                    # Validate on held-out set
+                    y_pred = m.predict(X_val)
+                    score = r2_score(y_val, y_pred)
+                    
+                    elapsed = time.time() - start_time
+                    status = "incremental" if has_existing else "fresh"
+                    print(f"R² = {score:.3f} ({status}, {elapsed:.1f}s)")
                     trained_models[name] = m
-                    model_scores[name] = mean_score
+                    model_scores[name] = score
                 except Exception as e:
-                    print(f"      {name}: Training failed: {e}")
+                    print(f"failed: {e}")
         
         if not trained_models:
             print(f"   ⚠️ Universal Model: No models trained successfully")

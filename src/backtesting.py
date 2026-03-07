@@ -34,7 +34,7 @@ from config import (
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
     CALENDAR_DAYS_PER_YEAR,
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
-    ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_6M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M_SENTIMENT, ENABLE_VOL_SWEET_MOM, ENABLE_RISK_ADJ_MOM_1M, ENABLE_RISK_ADJ_MOM_1M_MONTHLY, ENABLE_AI_ELITE,
+    ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_6M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M_SENTIMENT, ENABLE_VOL_SWEET_MOM, ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET, ENABLE_RISK_ADJ_MOM_1M, ENABLE_RISK_ADJ_MOM_1M_MONTHLY, ENABLE_AI_ELITE,
     ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_REGIME, ENABLE_AI_REGIME_MONTHLY, ENABLE_UNIVERSAL_MODEL,
     CONCENTRATED_3M_REBALANCE_DAYS,
     AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, AI_ELITE_INTRADAY_LOOKBACK
@@ -1712,6 +1712,14 @@ def _run_portfolio_backtest_walk_forward(
     vol_sweet_mom_cash = initial_capital_needed
     current_vol_sweet_mom_stocks = []
     vol_sweet_mom_transaction_costs = 0.0
+
+    # RISK-ADJ MOM 1M + VOL-SWEET: Initialize portfolio tracking
+    risk_adj_mom_1m_vol_sweet_portfolio_value = initial_capital_needed
+    risk_adj_mom_1m_vol_sweet_portfolio_history = [risk_adj_mom_1m_vol_sweet_portfolio_value]
+    risk_adj_mom_1m_vol_sweet_positions = {}
+    risk_adj_mom_1m_vol_sweet_cash = initial_capital_needed
+    current_risk_adj_mom_1m_vol_sweet_stocks = []
+    risk_adj_mom_1m_vol_sweet_transaction_costs = 0.0
 
     # RISK-ADJ MOM 1M: Initialize portfolio tracking
     risk_adj_mom_1m_portfolio_value = initial_capital_needed
@@ -4100,6 +4108,36 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Vol-Sweet Momentum error: {e}")
 
+        # RISK-ADJ MOM 1M + VOL-SWEET STRATEGY
+        if ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET:
+            try:
+                from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+
+                new_stocks = select_risk_adj_mom_1m_vol_sweet_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE
+                )
+
+                if new_stocks:
+                    risk_adj_mom_1m_vol_sweet_positions, risk_adj_mom_1m_vol_sweet_cash, current_risk_adj_mom_1m_vol_sweet_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        strategy_name="1M VolSweet",
+                        current_stocks=current_risk_adj_mom_1m_vol_sweet_stocks,
+                        new_stocks=new_stocks,
+                        positions=risk_adj_mom_1m_vol_sweet_positions,
+                        cash=risk_adj_mom_1m_vol_sweet_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_risk_adj_mom_1m_vol_sweet_stocks
+                    )
+                    risk_adj_mom_1m_vol_sweet_transaction_costs += rebalance_costs
+
+            except Exception as e:
+                print(f"   ⚠️ 1M VolSweet error: {e}")
+
         # RISK-ADJ MOM 1M STRATEGY
         if ENABLE_RISK_ADJ_MOM_1M:
             try:
@@ -5509,6 +5547,28 @@ def _run_portfolio_backtest_walk_forward(
         vol_sweet_mom_portfolio_value = vol_sweet_mom_invested_value + vol_sweet_mom_cash
         vol_sweet_mom_portfolio_history.append(vol_sweet_mom_portfolio_value)
 
+        # Update RISK-ADJ MOM 1M + VOL-SWEET portfolio value daily
+        risk_adj_mom_1m_vol_sweet_invested_value = 0.0
+        if ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET:
+            for ticker in list(risk_adj_mom_1m_vol_sweet_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = risk_adj_mom_1m_vol_sweet_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            risk_adj_mom_1m_vol_sweet_positions[ticker]['value'] = position_value
+                            risk_adj_mom_1m_vol_sweet_invested_value += position_value
+                        else:
+                            risk_adj_mom_1m_vol_sweet_invested_value += risk_adj_mom_1m_vol_sweet_positions[ticker].get('value', 0.0)
+                    else:
+                        risk_adj_mom_1m_vol_sweet_invested_value += risk_adj_mom_1m_vol_sweet_positions[ticker].get('value', 0.0)
+                except Exception:
+                    risk_adj_mom_1m_vol_sweet_invested_value += risk_adj_mom_1m_vol_sweet_positions[ticker].get('value', 0.0)
+        risk_adj_mom_1m_vol_sweet_portfolio_value = risk_adj_mom_1m_vol_sweet_invested_value + risk_adj_mom_1m_vol_sweet_cash
+        risk_adj_mom_1m_vol_sweet_portfolio_history.append(risk_adj_mom_1m_vol_sweet_portfolio_value)
+
         # Update RISK-ADJ MOM 1M portfolio value daily
         risk_adj_mom_1m_invested_value = 0.0
         if ENABLE_RISK_ADJ_MOM_1M:
@@ -6067,6 +6127,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("RiskAdj 3M Mth", risk_adj_mom_3m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_3M_MONTHLY else None),
                 ("RiskAdj 3M Sent", risk_adj_mom_3m_sentiment_portfolio_value if ENABLE_RISK_ADJ_MOM_3M_SENTIMENT else None),
                 ("VolSweet Mom", vol_sweet_mom_portfolio_value if ENABLE_VOL_SWEET_MOM else None),
+                ("1M VolSweet", risk_adj_mom_1m_vol_sweet_portfolio_value if ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET else None),
                 ("Risk-Adj Mom 1M", risk_adj_mom_1m_portfolio_value if ENABLE_RISK_ADJ_MOM_1M else None),
                 ("RiskAdj 1M Mth", risk_adj_mom_1m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_1M_MONTHLY else None),
                 ("AI Elite", ai_elite_portfolio_value if ENABLE_AI_ELITE else None),
@@ -6235,6 +6296,10 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = vol_sweet_mom_cash
                     num_positions = len(vol_sweet_mom_positions)
                     invested = value - strat_cash
+                elif name == "1M VolSweet" and ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET:
+                    strat_cash = risk_adj_mom_1m_vol_sweet_cash
+                    num_positions = len(risk_adj_mom_1m_vol_sweet_positions)
+                    invested = value - strat_cash
                 elif name == "Risk-Adj Mom 1M" and ENABLE_RISK_ADJ_MOM_1M:
                     strat_cash = risk_adj_mom_1m_cash
                     num_positions = len(risk_adj_mom_1m_positions)
@@ -6389,6 +6454,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("RiskAdj 3M Mth", risk_adj_mom_3m_monthly_portfolio_history) if ENABLE_RISK_ADJ_MOM_3M_MONTHLY else None,
                 ("RiskAdj 3M Sent", risk_adj_mom_3m_sentiment_portfolio_history) if ENABLE_RISK_ADJ_MOM_3M_SENTIMENT else None,
                 ("VolSweet Mom", vol_sweet_mom_portfolio_history) if ENABLE_VOL_SWEET_MOM else None,
+                ("1M VolSweet", risk_adj_mom_1m_vol_sweet_portfolio_history) if ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET else None,
                 ("Risk-Adj Mom 1M", risk_adj_mom_1m_portfolio_history) if ENABLE_RISK_ADJ_MOM_1M else None,
                 ("RiskAdj 1M Mth", risk_adj_mom_1m_monthly_portfolio_history) if ENABLE_RISK_ADJ_MOM_1M_MONTHLY else None,
                 ("AI Elite", ai_elite_portfolio_history) if ENABLE_AI_ELITE else None,
@@ -6501,6 +6567,7 @@ def _run_portfolio_backtest_walk_forward(
             ("RiskAdj 3M Mth",     risk_adj_mom_3m_monthly_portfolio_history if ENABLE_RISK_ADJ_MOM_3M_MONTHLY else None),
             ("RiskAdj 3M Sent",    risk_adj_mom_3m_sentiment_portfolio_history if ENABLE_RISK_ADJ_MOM_3M_SENTIMENT else None),
             ("VolSweet Mom",       vol_sweet_mom_portfolio_history       if ENABLE_VOL_SWEET_MOM else None),
+            ("1M VolSweet",        risk_adj_mom_1m_vol_sweet_portfolio_history if ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET else None),
             ("Risk-Adj Mom 1M",     risk_adj_mom_1m_portfolio_history     if ENABLE_RISK_ADJ_MOM_1M else None),
             ("RiskAdj 1M Mth",     risk_adj_mom_1m_monthly_portfolio_history if ENABLE_RISK_ADJ_MOM_1M_MONTHLY else None),
             ("AI Elite",            ai_elite_portfolio_history            if ENABLE_AI_ELITE else None),
@@ -6648,6 +6715,7 @@ def _run_portfolio_backtest_walk_forward(
             'risk_adj_mom_3m_monthly':  _strat(risk_adj_mom_3m_monthly_portfolio_value, risk_adj_mom_3m_monthly_portfolio_history, risk_adj_mom_3m_monthly_transaction_costs, risk_adj_mom_3m_monthly_cash),
             'risk_adj_mom_3m_sentiment': _strat(risk_adj_mom_3m_sentiment_portfolio_value, risk_adj_mom_3m_sentiment_portfolio_history, risk_adj_mom_3m_sentiment_transaction_costs, risk_adj_mom_3m_sentiment_cash),
             'vol_sweet_mom':            _strat(vol_sweet_mom_portfolio_value, vol_sweet_mom_portfolio_history, vol_sweet_mom_transaction_costs, vol_sweet_mom_cash),
+            'risk_adj_mom_1m_vol_sweet': _strat(risk_adj_mom_1m_vol_sweet_portfolio_value, risk_adj_mom_1m_vol_sweet_portfolio_history, risk_adj_mom_1m_vol_sweet_transaction_costs, risk_adj_mom_1m_vol_sweet_cash),
             'risk_adj_mom_1m':          _strat(risk_adj_mom_1m_portfolio_value, risk_adj_mom_1m_portfolio_history, risk_adj_mom_1m_transaction_costs, risk_adj_mom_1m_cash),
             'risk_adj_mom_1m_monthly':  _strat(risk_adj_mom_1m_monthly_portfolio_value, risk_adj_mom_1m_monthly_portfolio_history, risk_adj_mom_1m_monthly_transaction_costs, risk_adj_mom_1m_monthly_cash),
             'ai_elite':                 _strat(ai_elite_portfolio_value, ai_elite_portfolio_history, ai_elite_transaction_costs, ai_elite_cash),
