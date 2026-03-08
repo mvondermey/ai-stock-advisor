@@ -612,4 +612,7 @@ def _predict_ticker_worker(args):
         
         return ticker, ai_score, 'success'
     except Exception as e:
+        import traceback
+        print(f"   ⚠️ AI Elite worker exception for {ticker}: {e}")
+        traceback.print_exc()
         return ticker, None, 'exception'

@@ -24,6 +24,9 @@ from config import (
 # Multi-task learning strategy removed
 MULTITASK_AVAILABLE = False
 
+# Import AI Elite helper functions
+from ai_elite_strategy import _calculate_market_return
+
 
 # Global tracking for inverse ETF hedges used
 _inverse_etf_hedge_log = []  # List of (date, etf, market_decline) tuples
