@@ -600,12 +600,20 @@ def _predict_ticker_worker(args):
         if ticker_model is None:
             return ticker, 0.0, 'no_model'
         
+        # Extract the actual model from ensemble dict
+        if isinstance(ticker_model, dict):
+            actual_model = ticker_model.get('best_model')
+            if actual_model is None:
+                return ticker, 0.0, 'no_model'
+        else:
+            actual_model = ticker_model
+        
         # Predict (keep as DataFrame for compatibility)
         from ai_elite_strategy_per_ticker import FEATURE_COLS
         # Use explicit feature ordering to match training
         feature_values = [features.get(col, 0.0) for col in FEATURE_COLS]
         X_ticker = pd.DataFrame([feature_values], columns=FEATURE_COLS)
-        ai_score = ticker_model.predict(X_ticker)[0]
+        ai_score = actual_model.predict(X_ticker)[0]
         
         return ticker, ai_score, 'success'
     except Exception as e:
