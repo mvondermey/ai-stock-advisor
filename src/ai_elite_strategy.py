@@ -601,13 +601,10 @@ def _predict_ticker_worker(args):
             return ticker, 0.0, 'no_model'
         
         # Predict (keep as DataFrame for compatibility)
-        feature_cols = ['perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
-                        'overnight_gap', 'intraday_range', 'last_hour_momentum',
-                        'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
-                        'volume_ratio', 'rsi_14', 'short_term_reversal', 
-                        'volume_sentiment', 'risk_adj_mom_3m', 'bollinger_position',
-                        'sma20_distance', 'sma50_distance', 'macd']
-        X_ticker = pd.DataFrame([list(features.values())], columns=feature_cols)
+        from ai_elite_strategy_per_ticker import FEATURE_COLS
+        # Use explicit feature ordering to match training
+        feature_values = [features.get(col, 0.0) for col in FEATURE_COLS]
+        X_ticker = pd.DataFrame([feature_values], columns=FEATURE_COLS)
         ai_score = ticker_model.predict(X_ticker)[0]
         
         return ticker, ai_score, 'success'
