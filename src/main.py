@@ -1647,12 +1647,19 @@ def main(
             backtest_time_minutes=backtest_time_minutes
         )
         
-        # Send push notification with best strategy
-        best_strategy = max(strategy_results.items(), key=lambda x: x[1].get('return', 0)) if strategy_results else None
-        send_push_success(
+        # Build full strategy summary for push notification
+        from notifications import send_push_summary
+        all_strategy_returns = []
+        for name, data in s.items():
+            ret = ((data['value'] - portfolio_initial_capital) / abs(portfolio_initial_capital)) * 100 if portfolio_initial_capital != 0 else 0.0
+            all_strategy_returns.append((name, ret))
+        
+        # Sort by return descending
+        all_strategy_returns.sort(key=lambda x: x[1], reverse=True)
+        
+        send_push_summary(
             backtest_time_minutes=backtest_time_minutes,
-            top_strategy=best_strategy[0] if best_strategy else None,
-            top_return=best_strategy[1].get('return') if best_strategy else None
+            strategy_returns=all_strategy_returns[:10]  # Top 10
         )
     
     # Send final completion notification

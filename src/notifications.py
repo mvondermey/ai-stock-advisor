@@ -273,3 +273,57 @@ def send_push_error(error_type: str, error_message: str):
         priority="high",
         tags="warning,skull"
     )
+
+def send_push_summary(backtest_time_minutes: float, strategy_returns: list):
+    """
+    Send push notification with full strategy summary.
+    
+    Args:
+        backtest_time_minutes: Total backtest runtime
+        strategy_returns: List of (strategy_name, return_pct) tuples, sorted by return
+    """
+    # Build message with top strategies
+    lines = [f"⏱️ {backtest_time_minutes:.1f} min", ""]
+    
+    # Strategy name mapping for shorter display
+    name_map = {
+        'momentum_volatility_hybrid_6m': 'Mom-Vol 6M',
+        'momentum_volatility_hybrid_1y': 'Mom-Vol 1Y',
+        'momentum_volatility_hybrid': 'Mom-Vol 3M',
+        'momentum_volatility_hybrid_1y3m': 'Mom-Vol 1Y/3M',
+        'static_bh_1y': 'Static BH 1Y',
+        'static_bh_6m': 'Static BH 6M',
+        'static_bh_3m': 'Static BH 3M',
+        'static_bh_1m': 'Static BH 1M',
+        'dynamic_bh_1y': 'Dynamic BH 1Y',
+        'dynamic_bh_6m': 'Dynamic BH 6M',
+        'dynamic_bh_3m': 'Dynamic BH 3M',
+        'dynamic_bh_1m': 'Dynamic BH 1M',
+        'risk_adj_mom': 'Risk-Adj Mom',
+        'risk_adj_mom_6m': 'Risk-Adj 6M',
+        'risk_adj_mom_3m': 'Risk-Adj 3M',
+        'risk_adj_mom_1m': 'Risk-Adj 1M',
+        'elite_hybrid': 'Elite Hybrid',
+        'elite_risk': 'Elite Risk',
+        'ai_elite': 'AI Elite',
+        'ai_elite_monthly': 'AI Elite Mth',
+        'trend_atr': 'Trend ATR',
+        'dual_momentum': 'Dual Mom',
+        'price_acceleration': 'Price Accel',
+        'enhanced_volatility': 'Enh Vol',
+        'inverse_etf_hedge': '🛡️ Inv ETF',
+    }
+    
+    for i, (name, ret) in enumerate(strategy_returns[:10], 1):
+        display_name = name_map.get(name, name.replace('_', ' ').title()[:12])
+        emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+        lines.append(f"{emoji} {display_name}: {ret:+.1f}%")
+    
+    message = "\n".join(lines)
+    
+    send_push_notification(
+        title="✅ Backtest Complete",
+        message=message,
+        priority="default",
+        tags="chart_with_upwards_trend"
+    )
