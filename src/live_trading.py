@@ -79,6 +79,74 @@ def get_live_trading_strategy():
     return getattr(config, 'LIVE_TRADING_STRATEGY', 'risk_adj_mom')
 
 
+def load_strategy_selections_from_json(strategy_name: str) -> Optional[List[str]]:
+    """
+    Load strategy selections from the JSON file saved by backtesting.
+    This is the preferred method - live trading should use backtest results, not recalculate.
+    
+    Args:
+        strategy_name: Name of the strategy (e.g., 'momentum_volatility_hybrid_6m')
+    
+    Returns:
+        List of ticker symbols, or None if file not found or strategy not in file
+    """
+    import json
+    from pathlib import Path
+    
+    selections_file = Path('logs/strategy_selections.json')
+    
+    if not selections_file.exists():
+        print(f"   [WARN] Strategy selections file not found: {selections_file}")
+        print(f"   [INFO] Run backtesting first to generate strategy selections")
+        return None
+    
+    try:
+        with open(selections_file, 'r') as f:
+            data = json.load(f)
+        
+        # Check file age
+        from datetime import datetime, timedelta
+        timestamp = datetime.fromisoformat(data.get('timestamp', '2000-01-01'))
+        age_hours = (datetime.now() - timestamp).total_seconds() / 3600
+        
+        if age_hours > 24:
+            print(f"   [WARN] Strategy selections are {age_hours:.1f} hours old")
+            print(f"   [INFO] Consider re-running backtesting for fresh selections")
+        
+        # Get strategy tickers
+        strategies = data.get('strategies', {})
+        if strategy_name in strategies:
+            tickers = strategies[strategy_name].get('tickers', [])
+            print(f"   [INFO] Loaded {len(tickers)} tickers for {strategy_name} from JSON")
+            print(f"   [INFO] Backtest end date: {data.get('backtest_end_date', 'unknown')}")
+            return tickers
+        else:
+            print(f"   [WARN] Strategy '{strategy_name}' not found in selections file")
+            print(f"   [INFO] Available strategies: {list(strategies.keys())}")
+            return None
+            
+    except Exception as e:
+        print(f"   [FAIL] Error loading strategy selections: {e}")
+        return None
+
+
+def get_all_strategy_selections() -> Optional[Dict]:
+    """Load all strategy selections from JSON file."""
+    import json
+    from pathlib import Path
+    
+    selections_file = Path('logs/strategy_selections.json')
+    
+    if not selections_file.exists():
+        return None
+    
+    try:
+        with open(selections_file, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
 def _prepare_ticker_data_grouped(all_tickers: List[str], all_tickers_data: pd.DataFrame, strategy_name: str = "Strategy") -> dict:
     """
     Prepare ticker data grouped by ticker with date as index.
@@ -358,12 +426,23 @@ def rebalance_portfolio(
 def get_strategy_tickers(strategy: str, all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Get the tickers to hold based on the selected strategy.
     
+    PREFERRED: Load from JSON file saved by backtesting (no recalculation needed).
+    FALLBACK: Recalculate using shared strategy functions (slower, may differ from backtest).
+    
     Args:
         strategy: Strategy name
         all_tickers: List of ticker symbols
         ticker_data_grouped: Dict mapping ticker -> DataFrame with date index and OHLCV columns (same format as backtesting)
     """
-    print(f"   [DEBUG] DEBUG: Strategy passed = '{strategy}'")
+    print(f"   [DEBUG] Strategy passed = '{strategy}'")
+    
+    # FIRST: Try to load from JSON file (preferred - uses backtest results)
+    json_tickers = load_strategy_selections_from_json(strategy)
+    if json_tickers:
+        print(f"   [INFO] Using backtest selections from JSON file")
+        return json_tickers
+    
+    print(f"   [WARN] JSON not available, falling back to recalculation...")
 
     if strategy == 'ai_individual' or strategy == 'ai_strategy':
         # AI Strategy: REMOVED - fallback to momentum-based selection
@@ -1027,24 +1106,8 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
     print(f" Mode: {mode}")
     print("=" * 80)
 
-    client = get_alpaca_client()
-    if client is None:
-        print("\n Cannot proceed without Alpaca connection")
-        return
-
-    # Get current positions
-    current_positions = {}
-    try:
-        positions = client.get_all_positions()
-        for pos in positions:
-            if float(pos.qty_available) != 0:  # Only include positions with available shares
-                current_positions[pos.symbol] = float(pos.qty_available)
-    except Exception as e:
-        print(f"   [WARN] Could not get current positions: {e}")
-
-    print(f"\n Current positions: {len(current_positions)}")
-    for ticker, qty in current_positions.items():
-        print(f"  - {ticker}: {int(qty)} shares")
+    # No longer require Alpaca connection - just show recommended trades from backtest
+    current_positions = {}  # Empty - we don't track positions anymore
 
     # Get target tickers based on strategy
     print(f"\n [DEBUG] Running {LIVE_TRADING_STRATEGY} strategy...")
@@ -1062,48 +1125,30 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
     print(f"   Number of stocks: {len(target_tickers)}")
     print(f"   Stocks to buy: {target_tickers}")
     
-    # Show current vs target positions
-    print(f"\n[INFO] PORTFOLIO CHANGES:")
-    current_stocks = list(current_positions.keys())
-    stocks_to_sell = [ticker for ticker in current_stocks if ticker not in target_tickers]
-    stocks_to_buy = [ticker for ticker in target_tickers if ticker not in current_stocks]
-    
-    if stocks_to_sell:
-        print(f"   SELL: {stocks_to_sell}")
-    if stocks_to_buy:
-        print(f"   BUY:  {stocks_to_buy}")
-    if not stocks_to_sell and not stocks_to_buy:
-        print(f"   No changes needed - portfolio already aligned")
-    
-    print(f"\n[WARN]  TRADING MODE: {'DRY RUN' if not LIVE_TRADING_ENABLED else ('PAPER TRADING' if USE_PAPER_TRADING else 'LIVE TRADING')}")
-    
-    # Ask for confirmation in live mode
-    if LIVE_TRADING_ENABLED and not USE_PAPER_TRADING:
-        try:
-            confirm = input("\n❓ Execute these trades? (y/N): ").strip().lower()
-            if confirm != 'y':
-                print("[FAIL] Trading cancelled by user")
-                return
-        except KeyboardInterrupt:
-            print("\n[FAIL] Trading cancelled by user")
-            return
-
-    # Rebalance portfolio (ticker_data_grouped already prepared in main.py)
-    rebalance_portfolio(
-        client,
-        target_tickers,
-        current_positions,
-        INVESTMENT_PER_STOCK,
-        ticker_data_grouped
-    )
-
-    # Summary
-    print("\n" + "=" * 80)
-    print(" LIVE TRADING COMPLETE")
+    # Show recommended portfolio
+    print(f"\n" + "=" * 80)
+    print(f" RECOMMENDED PORTFOLIO ({LIVE_TRADING_STRATEGY})")
     print("=" * 80)
-    print(f" Portfolio should now hold: {target_tickers}")
-    print(f" Check Alpaca dashboard: https://app.alpaca.markets/{'paper' if USE_PAPER_TRADING else 'live'}/dashboard")
+    print(f" Stocks to hold: {target_tickers}")
+    print(f" Number of positions: {len(target_tickers)}")
+    print(f" Investment per stock: ${INVESTMENT_PER_STOCK:,.2f}")
+    print(f" Total investment: ${INVESTMENT_PER_STOCK * len(target_tickers):,.2f}")
     print("=" * 80)
+    
+    # Show all available strategies from JSON if available
+    all_selections = get_all_strategy_selections()
+    if all_selections:
+        print(f"\n📊 ALL STRATEGY SELECTIONS (from backtest {all_selections.get('backtest_end_date', 'unknown')}):")
+        print("-" * 80)
+        for strat_name, strat_data in all_selections.get('strategies', {}).items():
+            tickers = strat_data.get('tickers', [])
+            perf = all_selections.get('performance', {}).get(strat_name, {})
+            ret_pct = perf.get('return_pct', 0)
+            print(f"   {strat_name:<30} {len(tickers):>2} stocks  {ret_pct:>+7.1f}%  {tickers[:5]}{'...' if len(tickers) > 5 else ''}")
+        print("-" * 80)
+    
+    print("\n✅ LIVE TRADING RECOMMENDATIONS COMPLETE")
+    print("   Use these selections to manually execute trades on your broker")
 
 
 def get_ai_elite_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:

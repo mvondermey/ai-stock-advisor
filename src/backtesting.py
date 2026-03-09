@@ -6793,6 +6793,43 @@ def _run_portfolio_backtest_walk_forward(
         }
     }
 
+    # === SAVE STRATEGY SELECTIONS TO JSON FOR LIVE TRADING ===
+    # This allows live trading to read selections instead of recalculating
+    import json
+    from datetime import datetime as dt
+    
+    strategy_selections = {
+        'timestamp': dt.now().isoformat(),
+        'backtest_end_date': str(backtest_end_date),
+        'strategies': {
+            'static_bh_1y': {'tickers': list(current_static_bh_1y_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in static_bh_1y_positions.items()}},
+            'static_bh_6m': {'tickers': list(current_static_bh_6m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in static_bh_6m_positions.items()}},
+            'static_bh_3m': {'tickers': list(current_static_bh_3m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in static_bh_3m_positions.items()}},
+            'static_bh_1m': {'tickers': list(current_static_bh_1m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in static_bh_1m_positions.items()}},
+            'dynamic_bh_1y': {'tickers': list(current_dynamic_bh_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in dynamic_bh_positions.items()}},
+            'dynamic_bh_6m': {'tickers': list(current_dynamic_bh_6m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in dynamic_bh_6m_positions.items()}},
+            'dynamic_bh_3m': {'tickers': list(current_dynamic_bh_3m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in dynamic_bh_3m_positions.items()}},
+            'dynamic_bh_1m': {'tickers': list(current_dynamic_bh_1m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in dynamic_bh_1m_positions.items()}},
+            'risk_adj_mom': {'tickers': list(current_risk_adj_mom_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in risk_adj_mom_positions.items()}},
+            'momentum_ai_hybrid': {'tickers': list(momentum_ai_hybrid_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in momentum_ai_hybrid_positions.items()}},
+            'ai_elite': {'tickers': list(ai_elite_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in ai_elite_positions.items()}},
+            'elite_hybrid': {'tickers': list(elite_hybrid_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in elite_hybrid_positions.items()}},
+            'elite_risk': {'tickers': list(elite_risk_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in elite_risk_positions.items()}},
+            'inverse_etf_hedge': {'tickers': list(current_inverse_etf_hedge_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in inverse_etf_hedge_positions.items()}},
+            'momentum_volatility_hybrid_6m': {'tickers': list(momentum_volatility_hybrid_6m_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in momentum_volatility_hybrid_6m_positions.items()}},
+            'trend_atr': {'tickers': list(trend_atr_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in trend_atr_positions.items()}},
+            'dual_momentum': {'tickers': list(dual_mom_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p['avg_price']} for t, p in dual_mom_positions.items()}},
+        },
+        'performance': {name: {'value': data['value'], 'return_pct': ((data['value'] - INVESTMENT_PER_STOCK * PORTFOLIO_SIZE) / (INVESTMENT_PER_STOCK * PORTFOLIO_SIZE)) * 100} for name, data in results['strategies'].items()}
+    }
+    
+    # Save to JSON file
+    selections_file = Path('logs/strategy_selections.json')
+    selections_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(selections_file, 'w') as f:
+        json.dump(strategy_selections, f, indent=2, default=str)
+    print(f"\n📁 Strategy selections saved to {selections_file}")
+
     return results
 
 
