@@ -3403,7 +3403,7 @@ def _run_portfolio_backtest_walk_forward(
                         new_inverse_etf_stocks = [etf for etf, _ in inverse_etf_scores[:2]]
                         
                         if new_inverse_etf_stocks != current_inverse_etf_hedge_stocks:
-                            print(f"   🛡️ Inverse ETF Hedge: Market down {abs(worst_decline):.1f}%, selecting {new_inverse_etf_stocks}")
+                            print(f"   🛡️ Inverse ETF Hedge: Market down {abs(worst_decline)*100:.1f}%, selecting {new_inverse_etf_stocks}")
                             
                             # Rebalance to inverse ETFs
                             inverse_etf_hedge_positions, inverse_etf_hedge_cash, current_inverse_etf_hedge_stocks, rebalance_costs = _smart_rebalance_portfolio(
@@ -3420,6 +3420,14 @@ def _run_portfolio_backtest_walk_forward(
                             )
                             inverse_etf_hedge_transaction_costs += rebalance_costs
                             inverse_etf_hedge_initialized = True
+                            
+                            # Log detailed allocation
+                            total_invested = sum(p['shares'] * p['avg_price'] for p in inverse_etf_hedge_positions.values())
+                            print(f"   🛡️ Hedge Allocation: Cash=${inverse_etf_hedge_cash:,.0f}, Invested=${total_invested:,.0f}")
+                            for etf, pos in inverse_etf_hedge_positions.items():
+                                value = pos['shares'] * pos['avg_price']
+                                pct = (value / (total_invested + inverse_etf_hedge_cash)) * 100 if (total_invested + inverse_etf_hedge_cash) > 0 else 0
+                                print(f"      📈 {etf}: {pos['shares']:.0f} shares @ ${pos['avg_price']:.2f} = ${value:,.0f} ({pct:.1f}%)")
                 else:
                     # Market is up - sell all inverse ETFs and hold cash
                     if current_inverse_etf_hedge_stocks:
