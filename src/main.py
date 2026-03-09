@@ -1749,92 +1749,38 @@ if __name__ == "__main__":
         print(f"💡 Example: python src/main.py --live-trading --strategy volatility_ensemble")
         print("=" * 80)
         
-        # Download data using same shared function as backtesting
-        print("\n🔍 Loading market data (same as backtesting)...")
-        from ticker_selection import get_all_tickers
-        from data_utils import load_all_market_data
+        # NO DATA DOWNLOAD - Live trading reads from JSON file saved by backtesting
+        print("\n📂 Reading strategy selections from JSON (no data download needed)...")
+        from live_trading import get_all_strategy_selections, get_strategy_tickers
         
-        all_available_tickers = get_all_tickers()
-        print(f"   Found {len(all_available_tickers)} tickers in universe")
-        
-        all_tickers_data = load_all_market_data(all_available_tickers)
-        
-        if all_tickers_data is None or all_tickers_data.empty:
-            print("   ❌ No data available")
+        all_selections = get_all_strategy_selections()
+        if all_selections is None:
+            print("   ❌ No strategy selections found!")
+            print("   ❌ Run backtesting first: python src/main.py")
+            print("   ❌ JSON file: logs/strategy_selections.json")
             sys.exit(1)
         
-        # Get all available tickers from data
-        if 'ticker' in all_tickers_data.columns:
-            all_available_tickers = sorted(all_tickers_data['ticker'].unique().tolist())
-        else:
-            all_available_tickers = sorted(all_tickers_data.columns.tolist())
-        
-        print(f"   ✅ Loaded data for {len(all_available_tickers)} tickers from backtesting")
-        
-        # Filter to top performers using backtest data
-        try:
-            from ticker_selection import find_top_performers
-            
-            # Get latest date from data
-            if 'date' in all_tickers_data.columns:
-                latest_date = all_tickers_data['date'].max()
-                naive_end_date = pd.Timestamp(latest_date).replace(tzinfo=None)
-            else:
-                naive_end_date = datetime.now().replace(tzinfo=None)
-            
-            market_selected_performers = find_top_performers(
-                all_available_tickers=all_available_tickers,
-                all_tickers_data=all_tickers_data,
-                return_tickers=True,
-                n_top=N_TOP_TICKERS,
-                performance_end_date=naive_end_date
-            )
-            
-            if market_selected_performers:
-                market_selected_performers = [ticker for ticker, _ in market_selected_performers]
-                print(f"   ✅ Filtered to {len(market_selected_performers)} top performers")
-            else:
-                print(f"   ⚠️ No top performers found, using all tickers")
-                market_selected_performers = all_available_tickers[:N_TOP_TICKERS]
-                
-        except Exception as e:
-            print(f"   ❌ Ticker filtering failed: {e}")
-            import traceback
-            traceback.print_exc()
-            market_selected_performers = all_available_tickers[:N_TOP_TICKERS]
+        print(f"   ✅ Loaded selections from backtest ({all_selections.get('backtest_end_date', 'unknown')})")
+        print(f"   ✅ Available strategies: {len(all_selections.get('strategies', {}))}")
         
         # Check if multiple strategies requested (comma-separated)
         strategies = [s.strip() for s in args.strategy.split(',')]
         
-        # Use the live trading implementation with filtered tickers
+        # Use the live trading implementation - no data needed, reads from JSON
         try:
-            from live_trading import run_live_trading_with_filtered_tickers, get_strategy_tickers
-            
             if len(strategies) > 1:
                 # Multi-strategy mode: just show selected tickers for each
                 print("\n" + "=" * 80)
                 print("📊 MULTI-STRATEGY TICKER SELECTION")
                 print("=" * 80)
                 
-                # Prepare ticker_data_grouped once (same format as backtesting and single-strategy)
-                print(f"\n   📦 Preparing ticker data grouped by ticker...")
-                ticker_data_grouped = {}
-                for ticker in market_selected_performers:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-                    if not ticker_data.empty:
-                        if 'date' in ticker_data.columns:
-                            ticker_data['date'] = pd.to_datetime(ticker_data['date'])
-                            ticker_data = ticker_data.set_index('date')
-                        ticker_data = ticker_data.drop('ticker', axis=1, errors='ignore')
-                        ticker_data_grouped[ticker] = ticker_data
-                print(f"   ✅ Prepared data for {len(ticker_data_grouped)} tickers")
-                
-                all_selections = {}
+                strategy_selections = {}
                 for strategy in strategies:
                     print(f"\n🎯 Strategy: {strategy}")
                     print("-" * 40)
-                    selected = get_strategy_tickers(strategy, market_selected_performers, ticker_data_grouped)
-                    all_selections[strategy] = set(selected) if selected else set()
+                    # Read from JSON - no data needed
+                    selected = get_strategy_tickers(strategy, [], None)
+                    strategy_selections[strategy] = set(selected) if selected else set()
                     if selected:
                         print(f"   Selected {len(selected)} tickers: {selected}")
                     else:
@@ -1846,15 +1792,15 @@ if __name__ == "__main__":
                 print("=" * 80)
                 
                 # Find common tickers (intersection of all)
-                if all_selections:
-                    common = set.intersection(*all_selections.values()) if all(all_selections.values()) else set()
+                if strategy_selections:
+                    common = set.intersection(*strategy_selections.values()) if all(strategy_selections.values()) else set()
                     print(f"\n✅ COMMON to all strategies ({len(common)}): {sorted(common) if common else 'None'}")
                     
                     # Show unique tickers for each strategy
                     print(f"\n🔀 UNIQUE to each strategy:")
                     for strategy in strategies:
-                        others = set.union(*[s for name, s in all_selections.items() if name != strategy]) if len(strategies) > 1 else set()
-                        unique = all_selections[strategy] - others
+                        others = set.union(*[s for name, s in strategy_selections.items() if name != strategy]) if len(strategies) > 1 else set()
+                        unique = strategy_selections[strategy] - others
                         if unique:
                             print(f"   {strategy}: {sorted(unique)}")
                         else:
@@ -1871,7 +1817,7 @@ if __name__ == "__main__":
                 ticker_votes = Counter()
                 ticker_strategies = {}  # Track which strategies voted for each ticker
                 
-                for strategy, tickers in all_selections.items():
+                for strategy, tickers in strategy_selections.items():
                     for ticker in tickers:
                         ticker_votes[ticker] += 1
                         if ticker not in ticker_strategies:
@@ -1925,181 +1871,196 @@ if __name__ == "__main__":
                 print(f"   python src/main.py --live-trading --strategy <strategy_name>")
                 print("=" * 80)
             else:
-                # Single strategy: run full live trading
-                # Prepare ticker_data_grouped once (same format as backtesting)
-                print(f"\n   📦 Preparing ticker data grouped by ticker...")
-                ticker_data_grouped = {}
-                for ticker in market_selected_performers:
-                    ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-                    if not ticker_data.empty:
-                        if 'date' in ticker_data.columns:
-                            ticker_data['date'] = pd.to_datetime(ticker_data['date'])
-                            ticker_data = ticker_data.set_index('date')
-                        ticker_data = ticker_data.drop('ticker', axis=1, errors='ignore')
-                        ticker_data_grouped[ticker] = ticker_data
-                print(f"   ✅ Prepared data for {len(ticker_data_grouped)} tickers")
+                # Single strategy: read from JSON - no data needed
+                print(f"\n🎯 Single Strategy Mode: {strategies[0]}")
+                selected = get_strategy_tickers(strategies[0], [], None)
                 
-                run_live_trading_with_filtered_tickers(market_selected_performers, ticker_data_grouped)
+                if selected:
+                    print(f"\n" + "=" * 80)
+                    print(f"📊 RECOMMENDED PORTFOLIO ({strategies[0]})")
+                    print("=" * 80)
+                    print(f"   Stocks to hold: {selected}")
+                    print(f"   Number of positions: {len(selected)}")
+                    from config import INVESTMENT_PER_STOCK
+                    print(f"   Investment per stock: ${INVESTMENT_PER_STOCK:,.2f}")
+                    print(f"   Total investment: ${INVESTMENT_PER_STOCK * len(selected):,.2f}")
+                    print("=" * 80)
+                    
+                    # Show all strategies from JSON
+                    print(f"\n📊 ALL STRATEGY SELECTIONS (from backtest {all_selections.get('backtest_end_date', 'unknown')}):")
+                    print("-" * 80)
+                    for strat_name, strat_data in all_selections.get('strategies', {}).items():
+                        tickers = strat_data.get('tickers', [])
+                        perf = all_selections.get('performance', {}).get(strat_name, {})
+                        ret_pct = perf.get('return_pct', 0)
+                        print(f"   {strat_name:<30} {len(tickers):>2} stocks  {ret_pct:>+7.1f}%  {tickers[:5]}{'...' if len(tickers) > 5 else ''}")
+                    print("-" * 80)
+                    
+                    print("\n✅ LIVE TRADING RECOMMENDATIONS COMPLETE")
+                    print("   Use these selections to manually execute trades on your broker")
+                else:
+                    print(f"   ❌ No tickers found for strategy '{strategies[0]}'")
         except Exception as e:
             print(f"❌ Live trading failed: {e}")
     else:
         # Run normal backtesting and get the data
         all_tickers_data = main()
     
-    # Add 3M performance table at the end (runs in both live trading and backtesting modes)
-    try:
-        print("\n" + "=" * 100)
-        print("📊 UNIFIED TICKER PERFORMANCE TABLE (Sorted by 3M Performance)")
-        print("=" * 100)
-        
-        from ticker_selection import _calculate_1y_return_from_dataframe
-        
-        today = datetime.now(timezone.utc)
-        
-        # Use the already loaded all_tickers_data from backtest instead of fetching fresh data
-        if all_tickers_data is not None and not all_tickers_data.empty:
-            print(f"🔍 Using backtest data for performance calculation...")
-            print(f"   Data shape: {all_tickers_data.shape}")
-            print(f"   Columns: {list(all_tickers_data.columns)[:5]}...")  # Show first 5 columns
+    # Add 3M performance table at the end (only for backtesting mode - live trading skips this)
+    if not args.live_trading:
+        try:
+            print("\n" + "=" * 100)
+            print("📊 UNIFIED TICKER PERFORMANCE TABLE (Sorted by 3M Performance)")
+            print("=" * 100)
             
-            # Data is in long format
-            print("   Data is in long format")
+            from ticker_selection import _calculate_1y_return_from_dataframe
             
-            # Check if date is in index or column
-            if 'date' not in all_tickers_data.columns:
-                if hasattr(all_tickers_data.index, 'names') and 'date' in all_tickers_data.index.names:
-                    # Date is in index, reset it to make it a column
-                    all_tickers_data = all_tickers_data.reset_index()
-                    print("   Reset index to make 'date' a column")
+            today = datetime.now(timezone.utc)
+            
+            # Use the already loaded all_tickers_data from backtest instead of fetching fresh data
+            if all_tickers_data is not None and not all_tickers_data.empty:
+                print(f"🔍 Using backtest data for performance calculation...")
+                print(f"   Data shape: {all_tickers_data.shape}")
+                print(f"   Columns: {list(all_tickers_data.columns)[:5]}...")  # Show first 5 columns
+                
+                # Data is in long format
+                print("   Data is in long format")
+                
+                # Check if date is in index or column
+                if 'date' not in all_tickers_data.columns:
+                    if hasattr(all_tickers_data.index, 'names') and 'date' in all_tickers_data.index.names:
+                        # Date is in index, reset it to make it a column
+                        all_tickers_data = all_tickers_data.reset_index()
+                        print("   Reset index to make 'date' a column")
+                    else:
+                        print("   ⚠️ No 'date' column found in data")
+                        raise ValueError("Date column not found in data")
+                
+                # Ensure we have a 'ticker' column in long format
+                if 'ticker' not in all_tickers_data.columns:
+                    print("   ⚠️ No 'ticker' column found in long format data")
+                    # Try to infer ticker from other columns or raise a clear error
+                    possible_cols = [col for col in all_tickers_data.columns if 'ticker' in col.lower() or 'symbol' in col.lower()]
+                    if possible_cols:
+                        ticker_col = possible_cols[0]
+                        print(f"   Using column '{ticker_col}' as ticker")
+                        all_tickers_data = all_tickers_data.rename(columns={ticker_col: 'ticker'})
+                    else:
+                        raise ValueError("Data is in long format but missing 'ticker' column and cannot infer it")
+                
+                # Get unique tickers from the backtest data
+                if 'ticker' in all_tickers_data.columns:
+                    all_available_tickers = all_tickers_data['ticker'].unique().tolist()
                 else:
-                    print("   ⚠️ No 'date' column found in data")
-                    raise ValueError("Date column not found in data")
+                    print("   ⚠️ No 'ticker' column found in data")
+                    # Fallback to fetching fresh data
+                    raise ValueError("Ticker column not found")
+                print(f"   Found {len(all_available_tickers)} tickers in backtest data")
+                
+                # Group data by ticker for easier processing
+                ticker_data_dict = {}
+                for ticker in all_available_tickers:
+                    ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
+                    if not ticker_df.empty:
+                        if 'date' in ticker_df.columns:
+                            ticker_df = ticker_df.set_index('date')
+                        ticker_data_dict[ticker] = ticker_df
+                
+                # Calculate 3M and 1Y performance for all tickers in backtest data
+                performance_data = []
+                
+                print(f"🔍 Calculating performance metrics for {len(all_available_tickers)} tickers...")
+                
+                for ticker in all_available_tickers:
+                    try:
+                        ticker_df = ticker_data_dict[ticker]
+                        
+                        # Calculate 1Y performance
+                        perf_1y = _calculate_1y_return_from_dataframe(ticker_df, today, 365)
+                        
+                        # Calculate 3M performance
+                        perf_3m = _calculate_1y_return_from_dataframe(ticker_df, today, 90)
+                        
+                        if perf_1y is not None and perf_3m is not None:
+                            performance_data.append({
+                                'Ticker': ticker,
+                                '3M_Perf': perf_3m,
+                                '1Y_Perf': perf_1y
+                            })
+                            
+                    except Exception:
+                        # Skip tickers with errors
+                        continue
+            else:
+                print("⚠️ No backtest data available, fetching fresh data...")
+                # Fallback to original behavior if no backtest data
+                from ticker_selection import get_all_tickers, _get_current_1y_return_from_cache
+                
+                try:
+                    all_available_tickers = get_all_tickers()
+                except Exception as e:
+                    print(f"⚠️ Could not fetch tickers: {e}")
+                    all_available_tickers = []
+                
+                # Calculate 3M and 1Y performance for all available tickers
+                performance_data = []
+                
+                print(f"🔍 Calculating performance metrics for {len(all_available_tickers)} tickers...")
+                
+                for ticker in all_available_tickers:
+                    try:
+                        # Get 1Y performance
+                        perf_1y = _get_current_1y_return_from_cache(ticker, {}, today, 365)
+                        
+                        # Get 3M performance (reuse the same function with 90 days)
+                        perf_3m = _get_current_1y_return_from_cache(ticker, {}, today, 90)
+                        
+                        if perf_1y is not None and perf_3m is not None:
+                            performance_data.append({
+                                'Ticker': ticker,
+                                '3M_Perf': perf_3m,
+                                '1Y_Perf': perf_1y
+                            })
+                            
+                    except Exception:
+                        # Skip tickers with errors
+                        continue
             
-            # Ensure we have a 'ticker' column in long format
-            if 'ticker' not in all_tickers_data.columns:
-                print("   ⚠️ No 'ticker' column found in long format data")
-                # Try to infer ticker from other columns or raise a clear error
-                possible_cols = [col for col in all_tickers_data.columns if 'ticker' in col.lower() or 'symbol' in col.lower()]
-                if possible_cols:
-                    ticker_col = possible_cols[0]
-                    print(f"   Using column '{ticker_col}' as ticker")
-                    all_tickers_data = all_tickers_data.rename(columns={ticker_col: 'ticker'})
+            # Sort by 3M performance (descending)
+            performance_data.sort(key=lambda x: x['3M_Perf'], reverse=True)
+            
+            # Print table
+            print(f"{'Ticker':<10} {'3M_Perf':>12} {'1Y_Perf':>12}")
+            print("-" * 38)
+            
+            for data in performance_data:  # Show ALL tickers
+                ticker = data['Ticker']
+                perf_3m = data['3M_Perf']
+                perf_1y = data['1Y_Perf']
+                
+                # Color coding for performance
+                if perf_3m >= 20:
+                    color_3m = "🟢"  # Strong positive
+                elif perf_3m >= 10:
+                    color_3m = "🔵"  # Moderate positive
+                elif perf_3m >= 0:
+                    color_3m = "⚪"  # Neutral
                 else:
-                    raise ValueError("Data is in long format but missing 'ticker' column and cannot infer it")
+                    color_3m = "🔴"  # Negative
+                
+                print(f"{ticker:<10} {color_3m} {perf_3m:+10.2f}% {perf_1y:+10.2f}%")
             
-            # Get unique tickers from the backtest data
-            if 'ticker' in all_tickers_data.columns:
-                all_available_tickers = all_tickers_data['ticker'].unique().tolist()
-            else:
-                print("   ⚠️ No 'ticker' column found in data")
-                # Fallback to fetching fresh data
-                raise ValueError("Ticker column not found")
-            print(f"   Found {len(all_available_tickers)} tickers in backtest data")
+            print(f"\n📈 Summary:")
+            print(f"   Total tickers analyzed: {len(performance_data)}")
+            if performance_data:
+                avg_3m = sum(d['3M_Perf'] for d in performance_data) / len(performance_data)
+                avg_1y = sum(d['1Y_Perf'] for d in performance_data) / len(performance_data)
+                print(f"   Average 3M performance: {avg_3m:+.2f}%")
+                print(f"   Average 1Y performance: {avg_1y:+.2f}%")
+                print(f"   Best 3M performer: {performance_data[0]['Ticker']} ({performance_data[0]['3M_Perf']:+.2f}%)")
+                print(f"   Worst 3M performer: {performance_data[-1]['Ticker']} ({performance_data[-1]['3M_Perf']:+.2f}%)")
             
-            # Group data by ticker for easier processing
-            ticker_data_dict = {}
-            for ticker in all_available_tickers:
-                ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-                if not ticker_df.empty:
-                    if 'date' in ticker_df.columns:
-                        ticker_df = ticker_df.set_index('date')
-                    ticker_data_dict[ticker] = ticker_df
+            print("=" * 100)
             
-            # Calculate 3M and 1Y performance for all tickers in backtest data
-            performance_data = []
-            
-            print(f"🔍 Calculating performance metrics for {len(all_available_tickers)} tickers...")
-            
-            for ticker in all_available_tickers:
-                try:
-                    ticker_df = ticker_data_dict[ticker]
-                    
-                    # Calculate 1Y performance
-                    perf_1y = _calculate_1y_return_from_dataframe(ticker_df, today, 365)
-                    
-                    # Calculate 3M performance
-                    perf_3m = _calculate_1y_return_from_dataframe(ticker_df, today, 90)
-                    
-                    if perf_1y is not None and perf_3m is not None:
-                        performance_data.append({
-                            'Ticker': ticker,
-                            '3M_Perf': perf_3m,
-                            '1Y_Perf': perf_1y
-                        })
-                        
-                except Exception as e:
-                    # Skip tickers with errors
-                    continue
-        else:
-            print("⚠️ No backtest data available, fetching fresh data...")
-            # Fallback to original behavior if no backtest data
-            from ticker_selection import get_all_tickers, _get_current_1y_return_from_cache
-            
-            try:
-                all_available_tickers = get_all_tickers()
-            except Exception as e:
-                print(f"⚠️ Could not fetch tickers: {e}")
-                all_available_tickers = []
-            
-            # Calculate 3M and 1Y performance for all available tickers
-            performance_data = []
-            
-            print(f"🔍 Calculating performance metrics for {len(all_available_tickers)} tickers...")
-            
-            for ticker in all_available_tickers:
-                try:
-                    # Get 1Y performance
-                    perf_1y = _get_current_1y_return_from_cache(ticker, {}, today, 365)
-                    
-                    # Get 3M performance (reuse the same function with 90 days)
-                    perf_3m = _get_current_1y_return_from_cache(ticker, {}, today, 90)
-                    
-                    if perf_1y is not None and perf_3m is not None:
-                        performance_data.append({
-                            'Ticker': ticker,
-                            '3M_Perf': perf_3m,
-                            '1Y_Perf': perf_1y
-                        })
-                        
-                except Exception as e:
-                    # Skip tickers with errors
-                    continue
-        
-        # Sort by 3M performance (descending)
-        performance_data.sort(key=lambda x: x['3M_Perf'], reverse=True)
-        
-        # Print table
-        print(f"{'Ticker':<10} {'3M_Perf':>12} {'1Y_Perf':>12}")
-        print("-" * 38)
-        
-        for data in performance_data:  # Show ALL tickers
-            ticker = data['Ticker']
-            perf_3m = data['3M_Perf']
-            perf_1y = data['1Y_Perf']
-            
-            # Color coding for performance
-            if perf_3m >= 20:
-                color_3m = "🟢"  # Strong positive
-            elif perf_3m >= 10:
-                color_3m = "🔵"  # Moderate positive
-            elif perf_3m >= 0:
-                color_3m = "⚪"  # Neutral
-            else:
-                color_3m = "🔴"  # Negative
-            
-            print(f"{ticker:<10} {color_3m} {perf_3m:+10.2f}% {perf_1y:+10.2f}%")
-        
-        print(f"\n📈 Summary:")
-        print(f"   Total tickers analyzed: {len(performance_data)}")
-        if performance_data:
-            avg_3m = sum(d['3M_Perf'] for d in performance_data) / len(performance_data)
-            avg_1y = sum(d['1Y_Perf'] for d in performance_data) / len(performance_data)
-            print(f"   Average 3M performance: {avg_3m:+.2f}%")
-            print(f"   Average 1Y performance: {avg_1y:+.2f}%")
-            print(f"   Best 3M performer: {performance_data[0]['Ticker']} ({performance_data[0]['3M_Perf']:+.2f}%)")
-            print(f"   Worst 3M performer: {performance_data[-1]['Ticker']} ({performance_data[-1]['3M_Perf']:+.2f}%)")
-        
-        print("=" * 100)
-        
-    except Exception as e:
-        print(f"⚠️ Error generating performance table: {e}")
+        except Exception as e:
+            print(f"⚠️ Error generating performance table: {e}")
