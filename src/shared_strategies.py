@@ -2384,10 +2384,6 @@ def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookba
     if performances:
         performances.sort(key=lambda x: x[1], reverse=True)
         selected = [ticker for ticker, _ in performances[:top_n]]
-        
-        # Apply inverse ETF hedge if enabled
-        selected = apply_inverse_etf_hedge(selected, ticker_data_grouped, current_date, top_n)
-        
         return selected
     
     return []

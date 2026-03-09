@@ -1835,6 +1835,15 @@ def _run_portfolio_backtest_walk_forward(
     current_volatility_adj_mom_stocks = []  # Current top N stocks held by volatility-adjusted momentum
     volatility_adj_mom_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
+    # INVERSE ETF HEDGE: Standalone strategy that only holds inverse ETFs when market is down
+    inverse_etf_hedge_portfolio_value = initial_capital_needed
+    inverse_etf_hedge_portfolio_history = [inverse_etf_hedge_portfolio_value]
+    inverse_etf_hedge_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    inverse_etf_hedge_cash = initial_capital_needed
+    current_inverse_etf_hedge_stocks = []
+    inverse_etf_hedge_transaction_costs = 0.0
+    inverse_etf_hedge_initialized = False
+
     # Reset global transaction cost tracking variables for this backtest
     global static_bh_transaction_costs, static_bh_3m_transaction_costs, static_bh_6m_transaction_costs, static_bh_1m_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_transaction_costs
     global dynamic_bh_3m_transaction_costs, dynamic_bh_6m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs, multitask_transaction_costs, ratio_3m_1y_transaction_costs, ratio_1y_3m_transaction_costs, turnaround_transaction_costs, adaptive_ensemble_transaction_costs, volatility_ensemble_transaction_costs, correlation_ensemble_transaction_costs, dynamic_pool_transaction_costs, sentiment_ensemble_transaction_costs
@@ -3353,6 +3362,81 @@ def _run_portfolio_backtest_walk_forward(
 
             except Exception as e:
                 print(f"   ⚠️ Volatility-adjusted momentum selection failed: {e}")
+
+        # === INVERSE ETF HEDGE STRATEGY ===
+        # Standalone strategy: holds inverse ETFs when market is down, cash when market is up
+        if ENABLE_INVERSE_ETF_HEDGE:
+            try:
+                from shared_strategies import get_market_conditions
+                from config import INVERSE_ETF_HEDGE_THRESHOLD, INVERSE_ETF_HEDGE_PREFERENCE, INVERSE_ETFS
+                
+                # Get market conditions
+                market_cond = get_market_conditions(ticker_data_grouped, current_date)
+                spy_3m = market_cond.get('spy_3m', 0)
+                qqq_3m = market_cond.get('qqq_3m', 0)
+                worst_decline = min(spy_3m, qqq_3m)
+                
+                if worst_decline < -INVERSE_ETF_HEDGE_THRESHOLD:
+                    # Market is down - select inverse ETFs
+                    # Pick the best performing inverse ETF from preference list
+                    inverse_etf_scores = []
+                    for etf in INVERSE_ETF_HEDGE_PREFERENCE:
+                        if etf in ticker_data_grouped:
+                            try:
+                                etf_data = ticker_data_grouped[etf]
+                                if len(etf_data) >= 30:
+                                    recent = etf_data[etf_data.index <= current_date].tail(30)
+                                    if len(recent) >= 5:
+                                        perf_1m = (recent['Close'].iloc[-1] / recent['Close'].iloc[0] - 1) * 100
+                                        inverse_etf_scores.append((etf, perf_1m))
+                            except:
+                                pass
+                    
+                    if inverse_etf_scores:
+                        # Sort by performance and pick top 2
+                        inverse_etf_scores.sort(key=lambda x: x[1], reverse=True)
+                        new_inverse_etf_stocks = [etf for etf, _ in inverse_etf_scores[:2]]
+                        
+                        if new_inverse_etf_stocks != current_inverse_etf_hedge_stocks:
+                            print(f"   🛡️ Inverse ETF Hedge: Market down {abs(worst_decline):.1f}%, selecting {new_inverse_etf_stocks}")
+                            
+                            # Rebalance to inverse ETFs
+                            inverse_etf_hedge_positions, inverse_etf_hedge_cash, current_inverse_etf_hedge_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                                strategy_name="Inverse ETF Hedge",
+                                current_stocks=current_inverse_etf_hedge_stocks,
+                                new_stocks=new_inverse_etf_stocks,
+                                positions=inverse_etf_hedge_positions,
+                                cash=inverse_etf_hedge_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=2,  # Only hold 2 inverse ETFs
+                                force_rebalance=not inverse_etf_hedge_initialized
+                            )
+                            inverse_etf_hedge_transaction_costs += rebalance_costs
+                            inverse_etf_hedge_initialized = True
+                else:
+                    # Market is up - sell all inverse ETFs and hold cash
+                    if current_inverse_etf_hedge_stocks:
+                        print(f"   🛡️ Inverse ETF Hedge: Market up, selling inverse ETFs and holding cash")
+                        # Sell all positions
+                        for ticker, pos in list(inverse_etf_hedge_positions.items()):
+                            if ticker in ticker_data_grouped:
+                                try:
+                                    ticker_data = ticker_data_grouped[ticker]
+                                    current_price = ticker_data[ticker_data.index <= current_date]['Close'].iloc[-1]
+                                    sell_value = pos['shares'] * current_price
+                                    sell_cost = sell_value * TRANSACTION_COST
+                                    inverse_etf_hedge_cash += sell_value - sell_cost
+                                    inverse_etf_hedge_transaction_costs += sell_cost
+                                    print(f"   💰 Inverse ETF Hedge Selling {ticker}: {pos['shares']:.0f} shares @ ${current_price:.2f}")
+                                except:
+                                    pass
+                        inverse_etf_hedge_positions = {}
+                        current_inverse_etf_hedge_stocks = []
+                        
+            except Exception as e:
+                print(f"   ⚠️ Inverse ETF Hedge selection failed: {e}")
 
         # === ENHANCED VOLATILITY TRADER STRATEGY ===
         if ENABLE_ENHANCED_VOLATILITY:
@@ -5746,6 +5830,29 @@ def _run_portfolio_backtest_walk_forward(
         volatility_adj_mom_portfolio_value = volatility_adj_mom_invested_value + volatility_adj_mom_cash
         volatility_adj_mom_portfolio_history.append(volatility_adj_mom_portfolio_value)
 
+        # Update INVERSE ETF HEDGE portfolio value daily
+        if ENABLE_INVERSE_ETF_HEDGE:
+            inverse_etf_hedge_invested_value = 0.0
+            for ticker, pos in inverse_etf_hedge_positions.items():
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price_data = ticker_data.loc[ticker_data.index == current_date]
+                        if not current_price_data.empty:
+                            current_price = current_price_data['Close'].iloc[0]
+                            position_value = pos['shares'] * current_price
+                            inverse_etf_hedge_invested_value += position_value
+                            pos['value'] = position_value
+                        else:
+                            inverse_etf_hedge_invested_value += pos.get('value', 0.0)
+                    else:
+                        inverse_etf_hedge_invested_value += pos.get('value', 0.0)
+                except Exception:
+                    inverse_etf_hedge_invested_value += pos.get('value', 0.0)
+            
+            inverse_etf_hedge_portfolio_value = inverse_etf_hedge_invested_value + inverse_etf_hedge_cash
+            inverse_etf_hedge_portfolio_history.append(inverse_etf_hedge_portfolio_value)
+
         # === MOMENTUM + AI HYBRID: Update portfolio value ===
         if ENABLE_MOMENTUM_AI_HYBRID:
             momentum_ai_hybrid_invested_value = 0.0
@@ -6050,6 +6157,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("AI Regime", ai_regime_portfolio_value if ENABLE_AI_REGIME else None),
                 ("AI Regime Mth", ai_regime_monthly_portfolio_value if ENABLE_AI_REGIME_MONTHLY else None),
                 ("Universal Model", universal_model_portfolio_value if ENABLE_UNIVERSAL_MODEL else None),
+                ("Inverse ETF Hedge", inverse_etf_hedge_portfolio_value if ENABLE_INVERSE_ETF_HEDGE else None),
                 ("BH 1Y Monthly", static_bh_1y_monthly_portfolio_value if ENABLE_STATIC_BH_1Y_MONTHLY else None),
                 ("BH 6M Monthly", static_bh_6m_monthly_portfolio_value if ENABLE_STATIC_BH_6M_MONTHLY else None),
                 ("BH 3M Monthly", static_bh_3m_monthly_portfolio_value if ENABLE_STATIC_BH_3M_MONTHLY else None),
@@ -6318,6 +6426,10 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = 0
                     num_positions = meta_allocator.top_k
                     invested = value
+                elif name == "Inverse ETF Hedge" and ENABLE_INVERSE_ETF_HEDGE:
+                    strat_cash = inverse_etf_hedge_cash
+                    num_positions = len(inverse_etf_hedge_positions)
+                    invested = value - strat_cash
                 
                 strategy_details.append((name, value, strat_cash, num_positions, invested))
             
@@ -6377,6 +6489,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("AI Regime", ai_regime_portfolio_history) if ENABLE_AI_REGIME else None,
                 ("AI Regime Mth", ai_regime_monthly_portfolio_history) if ENABLE_AI_REGIME_MONTHLY else None,
                 ("Universal Model", universal_model_portfolio_history) if ENABLE_UNIVERSAL_MODEL else None,
+                ("Inverse ETF Hedge", inverse_etf_hedge_portfolio_history) if ENABLE_INVERSE_ETF_HEDGE else None,
                 ("BH 1Y Monthly", static_bh_1y_monthly_portfolio_history) if ENABLE_STATIC_BH_1Y_MONTHLY else None,
                 ("BH 6M Monthly", static_bh_6m_monthly_portfolio_history) if ENABLE_STATIC_BH_6M_MONTHLY else None,
                 ("BH 3M Monthly", static_bh_3m_monthly_portfolio_history) if ENABLE_STATIC_BH_3M_MONTHLY else None,
@@ -6654,6 +6767,7 @@ def _run_portfolio_backtest_walk_forward(
             'ai_regime':                _strat(ai_regime_portfolio_value, ai_regime_portfolio_history, ai_regime_transaction_costs, ai_regime_cash),
             'ai_regime_monthly':        _strat(ai_regime_monthly_portfolio_value, ai_regime_monthly_portfolio_history, ai_regime_monthly_transaction_costs, ai_regime_monthly_cash),
             'universal_model':          _strat(universal_model_portfolio_value, universal_model_portfolio_history, universal_model_transaction_costs, universal_model_cash),
+            'inverse_etf_hedge':        _strat(inverse_etf_hedge_portfolio_value, inverse_etf_hedge_portfolio_history, inverse_etf_hedge_transaction_costs, inverse_etf_hedge_cash),
             'risk_adj_mom_sentiment':   _strat(risk_adj_mom_sentiment_portfolio_value, risk_adj_mom_sentiment_portfolio_history, risk_adj_mom_sentiment_transaction_costs, risk_adj_mom_sentiment_cash),
             'bh_1y_monthly':            _strat(static_bh_1y_monthly_portfolio_value, static_bh_1y_monthly_portfolio_history, static_bh_1y_monthly_transaction_costs, static_bh_1y_monthly_cash),
             'bh_6m_monthly':            _strat(static_bh_6m_monthly_portfolio_value, static_bh_6m_monthly_portfolio_history, static_bh_6m_monthly_transaction_costs, static_bh_6m_monthly_cash),
