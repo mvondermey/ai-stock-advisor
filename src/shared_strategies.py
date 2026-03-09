@@ -18,7 +18,7 @@ from config import (
     VOLATILITY_ADJ_MOM_MIN_SCORE, DATA_FRESHNESS_MAX_DAYS,
     ENABLE_MULTITASK_LEARNING,
     MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M, MIN_DATA_DAYS_GENERAL,
-    ENABLE_INVERSE_ETF_HEDGE, INVERSE_ETF_HEDGE_THRESHOLD, INVERSE_ETF_HEDGE_ALLOCATION, INVERSE_ETF_HEDGE_PREFERENCE
+    ENABLE_INVERSE_ETF_HEDGE, INVERSE_ETF_HEDGE_THRESHOLD_LOW, INVERSE_ETF_HEDGE_BASE_ALLOCATION, INVERSE_ETF_HEDGE_PREFERENCE
 )
 
 # Multi-task learning strategy removed
@@ -78,11 +78,11 @@ def apply_inverse_etf_hedge(
             market_decline = max(market_decline, abs(value))
     
     # Add hedge if market is down more than threshold
-    if market_decline <= INVERSE_ETF_HEDGE_THRESHOLD:
+    if market_decline <= INVERSE_ETF_HEDGE_THRESHOLD_LOW:
         return selected_stocks
     
     # Calculate how many positions to replace with hedge
-    num_hedge_positions = max(1, int(portfolio_size * INVERSE_ETF_HEDGE_ALLOCATION))
+    num_hedge_positions = max(1, int(portfolio_size * INVERSE_ETF_HEDGE_BASE_ALLOCATION))
     
     # Remove worst performers to make room
     updated_stocks = selected_stocks[:-num_hedge_positions] if len(selected_stocks) > portfolio_size - num_hedge_positions else selected_stocks.copy()
