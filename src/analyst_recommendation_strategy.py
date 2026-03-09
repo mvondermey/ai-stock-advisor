@@ -122,27 +122,27 @@ def calculate_analyst_score(
         to_grade = str(row.get('ToGrade', '')).lower()
         from_grade = str(row.get('FromGrade', '')).lower()
         
-        # Upgrade points
-        if 'upgrade' in action:
+        # Upgrade points ('up' = upgrade)
+        if action == 'up' or 'upgrade' in action:
             if 'buy' in to_grade or 'outperform' in to_grade or 'overweight' in to_grade:
                 score += UPGRADE_TO_BUY_POINTS
             else:
                 score += UPGRADE_TO_HOLD_POINTS
         
-        # Initiate coverage
-        elif 'init' in action:
+        # Initiate coverage ('init' = initiate)
+        elif action == 'init' or 'init' in action:
             if 'buy' in to_grade or 'outperform' in to_grade or 'overweight' in to_grade:
                 score += INITIATE_BUY_POINTS
             else:
                 score += INITIATE_HOLD_POINTS
         
-        # Maintain rating
-        elif 'maintain' in action or 'reiterate' in action:
+        # Maintain rating ('main' = maintain, 'reit' = reiterate)
+        elif action in ('main', 'reit') or 'maintain' in action or 'reiterate' in action:
             if 'buy' in to_grade or 'outperform' in to_grade or 'overweight' in to_grade:
                 score += MAINTAIN_BUY_POINTS
         
-        # Downgrade
-        elif 'downgrade' in action:
+        # Downgrade ('down' = downgrade)
+        elif action == 'down' or 'downgrade' in action:
             score += DOWNGRADE_POINTS
         
         # Price target bonus
