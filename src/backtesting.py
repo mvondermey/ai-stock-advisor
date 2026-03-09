@@ -3373,9 +3373,13 @@ def _run_portfolio_backtest_walk_forward(
                 
                 # Get market conditions
                 market_cond = get_market_conditions(ticker_data_grouped, current_date)
-                spy_3m = market_cond.get('spy_3m', 0)
-                qqq_3m = market_cond.get('qqq_3m', 0)
+                spy_3m = market_cond.get('sp500_3m', 0)  # Key is sp500_3m, not spy_3m
+                qqq_3m = market_cond.get('nasdaq_3m', 0)  # Key is nasdaq_3m, not qqq_3m
                 worst_decline = min(spy_3m, qqq_3m)
+                
+                # Debug: Show market conditions periodically
+                if day_count % 20 == 0:
+                    print(f"   🛡️ Hedge Check: SPY 3M={spy_3m*100:+.1f}%, QQQ 3M={qqq_3m*100:+.1f}%, Threshold={-INVERSE_ETF_HEDGE_THRESHOLD*100:.1f}%")
                 
                 if worst_decline < -INVERSE_ETF_HEDGE_THRESHOLD:
                     # Market is down - select inverse ETFs
