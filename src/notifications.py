@@ -231,9 +231,13 @@ def send_push_notification(
     
     try:
         url = f"{NTFY_SERVER}/{NTFY_TOPIC}"
+        # Encode title to handle emojis (HTTP headers must be ASCII/latin-1)
+        import urllib.parse
+        encoded_title = urllib.parse.quote(title, safe='')
         headers = {
-            "Title": title,
+            "Title": encoded_title,
             "Priority": priority,
+            "Encoding": "utf-8",
         }
         if tags:
             headers["Tags"] = tags
