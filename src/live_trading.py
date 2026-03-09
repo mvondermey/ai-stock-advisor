@@ -436,13 +436,19 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], ticker_data_grou
     """
     print(f"   [DEBUG] Strategy passed = '{strategy}'")
     
-    # FIRST: Try to load from JSON file (preferred - uses backtest results)
+    # Load from JSON file (uses backtest results - no recalculation)
     json_tickers = load_strategy_selections_from_json(strategy)
     if json_tickers:
         print(f"   [INFO] Using backtest selections from JSON file")
         return json_tickers
     
-    print(f"   [WARN] JSON not available, falling back to recalculation...")
+    # No fallback - require JSON file
+    print(f"\n" + "=" * 80)
+    print(f"   [ERROR] Strategy '{strategy}' not found in JSON file!")
+    print(f"   [ERROR] Run backtesting first to generate strategy selections.")
+    print(f"   [ERROR] JSON file: logs/strategy_selections.json")
+    print("=" * 80)
+    return []
 
     if strategy == 'ai_individual' or strategy == 'ai_strategy':
         # AI Strategy: REMOVED - fallback to momentum-based selection
