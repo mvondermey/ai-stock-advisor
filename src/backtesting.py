@@ -126,6 +126,7 @@ from config import (
     TRAINING_NUM_PROCESSES,
     ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_REGIME, ENABLE_UNIVERSAL_MODEL,
     ENABLE_INVERSE_ETF_HEDGE,
+    ENABLE_ANALYST_RECOMMENDATION, ANALYST_LOOKBACK_DAYS, ANALYST_MIN_ACTIONS, ANALYST_REBALANCE_DAYS,
 )
 from scipy.stats import uniform, beta
 
@@ -1841,6 +1842,17 @@ def _run_portfolio_backtest_walk_forward(
     inverse_etf_hedge_portfolio_history = [inverse_etf_hedge_portfolio_value]
     inverse_etf_hedge_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
     inverse_etf_hedge_cash = initial_capital_needed
+
+    # ANALYST RECOMMENDATION: Strategy based on analyst upgrades/downgrades
+    analyst_rec_portfolio_value = initial_capital_needed
+    analyst_rec_portfolio_history = [analyst_rec_portfolio_value]
+    analyst_rec_positions = {}
+    analyst_rec_cash = initial_capital_needed
+    current_analyst_rec_stocks = []
+    analyst_rec_transaction_costs = 0.0
+    analyst_rec_initialized = False
+    analyst_rec_last_rebalance_day = 0
+    analyst_data_cache = {}  # Cache analyst data to avoid repeated API calls
     current_inverse_etf_hedge_stocks = []
     inverse_etf_hedge_transaction_costs = 0.0
     inverse_etf_hedge_initialized = False
@@ -3493,6 +3505,58 @@ def _run_portfolio_backtest_walk_forward(
                         
             except Exception as e:
                 print(f"   ⚠️ Inverse ETF Hedge selection failed: {e}")
+
+        # === ANALYST RECOMMENDATION STRATEGY ===
+        if ENABLE_ANALYST_RECOMMENDATION:
+            try:
+                # Check if it's time to rebalance (weekly by default)
+                should_rebalance_analyst = (
+                    not analyst_rec_initialized or 
+                    (day_count - analyst_rec_last_rebalance_day) >= ANALYST_REBALANCE_DAYS
+                )
+                
+                if should_rebalance_analyst:
+                    from analyst_recommendation_strategy import (
+                        fetch_all_analyst_data, select_analyst_recommendation_stocks
+                    )
+                    
+                    # Fetch analyst data if not cached or cache is old
+                    if not analyst_data_cache:
+                        print(f"   📊 Analyst Recommendation: Fetching analyst data for {len(initial_top_tickers)} tickers...")
+                        analyst_data_cache.update(fetch_all_analyst_data(initial_top_tickers, max_workers=10, show_progress=False))
+                        print(f"   📊 Analyst data available for {len(analyst_data_cache)} tickers")
+                    
+                    # Select stocks based on analyst recommendations
+                    new_analyst_stocks = select_analyst_recommendation_stocks(
+                        tickers=initial_top_tickers,
+                        ticker_data_grouped=ticker_data_grouped,
+                        analyst_data=analyst_data_cache,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE,
+                        lookback_days=ANALYST_LOOKBACK_DAYS,
+                        min_actions=ANALYST_MIN_ACTIONS
+                    )
+                    
+                    if new_analyst_stocks:
+                        # Rebalance portfolio
+                        analyst_rec_positions, analyst_rec_cash, current_analyst_rec_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                            strategy_name="Analyst Rec",
+                            current_stocks=current_analyst_rec_stocks,
+                            new_stocks=new_analyst_stocks,
+                            positions=analyst_rec_positions,
+                            cash=analyst_rec_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not analyst_rec_initialized
+                        )
+                        analyst_rec_transaction_costs += rebalance_costs
+                        analyst_rec_initialized = True
+                        analyst_rec_last_rebalance_day = day_count
+                    
+            except Exception as e:
+                print(f"   ⚠️ Analyst Recommendation selection failed: {e}")
 
         # === ENHANCED VOLATILITY TRADER STRATEGY ===
         if ENABLE_ENHANCED_VOLATILITY:
@@ -5909,6 +5973,30 @@ def _run_portfolio_backtest_walk_forward(
             inverse_etf_hedge_portfolio_value = inverse_etf_hedge_invested_value + inverse_etf_hedge_cash
             inverse_etf_hedge_portfolio_history.append(inverse_etf_hedge_portfolio_value)
 
+        # Update ANALYST RECOMMENDATION portfolio value daily
+        if ENABLE_ANALYST_RECOMMENDATION:
+            analyst_rec_invested_value = 0.0
+            for ticker, pos in analyst_rec_positions.items():
+                try:
+                    if ticker in ticker_data_grouped:
+                        ticker_data = ticker_data_grouped[ticker]
+                        valid_prices = ticker_data[ticker_data.index <= current_date]['Close'].dropna()
+                        if len(valid_prices) > 0:
+                            current_price = valid_prices.iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                position_value = pos['shares'] * current_price
+                                analyst_rec_positions[ticker]['value'] = position_value
+                                analyst_rec_invested_value += position_value
+                            else:
+                                analyst_rec_invested_value += pos.get('value', 0.0)
+                        else:
+                            analyst_rec_invested_value += pos.get('value', 0.0)
+                except Exception:
+                    analyst_rec_invested_value += pos.get('value', 0.0)
+            
+            analyst_rec_portfolio_value = analyst_rec_invested_value + analyst_rec_cash
+            analyst_rec_portfolio_history.append(analyst_rec_portfolio_value)
+
         # === MOMENTUM + AI HYBRID: Update portfolio value ===
         if ENABLE_MOMENTUM_AI_HYBRID:
             momentum_ai_hybrid_invested_value = 0.0
@@ -6214,6 +6302,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("AI Regime Mth", ai_regime_monthly_portfolio_value if ENABLE_AI_REGIME_MONTHLY else None),
                 ("Universal Model", universal_model_portfolio_value if ENABLE_UNIVERSAL_MODEL else None),
                 ("Inverse ETF Hedge", inverse_etf_hedge_portfolio_value if ENABLE_INVERSE_ETF_HEDGE else None),
+                ("Analyst Rec", analyst_rec_portfolio_value if ENABLE_ANALYST_RECOMMENDATION else None),
                 ("BH 1Y Monthly", static_bh_1y_monthly_portfolio_value if ENABLE_STATIC_BH_1Y_MONTHLY else None),
                 ("BH 6M Monthly", static_bh_6m_monthly_portfolio_value if ENABLE_STATIC_BH_6M_MONTHLY else None),
                 ("BH 3M Monthly", static_bh_3m_monthly_portfolio_value if ENABLE_STATIC_BH_3M_MONTHLY else None),
@@ -6486,6 +6575,10 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = inverse_etf_hedge_cash
                     num_positions = len(inverse_etf_hedge_positions)
                     invested = value - strat_cash
+                elif name == "Analyst Rec" and ENABLE_ANALYST_RECOMMENDATION:
+                    strat_cash = analyst_rec_cash
+                    num_positions = len(analyst_rec_positions)
+                    invested = value - strat_cash
                 
                 strategy_details.append((name, value, strat_cash, num_positions, invested))
             
@@ -6546,6 +6639,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("AI Regime Mth", ai_regime_monthly_portfolio_history) if ENABLE_AI_REGIME_MONTHLY else None,
                 ("Universal Model", universal_model_portfolio_history) if ENABLE_UNIVERSAL_MODEL else None,
                 ("Inverse ETF Hedge", inverse_etf_hedge_portfolio_history) if ENABLE_INVERSE_ETF_HEDGE else None,
+                ("Analyst Rec", analyst_rec_portfolio_history) if ENABLE_ANALYST_RECOMMENDATION else None,
                 ("BH 1Y Monthly", static_bh_1y_monthly_portfolio_history) if ENABLE_STATIC_BH_1Y_MONTHLY else None,
                 ("BH 6M Monthly", static_bh_6m_monthly_portfolio_history) if ENABLE_STATIC_BH_6M_MONTHLY else None,
                 ("BH 3M Monthly", static_bh_3m_monthly_portfolio_history) if ENABLE_STATIC_BH_3M_MONTHLY else None,
@@ -6828,6 +6922,7 @@ def _run_portfolio_backtest_walk_forward(
             'ai_regime_monthly':        _strat(ai_regime_monthly_portfolio_value, ai_regime_monthly_portfolio_history, ai_regime_monthly_transaction_costs, ai_regime_monthly_cash),
             'universal_model':          _strat(universal_model_portfolio_value, universal_model_portfolio_history, universal_model_transaction_costs, universal_model_cash),
             'inverse_etf_hedge':        _strat(inverse_etf_hedge_portfolio_value, inverse_etf_hedge_portfolio_history, inverse_etf_hedge_transaction_costs, inverse_etf_hedge_cash),
+            'analyst_rec':              _strat(analyst_rec_portfolio_value, analyst_rec_portfolio_history, analyst_rec_transaction_costs, analyst_rec_cash),
             'risk_adj_mom_sentiment':   _strat(risk_adj_mom_sentiment_portfolio_value, risk_adj_mom_sentiment_portfolio_history, risk_adj_mom_sentiment_transaction_costs, risk_adj_mom_sentiment_cash),
             'bh_1y_monthly':            _strat(static_bh_1y_monthly_portfolio_value, static_bh_1y_monthly_portfolio_history, static_bh_1y_monthly_transaction_costs, static_bh_1y_monthly_cash),
             'bh_6m_monthly':            _strat(static_bh_6m_monthly_portfolio_value, static_bh_6m_monthly_portfolio_history, static_bh_6m_monthly_transaction_costs, static_bh_6m_monthly_cash),

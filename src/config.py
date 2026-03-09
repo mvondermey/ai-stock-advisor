@@ -445,6 +445,12 @@ INVERSE_ETF_HEDGE_MAX_ALLOCATION = 0.80     # Max 80% in hedge (never 100%)
 INVERSE_ETF_HEDGE_PREFERENCE = ['SOXS', 'SQQQ', 'SPXU', 'FAZ', 'SH', 'PSQ']  # Preferred hedge ETFs
 INVERSE_ETF_HEDGE_MIN_HOLD_DAYS = 5         # Minimum days to hold hedge before exiting (prevents whipsaw)
 
+# --- Analyst Recommendation Strategy ---
+ENABLE_ANALYST_RECOMMENDATION = True        # Enable analyst recommendation strategy
+ANALYST_LOOKBACK_DAYS = 60                  # Days to look back for analyst actions
+ANALYST_MIN_ACTIONS = 1                     # Minimum analyst actions required
+ANALYST_REBALANCE_DAYS = 7                  # Rebalance weekly (analyst data doesn't change daily)
+
 # --- Strategy-Specific Stop Loss Configuration ---
 # All stop loss values respect the global ENABLE_STOP_LOSS flag
 # Based on backtest analysis: Some strategies benefit from stop loss, others don't
