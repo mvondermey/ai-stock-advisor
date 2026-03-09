@@ -1062,8 +1062,16 @@ def main(
         print(f"Exception message: {str(e)}")
         print("\nFull traceback:")
         import traceback
-        traceback.print_exc()
+        tb_str = traceback.format_exc()
+        print(tb_str)
         print("="*100 + "\n")
+        
+        # Send error notification
+        send_error_notification(
+            error_type=type(e).__name__,
+            error_message=str(e),
+            traceback_str=tb_str
+        )
         raise
     
     # AI Strategy removed - compute return using portfolio initial capital for consistency
