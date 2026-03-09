@@ -221,7 +221,7 @@ def select_analyst_recommendation_stocks(
             lookback_days
         )
         
-        if num_actions >= min_actions:
+        if num_actions >= min_actions and score > 0:
             scores.append((ticker, score, num_actions))
     
     # Sort by score descending
