@@ -271,7 +271,7 @@ def send_push_success(backtest_time_minutes: float, top_strategy: str = None, to
 def send_push_error(error_type: str, error_message: str):
     """Send error push notification."""
     send_push_notification(
-        title=f"❌ {error_type}",
+        title=f"ERROR: {error_type}",
         message=error_message[:200],  # Truncate long messages
         priority="high",
         tags="warning,skull"
