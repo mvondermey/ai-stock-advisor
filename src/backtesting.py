@@ -1844,6 +1844,7 @@ def _run_portfolio_backtest_walk_forward(
     current_inverse_etf_hedge_stocks = []
     inverse_etf_hedge_transaction_costs = 0.0
     inverse_etf_hedge_initialized = False
+    inverse_etf_hedge_days_in_hedge = 0  # Track days in hedge for minimum hold period
 
     # Reset global transaction cost tracking variables for this backtest
     global static_bh_transaction_costs, static_bh_3m_transaction_costs, static_bh_6m_transaction_costs, static_bh_1m_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_transaction_costs
@@ -3369,7 +3370,10 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_INVERSE_ETF_HEDGE:
             try:
                 from shared_strategies import get_market_conditions
-                from config import INVERSE_ETF_HEDGE_THRESHOLD, INVERSE_ETF_HEDGE_PREFERENCE, INVERSE_ETFS
+                from config import (INVERSE_ETF_HEDGE_THRESHOLD_LOW, INVERSE_ETF_HEDGE_THRESHOLD_MED, 
+                                    INVERSE_ETF_HEDGE_THRESHOLD_HIGH, INVERSE_ETF_HEDGE_BASE_ALLOCATION,
+                                    INVERSE_ETF_HEDGE_MAX_ALLOCATION, INVERSE_ETF_HEDGE_PREFERENCE, 
+                                    INVERSE_ETF_HEDGE_MIN_HOLD_DAYS)
                 
                 # Get market conditions
                 market_cond = get_market_conditions(ticker_data_grouped, current_date)
@@ -3379,11 +3383,44 @@ def _run_portfolio_backtest_walk_forward(
                 
                 # Debug: Show market conditions periodically
                 if day_count % 20 == 0:
-                    print(f"   🛡️ Hedge Check: SPY 3M={spy_3m*100:+.1f}%, QQQ 3M={qqq_3m*100:+.1f}%, Threshold={-INVERSE_ETF_HEDGE_THRESHOLD*100:.1f}%")
+                    print(f"   🛡️ Hedge Check: SPY 3M={spy_3m*100:+.1f}%, QQQ 3M={qqq_3m*100:+.1f}%, Worst={worst_decline*100:+.1f}%")
                 
-                if worst_decline < -INVERSE_ETF_HEDGE_THRESHOLD:
-                    # Market is down - select inverse ETFs
-                    # Pick the best performing inverse ETF from preference list
+                # === HYBRID INVERSE ETF HEDGE LOGIC ===
+                # Gradual scaling based on market stress:
+                # - 5% decline -> 20% hedge allocation
+                # - 10% decline -> 50% hedge allocation  
+                # - 15% decline -> 80% hedge allocation
+                # Always keep 20% in equity, never go 100% hedge
+                
+                market_decline = abs(worst_decline) if worst_decline < 0 else 0
+                
+                # Calculate target hedge allocation
+                if market_decline >= INVERSE_ETF_HEDGE_THRESHOLD_HIGH:
+                    target_hedge_pct = INVERSE_ETF_HEDGE_MAX_ALLOCATION  # 80% hedge
+                elif market_decline >= INVERSE_ETF_HEDGE_THRESHOLD_MED:
+                    target_hedge_pct = 0.50  # 50% hedge
+                elif market_decline >= INVERSE_ETF_HEDGE_THRESHOLD_LOW:
+                    target_hedge_pct = INVERSE_ETF_HEDGE_BASE_ALLOCATION  # 20% hedge
+                else:
+                    target_hedge_pct = 0.0  # No hedge
+                
+                # Determine if we should be in hedge mode
+                in_hedge_mode = target_hedge_pct > 0
+                
+                # Minimum hold days check - prevent whipsaw
+                if current_inverse_etf_hedge_stocks and not in_hedge_mode:
+                    if inverse_etf_hedge_days_in_hedge < INVERSE_ETF_HEDGE_MIN_HOLD_DAYS:
+                        # Force continue hedge for minimum hold period
+                        in_hedge_mode = True
+                        target_hedge_pct = INVERSE_ETF_HEDGE_BASE_ALLOCATION  # Keep at least 20% hedge
+                        if day_count % 20 == 0:
+                            print(f"   🛡️ Hedge hold period: {inverse_etf_hedge_days_in_hedge}/{INVERSE_ETF_HEDGE_MIN_HOLD_DAYS} days (preventing whipsaw)")
+                
+                if in_hedge_mode and market_decline > 0:
+                    # Market is down - select inverse ETFs based on allocation level
+                    inverse_etf_hedge_days_in_hedge += 1
+                    
+                    # Pick the best performing inverse ETFs from preference list
                     inverse_etf_scores = []
                     for etf in INVERSE_ETF_HEDGE_PREFERENCE:
                         if etf in ticker_data_grouped:
@@ -3398,16 +3435,18 @@ def _run_portfolio_backtest_walk_forward(
                                 pass
                     
                     if inverse_etf_scores:
-                        # Sort by performance and pick top 2
+                        # Sort by performance and pick top 2-4 based on allocation
                         inverse_etf_scores.sort(key=lambda x: x[1], reverse=True)
-                        new_inverse_etf_stocks = [etf for etf, _ in inverse_etf_scores[:2]]
+                        # Scale number of ETFs with allocation level
+                        num_etfs = 2 if target_hedge_pct <= 0.30 else 3 if target_hedge_pct <= 0.60 else 4
+                        new_inverse_etf_stocks = [etf for etf, _ in inverse_etf_scores[:num_etfs]]
                         
                         if new_inverse_etf_stocks != current_inverse_etf_hedge_stocks:
-                            print(f"   🛡️ Inverse ETF Hedge: Market down {abs(worst_decline)*100:.1f}%, selecting {new_inverse_etf_stocks}")
+                            print(f"   🛡️ Hybrid Hedge: Market down {market_decline:.1%} -> {target_hedge_pct:.0%} allocation, selecting {new_inverse_etf_stocks}")
                             
                             # Rebalance to inverse ETFs
                             inverse_etf_hedge_positions, inverse_etf_hedge_cash, current_inverse_etf_hedge_stocks, rebalance_costs = _smart_rebalance_portfolio(
-                                strategy_name="Inverse ETF Hedge",
+                                strategy_name="Hybrid Inverse ETF Hedge",
                                 current_stocks=current_inverse_etf_hedge_stocks,
                                 new_stocks=new_inverse_etf_stocks,
                                 positions=inverse_etf_hedge_positions,
@@ -3415,7 +3454,7 @@ def _run_portfolio_backtest_walk_forward(
                                 ticker_data_grouped=ticker_data_grouped,
                                 current_date=current_date,
                                 transaction_cost=TRANSACTION_COST,
-                                portfolio_size=2,  # Only hold 2 inverse ETFs
+                                portfolio_size=len(new_inverse_etf_stocks),
                                 force_rebalance=not inverse_etf_hedge_initialized
                             )
                             inverse_etf_hedge_transaction_costs += rebalance_costs
@@ -3423,15 +3462,17 @@ def _run_portfolio_backtest_walk_forward(
                             
                             # Log detailed allocation
                             total_invested = sum(p['shares'] * p['avg_price'] for p in inverse_etf_hedge_positions.values())
-                            print(f"   🛡️ Hedge Allocation: Cash=${inverse_etf_hedge_cash:,.0f}, Invested=${total_invested:,.0f}")
+                            print(f"   🛡️ Hedge Active: {target_hedge_pct:.0%} allocation, Cash=${inverse_etf_hedge_cash:,.0f}, Invested=${total_invested:,.0f}, Days in hedge={inverse_etf_hedge_days_in_hedge}")
                             for etf, pos in inverse_etf_hedge_positions.items():
                                 value = pos['shares'] * pos['avg_price']
                                 pct = (value / (total_invested + inverse_etf_hedge_cash)) * 100 if (total_invested + inverse_etf_hedge_cash) > 0 else 0
                                 print(f"      📈 {etf}: {pos['shares']:.0f} shares @ ${pos['avg_price']:.2f} = ${value:,.0f} ({pct:.1f}%)")
                 else:
-                    # Market is up - sell all inverse ETFs and hold cash
+                    # Market is up or recovery period - reset hedge days and sell all inverse ETFs
                     if current_inverse_etf_hedge_stocks:
-                        print(f"   🛡️ Inverse ETF Hedge: Market up, selling inverse ETFs and holding cash")
+                        print(f"   🛡️ Hybrid Hedge: Market recovered (SPY={spy_3m*100:+.1f}%, QQQ={qqq_3m*100:+.1f}%), selling hedge after {inverse_etf_hedge_days_in_hedge} days")
+                        inverse_etf_hedge_days_in_hedge = 0  # Reset counter
+                        
                         # Sell all positions
                         for ticker, pos in list(inverse_etf_hedge_positions.items()):
                             if ticker in ticker_data_grouped:
@@ -3442,10 +3483,12 @@ def _run_portfolio_backtest_walk_forward(
                                     sell_cost = sell_value * TRANSACTION_COST
                                     inverse_etf_hedge_cash += sell_value - sell_cost
                                     inverse_etf_hedge_transaction_costs += sell_cost
-                                    print(f"   💰 Inverse ETF Hedge Selling {ticker}: {pos['shares']:.0f} shares @ ${current_price:.2f}")
+                                    print(f"   💰 Selling {ticker}: {pos['shares']:.0f} shares @ ${current_price:.2f}")
                                 except:
                                     pass
                         inverse_etf_hedge_positions = {}
+                        current_inverse_etf_hedge_stocks = []
+                        print(f"   🛡️ Hedge closed. Holding cash: ${inverse_etf_hedge_cash:,.0f}")
                         current_inverse_etf_hedge_stocks = []
                         
             except Exception as e:

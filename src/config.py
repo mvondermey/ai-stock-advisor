@@ -433,10 +433,17 @@ ENABLE_PROFIT_GUARD     = False      # Sell stocks when not in top 10 (no profit
 
 # --- Inverse ETF Hedge Strategy ---
 # Instead of stop losses, add inverse ETFs during market downturns
+# NEW: Hybrid approach - gradual scaling based on market stress
 ENABLE_INVERSE_ETF_HEDGE = True     # Add inverse ETFs when market crashes
-INVERSE_ETF_HEDGE_THRESHOLD = 0.03   # Add hedge when market down >3% (was 10%)
-INVERSE_ETF_HEDGE_ALLOCATION = 0.20  # Allocate 20% to inverse ETFs
+# Gradual scaling thresholds (market decline % -> hedge allocation %)
+# Example: market down 5% -> 20% hedge, down 10% -> 50% hedge, down 15% -> 80% hedge
+INVERSE_ETF_HEDGE_THRESHOLD_LOW = 0.05    # 5% decline = 20% hedge
+INVERSE_ETF_HEDGE_THRESHOLD_MED = 0.10      # 10% decline = 50% hedge  
+INVERSE_ETF_HEDGE_THRESHOLD_HIGH = 0.15     # 15% decline = 80% hedge
+INVERSE_ETF_HEDGE_BASE_ALLOCATION = 0.20    # Always keep 20% in equity (never 100% hedge)
+INVERSE_ETF_HEDGE_MAX_ALLOCATION = 0.80     # Max 80% in hedge (never 100%)
 INVERSE_ETF_HEDGE_PREFERENCE = ['SOXS', 'SQQQ', 'SPXU', 'FAZ', 'SH', 'PSQ']  # Preferred hedge ETFs
+INVERSE_ETF_HEDGE_MIN_HOLD_DAYS = 5         # Minimum days to hold hedge before exiting (prevents whipsaw)
 
 # --- Strategy-Specific Stop Loss Configuration ---
 # All stop loss values respect the global ENABLE_STOP_LOSS flag
