@@ -232,6 +232,8 @@ def select_analyst_recommendation_stocks(
     # Return top N
     selected = [ticker for ticker, score, _ in scores[:top_n]]
     
+    # Always print debug info
+    print(f"   [Analyst] Processed {len(tickers)} -> {len(scores)} scored -> {len(selected)} selected")
     if selected:
         import sys
         try:
