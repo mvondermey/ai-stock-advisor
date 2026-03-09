@@ -197,18 +197,12 @@ def select_analyst_recommendation_stocks(
         
         price_df = ticker_data_grouped[ticker]
         try:
-            # Filter to data before current_date
-            if hasattr(price_df.index, 'tz') and price_df.index.tz is not None:
-                current_date_tz = pd.Timestamp(current_date).tz_localize(price_df.index.tz)
-                valid_prices = price_df[price_df.index <= current_date_tz]
-            else:
-                valid_prices = price_df[price_df.index <= current_date]
-            
-            if valid_prices.empty:
+            if price_df is None or price_df.empty:
                 continue
             
-            current_price = valid_prices['Close'].iloc[-1]
-            if pd.isna(current_price) or current_price <= 0:
+            # Get latest close price
+            current_price = float(price_df['Close'].dropna().iloc[-1])
+            if current_price <= 0:
                 continue
         except Exception:
             continue
