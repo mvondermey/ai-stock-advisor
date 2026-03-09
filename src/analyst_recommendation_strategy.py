@@ -200,8 +200,16 @@ def select_analyst_recommendation_stocks(
             if price_df is None or price_df.empty:
                 continue
             
-            # Get latest close price
-            current_price = float(price_df['Close'].dropna().iloc[-1])
+            # Get close price at current_date (for backtesting)
+            # Convert current_date to timestamp for comparison
+            current_ts = pd.Timestamp(current_date).tz_localize(None)
+            price_idx = price_df.index.tz_localize(None) if price_df.index.tz else price_df.index
+            valid_prices = price_df[price_idx <= current_ts]['Close'].dropna()
+            
+            if len(valid_prices) == 0:
+                continue
+            
+            current_price = float(valid_prices.iloc[-1])
             if current_price <= 0:
                 continue
         except Exception:
