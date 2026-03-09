@@ -6512,7 +6512,11 @@ def _run_portfolio_backtest_walk_forward(
                 std_dev = calculate_std_dev(strategy_to_history.get(name, []))
                 
                 allocation_pct = (invested / value * 100) if value > 0 and invested > 0 else 0
-                print(f"{i:<5} {name:<20} ${value:>11,.0f} {return_pct:>+8.1f}% {std_dev:>7.1f}% {annualized_return:>+9.1f}% ${strat_cash:>11,.0f} {num_pos:>5}")
+                # Add visual marker for special strategies
+                display_name = name
+                if name == "Inverse ETF Hedge":
+                    display_name = "🛡️ Inv ETF Hedge"
+                print(f"{i:<5} {display_name:<20} ${value:>11,.0f} {return_pct:>+8.1f}% {std_dev:>7.1f}% {annualized_return:>+9.1f}% ${strat_cash:>11,.0f} {num_pos:>5}")
             
             
             # Show Top 5 Consistency Score
