@@ -231,7 +231,11 @@ def select_analyst_recommendation_stocks(
     selected = [ticker for ticker, score, _ in scores[:top_n]]
     
     if selected:
-        print(f"   [Analyst] Top {len(selected)} by score")
+        import sys
+        try:
+            print(f"   📊 Analyst Recommendations: Top {len(selected)} by score")
+        except UnicodeEncodeError:
+            print(f"   [Analyst] Top {len(selected)} by score")
         for ticker, score, num_actions in scores[:min(5, len(scores))]:
             print(f"      {ticker}: score={score:.1f} ({num_actions} actions)")
     

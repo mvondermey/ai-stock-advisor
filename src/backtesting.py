@@ -3522,9 +3522,15 @@ def _run_portfolio_backtest_walk_forward(
                     
                     # Fetch analyst data if not cached or cache is old
                     if not analyst_data_cache:
-                        print(f"   📊 Analyst Recommendation: Fetching analyst data for {len(initial_top_tickers)} tickers...")
+                        try:
+                            print(f"   📊 Analyst Recommendation: Fetching analyst data for {len(initial_top_tickers)} tickers...")
+                        except UnicodeEncodeError:
+                            print(f"   [Analyst] Fetching analyst data for {len(initial_top_tickers)} tickers...")
                         analyst_data_cache.update(fetch_all_analyst_data(initial_top_tickers, max_workers=10, show_progress=False))
-                        print(f"   📊 Analyst data available for {len(analyst_data_cache)} tickers")
+                        try:
+                            print(f"   📊 Analyst data available for {len(analyst_data_cache)} tickers")
+                        except UnicodeEncodeError:
+                            print(f"   [Analyst] Data available for {len(analyst_data_cache)} tickers")
                     
                     # Select stocks based on analyst recommendations
                     new_analyst_stocks = select_analyst_recommendation_stocks(
@@ -3556,7 +3562,10 @@ def _run_portfolio_backtest_walk_forward(
                         analyst_rec_last_rebalance_day = day_count
                     
             except Exception as e:
-                print(f"   ⚠️ Analyst Recommendation selection failed: {e}")
+                try:
+                    print(f"   ⚠️ Analyst Recommendation selection failed: {e}")
+                except UnicodeEncodeError:
+                    print(f"   [ERROR] Analyst Recommendation selection failed: {e}")
 
         # === ENHANCED VOLATILITY TRADER STRATEGY ===
         if ENABLE_ENHANCED_VOLATILITY:
