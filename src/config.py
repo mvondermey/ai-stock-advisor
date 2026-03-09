@@ -49,6 +49,12 @@ TWELVEDATA_MAX_WORKERS  = 5  # Max parallel API requests (free tier: 800 credits
 ALPHA_VANTAGE_API_KEY   = "6WMZFFL86AE6QK2R"  # Get free key from https://www.alphavantage.co/support/#api-key
 ALPHA_VANTAGE_MAX_CALLS_PER_MINUTE = 25  # Free tier limit
 
+# --- Push Notifications (ntfy.sh) ---
+# Setup: Install ntfy app on phone, subscribe to your topic
+NTFY_ENABLED = True  # Enable push notifications
+NTFY_TOPIC = "ai-stock-mvondermey"  # Your unique topic name (change this!)
+NTFY_SERVER = "https://ntfy.sh"  # Default ntfy server
+
 # --- ML Library Availability Flags (initialized to False, updated in main.py) ---
 ALPACA_AVAILABLE = False
 TWELVEDATA_SDK_AVAILABLE = True  # Runtime detection will confirm availability

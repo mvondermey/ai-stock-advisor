@@ -20,11 +20,8 @@ EMAIL_USERNAME = os.environ.get('EMAIL_USERNAME', '')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
 EMAIL_TO = os.environ.get('EMAIL_TO', EMAIL_USERNAME)  # Default to self if not specified
 
-# ntfy.sh push notification configuration (easiest option - no account needed)
-# Set NTFY_TOPIC to your unique topic name (e.g., "ai-stock-advisor-yourname")
-NTFY_ENABLED = os.environ.get('NTFY_ENABLED', 'False').lower() == 'true'
-NTFY_TOPIC = os.environ.get('NTFY_TOPIC', 'ai-stock-advisor')
-NTFY_SERVER = os.environ.get('NTFY_SERVER', 'https://ntfy.sh')
+# ntfy.sh push notification configuration - imported from config.py
+from config import NTFY_ENABLED, NTFY_TOPIC, NTFY_SERVER
 
 def send_completion_notification(
     subject: str,
@@ -227,7 +224,9 @@ def send_push_notification(
     Returns:
         bool: True if sent successfully
     """
+    print(f"   [DEBUG] Push notification: NTFY_ENABLED={NTFY_ENABLED}, NTFY_TOPIC={NTFY_TOPIC}")
     if not NTFY_ENABLED:
+        print(f"   [WARN] Push notifications disabled (NTFY_ENABLED=false)")
         return False
     
     try:
