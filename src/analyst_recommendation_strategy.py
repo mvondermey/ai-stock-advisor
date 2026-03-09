@@ -91,20 +91,25 @@ def calculate_analyst_score(
         
     Returns:
         Tuple of (score, num_actions)
+        
+    Note: Yahoo Finance only provides recent analyst data (last few months).
+    For backtesting, we use the most recent N days of available data regardless
+    of the backtest date. This introduces forward-looking bias but allows
+    testing the strategy logic. For live trading, dates will match correctly.
     """
     if analyst_df is None or analyst_df.empty:
         return 0.0, 0
     
-    # Filter to actions before current_date and within lookback period
-    cutoff_date = current_date - timedelta(days=lookback_days)
-    
-    # Handle timezone-aware index
-    if analyst_df.index.tz is not None:
-        current_date = pd.Timestamp(current_date).tz_localize(analyst_df.index.tz)
-        cutoff_date = pd.Timestamp(cutoff_date).tz_localize(analyst_df.index.tz)
-    
-    mask = (analyst_df.index <= current_date) & (analyst_df.index >= cutoff_date)
-    recent_actions = analyst_df[mask]
+    # Get the most recent analyst actions (last N days of available data)
+    # This is necessary because Yahoo only provides current data, not historical
+    if len(analyst_df) > 0:
+        most_recent_date = analyst_df.index.max()
+        cutoff_date = most_recent_date - timedelta(days=lookback_days)
+        
+        mask = analyst_df.index >= cutoff_date
+        recent_actions = analyst_df[mask]
+    else:
+        recent_actions = analyst_df
     
     if recent_actions.empty:
         return 0.0, 0
@@ -226,7 +231,7 @@ def select_analyst_recommendation_stocks(
     selected = [ticker for ticker, score, _ in scores[:top_n]]
     
     if selected:
-        print(f"   📊 Analyst Recommendations: Top {len(selected)} by score")
+        print(f"   [Analyst] Top {len(selected)} by score")
         for ticker, score, num_actions in scores[:min(5, len(scores))]:
             print(f"      {ticker}: score={score:.1f} ({num_actions} actions)")
     
