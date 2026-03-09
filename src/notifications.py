@@ -10,6 +10,7 @@ from datetime import datetime
 import os
 from typing import Optional
 import traceback
+import requests
 
 # Email configuration (set as environment variables for security)
 EMAIL_ENABLED = os.environ.get('EMAIL_ENABLED', 'False').lower() == 'true'
@@ -18,6 +19,12 @@ EMAIL_SMTP_PORT = int(os.environ.get('EMAIL_SMTP_PORT', '587'))
 EMAIL_USERNAME = os.environ.get('EMAIL_USERNAME', '')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
 EMAIL_TO = os.environ.get('EMAIL_TO', EMAIL_USERNAME)  # Default to self if not specified
+
+# ntfy.sh push notification configuration (easiest option - no account needed)
+# Set NTFY_TOPIC to your unique topic name (e.g., "ai-stock-advisor-yourname")
+NTFY_ENABLED = os.environ.get('NTFY_ENABLED', 'False').lower() == 'true'
+NTFY_TOPIC = os.environ.get('NTFY_TOPIC', 'ai-stock-advisor')
+NTFY_SERVER = os.environ.get('NTFY_SERVER', 'https://ntfy.sh')
 
 def send_completion_notification(
     subject: str,
@@ -149,21 +156,120 @@ def send_backtesting_notification(
     )
 
 def send_error_notification(
-    operation: str,
-    error: Exception,
+    error_type: str = None,
+    error_message: str = None,
+    traceback_str: str = None,
+    operation: str = None,
+    error: Exception = None,
     context: Optional[str] = None
 ) -> bool:
     """Send notification about critical errors."""
     
-    error_details = f"Operation: {operation}\n"
-    if context:
-        error_details += f"Context: {context}\n"
-    error_details += f"Error: {str(error)}\n"
-    error_details += f"Traceback:\n{traceback.format_exc()}"
+    # Support both old and new calling conventions
+    if error_type and error_message:
+        # New style: called with error_type, error_message, traceback_str
+        op = operation or "Backtesting"
+        error_details = f"Error Type: {error_type}\n"
+        error_details += f"Error Message: {error_message}\n"
+        if traceback_str:
+            error_details += f"Traceback:\n{traceback_str}"
+    else:
+        # Old style: called with operation, error, context
+        op = operation or "Unknown"
+        error_details = f"Operation: {op}\n"
+        if context:
+            error_details += f"Context: {context}\n"
+        if error:
+            error_details += f"Error: {str(error)}\n"
+        error_details += f"Traceback:\n{traceback.format_exc()}"
+    
+    # Send push notification
+    send_push_notification(
+        title=f"❌ Error: {op}",
+        message=error_message or str(error) or "Unknown error",
+        priority="high",
+        tags="warning"
+    )
     
     return send_completion_notification(
-        subject=f"Critical Error: {operation}",
-        message_body=f"❌ A critical error occurred during {operation}",
+        subject=f"Critical Error: {op}",
+        message_body=f"❌ A critical error occurred during {op}",
         success=False,
         error_details=error_details
+    )
+
+# =============================================================================
+# ntfy.sh Push Notifications (easiest - no account needed)
+# =============================================================================
+
+def send_push_notification(
+    title: str,
+    message: str,
+    priority: str = "default",
+    tags: str = None
+) -> bool:
+    """
+    Send push notification via ntfy.sh.
+    
+    Setup:
+    1. Install ntfy app on your phone (iOS/Android)
+    2. Subscribe to your topic (e.g., "ai-stock-advisor-yourname")
+    3. Set environment variables:
+       export NTFY_ENABLED=true
+       export NTFY_TOPIC=ai-stock-advisor-yourname
+    
+    Args:
+        title: Notification title
+        message: Notification body
+        priority: "min", "low", "default", "high", "urgent"
+        tags: Comma-separated emoji tags (e.g., "warning,skull")
+    
+    Returns:
+        bool: True if sent successfully
+    """
+    if not NTFY_ENABLED:
+        return False
+    
+    try:
+        url = f"{NTFY_SERVER}/{NTFY_TOPIC}"
+        headers = {
+            "Title": title,
+            "Priority": priority,
+        }
+        if tags:
+            headers["Tags"] = tags
+        
+        response = requests.post(url, data=message.encode('utf-8'), headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            print(f"📱 Push notification sent to topic '{NTFY_TOPIC}'")
+            return True
+        else:
+            print(f"⚠️ Push notification failed: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"⚠️ Push notification error: {e}")
+        return False
+
+def send_push_success(backtest_time_minutes: float, top_strategy: str = None, top_return: float = None):
+    """Send success push notification with summary."""
+    message = f"Backtest completed in {backtest_time_minutes:.1f} min"
+    if top_strategy and top_return is not None:
+        message += f"\n🏆 Best: {top_strategy} ({top_return:+.1f}%)"
+    
+    send_push_notification(
+        title="✅ Backtest Complete",
+        message=message,
+        priority="default",
+        tags="chart_with_upwards_trend,white_check_mark"
+    )
+
+def send_push_error(error_type: str, error_message: str):
+    """Send error push notification."""
+    send_push_notification(
+        title=f"❌ {error_type}",
+        message=error_message[:200],  # Truncate long messages
+        priority="high",
+        tags="warning,skull"
     )

@@ -164,7 +164,7 @@ import os
 # from portfolio_rebalancing import run_portfolio_rebalancing_backtest  # Module deleted
 # from rule_based_strategy import run_rule_based_portfolio_strategy  # Module deleted
 from summary_phase import print_final_summary
-from notifications import send_training_notification, send_backtesting_notification, send_error_notification
+from notifications import send_training_notification, send_backtesting_notification, send_error_notification, send_push_success
 from backtesting_phase import _run_portfolio_backtest_walk_forward
 from data_validation import get_data_summary, print_data_diagnostics, InsufficientDataError
 from selection_backtester import run_selection_strategy_comparison, print_strategy_stock_overlap
@@ -1645,6 +1645,14 @@ def main(
         send_backtesting_notification(
             strategy_results=strategy_results,
             backtest_time_minutes=backtest_time_minutes
+        )
+        
+        # Send push notification with best strategy
+        best_strategy = max(strategy_results.items(), key=lambda x: x[1].get('return', 0)) if strategy_results else None
+        send_push_success(
+            backtest_time_minutes=backtest_time_minutes,
+            top_strategy=best_strategy[0] if best_strategy else None,
+            top_return=best_strategy[1].get('return') if best_strategy else None
         )
     
     # Send final completion notification
