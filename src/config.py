@@ -375,6 +375,13 @@ INVERSE_ETFS = [
     'QID',   # ProShares UltraShort QQQ (2x)
     'DXD',   # ProShares UltraShort Dow 30 (2x)
     'TWM',   # ProShares UltraShort Russell 2000 (2x)
+    # 3x leveraged inverse ETFs (VERY HIGH RISK - decay rapidly, only for hedging)
+    'SOXS',  # Direxion Daily Semiconductor Bear 3X
+    'SQQQ',  # ProShares UltraPro Short QQQ (3x)
+    'SPXU',  # ProShares UltraPro Short S&P 500 (3x)
+    'FAZ',   # Direxion Daily Financial Bear 3X
+    'TZA',   # Direxion Daily Small Cap Bear 3X
+    'TECS',  # Direxion Daily Technology Bear 3X
 ]
 
 # Inverse ETF Performance Filters (more lenient than regular stocks)

@@ -2342,7 +2342,8 @@ def select_voting_ensemble_stocks(all_tickers, ticker_data_grouped, current_date
 
 
 def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days, top_n=10,
-                          apply_performance_filter=False, filter_label="Strategy"):
+                          apply_performance_filter=False, filter_label="Strategy",
+                          exclude_inverse_etfs=True):
     """
     Shared stock selection by historical performance: calculate_parallel_performance + sort + top N.
     
@@ -2357,13 +2358,19 @@ def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookba
         top_n: Number of stocks to select
         apply_performance_filter: If True, apply performance_filters before ranking
         filter_label: Label for performance filter logging
+        exclude_inverse_etfs: If True, exclude inverse ETFs from selection (they decay over time)
         
     Returns:
         List of selected ticker symbols (top performers)
     """
     from parallel_backtest import calculate_parallel_performance
+    from config import INVERSE_ETFS
     
-    tickers_to_rank = all_tickers
+    # Exclude inverse ETFs from buy-and-hold strategies (they decay over time)
+    if exclude_inverse_etfs:
+        tickers_to_rank = [t for t in all_tickers if t not in INVERSE_ETFS]
+    else:
+        tickers_to_rank = all_tickers
     if apply_performance_filter:
         from performance_filters import filter_tickers_by_performance
         tickers_to_rank = filter_tickers_by_performance(
