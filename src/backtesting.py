@@ -3562,10 +3562,9 @@ def _run_portfolio_backtest_walk_forward(
                         analyst_rec_last_rebalance_day = day_count
                     
             except Exception as e:
-                try:
-                    print(f"   ⚠️ Analyst Recommendation selection failed: {e}")
-                except UnicodeEncodeError:
-                    print(f"   [ERROR] Analyst Recommendation selection failed: {e}")
+                import traceback
+                print(f"   [ERROR] Analyst Recommendation selection failed: {e}")
+                traceback.print_exc()
 
         # === ENHANCED VOLATILITY TRADER STRATEGY ===
         if ENABLE_ENHANCED_VOLATILITY:
