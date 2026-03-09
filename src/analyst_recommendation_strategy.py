@@ -93,20 +93,20 @@ def calculate_analyst_score(
         Tuple of (score, num_actions)
         
     Note: Yahoo Finance only provides recent analyst data (last few months).
-    For backtesting, we use the most recent N days of available data regardless
-    of the backtest date. This introduces forward-looking bias but allows
-    testing the strategy logic. For live trading, dates will match correctly.
+    For backtesting, we filter to actions available at the backtest date
+    to avoid forward-looking bias. For live trading, dates will match correctly.
     """
     if analyst_df is None or analyst_df.empty:
         return 0.0, 0
     
-    # Get the most recent analyst actions (last N days of available data)
-    # This is necessary because Yahoo only provides current data, not historical
+    # Get analyst actions up to the current_date (for proper backtesting)
+    # Yahoo provides current data, but we filter to what would be known at backtest date
     if len(analyst_df) > 0:
-        most_recent_date = analyst_df.index.max()
-        cutoff_date = most_recent_date - timedelta(days=lookback_days)
+        current_ts = pd.Timestamp(current_date).tz_localize(None)
+        analyst_idx = analyst_df.index.tz_localize(None) if analyst_df.index.tz else analyst_df.index
+        cutoff_date = current_ts - timedelta(days=lookback_days)
         
-        mask = analyst_df.index >= cutoff_date
+        mask = (analyst_idx <= current_ts) & (analyst_idx >= cutoff_date)
         recent_actions = analyst_df[mask]
     else:
         recent_actions = analyst_df
