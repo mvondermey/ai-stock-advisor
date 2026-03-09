@@ -1014,6 +1014,15 @@ def main(
     # AI Strategy removed - running comparison strategies only
     print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (comparison strategies only)...")
     
+    # Send push notification at start of backtest
+    from notifications import send_push_notification
+    send_push_notification(
+        title="🚀 Backtest Started",
+        message=f"Running {actual_period_name} backtest with {len(top_tickers)} tickers",
+        priority="low",
+        tags="rocket"
+    )
+    
     n_top_rebal = 3
     initial_capital_1y = capital_per_stock_1y * n_top_rebal
     
