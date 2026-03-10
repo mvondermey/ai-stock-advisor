@@ -466,7 +466,7 @@ def _smart_rebalance_portfolio(
             if ticker in ticker_data_grouped and ticker in updated_positions
         )
         total_portfolio_value = updated_cash + kept_positions_value
-        capital_per_stock = total_portfolio_value / len(new_stocks) if new_stocks else 0
+        capital_per_stock = total_portfolio_value / portfolio_size if portfolio_size > 0 else 0
     else:
         capital_per_stock = 0
     
@@ -4563,16 +4563,25 @@ def _run_portfolio_backtest_walk_forward(
                 # Record daily values for ALL sub-strategies (needed for training)
                 strategy_values_for_regime = {
                     'risk_adj_mom_3m': risk_adj_mom_3m_portfolio_value if ENABLE_RISK_ADJ_MOM_3M else None,
+                    'risk_adj_mom_3m_monthly': risk_adj_mom_3m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_3M else None,
                     'risk_adj_mom_6m': risk_adj_mom_6m_portfolio_value if ENABLE_RISK_ADJ_MOM_6M else None,
+                    'risk_adj_mom_6m_monthly': risk_adj_mom_6m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_6M else None,
                     'risk_adj_mom': risk_adj_mom_portfolio_value if ENABLE_RISK_ADJ_MOM else None,
+                    'risk_adj_mom_1m': risk_adj_mom_1m_portfolio_value if ENABLE_RISK_ADJ_MOM_1M else None,
+                    'risk_adj_mom_1m_monthly': risk_adj_mom_1m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_1M else None,
                     'elite_hybrid': elite_hybrid_portfolio_value if ENABLE_ELITE_HYBRID else None,
                     'elite_risk': elite_risk_portfolio_value if ENABLE_ELITE_RISK else None,
                     'ai_elite': ai_elite_portfolio_value if ENABLE_AI_ELITE else None,
                     'momentum_volatility_hybrid_6m': momentum_volatility_hybrid_6m_portfolio_value if ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M else None,
+                    'momentum_volatility_hybrid': momentum_volatility_hybrid_portfolio_value if ENABLE_MOMENTUM_VOLATILITY_HYBRID else None,
+                    'concentrated_3m': concentrated_3m_portfolio_value if ENABLE_CONCENTRATED_3M else None,
                     'trend_atr': trend_atr_portfolio_value if ENABLE_TREND_FOLLOWING_ATR else None,
                     'dual_momentum': dual_mom_portfolio_value if ENABLE_DUAL_MOMENTUM else None,
                     'static_bh_1y': static_bh_1y_portfolio_value if ENABLE_STATIC_BH else None,
                     'static_bh_3m': static_bh_3m_portfolio_value if ENABLE_STATIC_BH else None,
+                    'adaptive_ensemble': adaptive_ensemble_portfolio_value if ENABLE_ADAPTIVE_ENSEMBLE else None,
+                    'dynamic_pool': dynamic_pool_portfolio_value if ENABLE_DYNAMIC_POOL else None,
+                    'volatility_ensemble': ai_volatility_ensemble_portfolio_value if ENABLE_AI_VOLATILITY_ENSEMBLE else None,
                 }
                 ai_regime_allocator.record_daily_values(strategy_values_for_regime)
                 
@@ -4627,16 +4636,25 @@ def _run_portfolio_backtest_walk_forward(
                 # Record daily values for ALL sub-strategies (same as daily AI Regime)
                 strategy_values_for_regime = {
                     'risk_adj_mom_3m': risk_adj_mom_3m_portfolio_value if ENABLE_RISK_ADJ_MOM_3M else None,
+                    'risk_adj_mom_3m_monthly': risk_adj_mom_3m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_3M else None,
                     'risk_adj_mom_6m': risk_adj_mom_6m_portfolio_value if ENABLE_RISK_ADJ_MOM_6M else None,
+                    'risk_adj_mom_6m_monthly': risk_adj_mom_6m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_6M else None,
                     'risk_adj_mom': risk_adj_mom_portfolio_value if ENABLE_RISK_ADJ_MOM else None,
+                    'risk_adj_mom_1m': risk_adj_mom_1m_portfolio_value if ENABLE_RISK_ADJ_MOM_1M else None,
+                    'risk_adj_mom_1m_monthly': risk_adj_mom_1m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_1M else None,
                     'elite_hybrid': elite_hybrid_portfolio_value if ENABLE_ELITE_HYBRID else None,
                     'elite_risk': elite_risk_portfolio_value if ENABLE_ELITE_RISK else None,
                     'ai_elite': ai_elite_portfolio_value if ENABLE_AI_ELITE else None,
                     'momentum_volatility_hybrid_6m': momentum_volatility_hybrid_6m_portfolio_value if ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M else None,
+                    'momentum_volatility_hybrid': momentum_volatility_hybrid_portfolio_value if ENABLE_MOMENTUM_VOLATILITY_HYBRID else None,
+                    'concentrated_3m': concentrated_3m_portfolio_value if ENABLE_CONCENTRATED_3M else None,
                     'trend_atr': trend_atr_portfolio_value if ENABLE_TREND_FOLLOWING_ATR else None,
                     'dual_momentum': dual_mom_portfolio_value if ENABLE_DUAL_MOMENTUM else None,
                     'static_bh_1y': static_bh_1y_portfolio_value if ENABLE_STATIC_BH else None,
                     'static_bh_3m': static_bh_3m_portfolio_value if ENABLE_STATIC_BH else None,
+                    'adaptive_ensemble': adaptive_ensemble_portfolio_value if ENABLE_ADAPTIVE_ENSEMBLE else None,
+                    'dynamic_pool': dynamic_pool_portfolio_value if ENABLE_DYNAMIC_POOL else None,
+                    'volatility_ensemble': ai_volatility_ensemble_portfolio_value if ENABLE_AI_VOLATILITY_ENSEMBLE else None,
                 }
                 ai_regime_monthly_allocator.record_daily_values(strategy_values_for_regime)
                 

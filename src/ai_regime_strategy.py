@@ -473,8 +473,10 @@ class AIRegimeAllocator:
         Returns:
             Strategy name to use
         """
-        # Default if no model trained yet
-        if self.model is None:
+        # Default if no model trained yet or corrupted
+        if self.model is None or not hasattr(self.model, 'predict'):
+            if self.model is not None:
+                print(f"   ⚠️ AI Regime: Model corrupted (type: {type(self.model)}), using fallback")
             return 'risk_adj_mom_3m'  # Default to best simple strategy
             
         # Extract current features
