@@ -6991,6 +6991,124 @@ def _run_portfolio_backtest_walk_forward(
         json.dump(strategy_selections, f, indent=2, default=str)
     print(f"\n📁 Strategy selections saved to {selections_file}")
 
+    # === SAVE LIVE TRADING SELECTIONS (20 tickers per strategy, independent of PORTFOLIO_SIZE) ===
+    # This generates fresh selections at backtest end date with top 20 tickers for live trading
+    LIVE_TRADING_TOP_N = 20
+    print(f"\n📊 Generating live trading selections (top {LIVE_TRADING_TOP_N} per strategy)...")
+    
+    from shared_strategies import (
+        select_top_performers, select_risk_adj_mom_stocks,
+        select_sector_rotation_etfs, select_quality_momentum_stocks,
+        select_mean_reversion_stocks, select_volatility_adj_mom_stocks,
+        select_price_acceleration_stocks, select_turnaround_stocks,
+        select_3m_1y_ratio_stocks, select_1y_3m_ratio_stocks
+    )
+    
+    # Use backtest_end_date as current_date for selections
+    live_current_date = backtest_end_date
+    
+    live_trading_selections = {
+        'timestamp': dt.now().isoformat(),
+        'backtest_end_date': str(backtest_end_date),
+        'top_n': LIVE_TRADING_TOP_N,
+        'strategies': {}
+    }
+    
+    try:
+        # Static/Dynamic BH strategies (performance-based)
+        live_trading_selections['strategies']['static_bh_1y'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['static_bh_6m'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['static_bh_3m'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['static_bh_1m'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['dynamic_bh_1y'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['dynamic_bh_6m'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['dynamic_bh_3m'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['dynamic_bh_1m'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Risk-Adjusted Momentum strategies
+        live_trading_selections['strategies']['risk_adj_mom'] = select_risk_adj_mom_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['risk_adj_mom_1m'] = select_risk_adj_mom_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['risk_adj_mom_3m'] = select_risk_adj_mom_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['risk_adj_mom_6m'] = select_risk_adj_mom_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Sector Rotation (uses full ticker list)
+        live_trading_selections['strategies']['sector_rotation'] = select_sector_rotation_etfs(
+            list(available_tickers_in_data), ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Quality Momentum
+        live_trading_selections['strategies']['quality_momentum'] = select_quality_momentum_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Mean Reversion
+        live_trading_selections['strategies']['mean_reversion'] = select_mean_reversion_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Volatility-Adjusted Momentum
+        live_trading_selections['strategies']['volatility_adj_mom'] = select_volatility_adj_mom_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Price Acceleration
+        live_trading_selections['strategies']['price_acceleration'] = select_price_acceleration_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Turnaround
+        live_trading_selections['strategies']['turnaround'] = select_turnaround_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Ratio strategies
+        live_trading_selections['strategies']['ratio_3m_1y'] = select_3m_1y_ratio_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['ratio_1y_3m'] = select_1y_3m_ratio_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Concentrated 3M (same as static_bh_3m)
+        live_trading_selections['strategies']['concentrated_3m'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        print(f"   ✅ Generated selections for {len(live_trading_selections['strategies'])} strategies")
+        
+    except Exception as e:
+        print(f"   ⚠️ Error generating live trading selections: {e}")
+    
+    # Save live trading selections to separate JSON file
+    live_selections_file = Path('logs/live_trading_selections.json')
+    with open(live_selections_file, 'w') as f:
+        json.dump(live_trading_selections, f, indent=2, default=str)
+    print(f"📁 Live trading selections saved to {live_selections_file}")
+
     return results
 
 

@@ -82,7 +82,8 @@ def get_live_trading_strategy():
 def load_strategy_selections_from_json(strategy_name: str) -> Optional[List[str]]:
     """
     Load strategy selections from the JSON file saved by backtesting.
-    This is the preferred method - live trading should use backtest results, not recalculate.
+    First tries live_trading_selections.json (20 tickers per strategy),
+    then falls back to strategy_selections.json (actual positions).
     
     Args:
         strategy_name: Name of the strategy (e.g., 'momentum_volatility_hybrid_6m')
@@ -93,15 +94,25 @@ def load_strategy_selections_from_json(strategy_name: str) -> Optional[List[str]
     import json
     from pathlib import Path
     
+    # Try live trading selections first (20 tickers per strategy)
+    live_selections_file = Path('logs/live_trading_selections.json')
     selections_file = Path('logs/strategy_selections.json')
     
-    if not selections_file.exists():
-        print(f"   [WARN] Strategy selections file not found: {selections_file}")
+    # Prefer live_trading_selections.json (has 20 tickers per strategy)
+    file_to_use = None
+    if live_selections_file.exists():
+        file_to_use = live_selections_file
+        print(f"   [INFO] Using live trading selections (20 tickers per strategy)")
+    elif selections_file.exists():
+        file_to_use = selections_file
+        print(f"   [INFO] Using backtest positions (fallback)")
+    else:
+        print(f"   [WARN] No strategy selections file found")
         print(f"   [INFO] Run backtesting first to generate strategy selections")
         return None
     
     try:
-        with open(selections_file, 'r') as f:
+        with open(file_to_use, 'r') as f:
             data = json.load(f)
         
         # Check file age
@@ -116,8 +127,13 @@ def load_strategy_selections_from_json(strategy_name: str) -> Optional[List[str]
         # Get strategy tickers
         strategies = data.get('strategies', {})
         if strategy_name in strategies:
-            tickers = strategies[strategy_name].get('tickers', [])
-            print(f"   [INFO] Loaded {len(tickers)} tickers for {strategy_name} from JSON")
+            # live_trading_selections.json has list directly, strategy_selections.json has dict with 'tickers' key
+            strategy_data = strategies[strategy_name]
+            if isinstance(strategy_data, list):
+                tickers = strategy_data
+            else:
+                tickers = strategy_data.get('tickers', [])
+            print(f"   [INFO] Loaded {len(tickers)} tickers for {strategy_name} from {file_to_use.name}")
             print(f"   [INFO] Backtest end date: {data.get('backtest_end_date', 'unknown')}")
             return tickers
         else:
