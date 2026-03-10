@@ -389,10 +389,15 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
     """
     Shared Volatility-Adjusted Momentum stock selection logic.
     """
+    from config import INVERSE_ETFS
+    
+    # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
+    
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Vol-Adj Mom"
+        tickers_to_use, ticker_data_grouped, current_date, "Vol-Adj Mom"
     )
     
     current_top_performers = []
@@ -446,14 +451,19 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
 
 
 def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame], 
-                               current_date: datetime = None, top_n: int = 20) -> List[str]:
+                               current_date: datetime = None, top_n: int = 20, lookback_days: int = 365) -> List[str]:
     """
     Shared Risk-Adjusted Momentum stock selection logic.
     """
+    from config import INVERSE_ETFS
+    
+    # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
+    
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Risk-Adj Mom"
+        tickers_to_use, ticker_data_grouped, current_date, "Risk-Adj Mom"
     )
     
     current_top_performers = []
@@ -528,10 +538,15 @@ def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Di
     """
     Shared Mean Reversion stock selection logic.
     """
+    from config import INVERSE_ETFS
+    
+    # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
+    
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Mean Reversion"
+        tickers_to_use, ticker_data_grouped, current_date, "Mean Reversion"
     )
     
     oversold_candidates = []
@@ -623,10 +638,15 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
     """
     Shared Quality + Momentum stock selection logic.
     """
+    from config import INVERSE_ETFS
+    
+    # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
+    
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Quality+Mom"
+        tickers_to_use, ticker_data_grouped, current_date, "Quality+Mom"
     )
     
     quality_momentum_candidates = []
@@ -1090,10 +1110,15 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
     Turnaround Strategy: Select stocks with low 3Y performance but high 1Y performance.
     This identifies stocks that may be emerging from a long decline with strong recent momentum.
     """
+    from config import INVERSE_ETFS
+    
+    # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
+    
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Turnaround"
+        tickers_to_use, ticker_data_grouped, current_date, "Turnaround"
     )
     
     turnaround_candidates = []
@@ -1876,13 +1901,15 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
     - Acceleration = velocity.diff() (change in velocity)
     - Buy when acceleration is positive (momentum increasing)
     """
-    if current_date is None:
-        current_date = datetime.now()
+    from config import INVERSE_ETFS, MIN_DATA_DAYS_PERIOD_DATA
+    
+    # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
     
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Price Acceleration"
+        tickers_to_use, ticker_data_grouped, current_date, "Price Acceleration"
     )
     
     candidates = []
