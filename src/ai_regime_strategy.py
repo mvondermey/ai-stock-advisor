@@ -419,7 +419,7 @@ class AIRegimeAllocator:
         return True
     
     def save_model(self):
-        """Save all models and label encoder to disk."""
+        """Save all models, label encoder, and training state to disk."""
         try:
             MODEL_SAVE_DIR.mkdir(parents=True, exist_ok=True)
             joblib.dump({
@@ -428,14 +428,19 @@ class AIRegimeAllocator:
                 'best_name': self.best_name,
                 'model': self.model,
                 'label_encoder': self.label_encoder,
-                'feature_cols': self.feature_cols
+                'feature_cols': self.feature_cols,
+                # Persist training state for continuous learning
+                'training_data': self.training_data,
+                'day_count': self.day_count,
+                'last_train_day': self.last_train_day,
+                'strategy_histories': dict(self.strategy_histories)
             }, AI_REGIME_MODEL_PATH)
-            print(f"   💾 AI Regime: Saved {len(self.all_models)} models to {AI_REGIME_MODEL_PATH}")
+            print(f"   💾 AI Regime: Saved {len(self.all_models)} models + {len(self.training_data)} training samples to {AI_REGIME_MODEL_PATH}")
         except Exception as e:
             print(f"   ⚠️ AI Regime: Failed to save: {e}")
     
     def load_model(self) -> bool:
-        """Load all models and label encoder from disk."""
+        """Load all models, label encoder, and training state from disk."""
         try:
             if AI_REGIME_MODEL_PATH.exists():
                 data = joblib.load(AI_REGIME_MODEL_PATH)
@@ -446,8 +451,15 @@ class AIRegimeAllocator:
                 self.all_models = data.get('all_models')
                 self.all_scores = data.get('all_scores')
                 self.best_name = data.get('best_name')
+                # Restore training state for continuous learning
+                self.training_data = data.get('training_data', [])
+                self.day_count = data.get('day_count', 0)
+                self.last_train_day = data.get('last_train_day', 0)
+                loaded_histories = data.get('strategy_histories', {})
+                self.strategy_histories = defaultdict(list, loaded_histories)
                 n_models = len(self.all_models) if self.all_models else 1
-                print(f"   📂 AI Regime: Loaded {n_models} models from disk")
+                n_samples = len(self.training_data)
+                print(f"   📂 AI Regime: Loaded {n_models} models, {n_samples} training samples, day_count={self.day_count}")
                 return True
         except Exception as e:
             print(f"   ⚠️ AI Regime: Failed to load: {e}")

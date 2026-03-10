@@ -331,7 +331,7 @@ class UniversalModelStrategy:
         return True
     
     def save_model(self):
-        """Save all models and scaler to disk."""
+        """Save all models, scaler, and training state to disk."""
         try:
             MODEL_SAVE_DIR.mkdir(parents=True, exist_ok=True)
             joblib.dump({
@@ -340,14 +340,17 @@ class UniversalModelStrategy:
                 'best_name': self.best_name,
                 'model': self.model,
                 'scaler': self.scaler,
-                'feature_cols': self.feature_cols
+                'feature_cols': self.feature_cols,
+                # Persist training state for continuous learning
+                'day_count': self.day_count,
+                'last_train_day': self.last_train_day
             }, UNIVERSAL_MODEL_PATH)
-            print(f"   💾 Universal Model: Saved {len(self.all_models)} models to {UNIVERSAL_MODEL_PATH}")
+            print(f"   💾 Universal Model: Saved {len(self.all_models)} models, day_count={self.day_count} to {UNIVERSAL_MODEL_PATH}")
         except Exception as e:
             print(f"   ⚠️ Universal Model: Failed to save: {e}")
     
     def load_model(self) -> bool:
-        """Load all models and scaler from disk."""
+        """Load all models, scaler, and training state from disk."""
         try:
             if UNIVERSAL_MODEL_PATH.exists():
                 data = joblib.load(UNIVERSAL_MODEL_PATH)
@@ -359,8 +362,11 @@ class UniversalModelStrategy:
                     self.model = data['model']
                     self.scaler = data['scaler']
                     self.feature_cols = data['feature_cols']
+                    # Restore training state for continuous learning
+                    self.day_count = data.get('day_count', 0)
+                    self.last_train_day = data.get('last_train_day', 0)
                     n_models = len(self.all_models) if self.all_models else 1
-                    print(f"   📂 Universal Model: Loaded {n_models} models from disk")
+                    print(f"   📂 Universal Model: Loaded {n_models} models, day_count={self.day_count}")
                 else:
                     # Legacy format (single model)
                     self.model = data

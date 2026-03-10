@@ -133,6 +133,11 @@ def load_strategy_selections_from_json(strategy_name: str) -> Optional[List[str]
                 tickers = strategy_data
             else:
                 tickers = strategy_data.get('tickers', [])
+            
+            # Limit to PORTFOLIO_SIZE (respects --num-stocks argument)
+            num_to_use = min(len(tickers), config.PORTFOLIO_SIZE)
+            tickers = tickers[:num_to_use]
+            
             print(f"   [INFO] Loaded {len(tickers)} tickers for {strategy_name} from {file_to_use.name}")
             print(f"   [INFO] Backtest end date: {data.get('backtest_end_date', 'unknown')}")
             return tickers

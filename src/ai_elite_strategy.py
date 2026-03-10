@@ -62,33 +62,27 @@ def select_ai_elite_stocks(
     
     print(f"   🤖 AI Elite: Analyzing {len(filtered_tickers)} tickers with ML scoring (filtered from {len(all_tickers)})")
     
-    # Parallel prediction with multiprocessing.Pool
-    from multiprocessing import Pool, cpu_count
+    # Sequential prediction - avoids nested multiprocessing deadlocks
+    # (backtesting already uses multiprocessing, nested Pools cause semaphore leaks)
     import time
     
-    n_workers = max(1, cpu_count() - 2)
     start_time = time.time()
-    
-    # Prepare args for parallel workers (pass ticker_data and model directly, not full dicts)
-    predict_args = [
-        (ticker, ticker_data_grouped.get(ticker), current_date, 
-         per_ticker_models.get(ticker) if per_ticker_models else None)
-        for ticker in filtered_tickers
-    ]
     
     ai_scores = {}
     fail_reasons = {'not_in_data': 0, 'empty': 0, 'features_none': 0, 'no_model': 0, 'exception': 0}
     
-    with Pool(processes=n_workers) as pool:
-        results = pool.map(_predict_ticker_worker, predict_args)
-    
-    for ticker, score, status in results:
+    for ticker in filtered_tickers:
+        ticker_data = ticker_data_grouped.get(ticker)
+        ticker_model = per_ticker_models.get(ticker) if per_ticker_models else None
+        args = (ticker, ticker_data, current_date, ticker_model)
+        
+        ticker_result, score, status = _predict_ticker_worker(args)
         if status == 'success':
-            ai_scores[ticker] = score
+            ai_scores[ticker_result] = score
         else:
             fail_reasons[status] += 1
             if status == 'no_model':
-                ai_scores[ticker] = 0.0
+                ai_scores[ticker_result] = 0.0
     
     elapsed = time.time() - start_time
     print(f"   📊 AI Elite: Predicted {len(ai_scores)} tickers ({elapsed:.1f}s)")
