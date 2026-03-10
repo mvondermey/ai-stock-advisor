@@ -2475,7 +2475,7 @@ def _run_portfolio_backtest_walk_forward(
                 # Select top sector ETFs based on momentum
                 from shared_strategies import select_sector_rotation_etfs
                 new_sector_rotation_etfs = select_sector_rotation_etfs(
-                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                    list(available_tickers_in_data), ticker_data_grouped, current_date, PORTFOLIO_SIZE
                 )
                 
                 if new_sector_rotation_etfs:
