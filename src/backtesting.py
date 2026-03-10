@@ -4579,7 +4579,7 @@ def _run_portfolio_backtest_walk_forward(
                     'dual_momentum': dual_mom_portfolio_value if ENABLE_DUAL_MOMENTUM else None,
                     'static_bh_1y': static_bh_1y_portfolio_value if ENABLE_STATIC_BH else None,
                     'static_bh_3m': static_bh_3m_portfolio_value if ENABLE_STATIC_BH else None,
-                    'adaptive_ensemble': adaptive_ensemble_portfolio_value if ENABLE_ADAPTIVE_ENSEMBLE else None,
+                    'adaptive_ensemble': adaptive_ensemble_portfolio_value if ENABLE_ADAPTIVE_STRATEGY else None,
                     'dynamic_pool': dynamic_pool_portfolio_value if ENABLE_DYNAMIC_POOL else None,
                     'volatility_ensemble': ai_volatility_ensemble_portfolio_value if ENABLE_AI_VOLATILITY_ENSEMBLE else None,
                 }
@@ -4652,7 +4652,7 @@ def _run_portfolio_backtest_walk_forward(
                     'dual_momentum': dual_mom_portfolio_value if ENABLE_DUAL_MOMENTUM else None,
                     'static_bh_1y': static_bh_1y_portfolio_value if ENABLE_STATIC_BH else None,
                     'static_bh_3m': static_bh_3m_portfolio_value if ENABLE_STATIC_BH else None,
-                    'adaptive_ensemble': adaptive_ensemble_portfolio_value if ENABLE_ADAPTIVE_ENSEMBLE else None,
+                    'adaptive_ensemble': adaptive_ensemble_portfolio_value if ENABLE_ADAPTIVE_STRATEGY else None,
                     'dynamic_pool': dynamic_pool_portfolio_value if ENABLE_DYNAMIC_POOL else None,
                     'volatility_ensemble': ai_volatility_ensemble_portfolio_value if ENABLE_AI_VOLATILITY_ENSEMBLE else None,
                 }
