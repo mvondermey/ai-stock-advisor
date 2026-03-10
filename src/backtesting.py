@@ -7085,6 +7085,61 @@ def _run_portfolio_backtest_walk_forward(
             initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
         )
         
+        # AI and Elite strategies
+        from shared_strategies import select_momentum_ai_hybrid_stocks, select_ai_elite_with_training
+        live_trading_selections['strategies']['momentum_ai_hybrid'] = select_momentum_ai_hybrid_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['ai_elite'] = select_ai_elite_with_training(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Elite Hybrid and Elite Risk (use momentum AI hybrid as base for now)
+        live_trading_selections['strategies']['elite_hybrid'] = select_momentum_ai_hybrid_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['elite_risk'] = select_risk_adj_mom_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Additional strategies
+        from shared_strategies import select_momentum_volatility_hybrid_stocks, select_momentum_volatility_hybrid_6m_stocks
+        live_trading_selections['strategies']['momentum_volatility_hybrid_6m'] = select_momentum_volatility_hybrid_6m_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Inverse ETF hedge and trend ATR use special selection
+        live_trading_selections['strategies']['inverse_etf_hedge'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['trend_atr'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Dual Momentum uses 1Y momentum
+        live_trading_selections['strategies']['dual_momentum'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+        )
+        
+        # Analyst Rec (if data available, fallback to risk_adj_mom)
+        try:
+            from analyst_recommendation_strategy import select_analyst_recommendation_stocks
+            # Check if analyst_data_cache exists and has data
+            if 'analyst_data_cache' in locals() and analyst_data_cache:
+                live_trading_selections['strategies']['analyst_rec'] = select_analyst_recommendation_stocks(
+                    initial_top_tickers, ticker_data_grouped, analyst_data_cache, live_current_date, top_n=LIVE_TRADING_TOP_N
+                )
+            else:
+                # Fallback to risk_adj_mom if no analyst data
+                live_trading_selections['strategies']['analyst_rec'] = select_risk_adj_mom_stocks(
+                    initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+                )
+        except Exception:
+            # Fallback to risk_adj_mom
+            live_trading_selections['strategies']['analyst_rec'] = select_risk_adj_mom_stocks(
+                initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+            )
+        
         # Ratio strategies
         live_trading_selections['strategies']['ratio_3m_1y'] = select_3m_1y_ratio_stocks(
             initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
