@@ -1745,15 +1745,15 @@ if __name__ == "__main__":
         print(f"   ✅ Loaded selections from backtest ({all_selections.get('backtest_end_date', 'unknown')})")
         print(f"   ✅ Available strategies: {len(all_selections.get('strategies', {}))}")
         
-        # Display available strategies from JSON
+        # Display all strategies from JSON
         print(f"📋 Available strategies:")
         strategies_list = list(all_selections.get('strategies', {}).keys())
         
         # Sort strategies for consistent display
         strategies_list.sort()
         
-        # Display first 20 strategies with icons
-        for i, strategy in enumerate(strategies_list[:20]):
+        # Display all strategies with icons
+        for i, strategy in enumerate(strategies_list):
             # Assign icons based on strategy type
             if 'volatility' in strategy.lower():
                 icon = "🏆"
@@ -1781,10 +1781,6 @@ if __name__ == "__main__":
             # Format strategy name for display
             display_name = strategy.replace('_', ' ').title()
             print(f"   {icon} {display_name.lower()}")
-        
-        # Show remaining strategies count if more than 20
-        if len(strategies_list) > 20:
-            print(f"   ... and {len(strategies_list) - 20} more strategies")
         
         print(f"💡 Example: python src/main.py --live-trading --strategy {strategies_list[0]}")
         print("=" * 80)
