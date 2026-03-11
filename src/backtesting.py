@@ -7019,7 +7019,9 @@ def _run_portfolio_backtest_walk_forward(
         select_sector_rotation_etfs, select_quality_momentum_stocks,
         select_mean_reversion_stocks, select_volatility_adj_mom_stocks,
         select_price_acceleration_stocks, select_turnaround_stocks,
-        select_3m_1y_ratio_stocks, select_1y_3m_ratio_stocks
+        select_3m_1y_ratio_stocks, select_1y_3m_ratio_stocks,
+        select_top_performers_vol_filtered, select_multitask_learning_stocks,
+        select_momentum_volatility_hybrid_stocks
     )
     
     # Use backtest_end_date as current_date for selections
@@ -7243,9 +7245,15 @@ def _run_portfolio_backtest_walk_forward(
         from elite_hybrid_strategy import select_elite_hybrid_stocks
         from elite_risk_strategy import select_elite_risk_stocks
         
-        live_trading_selections['strategies']['dynamic_bh_1y_vol_filter'] = live_trading_selections['strategies']['dynamic_bh_1y']
-        live_trading_selections['strategies']['dynamic_bh_1y_trailing_stop'] = live_trading_selections['strategies']['dynamic_bh_1y']
-        live_trading_selections['strategies']['multitask'] = live_trading_selections['strategies']['risk_adj_mom']  # Multitask uses same base selection
+        live_trading_selections['strategies']['dynamic_bh_1y_vol_filter'] = select_top_performers_vol_filtered(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, max_volatility=0.4, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['dynamic_bh_1y_trailing_stop'] = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+        )
+        live_trading_selections['strategies']['multitask'] = select_multitask_learning_stocks(
+            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+        )
         
         # Proper selection functions for each strategy
         live_trading_selections['strategies']['risk_adj_mom_3m_sentiment'] = select_risk_adj_mom_3m_sentiment_stocks(
