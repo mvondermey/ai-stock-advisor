@@ -4396,6 +4396,17 @@ def _run_portfolio_backtest_walk_forward(
                         force_rebalance=not current_risk_adj_mom_3m_with_stops_stocks
                     )
                     risk_adj_mom_3m_with_stops_transaction_costs += rebalance_costs
+                    
+                    # Track entry prices for new positions
+                    for ticker in new_stocks:
+                        if ticker in risk_adj_mom_3m_with_stops_positions:
+                            ticker_df = ticker_data_grouped.get(ticker)
+                            if ticker_df is not None:
+                                from backtesting import _last_valid_close_up_to
+                                entry_price = _last_valid_close_up_to(ticker_df, current_date)
+                                if entry_price is not None:
+                                    risk_adj_mom_3m_with_stops_positions[ticker]['entry_price'] = entry_price
+                                    risk_adj_mom_3m_with_stops_positions[ticker]['entry_date'] = current_date
 
             except Exception as e:
                 print(f"   ⚠️ Risk-Adj Mom 3M with Stops error: {e}")
@@ -5790,6 +5801,22 @@ def _run_portfolio_backtest_walk_forward(
                     risk_adj_mom_3m_with_stops_invested_value += risk_adj_mom_3m_with_stops_positions[ticker].get('value', 0.0)
         risk_adj_mom_3m_with_stops_portfolio_value = risk_adj_mom_3m_with_stops_invested_value + risk_adj_mom_3m_with_stops_cash
         risk_adj_mom_3m_with_stops_portfolio_history.append(risk_adj_mom_3m_with_stops_portfolio_value)
+        
+        # Check custom stops for Risk-Adj Mom 3M with Stops
+        if ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS:
+            from risk_adj_mom_3m_with_stops_strategy import update_risk_adj_mom_3m_with_stops_positions
+            updated_positions, stop_costs, sold_positions = update_risk_adj_mom_3m_with_stops_positions(
+                risk_adj_mom_3m_with_stops_positions,
+                ticker_data_grouped,
+                current_date,
+                TRANSACTION_COST
+            )
+            risk_adj_mom_3m_with_stops_positions = updated_positions
+            risk_adj_mom_3m_with_stops_transaction_costs += stop_costs
+            
+            # Add cash from sold positions
+            for ticker, reason, net_value in sold_positions:
+                risk_adj_mom_3m_with_stops_cash += net_value
 
         # Update VOL-SWEET MOMENTUM portfolio value daily
         vol_sweet_mom_invested_value = 0.0

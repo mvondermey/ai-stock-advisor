@@ -151,3 +151,68 @@ def check_risk_adj_mom_3m_stops(
         return True, f"Take profit triggered: {pnl_pct:.1f}% gain"
     
     return False, "Hold"
+
+
+def update_risk_adj_mom_3m_with_stops_positions(
+    positions: Dict,
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    transaction_cost: float,
+) -> tuple[Dict, float, List[str]]:
+    """
+    Check and apply custom stops for Risk-Adj Mom 3M with Stops strategy.
+    
+    Returns:
+        (updated_positions, transaction_costs, sold_tickers)
+    """
+    from backtesting import _last_valid_close_up_to
+    
+    total_costs = 0.0
+    sold_tickers = []
+    
+    for ticker, pos_info in list(positions.items()):
+        if pos_info.get('shares', 0) <= 0:
+            continue
+            
+        # Get current price
+        ticker_df = ticker_data_grouped.get(ticker)
+        if ticker_df is None:
+            continue
+            
+        current_price = _last_valid_close_up_to(ticker_df, current_date)
+        if current_price is None:
+            continue
+        
+        # Get entry price (stored as entry_price or avg_price)
+        entry_price = pos_info.get('entry_price', pos_info.get('avg_price', 0))
+        if entry_price <= 0:
+            # Store entry price if not set
+            pos_info['entry_price'] = current_price
+            continue
+        
+        # Check if stop should be triggered
+        should_close, reason = check_risk_adj_mom_3m_stops(
+            ticker, ticker_df, entry_price, current_price, 
+            pos_info.get('days_held', 0)
+        )
+        
+        if should_close:
+            # Sell the position
+            shares = pos_info['shares']
+            sale_value = shares * current_price
+            cost = sale_value * transaction_cost
+            net_value = sale_value - cost
+            
+            # Update position
+            pos_info['shares'] = 0
+            pos_info['value'] = 0
+            pos_info['exit_price'] = current_price
+            pos_info['exit_reason'] = reason
+            pos_info['exit_date'] = current_date
+            
+            total_costs += cost
+            sold_tickers.append((ticker, reason, net_value))
+            
+            print(f"   💰 RiskAdj 3M Stop: Selling {ticker}: {reason}")
+    
+    return positions, total_costs, sold_tickers
