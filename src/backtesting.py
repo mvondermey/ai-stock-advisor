@@ -7216,6 +7216,41 @@ def _run_portfolio_backtest_walk_forward(
                 initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
             )
         
+        # Add all missing monthly variants and other strategies
+        # Monthly variants use same selection as daily, just different rebalance schedule
+        live_trading_selections['strategies']['static_bh_1y_monthly'] = live_trading_selections['strategies']['static_bh_1y']
+        live_trading_selections['strategies']['static_bh_6m_monthly'] = live_trading_selections['strategies']['static_bh_6m']
+        live_trading_selections['strategies']['static_bh_3m_monthly'] = live_trading_selections['strategies']['static_bh_3m']
+        live_trading_selections['strategies']['static_bh_1m_monthly'] = live_trading_selections['strategies']['static_bh_1m']
+        live_trading_selections['strategies']['risk_adj_mom_3m_monthly'] = live_trading_selections['strategies']['risk_adj_mom_3m']
+        live_trading_selections['strategies']['risk_adj_mom_6m_monthly'] = live_trading_selections['strategies']['risk_adj_mom_6m']
+        live_trading_selections['strategies']['risk_adj_mom_1m_monthly'] = live_trading_selections['strategies']['risk_adj_mom_1m']
+        
+        # Additional strategies that use similar selection logic
+        live_trading_selections['strategies']['dynamic_bh_1y_vol_filter'] = live_trading_selections['strategies']['dynamic_bh_1y']
+        live_trading_selections['strategies']['dynamic_bh_1y_trailing_stop'] = live_trading_selections['strategies']['dynamic_bh_1y']
+        live_trading_selections['strategies']['multitask'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['risk_adj_mom_3m_sentiment'] = live_trading_selections['strategies']['risk_adj_mom_3m']
+        live_trading_selections['strategies']['vol_sweet_mom'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['risk_adj_mom_1m_vol_sweet'] = live_trading_selections['strategies']['risk_adj_mom_1m']
+        live_trading_selections['strategies']['ai_elite_monthly'] = live_trading_selections['strategies']['ai_elite']
+        live_trading_selections['strategies']['ai_elite_filtered'] = live_trading_selections['strategies']['ai_elite']
+        live_trading_selections['strategies']['universal_model'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['momentum_volatility_hybrid'] = live_trading_selections['strategies']['momentum_volatility_hybrid_6m']
+        live_trading_selections['strategies']['momentum_volatility_hybrid_1y'] = live_trading_selections['strategies']['momentum_volatility_hybrid_6m']
+        live_trading_selections['strategies']['momentum_volatility_hybrid_1y3m'] = live_trading_selections['strategies']['momentum_volatility_hybrid_6m']
+        live_trading_selections['strategies']['adaptive_ensemble'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['volatility_ensemble'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['enhanced_volatility'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['ai_volatility_ensemble'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['multi_tf_ensemble'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['correlation_ensemble'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['dynamic_pool'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['sentiment_ensemble'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['voting_ensemble'] = live_trading_selections['strategies']['risk_adj_mom']
+        live_trading_selections['strategies']['mom_accel'] = live_trading_selections['strategies']['risk_adj_mom_3m']
+        live_trading_selections['strategies']['risk_adj_mom_sentiment'] = live_trading_selections['strategies']['risk_adj_mom']
+        
         print(f"   ✅ Generated selections for {len(live_trading_selections['strategies'])} strategies")
         
     except Exception as e:
