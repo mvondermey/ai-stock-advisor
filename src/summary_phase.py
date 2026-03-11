@@ -498,12 +498,12 @@ def print_final_summary(
     print("=" * 95)
 
     # ============================================
-    # UNIFIED TABLE: All Strategies Side by Side
+    # UNIFIED TABLE: Buy & Hold Performance
     # ============================================
     print(f"\n📊 UNIFIED TICKER PERFORMANCE TABLE (Sorted by 1Y Performance):")
-    print("=" * 200)
-    print(f"{'Ticker':<10} | {'1Y Perf':>10} | {'AI Gain':>12} | {'AI Status':<12} | {'BH Gain':>12} | {'AI vs BH':>10} | {'AI Sharpe':>10} | {'BH Sharpe':>10} | {'Last Action':<12} | {'Days Held':>10}")
-    print("=" * 200)
+    print("=" * 120)
+    print(f"{'Ticker':<10} | {'1Y Perf':>10} | {'BH Gain':>12} | {'BH Sharpe':>10} | {'Last Action':<12} | {'Days Held':>10}")
+    print("=" * 120)
     
     # Build lookup for Buy & Hold results
     bh_lookup = {}
@@ -561,33 +561,6 @@ def print_final_summary(
         # Format 1Y performance
         one_year_perf_str = f"{one_year_perf:>9.2f}%" if pd.notna(one_year_perf) else "N/A".rjust(10)
         
-        # AI Strategy metrics
-        if ai_res and ai_res.get('status') != 'failed':
-            ai_gain = ai_res.get('strategy_gain', 0.0)
-            ai_gain_str = f"${ai_gain:>10,.0f}"
-            # Check if TargetReturn model exists for this ticker
-            if models.get(ticker):
-                ai_status = "✅ Trained"
-            else:
-                ai_status = "❌ Not Trained"
-            ai_sharpe = ai_res.get('sharpe', np.nan)
-            ai_sharpe_str = f"{ai_sharpe:>9.2f}" if pd.notna(ai_sharpe) else "N/A".rjust(10)
-            last_action = str(ai_res.get('last_ai_action', 'HOLD'))[:12]
-            days_held = ai_res.get('days_held', 0)
-            days_held_str = f"{days_held:>10}"
-        elif ai_res and ai_res.get('status') == 'failed':
-            ai_gain_str = "N/A".rjust(12)
-            ai_status = "❌ Failed"
-            ai_sharpe_str = "N/A".rjust(10)
-            last_action = "FAILED"
-            days_held_str = "N/A".rjust(10)
-        else:
-            ai_gain_str = "N/A".rjust(12)
-            ai_status = "⚪ No Data"
-            ai_sharpe_str = "N/A".rjust(10)
-            last_action = "N/A"
-            days_held_str = "N/A".rjust(10)
-        
         # Buy & Hold metrics
         if bh_res:
             bh_final = bh_res.get('final_val', INVESTMENT_PER_STOCK)
@@ -600,29 +573,24 @@ def print_final_summary(
             bh_gain_str = "N/A".rjust(12)
             bh_sharpe_str = "N/A".rjust(10)
         
-        # AI vs BH comparison
-        if ai_res and ai_res.get('status') != 'failed' and bh_res:
-            ai_gain_val = ai_res.get('strategy_gain', 0.0)
-            diff = ai_gain_val - bh_gain
-            if diff > 0:
-                ai_vs_bh_str = f"+${diff:>7,.0f}"
-            else:
-                ai_vs_bh_str = f"-${abs(diff):>7,.0f}"
+        # Use placeholder values for last action and days held (from AI strategy if available)
+        if ai_res and ai_res.get('status') != 'failed':
+            last_action = str(ai_res.get('last_ai_action', 'HOLD'))[:12]
+            days_held = ai_res.get('days_held', 0)
+            days_held_str = f"{days_held:>10}"
         else:
-            ai_vs_bh_str = "N/A".rjust(10)
+            last_action = "N/A"
+            days_held_str = "N/A".rjust(10)
         
-        print(f"{ticker:<10} | {one_year_perf_str} | {ai_gain_str} | {ai_status:<12} | {bh_gain_str} | {ai_vs_bh_str} | {ai_sharpe_str} | {bh_sharpe_str} | {last_action:<12} | {days_held_str}")
+        print(f"{ticker:<10} | {one_year_perf_str} | {bh_gain_str} | {bh_sharpe_str} | {last_action:<12} | {days_held_str}")
     
-    print("=" * 200)
+    print("=" * 120)
     
     # Summary row
-    total_ai_gain = sum(res.get('strategy_gain', 0.0) for res in sorted_final_results if res.get('status') != 'failed')
     total_bh_gain = sum((bh_res.get('final_val', INVESTMENT_PER_STOCK) - INVESTMENT_PER_STOCK) for bh_res in bh_lookup.values() if bh_res.get('final_val') is not None)
-    trained_count = sum(1 for res in sorted_final_results if res.get('status') != 'failed')
-    failed_count = sum(1 for res in sorted_final_results if res.get('status') == 'failed')
     
-    print(f"{'TOTALS':<10} | {'':>10} | ${total_ai_gain:>10,.0f} | {trained_count}✅ {failed_count}❌    | ${total_bh_gain:>10,.0f} | {'':>10} | {'':>10} | {'':>10} | {'':>12} | {'':>10}")
-    print("=" * 200)
+    print(f"{'TOTALS':<10} | {'':>10} | ${total_bh_gain:>10,.0f} | {'':>10} | {'':>12} | {'':>10}")
+    print("=" * 120)
 
     # Show Buy & Hold results for tickers not selected by the AI strategy
     ai_tickers = {str(res.get('ticker')) for res in sorted_final_results}
@@ -662,23 +630,11 @@ def print_final_summary(
             print(f"{ticker:<10} | ${allocated_capital:>16,.2f} | ${strategy_gain:>13,.2f} | {one_year_perf_str} | {sharpe_str} | {shares_before_liquidation_str}")
         print("-" * 126)
 
-    print("\n🤖 ML Model Status:")
-    # ✅ FIX: Only show unique tickers (avoid duplicates)
-    seen_tickers = set()
-    for ticker in sorted_final_results:
-        t = ticker['ticker']
-        if t not in seen_tickers:
-            seen_tickers.add(t)
-            model_status = "✅ Trained" if models.get(t) else "❌ Not Trained"
-            print(f"  - {t}: TargetReturn Model: {model_status}")
-    print("="*80)
-
     print("\n💡 Next Steps:")
     print("  - Review individual ticker performance and trade logs for deeper insights.")
     print("  - Experiment with different `MARKET_SELECTION` options and `N_TOP_TICKERS`.")
-    print("  - Adjust model parameters and risk management for different risk appetites.")
+    print("  - Adjust strategy parameters and risk management for different risk appetites.")
     print("  - Consider enabling `USE_MARKET_FILTER` and `USE_PERFORMANCE_BENCHMARK` for additional filtering.")
-    print("  - Explore advanced ML models or feature engineering for further improvements.")
     print("="*80)
 
 
