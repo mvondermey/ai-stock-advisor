@@ -7137,8 +7137,9 @@ def _run_portfolio_backtest_walk_forward(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
                 elif strategy_name == 'inverse_etf_hedge':
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
-                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+                    from inverse_etf_hedge_strategy import select_inverse_etf_hedge_stocks
+                    live_trading_selections['strategies'][strategy_name] = select_inverse_etf_hedge_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
                 elif strategy_name == 'trend_atr':
                     live_trading_selections['strategies'][strategy_name] = select_top_performers(
