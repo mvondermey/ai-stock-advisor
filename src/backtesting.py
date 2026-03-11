@@ -7218,10 +7218,10 @@ def _run_portfolio_backtest_walk_forward(
         
         # Add all missing monthly variants and other strategies
         # Monthly variants use same selection as daily, just different rebalance schedule
-        live_trading_selections['strategies']['static_bh_1y_monthly'] = live_trading_selections['strategies']['static_bh_1y']
-        live_trading_selections['strategies']['static_bh_6m_monthly'] = live_trading_selections['strategies']['static_bh_6m']
-        live_trading_selections['strategies']['static_bh_3m_monthly'] = live_trading_selections['strategies']['static_bh_3m']
-        live_trading_selections['strategies']['static_bh_1m_monthly'] = live_trading_selections['strategies']['static_bh_1m']
+        live_trading_selections['strategies']['bh_1y_monthly'] = live_trading_selections['strategies']['static_bh_1y']
+        live_trading_selections['strategies']['bh_6m_monthly'] = live_trading_selections['strategies']['static_bh_6m']
+        live_trading_selections['strategies']['bh_3m_monthly'] = live_trading_selections['strategies']['static_bh_3m']
+        live_trading_selections['strategies']['bh_1m_monthly'] = live_trading_selections['strategies']['static_bh_1m']
         live_trading_selections['strategies']['risk_adj_mom_3m_monthly'] = live_trading_selections['strategies']['risk_adj_mom_3m']
         live_trading_selections['strategies']['risk_adj_mom_6m_monthly'] = live_trading_selections['strategies']['risk_adj_mom_6m']
         live_trading_selections['strategies']['risk_adj_mom_1m_monthly'] = live_trading_selections['strategies']['risk_adj_mom_1m']
