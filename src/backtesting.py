@@ -7035,295 +7035,197 @@ def _run_portfolio_backtest_walk_forward(
     }
     
     try:
-        # Static/Dynamic BH strategies (performance-based)
-        live_trading_selections['strategies']['static_bh_1y'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['static_bh_6m'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['static_bh_3m'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['static_bh_1m'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['dynamic_bh_1y'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['dynamic_bh_6m'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['dynamic_bh_3m'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['dynamic_bh_1m'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Risk-Adjusted Momentum strategies
-        live_trading_selections['strategies']['risk_adj_mom'] = select_risk_adj_mom_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['risk_adj_mom_1m'] = select_risk_adj_mom_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['risk_adj_mom_3m'] = select_risk_adj_mom_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['risk_adj_mom_6m'] = select_risk_adj_mom_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Sector Rotation (uses full ticker list)
-        live_trading_selections['strategies']['sector_rotation'] = select_sector_rotation_etfs(
-            list(available_tickers_in_data), ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Quality Momentum
-        live_trading_selections['strategies']['quality_momentum'] = select_quality_momentum_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Mean Reversion
-        live_trading_selections['strategies']['mean_reversion'] = select_mean_reversion_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Volatility-Adjusted Momentum
-        live_trading_selections['strategies']['volatility_adj_mom'] = select_volatility_adj_mom_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Price Acceleration
-        live_trading_selections['strategies']['price_acceleration'] = select_price_acceleration_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Turnaround
-        live_trading_selections['strategies']['turnaround'] = select_turnaround_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # AI and Elite strategies
-        from shared_strategies import select_momentum_ai_hybrid_stocks, select_ai_elite_with_training
-        live_trading_selections['strategies']['momentum_ai_hybrid'] = select_momentum_ai_hybrid_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['ai_elite'] = select_ai_elite_with_training(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Elite Hybrid and Elite Risk (use momentum AI hybrid as base for now)
-        live_trading_selections['strategies']['elite_hybrid'] = select_momentum_ai_hybrid_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['elite_risk'] = select_risk_adj_mom_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Additional strategies
-        from shared_strategies import select_momentum_volatility_hybrid_stocks, select_momentum_volatility_hybrid_6m_stocks
-        live_trading_selections['strategies']['momentum_volatility_hybrid_6m'] = select_momentum_volatility_hybrid_6m_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Inverse ETF hedge and trend ATR use special selection
-        live_trading_selections['strategies']['inverse_etf_hedge'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['trend_atr'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Dual Momentum uses 1Y momentum
-        live_trading_selections['strategies']['dual_momentum'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Analyst Rec (if data available, fallback to risk_adj_mom)
-        try:
-            from analyst_recommendation_strategy import select_analyst_recommendation_stocks
-            # Check if analyst_data_cache exists and has data
-            if 'analyst_data_cache' in locals() and analyst_data_cache:
-                live_trading_selections['strategies']['analyst_rec'] = select_analyst_recommendation_stocks(
-                    initial_top_tickers, ticker_data_grouped, analyst_data_cache, live_current_date, top_n=LIVE_TRADING_TOP_N
-                )
-            else:
-                # Fallback to risk_adj_mom if no analyst data
-                live_trading_selections['strategies']['analyst_rec'] = select_risk_adj_mom_stocks(
+        # Auto-generate selections for ALL strategies in backtesting results
+        # This ensures live trading always has all strategies without manual updates
+        for strategy_name in results['strategies'].keys():
+            try:
+                # Skip strategies that don't have selection functions (e.g., meta strategies)
+                if strategy_name in ['meta_strategy_ml', 'meta_strategy_mom']:
+                    continue
+                    
+                # Special handling for strategies with custom selection functions
+                if strategy_name == 'static_bh_1y':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'static_bh_6m':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'static_bh_3m':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'static_bh_1m':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'dynamic_bh_1y':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'dynamic_bh_6m':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'dynamic_bh_3m':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'dynamic_bh_1m':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'risk_adj_mom':
+                    live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'risk_adj_mom_1m':
+                    live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'risk_adj_mom_3m':
+                    live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'risk_adj_mom_6m':
+                    live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'sector_rotation':
+                    live_trading_selections['strategies'][strategy_name] = select_sector_rotation_etfs(
+                        list(available_tickers_in_data), ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'quality_momentum':
+                    live_trading_selections['strategies'][strategy_name] = select_quality_momentum_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'mean_reversion':
+                    live_trading_selections['strategies'][strategy_name] = select_mean_reversion_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'volatility_adj_mom':
+                    live_trading_selections['strategies'][strategy_name] = select_volatility_adj_mom_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'price_acceleration':
+                    live_trading_selections['strategies'][strategy_name] = select_price_acceleration_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'turnaround':
+                    live_trading_selections['strategies'][strategy_name] = select_turnaround_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'momentum_ai_hybrid':
+                    live_trading_selections['strategies'][strategy_name] = select_momentum_ai_hybrid_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'ai_elite':
+                    live_trading_selections['strategies'][strategy_name] = select_ai_elite_with_training(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'elite_hybrid':
+                    live_trading_selections['strategies'][strategy_name] = select_elite_hybrid_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'elite_risk':
+                    live_trading_selections['strategies'][strategy_name] = select_elite_risk_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'momentum_volatility_hybrid_6m':
+                    live_trading_selections['strategies'][strategy_name] = select_momentum_volatility_hybrid_6m_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'inverse_etf_hedge':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'trend_atr':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'dual_momentum':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'ratio_3m_1y':
+                    live_trading_selections['strategies'][strategy_name] = select_3m_1y_ratio_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'ratio_1y_3m':
+                    live_trading_selections['strategies'][strategy_name] = select_1y_3m_ratio_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'concentrated_3m':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'analyst_rec':
+                    try:
+                        from analyst_recommendation_strategy import select_analyst_recommendation_stocks
+                        if 'analyst_data_cache' in locals() and analyst_data_cache:
+                            live_trading_selections['strategies'][strategy_name] = select_analyst_recommendation_stocks(
+                                initial_top_tickers, ticker_data_grouped, analyst_data_cache, live_current_date, top_n=LIVE_TRADING_TOP_N
+                            )
+                        else:
+                            live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
+                                initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+                            )
+                    except Exception:
+                        live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
+                            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+                        )
+                else:
+                    # Default fallback for any remaining strategies
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+                    )
+                    
+            except Exception as e:
+                print(f"   ⚠️ Error generating selections for {strategy_name}: {e}")
+                # Fallback to simple top performers
+                live_trading_selections['strategies'][strategy_name] = select_top_performers(
                     initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
                 )
-        except Exception:
-            # Fallback to risk_adj_mom
-            live_trading_selections['strategies']['analyst_rec'] = select_risk_adj_mom_stocks(
-                initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-            )
         
-        # Ratio strategies
-        live_trading_selections['strategies']['ratio_3m_1y'] = select_3m_1y_ratio_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['ratio_1y_3m'] = select_1y_3m_ratio_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
+        print(f"   ✅ Generated selections for {len(live_trading_selections['strategies'])} strategies")
         
-        # Concentrated 3M (same as static_bh_3m)
-        live_trading_selections['strategies']['concentrated_3m'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # AI Regime strategies (ML-based strategy selection)
-        try:
-            if ENABLE_AI_REGIME:
+        # Special handling for AI Regime (needs model loading)
+        if ENABLE_AI_REGIME and 'ai_regime' in results['strategies']:
+            try:
                 from ai_regime_strategy import AIRegimeAllocator, select_ai_regime_stocks
-                # Initialize allocator
                 ai_regime_allocator = AIRegimeAllocator(retrain_days=1, forward_days=1)
                 ai_regime_allocator.load_model()
-                # Predict best strategy
                 ai_regime_current_strategy = ai_regime_allocator.predict_best_strategy(ticker_data_grouped, live_current_date)
-                # Select stocks using predicted strategy
                 ai_regime_stocks = select_ai_regime_stocks(
                     initial_top_tickers, ticker_data_grouped, live_current_date, 
                     LIVE_TRADING_TOP_N, ai_regime_current_strategy
                 )
                 live_trading_selections['strategies']['ai_regime'] = ai_regime_stocks
                 print(f"   ✅ AI Regime: Selected {len(ai_regime_stocks)} stocks using {ai_regime_current_strategy}")
-        except Exception as e:
-            print(f"   ⚠️ AI Regime live selection error: {e}")
-            # Fallback to risk_adj_mom_3m
-            live_trading_selections['strategies']['ai_regime'] = select_risk_adj_mom_stocks(
-                initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
-            )
+            except Exception as e:
+                print(f"   ⚠️ AI Regime live selection error: {e}")
+                live_trading_selections['strategies']['ai_regime'] = select_risk_adj_mom_stocks(
+                    initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+                )
         
-        try:
-            if ENABLE_AI_REGIME_MONTHLY:
+        if ENABLE_AI_REGIME_MONTHLY and 'ai_regime_monthly' in results['strategies']:
+            try:
                 from ai_regime_strategy import AIRegimeMonthlyAllocator, select_ai_regime_stocks
-                # Initialize allocator
                 ai_regime_monthly_allocator = AIRegimeMonthlyAllocator(forward_days=1)
                 ai_regime_monthly_allocator.load_model()
-                # Predict best strategy
                 ai_regime_monthly_current_strategy = ai_regime_monthly_allocator.predict_best_strategy(ticker_data_grouped, live_current_date)
-                # Select stocks using predicted strategy
                 ai_regime_monthly_stocks = select_ai_regime_stocks(
                     initial_top_tickers, ticker_data_grouped, live_current_date,
                     LIVE_TRADING_TOP_N, ai_regime_monthly_current_strategy
                 )
                 live_trading_selections['strategies']['ai_regime_monthly'] = ai_regime_monthly_stocks
                 print(f"   ✅ AI Regime Monthly: Selected {len(ai_regime_monthly_stocks)} stocks using {ai_regime_monthly_current_strategy}")
-        except Exception as e:
-            print(f"   ⚠️ AI Regime Monthly live selection error: {e}")
-            # Fallback to risk_adj_mom_3m
-            live_trading_selections['strategies']['ai_regime_monthly'] = select_risk_adj_mom_stocks(
-                initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
-            )
-        
-        # Add all missing monthly variants and other strategies
-        # Monthly variants use same selection as daily, just different rebalance schedule
-        live_trading_selections['strategies']['bh_1y_monthly'] = live_trading_selections['strategies']['static_bh_1y']
-        live_trading_selections['strategies']['bh_6m_monthly'] = live_trading_selections['strategies']['static_bh_6m']
-        live_trading_selections['strategies']['bh_3m_monthly'] = live_trading_selections['strategies']['static_bh_3m']
-        live_trading_selections['strategies']['bh_1m_monthly'] = live_trading_selections['strategies']['static_bh_1m']
-        live_trading_selections['strategies']['risk_adj_mom_3m_monthly'] = live_trading_selections['strategies']['risk_adj_mom_3m']
-        live_trading_selections['strategies']['risk_adj_mom_6m_monthly'] = live_trading_selections['strategies']['risk_adj_mom_6m']
-        live_trading_selections['strategies']['risk_adj_mom_1m_monthly'] = live_trading_selections['strategies']['risk_adj_mom_1m']
-        
-        # Strategies with proper selection functions
-        from dynamic_pool import select_dynamic_pool_stocks
-        from correlation_ensemble import select_correlation_ensemble_stocks
-        from volatility_ensemble import select_volatility_ensemble_stocks
-        from adaptive_ensemble import select_adaptive_ensemble_stocks
-        from enhanced_volatility_trader import select_enhanced_volatility_stocks
-        from sentiment_ensemble import select_sentiment_ensemble_stocks
-        from multi_timeframe_ensemble import select_multi_timeframe_ensemble_stocks
-        from vol_sweet_mom_strategy import select_vol_sweet_mom_stocks
-        from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
-        from risk_adj_mom_3m_sentiment_strategy import select_risk_adj_mom_3m_sentiment_stocks
-        from risk_adj_mom_sentiment import select_risk_adj_mom_sentiment_stocks
-        from ai_elite_filtered_strategy import select_ai_elite_filtered_stocks
-        from universal_model_strategy import select_universal_model_stocks
-        from elite_hybrid_strategy import select_elite_hybrid_stocks
-        from elite_risk_strategy import select_elite_risk_stocks
-        
-        live_trading_selections['strategies']['dynamic_bh_1y_vol_filter'] = select_top_performers_vol_filtered(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, max_volatility=0.4, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['dynamic_bh_1y_trailing_stop'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['multitask'] = select_multitask_learning_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Proper selection functions for each strategy
-        live_trading_selections['strategies']['risk_adj_mom_3m_sentiment'] = select_risk_adj_mom_3m_sentiment_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['vol_sweet_mom'] = select_vol_sweet_mom_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['risk_adj_mom_1m_vol_sweet'] = select_risk_adj_mom_1m_vol_sweet_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['ai_elite_monthly'] = live_trading_selections['strategies']['ai_elite']  # Monthly uses same selection
-        live_trading_selections['strategies']['ai_elite_filtered'] = select_ai_elite_filtered_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['universal_model'] = select_universal_model_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['momentum_volatility_hybrid'] = select_momentum_volatility_hybrid_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['momentum_volatility_hybrid_1y'] = select_momentum_volatility_hybrid_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['momentum_volatility_hybrid_1y3m'] = select_momentum_volatility_hybrid_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['adaptive_ensemble'] = select_adaptive_ensemble_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['volatility_ensemble'] = select_volatility_ensemble_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['enhanced_volatility'] = select_enhanced_volatility_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['ai_volatility_ensemble'] = select_volatility_ensemble_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['multi_tf_ensemble'] = select_multi_timeframe_ensemble_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['correlation_ensemble'] = select_correlation_ensemble_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['dynamic_pool'] = select_dynamic_pool_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['sentiment_ensemble'] = select_sentiment_ensemble_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['voting_ensemble'] = select_adaptive_ensemble_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['mom_accel'] = select_top_performers(
-            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['risk_adj_mom_sentiment'] = select_risk_adj_mom_sentiment_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        # Override elite_hybrid and elite_risk with proper functions
-        live_trading_selections['strategies']['elite_hybrid'] = select_elite_hybrid_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        live_trading_selections['strategies']['elite_risk'] = select_elite_risk_stocks(
-            initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
-        )
-        
-        print(f"   ✅ Generated selections for {len(live_trading_selections['strategies'])} strategies")
+            except Exception as e:
+                print(f"   ⚠️ AI Regime Monthly live selection error: {e}")
+                live_trading_selections['strategies']['ai_regime_monthly'] = select_risk_adj_mom_stocks(
+                    initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+                )
         
     except Exception as e:
         print(f"   ⚠️ Error generating live trading selections: {e}")
