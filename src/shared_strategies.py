@@ -2620,6 +2620,7 @@ def select_ai_elite_with_training(
                 
                 # Handle both old format (direct model) and new format (model + metadata)
                 if isinstance(model_data, dict) and 'all_models' in model_data:
+                    # New format - model dict with metadata at top level
                     loaded_model = model_data
                     metadata = model_data.get('metadata', {})
                     
@@ -2644,6 +2645,11 @@ def select_ai_elite_with_training(
                         print(msg)
                     else:
                         print(f"   ✅ AI Elite: Loaded model from {base_model_path}")
+                elif isinstance(model_data, dict) and 'model' in model_data:
+                    # Wrapped format - extract the actual model
+                    loaded_model = model_data['model']
+                    metadata = model_data.get('metadata', {})
+                    print(f"   ✅ AI Elite: Loaded model from {base_model_path} (wrapped format)")
                 else:
                     # Old format - direct model
                     loaded_model = model_data
