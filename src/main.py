@@ -939,9 +939,6 @@ def main(
     
     print(f"  ✅ {len(top_tickers)} tickers available for all strategies: {', '.join(top_tickers[:10])}{'...' if len(top_tickers) > 10 else ''}", flush=True)
 
-    # --- Skip initial AI training - will be trained during walk-forward backtest ---
-    print(f"\n⏭️ Skipping initial AI training - will be trained during walk-forward backtest")
-
     # 🧠 Initialize dictionaries for model training data before threshold optimization
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
     prices_dict, signals_dict = {}, {}
