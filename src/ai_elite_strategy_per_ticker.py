@@ -231,7 +231,18 @@ def train_shared_base_model(
                 
                 # Validate on held-out set (faster than CV)
                 y_pred = m.predict(X_val)
+                
+                # Check for numerical instability
+                if np.any(np.isnan(y_pred)) or np.any(np.isinf(y_pred)):
+                    print(f"      ⚠️ {name}: Predictions contain NaN/Inf, skipping")
+                    continue
+                
                 score = r2_score(y_val, y_pred)
+                
+                # Clip to reasonable bounds - extreme values indicate numerical overflow
+                if score < -10 or score > 1 or np.isnan(score) or np.isinf(score):
+                    print(f"      ⚠️ {name}: R² = {score:.3f} (invalid, clipping to -10)")
+                    score = -10.0
             
             elapsed = time.time() - start_time
             status = "incremental" if has_existing else "fresh"
