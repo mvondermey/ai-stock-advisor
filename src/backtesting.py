@@ -7168,25 +7168,16 @@ def _run_portfolio_backtest_walk_forward(
                                 initial_top_tickers, ticker_data_grouped, analyst_data_cache, live_current_date, top_n=LIVE_TRADING_TOP_N
                             )
                         else:
-                            live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
-                                initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-                            )
+                            live_trading_selections['strategies'][strategy_name] = []
                     except Exception:
-                        live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
-                            initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-                        )
+                        live_trading_selections['strategies'][strategy_name] = []
                 else:
-                    # Default fallback for any remaining strategies
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
-                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-                    )
+                    # No fallback - strategy must be explicitly implemented
+                    live_trading_selections['strategies'][strategy_name] = []
                     
             except Exception as e:
                 print(f"   ⚠️ Error generating selections for {strategy_name}: {e}")
-                # Fallback to simple top performers
-                live_trading_selections['strategies'][strategy_name] = select_top_performers(
-                    initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
-                )
+                live_trading_selections['strategies'][strategy_name] = []
         
         print(f"   ✅ Generated selections for {len(live_trading_selections['strategies'])} strategies")
         
