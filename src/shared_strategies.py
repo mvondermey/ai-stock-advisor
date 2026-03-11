@@ -2401,7 +2401,7 @@ def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookba
     if apply_performance_filter:
         from performance_filters import filter_tickers_by_performance
         tickers_to_rank = filter_tickers_by_performance(
-            all_tickers, ticker_data_grouped, current_date, filter_label
+            tickers_to_rank, ticker_data_grouped, current_date, filter_label
         )
     
     performances = calculate_parallel_performance(
