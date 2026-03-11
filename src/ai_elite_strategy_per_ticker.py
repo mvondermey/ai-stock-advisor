@@ -224,6 +224,17 @@ def train_shared_base_model(
         try:
             print(f"      🔄 {name}: Training started...", end=" ", flush=True)
             start_time = time.time()
+            
+            # Validate training data
+            if len(X_train) < 10:
+                print(f"skipped (insufficient data: {len(X_train)} samples)")
+                continue
+                
+            # Check for valid target values
+            if np.all(y_train == y_train[0]):
+                print(f"skipped (constant target)")
+                continue
+                
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 if has_existing:
@@ -236,12 +247,26 @@ def train_shared_base_model(
                     # Fresh training
                     m.fit(X_train, y_train)
                 
+                # Validate model was trained (has trees/estimators)
+                if name == 'CatBoost':
+                    try:
+                        # Check if CatBoost has any trees
+                        if hasattr(m, 'get_tree_count') and m.get_tree_count() == 0:
+                            print(f"failed: No trees built")
+                            continue
+                    except:
+                        pass
+                
                 # Validate on held-out set (faster than CV)
                 y_pred = m.predict(X_val)
                 
                 # Check for numerical instability
                 if np.any(np.isnan(y_pred)) or np.any(np.isinf(y_pred)):
                     print(f"      ⚠️ {name}: Predictions contain NaN/Inf, skipping")
+                    continue
+                
+                if len(y_pred) == 0 or len(y_val) == 0:
+                    print(f"failed: Empty predictions")
                     continue
                 
                 score = r2_score(y_val, y_pred)
