@@ -2033,6 +2033,7 @@ def _run_portfolio_backtest_walk_forward(
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not static_bh_1y_initialized  # Force initial allocation
                         )
+                        strategies_rebalanced_today['Static BH 1Y'] = rebalanced_flag
                         static_bh_transaction_costs += rebalance_costs
                         
                         static_bh_1y_initialized = True
@@ -2069,6 +2070,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not static_bh_3m_initialized  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Static BH 3M'] = rebalanced_flag
                     static_bh_transaction_costs += rebalance_costs
                     
                     static_bh_3m_initialized = True
@@ -2106,6 +2108,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not static_bh_6m_initialized  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Static BH 6M'] = rebalanced_flag
                     static_bh_transaction_costs += rebalance_costs
                     
                     static_bh_6m_initialized = True
@@ -2142,6 +2145,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not static_bh_1m_initialized  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Static BH 1M'] = rebalanced_flag
                     static_bh_1m_transaction_costs += rebalance_costs
                     
                     static_bh_1m_initialized = True
@@ -2169,6 +2173,7 @@ def _run_portfolio_backtest_walk_forward(
                         new_stocks=new_stocks, positions=static_bh_1y_monthly_positions, cash=static_bh_1y_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
                         portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_1y_monthly_initialized)
+                    strategies_rebalanced_today['Static BH 1Y Mth'] = rebalanced_flag
                     static_bh_1y_monthly_transaction_costs += rc
                     static_bh_1y_monthly_initialized = True
                     static_bh_1y_monthly_last_month = current_date.month
@@ -2189,6 +2194,7 @@ def _run_portfolio_backtest_walk_forward(
                         new_stocks=new_stocks, positions=static_bh_6m_monthly_positions, cash=static_bh_6m_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
                         portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_6m_monthly_initialized)
+                    strategies_rebalanced_today['Static BH 6M Mth'] = rebalanced_flag
                     static_bh_6m_monthly_transaction_costs += rc
                     static_bh_6m_monthly_initialized = True
                     static_bh_6m_monthly_last_month = current_date.month
@@ -2209,6 +2215,7 @@ def _run_portfolio_backtest_walk_forward(
                         new_stocks=new_stocks, positions=static_bh_3m_monthly_positions, cash=static_bh_3m_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
                         portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_3m_monthly_initialized)
+                    strategies_rebalanced_today['Static BH 3M Mth'] = rebalanced_flag
                     static_bh_3m_monthly_transaction_costs += rc
                     static_bh_3m_monthly_initialized = True
                     static_bh_3m_monthly_last_month = current_date.month
@@ -2229,6 +2236,7 @@ def _run_portfolio_backtest_walk_forward(
                         new_stocks=new_stocks, positions=static_bh_1m_monthly_positions, cash=static_bh_1m_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
                         portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_1m_monthly_initialized)
+                    strategies_rebalanced_today['Static BH 1M Mth'] = rebalanced_flag
                     static_bh_1m_monthly_transaction_costs += rc
                     static_bh_1m_monthly_initialized = True
                     static_bh_1m_monthly_last_month = current_date.month
@@ -2260,6 +2268,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_dynamic_bh_stocks  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Dynamic BH 1Y'] = rebalanced_flag
                     dynamic_bh_transaction_costs += rebalance_costs
                     dynamic_bh_last_rebalance_value = _mark_to_market_value(
                         dynamic_bh_positions, dynamic_bh_cash, ticker_data_grouped, current_date
@@ -2295,6 +2304,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_dynamic_bh_6m_stocks  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Dynamic BH 6M'] = rebalanced_flag
                     dynamic_bh_6m_transaction_costs += rebalance_costs
                     dynamic_bh_6m_last_rebalance_value = _mark_to_market_value(
                         dynamic_bh_6m_positions, dynamic_bh_6m_cash, ticker_data_grouped, current_date
@@ -2327,6 +2337,7 @@ def _run_portfolio_backtest_walk_forward(
                     portfolio_size=PORTFOLIO_SIZE,
                     force_rebalance=not current_dynamic_bh_3m_stocks  # Force initial allocation
                 )
+                strategies_rebalanced_today['Dynamic BH 3M'] = rebalanced_flag
                 dynamic_bh_3m_transaction_costs += rebalance_costs
                 dynamic_bh_3m_last_rebalance_value = _mark_to_market_value(
                     dynamic_bh_3m_positions, dynamic_bh_3m_cash, ticker_data_grouped, current_date
@@ -2356,6 +2367,7 @@ def _run_portfolio_backtest_walk_forward(
                     portfolio_size=PORTFOLIO_SIZE,
                     force_rebalance=not current_dynamic_bh_1m_stocks  # Force initial allocation
                 )
+                strategies_rebalanced_today['Dynamic BH 1M'] = rebalanced_flag
                 dynamic_bh_1m_transaction_costs += rebalance_costs
                 dynamic_bh_1m_last_rebalance_value = _mark_to_market_value(
                     dynamic_bh_1m_positions, dynamic_bh_1m_cash, ticker_data_grouped, current_date
@@ -2386,6 +2398,7 @@ def _run_portfolio_backtest_walk_forward(
                     portfolio_size=PORTFOLIO_SIZE,
                     force_rebalance=not current_dynamic_bh_1y_vol_filter_stocks  # Force initial allocation
                 )
+                strategies_rebalanced_today['Dynamic BH 1Y+Vol'] = rebalanced_flag
                 dynamic_bh_1y_vol_filter_transaction_costs += rebalance_costs
                 dynamic_bh_1y_vol_filter_last_rebalance_value = _mark_to_market_value(
                     dynamic_bh_1y_vol_filter_positions, dynamic_bh_1y_vol_filter_cash, ticker_data_grouped, current_date
@@ -2472,6 +2485,7 @@ def _run_portfolio_backtest_walk_forward(
                     portfolio_size=PORTFOLIO_SIZE,
                     force_rebalance=not current_dynamic_bh_1y_trailing_stop_stocks  # Force initial allocation
                 )
+                strategies_rebalanced_today['Dynamic BH 1Y+TS'] = rebalanced_flag
                 dynamic_bh_1y_trailing_stop_transaction_costs += rebalance_costs
                 dynamic_bh_1y_trailing_stop_last_rebalance_value = _mark_to_market_value(
                     dynamic_bh_1y_trailing_stop_positions, dynamic_bh_1y_trailing_stop_cash, ticker_data_grouped, current_date
@@ -2506,6 +2520,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_sector_rotation_etfs  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Sector Rotation'] = rebalanced_flag
                     sector_rotation_transaction_costs += rebalance_costs
                     sector_rotation_last_rebalance_date = current_date
                     sector_rotation_last_rebalance_value = _mark_to_market_value(
@@ -2542,6 +2557,7 @@ def _run_portfolio_backtest_walk_forward(
                     portfolio_size=PORTFOLIO_SIZE,
                     force_rebalance=not current_risk_adj_mom_stocks  # Force initial allocation
                 )
+                strategies_rebalanced_today['Risk-Adj Mom'] = rebalanced_flag
                 risk_adj_mom_transaction_costs += rebalance_costs
                 risk_adj_mom_last_rebalance_value = _mark_to_market_value(
                     risk_adj_mom_positions, risk_adj_mom_cash, ticker_data_grouped, current_date
@@ -2579,6 +2595,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_multitask_stocks  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Multi-Task Learning'] = rebalanced_flag
                     multitask_transaction_costs += rebalance_costs
                     multitask_last_rebalance_value = _mark_to_market_value(
                         multitask_positions, multitask_cash, ticker_data_grouped, current_date
@@ -2618,6 +2635,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_ratio_3m_1y_stocks  # Force initial allocation
                     )
+                    strategies_rebalanced_today['3M/1Y Ratio'] = rebalanced_flag
                     ratio_3m_1y_transaction_costs += rebalance_costs
                     ratio_3m_1y_last_rebalance_value = _mark_to_market_value(
                         ratio_3m_1y_positions, ratio_3m_1y_cash, ticker_data_grouped, current_date
@@ -2656,6 +2674,7 @@ def _run_portfolio_backtest_walk_forward(
                     portfolio_size=PORTFOLIO_SIZE,
                     force_rebalance=not current_ratio_1y_3m_stocks  # Force initial allocation
                 )
+                strategies_rebalanced_today['1Y/3M Ratio'] = rebalanced_flag
                 ratio_1y_3m_transaction_costs += rebalance_costs
                 ratio_1y_3m_last_rebalance_value = _mark_to_market_value(
                     ratio_1y_3m_positions, ratio_1y_3m_cash, ticker_data_grouped, current_date
@@ -2695,6 +2714,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=min(len(new_turnaround_stocks), 15),  # Allow up to 15 positions
                         force_rebalance=not current_turnaround_stocks  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Turnaround'] = rebalanced_flag
                     turnaround_transaction_costs += rebalance_costs
                     turnaround_last_rebalance_value = _mark_to_market_value(
                         turnaround_positions, turnaround_cash, ticker_data_grouped, current_date
@@ -2734,6 +2754,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_momentum_volatility_hybrid_stocks  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Momentum-Vol Hybrid'] = rebalanced_flag
                     momentum_volatility_hybrid_transaction_costs += rebalance_costs
                     momentum_volatility_hybrid_last_rebalance_value = _mark_to_market_value(
                         momentum_volatility_hybrid_positions, momentum_volatility_hybrid_cash, ticker_data_grouped, current_date
@@ -2771,6 +2792,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_momentum_volatility_hybrid_6m_stocks
                     )
+                    strategies_rebalanced_today['Mom-Vol Hybrid 6M'] = rebalanced_flag
                     momentum_volatility_hybrid_6m_transaction_costs += rebalance_costs
                     momentum_volatility_hybrid_6m_last_rebalance_value = _mark_to_market_value(
                         momentum_volatility_hybrid_6m_positions, momentum_volatility_hybrid_6m_cash, ticker_data_grouped, current_date
@@ -2808,6 +2830,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_momentum_volatility_hybrid_1y_stocks
                     )
+                    strategies_rebalanced_today['Mom-Vol Hybrid 1Y'] = rebalanced_flag
                     momentum_volatility_hybrid_1y_transaction_costs += rebalance_costs
                     momentum_volatility_hybrid_1y_last_rebalance_value = _mark_to_market_value(
                         momentum_volatility_hybrid_1y_positions, momentum_volatility_hybrid_1y_cash, ticker_data_grouped, current_date
@@ -2845,6 +2868,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_momentum_volatility_hybrid_1y3m_stocks
                     )
+                    strategies_rebalanced_today['Mom-Vol Hybrid 1Y/3M'] = rebalanced_flag
                     momentum_volatility_hybrid_1y3m_transaction_costs += rebalance_costs
                     momentum_volatility_hybrid_1y3m_last_rebalance_value = _mark_to_market_value(
                         momentum_volatility_hybrid_1y3m_positions, momentum_volatility_hybrid_1y3m_cash, ticker_data_grouped, current_date
@@ -2884,6 +2908,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_price_acceleration_stocks  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Price Acceleration'] = rebalanced_flag
                     price_acceleration_transaction_costs += rebalance_costs
                     price_acceleration_last_rebalance_value = _mark_to_market_value(
                         price_acceleration_positions, price_acceleration_cash, ticker_data_grouped, current_date
@@ -2923,6 +2948,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_adaptive_ensemble_stocks  # Force initial allocation on day 1
                     )
+                    strategies_rebalanced_today['Adaptive Ensemble'] = rebalanced_flag
                     adaptive_ensemble_transaction_costs += rebalance_costs
                     adaptive_ensemble_last_rebalance_value = _mark_to_market_value(
                         adaptive_ensemble_positions, adaptive_ensemble_cash, ticker_data_grouped, current_date
@@ -2963,6 +2989,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_volatility_ensemble_stocks  # Force initial allocation on day 1
                     )
+                    strategies_rebalanced_today['Volatility Ensemble'] = rebalanced_flag
                     volatility_ensemble_transaction_costs += rebalance_costs
                     volatility_ensemble_last_rebalance_value = _mark_to_market_value(
                         volatility_ensemble_positions, volatility_ensemble_cash, ticker_data_grouped, current_date
@@ -3048,6 +3075,7 @@ def _run_portfolio_backtest_walk_forward(
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not current_correlation_ensemble_stocks  # Force initial allocation on day 1
                         )
+                        strategies_rebalanced_today['Correlation Ensemble'] = rebalanced_flag
                         correlation_ensemble_transaction_costs += rebalance_costs
                         correlation_ensemble_last_rebalance_value = _mark_to_market_value(
                             correlation_ensemble_positions, correlation_ensemble_cash, ticker_data_grouped, current_date
@@ -3088,6 +3116,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_dynamic_pool_stocks  # Force initial allocation on day 1
                     )
+                    strategies_rebalanced_today['Dynamic Pool'] = rebalanced_flag
                     dynamic_pool_transaction_costs += rebalance_costs
                     dynamic_pool_last_rebalance_value = _mark_to_market_value(
                         dynamic_pool_positions, dynamic_pool_cash, ticker_data_grouped, current_date
@@ -3127,6 +3156,7 @@ def _run_portfolio_backtest_walk_forward(
                         buffer_size=PORTFOLIO_BUFFER_SIZE,
                         strategy_stop_loss=STRATEGY_STOP_LOSS_PCT.get('Risk-Adj Mom Sentiment', STOP_LOSS_PCT)
                     )
+                    strategies_rebalanced_today['RiskAdj Sent'] = rebalanced_flag
                     
                     risk_adj_mom_sentiment_transaction_costs += rebalance_costs
                     risk_adj_mom_sentiment_last_rebalance_value = risk_adj_mom_sentiment_portfolio_value
@@ -3162,6 +3192,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_voting_ensemble_stocks  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Voting Ensemble'] = rebalanced_flag
                     voting_ensemble_transaction_costs += rebalance_costs
                     voting_ensemble_last_rebalance_value = voting_ensemble_portfolio_value
                 
@@ -3227,6 +3258,7 @@ def _run_portfolio_backtest_walk_forward(
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not current_mean_reversion_stocks  # Force initial allocation
                         )
+                        strategies_rebalanced_today['Mean Reversion'] = rebalanced_flag
                         mean_reversion_transaction_costs += rebalance_costs
                         mean_reversion_last_rebalance_value = _mark_to_market_value(
                             mean_reversion_positions, mean_reversion_cash, ticker_data_grouped, current_date
@@ -3305,6 +3337,7 @@ def _run_portfolio_backtest_walk_forward(
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not current_quality_momentum_stocks  # Force initial allocation
                         )
+                        strategies_rebalanced_today['Quality+Mom'] = rebalanced_flag
                         quality_momentum_transaction_costs += rebalance_costs
                         quality_momentum_last_rebalance_value = _mark_to_market_value(
                             quality_momentum_positions, quality_momentum_cash, ticker_data_grouped, current_date
@@ -3381,6 +3414,7 @@ def _run_portfolio_backtest_walk_forward(
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not current_volatility_adj_mom_stocks  # Force initial allocation
                         )
+                        strategies_rebalanced_today['Vol-Adj Mom'] = rebalanced_flag
                         volatility_adj_mom_transaction_costs += rebalance_costs
                         volatility_adj_mom_last_rebalance_value = _mark_to_market_value(
                             volatility_adj_mom_positions, volatility_adj_mom_cash, ticker_data_grouped, current_date
@@ -3483,6 +3517,7 @@ def _run_portfolio_backtest_walk_forward(
                                 portfolio_size=len(new_inverse_etf_stocks),
                                 force_rebalance=not inverse_etf_hedge_initialized
                             )
+                            strategies_rebalanced_today['Hybrid Inverse ETF Hedge'] = rebalanced_flag
                             inverse_etf_hedge_transaction_costs += rebalance_costs
                             inverse_etf_hedge_initialized = True
                             
@@ -3571,6 +3606,7 @@ def _run_portfolio_backtest_walk_forward(
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not analyst_rec_initialized
                         )
+                        strategies_rebalanced_today['Analyst Rec'] = rebalanced_flag
                         analyst_rec_transaction_costs += rebalance_costs
                         analyst_rec_initialized = True
                         analyst_rec_last_rebalance_day = day_count
@@ -3878,6 +3914,7 @@ def _run_portfolio_backtest_walk_forward(
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=last_momentum_ai_hybrid_rebalance_day == 0  # Force initial allocation
                         )
+                        strategies_rebalanced_today['Momentum+AI Hybrid'] = rebalanced_flag
                         momentum_ai_hybrid_transaction_costs += rebalance_costs
                         
                         last_momentum_ai_hybrid_rebalance_day = day_count
@@ -3971,6 +4008,7 @@ def _run_portfolio_backtest_walk_forward(
                             portfolio_size=3,
                             force_rebalance=not current_concentrated_3m_stocks  # Force initial allocation
                         )
+                        strategies_rebalanced_today['Concentrated 3M'] = rebalanced_flag
                         concentrated_3m_transaction_costs += rebalance_costs
                         concentrated_3m_days_since_rebalance = 0
                         
@@ -4018,6 +4056,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_dual_mom_stocks  # Force initial allocation
                     )
+                    strategies_rebalanced_today['Dual Momentum'] = rebalanced_flag
                     dual_mom_transaction_costs += rebalance_costs
                     
             except Exception as e:
@@ -4106,6 +4145,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_elite_hybrid_stocks
                     )
+                    strategies_rebalanced_today['Elite Hybrid'] = rebalanced_flag
                     elite_hybrid_transaction_costs += rebalance_costs
                     elite_hybrid_last_rebalance_value = elite_hybrid_portfolio_value
                     
@@ -4137,6 +4177,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_elite_risk_stocks
                     )
+                    strategies_rebalanced_today['Elite Risk'] = rebalanced_flag
                     elite_risk_transaction_costs += rebalance_costs
                     elite_risk_last_rebalance_value = elite_risk_portfolio_value
 
@@ -4168,6 +4209,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_risk_adj_mom_6m_stocks
                     )
+                    strategies_rebalanced_today['Risk-Adj Mom 6M'] = rebalanced_flag
                     risk_adj_mom_6m_transaction_costs += rebalance_costs
 
             except Exception as e:
@@ -4203,6 +4245,7 @@ def _run_portfolio_backtest_walk_forward(
                             transaction_cost=TRANSACTION_COST,
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not risk_adj_mom_6m_monthly_initialized)
+                        strategies_rebalanced_today['RiskAdj 6M Mth'] = rebalanced_flag
                         risk_adj_mom_6m_monthly_transaction_costs += rc
                         risk_adj_mom_6m_monthly_initialized = True
                         risk_adj_mom_6m_monthly_last_month = current_date.month
@@ -4235,6 +4278,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_risk_adj_mom_3m_stocks
                     )
+                    strategies_rebalanced_today['Risk-Adj Mom 3M'] = rebalanced_flag
                     risk_adj_mom_3m_transaction_costs += rebalance_costs
 
             except Exception as e:
@@ -4270,6 +4314,7 @@ def _run_portfolio_backtest_walk_forward(
                             transaction_cost=TRANSACTION_COST,
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not risk_adj_mom_3m_monthly_initialized)
+                        strategies_rebalanced_today['RiskAdj 3M Mth'] = rebalanced_flag
                         risk_adj_mom_3m_monthly_transaction_costs += rc
                         risk_adj_mom_3m_monthly_initialized = True
                         risk_adj_mom_3m_monthly_last_month = current_date.month
@@ -4302,6 +4347,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_risk_adj_mom_3m_sentiment_stocks
                     )
+                    strategies_rebalanced_today['RiskAdj 3M Sent'] = rebalanced_flag
                     risk_adj_mom_3m_sentiment_transaction_costs += rebalance_costs
 
             except Exception as e:
@@ -4332,6 +4378,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_vol_sweet_mom_stocks
                     )
+                    strategies_rebalanced_today['VolSweet Mom'] = rebalanced_flag
                     vol_sweet_mom_transaction_costs += rebalance_costs
 
             except Exception as e:
@@ -4367,6 +4414,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_risk_adj_mom_3m_market_up_stocks
                     )
+                    strategies_rebalanced_today['Risk-Adj Mom 3M Market-Up'] = rebalanced_flag
                     risk_adj_mom_3m_market_up_transaction_costs += rebalance_costs
                     # Check if rebalancing actually changed positions
                     risk_adj_mom_3m_market_up_rebalanced_today = set(current_risk_adj_mom_3m_market_up_stocks) != set(prev_risk_adj_mom_3m_market_up_stocks)
@@ -4401,6 +4449,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_risk_adj_mom_3m_with_stops_stocks
                     )
+                    strategies_rebalanced_today['Risk-Adj Mom 3M with Stops'] = rebalanced_flag
                     risk_adj_mom_3m_with_stops_transaction_costs += rebalance_costs
                     # Check if rebalancing actually changed positions
                     risk_adj_mom_3m_with_stops_rebalanced_today = set(current_risk_adj_mom_3m_with_stops_stocks) != set(prev_risk_adj_mom_3m_with_stops_stocks)
@@ -4444,6 +4493,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_risk_adj_mom_1m_vol_sweet_stocks
                     )
+                    strategies_rebalanced_today['1M VolSweet'] = rebalanced_flag
                     risk_adj_mom_1m_vol_sweet_transaction_costs += rebalance_costs
 
             except Exception as e:
@@ -4474,6 +4524,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_risk_adj_mom_1m_stocks
                     )
+                    strategies_rebalanced_today['Risk-Adj Mom 1M'] = rebalanced_flag
                     risk_adj_mom_1m_transaction_costs += rebalance_costs
 
             except Exception as e:
@@ -4509,6 +4560,7 @@ def _run_portfolio_backtest_walk_forward(
                             transaction_cost=TRANSACTION_COST,
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not risk_adj_mom_1m_monthly_initialized)
+                        strategies_rebalanced_today['RiskAdj 1M Mth'] = rebalanced_flag
                         risk_adj_mom_1m_monthly_transaction_costs += rc
                         risk_adj_mom_1m_monthly_initialized = True
                         risk_adj_mom_1m_monthly_last_month = current_date.month
@@ -4566,6 +4618,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_ai_elite_stocks
                     )
+                    strategies_rebalanced_today['AI Elite'] = rebalanced_flag
                     ai_elite_transaction_costs += rebalance_costs
                     ai_elite_last_rebalance_value = ai_elite_portfolio_value
                     
@@ -4605,6 +4658,7 @@ def _run_portfolio_backtest_walk_forward(
                             transaction_cost=TRANSACTION_COST,
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not ai_elite_monthly_initialized)
+                        strategies_rebalanced_today['AI Elite Mth'] = rebalanced_flag
                         ai_elite_monthly_transaction_costs += rc
                         ai_elite_monthly_initialized = True
                         ai_elite_monthly_last_month = current_date.month
@@ -4640,6 +4694,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not ai_elite_filtered_initialized
                     )
+                    strategies_rebalanced_today['AI Elite Flt'] = rebalanced_flag
                     ai_elite_filtered_transaction_costs += rc
                     ai_elite_filtered_initialized = True
                     
@@ -4831,6 +4886,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not universal_model_initialized
                     )
+                    strategies_rebalanced_today['Universal Model'] = rebalanced_flag
                     universal_model_transaction_costs += rc
                     universal_model_initialized = True
                     
