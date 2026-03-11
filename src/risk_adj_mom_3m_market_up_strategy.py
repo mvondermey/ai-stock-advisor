@@ -31,8 +31,11 @@ def select_risk_adj_mom_3m_market_up_stocks(
 
     # Check market direction (5-day return)
     market_return = _calculate_market_return(ticker_data_grouped, current_date, 5)
+    
     if market_return is None:
-        market_return = 0.0
+        # On first day or when market data unavailable, assume market is up to allow initial investment
+        print(f"   📊 Risk-Adj Mom 3M Market-Up: Market data unavailable, allowing initial investment")
+        market_return = 1.0  # Assume slightly positive to proceed
     
     if market_return <= 0:
         print(f"   📊 Risk-Adj Mom 3M Market-Up: Market is down ({market_return:.1f}%), skipping rebalance")
