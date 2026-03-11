@@ -246,6 +246,17 @@ class UniversalModelStrategy:
         # Build models (XGBoost + LightGBM + CatBoost - all support GPU/incremental)
         if has_existing:
             models = self.all_models
+            # Add CatBoost if missing from loaded model
+            if 'CatBoost' not in models:
+                try:
+                    import catboost as cb
+                    task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
+                    models['CatBoost'] = cb.CatBoostRegressor(
+                        iterations=100, depth=4, learning_rate=0.1,
+                        task_type=task_type, random_seed=42, verbose=0
+                    )
+                except ImportError:
+                    pass
             print(f"   📊 Universal Model: Continuing training on {len(X_list)} samples ({device})...")
         else:
             models = {
@@ -287,9 +298,9 @@ class UniversalModelStrategy:
                     
                     # True incremental training for supported models
                     if has_existing:
-                        if name == 'XGBoost':
-                            m.fit(X_train, y_train, xgb_model=m.get_booster())
-                        elif name == 'LightGBM':
+                        # Incremental training - retrain on new data
+                        # Note: xgb_model causes numerical instability, so we just retrain
+                        if name == 'LightGBM':
                             m.fit(X_train, y_train, init_model=m.booster_)
                         elif name == 'CatBoost':
                             m.fit(X_train, y_train, init_model=m)
