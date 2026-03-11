@@ -2611,8 +2611,10 @@ def select_ai_elite_with_training(
     
     # Step 1: Try loading saved model from disk if not already in memory
     if ai_elite_models.get('_shared_base') is None and not force_train:
+        print(f"   🔍 AI Elite: Looking for model at {base_model_path}")
         if os.path.exists(base_model_path):
             try:
+                print(f"   📁 AI Elite: Found model file, loading...")
                 with open(base_model_path, 'rb') as f:
                     model_data = pickle.load(f)
                 
