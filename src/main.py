@@ -1733,23 +1733,8 @@ if __name__ == "__main__":
             print(f"📊 Overriding portfolio size to {args.num_stocks} stocks (${config.INVESTMENT_PER_STOCK:,.0f} per stock)")
         
         print(f"🚀 Starting Live Trading with Strategy: {args.strategy}")
-        print(f"📋 Available strategies:")
-        print(f"   🏆 volatility_ensemble  - Vol Ens (+106% in backtest)")
-        print(f"   🚀 enhanced_volatility  - Enhanced Vol Trader (ATR stops + take profits)")
-        print(f"   🤖 ai_volatility_ensemble - AI Vol Ens (NEW - AI-enhanced)")
-        print(f"   🏆 correlation_ensemble - Corr Ens (+106% in backtest)")
-        print(f"   🆕 momentum_breakout    - 52-week high breakouts")
-        print(f"   🆕 factor_rotation      - Value/Growth/Mom/Quality rotation")
-        print(f"   🆕 pairs_trading        - Statistical arbitrage")
-        print(f"   🆕 earnings_momentum    - Post-earnings drift (PEAD)")
-        print(f"   🆕 insider_trading      - Follow insider buying")
-        print(f"   🆕 options_sentiment    - Put/call ratio signals")
-        print(f"   🆕 ml_ensemble          - Multi-model voting")
-        print(f"   risk_adj_mom, dynamic_bh_1y, quality_momentum")
-        print(f"💡 Example: python src/main.py --live-trading --strategy volatility_ensemble")
-        print("=" * 80)
         
-        # NO DATA DOWNLOAD - Live trading reads from JSON file saved by backtesting
+        # Load strategy selections first to get available strategies
         print("\n📂 Reading strategy selections from JSON (no data download needed)...")
         from live_trading import get_all_strategy_selections, get_strategy_tickers
         
@@ -1762,6 +1747,50 @@ if __name__ == "__main__":
         
         print(f"   ✅ Loaded selections from backtest ({all_selections.get('backtest_end_date', 'unknown')})")
         print(f"   ✅ Available strategies: {len(all_selections.get('strategies', {}))}")
+        
+        # Display available strategies from JSON
+        print(f"📋 Available strategies:")
+        strategies_list = list(all_selections.get('strategies', {}).keys())
+        
+        # Sort strategies for consistent display
+        strategies_list.sort()
+        
+        # Display first 20 strategies with icons
+        for i, strategy in enumerate(strategies_list[:20]):
+            # Assign icons based on strategy type
+            if 'volatility' in strategy.lower():
+                icon = "🏆"
+            elif 'ai_' in strategy.lower():
+                icon = "🤖"
+            elif 'enhanced' in strategy.lower():
+                icon = "🚀"
+            elif 'correlation' in strategy.lower():
+                icon = "🏆"
+            elif 'momentum' in strategy.lower() and 'ai' not in strategy.lower():
+                icon = "📈"
+            elif 'risk_adj' in strategy.lower():
+                icon = "⚡"
+            elif 'dynamic_' in strategy.lower():
+                icon = "🔄"
+            elif 'static_' in strategy.lower():
+                icon = "📊"
+            elif 'elite_' in strategy.lower():
+                icon = "👑"
+            elif 'regime' in strategy.lower():
+                icon = "🎯"
+            else:
+                icon = "🆕"
+            
+            # Format strategy name for display
+            display_name = strategy.replace('_', ' ').title()
+            print(f"   {icon} {display_name.lower()}")
+        
+        # Show remaining strategies count if more than 20
+        if len(strategies_list) > 20:
+            print(f"   ... and {len(strategies_list) - 20} more strategies")
+        
+        print(f"💡 Example: python src/main.py --live-trading --strategy {strategies_list[0]}")
+        print("=" * 80)
         
         # Check if multiple strategies requested (comma-separated)
         strategies = [s.strip() for s in args.strategy.split(',')]
