@@ -113,7 +113,7 @@ class EnhancedVolatilityTrader:
             atr = true_range.rolling(window=period).mean().iloc[-1]
             return atr if not pd.isna(atr) else 0.0
             
-        except Exception:
+        except Exception as e:
             # Return reasonable default ATR (2% of typical stock price)
             return 2.0  # $2 default ATR for typical $100 stock
     
@@ -144,7 +144,7 @@ class EnhancedVolatilityTrader:
                 return current_volume / avg_volume
             return 1.5  # Default when no valid volume
             
-        except Exception:
+        except Exception as e:
             return 1.5  # Default above MIN_VOLUME_RATIO threshold
     
     def calculate_stock_volatility(self, ticker: str, ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -170,7 +170,7 @@ class EnhancedVolatilityTrader:
             volatility = daily_returns.std() * np.sqrt(252)
             return min(volatility, 1.0)  # Cap at 100%
             
-        except Exception:
+        except Exception as e:
             return 0.5
     
     def calculate_momentum_score(self, ticker: str, ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -212,7 +212,7 @@ class EnhancedVolatilityTrader:
             # Weighted combination (70% 3m, 30% 1m)
             return (momentum_3m * 0.7) + (momentum_1m * 0.3)
             
-        except Exception:
+        except Exception as e:
             return 20.0  # Default momentum score on error
     
     def calculate_position_size(self, ticker: str, score: float, volatility: float,
@@ -237,7 +237,7 @@ class EnhancedVolatilityTrader:
             position_size = base_position * volatility_factor * atr_factor
             return max(MIN_POSITION_WEIGHT, min(position_size, MAX_POSITION_WEIGHT))
             
-        except Exception:
+        except Exception as e:
             return MIN_POSITION_WEIGHT
     
     def get_strategy_picks(self, strategy_name: str, all_tickers: List[str],

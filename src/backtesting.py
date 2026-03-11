@@ -7169,7 +7169,8 @@ def _run_portfolio_backtest_walk_forward(
                             )
                         else:
                             live_trading_selections['strategies'][strategy_name] = []
-                    except Exception:
+                    except Exception as e:
+                        print(f"   ⚠️ analyst_rec selection error: {e}")
                         live_trading_selections['strategies'][strategy_name] = []
                 else:
                     # No fallback - strategy must be explicitly implemented

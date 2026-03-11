@@ -501,9 +501,9 @@ def print_final_summary(
     # UNIFIED TABLE: Buy & Hold Performance
     # ============================================
     print(f"\n📊 UNIFIED TICKER PERFORMANCE TABLE (Sorted by 1Y Performance):")
-    print("=" * 120)
-    print(f"{'Ticker':<10} | {'1Y Perf':>10} | {'BH Gain':>12} | {'BH Sharpe':>10} | {'Last Action':<12} | {'Days Held':>10}")
-    print("=" * 120)
+    print("=" * 80)
+    print(f"{'Ticker':<10} | {'1Y Perf':>10} | {'BH Gain':>12} | {'BH Sharpe':>10}")
+    print("=" * 80)
     
     # Build lookup for Buy & Hold results
     bh_lookup = {}

@@ -197,7 +197,7 @@ def filter_tickers_by_performance(
                 failed_count += 1
                 debug_count += 1
                 
-        except Exception:
+        except Exception as e:
             failed_count += 1
             debug_count += 1
             continue

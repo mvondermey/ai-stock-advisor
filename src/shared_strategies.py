@@ -180,8 +180,9 @@ def calculate_risk_adjusted_momentum_score(ticker_data: pd.DataFrame, current_da
         except ValueError:
             # Re-raise ValueError (stale data error) so caller can handle it
             raise
-        except Exception:
+        except Exception as e:
             # For other errors (timezone conversion, etc), stick with data's max date
+            print(f"Error calculating risk-adjusted momentum score: {e}")
             pass
     
     # Calculate 1-year performance (rolling window)
@@ -265,8 +266,9 @@ def check_momentum_confirmation(ticker_data: pd.DataFrame, current_date: datetim
         except ValueError:
             # Re-raise ValueError (stale data error) so caller can handle it
             raise
-        except Exception:
+        except Exception as e:
             # For other errors (timezone conversion, etc), stick with data's max date
+            print(f"Error checking momentum confirmation: {e}")
             pass
     
     # 3-month momentum check
@@ -380,7 +382,7 @@ def calculate_volatility_adjusted_momentum(ticker_data, lookback_days=90, vol_wi
         return vol_adjusted_score
         
     except Exception as e:
-        print(f"   ⚠️ Error calculating volatility-adjusted momentum: {e}")
+        print(f"Error calculating volatility-adjusted momentum: {e}")
         return 0.0
 
 
@@ -432,7 +434,8 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
             if vol_adj_score > 0:
                 current_top_performers.append((ticker, vol_adj_score))
         
-        except Exception:
+        except Exception as e:
+            print(f"Error processing {ticker}: {e}")
             continue
     
     # Sort by volatility-adjusted score and get top N
@@ -502,8 +505,9 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
             if score > RISK_ADJ_MOM_MIN_SCORE:
                 current_top_performers.append((ticker, score, return_pct, volatility_pct))
                 
-        except Exception:
+        except Exception as e:
             data_issues += 1
+            print(f"Error processing {ticker}: {e}")
             continue
     
     analyzed_count = len(scores_data)
@@ -615,7 +619,8 @@ def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Di
                 reversion_score = (-recent_return * 0.7) + (longer_return * 0.3)  # Weight recent drop more
                 oversold_candidates.append((ticker, reversion_score, recent_return, longer_return))
         
-        except Exception:
+        except Exception as e:
+            print(f"Error processing {ticker}: {e}")
             continue
     
     # Sort by reversion score and get top N
@@ -698,8 +703,9 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
                 except ValueError:
                     # Re-raise ValueError (stale data error) so it gets caught in outer exception handler
                     raise
-                except Exception:
+                except Exception as e:
                     # For other errors (timezone conversion, etc), stick with data's max date
+                    print(f"Error processing {ticker}: {e}")
                     pass
             
             # Momentum calculation (1-year) using date filtering
@@ -2489,7 +2495,8 @@ def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current
                         if annualized_volatility <= max_volatility:
                             filtered.append((ticker, perf_pct, annualized_volatility))
                             stocks_passed += 1
-        except Exception:
+        except Exception as e:
+            print(f"   ⚠️ Error processing {ticker}: {e}")
             continue
     
     if filtered:
@@ -2542,7 +2549,8 @@ def select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_d
                     momentum_return = (end_price - start_price) / start_price
                     momentum_scores.append((ticker, momentum_return))
         
-        except Exception:
+        except Exception as e:
+            print(f"   ⚠️ Error processing {ticker}: {e}")
             continue
     
     if momentum_scores:

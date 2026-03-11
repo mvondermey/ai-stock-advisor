@@ -100,8 +100,8 @@ def collect_ticker_training_data(
                 'forward_return':     forward_return,
                 'market_return':      market_returns.get(current_date, 0.0),
             })
-        except Exception:
-            pass
+        except Exception as e:
+            pass  # Skip date on error
         current_date += timedelta(days=2)
 
     return samples

@@ -164,7 +164,8 @@ def get_all_strategy_selections() -> Optional[Dict]:
     try:
         with open(selections_file, 'r') as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
+        print(f"   ⚠️ Error loading selections: {e}")
         return None
 
 

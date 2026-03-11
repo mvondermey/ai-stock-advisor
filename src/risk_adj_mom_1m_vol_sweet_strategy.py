@@ -89,7 +89,8 @@ def select_risk_adj_mom_1m_vol_sweet_stocks(
             score = base_score * vf
 
             candidates.append((tkr, score, basic_ret, vol_pct))
-        except Exception:
+        except Exception as e:
+            print(f"   ⚠️ Error processing {tkr}: {e}")
             continue
 
     if not candidates:

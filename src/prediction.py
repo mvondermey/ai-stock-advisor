@@ -304,7 +304,7 @@ def _load_single_model(args):
                             model = joblib.load(model_path)
                     else:
                         model = joblib.load(model_path)
-                except Exception:
+                except Exception as e:
                     model = joblib.load(model_path)
             else:
                 model = joblib.load(model_path)

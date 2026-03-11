@@ -102,7 +102,8 @@ def select_risk_adj_mom_6m_stocks(
 
             candidates.append((ticker, score, basic_return, volatility_pct))
 
-        except Exception:
+        except Exception as e:
+            print(f"   ⚠️ Error processing {ticker}: {e}")
             continue
 
     if not candidates:

@@ -109,7 +109,8 @@ def calculate_sentiment_score(data: pd.DataFrame, current_date: datetime = None)
         
         return np.clip(combined, -1.0, 1.0)
         
-    except Exception:
+    except Exception as e:
+        print(f"   ⚠️ Sentiment analysis error: {e}")
         return 0.0
 
 
@@ -234,7 +235,8 @@ def select_risk_adj_mom_3m_sentiment_stocks(
                 'volatility': volatility_pct
             })
 
-        except Exception:
+        except Exception as e:
+            print(f"   ⚠️ Error processing {ticker}: {e}")
             continue
 
     if not candidates:

@@ -200,7 +200,8 @@ def select_elite_risk_stocks(
                 'dip_bonus':    dip_bonus,
             })
 
-        except Exception:
+        except Exception as e:
+            print(f"   ⚠️ Error processing {ticker}: {e}")
             continue
 
     if not candidates:

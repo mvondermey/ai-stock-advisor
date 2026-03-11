@@ -126,7 +126,8 @@ def select_ai_elite_stocks(
                 has_hourly = hourly_data is not None and len(hourly_data) > 0
                 print(f"   🔍 AI Elite DEBUG {ticker}: daily={len(daily_data)} rows, hourly={'yes' if has_hourly else 'no'}")
                 debug_count += 1
-        except Exception:
+        except Exception as e:
+            print(f"   ⚠️ Error processing {ticker}: {e}")
             continue
     
     candidates_df = pd.DataFrame(candidates)
@@ -368,8 +369,8 @@ def _extract_features(ticker: str, hourly_data: Optional[pd.DataFrame], current_
                             lh_moves.append((day['Close'].iloc[-1] - day['Close'].iloc[-2]) / day['Close'].iloc[-2] * 100)
                     avg_last_hour_momentum = float(np.mean(lh_moves)) if lh_moves else 0.0
 
-            except Exception:
-                pass  # intraday features stay 0
+            except Exception as e:
+                pass  # intraday features stay 0, error: {e}
 
         return {
             'perf_3m':               perf_3m,
@@ -505,7 +506,7 @@ def _calculate_market_return(
             return np.mean(returns)
         return None
         
-    except Exception:
+    except Exception as e:
         return None
 
 
