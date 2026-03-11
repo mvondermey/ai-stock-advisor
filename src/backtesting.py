@@ -7171,6 +7171,33 @@ def _run_portfolio_backtest_walk_forward(
             initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
         )
         
+        # AI Regime strategies (ML-based strategy selection)
+        if ENABLE_AI_REGIME:
+            from ai_regime_strategy import AIRegimeAllocator, select_ai_regime_stocks
+            # Initialize allocator
+            ai_regime_allocator = AIRegimeAllocator(retrain_days=1, forward_days=1)
+            ai_regime_allocator.load_model()
+            # Predict best strategy
+            ai_regime_current_strategy = ai_regime_allocator.predict_best_strategy(ticker_data_grouped, live_current_date)
+            # Select stocks using predicted strategy
+            live_trading_selections['strategies']['ai_regime'] = select_ai_regime_stocks(
+                initial_top_tickers, ticker_data_grouped, live_current_date, 
+                LIVE_TRADING_TOP_N, ai_regime_current_strategy
+            )
+        
+        if ENABLE_AI_REGIME_MONTHLY:
+            from ai_regime_strategy import AIRegimeMonthlyAllocator, select_ai_regime_stocks
+            # Initialize allocator
+            ai_regime_monthly_allocator = AIRegimeMonthlyAllocator(forward_days=1)
+            ai_regime_monthly_allocator.load_model()
+            # Predict best strategy
+            ai_regime_monthly_current_strategy = ai_regime_monthly_allocator.predict_best_strategy(ticker_data_grouped, live_current_date)
+            # Select stocks using predicted strategy
+            live_trading_selections['strategies']['ai_regime_monthly'] = select_ai_regime_stocks(
+                initial_top_tickers, ticker_data_grouped, live_current_date,
+                LIVE_TRADING_TOP_N, ai_regime_monthly_current_strategy
+            )
+        
         print(f"   ✅ Generated selections for {len(live_trading_selections['strategies'])} strategies")
         
     except Exception as e:
