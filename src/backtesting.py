@@ -125,6 +125,7 @@ from config import (
     OPTIMIZE_REBALANCE_HORIZON,
     TRAINING_NUM_PROCESSES,
     ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_REGIME, ENABLE_UNIVERSAL_MODEL,
+    AI_ELITE_FORCE_FRESH_TRAIN,
     ENABLE_INVERSE_ETF_HEDGE,
     ENABLE_ANALYST_RECOMMENDATION, ANALYST_LOOKBACK_DAYS, ANALYST_MIN_ACTIONS, ANALYST_REBALANCE_DAYS,
 )
@@ -4486,15 +4487,14 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   📊 AI Elite Monthly: {'Initializing' if not ai_elite_monthly_initialized else 'Start-of-month'} ({current_date.strftime('%b %Y')})")
                     
                     # Use shared function (handles load/train/select) with monthly model path
-                    # Always try to load existing model first (force_train=False)
-                    # This enables incremental training from saved model on Day 1
+                    # AI_ELITE_FORCE_FRESH_TRAIN controls whether to load existing model (incremental) or fresh train
                     new_stocks, ai_elite_monthly_models = select_ai_elite_with_training(
                         all_tickers=initial_top_tickers,
                         ticker_data_grouped=ticker_data_grouped,
                         current_date=current_date,
                         top_n=PORTFOLIO_SIZE,
                         ai_elite_models=ai_elite_monthly_models,
-                        force_train=False,
+                        force_train=AI_ELITE_FORCE_FRESH_TRAIN,
                         model_path_suffix="_monthly"
                     )
 

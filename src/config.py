@@ -220,7 +220,7 @@ TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
 USE_UNIFIED_PARALLEL_TRAINING = True
 
 # --- Backtest windows
-BACKTEST_DAYS           =   2   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   70   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 
 # --- Calendar days ---
@@ -347,6 +347,7 @@ ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (not implemented)
 AI_ELITE_RETRAIN_DAYS = 1  # Retrain model every 1 days
 AI_ELITE_TRAINING_LOOKBACK = 90  # Days of history to use for training
 AI_ELITE_FORWARD_DAYS = 5  # Predict performance over next N days
+AI_ELITE_FORCE_FRESH_TRAIN = False  # False = load existing model and do incremental training; True = always fresh train
 
 # AI Elite Intraday Configuration
 AI_ELITE_INTRADAY_INTERVAL = "1h"  # Use 1-hour data for intraday features
