@@ -2619,8 +2619,8 @@ def select_ai_elite_with_training(
                     model_data = pickle.load(f)
                 
                 # Handle both old format (direct model) and new format (model + metadata)
-                if isinstance(model_data, dict) and 'model' in model_data:
-                    loaded_model = model_data['model']
+                if isinstance(model_data, dict) and 'all_models' in model_data:
+                    loaded_model = model_data
                     metadata = model_data.get('metadata', {})
                     
                     # Display training/update info
