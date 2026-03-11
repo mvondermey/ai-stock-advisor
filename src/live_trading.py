@@ -152,20 +152,30 @@ def load_strategy_selections_from_json(strategy_name: str) -> Optional[List[str]
 
 
 def get_all_strategy_selections() -> Optional[Dict]:
-    """Load all strategy selections from JSON file."""
+    """Load all strategy selections from JSON file.
+    Prefers live_trading_selections.json (has all 62 strategies with 20 tickers each).
+    Falls back to strategy_selections.json if live_trading_selections.json doesn't exist.
+    """
     import json
     from pathlib import Path
     
+    # Prefer live_trading_selections.json (has all 62 strategies)
+    live_selections_file = Path('logs/live_trading_selections.json')
     selections_file = Path('logs/strategy_selections.json')
     
-    if not selections_file.exists():
+    file_to_use = None
+    if live_selections_file.exists():
+        file_to_use = live_selections_file
+    elif selections_file.exists():
+        file_to_use = selections_file
+    else:
         return None
     
     try:
-        with open(selections_file, 'r') as f:
+        with open(file_to_use, 'r') as f:
             return json.load(f)
     except Exception as e:
-        print(f"   ⚠️ Error loading selections: {e}")
+        print(f"   ⚠️ Error loading selections from {file_to_use}: {e}")
         return None
 
 
