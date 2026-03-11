@@ -895,6 +895,11 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
     Returns:
         List[str]: Selected ticker symbols
     """
+    from config import INVERSE_ETFS
+    
+    # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
+    all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
+    
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
@@ -2523,11 +2528,14 @@ def select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_d
         List of selected ticker symbols
     """
     import pandas as pd
-    from config import MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK
+    from config import MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK, INVERSE_ETFS
+    
+    # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
     
     momentum_scores = []
     
-    for ticker in all_tickers:
+    for ticker in tickers_to_use:
         try:
             if ticker not in ticker_data_grouped:
                 continue
