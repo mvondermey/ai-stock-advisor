@@ -216,15 +216,11 @@ def train_shared_base_model(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 if has_existing:
-                    # True incremental training - continue from existing model
-                    if name == 'XGBoost':
-                        m.fit(X_train, y_train, xgb_model=m.get_booster())
-                    elif name == 'LightGBM':
-                        m.fit(X_train, y_train, init_model=m.booster_)
-                    elif name == 'CatBoost':
-                        m.fit(X_train, y_train, init_model=m)
-                    else:
-                        m.fit(X_train, y_train)
+                    # Incremental training - retrain on new data
+                    # Note: True incremental learning (adding trees) causes numerical instability
+                    # Instead, we retrain the model on new data but keep the same hyperparameters
+                    # This is still beneficial as it adapts to recent market conditions
+                    m.fit(X_train, y_train)
                 else:
                     # Fresh training
                     m.fit(X_train, y_train)
