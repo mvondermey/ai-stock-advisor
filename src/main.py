@@ -1895,6 +1895,14 @@ if __name__ == "__main__":
             else:
                 # Single strategy: read from JSON - no data needed
                 print(f"\n🎯 Single Strategy Mode: {strategies[0]}")
+                
+                # Debug: Check all_selections type
+                print(f"   [DEBUG] all_selections type: {type(all_selections)}")
+                if isinstance(all_selections, list):
+                    print(f"   [ERROR] all_selections is a list, expected dict!")
+                    print(f"   [DEBUG] First few items: {all_selections[:3] if len(all_selections) > 0 else 'empty'}")
+                    all_selections = {}  # Fallback to empty dict
+                
                 selected = get_strategy_tickers(strategies[0], [], None)
                 
                 if selected:
@@ -1909,13 +1917,16 @@ if __name__ == "__main__":
                     print("=" * 80)
                     
                     # Show all strategies from JSON
-                    print(f"\n📊 ALL STRATEGY SELECTIONS (from backtest {all_selections.get('backtest_end_date', 'unknown')}):")
+                    print(f"\n📊 ALL STRATEGY SELECTIONS (from backtest {all_selections.get('backtest_end_date', 'unknown') if isinstance(all_selections, dict) else 'N/A'}):")
                     print("-" * 80)
-                    for strat_name, strat_data in all_selections.get('strategies', {}).items():
-                        tickers = strat_data.get('tickers', [])
-                        perf = all_selections.get('performance', {}).get(strat_name, {})
-                        ret_pct = perf.get('return_pct', 0)
-                        print(f"   {strat_name:<30} {len(tickers):>2} stocks  {ret_pct:>+7.1f}%  {tickers[:5]}{'...' if len(tickers) > 5 else ''}")
+                    if isinstance(all_selections, dict):
+                        for strat_name, strat_data in all_selections.get('strategies', {}).items():
+                            tickers = strat_data.get('tickers', []) if isinstance(strat_data, dict) else []
+                            perf = all_selections.get('performance', {}).get(strat_name, {}) if isinstance(all_selections, dict) else {}
+                            ret_pct = perf.get('return_pct', 0) if isinstance(perf, dict) else 0
+                            print(f"   {strat_name:<30} {len(tickers):>2} stocks  {ret_pct:>+7.1f}%  {tickers[:5]}{'...' if len(tickers) > 5 else ''}")
+                    else:
+                        print(f"   [WARN] Cannot display strategy selections - invalid data format")
                     print("-" * 80)
                     
                     print("\n✅ LIVE TRADING RECOMMENDATIONS COMPLETE")
