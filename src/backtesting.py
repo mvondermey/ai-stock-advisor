@@ -1298,6 +1298,7 @@ def _run_portfolio_backtest_walk_forward(
 
     # Track current portfolio (starts empty)
     current_portfolio_stocks = []
+    strategies_rebalanced_today['AI'] = True  # Manual rebalance
     total_portfolio_value = 0.0  # Start with no capital invested
     portfolio_values_history = [total_portfolio_value]
 
@@ -1547,6 +1548,7 @@ def _run_portfolio_backtest_walk_forward(
     enhanced_volatility_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float, 'stop_loss': float, 'take_profit': float}
     enhanced_volatility_cash = initial_capital_needed  # Start with same capital as AI
     current_enhanced_volatility_stocks = []  # Current top stocks held by enhanced volatility trader
+    strategies_rebalanced_today['Enhanced Volatility'] = True  # Manual rebalance
     enhanced_volatility_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
     # AI VOLATILITY ENSEMBLE: Initialize portfolio tracking
@@ -1555,6 +1557,7 @@ def _run_portfolio_backtest_walk_forward(
     ai_volatility_ensemble_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
     ai_volatility_ensemble_cash = initial_capital_needed  # Start with same capital as AI
     current_ai_volatility_ensemble_stocks = []  # Current stocks held by AI volatility ensemble
+    strategies_rebalanced_today['AI Volatility Ensemble'] = True  # Manual rebalance
     ai_volatility_ensemble_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
     # MULTI-TIMEFRAME ENSEMBLE: Initialize portfolio tracking
@@ -1563,6 +1566,7 @@ def _run_portfolio_backtest_walk_forward(
     multi_tf_ensemble_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
     multi_tf_ensemble_cash = initial_capital_needed  # Start with same capital as AI
     current_multi_tf_ensemble_stocks = []  # Current multi-timeframe ensemble stocks held
+    strategies_rebalanced_today['Multi-TF Ensemble'] = True  # Manual rebalance
     multi_tf_ensemble_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
     # CORRELATION ENSEMBLE: Initialize portfolio tracking
@@ -1587,6 +1591,7 @@ def _run_portfolio_backtest_walk_forward(
     sentiment_ensemble_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
     sentiment_ensemble_cash = initial_capital_needed  # Start with same capital as AI
     current_sentiment_ensemble_stocks = []  # Current top stocks held by sentiment ensemble
+    strategies_rebalanced_today['Sentiment Ensemble'] = True  # Manual rebalance
     sentiment_ensemble_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
     # RISK-ADJ MOMENTUM SENTIMENT: Initialize portfolio tracking
@@ -1622,6 +1627,7 @@ def _run_portfolio_backtest_walk_forward(
     mom_accel_positions = {}
     mom_accel_cash = initial_capital_needed
     current_mom_accel_stocks = []
+    strategies_rebalanced_today['Mom Acceleration'] = True  # Manual rebalance
     mom_accel_last_rebalance_value = initial_capital_needed
 
     # CONCENTRATED 3M: Initialize portfolio tracking
@@ -1647,6 +1653,7 @@ def _run_portfolio_backtest_walk_forward(
     trend_atr_positions = {}
     trend_atr_cash = initial_capital_needed
     current_trend_atr_stocks = []
+    strategies_rebalanced_today['Trend ATR'] = True  # Manual rebalance
 
     # ELITE HYBRID: Initialize portfolio tracking
     elite_hybrid_portfolio_value = initial_capital_needed
@@ -3972,6 +3979,7 @@ def _run_portfolio_backtest_walk_forward(
                                             mom_accel_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
                     
                     current_mom_accel_stocks = new_mom_accel_stocks
+                    strategies_rebalanced_today['Mom Acceleration'] = set(new_stocks) != set(current_mom_accel_stocks)
                     
             except Exception as e:
                 print(f"   ⚠️ Momentum Acceleration error: {e}")
