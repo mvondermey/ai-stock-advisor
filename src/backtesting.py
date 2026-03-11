@@ -7205,9 +7205,7 @@ def _run_portfolio_backtest_walk_forward(
                 print(f"   ✅ AI Regime: Selected {len(ai_regime_stocks)} stocks using {ai_regime_current_strategy}")
             except Exception as e:
                 print(f"   ⚠️ AI Regime live selection error: {e}")
-                live_trading_selections['strategies']['ai_regime'] = select_risk_adj_mom_stocks(
-                    initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
-                )
+                live_trading_selections['strategies']['ai_regime'] = []
         
         if ENABLE_AI_REGIME_MONTHLY and 'ai_regime_monthly' in results['strategies']:
             try:
@@ -7223,9 +7221,7 @@ def _run_portfolio_backtest_walk_forward(
                 print(f"   ✅ AI Regime Monthly: Selected {len(ai_regime_monthly_stocks)} stocks using {ai_regime_monthly_current_strategy}")
             except Exception as e:
                 print(f"   ⚠️ AI Regime Monthly live selection error: {e}")
-                live_trading_selections['strategies']['ai_regime_monthly'] = select_risk_adj_mom_stocks(
-                    initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
-                )
+                live_trading_selections['strategies']['ai_regime_monthly'] = []
         
     except Exception as e:
         print(f"   ⚠️ Error generating live trading selections: {e}")
