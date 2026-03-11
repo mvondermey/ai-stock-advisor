@@ -343,31 +343,18 @@ def _smart_rebalance_portfolio(
     force_rebalance: bool = False,
     buffer_size: int = None,
     strategy_stop_loss: float = None
-) -> Tuple[Dict[str, Dict], float, List[str], float]:
+) -> Tuple[Dict[str, Dict], float, List[str], float, bool]:
     """
     Universal smart rebalancing function for all strategies.
     
     Implements selective rebalancing with individual stock profit guards.
     
-    Args:
-        strategy_name: Name of the strategy for logging
-        current_stocks: Current portfolio positions
-        new_stocks: New target positions
-        positions: Current position details
-        cash: Available cash
-        ticker_data_grouped: Price data
-        current_date: Current date
-        transaction_cost: Transaction cost rate
-        portfolio_size: Target portfolio size
-        force_rebalance: Force rebalance regardless of profit guards
-        buffer_size: Buffer size for portfolio rebalancing
-        strategy_stop_loss: Strategy-specific stop loss percentage (optional)
-    
     Returns:
-        Tuple of (updated_positions, updated_cash, final_stocks, total_transaction_costs)
+        Tuple of (updated_positions, updated_cash, final_stocks, total_transaction_costs, rebalanced)
+        where rebalanced is True if positions actually changed
     """
     if not new_stocks:
-        return positions, cash, current_stocks, 0.0
+        return positions, cash, current_stocks, 0.0, False
     
     # Use buffer size if provided, otherwise use config value
     effective_buffer_size = buffer_size if buffer_size is not None else PORTFOLIO_BUFFER_SIZE
@@ -395,6 +382,7 @@ def _smart_rebalance_portfolio(
     updated_cash = cash
     final_stocks = list(positions_to_keep)  # Start with positions we're keeping
     kept_unprofitable_positions = []  # Track positions kept due to profit guard
+    positions_changed = False  # Track if any positions actually changed
     
     # Sell positions that are no longer in target list
     for ticker in positions_to_sell:
@@ -452,6 +440,7 @@ def _smart_rebalance_portfolio(
                     total_transaction_costs += sell_cost
                     updated_cash += gross_sale - sell_cost
                     del updated_positions[ticker]
+                    positions_changed = True  # Mark that positions changed
                 else:
                     print(f"   🚫 {strategy_name} Holding {ticker}: {sell_reason}")
                     # Keep this position in final list
@@ -522,19 +511,20 @@ def _smart_rebalance_portfolio(
                         buy_cost = buy_value * transaction_cost
                         total_cost = buy_value + buy_cost
                         if total_cost <= updated_cash:
-                            print(f"   🛒 {strategy_name} Buying {ticker} (2nd pass): {shares} shares @ ${current_price:.2f}")
+                            print(f"   {strategy_name} Buying {ticker} (2nd pass): {shares} shares @ ${current_price:.2f}")
                             total_transaction_costs += buy_cost
                             updated_cash -= total_cost
                             updated_positions[ticker] = {'shares': shares, 'entry_price': current_price}
                             final_stocks.append(ticker)
                             newly_bought.append(ticker)
+                            positions_changed = True  # Mark that positions changed
     
     # Log skipped positions
     if num_positions_to_skip > 0 and num_positions_to_skip < len(positions_to_buy_list):
         skipped = positions_to_buy_list[-num_positions_to_skip:]
-        print(f"   ⏭️ {strategy_name} Skipped buying {len(skipped)} position(s) to maintain size: {', '.join(skipped)}")
+        print(f"   {strategy_name} Skipped buying {len(skipped)} position(s) to maintain size: {', '.join(skipped)}")
     
-    return updated_positions, updated_cash, final_stocks, total_transaction_costs
+    return updated_positions, updated_cash, final_stocks, total_transaction_costs, positions_changed
 
 
 from data_validation import validate_prediction_data, validate_features_after_engineering, InsufficientDataError
@@ -1301,6 +1291,9 @@ def _run_portfolio_backtest_walk_forward(
     from shared_strategies import clear_inverse_etf_hedge_log
     clear_inverse_etf_hedge_log()
     
+    # Centralized rebalancing tracking for all strategies (strategy_name -> bool)
+    strategies_rebalanced_today = {}
+
     # Initialize - AI Elite models are trained during walk-forward, not loaded upfront
 
     # Track current portfolio (starts empty)
@@ -2028,7 +2021,7 @@ def _run_portfolio_backtest_walk_forward(
                             print(f"   🔄 Static BH 1Y: Smart rebalancing to top {len(new_static_bh_1y_stocks)} by 1Y performance: {new_static_bh_1y_stocks}")
                         
                         # Use universal smart rebalancing function
-                        static_bh_1y_positions, static_bh_1y_cash, current_static_bh_1y_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        static_bh_1y_positions, static_bh_1y_cash, current_static_bh_1y_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Static BH 1Y",
                             current_stocks=current_static_bh_1y_stocks,
                             new_stocks=new_static_bh_1y_stocks,
@@ -2064,7 +2057,7 @@ def _run_portfolio_backtest_walk_forward(
                         print(f"   🔄 Static BH 3M: Smart rebalancing to top {len(new_static_bh_3m_stocks)} by 3M performance: {new_static_bh_3m_stocks}")
                     
                     # Use universal smart rebalancing function
-                    static_bh_3m_positions, static_bh_3m_cash, current_static_bh_3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    static_bh_3m_positions, static_bh_3m_cash, current_static_bh_3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Static BH 3M",
                         current_stocks=current_static_bh_3m_stocks,
                         new_stocks=new_static_bh_3m_stocks,
@@ -2101,7 +2094,7 @@ def _run_portfolio_backtest_walk_forward(
                         print(f"   🔄 Static BH 6M: Smart rebalancing to top {len(new_static_bh_6m_stocks)} by 6M performance: {new_static_bh_6m_stocks}")
                     
                     # Use universal smart rebalancing function
-                    static_bh_6m_positions, static_bh_6m_cash, current_static_bh_6m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    static_bh_6m_positions, static_bh_6m_cash, current_static_bh_6m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Static BH 6M",
                         current_stocks=current_static_bh_6m_stocks,
                         new_stocks=new_static_bh_6m_stocks,
@@ -2137,7 +2130,7 @@ def _run_portfolio_backtest_walk_forward(
                         print(f"   🔄 Static BH 1M: Smart rebalancing to top {len(new_static_bh_1m_stocks)} by 1M performance: {new_static_bh_1m_stocks}")
                     
                     # Use universal smart rebalancing function
-                    static_bh_1m_positions, static_bh_1m_cash, current_static_bh_1m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    static_bh_1m_positions, static_bh_1m_cash, current_static_bh_1m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Static BH 1M",
                         current_stocks=current_static_bh_1m_stocks,
                         new_stocks=new_static_bh_1m_stocks,
@@ -2171,7 +2164,7 @@ def _run_portfolio_backtest_walk_forward(
                         print(f"   🎯 Static BH 1Y Monthly: Initializing with {new_stocks}")
                     else:
                         print(f"   🔄 Static BH 1Y Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
-                    static_bh_1y_monthly_positions, static_bh_1y_monthly_cash, current_static_bh_1y_monthly_stocks, rc = _smart_rebalance_portfolio(
+                    static_bh_1y_monthly_positions, static_bh_1y_monthly_cash, current_static_bh_1y_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Static BH 1Y Mth", current_stocks=current_static_bh_1y_monthly_stocks,
                         new_stocks=new_stocks, positions=static_bh_1y_monthly_positions, cash=static_bh_1y_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
@@ -2191,7 +2184,7 @@ def _run_portfolio_backtest_walk_forward(
                         print(f"   🎯 Static BH 6M Monthly: Initializing with {new_stocks}")
                     else:
                         print(f"   🔄 Static BH 6M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
-                    static_bh_6m_monthly_positions, static_bh_6m_monthly_cash, current_static_bh_6m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                    static_bh_6m_monthly_positions, static_bh_6m_monthly_cash, current_static_bh_6m_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Static BH 6M Mth", current_stocks=current_static_bh_6m_monthly_stocks,
                         new_stocks=new_stocks, positions=static_bh_6m_monthly_positions, cash=static_bh_6m_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
@@ -2211,7 +2204,7 @@ def _run_portfolio_backtest_walk_forward(
                         print(f"   🎯 Static BH 3M Monthly: Initializing with {new_stocks}")
                     else:
                         print(f"   🔄 Static BH 3M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
-                    static_bh_3m_monthly_positions, static_bh_3m_monthly_cash, current_static_bh_3m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                    static_bh_3m_monthly_positions, static_bh_3m_monthly_cash, current_static_bh_3m_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Static BH 3M Mth", current_stocks=current_static_bh_3m_monthly_stocks,
                         new_stocks=new_stocks, positions=static_bh_3m_monthly_positions, cash=static_bh_3m_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
@@ -2231,7 +2224,7 @@ def _run_portfolio_backtest_walk_forward(
                         print(f"   🎯 Static BH 1M Monthly: Initializing with {new_stocks}")
                     else:
                         print(f"   🔄 Static BH 1M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
-                    static_bh_1m_monthly_positions, static_bh_1m_monthly_cash, current_static_bh_1m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                    static_bh_1m_monthly_positions, static_bh_1m_monthly_cash, current_static_bh_1m_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Static BH 1M Mth", current_stocks=current_static_bh_1m_monthly_stocks,
                         new_stocks=new_stocks, positions=static_bh_1m_monthly_positions, cash=static_bh_1m_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
@@ -2255,7 +2248,7 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-year): {', '.join(new_dynamic_bh_stocks)}")
 
                     # Use universal smart rebalancing function
-                    dynamic_bh_positions, dynamic_bh_cash, current_dynamic_bh_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    dynamic_bh_positions, dynamic_bh_cash, current_dynamic_bh_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Dynamic BH 1Y",
                         current_stocks=current_dynamic_bh_stocks,
                         new_stocks=new_dynamic_bh_stocks,
@@ -2290,7 +2283,7 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   🏆 Top {PORTFOLIO_SIZE} performers (6-month): {', '.join(new_dynamic_bh_6m_stocks)}")
 
                     # Use universal smart rebalancing function
-                    dynamic_bh_6m_positions, dynamic_bh_6m_cash, current_dynamic_bh_6m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    dynamic_bh_6m_positions, dynamic_bh_6m_cash, current_dynamic_bh_6m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Dynamic BH 6M",
                         current_stocks=current_dynamic_bh_6m_stocks,
                         new_stocks=new_dynamic_bh_6m_stocks,
@@ -2322,7 +2315,7 @@ def _run_portfolio_backtest_walk_forward(
                 print(f"   🏆 Top {PORTFOLIO_SIZE} performers (3-month): {', '.join(new_dynamic_bh_3m_stocks)}")
                 
                 # Use universal smart rebalancing function
-                dynamic_bh_3m_positions, dynamic_bh_3m_cash, current_dynamic_bh_3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                dynamic_bh_3m_positions, dynamic_bh_3m_cash, current_dynamic_bh_3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                     strategy_name="Dynamic BH 3M",
                     current_stocks=current_dynamic_bh_3m_stocks,
                     new_stocks=new_dynamic_bh_3m_stocks,
@@ -2351,7 +2344,7 @@ def _run_portfolio_backtest_walk_forward(
                 print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-month): {', '.join(new_dynamic_bh_1m_stocks)}")
                 
                 # Use universal smart rebalancing function
-                dynamic_bh_1m_positions, dynamic_bh_1m_cash, current_dynamic_bh_1m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                dynamic_bh_1m_positions, dynamic_bh_1m_cash, current_dynamic_bh_1m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                     strategy_name="Dynamic BH 1M",
                     current_stocks=current_dynamic_bh_1m_stocks,
                     new_stocks=new_dynamic_bh_1m_stocks,
@@ -2381,7 +2374,7 @@ def _run_portfolio_backtest_walk_forward(
                 print(f"   🔍 Filter stats: {stocks_passed_vol_filter}/{stocks_evaluated} stocks passed volatility filter")
 
                 # Use universal smart rebalancing function
-                dynamic_bh_1y_vol_filter_positions, dynamic_bh_1y_vol_filter_cash, current_dynamic_bh_1y_vol_filter_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                dynamic_bh_1y_vol_filter_positions, dynamic_bh_1y_vol_filter_cash, current_dynamic_bh_1y_vol_filter_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                     strategy_name="Dynamic BH 1Y+Vol",
                     current_stocks=current_dynamic_bh_1y_vol_filter_stocks,
                     new_stocks=new_dynamic_bh_1y_vol_filter_stocks,
@@ -2467,7 +2460,7 @@ def _run_portfolio_backtest_walk_forward(
                 print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-year + Trailing Stop): {', '.join(new_dynamic_bh_1y_trailing_stop_stocks)}")
 
                 # Use universal smart rebalancing function
-                dynamic_bh_1y_trailing_stop_positions, dynamic_bh_1y_trailing_stop_cash, current_dynamic_bh_1y_trailing_stop_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                dynamic_bh_1y_trailing_stop_positions, dynamic_bh_1y_trailing_stop_cash, current_dynamic_bh_1y_trailing_stop_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                     strategy_name="Dynamic BH 1Y+TS",
                     current_stocks=current_dynamic_bh_1y_trailing_stop_stocks,
                     new_stocks=new_dynamic_bh_1y_trailing_stop_stocks,
@@ -2501,7 +2494,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 if new_sector_rotation_etfs:
                     # Use universal smart rebalancing function
-                    sector_rotation_positions, sector_rotation_cash, current_sector_rotation_etfs, rebalance_costs = _smart_rebalance_portfolio(
+                    sector_rotation_positions, sector_rotation_cash, current_sector_rotation_etfs, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Sector Rotation",
                         current_stocks=current_sector_rotation_etfs,
                         new_stocks=new_sector_rotation_etfs,
@@ -2537,7 +2530,7 @@ def _run_portfolio_backtest_walk_forward(
 
             if new_risk_adj_mom_stocks:
                 # Use universal smart rebalancing function
-                risk_adj_mom_positions, risk_adj_mom_cash, current_risk_adj_mom_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                risk_adj_mom_positions, risk_adj_mom_cash, current_risk_adj_mom_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                     strategy_name="Risk-Adj Mom",
                     current_stocks=current_risk_adj_mom_stocks,
                     new_stocks=new_risk_adj_mom_stocks,
@@ -2574,7 +2567,7 @@ def _run_portfolio_backtest_walk_forward(
 
                 if new_multitask_stocks:
                     # Use universal smart rebalancing function
-                    multitask_positions, multitask_cash, current_multitask_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    multitask_positions, multitask_cash, current_multitask_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Multi-Task Learning",
                         current_stocks=current_multitask_stocks,
                         new_stocks=new_multitask_stocks,
@@ -2613,7 +2606,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 if new_ratio_3m_1y_stocks:
                     # Use universal smart rebalancing function
-                    ratio_3m_1y_positions, ratio_3m_1y_cash, current_ratio_3m_1y_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    ratio_3m_1y_positions, ratio_3m_1y_cash, current_ratio_3m_1y_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="3M/1Y Ratio",
                         current_stocks=current_ratio_3m_1y_stocks,
                         new_stocks=new_ratio_3m_1y_stocks,
@@ -2651,7 +2644,7 @@ def _run_portfolio_backtest_walk_forward(
             
             if new_ratio_1y_3m_stocks:
                 # Use universal smart rebalancing function
-                ratio_1y_3m_positions, ratio_1y_3m_cash, current_ratio_1y_3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                ratio_1y_3m_positions, ratio_1y_3m_cash, current_ratio_1y_3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                     strategy_name="1Y/3M Ratio",
                     current_stocks=current_ratio_1y_3m_stocks,
                     new_stocks=new_ratio_1y_3m_stocks,
@@ -2690,7 +2683,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 if new_turnaround_stocks:
                     # Use universal smart rebalancing function
-                    turnaround_positions, turnaround_cash, current_turnaround_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    turnaround_positions, turnaround_cash, current_turnaround_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Turnaround",
                         current_stocks=current_turnaround_stocks,
                         new_stocks=new_turnaround_stocks,
@@ -2729,7 +2722,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 if new_momentum_volatility_hybrid_stocks:
                     # Use universal smart rebalancing function
-                    momentum_volatility_hybrid_positions, momentum_volatility_hybrid_cash, current_momentum_volatility_hybrid_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    momentum_volatility_hybrid_positions, momentum_volatility_hybrid_cash, current_momentum_volatility_hybrid_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Momentum-Vol Hybrid",
                         current_stocks=current_momentum_volatility_hybrid_stocks,
                         new_stocks=new_momentum_volatility_hybrid_stocks,
@@ -2766,7 +2759,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_momentum_volatility_hybrid_6m_stocks:
-                    momentum_volatility_hybrid_6m_positions, momentum_volatility_hybrid_6m_cash, current_momentum_volatility_hybrid_6m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    momentum_volatility_hybrid_6m_positions, momentum_volatility_hybrid_6m_cash, current_momentum_volatility_hybrid_6m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Mom-Vol Hybrid 6M",
                         current_stocks=current_momentum_volatility_hybrid_6m_stocks,
                         new_stocks=new_momentum_volatility_hybrid_6m_stocks,
@@ -2803,7 +2796,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_momentum_volatility_hybrid_1y_stocks:
-                    momentum_volatility_hybrid_1y_positions, momentum_volatility_hybrid_1y_cash, current_momentum_volatility_hybrid_1y_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    momentum_volatility_hybrid_1y_positions, momentum_volatility_hybrid_1y_cash, current_momentum_volatility_hybrid_1y_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Mom-Vol Hybrid 1Y",
                         current_stocks=current_momentum_volatility_hybrid_1y_stocks,
                         new_stocks=new_momentum_volatility_hybrid_1y_stocks,
@@ -2840,7 +2833,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_momentum_volatility_hybrid_1y3m_stocks:
-                    momentum_volatility_hybrid_1y3m_positions, momentum_volatility_hybrid_1y3m_cash, current_momentum_volatility_hybrid_1y3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    momentum_volatility_hybrid_1y3m_positions, momentum_volatility_hybrid_1y3m_cash, current_momentum_volatility_hybrid_1y3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Mom-Vol Hybrid 1Y/3M",
                         current_stocks=current_momentum_volatility_hybrid_1y3m_stocks,
                         new_stocks=new_momentum_volatility_hybrid_1y3m_stocks,
@@ -2879,7 +2872,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 if new_price_acceleration_stocks:
                     # Use universal smart rebalancing function
-                    price_acceleration_positions, price_acceleration_cash, current_price_acceleration_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    price_acceleration_positions, price_acceleration_cash, current_price_acceleration_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Price Acceleration",
                         current_stocks=current_price_acceleration_stocks,
                         new_stocks=new_price_acceleration_stocks,
@@ -2918,7 +2911,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 if new_adaptive_ensemble_stocks:
                     # Use universal smart rebalancing function
-                    adaptive_ensemble_positions, adaptive_ensemble_cash, current_adaptive_ensemble_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    adaptive_ensemble_positions, adaptive_ensemble_cash, current_adaptive_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Adaptive Ensemble",
                         current_stocks=current_adaptive_ensemble_stocks,
                         new_stocks=new_adaptive_ensemble_stocks,
@@ -2958,7 +2951,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 if new_volatility_ensemble_stocks:
                     # Use universal smart rebalancing function
-                    volatility_ensemble_positions, volatility_ensemble_cash, current_volatility_ensemble_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    volatility_ensemble_positions, volatility_ensemble_cash, current_volatility_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Volatility Ensemble",
                         current_stocks=current_volatility_ensemble_stocks,
                         new_stocks=new_volatility_ensemble_stocks,
@@ -3043,7 +3036,7 @@ def _run_portfolio_backtest_walk_forward(
                         print(f"   🎯 Correlation Ensemble: Selected {len(new_correlation_ensemble_stocks)} low-correlation stocks")
                         
                         # Use universal smart rebalancing function
-                        correlation_ensemble_positions, correlation_ensemble_cash, current_correlation_ensemble_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        correlation_ensemble_positions, correlation_ensemble_cash, current_correlation_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Correlation Ensemble",
                             current_stocks=current_correlation_ensemble_stocks,
                             new_stocks=new_correlation_ensemble_stocks,
@@ -3083,7 +3076,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 if new_dynamic_pool_stocks:
                     # Use universal smart rebalancing function
-                    dynamic_pool_positions, dynamic_pool_cash, current_dynamic_pool_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    dynamic_pool_positions, dynamic_pool_cash, current_dynamic_pool_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Dynamic Pool",
                         current_stocks=current_dynamic_pool_stocks,
                         new_stocks=new_dynamic_pool_stocks,
@@ -3121,7 +3114,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 if new_risk_adj_mom_sentiment_stocks:
                     # Use universal smart rebalancing function
-                    risk_adj_mom_sentiment_positions, risk_adj_mom_sentiment_cash, current_risk_adj_mom_sentiment_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    risk_adj_mom_sentiment_positions, risk_adj_mom_sentiment_cash, current_risk_adj_mom_sentiment_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="RiskAdj Sent",
                         current_stocks=current_risk_adj_mom_sentiment_stocks,
                         new_stocks=new_risk_adj_mom_sentiment_stocks,
@@ -3157,7 +3150,7 @@ def _run_portfolio_backtest_walk_forward(
                 
                 if new_voting_ensemble_stocks:
                     # Use universal smart rebalancing function
-                    voting_ensemble_positions, voting_ensemble_cash, current_voting_ensemble_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    voting_ensemble_positions, voting_ensemble_cash, current_voting_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Voting Ensemble",
                         current_stocks=current_voting_ensemble_stocks,
                         new_stocks=new_voting_ensemble_stocks,
@@ -3222,7 +3215,7 @@ def _run_portfolio_backtest_walk_forward(
 
                     if new_mean_reversion_stocks:
                         # Use universal smart rebalancing function
-                        mean_reversion_positions, mean_reversion_cash, current_mean_reversion_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        mean_reversion_positions, mean_reversion_cash, current_mean_reversion_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Mean Reversion",
                             current_stocks=current_mean_reversion_stocks,
                             new_stocks=new_mean_reversion_stocks,
@@ -3300,7 +3293,7 @@ def _run_portfolio_backtest_walk_forward(
 
                     if new_quality_momentum_stocks:
                         # Use universal smart rebalancing function
-                        quality_momentum_positions, quality_momentum_cash, current_quality_momentum_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        quality_momentum_positions, quality_momentum_cash, current_quality_momentum_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Quality+Mom",
                             current_stocks=current_quality_momentum_stocks,
                             new_stocks=new_quality_momentum_stocks,
@@ -3376,7 +3369,7 @@ def _run_portfolio_backtest_walk_forward(
                     
                     if new_volatility_adj_mom_stocks:
                         # Use universal smart rebalancing function
-                        volatility_adj_mom_positions, volatility_adj_mom_cash, current_volatility_adj_mom_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        volatility_adj_mom_positions, volatility_adj_mom_cash, current_volatility_adj_mom_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Vol-Adj Mom",
                             current_stocks=current_volatility_adj_mom_stocks,
                             new_stocks=new_volatility_adj_mom_stocks,
@@ -3478,7 +3471,7 @@ def _run_portfolio_backtest_walk_forward(
                             print(f"   🛡️ Hybrid Hedge: Market down {market_decline:.1%} -> {target_hedge_pct:.0%} allocation, selecting {new_inverse_etf_stocks}")
                             
                             # Rebalance to inverse ETFs
-                            inverse_etf_hedge_positions, inverse_etf_hedge_cash, current_inverse_etf_hedge_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                            inverse_etf_hedge_positions, inverse_etf_hedge_cash, current_inverse_etf_hedge_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                                 strategy_name="Hybrid Inverse ETF Hedge",
                                 current_stocks=current_inverse_etf_hedge_stocks,
                                 new_stocks=new_inverse_etf_stocks,
@@ -3566,7 +3559,7 @@ def _run_portfolio_backtest_walk_forward(
                     
                     if new_analyst_stocks:
                         # Rebalance portfolio
-                        analyst_rec_positions, analyst_rec_cash, current_analyst_rec_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        analyst_rec_positions, analyst_rec_cash, current_analyst_rec_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Analyst Rec",
                             current_stocks=current_analyst_rec_stocks,
                             new_stocks=new_analyst_stocks,
@@ -3873,7 +3866,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     
                     if top_momentum_stocks:
-                        momentum_ai_hybrid_positions, momentum_ai_hybrid_cash, current_momentum_ai_hybrid_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        momentum_ai_hybrid_positions, momentum_ai_hybrid_cash, current_momentum_ai_hybrid_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Momentum+AI Hybrid",
                             current_stocks=current_momentum_ai_hybrid_stocks,
                             new_stocks=top_momentum_stocks,
@@ -3966,7 +3959,7 @@ def _run_portfolio_backtest_walk_forward(
                     
                     if new_concentrated_3m_stocks:
                         # Use universal smart rebalancing function
-                        concentrated_3m_positions, concentrated_3m_cash, current_concentrated_3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                        concentrated_3m_positions, concentrated_3m_cash, current_concentrated_3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Concentrated 3M",
                             current_stocks=current_concentrated_3m_stocks,
                             new_stocks=new_concentrated_3m_stocks,
@@ -4013,7 +4006,7 @@ def _run_portfolio_backtest_walk_forward(
                 elif new_dual_mom_stocks:
                     dual_mom_is_risk_on = True
                     # Use universal smart rebalancing function
-                    dual_mom_positions, dual_mom_cash, current_dual_mom_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    dual_mom_positions, dual_mom_cash, current_dual_mom_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Dual Momentum",
                         current_stocks=current_dual_mom_stocks,
                         new_stocks=new_dual_mom_stocks,
@@ -4101,7 +4094,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_elite_hybrid_stocks:
-                    elite_hybrid_positions, elite_hybrid_cash, current_elite_hybrid_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    elite_hybrid_positions, elite_hybrid_cash, current_elite_hybrid_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Elite Hybrid",
                         current_stocks=current_elite_hybrid_stocks,
                         new_stocks=new_elite_hybrid_stocks,
@@ -4132,7 +4125,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_elite_risk_stocks:
-                    elite_risk_positions, elite_risk_cash, current_elite_risk_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    elite_risk_positions, elite_risk_cash, current_elite_risk_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Elite Risk",
                         current_stocks=current_elite_risk_stocks,
                         new_stocks=new_elite_risk_stocks,
@@ -4163,7 +4156,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_risk_adj_mom_6m_stocks:
-                    risk_adj_mom_6m_positions, risk_adj_mom_6m_cash, current_risk_adj_mom_6m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    risk_adj_mom_6m_positions, risk_adj_mom_6m_cash, current_risk_adj_mom_6m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Risk-Adj Mom 6M",
                         current_stocks=current_risk_adj_mom_6m_stocks,
                         new_stocks=new_risk_adj_mom_6m_stocks,
@@ -4199,7 +4192,7 @@ def _run_portfolio_backtest_walk_forward(
                             print(f"   🎯 Risk-Adj Mom 6M Monthly: Initializing with {new_stocks}")
                         else:
                             print(f"   🔄 Risk-Adj Mom 6M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
-                        risk_adj_mom_6m_monthly_positions, risk_adj_mom_6m_monthly_cash, current_risk_adj_mom_6m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                        risk_adj_mom_6m_monthly_positions, risk_adj_mom_6m_monthly_cash, current_risk_adj_mom_6m_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="RiskAdj 6M Mth",
                             current_stocks=current_risk_adj_mom_6m_monthly_stocks,
                             new_stocks=new_stocks,
@@ -4230,7 +4223,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_risk_adj_mom_3m_stocks:
-                    risk_adj_mom_3m_positions, risk_adj_mom_3m_cash, current_risk_adj_mom_3m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    risk_adj_mom_3m_positions, risk_adj_mom_3m_cash, current_risk_adj_mom_3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Risk-Adj Mom 3M",
                         current_stocks=current_risk_adj_mom_3m_stocks,
                         new_stocks=new_risk_adj_mom_3m_stocks,
@@ -4266,7 +4259,7 @@ def _run_portfolio_backtest_walk_forward(
                             print(f"   🎯 Risk-Adj Mom 3M Monthly: Initializing with {new_stocks}")
                         else:
                             print(f"   🔄 Risk-Adj Mom 3M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
-                        risk_adj_mom_3m_monthly_positions, risk_adj_mom_3m_monthly_cash, current_risk_adj_mom_3m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                        risk_adj_mom_3m_monthly_positions, risk_adj_mom_3m_monthly_cash, current_risk_adj_mom_3m_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="RiskAdj 3M Mth",
                             current_stocks=current_risk_adj_mom_3m_monthly_stocks,
                             new_stocks=new_stocks,
@@ -4297,7 +4290,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_stocks:
-                    risk_adj_mom_3m_sentiment_positions, risk_adj_mom_3m_sentiment_cash, current_risk_adj_mom_3m_sentiment_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    risk_adj_mom_3m_sentiment_positions, risk_adj_mom_3m_sentiment_cash, current_risk_adj_mom_3m_sentiment_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="RiskAdj 3M Sent",
                         current_stocks=current_risk_adj_mom_3m_sentiment_stocks,
                         new_stocks=new_stocks,
@@ -4327,7 +4320,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_stocks:
-                    vol_sweet_mom_positions, vol_sweet_mom_cash, current_vol_sweet_mom_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    vol_sweet_mom_positions, vol_sweet_mom_cash, current_vol_sweet_mom_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="VolSweet Mom",
                         current_stocks=current_vol_sweet_mom_stocks,
                         new_stocks=new_stocks,
@@ -4344,9 +4337,8 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Vol-Sweet Momentum error: {e}")
 
-        # Reset daily rebalancing flags at start of day
-        risk_adj_mom_3m_market_up_rebalanced_today = False
-        risk_adj_mom_3m_with_stops_rebalanced_today = False
+        # Reset daily rebalancing flags for all strategies at start of day
+        strategies_rebalanced_today.clear()
 
         # RISK-ADJ MOM 3M MARKET-UP ONLY STRATEGY
         if ENABLE_RISK_ADJ_MOM_3M_MARKET_UP:
@@ -4363,7 +4355,7 @@ def _run_portfolio_backtest_walk_forward(
                 if new_stocks:
                     # Store previous positions before rebalancing for tracking
                     prev_risk_adj_mom_3m_market_up_stocks = current_risk_adj_mom_3m_market_up_stocks.copy()
-                    risk_adj_mom_3m_market_up_positions, risk_adj_mom_3m_market_up_cash, current_risk_adj_mom_3m_market_up_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    risk_adj_mom_3m_market_up_positions, risk_adj_mom_3m_market_up_cash, current_risk_adj_mom_3m_market_up_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Risk-Adj Mom 3M Market-Up",
                         current_stocks=current_risk_adj_mom_3m_market_up_stocks,
                         new_stocks=new_stocks,
@@ -4397,7 +4389,7 @@ def _run_portfolio_backtest_walk_forward(
                 if new_stocks:
                     # Store previous positions before rebalancing for tracking
                     prev_risk_adj_mom_3m_with_stops_stocks = current_risk_adj_mom_3m_with_stops_stocks.copy()
-                    risk_adj_mom_3m_with_stops_positions, risk_adj_mom_3m_with_stops_cash, current_risk_adj_mom_3m_with_stops_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    risk_adj_mom_3m_with_stops_positions, risk_adj_mom_3m_with_stops_cash, current_risk_adj_mom_3m_with_stops_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Risk-Adj Mom 3M with Stops",
                         current_stocks=current_risk_adj_mom_3m_with_stops_stocks,
                         new_stocks=new_stocks,
@@ -4440,7 +4432,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_stocks:
-                    risk_adj_mom_1m_vol_sweet_positions, risk_adj_mom_1m_vol_sweet_cash, current_risk_adj_mom_1m_vol_sweet_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    risk_adj_mom_1m_vol_sweet_positions, risk_adj_mom_1m_vol_sweet_cash, current_risk_adj_mom_1m_vol_sweet_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="1M VolSweet",
                         current_stocks=current_risk_adj_mom_1m_vol_sweet_stocks,
                         new_stocks=new_stocks,
@@ -4470,7 +4462,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_risk_adj_mom_1m_stocks:
-                    risk_adj_mom_1m_positions, risk_adj_mom_1m_cash, current_risk_adj_mom_1m_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    risk_adj_mom_1m_positions, risk_adj_mom_1m_cash, current_risk_adj_mom_1m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Risk-Adj Mom 1M",
                         current_stocks=current_risk_adj_mom_1m_stocks,
                         new_stocks=new_risk_adj_mom_1m_stocks,
@@ -4506,7 +4498,7 @@ def _run_portfolio_backtest_walk_forward(
                             print(f"   🎯 Risk-Adj Mom 1M Monthly: Initializing with {new_stocks}")
                         else:
                             print(f"   🔄 Risk-Adj Mom 1M Monthly: Start-of-month rebalance ({current_date.strftime('%b %Y')})")
-                        risk_adj_mom_1m_monthly_positions, risk_adj_mom_1m_monthly_cash, current_risk_adj_mom_1m_monthly_stocks, rc = _smart_rebalance_portfolio(
+                        risk_adj_mom_1m_monthly_positions, risk_adj_mom_1m_monthly_cash, current_risk_adj_mom_1m_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="RiskAdj 1M Mth",
                             current_stocks=current_risk_adj_mom_1m_monthly_stocks,
                             new_stocks=new_stocks,
@@ -4562,7 +4554,7 @@ def _run_portfolio_backtest_walk_forward(
                         ai_elite_last_train_days[ticker] = day_count
                 
                 if new_ai_elite_stocks:
-                    ai_elite_positions, ai_elite_cash, current_ai_elite_stocks, rebalance_costs = _smart_rebalance_portfolio(
+                    ai_elite_positions, ai_elite_cash, current_ai_elite_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="AI Elite",
                         current_stocks=current_ai_elite_stocks,
                         new_stocks=new_ai_elite_stocks,
@@ -4602,7 +4594,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
 
                     if new_stocks:
-                        ai_elite_monthly_positions, ai_elite_monthly_cash, current_ai_elite_monthly_stocks, rc = _smart_rebalance_portfolio(
+                        ai_elite_monthly_positions, ai_elite_monthly_cash, current_ai_elite_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="AI Elite Mth",
                             current_stocks=current_ai_elite_monthly_stocks,
                             new_stocks=new_stocks,
@@ -4636,7 +4628,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_ai_elite_filtered_stocks:
-                    ai_elite_filtered_positions, ai_elite_filtered_cash, current_ai_elite_filtered_stocks, rc = _smart_rebalance_portfolio(
+                    ai_elite_filtered_positions, ai_elite_filtered_cash, current_ai_elite_filtered_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="AI Elite Flt",
                         current_stocks=current_ai_elite_filtered_stocks,
                         new_stocks=new_ai_elite_filtered_stocks,
@@ -4827,7 +4819,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_universal_model_stocks:
-                    universal_model_positions, universal_model_cash, current_universal_model_stocks, rc = _smart_rebalance_portfolio(
+                    universal_model_positions, universal_model_cash, current_universal_model_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Universal Model",
                         current_stocks=current_universal_model_stocks,
                         new_stocks=new_universal_model_stocks,
@@ -6865,14 +6857,12 @@ def _run_portfolio_backtest_walk_forward(
                 std_dev = calculate_std_dev(strategy_to_history.get(name, []))
                 
                 allocation_pct = (invested / value * 100) if value > 0 and invested > 0 else 0
-                # Add visual marker for special strategies and rebalancing
+                # Add visual marker for rebalancing and special strategies
                 display_name = name
                 if name == "Inverse ETF Hedge":
                     display_name = "🛡️ Inv ETF Hedge"
-                elif name == "RiskAdj 3M Up" and risk_adj_mom_3m_market_up_rebalanced_today:
-                    display_name = "🔄 RiskAdj 3M Up"
-                elif name == "RiskAdj 3M Stop" and risk_adj_mom_3m_with_stops_rebalanced_today:
-                    display_name = "🔄 RiskAdj 3M Stop"
+                elif strategies_rebalanced_today.get(name, False):
+                    display_name = f"🔄 {name}"
                 print(f"{i:<5} {display_name:<20} ${value:>11,.0f} {return_pct:>+8.1f}% {std_dev:>7.1f}% {annualized_return:>+9.1f}% ${strat_cash:>11,.0f} {num_pos:>5}")
             
             
@@ -7234,41 +7224,77 @@ def _run_portfolio_backtest_walk_forward(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
                     )
                 elif strategy_name == 'static_bh_6m':
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                    current_stocks = live_trading_selections['strategies'].get('static_bh_6m', [])
+                    new_stocks = select_top_performers(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['static_bh_6m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'static_bh_3m':
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                    current_stocks = live_trading_selections['strategies'].get('static_bh_3m', [])
+                    new_stocks = select_top_performers(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['static_bh_3m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'static_bh_1m':
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                    current_stocks = live_trading_selections['strategies'].get('static_bh_1m', [])
+                    new_stocks = select_top_performers(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['static_bh_1m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'dynamic_bh_1y':
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                    current_stocks = live_trading_selections['strategies'].get('dynamic_bh_1y', [])
+                    new_stocks = select_top_performers(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['dynamic_bh_1y'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'dynamic_bh_6m':
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                    current_stocks = live_trading_selections['strategies'].get('dynamic_bh_6m', [])
+                    new_stocks = select_top_performers(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['dynamic_bh_6m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'dynamic_bh_3m':
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                    current_stocks = live_trading_selections['strategies'].get('dynamic_bh_3m', [])
+                    new_stocks = select_top_performers(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['dynamic_bh_3m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'dynamic_bh_1m':
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                    current_stocks = live_trading_selections['strategies'].get('dynamic_bh_1m', [])
+                    new_stocks = select_top_performers(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['dynamic_bh_1m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'risk_adj_mom':
-                    live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('risk_adj_mom', [])
+                    new_stocks = select_risk_adj_mom_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['risk_adj_mom'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'risk_adj_mom_1m':
-                    live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('risk_adj_mom_1m', [])
+                    new_stocks = select_risk_adj_mom_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['risk_adj_mom_1m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'risk_adj_mom_3m':
                     from risk_adj_mom_3m_strategy import select_risk_adj_mom_stocks
                     current_stocks = live_trading_selections['strategies'].get('risk_adj_mom_3m', [])
@@ -7277,7 +7303,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     live_trading_selections['strategies'][strategy_name] = new_stocks
                     live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
-                    live_trading_selections['rebalanced']['risk_adj_mom_3m'] = set(new_stocks) != set(current_stocks)
+                    live_trading_selections['rebalanced'][strategy_name] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'risk_adj_mom_3m_market_up':
                     from risk_adj_mom_3m_market_up_strategy import select_risk_adj_mom_3m_market_up_stocks
                     current_stocks = live_trading_selections['strategies'].get('risk_adj_mom_3m_market_up', [])
@@ -7286,7 +7312,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     live_trading_selections['strategies'][strategy_name] = new_stocks
                     live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
-                    live_trading_selections['rebalanced']['risk_adj_mom_3m_market_up'] = set(new_stocks) != set(current_stocks)
+                    live_trading_selections['rebalanced'][strategy_name] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'risk_adj_mom_3m_with_stops':
                     from risk_adj_mom_3m_with_stops_strategy import select_risk_adj_mom_3m_with_stops_stocks
                     current_stocks = live_trading_selections['strategies'].get('risk_adj_mom_3m_with_stops', [])
@@ -7295,80 +7321,148 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     live_trading_selections['strategies'][strategy_name] = new_stocks
                     live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
-                    live_trading_selections['rebalanced']['risk_adj_mom_3m_with_stops'] = set(new_stocks) != set(current_stocks)
+                    live_trading_selections['rebalanced'][strategy_name] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'risk_adj_mom_6m':
-                    live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('risk_adj_mom_6m', [])
+                    new_stocks = select_risk_adj_mom_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['risk_adj_mom_6m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'sector_rotation':
-                    live_trading_selections['strategies'][strategy_name] = select_sector_rotation_etfs(
+                    current_stocks = live_trading_selections['strategies'].get('sector_rotation', [])
+                    new_stocks = select_sector_rotation_etfs(
                         list(available_tickers_in_data), ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['sector_rotation'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'quality_momentum':
-                    live_trading_selections['strategies'][strategy_name] = select_quality_momentum_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('quality_momentum', [])
+                    new_stocks = select_quality_momentum_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['quality_momentum'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'mean_reversion':
-                    live_trading_selections['strategies'][strategy_name] = select_mean_reversion_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('mean_reversion', [])
+                    new_stocks = select_mean_reversion_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['mean_reversion'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'volatility_adj_mom':
-                    live_trading_selections['strategies'][strategy_name] = select_volatility_adj_mom_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('volatility_adj_mom', [])
+                    new_stocks = select_volatility_adj_mom_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['volatility_adj_mom'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'price_acceleration':
-                    live_trading_selections['strategies'][strategy_name] = select_price_acceleration_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('price_acceleration', [])
+                    new_stocks = select_price_acceleration_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['price_acceleration'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'turnaround':
-                    live_trading_selections['strategies'][strategy_name] = select_turnaround_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('turnaround', [])
+                    new_stocks = select_turnaround_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['turnaround'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'momentum_ai_hybrid':
-                    live_trading_selections['strategies'][strategy_name] = select_momentum_ai_hybrid_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('momentum_ai_hybrid', [])
+                    new_stocks = select_momentum_ai_hybrid_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['momentum_ai_hybrid'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'ai_elite':
-                    live_trading_selections['strategies'][strategy_name] = select_ai_elite_with_training(
+                    current_stocks = live_trading_selections['strategies'].get('ai_elite', [])
+                    new_stocks = select_ai_elite_with_training(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['ai_elite'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'elite_hybrid':
-                    live_trading_selections['strategies'][strategy_name] = select_elite_hybrid_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('elite_hybrid', [])
+                    new_stocks = select_elite_hybrid_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['elite_hybrid'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'elite_risk':
-                    live_trading_selections['strategies'][strategy_name] = select_elite_risk_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('elite_risk', [])
+                    new_stocks = select_elite_risk_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['elite_risk'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'momentum_volatility_hybrid_6m':
-                    live_trading_selections['strategies'][strategy_name] = select_momentum_volatility_hybrid_6m_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('momentum_volatility_hybrid_6m', [])
+                    new_stocks = select_momentum_volatility_hybrid_6m_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['momentum_volatility_hybrid_6m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'inverse_etf_hedge':
                     from inverse_etf_hedge_strategy import select_inverse_etf_hedge_stocks
                     live_trading_selections['strategies'][strategy_name] = select_inverse_etf_hedge_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
                 elif strategy_name == 'trend_atr':
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                    current_stocks = live_trading_selections['strategies'].get('trend_atr', [])
+                    new_stocks = select_top_performers(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['trend_atr'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'dual_momentum':
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                    current_stocks = live_trading_selections['strategies'].get('dual_momentum', [])
+                    new_stocks = select_top_performers(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['dual_momentum'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'ratio_3m_1y':
-                    live_trading_selections['strategies'][strategy_name] = select_3m_1y_ratio_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('ratio_3m_1y', [])
+                    new_stocks = select_3m_1y_ratio_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['ratio_3m_1y'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'ratio_1y_3m':
-                    live_trading_selections['strategies'][strategy_name] = select_1y_3m_ratio_stocks(
+                    current_stocks = live_trading_selections['strategies'].get('ratio_1y_3m', [])
+                    new_stocks = select_1y_3m_ratio_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['ratio_1y_3m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'concentrated_3m':
-                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                    current_stocks = live_trading_selections['strategies'].get('concentrated_3m', [])
+                    new_stocks = select_top_performers(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['concentrated_3m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'analyst_rec':
                     try:
                         from analyst_recommendation_strategy import select_analyst_recommendation_stocks
