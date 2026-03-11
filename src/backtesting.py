@@ -1717,6 +1717,8 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_3m_market_up_positions = {}
     risk_adj_mom_3m_market_up_cash = initial_capital_needed
     current_risk_adj_mom_3m_market_up_stocks = []
+    prev_risk_adj_mom_3m_market_up_stocks = []  # Track for rebalancing indicator
+    risk_adj_mom_3m_market_up_rebalanced_today = False
     risk_adj_mom_3m_market_up_transaction_costs = 0.0
 
     # RISK-ADJ MOM 3M WITH STOPS: Initialize portfolio tracking
@@ -1725,6 +1727,8 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_3m_with_stops_positions = {}
     risk_adj_mom_3m_with_stops_cash = initial_capital_needed
     current_risk_adj_mom_3m_with_stops_stocks = []
+    prev_risk_adj_mom_3m_with_stops_stocks = []  # Track for rebalancing indicator
+    risk_adj_mom_3m_with_stops_rebalanced_today = False
     risk_adj_mom_3m_with_stops_transaction_costs = 0.0
 
     # VOL-SWEET MOMENTUM: Initialize portfolio tracking
@@ -4340,6 +4344,10 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Vol-Sweet Momentum error: {e}")
 
+        # Reset daily rebalancing flags at start of day
+        risk_adj_mom_3m_market_up_rebalanced_today = False
+        risk_adj_mom_3m_with_stops_rebalanced_today = False
+
         # RISK-ADJ MOM 3M MARKET-UP ONLY STRATEGY
         if ENABLE_RISK_ADJ_MOM_3M_MARKET_UP:
             try:
@@ -4353,6 +4361,8 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_stocks:
+                    # Store previous positions before rebalancing for tracking
+                    prev_risk_adj_mom_3m_market_up_stocks = current_risk_adj_mom_3m_market_up_stocks.copy()
                     risk_adj_mom_3m_market_up_positions, risk_adj_mom_3m_market_up_cash, current_risk_adj_mom_3m_market_up_stocks, rebalance_costs = _smart_rebalance_portfolio(
                         strategy_name="Risk-Adj Mom 3M Market-Up",
                         current_stocks=current_risk_adj_mom_3m_market_up_stocks,
@@ -4366,6 +4376,8 @@ def _run_portfolio_backtest_walk_forward(
                         force_rebalance=not current_risk_adj_mom_3m_market_up_stocks
                     )
                     risk_adj_mom_3m_market_up_transaction_costs += rebalance_costs
+                    # Check if rebalancing actually changed positions
+                    risk_adj_mom_3m_market_up_rebalanced_today = set(current_risk_adj_mom_3m_market_up_stocks) != set(prev_risk_adj_mom_3m_market_up_stocks)
 
             except Exception as e:
                 print(f"   ⚠️ Risk-Adj Mom 3M Market-Up error: {e}")
@@ -4383,6 +4395,8 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_stocks:
+                    # Store previous positions before rebalancing for tracking
+                    prev_risk_adj_mom_3m_with_stops_stocks = current_risk_adj_mom_3m_with_stops_stocks.copy()
                     risk_adj_mom_3m_with_stops_positions, risk_adj_mom_3m_with_stops_cash, current_risk_adj_mom_3m_with_stops_stocks, rebalance_costs = _smart_rebalance_portfolio(
                         strategy_name="Risk-Adj Mom 3M with Stops",
                         current_stocks=current_risk_adj_mom_3m_with_stops_stocks,
@@ -4396,6 +4410,8 @@ def _run_portfolio_backtest_walk_forward(
                         force_rebalance=not current_risk_adj_mom_3m_with_stops_stocks
                     )
                     risk_adj_mom_3m_with_stops_transaction_costs += rebalance_costs
+                    # Check if rebalancing actually changed positions
+                    risk_adj_mom_3m_with_stops_rebalanced_today = set(current_risk_adj_mom_3m_with_stops_stocks) != set(prev_risk_adj_mom_3m_with_stops_stocks)
                     
                     # Track entry prices for new positions
                     for ticker in new_stocks:
@@ -6813,6 +6829,8 @@ def _run_portfolio_backtest_walk_forward(
                 ("Risk-Adj Mom 3M", risk_adj_mom_3m_portfolio_history) if ENABLE_RISK_ADJ_MOM_3M else None,
                 ("RiskAdj 3M Mth", risk_adj_mom_3m_monthly_portfolio_history) if ENABLE_RISK_ADJ_MOM_3M_MONTHLY else None,
                 ("RiskAdj 3M Sent", risk_adj_mom_3m_sentiment_portfolio_history) if ENABLE_RISK_ADJ_MOM_3M_SENTIMENT else None,
+                ("RiskAdj 3M Up", risk_adj_mom_3m_market_up_portfolio_history) if ENABLE_RISK_ADJ_MOM_3M_MARKET_UP else None,
+                ("RiskAdj 3M Stop", risk_adj_mom_3m_with_stops_portfolio_history) if ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS else None,
                 ("VolSweet Mom", vol_sweet_mom_portfolio_history) if ENABLE_VOL_SWEET_MOM else None,
                 ("1M VolSweet", risk_adj_mom_1m_vol_sweet_portfolio_history) if ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET else None,
                 ("Risk-Adj Mom 1M", risk_adj_mom_1m_portfolio_history) if ENABLE_RISK_ADJ_MOM_1M else None,
@@ -6847,10 +6865,14 @@ def _run_portfolio_backtest_walk_forward(
                 std_dev = calculate_std_dev(strategy_to_history.get(name, []))
                 
                 allocation_pct = (invested / value * 100) if value > 0 and invested > 0 else 0
-                # Add visual marker for special strategies
+                # Add visual marker for special strategies and rebalancing
                 display_name = name
                 if name == "Inverse ETF Hedge":
                     display_name = "🛡️ Inv ETF Hedge"
+                elif name == "RiskAdj 3M Up" and risk_adj_mom_3m_market_up_rebalanced_today:
+                    display_name = "🔄 RiskAdj 3M Up"
+                elif name == "RiskAdj 3M Stop" and risk_adj_mom_3m_with_stops_rebalanced_today:
+                    display_name = "🔄 RiskAdj 3M Stop"
                 print(f"{i:<5} {display_name:<20} ${value:>11,.0f} {return_pct:>+8.1f}% {std_dev:>7.1f}% {annualized_return:>+9.1f}% ${strat_cash:>11,.0f} {num_pos:>5}")
             
             
@@ -7248,9 +7270,32 @@ def _run_portfolio_backtest_walk_forward(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
                     )
                 elif strategy_name == 'risk_adj_mom_3m':
-                    live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
+                    from risk_adj_mom_3m_strategy import select_risk_adj_mom_stocks
+                    current_stocks = live_trading_selections['strategies'].get('risk_adj_mom_3m', [])
+                    new_stocks = select_risk_adj_mom_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
                     )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['risk_adj_mom_3m'] = set(new_stocks) != set(current_stocks)
+                elif strategy_name == 'risk_adj_mom_3m_market_up':
+                    from risk_adj_mom_3m_market_up_strategy import select_risk_adj_mom_3m_market_up_stocks
+                    current_stocks = live_trading_selections['strategies'].get('risk_adj_mom_3m_market_up', [])
+                    new_stocks = select_risk_adj_mom_3m_market_up_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['risk_adj_mom_3m_market_up'] = set(new_stocks) != set(current_stocks)
+                elif strategy_name == 'risk_adj_mom_3m_with_stops':
+                    from risk_adj_mom_3m_with_stops_strategy import select_risk_adj_mom_3m_with_stops_stocks
+                    current_stocks = live_trading_selections['strategies'].get('risk_adj_mom_3m_with_stops', [])
+                    new_stocks = select_risk_adj_mom_3m_with_stops_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['risk_adj_mom_3m_with_stops'] = set(new_stocks) != set(current_stocks)
                 elif strategy_name == 'risk_adj_mom_6m':
                     live_trading_selections['strategies'][strategy_name] = select_risk_adj_mom_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
