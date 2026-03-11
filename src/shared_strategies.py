@@ -2704,11 +2704,12 @@ def select_ai_elite_with_training(
         elapsed = time.time() - start_time
         print(f"   📊 AI Elite: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers ({elapsed:.1f}s)")
         
-        # Train shared base model (always fresh training)
+        # Train shared base model
         os.makedirs(models_dir, exist_ok=True)
+        existing_base = ai_elite_models.get('_shared_base')
         base_model, base_r2 = train_shared_base_model(
             all_training_data, save_path=base_model_path,
-            existing_model=None, train_start=train_start, train_end=train_end
+            existing_model=existing_base, train_start=train_start, train_end=train_end
         )
         
         if base_model:
