@@ -39,6 +39,10 @@ def select_elite_risk_stocks(
     if current_date.tzinfo is None:
         current_date = current_date.replace(tzinfo=timezone.utc)
 
+    # Filter out inverse ETFs - they should only be in inverse_etf_hedge strategy
+    from config import INVERSE_ETFS
+    all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
+
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
         all_tickers, ticker_data_grouped, current_date, "Elite Risk"

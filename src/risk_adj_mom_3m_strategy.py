@@ -23,7 +23,11 @@ def select_risk_adj_mom_3m_stocks(
         RISK_ADJ_MOM_VOLUME_WINDOW,
         RISK_ADJ_MOM_VOLUME_MULTIPLIER,
         RISK_ADJ_MOM_MIN_SCORE,
+        INVERSE_ETFS,
     )
+
+    # Filter out inverse ETFs - they should only be in inverse_etf_hedge strategy
+    all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
 
     filtered_tickers = filter_tickers_by_performance(
         all_tickers, ticker_data_grouped, current_date, "Risk-Adj Mom 3M"

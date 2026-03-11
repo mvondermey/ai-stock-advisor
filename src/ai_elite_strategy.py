@@ -54,6 +54,10 @@ def select_ai_elite_stocks(
     if current_date.tzinfo is None:
         current_date = current_date.replace(tzinfo=timezone.utc)
     
+    # Filter out inverse ETFs - they should only be in inverse_etf_hedge strategy
+    from config import INVERSE_ETFS
+    all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
+    
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
