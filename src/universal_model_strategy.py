@@ -250,10 +250,10 @@ class UniversalModelStrategy:
             if 'CatBoost' not in models:
                 try:
                     import catboost as cb
-                    task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
+                    # Note: CatBoost GPU continuation not supported, always use CPU for incremental
                     models['CatBoost'] = cb.CatBoostRegressor(
                         iterations=100, depth=4, learning_rate=0.1,
-                        task_type=task_type, random_seed=42, verbose=0
+                        task_type='CPU', random_seed=42, verbose=0
                     )
                 except ImportError:
                     pass
