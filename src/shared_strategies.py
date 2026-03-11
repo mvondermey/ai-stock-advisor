@@ -2661,72 +2661,72 @@ def select_ai_elite_with_training(
             except Exception as e:
                 print(f"   ⚠️ AI Elite: Failed to load model: {e}")
     
-    # Step 2: Train if no model loaded (or force_train)
-    if ai_elite_models.get('_shared_base') is None or force_train:
-        print(f"   🎓 AI Elite: Training shared base model...")
-        
-        # Determine training window
-        if current_date is None:
-            import pandas as pd
-            from datetime import datetime
-            current_date = datetime.now(tz_utc.utc)
-        
-        train_end = current_date
-        train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
-        
-        # Pre-compute market returns (same as backtesting)
-        market_returns = {}
-        sample_date_iter = train_start
-        while sample_date_iter <= train_end:
-            mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
-            utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
-            market_returns[utc_key] = mr if mr is not None else 0.0
-            sample_date_iter += timedelta(days=2)
-        
-        # Collect training data from all tickers (PARALLEL with multiprocessing.Pool)
-        from multiprocessing import Pool, cpu_count
-        import time
-        
-        n_workers = max(1, cpu_count() - 2)
-        print(f"   📊 AI Elite: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
-        start_time = time.time()
-        
-        all_training_data = []
-        ticker_samples_map = {}
-        
-        # Prepare args for parallel workers
-        collect_args = [
-            (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS, market_returns)
-            for t in all_tickers
-        ]
-        
-        with Pool(processes=n_workers) as pool:
-            from backtesting import _collect_data_worker
-            results = pool.map(_collect_data_worker, collect_args)
-        
-        for ticker, samples in results:
-            if samples:
-                all_training_data.extend(samples)
-                ticker_samples_map[ticker] = samples
-        
-        elapsed = time.time() - start_time
-        print(f"   📊 AI Elite: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers ({elapsed:.1f}s)")
-        
-        # Train shared base model
-        os.makedirs(models_dir, exist_ok=True)
-        existing_base = ai_elite_models.get('_shared_base')
-        base_model, base_r2 = train_shared_base_model(
-            all_training_data, save_path=base_model_path,
-            existing_model=existing_base, train_start=train_start, train_end=train_end
-        )
-        
-        if base_model:
-            ai_elite_models['_shared_base'] = base_model
-            for ticker in all_tickers:
-                ai_elite_models[ticker] = base_model
-            print(f"   ✅ AI Elite: Model trained (R² {base_r2:.3f})")
-        else:
-            print(f"   ⚠️ AI Elite: Training failed, no model produced")
+    # Step 2: Always train (incrementally if model exists, fresh if not)
+    # This ensures model adapts to recent market conditions
+    print(f"   🎓 AI Elite: Training shared base model...")
+    
+    # Determine training window
+    if current_date is None:
+        import pandas as pd
+        from datetime import datetime
+        current_date = datetime.now(tz_utc.utc)
+    
+    train_end = current_date
+    train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
+    
+    # Pre-compute market returns (same as backtesting)
+    market_returns = {}
+    sample_date_iter = train_start
+    while sample_date_iter <= train_end:
+        mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
+        utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
+        market_returns[utc_key] = mr if mr is not None else 0.0
+        sample_date_iter += timedelta(days=2)
+    
+    # Collect training data from all tickers (PARALLEL with multiprocessing.Pool)
+    from multiprocessing import Pool, cpu_count
+    import time
+    
+    n_workers = max(1, cpu_count() - 2)
+    print(f"   📊 AI Elite: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
+    start_time = time.time()
+    
+    all_training_data = []
+    ticker_samples_map = {}
+    
+    # Prepare args for parallel workers
+    collect_args = [
+        (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS, market_returns)
+        for t in all_tickers
+    ]
+    
+    with Pool(processes=n_workers) as pool:
+        from backtesting import _collect_data_worker
+        results = pool.map(_collect_data_worker, collect_args)
+    
+    for ticker, samples in results:
+        if samples:
+            all_training_data.extend(samples)
+            ticker_samples_map[ticker] = samples
+    
+    elapsed = time.time() - start_time
+    print(f"   📊 AI Elite: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers ({elapsed:.1f}s)")
+    
+    # Train shared base model
+    os.makedirs(models_dir, exist_ok=True)
+    existing_base = ai_elite_models.get('_shared_base')
+    base_model, base_r2 = train_shared_base_model(
+        all_training_data, save_path=base_model_path,
+        existing_model=existing_base, train_start=train_start, train_end=train_end
+    )
+    
+    if base_model:
+        ai_elite_models['_shared_base'] = base_model
+        for ticker in all_tickers:
+            ai_elite_models[ticker] = base_model
+        print(f"   ✅ AI Elite: Model trained (R² {base_r2:.3f})")
+    else:
+        print(f"   ⚠️ AI Elite: Training failed, no model produced")
     
     # Step 3: Select stocks using trained model
     selected = select_ai_elite_stocks(

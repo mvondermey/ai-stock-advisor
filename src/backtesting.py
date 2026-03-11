@@ -4486,13 +4486,15 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   📊 AI Elite Monthly: {'Initializing' if not ai_elite_monthly_initialized else 'Start-of-month'} ({current_date.strftime('%b %Y')})")
                     
                     # Use shared function (handles load/train/select) with monthly model path
+                    # Always try to load existing model first (force_train=False)
+                    # This enables incremental training from saved model on Day 1
                     new_stocks, ai_elite_monthly_models = select_ai_elite_with_training(
                         all_tickers=initial_top_tickers,
                         ticker_data_grouped=ticker_data_grouped,
                         current_date=current_date,
                         top_n=PORTFOLIO_SIZE,
                         ai_elite_models=ai_elite_monthly_models,
-                        force_train=not ai_elite_monthly_initialized,
+                        force_train=False,
                         model_path_suffix="_monthly"
                     )
 
