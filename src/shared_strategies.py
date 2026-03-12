@@ -271,46 +271,45 @@ def check_momentum_confirmation(ticker_data: pd.DataFrame, current_date: datetim
             print(f"Error checking momentum confirmation: {e}")
             pass
     
-    # 3-month momentum check
+    # 3-month momentum check (using trading days)
     if RISK_ADJ_MOM_CONFIRM_SHORT:
-        start_3m = end_date - timedelta(days=90)
-        
-        # ✅ Use boolean indexing instead of .loc[] to avoid KeyError
-        data_3m = ticker_data[(ticker_data.index >= start_3m) & (ticker_data.index <= end_date)]
-        if len(data_3m) >= 30:
-            valid_close = data_3m['Close'].dropna()
-            if len(valid_close) >= 2:
-                start_price = valid_close.iloc[0]
-                end_price = valid_close.iloc[-1]
-                if start_price > 0 and not pd.isna(start_price) and not pd.isna(end_price):
-                    return_3m = ((end_price - start_price) / start_price) * 100
-                    if return_3m > 0:
-                        momentum_confirmations += 1
+        # Filter data up to end_date
+        data_up_to_date = ticker_data[ticker_data.index <= end_date]
+        valid_close = data_up_to_date['Close'].dropna()
+        n = len(valid_close)
+        if n >= 90:
+            lookback = min(90, n - 1)
+            start_price = valid_close.iloc[-lookback]
+            end_price = valid_close.iloc[-1]
+            if start_price > 0 and not pd.isna(start_price) and not pd.isna(end_price):
+                return_3m = ((end_price - start_price) / start_price) * 100
+                if return_3m > 0:
+                    momentum_confirmations += 1
     
-    # 6-month momentum check
+    # 6-month momentum check (using trading days)
     if RISK_ADJ_MOM_CONFIRM_MEDIUM:
-        start_6m = end_date - timedelta(days=180)
-        data_6m = ticker_data[(ticker_data.index >= start_6m) & (ticker_data.index <= end_date)]
-        if len(data_6m) >= 60:
-            valid_close = data_6m['Close'].dropna()
-            if len(valid_close) >= 2:
-                start_price = valid_close.iloc[0]
-                end_price = valid_close.iloc[-1]
-                if start_price > 0 and not pd.isna(start_price) and not pd.isna(end_price):
-                    return_6m = ((end_price - start_price) / start_price) * 100
-                    if return_6m > 0:
-                        momentum_confirmations += 1
+        data_up_to_date = ticker_data[ticker_data.index <= end_date]
+        valid_close = data_up_to_date['Close'].dropna()
+        n = len(valid_close)
+        if n >= 180:
+            lookback = min(180, n - 1)
+            start_price = valid_close.iloc[-lookback]
+            end_price = valid_close.iloc[-1]
+            if start_price > 0 and not pd.isna(start_price) and not pd.isna(end_price):
+                return_6m = ((end_price - start_price) / start_price) * 100
+                if return_6m > 0:
+                    momentum_confirmations += 1
     
-    # 1-year momentum check
+    # 1-year momentum check (using trading days)
     if RISK_ADJ_MOM_CONFIRM_LONG:
-        start_1y = end_date - timedelta(days=365)
-        data_1y = ticker_data[(ticker_data.index >= start_1y) & (ticker_data.index <= end_date)]
-        if len(data_1y) >= 100:
-            valid_close = data_1y['Close'].dropna()
-            if len(valid_close) >= 2:
-                start_price = valid_close.iloc[0]
-                end_price = valid_close.iloc[-1]
-                if start_price > 0 and not pd.isna(start_price) and not pd.isna(end_price):
+        data_up_to_date = ticker_data[ticker_data.index <= end_date]
+        valid_close = data_up_to_date['Close'].dropna()
+        n = len(valid_close)
+        if n >= 252:
+            lookback = min(252, n - 1)
+            start_price = valid_close.iloc[-lookback]
+            end_price = valid_close.iloc[-1]
+            if start_price > 0 and not pd.isna(start_price) and not pd.isna(end_price):
                     return_1y = ((end_price - start_price) / start_price) * 100
                     if return_1y > 0:
                         momentum_confirmations += 1
