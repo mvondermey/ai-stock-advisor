@@ -108,12 +108,18 @@ def calculate_daily_momentum(data: pd.DataFrame, current_date: datetime = None) 
     return signal
 
 def calculate_medium_term_momentum(data: pd.DataFrame) -> float:
-    """Calculate medium-term momentum signal"""
+    """Calculate medium-term momentum signal
+    
+    Note: data is already filtered by lookback period from calculate_multi_timeframe_signals
+    """
     if len(data) < 20:
         return 0.0
     
-    # 30-day momentum
-    momentum_30d = (data['Close'].iloc[-1] / data['Close'].iloc[0] - 1) * 100
+    # 30-day momentum (data is already filtered to lookback period)
+    if len(data) >= 2:
+        momentum_30d = (data['Close'].iloc[-1] / data['Close'].iloc[0] - 1) * 100
+    else:
+        return 0.0
     
     # Recent trend (last 10 days vs previous 10 days)
     if len(data) >= 20:
@@ -136,12 +142,18 @@ def calculate_medium_term_momentum(data: pd.DataFrame) -> float:
     return signal
 
 def calculate_short_term_momentum(data: pd.DataFrame) -> float:
-    """Calculate short-term momentum signal"""
+    """Calculate short-term momentum signal
+    
+    Note: data is already filtered by lookback period from calculate_multi_timeframe_signals
+    """
     if len(data) < 5:
         return 0.0
     
-    # 7-day momentum
-    momentum_7d = (data['Close'].iloc[-1] / data['Close'].iloc[0] - 1) * 100
+    # 7-day momentum (data is already filtered to lookback period)
+    if len(data) >= 2:
+        momentum_7d = (data['Close'].iloc[-1] / data['Close'].iloc[0] - 1) * 100
+    else:
+        return 0.0
     
     # Recent price action (last 3 days)
     if len(data) >= 3:
