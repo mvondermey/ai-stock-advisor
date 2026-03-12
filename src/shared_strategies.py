@@ -454,7 +454,8 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
 
 
 def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame], 
-                               current_date: datetime = None, top_n: int = 20, lookback_days: int = 365) -> List[str]:
+                               current_date: datetime = None, top_n: int = 20, lookback_days: int = 365,
+                               strategy_name: str = "Risk-Adj Mom") -> List[str]:
     """
     Shared Risk-Adjusted Momentum stock selection logic.
     """
@@ -466,7 +467,7 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        tickers_to_use, ticker_data_grouped, current_date, "Risk-Adj Mom"
+        tickers_to_use, ticker_data_grouped, current_date, strategy_name
     )
     
     current_top_performers = []

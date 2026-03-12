@@ -27,5 +27,6 @@ def select_risk_adj_mom_3m_stocks(
         ticker_data_grouped=ticker_data_grouped,
         current_date=current_date,
         top_n=top_n,
-        lookback_days=lookback_days
+        lookback_days=lookback_days,
+        strategy_name="Risk-Adj Mom 3M"
     )
