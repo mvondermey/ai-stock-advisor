@@ -179,6 +179,9 @@ def optimize_rebalance_horizons(
     Test all rebalance horizons from REBALANCE_HORIZON_MIN to REBALANCE_HORIZON_MAX
     for each strategy type and find the best performing horizon.
     
+    Note: Uses a minimum 180-day optimization period to properly evaluate horizons,
+    regardless of the actual backtest period length.
+    
     Args:
         all_tickers_data: DataFrame with all ticker data (long format with 'ticker' column)
         backtest_start: Start date for backtesting
@@ -195,11 +198,25 @@ def optimize_rebalance_horizons(
             '1M': {...}
         }
     """
-    print(f"\n🔄 REBALANCE HORIZON OPTIMIZATION", flush=True)
-    print("=" * 50, flush=True)
+    # Ensure minimum optimization period of 180 days for proper horizon evaluation
+    MIN_OPTIMIZATION_DAYS = 180
+    actual_days = (backtest_end - backtest_start).days
+    
+    if actual_days < MIN_OPTIMIZATION_DAYS:
+        # Extend start date backwards to get enough data for proper optimization
+        optimization_start = backtest_end - timedelta(days=MIN_OPTIMIZATION_DAYS)
+        print(f"\n🔄 REBALANCE HORIZON OPTIMIZATION", flush=True)
+        print("=" * 50, flush=True)
+        print(f"   ⚠️ Backtest period too short ({actual_days} days)", flush=True)
+        print(f"   📅 Using extended period: {optimization_start.date()} to {backtest_end.date()} ({MIN_OPTIMIZATION_DAYS} days)", flush=True)
+    else:
+        optimization_start = backtest_start
+        print(f"\n🔄 REBALANCE HORIZON OPTIMIZATION", flush=True)
+        print("=" * 50, flush=True)
+    
     print(f"   Testing horizons: {REBALANCE_HORIZON_MIN} to {REBALANCE_HORIZON_MAX} days", flush=True)
     print(f"   Strategy types: {strategy_types}", flush=True)
-    print(f"   Backtest period: {backtest_start.date()} to {backtest_end.date()}", flush=True)
+    print(f"   Optimization period: {optimization_start.date()} to {backtest_end.date()}", flush=True)
     
     # Convert data to dict format for faster access in workers
     print(f"   📊 Preparing data for parallel processing...", flush=True)
@@ -220,7 +237,7 @@ def optimize_rebalance_horizons(
         for horizon in horizons:
             tasks.append((
                 strategy_type, horizon, ticker_data_dict, None,
-                backtest_start, backtest_end, initial_capital, portfolio_size
+                optimization_start, backtest_end, initial_capital, portfolio_size
             ))
     
     total_tasks = len(tasks)
