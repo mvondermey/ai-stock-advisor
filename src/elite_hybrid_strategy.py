@@ -110,13 +110,14 @@ def select_elite_hybrid_stocks(
             if latest_price <= 0:
                 continue
             
-            # === PART 1: Mom-Vol Hybrid 6M Scoring ===
+            # === PART 1: Mom-Vol Hybrid 6M Scoring (using calendar days) ===
             
-            # Calculate 6M performance (adaptive: use up to 126 trading days)
-            lookback_6m = min(126, n_prices - 1)
-            if lookback_6m < 40:
+            # Calculate 6M performance using calendar days (180 days)
+            start_6m = current_ts - timedelta(days=180)
+            data_6m = close_prices[close_prices.index >= start_6m]
+            if len(data_6m) < 40:
                 continue
-            price_6m_ago = close_prices.iloc[-lookback_6m]
+            price_6m_ago = data_6m.iloc[0]
             if price_6m_ago <= 0:
                 continue
             
@@ -135,22 +136,24 @@ def select_elite_hybrid_stocks(
             else:
                 mom_vol_score = 0
             
-            # === PART 2: 1Y/3M Ratio Scoring ===
+            # === PART 2: 1Y/3M Ratio Scoring (using calendar days) ===
             
-            # Calculate 3M performance (adaptive: use up to 63 trading days)
-            lookback_3m = min(63, n_prices - 1)
-            if lookback_3m < 10:
+            # Calculate 3M performance using calendar days (90 days)
+            start_3m = current_ts - timedelta(days=90)
+            data_3m = close_prices[close_prices.index >= start_3m]
+            if len(data_3m) < 10:
                 continue
-            price_3m_ago = close_prices.iloc[-lookback_3m]
+            price_3m_ago = data_3m.iloc[0]
             if price_3m_ago <= 0:
                 continue
             perf_3m = ((latest_price - price_3m_ago) / price_3m_ago) * 100
             
-            # Calculate 1Y performance (adaptive: use up to 252 trading days)
-            lookback_1y = min(252, n_prices - 1)
-            if lookback_1y < 60:
+            # Calculate 1Y performance using calendar days (365 days)
+            start_1y = current_ts - timedelta(days=365)
+            data_1y = close_prices[close_prices.index >= start_1y]
+            if len(data_1y) < 60:
                 continue
-            price_1y_ago = close_prices.iloc[-lookback_1y]
+            price_1y_ago = data_1y.iloc[0]
             if price_1y_ago <= 0:
                 continue
             perf_1y = ((latest_price - price_1y_ago) / price_1y_ago) * 100

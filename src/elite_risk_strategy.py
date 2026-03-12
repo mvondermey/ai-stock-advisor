@@ -92,12 +92,16 @@ def select_elite_risk_stocks(
 
             # ---------------------------------------------------------------- #
             # PART 1: Risk-Adj Mom base score  (return / vol^0.5)              #
+            # Uses calendar days for consistency                               #
             # ---------------------------------------------------------------- #
-            perf_window = min(RISK_ADJ_MOM_PERFORMANCE_WINDOW, n - 1)
-            if perf_window < 60:
+            # Calculate performance using calendar days
+            perf_start = current_ts - timedelta(days=RISK_ADJ_MOM_PERFORMANCE_WINDOW)
+            perf_data = close[close.index >= perf_start]
+            
+            if len(perf_data) < 30:  # Need at least 30 trading days
                 continue
 
-            start_price = close.iloc[-perf_window]
+            start_price = perf_data.iloc[0]
             if start_price <= 0:
                 continue
 
@@ -117,15 +121,17 @@ def select_elite_risk_stocks(
                 continue
 
             # ---------------------------------------------------------------- #
-            # PART 2: Multi-timeframe momentum confirmation (Risk-Adj Mom)      #
+            # PART 2: Multi-timeframe momentum confirmation (calendar days)    #
             # ---------------------------------------------------------------- #
             if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
                 confirmations = 0
-                for days in [90, 180, 365]:
-                    lookback = min(days, n - 1)
-                    p = close.iloc[-lookback]
-                    if p > 0 and (latest_price - p) / p > 0:
-                        confirmations += 1
+                for days in [90, 180, 365]:  # Calendar days
+                    start_date = current_ts - timedelta(days=days)
+                    period_data = close[close.index >= start_date]
+                    if len(period_data) >= 10:
+                        p = period_data.iloc[0]
+                        if p > 0 and (latest_price - p) / p > 0:
+                            confirmations += 1
                 if confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
                     continue
 
@@ -141,15 +147,18 @@ def select_elite_risk_stocks(
                         continue
 
             # ---------------------------------------------------------------- #
-            # PART 4: Elite Hybrid bonuses                                      #
+            # PART 4: Elite Hybrid bonuses (using calendar days)               #
             # ---------------------------------------------------------------- #
             volatility_ann = daily_returns.std() * (252 ** 0.5)  # annualised
 
-            # 3M and 1Y performance
-            lookback_3m = min(63, n - 1)
-            lookback_1y = min(252, n - 1)
-            perf_3m = (latest_price / close.iloc[-lookback_3m] - 1) * 100 if lookback_3m >= 10 else 0.0
-            perf_1y = (latest_price / close.iloc[-lookback_1y] - 1) * 100 if lookback_1y >= 60 else 0.0
+            # 3M and 1Y performance using calendar days
+            start_3m = current_ts - timedelta(days=90)
+            data_3m = close[close.index >= start_3m]
+            perf_3m = (latest_price / data_3m.iloc[0] - 1) * 100 if len(data_3m) >= 10 else 0.0
+            
+            start_1y = current_ts - timedelta(days=365)
+            data_1y = close[close.index >= start_1y]
+            perf_1y = (latest_price / data_1y.iloc[0] - 1) * 100 if len(data_1y) >= 60 else 0.0
 
             # Dip bonus: strong 1Y but weak 3M = buy-the-dip opportunity
             if perf_1y > 30 and perf_3m < 5:

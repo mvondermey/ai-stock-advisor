@@ -340,41 +340,62 @@ def check_volume_confirmation(ticker_data: pd.DataFrame) -> bool:
     return recent_volume >= avg_volume * RISK_ADJ_MOM_VOLUME_MULTIPLIER
 
 
-def calculate_volatility_adjusted_momentum(ticker_data, lookback_days=90, vol_window=20):
+def calculate_volatility_adjusted_momentum(ticker_data, current_date=None, lookback_days=90, vol_window=20):
     """
     Calculate volatility-adjusted momentum score for a ticker.
+    Uses calendar days (timedelta) for consistency with other calculations.
     
     Args:
         ticker_data: DataFrame with price data for a single ticker
-        lookback_days: Period for momentum calculation (default 90 days)
-        vol_window: Period for volatility calculation (default 20 days)
+        current_date: Current date for calculation (uses data max if None)
+        lookback_days: Period for momentum calculation in calendar days (default 90)
+        vol_window: Period for volatility calculation in calendar days (default 20)
     
     Returns:
         Volatility-adjusted momentum score
     """
     try:
-        if len(ticker_data) < lookback_days + vol_window:
+        # Determine end date
+        if current_date is not None:
+            end_date = pd.Timestamp(current_date)
+            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                if end_date.tz is None:
+                    end_date = end_date.tz_localize(ticker_data.index.tz)
+            ticker_data = ticker_data[ticker_data.index <= end_date]
+        else:
+            end_date = ticker_data.index.max()
+        
+        if len(ticker_data) < 30:
             return 0.0
         
-        # Calculate momentum return over lookback period
-        if len(ticker_data) >= lookback_days:
-            momentum_return = (ticker_data['Close'].iloc[-1] / ticker_data['Close'].iloc[-lookback_days] - 1)
-        else:
-            momentum_return = 0.0
+        # Calculate momentum return using calendar days
+        start_date = end_date - timedelta(days=lookback_days)
+        momentum_data = ticker_data[ticker_data.index >= start_date]
         
-        # Calculate volatility (standard deviation of daily returns)
-        daily_returns = ticker_data['Close'].pct_change().dropna()
-        if len(daily_returns) >= vol_window:
-            volatility = daily_returns.iloc[-vol_window:].std()
-        else:
-            volatility = daily_returns.std()
+        if len(momentum_data) < 10:  # Need at least 10 trading days
+            return 0.0
+        
+        close_prices = momentum_data['Close'].dropna()
+        if len(close_prices) < 2:
+            return 0.0
+        
+        momentum_return = (close_prices.iloc[-1] / close_prices.iloc[0] - 1)
+        
+        # Calculate volatility using calendar days
+        vol_start_date = end_date - timedelta(days=vol_window)
+        vol_data = ticker_data[ticker_data.index >= vol_start_date]
+        daily_returns = vol_data['Close'].pct_change().dropna()
+        
+        if len(daily_returns) < 5:
+            return 0.0
+        
+        volatility = daily_returns.std()
         
         # Avoid division by zero
         if volatility <= 0:
             return 0.0
         
         # Volatility-adjusted momentum (higher is better)
-        # This penalizes high volatility and rewards steady momentum
         vol_adjusted_score = momentum_return / (volatility ** 0.5)
         
         return vol_adjusted_score
@@ -388,6 +409,7 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
                                      current_date: datetime = None, top_n: int = 20) -> List[str]:
     """
     Shared Volatility-Adjusted Momentum stock selection logic.
+    Uses calendar days for all calculations.
     """
     from config import INVERSE_ETFS
     
@@ -409,23 +431,12 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
             
             ticker_data = ticker_data_grouped[ticker]
             
-            # Use same approach as backtesting
-            lookback_start = current_date - timedelta(days=VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW + 30)
-            ticker_history = ticker_data[
-                (ticker_data.index >= lookback_start) & 
-                (ticker_data.index <= current_date)
-            ]
-            
-            # Use same minimum requirement as backtesting
-            min_required = min(60, VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW)
-            if len(ticker_history) < min_required:
-                continue
-            
-            # Calculate volatility-adjusted momentum score (same as backtesting)
+            # Calculate volatility-adjusted momentum score using calendar days
             vol_adj_score = calculate_volatility_adjusted_momentum(
-                ticker_history, 
-                min(VOLATILITY_ADJ_MOM_LOOKBACK, len(ticker_history) - VOLATILITY_ADJ_MOM_VOL_WINDOW), 
-                VOLATILITY_ADJ_MOM_VOL_WINDOW
+                ticker_data,
+                current_date=current_date,
+                lookback_days=VOLATILITY_ADJ_MOM_LOOKBACK,
+                vol_window=VOLATILITY_ADJ_MOM_VOL_WINDOW
             )
             
             # Use same threshold as backtesting (accept any positive score)

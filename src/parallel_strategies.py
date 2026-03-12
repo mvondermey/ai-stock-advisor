@@ -31,29 +31,49 @@ def calculate_momentum_scores(args):
 
 
 def calculate_volatility_adjusted_momentum(args):
-    """Worker: Calculate volatility-adjusted momentum score."""
+    """Worker: Calculate volatility-adjusted momentum score using calendar days."""
     ticker, ticker_df, current_date, lookback_days, vol_window = args
     try:
-        if ticker_df is None or len(ticker_df) < max(lookback_days, vol_window):
+        from datetime import timedelta
+        
+        if ticker_df is None or len(ticker_df) < 30:
             return None
         
+        # Filter data up to current_date
         ticker_history = ticker_df[ticker_df.index <= current_date]
-        if len(ticker_history) >= lookback_days:
-            # Calculate momentum
-            lookback_data = ticker_history.tail(lookback_days)
-            start_price = lookback_data.iloc[0]['Close']
-            end_price = lookback_data.iloc[-1]['Close']
-            
-            if start_price > 0:
-                momentum = (end_price - start_price) / start_price
-                
-                # Calculate volatility
-                returns = ticker_history['Close'].pct_change().tail(vol_window)
-                volatility = returns.std()
-                
-                if volatility > 0:
-                    vol_adj_score = momentum / volatility
-                    return (ticker, vol_adj_score, momentum, volatility)
+        
+        # Calculate momentum using calendar days
+        start_date = current_date - timedelta(days=lookback_days)
+        momentum_data = ticker_history[ticker_history.index >= start_date]
+        
+        if len(momentum_data) < 10:  # Need at least 10 trading days
+            return None
+        
+        close_prices = momentum_data['Close'].dropna()
+        if len(close_prices) < 2:
+            return None
+        
+        start_price = close_prices.iloc[0]
+        end_price = close_prices.iloc[-1]
+        
+        if start_price <= 0:
+            return None
+        
+        momentum = (end_price - start_price) / start_price
+        
+        # Calculate volatility using calendar days
+        vol_start_date = current_date - timedelta(days=vol_window)
+        vol_data = ticker_history[ticker_history.index >= vol_start_date]
+        returns = vol_data['Close'].pct_change().dropna()
+        
+        if len(returns) < 5:
+            return None
+        
+        volatility = returns.std()
+        
+        if volatility > 0:
+            vol_adj_score = momentum / volatility
+            return (ticker, vol_adj_score, momentum, volatility)
     except Exception:
         pass
     return None

@@ -208,14 +208,19 @@ def _extract_features(ticker: str, hourly_data: Optional[pd.DataFrame], current_
         if latest_price <= 0:
             return None
 
-        def _perf(days):
-            idx = min(days, len(close_daily) - 1)
-            p = close_daily.iloc[-idx]
+        # Helper function to calculate performance using calendar days
+        def _perf(calendar_days):
+            start_date = current_ts - timedelta(days=calendar_days)
+            period_data = close_daily[close_daily.index >= start_date]
+            if len(period_data) < 5:
+                return 0.0
+            p = period_data.iloc[0]
             return ((latest_price - p) / p * 100) if p > 0 else 0.0
 
-        perf_3m  = _perf(63)
-        perf_6m  = _perf(126)
-        perf_1y  = _perf(252)
+        perf_3m  = _perf(90)   # 90 calendar days
+        perf_6m  = _perf(180)  # 180 calendar days
+        perf_1y  = _perf(365)  # 365 calendar days
+        perf_5d  = _perf(5)    # 5 calendar days (for intraday features)
 
         # Annualised daily volatility (252 trading days)
         daily_returns = close_daily.pct_change().dropna()
@@ -307,7 +312,6 @@ def _extract_features(ticker: str, hourly_data: Optional[pd.DataFrame], current_
         # ------------------------------------------------------------------ #
         # Short-term reversal: 5-day return minus 20-day return
         # Positive = recent acceleration (bullish sentiment), negative = fading (bearish)
-        perf_5d = _perf(5)
         perf_20d = _perf(20)
         short_term_reversal = perf_5d - perf_20d
 
