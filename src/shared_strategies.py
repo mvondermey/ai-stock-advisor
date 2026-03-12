@@ -124,15 +124,19 @@ def get_market_conditions(ticker_data_grouped: Dict[str, pd.DataFrame], current_
             
             data_until_now = data[data.index <= current_ts]
             
-            if len(data_until_now) >= 63:  # Need 3 months of data
-                # 3-month performance
-                perf_3m = (data_until_now['Close'].iloc[-1] / data_until_now['Close'].iloc[-63] - 1)
+            # 3-month performance (90 calendar days)
+            start_3m = current_ts - timedelta(days=90)
+            data_3m = data_until_now[data_until_now.index >= start_3m]
+            if len(data_3m) >= 10:
+                perf_3m = (data_3m['Close'].iloc[-1] / data_3m['Close'].iloc[0] - 1)
                 conditions[f'{name}_3m'] = perf_3m
-                
-                # 1-month performance
-                if len(data_until_now) >= 21:
-                    perf_1m = (data_until_now['Close'].iloc[-1] / data_until_now['Close'].iloc[-21] - 1)
-                    conditions[f'{name}_1m'] = perf_1m
+            
+            # 1-month performance (30 calendar days)
+            start_1m = current_ts - timedelta(days=30)
+            data_1m = data_until_now[data_until_now.index >= start_1m]
+            if len(data_1m) >= 5:
+                perf_1m = (data_1m['Close'].iloc[-1] / data_1m['Close'].iloc[0] - 1)
+                conditions[f'{name}_1m'] = perf_1m
     
     return conditions
 

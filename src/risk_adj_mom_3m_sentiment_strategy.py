@@ -42,10 +42,19 @@ def calculate_sentiment_score(data: pd.DataFrame, current_date: datetime = None)
         if len(close) < 30:
             return 0.0
         
-        # 1. Short-term reversal (acceleration signal)
+        # Use calendar days for performance calculations
+        current_price = close.iloc[-1]
+        
+        # 1. Short-term reversal (acceleration signal) using calendar days
         # Positive = recent acceleration (bullish), negative = fading (bearish)
-        perf_5d = (close.iloc[-1] / close.iloc[-5] - 1) * 100 if len(close) >= 5 else 0
-        perf_20d = (close.iloc[-1] / close.iloc[-20] - 1) * 100 if len(close) >= 20 else 0
+        start_5d = current_date - timedelta(days=5)
+        data_5d = close[close.index >= start_5d]
+        perf_5d = (current_price / data_5d.iloc[0] - 1) * 100 if len(data_5d) >= 3 else 0
+        
+        start_20d = current_date - timedelta(days=20)
+        data_20d = close[close.index >= start_20d]
+        perf_20d = (current_price / data_20d.iloc[0] - 1) * 100 if len(data_20d) >= 10 else 0
+        
         short_term_reversal = perf_5d - perf_20d
         # Normalize to [-1, 1] range (assume ±10% is extreme)
         reversal_score = np.clip(short_term_reversal / 10.0, -1.0, 1.0)

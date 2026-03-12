@@ -124,11 +124,11 @@ class AIRegimeAllocator:
             stocks_total = 0
             
             for ticker, data in ticker_data_grouped.items():
-                if data is None or len(data) < 65:
+                if data is None or len(data) < 30:
                     continue
                     
                 close = data['Close'].dropna()
-                if len(close) < 65:
+                if len(close) < 30:
                     continue
                     
                 # Filter to current date
@@ -139,17 +139,32 @@ class AIRegimeAllocator:
                 latest = close.iloc[-1]
                 stocks_total += 1
                 
-                # Multi-timeframe momentum
-                if len(close) >= 5 and close.iloc[-5] > 0:
-                    stock_returns_5d.append((latest / close.iloc[-5] - 1) * 100)
-                if len(close) >= 10 and close.iloc[-10] > 0:
-                    stock_returns_10d.append((latest / close.iloc[-10] - 1) * 100)
-                if len(close) >= 20 and close.iloc[-20] > 0:
-                    stock_returns_20d.append((latest / close.iloc[-20] - 1) * 100)
-                if len(close) >= 60 and close.iloc[-60] > 0:
-                    stock_returns_60d.append((latest / close.iloc[-60] - 1) * 100)
+                # Multi-timeframe momentum using calendar days
+                # 5 calendar days (~5 trading days)
+                start_5d = current_date - timedelta(days=5)
+                data_5d = close[close.index >= start_5d]
+                if len(data_5d) >= 3 and data_5d.iloc[0] > 0:
+                    stock_returns_5d.append((latest / data_5d.iloc[0] - 1) * 100)
                 
-                # Multi-timeframe volatility
+                # 10 calendar days (~10 trading days)
+                start_10d = current_date - timedelta(days=10)
+                data_10d = close[close.index >= start_10d]
+                if len(data_10d) >= 5 and data_10d.iloc[0] > 0:
+                    stock_returns_10d.append((latest / data_10d.iloc[0] - 1) * 100)
+                
+                # 20 calendar days (~20 trading days)
+                start_20d = current_date - timedelta(days=20)
+                data_20d = close[close.index >= start_20d]
+                if len(data_20d) >= 10 and data_20d.iloc[0] > 0:
+                    stock_returns_20d.append((latest / data_20d.iloc[0] - 1) * 100)
+                
+                # 60 calendar days (~60 trading days)
+                start_60d = current_date - timedelta(days=60)
+                data_60d = close[close.index >= start_60d]
+                if len(data_60d) >= 30 and data_60d.iloc[0] > 0:
+                    stock_returns_60d.append((latest / data_60d.iloc[0] - 1) * 100)
+                
+                # Multi-timeframe volatility using calendar days
                 daily_ret = close.pct_change().dropna()
                 if len(daily_ret) >= 10:
                     vol_short = daily_ret.tail(10).std() * np.sqrt(252) * 100
@@ -158,7 +173,7 @@ class AIRegimeAllocator:
                     vol_long = daily_ret.tail(60).std() * np.sqrt(252) * 100
                     stock_vol_long.append(vol_long)
                     
-                # Market breadth: stock above its 20d SMA
+                # Market breadth: stock above its 20d SMA (using last 20 trading days)
                 if len(close) >= 20:
                     sma20 = close.tail(20).mean()
                     if latest > sma20:

@@ -66,26 +66,39 @@ def calculate_multi_timeframe_signals(
     
     return signals
 
-def calculate_daily_momentum(data: pd.DataFrame) -> float:
-    """Calculate long-term daily momentum signal"""
+def calculate_daily_momentum(data: pd.DataFrame, current_date: datetime = None) -> float:
+    """Calculate long-term daily momentum signal using calendar days"""
     if len(data) < 50:
         return 0.0
     
-    # 1-year momentum
-    if len(data) >= 252:
-        momentum_1y = (data['Close'].iloc[-1] / data['Close'].iloc[-252] - 1) * 100
+    # Use calendar days for calculations
+    if current_date is None:
+        current_date = data.index.max()
+    
+    # Filter data up to current_date
+    data = data[data.index <= current_date]
+    
+    # 1-year momentum (365 calendar days)
+    start_1y = current_date - timedelta(days=365)
+    data_1y = data[data.index >= start_1y]
+    if len(data_1y) >= 50:
+        momentum_1y = (data_1y['Close'].iloc[-1] / data_1y['Close'].iloc[0] - 1) * 100
     else:
         momentum_1y = (data['Close'].iloc[-1] / data['Close'].iloc[0] - 1) * 100
     
-    # 6-month momentum
-    if len(data) >= 126:
-        momentum_6m = (data['Close'].iloc[-1] / data['Close'].iloc[-126] - 1) * 100
+    # 6-month momentum (180 calendar days)
+    start_6m = current_date - timedelta(days=180)
+    data_6m = data[data.index >= start_6m]
+    if len(data_6m) >= 25:
+        momentum_6m = (data_6m['Close'].iloc[-1] / data_6m['Close'].iloc[0] - 1) * 100
     else:
         momentum_6m = momentum_1y
     
-    # 3-month momentum
-    if len(data) >= 63:
-        momentum_3m = (data['Close'].iloc[-1] / data['Close'].iloc[-63] - 1) * 100
+    # 3-month momentum (90 calendar days)
+    start_3m = current_date - timedelta(days=90)
+    data_3m = data[data.index >= start_3m]
+    if len(data_3m) >= 10:
+        momentum_3m = (data_3m['Close'].iloc[-1] / data_3m['Close'].iloc[0] - 1) * 100
     else:
         momentum_3m = momentum_1y
     

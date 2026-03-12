@@ -49,11 +49,10 @@ FACTOR_WEIGHTS = {
     },
 }
 
-# Factor calculation parameters
-MOMENTUM_LOOKBACK = 252  # 1 year for momentum
-VALUE_METRICS = ['pe_ratio', 'pb_ratio', 'dividend_yield']
-QUALITY_METRICS = ['roe', 'debt_to_equity', 'profit_margin']
-GROWTH_LOOKBACK = 63  # 3 months for growth
+# Factor calculation parameters (using calendar days)
+MOMENTUM_LOOKBACK_DAYS = 365  # 1 year for momentum (calendar days)
+VALUE_LOOKBACK_DAYS = 365  # 1 year for value (calendar days)
+GROWTH_LOOKBACK_DAYS = 90  # 3 months for growth (calendar days)
 
 
 class FactorRotation:
@@ -110,16 +109,23 @@ class FactorRotation:
     
     def calculate_momentum_score(self, ticker_data: pd.DataFrame, 
                                  current_date: datetime) -> float:
-        """Calculate momentum factor score (12-month return minus last month)."""
+        """Calculate momentum factor score (12-month return minus last month) using calendar days."""
         try:
             data = ticker_data[ticker_data.index <= current_date]
-            if len(data) < MOMENTUM_LOOKBACK:
+            
+            # 12-month return (365 calendar days)
+            start_12m = current_date - timedelta(days=MOMENTUM_LOOKBACK_DAYS)
+            data_12m = data[data.index >= start_12m]
+            if len(data_12m) < 50:
                 return 0.0
             
-            # 12-month return
             price_now = data['Close'].iloc[-1]
-            price_12m = data['Close'].iloc[-MOMENTUM_LOOKBACK]
-            price_1m = data['Close'].iloc[-21] if len(data) >= 21 else price_now
+            price_12m = data_12m['Close'].iloc[0]
+            
+            # 1-month return (30 calendar days)
+            start_1m = current_date - timedelta(days=30)
+            data_1m = data[data.index >= start_1m]
+            price_1m = data_1m['Close'].iloc[0] if len(data_1m) >= 5 else price_now
             
             # Momentum = 12M return - 1M return (to avoid short-term reversal)
             return_12m = (price_now - price_12m) / price_12m
@@ -154,25 +160,32 @@ class FactorRotation:
     
     def calculate_quality_score(self, ticker_data: pd.DataFrame,
                                current_date: datetime) -> float:
-        """Calculate quality factor score based on stability and consistency."""
+        """Calculate quality factor score based on stability and consistency using calendar days."""
         try:
             data = ticker_data[ticker_data.index <= current_date]
-            if len(data) < 252:
+            
+            # Use 1-year calendar days for quality calculation
+            start_1y = current_date - timedelta(days=365)
+            data_1y = data[data.index >= start_1y]
+            if len(data_1y) < 100:  # Need at least ~100 trading days in 1 year
                 return 0.0
             
-            returns = data['Close'].pct_change().dropna()
+            returns = data_1y['Close'].pct_change().dropna()
+            n_days = len(returns)
+            if n_days < 50:
+                return 0.0
             
             # Quality metrics from price data:
             # 1. Lower volatility = higher quality
-            vol = returns.tail(252).std() * np.sqrt(252)
+            vol = returns.std() * np.sqrt(252)
             vol_score = max(0, 1 - vol)  # Invert: lower vol = higher score
             
             # 2. Positive return consistency
-            positive_days = (returns.tail(252) > 0).sum() / 252
+            positive_days = (returns > 0).sum() / n_days
             
             # 3. Drawdown resilience
-            rolling_max = data['Close'].tail(252).cummax()
-            drawdown = (data['Close'].tail(252) - rolling_max) / rolling_max
+            rolling_max = data_1y['Close'].cummax()
+            drawdown = (data_1y['Close'] - rolling_max) / rolling_max
             max_dd = abs(drawdown.min())
             dd_score = max(0, 1 - max_dd)
             
@@ -184,16 +197,26 @@ class FactorRotation:
     
     def calculate_growth_score(self, ticker_data: pd.DataFrame,
                               current_date: datetime) -> float:
-        """Calculate growth factor score based on recent price acceleration."""
+        """Calculate growth factor score based on recent price acceleration using calendar days."""
         try:
             data = ticker_data[ticker_data.index <= current_date]
-            if len(data) < GROWTH_LOOKBACK * 2:
-                return 0.0
             
-            # Growth = acceleration in returns
+            # Growth = acceleration in returns (using calendar days)
             price_now = data['Close'].iloc[-1]
-            price_3m = data['Close'].iloc[-GROWTH_LOOKBACK]
-            price_6m = data['Close'].iloc[-GROWTH_LOOKBACK * 2]
+            
+            # 3-month lookback (90 calendar days)
+            start_3m = current_date - timedelta(days=GROWTH_LOOKBACK_DAYS)
+            data_3m = data[data.index >= start_3m]
+            if len(data_3m) < 10:
+                return 0.0
+            price_3m = data_3m['Close'].iloc[0]
+            
+            # 6-month lookback (180 calendar days)
+            start_6m = current_date - timedelta(days=GROWTH_LOOKBACK_DAYS * 2)
+            data_6m = data[data.index >= start_6m]
+            if len(data_6m) < 20:
+                return 0.0
+            price_6m = data_6m['Close'].iloc[0]
             
             return_3m = (price_now - price_3m) / price_3m
             return_prev_3m = (price_3m - price_6m) / price_6m

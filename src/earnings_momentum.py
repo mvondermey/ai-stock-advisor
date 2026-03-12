@@ -117,21 +117,26 @@ class EarningsMomentum:
         """
         Calculate Standardized Unexpected Earnings (SUE) proxy.
         Uses price momentum as proxy for earnings surprise.
+        Uses calendar days (90 days for 3-month period).
         """
         try:
             data = ticker_data[ticker_data.index <= current_date]
-            if len(data) < 90:
+            
+            # Use 3-month calendar days (90 days) for earnings momentum proxy
+            start_3m = current_date - timedelta(days=90)
+            data_3m = data[data.index >= start_3m]
+            
+            if len(data_3m) < 10:  # Need at least 10 trading days
                 return 0.0
             
-            # Use 3-month return as earnings momentum proxy
             price_now = data['Close'].iloc[-1]
-            price_3m = data['Close'].iloc[-63]
+            price_3m = data_3m['Close'].iloc[0]
             
             return_3m = (price_now - price_3m) / price_3m
             
-            # Standardize by volatility
-            returns = data['Close'].pct_change().dropna()
-            vol = returns.tail(63).std() * np.sqrt(252)
+            # Standardize by volatility (using 90 calendar days of data)
+            returns = data_3m['Close'].pct_change().dropna()
+            vol = returns.std() * np.sqrt(252) if len(returns) > 5 else 0
             
             if vol == 0:
                 return 0.0

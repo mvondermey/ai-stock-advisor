@@ -76,14 +76,18 @@ def select_inverse_etf_hedge_stocks(
                 etf_data = etf_data[etf_data.index <= current_ts]
                 
                 if len(etf_data) >= 20:  # Need at least 20 days of data
-                    # Calculate 3-month performance
-                    start_price = etf_data['Close'].iloc[-63] if len(etf_data) >= 63 else etf_data['Close'].iloc[0]
-                    end_price = etf_data['Close'].iloc[-1]
+                    # Calculate 3-month performance using calendar days (90 days)
+                    start_3m = current_ts - timedelta(days=90)
+                    data_3m = etf_data[etf_data.index >= start_3m]
                     
-                    if start_price > 0:
-                        perf_3m = (end_price / start_price - 1) * 100
-                        inverse_etf_scores.append((etf, perf_3m))
-                        print(f"      📈 {etf}: {perf_3m:+.1f}% (3M)")
+                    if len(data_3m) >= 10:  # Need at least 10 trading days
+                        start_price = data_3m['Close'].iloc[0]
+                        end_price = etf_data['Close'].iloc[-1]
+                        
+                        if start_price > 0:
+                            perf_3m = (end_price / start_price - 1) * 100
+                            inverse_etf_scores.append((etf, perf_3m))
+                            print(f"      📈 {etf}: {perf_3m:+.1f}% (3M)")
                         
             except Exception as e:
                 print(f"      ⚠️ Error scoring {etf}: {e}")

@@ -1,11 +1,12 @@
 """
 Inverse ETF Hedge Strategy
 Adds inverse ETFs to portfolios during market downturns instead of using stop losses
+Uses calendar days for all calculations.
 """
 
 from typing import List, Dict
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from config import INVERSE_ETFS, PORTFOLIO_SIZE
 
 def add_inverse_etf_hedge(
@@ -57,16 +58,30 @@ def add_inverse_etf_hedge(
     return updated_stocks
 
 
-def get_market_conditions(ticker_data_grouped: Dict[str, pd.DataFrame], current_date: datetime) -> Dict[str, float]:
+def calculate_market_conditions(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime = None
+) -> Dict[str, float]:
     """
-    Get current market conditions using major indices
+    Calculate current market conditions using calendar days.
     
+    Args:
+        ticker_data_grouped: Dict of ticker -> DataFrame
+        current_date: Current date for calculation
+        
     Returns:
-        Dict with market performance metrics
+        Dict with market condition metrics
     """
     conditions = {}
     
-    # Check major indices
+    if current_date is None:
+        # Use latest date from data
+        latest_dates = [data.index.max() for data in ticker_data_grouped.values() if len(data) > 0]
+        if latest_dates:
+            current_date = max(latest_dates)
+        else:
+            return conditions
+    
     indices = {
         'SPY': 'sp500',
         'QQQ': 'nasdaq',
@@ -76,14 +91,20 @@ def get_market_conditions(ticker_data_grouped: Dict[str, pd.DataFrame], current_
     for ticker, name in indices.items():
         if ticker in ticker_data_grouped:
             data = ticker_data_grouped[ticker]
-            if len(data) >= 63:  # Need 3 months of data
-                # 3-month performance
-                perf_3m = (data['Close'].iloc[-1] / data['Close'].iloc[-63] - 1)
+            data = data[data.index <= current_date]
+            
+            # 3-month performance (90 calendar days)
+            start_3m = current_date - timedelta(days=90)
+            data_3m = data[data.index >= start_3m]
+            if len(data_3m) >= 10:
+                perf_3m = (data_3m['Close'].iloc[-1] / data_3m['Close'].iloc[0] - 1)
                 conditions[f'{name}_3m'] = perf_3m
-                
-                # 1-month performance
-                if len(data) >= 21:
-                    perf_1m = (data['Close'].iloc[-1] / data['Close'].iloc[-21] - 1)
-                    conditions[f'{name}_1m'] = perf_1m
+            
+            # 1-month performance (30 calendar days)
+            start_1m = current_date - timedelta(days=30)
+            data_1m = data[data.index >= start_1m]
+            if len(data_1m) >= 5:
+                perf_1m = (data_1m['Close'].iloc[-1] / data_1m['Close'].iloc[0] - 1)
+                conditions[f'{name}_1m'] = perf_1m
     
     return conditions

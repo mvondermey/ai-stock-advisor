@@ -3798,8 +3798,13 @@ def _run_portfolio_backtest_walk_forward(
                                     vol_long = returns.head(20).std() * np.sqrt(252)
                                     vol_trend = (vol_short - vol_long) / vol_long if vol_long > 0 else 0
                                     
-                                    # 3. Price momentum (30-day)
-                                    price_momentum = (data_slice['Close'].iloc[-1] / data_slice['Close'].iloc[-30]) - 1
+                                    # 3. Price momentum (30 calendar days)
+                                    start_30d = current_date - timedelta(days=30)
+                                    data_30d = data_slice[data_slice.index >= start_30d]
+                                    if len(data_30d) >= 10:
+                                        price_momentum = (data_30d['Close'].iloc[-1] / data_30d['Close'].iloc[0]) - 1
+                                    else:
+                                        price_momentum = 0
                                     
                                     # 4. Volume confirmation
                                     volume_ratio = data_slice['Volume'].tail(10).mean() / data_slice['Volume'].head(30).mean()
