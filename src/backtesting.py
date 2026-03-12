@@ -2555,6 +2555,7 @@ def _run_portfolio_backtest_walk_forward(
             )
 
             if new_risk_adj_mom_stocks:
+                print(f"   📊 Risk-Adj Mom Day {day_count}: {new_risk_adj_mom_stocks}")
                 # Use universal smart rebalancing function
                 risk_adj_mom_positions, risk_adj_mom_cash, current_risk_adj_mom_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                     strategy_name="Risk-Adj Mom",
@@ -4628,6 +4629,7 @@ def _run_portfolio_backtest_walk_forward(
                         ai_elite_last_train_days[ticker] = day_count
                 
                 if new_ai_elite_stocks:
+                    print(f"   📊 AI Elite Day {day_count}: {new_ai_elite_stocks}")
                     ai_elite_positions, ai_elite_cash, current_ai_elite_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="AI Elite",
                         current_stocks=current_ai_elite_stocks,
@@ -4669,6 +4671,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
 
                     if new_stocks:
+                        print(f"   📊 AI Elite Monthly Day {day_count}: {new_stocks}")
                         ai_elite_monthly_positions, ai_elite_monthly_cash, current_ai_elite_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="AI Elite Mth",
                             current_stocks=current_ai_elite_monthly_stocks,
@@ -4704,6 +4707,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_ai_elite_filtered_stocks:
+                    print(f"   📊 AI Elite Filtered Day {day_count}: {new_ai_elite_filtered_stocks}")
                     ai_elite_filtered_positions, ai_elite_filtered_cash, current_ai_elite_filtered_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="AI Elite Flt",
                         current_stocks=current_ai_elite_filtered_stocks,
@@ -4737,6 +4741,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_ai_elite_market_up_stocks:
+                    print(f"   📊 AI Elite Market-Up Day {day_count}: {new_ai_elite_market_up_stocks}")
                     # Store previous positions before rebalancing for tracking
                     prev_ai_elite_market_up_stocks = current_ai_elite_market_up_stocks.copy()
                     ai_elite_market_up_positions, ai_elite_market_up_cash, current_ai_elite_market_up_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
