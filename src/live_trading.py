@@ -79,6 +79,90 @@ def get_live_trading_strategy():
     return getattr(config, 'LIVE_TRADING_STRATEGY', 'risk_adj_mom')
 
 
+def load_strategy_selections_with_comparison(strategy_name: str) -> Optional[List[str]]:
+    """
+    Load strategy selections from both JSON files and show comparison.
+    Shows backtest selections (actual positions) vs live selections (20 candidates).
+    
+    Args:
+        strategy_name: Name of the strategy (e.g., 'momentum_volatility_hybrid_6m')
+    
+    Returns:
+        List of ticker symbols from live selections (20 candidates), or None if not found
+    """
+    import json
+    from pathlib import Path
+    
+    live_selections_file = Path('logs/live_trading_selections.json')
+    selections_file = Path('logs/strategy_selections.json')
+    
+    backtest_selections = None
+    live_selections = None
+    
+    # Load backtest selections (actual positions from backtest)
+    if selections_file.exists():
+        try:
+            with open(selections_file, 'r') as f:
+                data = json.load(f)
+            strategies = data.get('strategies', {})
+            if strategy_name in strategies:
+                strategy_data = strategies[strategy_name]
+                if isinstance(strategy_data, list):
+                    backtest_selections = strategy_data
+                else:
+                    backtest_selections = strategy_data.get('tickers', [])
+        except Exception as e:
+            print(f"   [WARN] Error loading backtest selections: {e}")
+    
+    # Load live selections (20 candidates for live trading)
+    if live_selections_file.exists():
+        try:
+            with open(live_selections_file, 'r') as f:
+                data = json.load(f)
+            strategies = data.get('strategies', {})
+            if strategy_name in strategies:
+                live_selections = strategies[strategy_name]
+        except Exception as e:
+            print(f"   [WARN] Error loading live selections: {e}")
+    
+    # Show comparison
+    print(f"\n   📊 Strategy: {strategy_name}")
+    print(f"   " + "=" * 60)
+    
+    if backtest_selections:
+        print(f"   📈 Backtest positions ({len(backtest_selections)}): {', '.join(backtest_selections[:10])}{'...' if len(backtest_selections) > 10 else ''}")
+    else:
+        print(f"   ⚠️ No backtest positions found")
+    
+    if live_selections:
+        print(f"   🎯 Live candidates ({len(live_selections)}): {', '.join(live_selections[:10])}{'...' if len(live_selections) > 10 else ''}")
+    else:
+        print(f"   ⚠️ No live selections found")
+    
+    # Show overlap
+    if backtest_selections and live_selections:
+        overlap = set(backtest_selections) & set(live_selections)
+        if overlap:
+            print(f"   ✅ Overlap ({len(overlap)}): {', '.join(sorted(overlap))}")
+        else:
+            print(f"   ❌ No overlap between backtest and live selections")
+    
+    print(f"   " + "=" * 60)
+    
+    # Return live selections for actual trading (limited to PORTFOLIO_SIZE)
+    if live_selections:
+        num_to_use = min(len(live_selections), config.PORTFOLIO_SIZE)
+        return live_selections[:num_to_use]
+    elif backtest_selections:
+        # Fallback to backtest selections
+        num_to_use = min(len(backtest_selections), config.PORTFOLIO_SIZE)
+        print(f"   [INFO] Using backtest selections as fallback")
+        return backtest_selections[:num_to_use]
+    else:
+        print(f"   [WARN] No selections available for {strategy_name}")
+        return None
+
+
 def load_strategy_selections_from_json(strategy_name: str) -> Optional[List[str]]:
     """
     Load strategy selections from the JSON file saved by backtesting.
@@ -468,10 +552,10 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], ticker_data_grou
     """
     print(f"   [DEBUG] Strategy passed = '{strategy}'")
     
-    # Load from JSON file (uses backtest results - no recalculation)
-    json_tickers = load_strategy_selections_from_json(strategy)
+    # Load from JSON file (shows comparison between backtest and live selections)
+    json_tickers = load_strategy_selections_with_comparison(strategy)
     if json_tickers:
-        print(f"   [INFO] Using backtest selections from JSON file")
+        print(f"   [INFO] Using selections for live trading")
         return json_tickers
     
     # No fallback - require JSON file
