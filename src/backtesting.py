@@ -7452,12 +7452,20 @@ def _run_portfolio_backtest_walk_forward(
                     live_trading_selections['rebalanced']['momentum_ai_hybrid'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'ai_elite':
                     current_stocks = live_trading_selections['strategies'].get('ai_elite', [])
-                    new_stocks = select_ai_elite_with_training(
+                    new_stocks, ai_elite_models = select_ai_elite_with_training(
                         initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
                     )
                     live_trading_selections['strategies'][strategy_name] = new_stocks
                     live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
                     live_trading_selections['rebalanced']['ai_elite'] = bool(set(new_stocks) != set(current_stocks))
+                elif strategy_name == 'ai_elite_monthly':
+                    current_stocks = live_trading_selections['strategies'].get('ai_elite_monthly', [])
+                    new_stocks, ai_elite_monthly_models = select_ai_elite_with_training(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N, model_path_suffix="_monthly"
+                    )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['ai_elite_monthly'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'elite_hybrid':
                     current_stocks = live_trading_selections['strategies'].get('elite_hybrid', [])
                     new_stocks = select_elite_hybrid_stocks(
