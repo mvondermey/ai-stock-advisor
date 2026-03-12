@@ -477,7 +477,8 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
     scores_data = calculate_parallel_risk_adjusted_scores(
         filtered_tickers,
         ticker_data_grouped,
-        current_date
+        current_date,
+        lookback_days=lookback_days
     )
     
     # Apply filters

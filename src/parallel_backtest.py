@@ -90,14 +90,14 @@ def calculate_parallel_performance(tickers: List[str],
 
 def _calculate_single_risk_adj(args):
     """Module-level worker for parallel risk-adjusted score calculation."""
-    ticker, ticker_data, current_date = args
+    ticker, ticker_data, current_date, lookback_days = args
     
     try:
         if len(ticker_data) < 100:
             return None
             
         end_date = current_date or ticker_data.index.max()
-        start_date = end_date - timedelta(days=365)  # Risk-adj uses 1-year
+        start_date = end_date - timedelta(days=lookback_days)
         
         perf_data = ticker_data.loc[start_date:end_date]
         if len(perf_data) < 50:
@@ -132,9 +132,13 @@ def _calculate_single_risk_adj(args):
 def calculate_parallel_risk_adjusted_scores(tickers: List[str],
                                            ticker_data_grouped: Dict[str, pd.DataFrame],
                                            current_date: datetime,
+                                           lookback_days: int = 365,
                                            num_processes: int = None) -> List[Tuple[str, float, float, float]]:
     """
     Calculate risk-adjusted momentum scores in parallel.
+    
+    Args:
+        lookback_days: Performance window in days (365=1Y, 180=6M, 90=3M, 30=1M)
     
     Returns:
         List of (ticker, score, return_pct, volatility_pct) tuples
@@ -149,7 +153,7 @@ def calculate_parallel_risk_adjusted_scores(tickers: List[str],
     args_list = []
     for ticker in tickers:
         ticker_data = ticker_data_grouped.get(ticker, pd.DataFrame())
-        args_list.append((ticker, ticker_data, current_date))
+        args_list.append((ticker, ticker_data, current_date, lookback_days))
     
     # Process in parallel
     with Pool(processes=num_processes) as pool:
