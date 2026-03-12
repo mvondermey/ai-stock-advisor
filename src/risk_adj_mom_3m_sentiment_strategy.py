@@ -13,7 +13,7 @@ Sentiment signals (price-derived, no API needed):
 import pandas as pd
 import numpy as np
 from typing import List, Dict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 def calculate_sentiment_score(data: pd.DataFrame, current_date: datetime = None) -> float:
