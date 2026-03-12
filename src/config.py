@@ -340,6 +340,7 @@ ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET = True   # NEW - Risk-Adj Mom 1M + Vol-Sweet (b
 ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip opportunities)
 ENABLE_AI_ELITE_MONTHLY = True   # NEW - AI Elite Monthly (same ML scoring, retrain + rebalance start of month only)
 ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre-filter + AI Elite re-rank)
+ENABLE_AI_ELITE_MARKET_UP = True   # NEW - AI Elite Market-Up (only rebalances when market is up)
 ENABLE_AI_REGIME = True   # NEW - AI Regime (ML predicts which strategy to use based on market conditions)
 ENABLE_AI_REGIME_MONTHLY = True   # NEW - AI Regime Monthly (same as AI Regime but rebalance start of month only)
 ENABLE_UNIVERSAL_MODEL = True   # NEW - Universal Model (single ML model for all tickers)

@@ -35,7 +35,7 @@ from config import (
     CALENDAR_DAYS_PER_YEAR,
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
     ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_6M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M_SENTIMENT, ENABLE_RISK_ADJ_MOM_3M_MARKET_UP, ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS, ENABLE_VOL_SWEET_MOM, ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET, ENABLE_RISK_ADJ_MOM_1M, ENABLE_RISK_ADJ_MOM_1M_MONTHLY, ENABLE_AI_ELITE,
-    ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_REGIME, ENABLE_AI_REGIME_MONTHLY, ENABLE_UNIVERSAL_MODEL,
+    ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_ELITE_MARKET_UP, ENABLE_AI_REGIME, ENABLE_AI_REGIME_MONTHLY, ENABLE_UNIVERSAL_MODEL,
     CONCENTRATED_3M_REBALANCE_DAYS,
     AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, AI_ELITE_INTRADAY_LOOKBACK
 )
@@ -1786,6 +1786,17 @@ def _run_portfolio_backtest_walk_forward(
     current_ai_elite_filtered_stocks = []
     ai_elite_filtered_transaction_costs = 0.0
     ai_elite_filtered_initialized = False
+
+    # AI ELITE MARKET-UP: Initialize portfolio tracking (AI Elite only when market is up)
+    ai_elite_market_up_portfolio_value = initial_capital_needed
+    ai_elite_market_up_portfolio_history = [ai_elite_market_up_portfolio_value]
+    ai_elite_market_up_positions = {}
+    ai_elite_market_up_cash = initial_capital_needed
+    current_ai_elite_market_up_stocks = []
+    prev_ai_elite_market_up_stocks = []  # Track for rebalancing indicator
+    ai_elite_market_up_rebalanced_today = False
+    ai_elite_market_up_transaction_costs = 0.0
+    ai_elite_market_up_initialized = False
 
     # AI REGIME: Initialize portfolio tracking (ML predicts which strategy to use)
     ai_regime_portfolio_value = initial_capital_needed
@@ -4712,6 +4723,43 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ AI Elite Filtered error: {e}")
 
+        # AI ELITE MARKET-UP STRATEGY (AI Elite only when market is up)
+        if ENABLE_AI_ELITE_MARKET_UP:
+            try:
+                from ai_elite_market_up_strategy import select_ai_elite_market_up_stocks
+                
+                new_ai_elite_market_up_stocks = select_ai_elite_market_up_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE,
+                    per_ticker_models=ai_elite_models,  # Reuse AI Elite models
+                )
+                
+                if new_ai_elite_market_up_stocks:
+                    # Store previous positions before rebalancing for tracking
+                    prev_ai_elite_market_up_stocks = current_ai_elite_market_up_stocks.copy()
+                    ai_elite_market_up_positions, ai_elite_market_up_cash, current_ai_elite_market_up_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="AI Elite Mkt-Up",
+                        current_stocks=current_ai_elite_market_up_stocks,
+                        new_stocks=new_ai_elite_market_up_stocks,
+                        positions=ai_elite_market_up_positions,
+                        cash=ai_elite_market_up_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not ai_elite_market_up_initialized
+                    )
+                    strategies_rebalanced_today['AI Elite Mkt-Up'] = rebalanced_flag
+                    ai_elite_market_up_transaction_costs += rc
+                    ai_elite_market_up_initialized = True
+                    # Check if rebalancing actually changed positions
+                    ai_elite_market_up_rebalanced_today = set(current_ai_elite_market_up_stocks) != set(prev_ai_elite_market_up_stocks)
+
+            except Exception as e:
+                print(f"   ⚠️ AI Elite Market-Up error: {e}")
+
         # AI REGIME STRATEGY (ML predicts which strategy to use based on market conditions)
         if ENABLE_AI_REGIME:
             try:
@@ -6049,6 +6097,28 @@ def _run_portfolio_backtest_walk_forward(
         ai_elite_filtered_portfolio_value = ai_elite_filtered_invested_value + ai_elite_filtered_cash
         ai_elite_filtered_portfolio_history.append(ai_elite_filtered_portfolio_value)
 
+        # Update AI ELITE MARKET-UP portfolio value daily
+        ai_elite_market_up_invested_value = 0.0
+        if ENABLE_AI_ELITE_MARKET_UP:
+            for ticker in list(ai_elite_market_up_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = ai_elite_market_up_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            ai_elite_market_up_positions[ticker]['value'] = position_value
+                            ai_elite_market_up_invested_value += position_value
+                        else:
+                            ai_elite_market_up_invested_value += ai_elite_market_up_positions[ticker].get('value', 0.0)
+                    else:
+                        ai_elite_market_up_invested_value += ai_elite_market_up_positions[ticker].get('value', 0.0)
+                except Exception:
+                    ai_elite_market_up_invested_value += ai_elite_market_up_positions[ticker].get('value', 0.0)
+        ai_elite_market_up_portfolio_value = ai_elite_market_up_invested_value + ai_elite_market_up_cash
+        ai_elite_market_up_portfolio_history.append(ai_elite_market_up_portfolio_value)
+
         # Update AI REGIME portfolio value daily
         ai_regime_invested_value = 0.0
         if ENABLE_AI_REGIME:
@@ -6552,6 +6622,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("AI Elite", ai_elite_portfolio_value if ENABLE_AI_ELITE else None),
                 ("AI Elite Mth", ai_elite_monthly_portfolio_value if ENABLE_AI_ELITE_MONTHLY else None),
                 ("AI Elite Flt", ai_elite_filtered_portfolio_value if ENABLE_AI_ELITE_FILTERED else None),
+                ("AI Elite Mkt-Up", ai_elite_market_up_portfolio_value if ENABLE_AI_ELITE_MARKET_UP else None),
                 ("AI Regime", ai_regime_portfolio_value if ENABLE_AI_REGIME else None),
                 ("AI Regime Mth", ai_regime_monthly_portfolio_value if ENABLE_AI_REGIME_MONTHLY else None),
                 ("Universal Model", universal_model_portfolio_value if ENABLE_UNIVERSAL_MODEL else None),
@@ -6749,6 +6820,10 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = ai_elite_filtered_cash
                     num_positions = len(ai_elite_filtered_positions)
                     invested = value - strat_cash
+                elif name == "AI Elite Mkt-Up" and ENABLE_AI_ELITE_MARKET_UP:
+                    strat_cash = ai_elite_market_up_cash
+                    num_positions = len(ai_elite_market_up_positions)
+                    invested = value - strat_cash
                 elif name == "AI Regime" and ENABLE_AI_REGIME:
                     strat_cash = ai_regime_cash
                     num_positions = len(ai_regime_positions)
@@ -6899,6 +6974,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("AI Elite", ai_elite_portfolio_history) if ENABLE_AI_ELITE else None,
                 ("AI Elite Mth", ai_elite_monthly_portfolio_history) if ENABLE_AI_ELITE_MONTHLY else None,
                 ("AI Elite Flt", ai_elite_filtered_portfolio_history) if ENABLE_AI_ELITE_FILTERED else None,
+                ("AI Elite Mkt-Up", ai_elite_market_up_portfolio_history) if ENABLE_AI_ELITE_MARKET_UP else None,
                 ("AI Regime", ai_regime_portfolio_history) if ENABLE_AI_REGIME else None,
                 ("AI Regime Mth", ai_regime_monthly_portfolio_history) if ENABLE_AI_REGIME_MONTHLY else None,
                 ("Universal Model", universal_model_portfolio_history) if ENABLE_UNIVERSAL_MODEL else None,
@@ -7188,6 +7264,7 @@ def _run_portfolio_backtest_walk_forward(
             'ai_elite':                 _strat(ai_elite_portfolio_value, ai_elite_portfolio_history, ai_elite_transaction_costs, ai_elite_cash),
             'ai_elite_monthly':         _strat(ai_elite_monthly_portfolio_value, ai_elite_monthly_portfolio_history, ai_elite_monthly_transaction_costs, ai_elite_monthly_cash),
             'ai_elite_filtered':        _strat(ai_elite_filtered_portfolio_value, ai_elite_filtered_portfolio_history, ai_elite_filtered_transaction_costs, ai_elite_filtered_cash),
+            'ai_elite_market_up':       _strat(ai_elite_market_up_portfolio_value, ai_elite_market_up_portfolio_history, ai_elite_market_up_transaction_costs, ai_elite_market_up_cash),
             'ai_regime':                _strat(ai_regime_portfolio_value, ai_regime_portfolio_history, ai_regime_transaction_costs, ai_regime_cash),
             'ai_regime_monthly':        _strat(ai_regime_monthly_portfolio_value, ai_regime_monthly_portfolio_history, ai_regime_monthly_transaction_costs, ai_regime_monthly_cash),
             'universal_model':          _strat(universal_model_portfolio_value, universal_model_portfolio_history, universal_model_transaction_costs, universal_model_cash),
