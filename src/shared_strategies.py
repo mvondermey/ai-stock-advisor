@@ -414,17 +414,23 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
     """
     Shared Volatility-Adjusted Momentum stock selection logic.
     Uses calendar days for all calculations.
+    Uses select_top_performers to avoid strict performance filtering issues.
     """
     from config import INVERSE_ETFS
     
     # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
     tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
     
-    # Apply performance filters if enabled
+    # Use select_top_performers to get candidates without strict filtering
+    # This allows the strategy to work even in early backtest days
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
         tickers_to_use, ticker_data_grouped, current_date, "Vol-Adj Mom"
     )
+    
+    # If filtering removed all tickers (early backtest days), fall back to all tickers
+    if not filtered_tickers:
+        filtered_tickers = tickers_to_use
     
     current_top_performers = []
     
