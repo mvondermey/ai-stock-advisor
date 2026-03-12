@@ -278,6 +278,11 @@ def optimize_rebalance_horizons(
         print(f"      Best horizon: {r['best_horizon']} days", flush=True)
         print(f"      Best return: {r['best_return']:+.1f}%", flush=True)
         print(f"      Transaction costs: ${r['best_txn_cost']:.0f}", flush=True)
+        
+        # Show all horizons sorted by return
+        all_sorted = sorted(r['all_results'], key=lambda x: x[1], reverse=True)
+        horizon_str = ", ".join([f"{h}d={ret:+.1f}%" for h, ret, _ in all_sorted])
+        print(f"      All horizons: {horizon_str}", flush=True)
     print("-" * 50, flush=True)
     
     return results
