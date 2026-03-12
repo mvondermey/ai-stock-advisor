@@ -198,8 +198,9 @@ def optimize_rebalance_horizons(
             '1M': {...}
         }
     """
-    # Ensure minimum optimization period of 180 days for proper horizon evaluation
-    MIN_OPTIMIZATION_DAYS = 180
+    # Ensure minimum optimization period = 3x max horizon for proper evaluation
+    # With 40-day max horizon, need at least 120 days to see 3 rebalance cycles
+    MIN_OPTIMIZATION_DAYS = REBALANCE_HORIZON_MAX * 3
     actual_days = (backtest_end - backtest_start).days
     
     if actual_days < MIN_OPTIMIZATION_DAYS:
