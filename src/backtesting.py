@@ -2480,7 +2480,8 @@ def _run_portfolio_backtest_walk_forward(
             # Regular rebalancing (same as Dynamic BH 1Y)
             from shared_strategies import select_top_performers
             new_dynamic_bh_1y_trailing_stop_stocks = select_top_performers(
-                initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE
+                initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE,
+                apply_performance_filter=True, filter_label="Dynamic BH 1Y+TS"
             )
 
             if new_dynamic_bh_1y_trailing_stop_stocks:

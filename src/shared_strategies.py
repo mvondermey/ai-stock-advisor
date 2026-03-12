@@ -1115,6 +1115,16 @@ def select_multitask_learning_stocks(all_tickers: List[str], ticker_data_grouped
     Returns:
         List[str]: Selected ticker symbols
     """
+    from config import INVERSE_ETFS
+    
+    # Exclude inverse ETFs
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
+    
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        tickers_to_use, ticker_data_grouped, current_date, "MultiTask"
+    )
     
     if not MULTITASK_AVAILABLE:
         print("   ⚠️ Multi-Task Learning not available, using fallback")
@@ -1126,7 +1136,7 @@ def select_multitask_learning_stocks(all_tickers: List[str], ticker_data_grouped
     
     try:
         return select_multitask_stocks(
-            all_tickers=all_tickers,
+            all_tickers=filtered_tickers,
             ticker_data_grouped=ticker_data_grouped,
             current_date=current_date,
             train_end_date=train_end_date,
