@@ -616,10 +616,10 @@ ENABLE_STATIC_BH_3M_MONTHLY = True   # Static BH 3M with monthly rebalance
 ENABLE_STATIC_BH_1M_MONTHLY = True   # Static BH 1M with monthly rebalance
 
 # --- Rebalance Horizon Optimization ---
-# If True, test all rebalance horizons from 40 to 40 days for static strategies
+# If True, test all rebalance horizons from 1 to 40 days for static strategies
 # and report the best performing horizon in the final summary
 OPTIMIZE_REBALANCE_HORIZON = True
-REBALANCE_HORIZON_MIN = 40  # Minimum rebalance period to test
+REBALANCE_HORIZON_MIN = 1  # Minimum rebalance period to test
 REBALANCE_HORIZON_MAX = 40  # Maximum rebalance period to test
 # All horizons from MIN to MAX will be tested in parallel
 
