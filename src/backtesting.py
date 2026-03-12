@@ -4416,7 +4416,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_risk_adj_mom_3m_market_up_stocks
                     )
-                    strategies_rebalanced_today['Risk-Adj Mom 3M Market-Up'] = rebalanced_flag
+                    strategies_rebalanced_today['RiskAdj 3M Up'] = rebalanced_flag
                     risk_adj_mom_3m_market_up_transaction_costs += rebalance_costs
                     # Check if rebalancing actually changed positions
                     risk_adj_mom_3m_market_up_rebalanced_today = set(current_risk_adj_mom_3m_market_up_stocks) != set(prev_risk_adj_mom_3m_market_up_stocks)
@@ -4451,7 +4451,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_risk_adj_mom_3m_with_stops_stocks
                     )
-                    strategies_rebalanced_today['Risk-Adj Mom 3M with Stops'] = rebalanced_flag
+                    strategies_rebalanced_today['RiskAdj 3M Stop'] = rebalanced_flag
                     risk_adj_mom_3m_with_stops_transaction_costs += rebalance_costs
                     # Check if rebalancing actually changed positions
                     risk_adj_mom_3m_with_stops_rebalanced_today = set(current_risk_adj_mom_3m_with_stops_stocks) != set(prev_risk_adj_mom_3m_with_stops_stocks)
