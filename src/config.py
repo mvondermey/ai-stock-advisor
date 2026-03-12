@@ -220,7 +220,7 @@ TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
 USE_UNIFIED_PARALLEL_TRAINING = True
 
 # --- Backtest windows
-BACKTEST_DAYS           =   70   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   2   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 
 # --- Calendar days ---
@@ -616,10 +616,10 @@ ENABLE_STATIC_BH_3M_MONTHLY = True   # Static BH 3M with monthly rebalance
 ENABLE_STATIC_BH_1M_MONTHLY = True   # Static BH 1M with monthly rebalance
 
 # --- Rebalance Horizon Optimization ---
-# If True, test all rebalance horizons from 20 to 40 days for static strategies
+# If True, test all rebalance horizons from 40 to 40 days for static strategies
 # and report the best performing horizon in the final summary
 OPTIMIZE_REBALANCE_HORIZON = True
-REBALANCE_HORIZON_MIN = 20  # Minimum rebalance period to test
+REBALANCE_HORIZON_MIN = 40  # Minimum rebalance period to test
 REBALANCE_HORIZON_MAX = 40  # Maximum rebalance period to test
 # All horizons from MIN to MAX will be tested in parallel
 
