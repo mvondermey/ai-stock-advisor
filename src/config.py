@@ -524,8 +524,8 @@ STRATEGY_STOP_LOSS_PCT = {
 # Minimum performance thresholds for stock selection
 # These can be used to filter out underperformers before strategy scoring
 MIN_PERFORMANCE_1Y = 0.10      # 10% minimum 1-year performance
-MIN_PERFORMANCE_6M = 0.05      # 5% minimum 6-month performance (10%/2)
-MIN_PERFORMANCE_3M = 0.025     # 2.5% minimum 3-month performance (10%/4)
+MIN_PERFORMANCE_6M = 0.0       # 0% minimum 6-month performance (disabled)
+MIN_PERFORMANCE_3M = 0.0       # 0% minimum 3-month performance (disabled)
 ENABLE_PERFORMANCE_FILTERS = True   # Set to True to enable these filters
 
 # --- Universal Data Requirements ---
