@@ -96,6 +96,12 @@ def apply_performance_filters(
         # Check if this is an inverse ETF - use different filters
         is_inverse_etf = ticker in INVERSE_ETFS
         
+        # Determine which filters to apply based on strategy timeframe
+        # 1M strategies only need 1M filter, 3M strategies need 3M, etc.
+        is_1m_strategy = '1M' in strategy_name and 'Monthly' not in strategy_name
+        is_3m_strategy = '3M' in strategy_name
+        is_6m_strategy = '6M' in strategy_name
+        
         # Apply filters
         if is_inverse_etf:
             # Inverse ETF filters: only check 1M and 3M, skip 1Y/6M
@@ -116,8 +122,31 @@ def apply_performance_filters(
             
             if debug_limit > 0:
                 print(f"   [PASS] {ticker}: INVERSE ETF PASSED (1M={perf_1m:.1%}, 3M={perf_3m:.1%})")
+        elif is_1m_strategy:
+            # 1M strategies: only check 1M performance (positive momentum)
+            min_perf_1m = 0.01  # 1% minimum for 1M strategies
+            if perf_1m < min_perf_1m:
+                if debug_limit > 0:
+                    print(f"   [FAIL] {ticker}: Failed 1M filter ({perf_1m:.1%} < {min_perf_1m:.1%})")
+                return None
+        elif is_3m_strategy:
+            # 3M strategies: only check 3M performance
+            if perf_3m < MIN_PERFORMANCE_3M:
+                if debug_limit > 0:
+                    print(f"   [FAIL] {ticker}: Failed 3M filter ({perf_3m:.1%} < {MIN_PERFORMANCE_3M:.1%})")
+                return None
+        elif is_6m_strategy:
+            # 6M strategies: check 6M and 3M performance
+            if perf_6m < MIN_PERFORMANCE_6M:
+                if debug_limit > 0:
+                    print(f"   [FAIL] {ticker}: Failed 6M filter ({perf_6m:.1%} < {MIN_PERFORMANCE_6M:.1%})")
+                return None
+            if perf_3m < MIN_PERFORMANCE_3M:
+                if debug_limit > 0:
+                    print(f"   [FAIL] {ticker}: Failed 3M filter ({perf_3m:.1%} < {MIN_PERFORMANCE_3M:.1%})")
+                return None
         else:
-            # Regular stock filters
+            # Default (1Y strategies): check all filters
             if perf_1y < MIN_PERFORMANCE_1Y:
                 if debug_limit > 0:
                     print(f"   [FAIL] {ticker}: Failed 1Y filter ({perf_1y:.1%} < {MIN_PERFORMANCE_1Y:.1%})")
