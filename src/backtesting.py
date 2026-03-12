@@ -2173,7 +2173,7 @@ def _run_portfolio_backtest_walk_forward(
                         new_stocks=new_stocks, positions=static_bh_1y_monthly_positions, cash=static_bh_1y_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
                         portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_1y_monthly_initialized)
-                    strategies_rebalanced_today['Static BH 1Y Mth'] = rebalanced_flag
+                    strategies_rebalanced_today['BH 1Y Monthly'] = rebalanced_flag
                     static_bh_1y_monthly_transaction_costs += rc
                     static_bh_1y_monthly_initialized = True
                     static_bh_1y_monthly_last_month = current_date.month
@@ -2194,7 +2194,7 @@ def _run_portfolio_backtest_walk_forward(
                         new_stocks=new_stocks, positions=static_bh_6m_monthly_positions, cash=static_bh_6m_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
                         portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_6m_monthly_initialized)
-                    strategies_rebalanced_today['Static BH 6M Mth'] = rebalanced_flag
+                    strategies_rebalanced_today['BH 6M Monthly'] = rebalanced_flag
                     static_bh_6m_monthly_transaction_costs += rc
                     static_bh_6m_monthly_initialized = True
                     static_bh_6m_monthly_last_month = current_date.month
@@ -2215,7 +2215,7 @@ def _run_portfolio_backtest_walk_forward(
                         new_stocks=new_stocks, positions=static_bh_3m_monthly_positions, cash=static_bh_3m_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
                         portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_3m_monthly_initialized)
-                    strategies_rebalanced_today['Static BH 3M Mth'] = rebalanced_flag
+                    strategies_rebalanced_today['BH 3M Monthly'] = rebalanced_flag
                     static_bh_3m_monthly_transaction_costs += rc
                     static_bh_3m_monthly_initialized = True
                     static_bh_3m_monthly_last_month = current_date.month
@@ -2236,7 +2236,7 @@ def _run_portfolio_backtest_walk_forward(
                         new_stocks=new_stocks, positions=static_bh_1m_monthly_positions, cash=static_bh_1m_monthly_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
                         portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_1m_monthly_initialized)
-                    strategies_rebalanced_today['Static BH 1M Mth'] = rebalanced_flag
+                    strategies_rebalanced_today['BH 1M Monthly'] = rebalanced_flag
                     static_bh_1m_monthly_transaction_costs += rc
                     static_bh_1m_monthly_initialized = True
                     static_bh_1m_monthly_last_month = current_date.month
@@ -2595,7 +2595,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_multitask_stocks  # Force initial allocation
                     )
-                    strategies_rebalanced_today['Multi-Task Learning'] = rebalanced_flag
+                    strategies_rebalanced_today['Multi-Task'] = rebalanced_flag
                     multitask_transaction_costs += rebalance_costs
                     multitask_last_rebalance_value = _mark_to_market_value(
                         multitask_positions, multitask_cash, ticker_data_grouped, current_date
@@ -2674,7 +2674,7 @@ def _run_portfolio_backtest_walk_forward(
                     portfolio_size=PORTFOLIO_SIZE,
                     force_rebalance=not current_ratio_1y_3m_stocks  # Force initial allocation
                 )
-                strategies_rebalanced_today['1Y/3M Ratio'] = rebalanced_flag
+                strategies_rebalanced_today['3M/1Y Ratio'] = rebalanced_flag
                 ratio_1y_3m_transaction_costs += rebalance_costs
                 ratio_1y_3m_last_rebalance_value = _mark_to_market_value(
                     ratio_1y_3m_positions, ratio_1y_3m_cash, ticker_data_grouped, current_date
@@ -2754,7 +2754,7 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_momentum_volatility_hybrid_stocks  # Force initial allocation
                     )
-                    strategies_rebalanced_today['Momentum-Vol Hybrid'] = rebalanced_flag
+                    strategies_rebalanced_today['Mom-Vol Hybrid'] = rebalanced_flag
                     momentum_volatility_hybrid_transaction_costs += rebalance_costs
                     momentum_volatility_hybrid_last_rebalance_value = _mark_to_market_value(
                         momentum_volatility_hybrid_positions, momentum_volatility_hybrid_cash, ticker_data_grouped, current_date
@@ -3517,7 +3517,7 @@ def _run_portfolio_backtest_walk_forward(
                                 portfolio_size=len(new_inverse_etf_stocks),
                                 force_rebalance=not inverse_etf_hedge_initialized
                             )
-                            strategies_rebalanced_today['Hybrid Inverse ETF Hedge'] = rebalanced_flag
+                            strategies_rebalanced_today['Inverse ETF Hedge'] = rebalanced_flag
                             inverse_etf_hedge_transaction_costs += rebalance_costs
                             inverse_etf_hedge_initialized = True
                             
@@ -3914,7 +3914,7 @@ def _run_portfolio_backtest_walk_forward(
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=last_momentum_ai_hybrid_rebalance_day == 0  # Force initial allocation
                         )
-                        strategies_rebalanced_today['Momentum+AI Hybrid'] = rebalanced_flag
+                        strategies_rebalanced_today['Momentum+AI'] = rebalanced_flag
                         momentum_ai_hybrid_transaction_costs += rebalance_costs
                         
                         last_momentum_ai_hybrid_rebalance_day = day_count
@@ -4115,7 +4115,9 @@ def _run_portfolio_backtest_walk_forward(
                                                 trend_atr_cash -= (buy_value + buy_cost)
                                                 trend_atr_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
                 
+                old_stocks = current_trend_atr_stocks.copy()
                 current_trend_atr_stocks = list(trend_atr_positions.keys())
+                strategies_rebalanced_today['Trend ATR'] = set(current_trend_atr_stocks) != set(old_stocks)
                     
             except Exception as e:
                 print(f"   ⚠️ Trend Following ATR error: {e}")
