@@ -1,6 +1,7 @@
 """
 Performance Filters Module
 Provides universal performance threshold filtering for all strategies.
+Uses calendar days (not trading days) for consistency across all calculations.
 """
 
 from typing import List, Dict, Optional
@@ -14,6 +15,12 @@ from config import (
     INVERSE_ETF_SKIP_1Y_FILTER
 )
 
+# Calendar day constants for performance calculations
+CALENDAR_DAYS_1Y = 365
+CALENDAR_DAYS_6M = 180
+CALENDAR_DAYS_3M = 90
+CALENDAR_DAYS_1M = 30
+
 
 def apply_performance_filters(
     ticker: str,
@@ -26,6 +33,7 @@ def apply_performance_filters(
     Apply performance threshold filters to a ticker.
     
     Returns None if ticker fails any filter, otherwise returns performance metrics.
+    Uses calendar days (timedelta) for all performance calculations.
     
     Args:
         ticker: Stock ticker symbol
@@ -49,46 +57,54 @@ def apply_performance_filters(
                 current_ts = current_ts.tz_convert(ticker_data.index.tz)
         
         # Filter data up to current_date
-        data_up_to_current = ticker_data.loc[:current_ts]
+        data_up_to_current = ticker_data[ticker_data.index <= current_ts]
         
-        if len(data_up_to_current) < MIN_DATA_DAYS_1Y:  # Need at least 1 year of data
+        if len(data_up_to_current) < MIN_DATA_DAYS_1Y:  # Need minimum trading days
             if debug_limit > 0:
                 print(f"   [WARN] {ticker}: Insufficient data ({len(data_up_to_current)} < {MIN_DATA_DAYS_1Y} days)")
             return None
         
         close_prices = data_up_to_current['Close'].dropna()
-        if len(close_prices) < MIN_DATA_DAYS_1Y:
+        price_current = close_prices.iloc[-1]
+        
+        # Calculate 1Y performance using calendar days
+        start_1y = current_ts - timedelta(days=CALENDAR_DAYS_1Y)
+        data_1y = close_prices[close_prices.index >= start_1y]
+        if len(data_1y) >= MIN_DATA_DAYS_1Y:
+            price_1y_ago = data_1y.iloc[0]
+            perf_1y = (price_current - price_1y_ago) / price_1y_ago
+        else:
             if debug_limit > 0:
-                print(f"   [WARN] {ticker}: Insufficient Close data ({len(close_prices)} < {MIN_DATA_DAYS_1Y} valid prices)")
+                print(f"   [WARN] {ticker}: Insufficient 1Y data ({len(data_1y)} < {MIN_DATA_DAYS_1Y} trading days in 365 calendar days)")
             return None
         
-        # Calculate 1Y performance
-        price_1y_ago = close_prices.iloc[-MIN_DATA_DAYS_1Y]
-        price_current = close_prices.iloc[-1]
-        perf_1y = (price_current - price_1y_ago) / price_1y_ago
-        
-        # Calculate 6M performance
-        if len(close_prices) >= MIN_DATA_DAYS_6M:
-            price_6m_ago = close_prices.iloc[-MIN_DATA_DAYS_6M]
+        # Calculate 6M performance using calendar days
+        start_6m = current_ts - timedelta(days=CALENDAR_DAYS_6M)
+        data_6m = close_prices[close_prices.index >= start_6m]
+        if len(data_6m) >= MIN_DATA_DAYS_6M:
+            price_6m_ago = data_6m.iloc[0]
             perf_6m = (price_current - price_6m_ago) / price_6m_ago
         else:
             if debug_limit > 0:
-                print(f"   [WARN] {ticker}: Insufficient 6M data ({len(close_prices)} < {MIN_DATA_DAYS_6M} days)")
-            return None  # Insufficient data for 6M
+                print(f"   [WARN] {ticker}: Insufficient 6M data ({len(data_6m)} < {MIN_DATA_DAYS_6M} trading days in 180 calendar days)")
+            return None
         
-        # Calculate 3M performance
-        if len(close_prices) >= MIN_DATA_DAYS_3M:
-            price_3m_ago = close_prices.iloc[-MIN_DATA_DAYS_3M]
+        # Calculate 3M performance using calendar days
+        start_3m = current_ts - timedelta(days=CALENDAR_DAYS_3M)
+        data_3m = close_prices[close_prices.index >= start_3m]
+        if len(data_3m) >= MIN_DATA_DAYS_3M:
+            price_3m_ago = data_3m.iloc[0]
             perf_3m = (price_current - price_3m_ago) / price_3m_ago
         else:
             if debug_limit > 0:
-                print(f"   [WARN] {ticker}: Insufficient 3M data ({len(close_prices)} < {MIN_DATA_DAYS_3M} days)")
-            return None  # Insufficient data for 3M
+                print(f"   [WARN] {ticker}: Insufficient 3M data ({len(data_3m)} < {MIN_DATA_DAYS_3M} trading days in 90 calendar days)")
+            return None
         
-        # Calculate 1M performance for inverse ETFs
-        min_data_1m = 21  # ~1 month of trading days
-        if len(close_prices) >= min_data_1m:
-            price_1m_ago = close_prices.iloc[-min_data_1m]
+        # Calculate 1M performance using calendar days
+        start_1m = current_ts - timedelta(days=CALENDAR_DAYS_1M)
+        data_1m = close_prices[close_prices.index >= start_1m]
+        if len(data_1m) >= 10:  # Need at least 10 trading days in 30 calendar days
+            price_1m_ago = data_1m.iloc[0]
             perf_1m = (price_current - price_1m_ago) / price_1m_ago
         else:
             perf_1m = 0.0

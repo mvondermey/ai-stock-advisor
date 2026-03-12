@@ -93,26 +93,23 @@ def _calculate_single_risk_adj(args):
     ticker, ticker_data, current_date, lookback_days = args
     
     try:
-        # Filter data up to current_date first
-        if current_date is not None:
-            ticker_data = ticker_data[ticker_data.index <= current_date]
+        # Use calendar days with timedelta
+        end_date = current_date or ticker_data.index.max()
+        start_date = end_date - timedelta(days=lookback_days)
         
-        # Need at least lookback_days + some buffer
-        min_data_days = max(50, lookback_days + 20)
-        if len(ticker_data) < min_data_days:
+        # Filter data to date range
+        perf_data = ticker_data[(ticker_data.index >= start_date) & (ticker_data.index <= end_date)]
+        
+        # Need at least 1/3 of lookback period in trading days
+        min_perf_days = max(10, lookback_days // 5)  # ~1/5 for calendar->trading conversion
+        if len(perf_data) < min_perf_days:
             return None
         
-        valid_close = ticker_data['Close'].dropna()
-        n = len(valid_close)
-        if n < 30:
+        valid_close = perf_data['Close'].dropna()
+        if len(valid_close) < min_perf_days:
             return None
         
-        # Use trading days (rows), not calendar days
-        perf_window = min(lookback_days, n - 1)
-        if perf_window < 30:
-            return None
-        
-        start_price = valid_close.iloc[-perf_window]
+        start_price = valid_close.iloc[0]
         end_price = valid_close.iloc[-1]
         
         if start_price <= 0 or pd.isna(start_price) or pd.isna(end_price):
