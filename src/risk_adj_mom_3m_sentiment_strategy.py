@@ -124,95 +124,65 @@ def select_risk_adj_mom_3m_sentiment_stocks(
     """
     Select stocks using Risk-Adj Mom 3M + Sentiment scoring.
     
+    Uses shared parallel function for base scoring, then applies sentiment adjustment.
     Final score = base_score * (1 + sentiment_weight * sentiment_score)
-    
-    This boosts stocks with positive sentiment and penalizes those with negative sentiment.
     """
+    from parallel_backtest import calculate_parallel_risk_adjusted_scores
     from performance_filters import filter_tickers_by_performance
+    from shared_strategies import check_momentum_confirmation, check_volume_confirmation
     from config import (
         RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION,
         RISK_ADJ_MOM_MIN_CONFIRMATIONS,
-        RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION,
-        RISK_ADJ_MOM_VOLUME_WINDOW,
-        RISK_ADJ_MOM_VOLUME_MULTIPLIER,
         RISK_ADJ_MOM_MIN_SCORE,
+        INVERSE_ETFS,
     )
 
+    # Filter out inverse ETFs
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
+    
+    # Apply performance filters
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "RiskAdj 3M Sent"
+        tickers_to_use, ticker_data_grouped, current_date, "RiskAdj 3M Sent"
     )
 
-    PERF_WINDOW = 90  # 3 months
+    # Get base scores using parallel processing
+    scores_data = calculate_parallel_risk_adjusted_scores(
+        filtered_tickers,
+        ticker_data_grouped,
+        current_date,
+        lookback_days=90
+    )
 
     candidates = []
     sentiment_stats = {'positive': 0, 'negative': 0, 'neutral': 0}
+    momentum_filtered = 0
+    volume_filtered = 0
     
-    print(f"   📊 RiskAdj 3M Sent: Analyzing {len(filtered_tickers)} tickers (filtered from {len(all_tickers)})")
+    print(f"   📊 RiskAdj 3M Sent: Analyzing {len(scores_data)} tickers (PARALLEL)")
 
-    for ticker in filtered_tickers:
+    for ticker, base_score, return_pct, volatility_pct in scores_data:
         try:
-            if ticker not in ticker_data_grouped:
-                continue
-
-            data = ticker_data_grouped[ticker]
-            if data is None or len(data) == 0:
-                continue
-
-            close = data['Close'].dropna()
-            n = len(close)
-            if n < 30:
-                continue
-
-            latest_price = close.iloc[-1]
-            if latest_price <= 0:
-                continue
-
-            perf_window = min(PERF_WINDOW, n - 1)
-            if perf_window < 30:
-                continue
-
-            start_price = close.iloc[-perf_window]
-            if start_price <= 0:
-                continue
-
-            basic_return = (latest_price - start_price) / start_price * 100
-
-            daily_returns = close.pct_change().dropna()
-            if len(daily_returns) < 20:
-                continue
-
-            volatility_pct = daily_returns.std() * 100
-            if volatility_pct <= 0:
-                continue
-
-            # Base score: Risk-Adj Mom 3M
-            base_score = basic_return / (volatility_pct ** 0.5 + 0.001)
-
             if base_score <= RISK_ADJ_MOM_MIN_SCORE:
                 continue
+                
+            ticker_data = ticker_data_grouped.get(ticker)
+            if ticker_data is None:
+                continue
 
-            # Momentum confirmation
+            # Check momentum confirmation
             if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
-                confirmations = 0
-                for days in [30, 60, 90]:
-                    lookback = min(days, n - 1)
-                    p = close.iloc[-lookback]
-                    if p > 0 and (latest_price - p) / p > 0:
-                        confirmations += 1
-                if confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
+                momentum_confirmations = check_momentum_confirmation(ticker_data, current_date)
+                if momentum_confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
+                    momentum_filtered += 1
                     continue
 
-            # Volume confirmation
-            if RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION and 'Volume' in data.columns:
-                vol_series = data['Volume'].dropna()
-                if len(vol_series) >= RISK_ADJ_MOM_VOLUME_WINDOW + 10:
-                    recent_vol = vol_series.tail(RISK_ADJ_MOM_VOLUME_WINDOW).mean()
-                    avg_vol = vol_series.iloc[:-RISK_ADJ_MOM_VOLUME_WINDOW].mean()
-                    if avg_vol > 0 and recent_vol < avg_vol * RISK_ADJ_MOM_VOLUME_MULTIPLIER:
-                        continue
+            # Check volume confirmation
+            if not check_volume_confirmation(ticker_data):
+                volume_filtered += 1
+                continue
 
             # Calculate sentiment score
-            sentiment = calculate_sentiment_score(data, current_date)
+            sentiment = calculate_sentiment_score(ticker_data, current_date)
             
             # Track sentiment distribution
             if sentiment > 0.1:
@@ -223,7 +193,6 @@ def select_risk_adj_mom_3m_sentiment_stocks(
                 sentiment_stats['neutral'] += 1
             
             # Final score: boost/penalize by sentiment
-            # sentiment_weight=0.30 means ±30% adjustment for extreme sentiment
             final_score = base_score * (1 + sentiment_weight * sentiment)
             
             candidates.append({
@@ -231,7 +200,7 @@ def select_risk_adj_mom_3m_sentiment_stocks(
                 'final_score': final_score,
                 'base_score': base_score,
                 'sentiment': sentiment,
-                'return': basic_return,
+                'return': return_pct,
                 'volatility': volatility_pct
             })
 
@@ -249,6 +218,7 @@ def select_risk_adj_mom_3m_sentiment_stocks(
 
     print(f"   ✅ RiskAdj 3M Sent: Found {len(candidates)} candidates, selected {len(selected)}")
     print(f"   📈 Sentiment: {sentiment_stats['positive']} bullish, {sentiment_stats['negative']} bearish, {sentiment_stats['neutral']} neutral")
+    print(f"   📊 Filtered: {momentum_filtered} momentum, {volume_filtered} volume")
     
     for c in candidates[:top_n]:
         sent_emoji = "🟢" if c['sentiment'] > 0.1 else ("🔴" if c['sentiment'] < -0.1 else "⚪")
