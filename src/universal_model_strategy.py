@@ -285,6 +285,16 @@ class UniversalModelStrategy:
         # Train/val split (faster than CV)
         X_train, X_val, y_train, y_val = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
         
+        # Validate data to prevent CatBoost errors
+        if len(X_train) < 10 or len(np.unique(y_train)) < 2:
+            print(f"   ⚠️ Universal Model: Insufficient training data ({len(X_train)} samples, {len(np.unique(y_train))} unique targets)")
+            return False
+        
+        # Check for constant targets
+        if np.std(y_train) < 1e-8:
+            print(f"   ⚠️ Universal Model: Target variance too low ({np.std(y_train):.2e})")
+            return False
+        
         # Train all models and evaluate
         trained_models = {}
         model_scores = {}
@@ -303,7 +313,8 @@ class UniversalModelStrategy:
                         if name == 'LightGBM':
                             m.fit(X_train, y_train, init_model=m.booster_)
                         elif name == 'CatBoost':
-                            m.fit(X_train, y_train, init_model=m)
+                            # CatBoost incremental training is problematic, retrain from scratch
+                            m.fit(X_train, y_train)
                         else:
                             m.fit(X_train, y_train)
                     else:
