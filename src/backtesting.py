@@ -7360,7 +7360,7 @@ def _run_portfolio_backtest_walk_forward(
                     live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
                     live_trading_selections['rebalanced']['risk_adj_mom_1m'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'risk_adj_mom_3m':
-                    from risk_adj_mom_3m_strategy import select_risk_adj_mom_stocks
+                    from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks as select_risk_adj_mom_stocks
                     current_stocks = live_trading_selections['strategies'].get('risk_adj_mom_3m', [])
                     new_stocks = select_risk_adj_mom_stocks(
                         initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
