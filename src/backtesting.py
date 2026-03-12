@@ -2024,7 +2024,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_static_bh_1y_stocks:
-                    
+                    print(f"   📊 Static BH 1Y Day {day_count}: {new_static_bh_1y_stocks}")
                     if new_static_bh_1y_stocks != current_static_bh_1y_stocks:
                         if not static_bh_1y_initialized:
                             print(f"   🎯 Static BH 1Y: Initializing with top {len(new_static_bh_1y_stocks)} by 1Y performance: {new_static_bh_1y_stocks}")
@@ -2063,6 +2063,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_static_bh_3m_stocks:
+                    print(f"   📊 Static BH 3M Day {day_count}: {new_static_bh_3m_stocks}")
                     if not static_bh_3m_initialized:
                         print(f"   🎯 Static BH 3M: Initializing with top {len(new_static_bh_3m_stocks)} by 3M performance: {new_static_bh_3m_stocks}")
                     else:
@@ -2101,6 +2102,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_static_bh_6m_stocks:
+                    print(f"   📊 Static BH 6M Day {day_count}: {new_static_bh_6m_stocks}")
                     if not static_bh_6m_initialized:
                         print(f"   🎯 Static BH 6M: Initializing with top {len(new_static_bh_6m_stocks)} by 6M performance: {new_static_bh_6m_stocks}")
                     else:
@@ -2138,6 +2140,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_static_bh_1m_stocks:
+                    print(f"   📊 Static BH 1M Day {day_count}: {new_static_bh_1m_stocks}")
                     if not static_bh_1m_initialized:
                         print(f"   🎯 Static BH 1M: Initializing with top {len(new_static_bh_1m_stocks)} by 1M performance: {new_static_bh_1m_stocks}")
                     else:
@@ -2594,6 +2597,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_multitask_stocks:
+                    print(f"   📊 Multi-Task Day {day_count}: {new_multitask_stocks}")
                     # Use universal smart rebalancing function
                     multitask_positions, multitask_cash, current_multitask_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Multi-Task Learning",
@@ -2634,6 +2638,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_ratio_3m_1y_stocks:
+                    print(f"   📊 3M/1Y Ratio Day {day_count}: {new_ratio_3m_1y_stocks}")
                     # Use universal smart rebalancing function
                     ratio_3m_1y_positions, ratio_3m_1y_cash, current_ratio_3m_1y_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="3M/1Y Ratio",
@@ -2673,6 +2678,7 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if new_ratio_1y_3m_stocks:
+                print(f"   📊 1Y/3M Ratio Day {day_count}: {new_ratio_1y_3m_stocks}")
                 # Use universal smart rebalancing function
                 ratio_1y_3m_positions, ratio_1y_3m_cash, current_ratio_1y_3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                     strategy_name="1Y/3M Ratio",
@@ -2713,6 +2719,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_turnaround_stocks:
+                    print(f"   📊 Turnaround Day {day_count}: {new_turnaround_stocks}")
                     # Use universal smart rebalancing function
                     turnaround_positions, turnaround_cash, current_turnaround_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Turnaround",
@@ -2753,6 +2760,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_momentum_volatility_hybrid_stocks:
+                    print(f"   📊 Mom-Vol Hybrid Day {day_count}: {new_momentum_volatility_hybrid_stocks}")
                     # Use universal smart rebalancing function
                     momentum_volatility_hybrid_positions, momentum_volatility_hybrid_cash, current_momentum_volatility_hybrid_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Momentum-Vol Hybrid",
@@ -2792,6 +2800,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_momentum_volatility_hybrid_6m_stocks:
+                    print(f"   📊 Mom-Vol Hybrid 6M Day {day_count}: {new_momentum_volatility_hybrid_6m_stocks}")
                     momentum_volatility_hybrid_6m_positions, momentum_volatility_hybrid_6m_cash, current_momentum_volatility_hybrid_6m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Mom-Vol Hybrid 6M",
                         current_stocks=current_momentum_volatility_hybrid_6m_stocks,
@@ -2830,6 +2839,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_momentum_volatility_hybrid_1y_stocks:
+                    print(f"   📊 Mom-Vol Hybrid 1Y Day {day_count}: {new_momentum_volatility_hybrid_1y_stocks}")
                     momentum_volatility_hybrid_1y_positions, momentum_volatility_hybrid_1y_cash, current_momentum_volatility_hybrid_1y_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Mom-Vol Hybrid 1Y",
                         current_stocks=current_momentum_volatility_hybrid_1y_stocks,
@@ -2868,6 +2878,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_momentum_volatility_hybrid_1y3m_stocks:
+                    print(f"   📊 Mom-Vol Hybrid 1Y3M Day {day_count}: {new_momentum_volatility_hybrid_1y3m_stocks}")
                     momentum_volatility_hybrid_1y3m_positions, momentum_volatility_hybrid_1y3m_cash, current_momentum_volatility_hybrid_1y3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Mom-Vol Hybrid 1Y/3M",
                         current_stocks=current_momentum_volatility_hybrid_1y3m_stocks,
@@ -2907,6 +2918,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_price_acceleration_stocks:
+                    print(f"   📊 Price Accel Day {day_count}: {new_price_acceleration_stocks}")
                     # Use universal smart rebalancing function
                     price_acceleration_positions, price_acceleration_cash, current_price_acceleration_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Price Acceleration",
@@ -2947,6 +2959,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_adaptive_ensemble_stocks:
+                    print(f"   📊 Adaptive Ensemble Day {day_count}: {new_adaptive_ensemble_stocks}")
                     # Use universal smart rebalancing function
                     adaptive_ensemble_positions, adaptive_ensemble_cash, current_adaptive_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Adaptive Ensemble",
@@ -2988,6 +3001,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_volatility_ensemble_stocks:
+                    print(f"   📊 Vol Ensemble Day {day_count}: {new_volatility_ensemble_stocks}")
                     # Use universal smart rebalancing function
                     volatility_ensemble_positions, volatility_ensemble_cash, current_volatility_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Volatility Ensemble",
@@ -3115,6 +3129,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_dynamic_pool_stocks:
+                    print(f"   📊 Dynamic Pool Day {day_count}: {new_dynamic_pool_stocks}")
                     # Use universal smart rebalancing function
                     dynamic_pool_positions, dynamic_pool_cash, current_dynamic_pool_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Dynamic Pool",
@@ -3154,6 +3169,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_risk_adj_mom_sentiment_stocks:
+                    print(f"   📊 RiskAdj Sent Day {day_count}: {new_risk_adj_mom_sentiment_stocks}")
                     # Use universal smart rebalancing function
                     risk_adj_mom_sentiment_positions, risk_adj_mom_sentiment_cash, current_risk_adj_mom_sentiment_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="RiskAdj Sent",
@@ -3191,6 +3207,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_voting_ensemble_stocks:
+                    print(f"   📊 Voting Ensemble Day {day_count}: {new_voting_ensemble_stocks}")
                     # Use universal smart rebalancing function
                     voting_ensemble_positions, voting_ensemble_cash, current_voting_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Voting Ensemble",
@@ -3257,6 +3274,7 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   🎯 Mean Reversion: Selected {new_mean_reversion_stocks} (from {len(moderate_losers)} moderate losers)")
 
                     if new_mean_reversion_stocks:
+                        print(f"   📊 Mean Reversion Day {day_count}: {new_mean_reversion_stocks}")
                         # Use universal smart rebalancing function
                         mean_reversion_positions, mean_reversion_cash, current_mean_reversion_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Mean Reversion",
@@ -3336,6 +3354,7 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   🎯 Quality+Mom: Selected {new_quality_momentum_stocks}")
 
                     if new_quality_momentum_stocks:
+                        print(f"   📊 Quality+Mom Day {day_count}: {new_quality_momentum_stocks}")
                         # Use universal smart rebalancing function
                         quality_momentum_positions, quality_momentum_cash, current_quality_momentum_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Quality+Mom",
@@ -3413,6 +3432,7 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"   🎯 Vol-Adj Mom: Selected {new_volatility_adj_mom_stocks}")
                     
                     if new_volatility_adj_mom_stocks:
+                        print(f"   📊 Vol-Adj Mom Day {day_count}: {new_volatility_adj_mom_stocks}")
                         # Use universal smart rebalancing function
                         volatility_adj_mom_positions, volatility_adj_mom_cash, current_volatility_adj_mom_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Vol-Adj Mom",
@@ -3605,6 +3625,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     
                     if new_analyst_stocks:
+                        print(f"   📊 Analyst Rec Day {day_count}: {new_analyst_stocks}")
                         # Rebalance portfolio
                         analyst_rec_positions, analyst_rec_cash, current_analyst_rec_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Analyst Rec",
@@ -3957,6 +3978,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_mom_accel_stocks:
+                    print(f"   📊 Mom Accel Day {day_count}: {new_mom_accel_stocks}")
                     total_value = mom_accel_cash + sum(pos.get('value', 0) for pos in mom_accel_positions.values())
                     capital_per_stock = total_value / len(new_mom_accel_stocks)
                     
@@ -4016,6 +4038,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     
                     if new_concentrated_3m_stocks:
+                        print(f"   📊 Concentrated 3M Day {day_count}: {new_concentrated_3m_stocks}")
                         # Use universal smart rebalancing function
                         concentrated_3m_positions, concentrated_3m_cash, current_concentrated_3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name="Concentrated 3M",
@@ -4156,6 +4179,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_elite_hybrid_stocks:
+                    print(f"   📊 Elite Hybrid Day {day_count}: {new_elite_hybrid_stocks}")
                     elite_hybrid_positions, elite_hybrid_cash, current_elite_hybrid_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Elite Hybrid",
                         current_stocks=current_elite_hybrid_stocks,
@@ -4188,6 +4212,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_elite_risk_stocks:
+                    print(f"   📊 Elite Risk Day {day_count}: {new_elite_risk_stocks}")
                     elite_risk_positions, elite_risk_cash, current_elite_risk_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Elite Risk",
                         current_stocks=current_elite_risk_stocks,
@@ -4220,6 +4245,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_risk_adj_mom_6m_stocks:
+                    print(f"   📊 Risk-Adj Mom 6M Day {day_count}: {new_risk_adj_mom_6m_stocks}")
                     risk_adj_mom_6m_positions, risk_adj_mom_6m_cash, current_risk_adj_mom_6m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Risk-Adj Mom 6M",
                         current_stocks=current_risk_adj_mom_6m_stocks,
@@ -4289,6 +4315,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_risk_adj_mom_3m_stocks:
+                    print(f"   📊 Risk-Adj Mom 3M Day {day_count}: {new_risk_adj_mom_3m_stocks}")
                     risk_adj_mom_3m_positions, risk_adj_mom_3m_cash, current_risk_adj_mom_3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Risk-Adj Mom 3M",
                         current_stocks=current_risk_adj_mom_3m_stocks,
@@ -4535,6 +4562,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_risk_adj_mom_1m_stocks:
+                    print(f"   📊 Risk-Adj Mom 1M Day {day_count}: {new_risk_adj_mom_1m_stocks}")
                     risk_adj_mom_1m_positions, risk_adj_mom_1m_cash, current_risk_adj_mom_1m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Risk-Adj Mom 1M",
                         current_stocks=current_risk_adj_mom_1m_stocks,
@@ -4820,6 +4848,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_ai_regime_stocks:
+                    print(f"   📊 AI Regime Day {day_count}: {new_ai_regime_stocks}")
                     ai_regime_positions, ai_regime_cash, current_ai_regime_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name=f"AI Regime ({ai_regime_current_strategy[:10]})",
                         current_stocks=current_ai_regime_stocks,
@@ -4896,6 +4925,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     
                     if new_ai_regime_monthly_stocks:
+                        print(f"   📊 AI Regime Monthly Day {day_count}: {new_ai_regime_monthly_stocks}")
                         ai_regime_monthly_positions, ai_regime_monthly_cash, current_ai_regime_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name=f"AI Regime Mth ({ai_regime_monthly_current_strategy[:10]})",
                             current_stocks=current_ai_regime_monthly_stocks,
@@ -4940,6 +4970,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_universal_model_stocks:
+                    print(f"   📊 Universal Model Day {day_count}: {new_universal_model_stocks}")
                     universal_model_positions, universal_model_cash, current_universal_model_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Universal Model",
                         current_stocks=current_universal_model_stocks,
