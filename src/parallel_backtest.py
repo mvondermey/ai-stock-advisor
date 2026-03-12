@@ -93,18 +93,21 @@ def _calculate_single_risk_adj(args):
     ticker, ticker_data, current_date, lookback_days = args
     
     try:
-        if len(ticker_data) < 100:
+        # Adjust minimum data requirements based on lookback period
+        min_data_days = max(50, lookback_days + 20)  # Need at least lookback + 20 days
+        if len(ticker_data) < min_data_days:
             return None
             
         end_date = current_date or ticker_data.index.max()
         start_date = end_date - timedelta(days=lookback_days)
         
         perf_data = ticker_data.loc[start_date:end_date]
-        if len(perf_data) < 50:
+        min_perf_days = max(10, lookback_days // 3)  # Need at least 1/3 of lookback period
+        if len(perf_data) < min_perf_days:
             return None
         
         valid_close = perf_data['Close'].dropna()
-        if len(valid_close) < 10:
+        if len(valid_close) < min_perf_days:
             return None
         
         start_price = valid_close.iloc[0]
