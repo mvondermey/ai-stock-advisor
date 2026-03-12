@@ -3725,6 +3725,7 @@ def _run_portfolio_backtest_walk_forward(
                         
                         last_enhanced_volatility_rebalance_day = day_count
                         print(f"   ✅ Enhanced Volatility: Rebalanced to {len(enhanced_volatility_positions)} positions")
+                        strategies_rebalanced_today['Enhanced Volatility'] = True
                 
                 # Check stop losses and take profits daily
                 positions_to_close = []
@@ -3885,6 +3886,7 @@ def _run_portfolio_backtest_walk_forward(
                         
                         last_ai_vol_ensemble_rebalance_day = day_count
                         print(f"   ✅ AI Volatility Ensemble: Rebalanced to {len(ai_volatility_ensemble_positions)} positions")
+                        strategies_rebalanced_today['AI Volatility Ensemble'] = True
                         
             except Exception as e:
                 print(f"   ⚠️ AI Volatility Ensemble error: {e}")
@@ -4760,7 +4762,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 
                 if new_ai_regime_stocks:
-                    ai_regime_positions, ai_regime_cash, current_ai_regime_stocks, rc = _smart_rebalance_portfolio(
+                    ai_regime_positions, ai_regime_cash, current_ai_regime_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name=f"AI Regime ({ai_regime_current_strategy[:10]})",
                         current_stocks=current_ai_regime_stocks,
                         new_stocks=new_ai_regime_stocks,
@@ -4770,8 +4772,9 @@ def _run_portfolio_backtest_walk_forward(
                         current_date=current_date,
                         transaction_cost=TRANSACTION_COST,
                         portfolio_size=PORTFOLIO_SIZE,
-                        force_rebalance=not ai_regime_initialized
+                        force_rebalance=not current_ai_regime_stocks
                     )
+                    strategies_rebalanced_today['AI Regime'] = rebalanced_flag
                     ai_regime_transaction_costs += rc
                     ai_regime_initialized = True
                     
@@ -4835,7 +4838,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     
                     if new_ai_regime_monthly_stocks:
-                        ai_regime_monthly_positions, ai_regime_monthly_cash, current_ai_regime_monthly_stocks, rc = _smart_rebalance_portfolio(
+                        ai_regime_monthly_positions, ai_regime_monthly_cash, current_ai_regime_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
                             strategy_name=f"AI Regime Mth ({ai_regime_monthly_current_strategy[:10]})",
                             current_stocks=current_ai_regime_monthly_stocks,
                             new_stocks=new_ai_regime_monthly_stocks,
@@ -4847,6 +4850,7 @@ def _run_portfolio_backtest_walk_forward(
                             portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not ai_regime_monthly_initialized
                         )
+                        strategies_rebalanced_today['AI Regime Mth'] = rebalanced_flag
                         ai_regime_monthly_transaction_costs += rc
                         ai_regime_monthly_initialized = True
                     
