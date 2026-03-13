@@ -1,96 +1,84 @@
 {
-  "timestamp": "2026-03-12T21:26:17.427518",
+  "timestamp": "2026-03-13T00:49:12.383684",
   "backtest_end_date": "2026-03-11 00:00:00+00:00",
   "strategies": {
     "static_bh_1y": {
       "tickers": [
-        "ZEC-USD",
-        "NDX1.DE",
-        "SNDK",
-        "STX",
-        "MU",
-        "CIEN",
-        "WDC",
         "FIX",
-        "GLW",
-        "TER"
+        "SNDK",
+        "WDC",
+        "STX",
+        "CIEN",
+        "NDX1.DE",
+        "ZEC-USD",
+        "MU",
+        "TER",
+        "GLW"
       ],
       "positions": {
-        "ZEC-USD": {
-          "shares": 57,
-          "avg_price": 512.61865234375
-        },
         "SNDK": {
           "shares": 125,
           "avg_price": 237.3249969482422
+        },
+        "WDC": {
+          "shares": 172,
+          "avg_price": 172.25999450683594
         },
         "STX": {
           "shares": 107,
           "avg_price": 275.32000732421875
         },
-        "MU": {
-          "shares": 103,
-          "avg_price": 285.42999267578125
-        },
-        "WDC": {
-          "shares": 172,
-          "avg_price": 172.25999450683594
-        },
         "CIEN": {
           "shares": 126,
           "avg_price": 233.76499938964844
         },
-        "NDX1.DE": {
-          "shares": 1090,
-          "avg_price": 33.720001220703125
+        "ZEC-USD": {
+          "shares": 57,
+          "avg_price": 512.61865234375
+        },
+        "MU": {
+          "shares": 103,
+          "avg_price": 285.42999267578125
         },
         "FIX": {
-          "shares": 12,
+          "shares": 32,
           "avg_price": 1142.72998046875
         },
-        "GLW": {
-          "shares": 254,
-          "avg_price": 146.88499450683594
+        "NDX1.DE": {
+          "shares": 412,
+          "avg_price": 33.720001220703125
         },
         "TER": {
-          "shares": 107,
+          "shares": 122,
           "avg_price": 304.2300109863281
+        },
+        "GLW": {
+          "shares": 223,
+          "avg_price": 146.88499450683594
         }
       }
     },
     "static_bh_6m": {
       "tickers": [
-        "ZEC-USD",
-        "TER",
-        "SNDK",
-        "MU",
         "WBD",
+        "SNDK",
         "WDC",
         "CIEN",
+        "TER",
+        "ZEC-USD",
+        "MU",
         "LRCX",
         "SOXL",
         "STX"
       ],
       "positions": {
-        "ZEC-USD": {
-          "shares": 57,
-          "avg_price": 512.61865234375
-        },
-        "TER": {
-          "shares": 153,
-          "avg_price": 193.5800018310547
+        "WBD": {
+          "shares": 1029,
+          "avg_price": 28.834999084472656
         },
         "SNDK": {
           "shares": 125,
           "avg_price": 237.3249969482422
-        },
-        "MU": {
-          "shares": 103,
-          "avg_price": 285.42999267578125
-        },
-        "WBD": {
-          "shares": 1029,
-          "avg_price": 28.834999084472656
         },
         "WDC": {
           "shares": 172,
@@ -99,6 +87,18 @@
         "CIEN": {
           "shares": 126,
           "avg_price": 233.76499938964844
+        },
+        "TER": {
+          "shares": 153,
+          "avg_price": 193.5800018310547
+        },
+        "ZEC-USD": {
+          "shares": 57,
+          "avg_price": 512.61865234375
+        },
+        "MU": {
+          "shares": 103,
+          "avg_price": 285.42999267578125
         },
         "LRCX": {
           "shares": 164,
@@ -117,72 +117,73 @@
     "static_bh_3m": {
       "tickers": [
         "MU",
-        "SLV",
         "CIEN",
         "SNDK",
-        "TER",
-        "MRNA",
+        "SLV",
+        "SOXL",
         "GLW",
+        "WDC",
         "TPL",
-        "SOXL"
+        "TER",
+        "MRNA"
       ],
       "positions": {
         "SNDK": {
           "shares": 125,
           "avg_price": 237.3249969482422
         },
-        "MU": {
-          "shares": 103,
-          "avg_price": 285.42999267578125
+        "CIEN": {
+          "shares": 126,
+          "avg_price": 233.76499938964844
         },
         "SLV": {
           "shares": 460,
           "avg_price": 64.43000030517578
         },
-        "CIEN": {
-          "shares": 126,
-          "avg_price": 233.76499938964844
+        "MU": {
+          "shares": 103,
+          "avg_price": 285.42999267578125
         },
-        "TER": {
-          "shares": 111,
-          "avg_price": 324.8999938964844
-        },
-        "MRNA": {
-          "shares": 725,
-          "avg_price": 49.880001068115234
+        "SOXL": {
+          "shares": 539,
+          "avg_price": 67.08999633789062
         },
         "GLW": {
           "shares": 259,
           "avg_price": 139.50999450683594
         },
+        "WDC": {
+          "shares": 126,
+          "avg_price": 285.3999938964844
+        },
         "TPL": {
           "shares": 72,
           "avg_price": 500.0
         },
-        "SOXL": {
-          "shares": 249,
-          "avg_price": 67.08999633789062
+        "TER": {
+          "shares": 51,
+          "avg_price": 324.8999938964844
+        },
+        "MRNA": {
+          "shares": 5,
+          "avg_price": 49.880001068115234
         }
       }
     },
     "static_bh_1m": {
       "tickers": [
-        "TER",
         "SNDK",
         "GLW",
+        "WDC",
         "GNRC",
-        "MPWR",
         "STX",
+        "MPWR",
         "TPL",
         "HSY",
-        "WDC",
+        "TER",
         "DOW"
       ],
       "positions": {
-        "TER": {
-          "shares": 93,
-          "avg_price": 300.010009765625
-        },
         "SNDK": {
           "shares": 47,
           "avg_price": 597.8499755859375
@@ -191,17 +192,21 @@
           "shares": 230,
           "avg_price": 122.16000366210938
         },
+        "WDC": {
+          "shares": 99,
+          "avg_price": 282.489990234375
+        },
         "GNRC": {
           "shares": 153,
           "avg_price": 183.3699951171875
         },
-        "MPWR": {
-          "shares": 22,
-          "avg_price": 1230.199951171875
-        },
         "STX": {
           "shares": 65,
           "avg_price": 429.2650146484375
+        },
+        "MPWR": {
+          "shares": 22,
+          "avg_price": 1230.199951171875
         },
         "TPL": {
           "shares": 76,
@@ -211,9 +216,9 @@
           "shares": 121,
           "avg_price": 231.47999572753903
         },
-        "WDC": {
-          "shares": 99,
-          "avg_price": 282.489990234375
+        "TER": {
+          "shares": 93,
+          "avg_price": 300.010009765625
         },
         "DOW": {
           "shares": 885,
@@ -223,20 +228,24 @@
     },
     "dynamic_bh_1y": {
       "tickers": [
-        "SNDK",
-        "GEV",
-        "STX",
-        "MU",
-        "CIEN",
-        "SOXL",
-        "WDC",
         "FIX",
+        "SOXL",
+        "SNDK",
+        "WDC",
+        "STX",
+        "CIEN",
+        "GEV",
+        "MU",
         "LRCX"
       ],
       "positions": {
         "SNDK": {
           "shares": 125,
           "avg_price": 237.3249969482422
+        },
+        "WDC": {
+          "shares": 172,
+          "avg_price": 172.25999450683594
         },
         "STX": {
           "shares": 107,
@@ -246,53 +255,45 @@
           "shares": 103,
           "avg_price": 285.42999267578125
         },
-        "WDC": {
-          "shares": 172,
-          "avg_price": 172.25999450683594
-        },
         "CIEN": {
-          "shares": 42,
+          "shares": 7,
           "avg_price": 232.22999572753903
         },
         "FIX": {
-          "shares": 24,
-          "avg_price": 1339.4200439453125
-        },
-        "GEV": {
-          "shares": 37,
-          "avg_price": 789.4600219726562
+          "shares": 25,
+          "avg_price": 1283.02001953125
         },
         "SOXL": {
-          "shares": 324,
+          "shares": 577,
           "avg_price": 53.42499923706055
         },
+        "GEV": {
+          "shares": 28,
+          "avg_price": 829.8699951171875
+        },
         "LRCX": {
-          "shares": 107,
+          "shares": 99,
           "avg_price": 218.8500061035156
         }
       }
     },
     "dynamic_bh_6m": {
       "tickers": [
+        "SNDK",
         "AIXA.DE",
+        "WDC",
+        "MU",
+        "ALB",
+        "CIEN",
         "NDX1.DE",
         "TER",
         "MRNA",
-        "SNDK",
-        "MU",
-        "ALB",
-        "WDC",
-        "CIEN",
         "AMAT"
       ],
       "positions": {
         "SNDK": {
           "shares": 125,
           "avg_price": 237.3249969482422
-        },
-        "MU": {
-          "shares": 103,
-          "avg_price": 285.42999267578125
         },
         "WDC": {
           "shares": 172,
@@ -302,44 +303,48 @@
           "shares": 126,
           "avg_price": 233.76499938964844
         },
+        "MU": {
+          "shares": 103,
+          "avg_price": 285.42999267578125
+        },
         "TER": {
-          "shares": 70,
+          "shares": 71,
           "avg_price": 241.0200042724609
         },
         "AIXA.DE": {
-          "shares": 910,
+          "shares": 927,
           "avg_price": 29.479999542236328
         },
         "MRNA": {
-          "shares": 2,
+          "shares": 1,
           "avg_price": 57.77999877929688
         },
         "ALB": {
-          "shares": 116,
+          "shares": 127,
           "avg_price": 169.5800018310547
         },
         "NDX1.DE": {
-          "shares": 564,
+          "shares": 567,
           "avg_price": 43.13999938964844
         },
         "AMAT": {
-          "shares": 77,
+          "shares": 78,
           "avg_price": 351.0
         }
       }
     },
     "dynamic_bh_3m": {
       "tickers": [
-        "AIXA.DE",
-        "NDX1.DE",
-        "TER",
-        "SNDK",
-        "MRNA",
-        "MU",
-        "TPL",
         "USO",
-        "LYB",
-        "CF"
+        "SNDK",
+        "AIXA.DE",
+        "MRNA",
+        "TPL",
+        "NDX1.DE",
+        "MU",
+        "TER",
+        "CF",
+        "LYB"
       ],
       "positions": {
         "SNDK": {
@@ -351,111 +356,116 @@
           "avg_price": 285.42999267578125
         },
         "MRNA": {
-          "shares": 687,
+          "shares": 686,
           "avg_price": 43.040000915527344
         },
         "TPL": {
           "shares": 48,
-          "avg_price": 512.510009765625
+          "avg_price": 500.0
         },
         "NDX1.DE": {
-          "shares": 9,
+          "shares": 779,
           "avg_price": 41.5
         },
         "AIXA.DE": {
-          "shares": 964,
+          "shares": 966,
           "avg_price": 29.479999542236328
         },
         "USO": {
-          "shares": 271,
+          "shares": 172,
           "avg_price": 108.86000061035156
         },
         "TER": {
-          "shares": 102,
-          "avg_price": 300.8900146484375
-        },
-        "LYB": {
-          "shares": 470,
-          "avg_price": 67.37999725341797
+          "shares": 106,
+          "avg_price": 301.9599914550781
         },
         "CF": {
-          "shares": 60,
+          "shares": 167,
           "avg_price": 120.12000274658205
+        },
+        "LYB": {
+          "shares": 1,
+          "avg_price": 67.37999725341797
         }
       }
     },
     "dynamic_bh_1m": {
       "tickers": [
+        "USO",
         "AIXA.DE",
-        "NDX1.DE",
-        "MRNA",
         "TRI",
         "NFLX",
+        "NDX1.DE",
+        "MRNA",
         "DELL",
-        "USO",
-        "LYB",
+        "CF",
         "TPL",
-        "CF"
+        "LYB"
       ],
       "positions": {
-        "NFLX": {
-          "shares": 239,
-          "avg_price": 98.62000274658205
-        },
         "MRNA": {
-          "shares": 279,
+          "shares": 378,
           "avg_price": 57.77999877929688
         },
-        "DELL": {
-          "shares": 155,
-          "avg_price": 146.47000122070312
+        "NFLX": {
+          "shares": 195,
+          "avg_price": 98.62000274658205
         },
         "TRI": {
-          "shares": 208,
+          "shares": 192,
           "avg_price": 109.47000122070312
         },
+        "DELL": {
+          "shares": 143,
+          "avg_price": 146.47000122070312
+        },
         "USO": {
-          "shares": 206,
+          "shares": 190,
           "avg_price": 108.86000061035156
         },
-        "AIXA.DE": {
-          "shares": 683,
-          "avg_price": 31.530000686645508
-        },
         "NDX1.DE": {
-          "shares": 499,
+          "shares": 462,
           "avg_price": 43.13999938964844
         },
-        "LYB": {
-          "shares": 318,
-          "avg_price": 67.37999725341797
-        },
-        "TPL": {
-          "shares": 40,
-          "avg_price": 524.719970703125
+        "AIXA.DE": {
+          "shares": 632,
+          "avg_price": 31.530000686645508
         },
         "CF": {
-          "shares": 178,
+          "shares": 165,
           "avg_price": 120.12000274658205
+        },
+        "TPL": {
+          "shares": 37,
+          "avg_price": 524.719970703125
+        },
+        "LYB": {
+          "shares": 282,
+          "avg_price": 67.37999725341797
         }
       }
     },
     "risk_adj_mom": {
       "tickers": [
+        "FIX",
         "SNDK",
         "ENR.DE",
-        "GLW",
-        "GEV",
-        "STX",
-        "MU",
-        "CIEN",
         "WDC",
-        "FIX"
+        "GLW",
+        "STX",
+        "CIEN",
+        "GEV",
+        "MU",
+        "TER"
       ],
       "positions": {
         "SNDK": {
           "shares": 125,
           "avg_price": 237.3249969482422
+        },
+        "WDC": {
+          "shares": 172,
+          "avg_price": 172.25999450683594
         },
         "STX": {
           "shares": 107,
@@ -465,97 +475,97 @@
           "shares": 103,
           "avg_price": 285.42999267578125
         },
-        "WDC": {
-          "shares": 172,
-          "avg_price": 172.25999450683594
-        },
         "CIEN": {
           "shares": 133,
           "avg_price": 252.97999572753903
         },
         "FIX": {
-          "shares": 23,
+          "shares": 14,
           "avg_price": 1336.6500244140625
         },
         "GLW": {
-          "shares": 259,
+          "shares": 15,
           "avg_price": 139.50999450683594
         },
         "ENR.DE": {
-          "shares": 99,
+          "shares": 129,
           "avg_price": 155.8000030517578
         },
         "GEV": {
-          "shares": 25,
+          "shares": 19,
           "avg_price": 789.4600219726562
+        },
+        "TER": {
+          "shares": 105,
+          "avg_price": 301.9599914550781
         }
       }
     },
     "risk_adj_mom_1m": {
       "tickers": [
-        "AIXA.DE",
-        "NDX1.DE",
-        "ENI.MI",
-        "MRNA",
-        "LYB",
-        "TPL",
         "REP.MC",
         "USO",
+        "AIXA.DE",
+        "TPL",
+        "ENI.MI",
+        "NDX1.DE",
+        "MRNA",
+        "LYB",
         "EOG",
         "CF"
       ],
       "positions": {
         "TPL": {
-          "shares": 57,
+          "shares": 56,
           "avg_price": 432.3599853515625
         },
         "AIXA.DE": {
-          "shares": 448,
+          "shares": 825,
           "avg_price": 27.86000061035156
         },
         "REP.MC": {
-          "shares": 1225,
+          "shares": 1201,
           "avg_price": 20.07999992370605
         },
-        "ENI.MI": {
-          "shares": 1126,
-          "avg_price": 20.170000076293945
-        },
         "USO": {
-          "shares": 235,
+          "shares": 232,
           "avg_price": 96.3499984741211
         },
-        "LYB": {
-          "shares": 337,
-          "avg_price": 66.83000183105469
+        "ENI.MI": {
+          "shares": 1109,
+          "avg_price": 20.170000076293945
         },
         "MRNA": {
-          "shares": 360,
+          "shares": 398,
           "avg_price": 55.77999877929688
         },
+        "LYB": {
+          "shares": 294,
+          "avg_price": 66.83000183105469
+        },
         "NDX1.DE": {
-          "shares": 425,
+          "shares": 507,
           "avg_price": 43.13999938964844
         },
         "EOG": {
-          "shares": 165,
+          "shares": 166,
           "avg_price": 132.50999450683594
         },
         "CF": {
-          "shares": 159,
+          "shares": 48,
           "avg_price": 120.12000274658205
         }
       }
     },
     "risk_adj_mom_3m": {
       "tickers": [
-        "SPM.MI",
-        "AIXA.DE",
         "SNDK",
-        "MRNA",
-        "TPL",
-        "CF",
         "USO",
+        "AIXA.DE",
+        "TPL",
+        "SPM.MI",
+        "MRNA",
+        "CF",
         "SCMN.SW",
         "LYB",
         "ENI.MI"
@@ -566,64 +576,60 @@
           "avg_price": 237.3249969482422
         },
         "MRNA": {
-          "shares": 1,
+          "shares": 680,
           "avg_price": 45.92250061035156
         },
         "TPL": {
-          "shares": 42,
+          "shares": 57,
           "avg_price": 500.0
         },
         "AIXA.DE": {
-          "shares": 1016,
+          "shares": 264,
           "avg_price": 29.479999542236328
         },
         "CF": {
-          "shares": 127,
+          "shares": 8,
           "avg_price": 110.7699966430664
         },
         "USO": {
-          "shares": 248,
+          "shares": 232,
           "avg_price": 108.86000061035156
         },
         "SPM.MI": {
-          "shares": 8218,
+          "shares": 7664,
           "avg_price": 3.3959999084472656
         },
         "SCMN.SW": {
-          "shares": 39,
+          "shares": 41,
           "avg_price": 716.5
         },
         "LYB": {
-          "shares": 421,
+          "shares": 437,
           "avg_price": 67.37999725341797
         },
         "ENI.MI": {
-          "shares": 1070,
+          "shares": 1283,
           "avg_price": 21.229999542236328
         }
       }
     },
     "risk_adj_mom_6m": {
       "tickers": [
+        "SNDK",
         "AIXA.DE",
+        "WDC",
+        "MU",
+        "ALB",
+        "CIEN",
+        "AMAT",
         "NDX1.DE",
         "TER",
-        "MRNA",
-        "SNDK",
-        "MU",
-        "AMAT",
-        "ALB",
-        "WDC",
-        "CIEN"
+        "MRNA"
       ],
       "positions": {
         "SNDK": {
           "shares": 125,
           "avg_price": 237.3249969482422
-        },
-        "MU": {
-          "shares": 103,
-          "avg_price": 285.42999267578125
         },
         "WDC": {
           "shares": 172,
@@ -633,28 +639,32 @@
           "shares": 126,
           "avg_price": 233.76499938964844
         },
+        "MU": {
+          "shares": 103,
+          "avg_price": 285.42999267578125
+        },
         "TER": {
-          "shares": 127,
+          "shares": 126,
           "avg_price": 251.8699951171875
         },
         "AMAT": {
-          "shares": 65,
-          "avg_price": 369.6799926757813
+          "shares": 96,
+          "avg_price": 354.8900146484375
         },
         "AIXA.DE": {
-          "shares": 2,
+          "shares": 360,
           "avg_price": 29.479999542236328
         },
         "MRNA": {
-          "shares": 181,
+          "shares": 2,
           "avg_price": 57.77999877929688
         },
         "ALB": {
-          "shares": 195,
+          "shares": 129,
           "avg_price": 169.5800018310547
         },
         "NDX1.DE": {
-          "shares": 756,
+          "shares": 761,
           "avg_price": 43.13999938964844
         }
       }
@@ -662,8 +672,8 @@
     "momentum_ai_hybrid": {
       "tickers": [
         "SNDK",
-        "MU",
         "WDC",
+        "MU",
         "TER",
         "MRNA",
         "AIXA.DE",
@@ -677,28 +687,28 @@
           "shares": 125,
           "avg_price": 237.3249969482422
         },
-        "MU": {
-          "shares": 103,
-          "avg_price": 285.42999267578125
-        },
         "WDC": {
           "shares": 172,
           "avg_price": 172.25999450683594
+        },
+        "MU": {
+          "shares": 103,
+          "avg_price": 285.42999267578125
         },
         "TER": {
           "shares": 114,
           "avg_price": 283.0299987792969
         },
         "MRNA": {
-          "shares": 601,
+          "shares": 11,
           "avg_price": 49.880001068115234
         },
         "AIXA.DE": {
-          "shares": 10,
+          "shares": 1125,
           "avg_price": 25.559999465942383
         },
         "SLV": {
-          "shares": 403,
+          "shares": 398,
           "avg_price": 74.26000213623047
         },
         "TPL": {
@@ -706,7 +716,7 @@
           "avg_price": 523.0900268554688
         },
         "ALB": {
-          "shares": 25,
+          "shares": 7,
           "avg_price": 162.27000427246094
         },
         "CIEN": {
@@ -717,81 +727,76 @@
     },
     "ai_elite": {
       "tickers": [
-        "MU",
         "CIEN",
+        "MU",
         "FIX",
         "GEV",
         "SNDK",
-        "STX",
         "WDC",
-        "GLW",
+        "STX",
+        "TER",
         "SLV",
-        "TER"
+        "GLW"
       ],
       "positions": {
-        "MU": {
-          "shares": 78,
-          "avg_price": 400.7550048828125
-        },
         "CIEN": {
-          "shares": 91,
+          "shares": 94,
           "avg_price": 343.5400085449219
         },
+        "MU": {
+          "shares": 80,
+          "avg_price": 400.7550048828125
+        },
         "FIX": {
-          "shares": 22,
+          "shares": 23,
           "avg_price": 1281.6400146484375
         },
         "GEV": {
-          "shares": 36,
+          "shares": 37,
           "avg_price": 829.8699951171875
         },
         "SNDK": {
-          "shares": 51,
+          "shares": 52,
           "avg_price": 618.6099853515625
         },
-        "STX": {
-          "shares": 82,
-          "avg_price": 384.2900085449219
-        },
         "WDC": {
-          "shares": 119,
+          "shares": 122,
           "avg_price": 266.2200012207031
         },
-        "GLW": {
-          "shares": 243,
-          "avg_price": 131.77999877929688
-        },
-        "SLV": {
-          "shares": 412,
-          "avg_price": 77.9000015258789
+        "STX": {
+          "shares": 84,
+          "avg_price": 384.2900085449219
         },
         "TER": {
-          "shares": 106,
+          "shares": 109,
           "avg_price": 301.9599914550781
+        },
+        "SLV": {
+          "shares": 423,
+          "avg_price": 77.9000015258789
+        },
+        "GLW": {
+          "shares": 250,
+          "avg_price": 131.77999877929688
         }
       }
     },
     "elite_hybrid": {
       "tickers": [
         "SNDK",
-        "MU",
         "WDC",
         "CIEN",
+        "MU",
         "TER",
         "AMAT",
         "SLV",
         "AIXA.DE",
-        "NDX1.DE",
-        "ALB"
+        "NDX1.DE"
       ],
       "positions": {
         "SNDK": {
           "shares": 125,
           "avg_price": 237.3249969482422
-        },
-        "MU": {
-          "shares": 103,
-          "avg_price": 285.42999267578125
         },
         "WDC": {
           "shares": 172,
@@ -801,85 +806,80 @@
           "shares": 126,
           "avg_price": 233.76499938964844
         },
+        "MU": {
+          "shares": 103,
+          "avg_price": 285.42999267578125
+        },
         "TER": {
-          "shares": 2,
-          "avg_price": 311.04998779296875
+          "shares": 110,
+          "avg_price": 271.1700134277344
         },
         "AMAT": {
           "shares": 80,
           "avg_price": 372.1700134277344
         },
         "SLV": {
-          "shares": 263,
+          "shares": 362,
           "avg_price": 74.26000213623047
         },
         "AIXA.DE": {
-          "shares": 1013,
+          "shares": 1014,
           "avg_price": 29.479999542236328
         },
         "NDX1.DE": {
-          "shares": 734,
+          "shares": 569,
           "avg_price": 43.13999938964844
-        },
-        "ALB": {
-          "shares": 198,
-          "avg_price": 167.97000122070312
         }
       }
     },
     "elite_risk": {
       "tickers": [
         "SNDK",
-        "STX",
         "WDC",
+        "STX",
         "MU",
         "CIEN",
         "FIX",
         "GDX",
         "GLW",
-        "LRCX",
-        "TER"
+        "LRCX"
       ],
       "positions": {
         "SNDK": {
           "shares": 125,
           "avg_price": 237.3249969482422
         },
-        "STX": {
-          "shares": 107,
-          "avg_price": 275.32000732421875
-        },
         "WDC": {
           "shares": 172,
           "avg_price": 172.25999450683594
         },
+        "STX": {
+          "shares": 107,
+          "avg_price": 275.32000732421875
+        },
         "MU": {
-          "shares": 65,
+          "shares": 80,
           "avg_price": 365.0
         },
         "CIEN": {
-          "shares": 48,
+          "shares": 135,
           "avg_price": 271.4100036621094
         },
         "FIX": {
-          "shares": 7,
+          "shares": 28,
           "avg_price": 1299.4100341796875
         },
         "GDX": {
-          "shares": 349,
+          "shares": 107,
           "avg_price": 103.97000122070312
         },
         "GLW": {
-          "shares": 255,
+          "shares": 260,
           "avg_price": 139.50999450683594
         },
         "LRCX": {
-          "shares": 157,
+          "shares": 155,
           "avg_price": 218.8500061035156
-        },
-        "TER": {
-          "shares": 70,
-          "avg_price": 301.9599914550781
         }
       }
     },
@@ -889,11 +889,11 @@
     },
     "momentum_volatility_hybrid_6m": {
       "tickers": [
-        "ZEC-USD",
         "SNDK",
-        "MU",
         "WDC",
         "CIEN",
+        "ZEC-USD",
+        "MU",
         "TER",
         "WBD",
         "AIXA.DE",
@@ -901,17 +901,9 @@
         "ALB"
       ],
       "positions": {
-        "ZEC-USD": {
-          "shares": 57,
-          "avg_price": 512.61865234375
-        },
         "SNDK": {
           "shares": 125,
           "avg_price": 237.3249969482422
-        },
-        "MU": {
-          "shares": 103,
-          "avg_price": 285.42999267578125
         },
         "WDC": {
           "shares": 172,
@@ -921,20 +913,28 @@
           "shares": 126,
           "avg_price": 233.76499938964844
         },
+        "ZEC-USD": {
+          "shares": 57,
+          "avg_price": 512.61865234375
+        },
+        "MU": {
+          "shares": 103,
+          "avg_price": 285.42999267578125
+        },
         "TER": {
-          "shares": 58,
+          "shares": 66,
           "avg_price": 249.572998046875
         },
         "WBD": {
-          "shares": 1241,
+          "shares": 1237,
           "avg_price": 26.73500061035156
         },
         "AIXA.DE": {
-          "shares": 1139,
+          "shares": 1140,
           "avg_price": 28.64999961853028
         },
         "STX": {
-          "shares": 71,
+          "shares": 65,
           "avg_price": 374.9200134277344
         },
         "ALB": {
@@ -957,39 +957,39 @@
       ],
       "positions": {
         "JEN.DE": {
-          "shares": 1147,
+          "shares": 1204,
           "avg_price": 26.5
         },
         "NDX1.DE": {
-          "shares": 749,
+          "shares": 789,
           "avg_price": 41.5
         },
         "REP.MC": {
-          "shares": 1472,
+          "shares": 1551,
           "avg_price": 20.799999237060547
         },
         "CF": {
-          "shares": 265,
+          "shares": 279,
           "avg_price": 110.7699966430664
         },
         "ROST": {
-          "shares": 136,
+          "shares": 144,
           "avg_price": 214.8500061035156
         },
         "SDF.DE": {
-          "shares": 1886,
+          "shares": 1987,
           "avg_price": 15.699999809265137
         },
         "ENI.MI": {
-          "shares": 1412,
+          "shares": 1487,
           "avg_price": 20.975000381469727
         },
         "LDO.MI": {
-          "shares": 475,
+          "shares": 500,
           "avg_price": 62.36000061035156
         },
         "AIXA.DE": {
-          "shares": 914,
+          "shares": 963,
           "avg_price": 31.530000686645508
         }
       }
@@ -1017,56 +1017,52 @@
           "avg_price": 285.42999267578125
         },
         "MRNA": {
-          "shares": 786,
+          "shares": 787,
           "avg_price": 42.540000915527344
         },
         "TPL": {
-          "shares": 50,
-          "avg_price": 512.510009765625
+          "shares": 53,
+          "avg_price": 502.8299865722656
         },
         "NDX1.DE": {
-          "shares": 2,
+          "shares": 726,
           "avg_price": 41.5
         },
         "AIXA.DE": {
-          "shares": 984,
+          "shares": 986,
           "avg_price": 29.479999542236328
         },
         "SOXS": {
-          "shares": 658,
+          "shares": 797,
           "avg_price": 40.06010055541992
         },
         "USO": {
-          "shares": 281,
+          "shares": 158,
           "avg_price": 108.86000061035156
         },
         "TER": {
-          "shares": 102,
+          "shares": 97,
           "avg_price": 300.8900146484375
         },
         "CF": {
-          "shares": 119,
+          "shares": 1,
           "avg_price": 120.12000274658205
         }
       }
     },
     "sector_rotation": {
       "tickers": [
-        "XLE",
-        "XLRE",
-        "XLC",
-        "XLP",
-        "XLB",
-        "GDX",
         "USO",
+        "XLC",
+        "XLB",
         "XLU",
-        "XLI"
+        "GDX",
+        "XLE",
+        "XLP",
+        "XLI",
+        "XLRE"
       ],
       "positions": {
-        "XLE": {
-          "shares": 663,
-          "avg_price": 44.709999084472656
-        },
         "XLB": {
           "shares": 654,
           "avg_price": 45.34000015258789
@@ -1074,6 +1070,10 @@
         "GDX": {
           "shares": 345,
           "avg_price": 85.79000091552734
+        },
+        "XLE": {
+          "shares": 663,
+          "avg_price": 44.709999084472656
         },
         "XLI": {
           "shares": 191,
@@ -1092,27 +1092,27 @@
           "avg_price": 41.97999954223633
         },
         "XLU": {
-          "shares": 640,
+          "shares": 570,
           "avg_price": 46.119998931884766
         },
         "XLC": {
-          "shares": 225,
+          "shares": 253,
           "avg_price": 117.41000366210938
         }
       }
     },
     "quality_momentum": {
       "tickers": [
-        "AIXA.DE",
+        "USO",
         "SNDK",
+        "AIXA.DE",
         "MRNA",
+        "TPL",
         "SOXS",
         "MU",
-        "TPL",
-        "USO",
         "SPM.MI",
-        "LYB",
-        "CF"
+        "CF",
+        "LYB"
       ],
       "positions": {
         "SNDK": {
@@ -1120,40 +1120,40 @@
           "avg_price": 237.3249969482422
         },
         "MRNA": {
-          "shares": 480,
+          "shares": 442,
           "avg_price": 43.040000915527344
         },
         "TPL": {
-          "shares": 31,
+          "shares": 29,
           "avg_price": 500.0
         },
         "AIXA.DE": {
-          "shares": 766,
+          "shares": 835,
           "avg_price": 29.479999542236328
         },
         "SOXS": {
-          "shares": 744,
+          "shares": 726,
           "avg_price": 40.06010055541992
         },
         "USO": {
-          "shares": 267,
+          "shares": 264,
           "avg_price": 108.86000061035156
         },
         "MU": {
-          "shares": 75,
+          "shares": 21,
           "avg_price": 389.30999755859375
         },
         "SPM.MI": {
-          "shares": 8934,
+          "shares": 8792,
           "avg_price": 3.4059998989105225
         },
-        "LYB": {
-          "shares": 451,
-          "avg_price": 67.37999725341797
-        },
         "CF": {
-          "shares": 61,
+          "shares": 249,
           "avg_price": 120.12000274658205
+        },
+        "LYB": {
+          "shares": 412,
+          "avg_price": 67.37999725341797
         }
       }
     },
@@ -1161,14 +1161,14 @@
       "tickers": [
         "APO",
         "FDR.MC",
-        "IP",
-        "CRH",
-        "MAS",
-        "BX",
-        "LEN",
         "PPG",
+        "SWK",
+        "IP",
+        "BX",
+        "MAS",
         "VMC",
-        "SWK"
+        "CRH",
+        "LEN"
       ],
       "positions": {
         "FDR.MC": {
@@ -1179,103 +1179,108 @@
           "shares": 122,
           "avg_price": 108.19000244140624
         },
-        "IP": {
-          "shares": 336,
-          "avg_price": 38.64500045776367
-        },
-        "CRH": {
+        "PPG": {
           "shares": 125,
-          "avg_price": 103.98999786376952
+          "avg_price": 104.08000183105467
         },
-        "MAS": {
-          "shares": 208,
-          "avg_price": 62.494998931884766
+        "SWK": {
+          "shares": 176,
+          "avg_price": 73.75
+        },
+        "IP": {
+          "shares": 337,
+          "avg_price": 38.64500045776367
         },
         "BX": {
           "shares": 121,
           "avg_price": 107.23999786376952
         },
-        "LEN": {
-          "shares": 134,
-          "avg_price": 96.55999755859376
-        },
-        "PPG": {
-          "shares": 125,
-          "avg_price": 104.08000183105467
+        "MAS": {
+          "shares": 208,
+          "avg_price": 62.494998931884766
         },
         "VMC": {
           "shares": 48,
           "avg_price": 266.6099853515625
         },
-        "SWK": {
-          "shares": 176,
-          "avg_price": 73.75
+        "CRH": {
+          "shares": 125,
+          "avg_price": 103.98999786376952
+        },
+        "LEN": {
+          "shares": 134,
+          "avg_price": 96.55999755859376
         }
       }
     },
     "volatility_ensemble": {
       "tickers": [
-        "AIXA.DE",
+        "FIX",
         "SNDK",
-        "GEV",
-        "MU",
+        "AIXA.DE",
         "WDC",
         "CIEN",
+        "GEV",
+        "MU",
+        "TER",
         "NEM",
-        "ENR.DE",
-        "TER"
+        "ENR.DE"
       ],
       "positions": {
         "SNDK": {
           "shares": 125,
           "avg_price": 237.3249969482422
         },
-        "MU": {
-          "shares": 103,
-          "avg_price": 285.42999267578125
-        },
         "WDC": {
           "shares": 172,
           "avg_price": 172.25999450683594
         },
+        "MU": {
+          "shares": 103,
+          "avg_price": 285.42999267578125
+        },
         "CIEN": {
-          "shares": 78,
+          "shares": 89,
           "avg_price": 313.7300109863281
         },
         "GEV": {
-          "shares": 39,
+          "shares": 10,
           "avg_price": 873.9199829101562
         },
         "AIXA.DE": {
-          "shares": 447,
+          "shares": 9,
           "avg_price": 29.170000076293945
         },
+        "FIX": {
+          "shares": 22,
+          "avg_price": 1373.6500244140625
+        },
+        "TER": {
+          "shares": 107,
+          "avg_price": 301.9599914550781
+        },
         "NEM": {
-          "shares": 283,
+          "shares": 279,
           "avg_price": 116.19499969482422
         },
         "ENR.DE": {
-          "shares": 214,
+          "shares": 140,
           "avg_price": 153.6999969482422
-        },
-        "TER": {
-          "shares": 70,
-          "avg_price": 301.9599914550781
         }
       }
     },
     "turnaround": {
       "tickers": [
-        "ULTA",
         "INTC",
+        "SOXL",
         "AIXA.DE",
-        "MRNA",
+        "ROVI.MC",
+        "ULTA",
+        "MPC",
         "APA",
         "DG",
-        "SOXL",
-        "DELL",
-        "MPC",
-        "ROVI.MC"
+        "MRNA",
+        "DELL"
       ],
       "positions": {
         "DG": {
@@ -1287,92 +1292,92 @@
           "avg_price": 666.1799926757812
         },
         "AIXA.DE": {
-          "shares": 1532,
-          "avg_price": 20.34000015258789
+          "shares": 1626,
+          "avg_price": 20.06999969482422
         },
         "MRNA": {
-          "shares": 651,
+          "shares": 654,
           "avg_price": 45.92250061035156
         },
         "APA": {
-          "shares": 996,
+          "shares": 717,
           "avg_price": 31.670000076293945
         },
         "INTC": {
-          "shares": 396,
+          "shares": 651,
           "avg_price": 45.560001373291016
         },
+        "ROVI.MC": {
+          "shares": 236,
+          "avg_price": 81.0
+        },
         "MPC": {
-          "shares": 138,
+          "shares": 128,
           "avg_price": 217.33999633789065
         },
-        "ROVI.MC": {
-          "shares": 326,
-          "avg_price": 80.5999984741211
+        "SOXL": {
+          "shares": 440,
+          "avg_price": 53.42499923706055
         },
         "DELL": {
-          "shares": 153,
-          "avg_price": 146.44000244140625
-        },
-        "SOXL": {
-          "shares": 535,
-          "avg_price": 53.42499923706055
+          "shares": 128,
+          "avg_price": 147.3699951171875
         }
       }
     },
     "price_acceleration": {
       "tickers": [
-        "DVN",
-        "PSX",
         "VLO",
-        "APA",
-        "COP",
-        "CF",
+        "PSX",
         "CTRA",
-        "DELL",
+        "OXY",
+        "COP",
         "MPC",
-        "OXY"
+        "DVN",
+        "CF",
+        "APA",
+        "DELL"
       ],
       "positions": {
-        "DVN": {
-          "shares": 259,
-          "avg_price": 45.34000015258789
-        },
-        "PSX": {
-          "shares": 69,
-          "avg_price": 169.5
-        },
         "VLO": {
           "shares": 50,
           "avg_price": 231.07000732421875
         },
-        "APA": {
-          "shares": 356,
-          "avg_price": 32.97999954223633
-        },
-        "COP": {
-          "shares": 100,
-          "avg_price": 117.01000213623048
-        },
-        "CF": {
-          "shares": 97,
-          "avg_price": 120.12000274658205
+        "PSX": {
+          "shares": 68,
+          "avg_price": 169.5
         },
         "CTRA": {
-          "shares": 374,
+          "shares": 370,
           "avg_price": 31.350000381469727
         },
-        "DELL": {
-          "shares": 79,
-          "avg_price": 147.3699951171875
+        "OXY": {
+          "shares": 208,
+          "avg_price": 55.56499862670898
+        },
+        "COP": {
+          "shares": 99,
+          "avg_price": 117.01000213623048
         },
         "MPC": {
           "shares": 51,
           "avg_price": 226.7400054931641
         },
-        "OXY": {
-          "shares": 211,
-          "avg_price": 55.56499862670898
+        "DVN": {
+          "shares": 256,
+          "avg_price": 45.34000015258789
+        },
+        "CF": {
+          "shares": 96,
+          "avg_price": 120.12000274658205
+        },
+        "APA": {
+          "shares": 352,
+          "avg_price": 32.97999954223633
+        },
+        "DELL": {
+          "shares": 78,
+          "avg_price": 147.3699951171875
         }
       }
     },
@@ -1427,112 +1432,112 @@
     },
     "ratio_3m_1y": {
       "tickers": [
-        "AIXA.DE",
-        "MRNA",
-        "TPL",
-        "CF",
         "USO",
-        "LMT",
+        "AIXA.DE",
         "JEN.DE",
+        "LMT",
+        "TPL",
+        "MRNA",
+        "CF",
         "SPM.MI",
-        "DVA",
-        "OXY"
+        "OXY",
+        "DVA"
       ],
       "positions": {
         "MRNA": {
-          "shares": 415,
+          "shares": 631,
           "avg_price": 46.845001220703125
         },
         "TPL": {
-          "shares": 53,
+          "shares": 50,
           "avg_price": 502.8299865722656
         },
         "JEN.DE": {
-          "shares": 965,
+          "shares": 968,
           "avg_price": 28.13999938964844
         },
         "LMT": {
-          "shares": 40,
+          "shares": 36,
           "avg_price": 658.3099975585938
         },
         "AIXA.DE": {
-          "shares": 906,
+          "shares": 891,
           "avg_price": 29.479999542236328
         },
         "USO": {
-          "shares": 265,
+          "shares": 267,
           "avg_price": 96.3499984741211
         },
         "CF": {
-          "shares": 209,
+          "shares": 208,
           "avg_price": 110.7699966430664
         },
         "SPM.MI": {
-          "shares": 7559,
+          "shares": 7631,
           "avg_price": 3.4059998989105225
         },
-        "DVA": {
-          "shares": 166,
-          "avg_price": 154.83999633789062
-        },
         "OXY": {
-          "shares": 386,
+          "shares": 467,
           "avg_price": 55.56499862670898
+        },
+        "DVA": {
+          "shares": 102,
+          "avg_price": 154.83999633789062
         }
       }
     },
     "ratio_1y_3m": {
       "tickers": [
-        "LRCX",
-        "NEM",
-        "ENR.DE",
-        "GEV",
-        "STX",
         "SOXL",
+        "ENR.DE",
+        "STX",
         "GDX",
-        "HOT.DE",
+        "LRCX",
         "SLR.MC",
+        "HOT.DE",
+        "NEM",
+        "GEV",
         "INTC"
       ],
       "positions": {
         "SLR.MC": {
-          "shares": 1317,
+          "shares": 1325,
           "avg_price": 21.21999931335449
         },
         "GDX": {
-          "shares": 255,
+          "shares": 191,
           "avg_price": 101.83000183105467
         },
         "LRCX": {
-          "shares": 125,
+          "shares": 126,
           "avg_price": 199.33999633789065
         },
         "ENR.DE": {
-          "shares": 165,
+          "shares": 166,
           "avg_price": 151.1999969482422
         },
         "SOXL": {
-          "shares": 475,
+          "shares": 479,
           "avg_price": 53.42499923706055
+        },
+        "NEM": {
+          "shares": 218,
+          "avg_price": 116.9800033569336
         },
         "HOT.DE": {
           "shares": 68,
           "avg_price": 371.7999877929688
         },
-        "NEM": {
-          "shares": 217,
-          "avg_price": 116.9800033569336
-        },
-        "GEV": {
-          "shares": 30,
-          "avg_price": 839.0999755859375
-        },
         "STX": {
           "shares": 67,
           "avg_price": 384.2900085449219
         },
+        "GEV": {
+          "shares": 31,
+          "avg_price": 839.0999755859375
+        },
         "INTC": {
-          "shares": 539,
+          "shares": 542,
           "avg_price": 47.959999084472656
         }
       }
@@ -1540,53 +1545,57 @@
     "concentrated_3m": {
       "tickers": [
         "SPM.MI",
-        "MTS.MC",
-        "LMT"
+        "LMT",
+        "MTS.MC"
       ],
       "positions": {
         "SPM.MI": {
           "shares": 28355,
           "avg_price": 3.571000099182129
         },
-        "MTS.MC": {
-          "shares": 1822,
-          "avg_price": 55.560001373291016
-        },
         "LMT": {
           "shares": 153,
           "avg_price": 658.3099975585938
+        },
+        "MTS.MC": {
+          "shares": 1822,
+          "avg_price": 55.560001373291016
         }
       }
     },
     "analyst_rec": {
       "tickers": [
-        "NOW",
-        "WDAY",
-        "DDOG",
         "MSFT",
-        "CRM",
         "AMZN",
         "NVDA",
+        "DDOG",
+        "WDAY",
+        "CRM",
+        "NOW",
         "DASH",
         "BSX",
         "ZS"
       ],
       "positions": {
-        "NOW": {
-          "shares": 238,
-          "avg_price": 116.73999786376952
+        "AMZN": {
+          "shares": 115,
+          "avg_price": 241.67999267578125
         },
         "DDOG": {
           "shares": 217,
           "avg_price": 128.17999267578125
         },
-        "AMZN": {
-          "shares": 115,
-          "avg_price": 241.67999267578125
+        "NOW": {
+          "shares": 238,
+          "avg_price": 116.73999786376952
         },
         "MSFT": {
           "shares": 62,
           "avg_price": 413.625
+        },
+        "NVDA": {
+          "shares": 145,
+          "avg_price": 177.16000366210938
         },
         "WDAY": {
           "shares": 192,
@@ -1595,10 +1604,6 @@
         "CRM": {
           "shares": 132,
           "avg_price": 194.7949981689453
-        },
-        "NVDA": {
-          "shares": 145,
-          "avg_price": 177.16000366210938
         },
         "DASH": {
           "shares": 159,
@@ -1617,112 +1622,112 @@
   },
   "performance": {
     "static_bh_1y": {
-      "value": 397631.63780016516,
-      "return_pct": 32.54387926672172
+      "value": 396720.73622449685,
+      "return_pct": 32.24024540816562
     },
     "static_bh_6m": {
       "value": 386949.52782074356,
       "return_pct": 28.98317594024785
     },
     "static_bh_3m": {
-      "value": 363715.1197400459,
-      "return_pct": 21.238373246681974
+      "value": 355416.58221312944,
+      "return_pct": 18.47219407104315
     },
     "static_bh_1m": {
       "value": 295953.80094011314,
       "return_pct": -1.348733019962286
     },
     "dynamic_bh_1y": {
-      "value": 333724.2960676098,
-      "return_pct": 11.2414320225366
+      "value": 327954.9657095891,
+      "return_pct": 9.318321903196356
     },
     "dynamic_bh_6m": {
-      "value": 336471.7123398892,
-      "return_pct": 12.157237446629733
+      "value": 339518.37732851435,
+      "return_pct": 13.17279244283812
     },
     "dynamic_bh_3m": {
-      "value": 319885.6718226694,
-      "return_pct": 6.62855727422313
+      "value": 325064.2407670757,
+      "return_pct": 8.354746922358562
     },
     "dynamic_bh_1m": {
-      "value": 216084.81394462186,
-      "return_pct": -27.971728685126045
+      "value": 200245.12570984714,
+      "return_pct": -33.251624763384285
     },
     "dynamic_bh_1y_vol_filter": {
-      "value": 366367.6219609509,
-      "return_pct": 22.1225406536503
+      "value": 343850.40903683665,
+      "return_pct": 14.616803012278881
     },
     "dynamic_bh_1y_trailing_stop": {
-      "value": 307710.4736567821,
-      "return_pct": 2.5701578855940412
+      "value": 305066.90170617297,
+      "return_pct": 1.6889672353909897
     },
     "risk_adj_mom": {
-      "value": 360885.6848565197,
-      "return_pct": 20.29522828550656
+      "value": 347324.8223137439,
+      "return_pct": 15.774940771247959
     },
     "multitask": {
       "value": 300000.0,
       "return_pct": 0.0
     },
     "mean_reversion": {
-      "value": 130455.85674686797,
-      "return_pct": -56.51471441771068
+      "value": 130538.55999268239,
+      "return_pct": -56.48714666910587
     },
     "quality_momentum": {
-      "value": 306907.2817902656,
-      "return_pct": 2.30242726342186
+      "value": 301805.8588963213,
+      "return_pct": 0.6019529654404421
     },
     "momentum_ai_hybrid": {
-      "value": 320069.8976568811,
-      "return_pct": 6.689965885627025
+      "value": 319788.4147073266,
+      "return_pct": 6.596138235775541
     },
     "volatility_adj_mom": {
       "value": 300000.0,
       "return_pct": 0.0
     },
     "sector_rotation": {
-      "value": 16137.822723793082,
-      "return_pct": -94.62072575873563
+      "value": 16086.74931542972,
+      "return_pct": -94.6377502281901
     },
     "ratio_3m_1y": {
-      "value": 259522.23597465156,
-      "return_pct": -13.49258800844948
+      "value": 262037.0281055512,
+      "return_pct": -12.654323964816266
     },
     "ratio_1y_3m": {
-      "value": 261146.989033981,
-      "return_pct": -12.951003655339669
+      "value": 262879.2503926092,
+      "return_pct": -12.373583202463594
     },
     "momentum_volatility_hybrid": {
-      "value": 315728.7982933134,
-      "return_pct": 5.242932764437806
+      "value": 332972.873830873,
+      "return_pct": 10.99095794362433
     },
     "momentum_volatility_hybrid_6m": {
-      "value": 351940.4721165476,
-      "return_pct": 17.31349070551586
+      "value": 352038.1283905188,
+      "return_pct": 17.34604279683959
     },
     "momentum_volatility_hybrid_1y": {
-      "value": 334733.31426280213,
-      "return_pct": 11.577771420934043
+      "value": 346636.57553734205,
+      "return_pct": 15.545525179114017
     },
     "momentum_volatility_hybrid_1y3m": {
-      "value": 242394.95314409558,
-      "return_pct": -19.201682285301473
+      "value": 243823.7539591189,
+      "return_pct": -18.72541534696036
     },
     "price_acceleration": {
-      "value": 117514.0022479074,
-      "return_pct": -60.8286659173642
+      "value": 116108.41250305106,
+      "return_pct": -61.29719583231632
     },
     "turnaround": {
-      "value": 312591.5607652397,
-      "return_pct": 4.197186921746567
+      "value": 300373.56068278593,
+      "return_pct": 0.12452022759531003
     },
     "adaptive_ensemble": {
-      "value": 363366.0517100105,
-      "return_pct": 21.122017236670168
+      "value": 362080.46400909236,
+      "return_pct": 20.693488003030787
     },
     "volatility_ensemble": {
-      "value": 332664.80872892385,
-      "return_pct": 10.888269576307948
+      "value": 327533.207654068,
+      "return_pct": 9.177735884689337
     },
     "enhanced_volatility": {
       "value": 246393.22551514147,
@@ -1737,12 +1742,12 @@
       "return_pct": 0.0
     },
     "correlation_ensemble": {
-      "value": 224286.91215824528,
-      "return_pct": -25.237695947251577
+      "value": 227896.33280027195,
+      "return_pct": -24.034555733242684
     },
     "dynamic_pool": {
-      "value": 344614.8823610115,
-      "return_pct": 14.871627453670508
+      "value": 353517.87351015094,
+      "return_pct": 17.839291170050313
     },
     "sentiment_ensemble": {
       "value": 300000.0,
@@ -1761,80 +1766,80 @@
       "return_pct": -5.0437387388226345
     },
     "dual_momentum": {
-      "value": 328187.91699781787,
-      "return_pct": 9.395972332605956
+      "value": 337598.22887248534,
+      "return_pct": 12.532742957495113
     },
     "trend_atr": {
-      "value": 295067.6767531118,
-      "return_pct": -1.6441077489627254
+      "value": 310767.277574151,
+      "return_pct": 3.589092524716999
     },
     "elite_hybrid": {
-      "value": 361791.46852177626,
-      "return_pct": 20.59715617392542
+      "value": 361720.6845746231,
+      "return_pct": 20.573561524874375
     },
     "elite_risk": {
-      "value": 347461.67745631683,
-      "return_pct": 15.82055915210561
+      "value": 367461.2165629057,
+      "return_pct": 22.48707218763523
     },
     "risk_adj_mom_6m": {
-      "value": 351074.6493057537,
-      "return_pct": 17.0248831019179
+      "value": 352555.7430912304,
+      "return_pct": 17.518581030410132
     },
     "risk_adj_mom_6m_monthly": {
-      "value": 394647.4253359356,
-      "return_pct": 31.5491417786452
+      "value": 394833.6469377194,
+      "return_pct": 31.61121564590646
     },
     "risk_adj_mom_3m": {
-      "value": 286559.1491850268,
-      "return_pct": -4.48028360499106
+      "value": 296781.192294112,
+      "return_pct": -1.072935901962667
     },
     "risk_adj_mom_3m_monthly": {
-      "value": 364155.51659401914,
-      "return_pct": 21.385172198006376
+      "value": 357220.6473641923,
+      "return_pct": 19.07354912139743
     },
     "risk_adj_mom_3m_sentiment": {
-      "value": 281641.0209113237,
-      "return_pct": -6.119659696225426
+      "value": 289514.92673889553,
+      "return_pct": -3.4950244203681557
     },
     "risk_adj_mom_3m_market_up": {
-      "value": 298129.13198784826,
-      "return_pct": -0.6236226707172464
+      "value": 302721.43103752023,
+      "return_pct": 0.9071436791734111
     },
     "risk_adj_mom_3m_with_stops": {
-      "value": 286559.1491850268,
-      "return_pct": -4.48028360499106
+      "value": 296781.192294112,
+      "return_pct": -1.072935901962667
     },
     "vol_sweet_mom": {
-      "value": 352091.4557956033,
-      "return_pct": 17.36381859853443
+      "value": 349605.8242785267,
+      "return_pct": 16.5352747595089
     },
     "risk_adj_mom_1m_vol_sweet": {
-      "value": 372310.9317574291,
-      "return_pct": 24.103643919143032
+      "value": 372221.7272116203,
+      "return_pct": 24.073909070540104
     },
     "risk_adj_mom_1m": {
-      "value": 221916.45408025198,
-      "return_pct": -26.02784863991601
+      "value": 222105.49262562278,
+      "return_pct": -25.964835791459073
     },
     "risk_adj_mom_1m_monthly": {
       "value": 272625.21676123893,
       "return_pct": -9.12492774625369
     },
     "ai_elite": {
-      "value": 323622.766802403,
-      "return_pct": 7.87425560080101
+      "value": 332490.58582878014,
+      "return_pct": 10.830195276260046
     },
     "ai_elite_monthly": {
-      "value": 394282.453043426,
-      "return_pct": 31.427484347808658
+      "value": 394238.2863150325,
+      "return_pct": 31.412762105010838
     },
     "ai_elite_filtered": {
-      "value": 259601.81972650284,
-      "return_pct": -13.46606009116572
+      "value": 259159.8796861126,
+      "return_pct": -13.613373437962464
     },
     "ai_elite_market_up": {
-      "value": 346446.0716100882,
-      "return_pct": 15.48202387002941
+      "value": 347206.24503615254,
+      "return_pct": 15.735415012050847
     },
     "ai_regime": {
       "value": 367348.6896568222,
@@ -1845,36 +1850,36 @@
       "return_pct": 18.209094386917112
     },
     "universal_model": {
-      "value": 199253.39855701066,
-      "return_pct": -33.58220048099645
+      "value": 181982.6376670047,
+      "return_pct": -39.3391207776651
     },
     "inverse_etf_hedge": {
       "value": 300000.0,
       "return_pct": 0.0
     },
     "analyst_rec": {
-      "value": 271592.56296835135,
-      "return_pct": -9.469145677216215
+      "value": 271624.4019414654,
+      "return_pct": -9.458532686178204
     },
     "risk_adj_mom_sentiment": {
-      "value": 267191.3345712619,
-      "return_pct": -10.93622180957937
+      "value": 263303.6324286074,
+      "return_pct": -12.232122523797539
     },
     "bh_1y_monthly": {
-      "value": 390432.9597862072,
-      "return_pct": 30.14431992873573
+      "value": 388920.17387035943,
+      "return_pct": 29.640057956786475
     },
     "bh_6m_monthly": {
-      "value": 379141.75121299166,
-      "return_pct": 26.380583737663887
+      "value": 376042.28316709714,
+      "return_pct": 25.347427722365712
     },
     "bh_3m_monthly": {
-      "value": 363439.3291331594,
-      "return_pct": 21.146443044386473
+      "value": 355988.4487895277,
+      "return_pct": 18.6628162631759
     },
     "bh_1m_monthly": {
-      "value": 301977.64848736563,
-      "return_pct": 0.65921616245521
+      "value": 301927.98952700885,
+      "return_pct": 0.6426631756696152
     }
   }
 }

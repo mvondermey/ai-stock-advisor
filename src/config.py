@@ -98,6 +98,8 @@ MARKET_SELECTION = {
     "NASDAQ_ALL": False,
     "NASDAQ_100": True,        # ENABLED - ~100 tech stocks for growth
     "SP500": True,             # ~500 stocks  
+    "SP400_MIDCAP": True,      # ENABLED - ~400 US mid-cap stocks
+    "SP600_SMALLCAP": True,    # ENABLED - ~600 US small-cap stocks (quality filtered)
     "DOW_JONES": True,         # ~30 stocks
     "POPULAR_ETFS": True,      # ENABLED - Include popular ETFs (includes sector ETFs)
     "CRYPTO": True,            # ENABLED - Bitcoin, Ethereum, and crypto stocks

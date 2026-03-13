@@ -479,21 +479,23 @@ def _smart_rebalance_portfolio(
             if not price_data.empty:
                 current_price = price_data['Close'].dropna().iloc[-1]
                 if current_price > 0:
-                    shares = int(capital_per_stock / (current_price * (1 + transaction_cost)))
-                    buy_value = shares * current_price
-                    buy_cost = buy_value * transaction_cost
-                    total_cost = buy_value + buy_cost
-                    
-                    # Check if we have enough cash
-                    if total_cost <= updated_cash and shares > 0:
-                        print(f"   🛒 {strategy_name} Buying {ticker}: {shares} shares @ ${current_price:.2f}")
-                        total_transaction_costs += buy_cost
-                        updated_cash -= total_cost
-                        updated_positions[ticker] = {'shares': shares, 'entry_price': current_price}
-                        final_stocks.append(ticker)
-                        newly_bought.append(ticker)
-                    else:
-                        print(f"   ❌ {strategy_name} Insufficient cash for {ticker}: need ${total_cost:,.0f}, have ${updated_cash:,.0f}")
+                    # Use the lesser of capital_per_stock or available cash
+                    available_for_stock = min(capital_per_stock, updated_cash)
+                    shares = int(available_for_stock / (current_price * (1 + transaction_cost)))
+                    if shares > 0:
+                        buy_value = shares * current_price
+                        buy_cost = buy_value * transaction_cost
+                        total_cost = buy_value + buy_cost
+                        
+                        if total_cost <= updated_cash:
+                            print(f"   🛒 {strategy_name} Buying {ticker}: {shares} shares @ ${current_price:.2f}")
+                            total_transaction_costs += buy_cost
+                            updated_cash -= total_cost
+                            updated_positions[ticker] = {'shares': shares, 'entry_price': current_price}
+                            final_stocks.append(ticker)
+                            newly_bought.append(ticker)
+                        else:
+                            print(f"   ❌ {strategy_name} Insufficient cash for {ticker}: need ${total_cost:,.0f}, have ${updated_cash:,.0f}")
     
     # Second pass: try to buy stocks that failed in first pass due to insufficient per-stock allocation
     skipped_tickers = [t for t in positions_to_actually_buy if t not in newly_bought and t not in final_stocks]

@@ -164,6 +164,32 @@ def get_all_tickers() -> List[str]:
         except Exception as e:
             print(f" Could not fetch S%26P 500 list ({e}).")
 
+    if MARKET_SELECTION.get("SP400_MIDCAP"):
+        try:
+            url_sp400 = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
+            response_sp400 = requests.get(url_sp400, headers=headers)
+            response_sp400.raise_for_status()
+            table_sp400 = pd.read_html(StringIO(response_sp400.text))[0]
+            col = "Symbol" if "Symbol" in table_sp400.columns else table_sp400.columns[0]
+            sp400_tickers = [s.replace('.', '-') for s in table_sp400[col].tolist()]
+            all_tickers.update(sp400_tickers)
+            print(f" Fetched {len(sp400_tickers)} tickers from S&P 400 MidCap.")
+        except Exception as e:
+            print(f" Could not fetch S&P 400 MidCap list ({e}).")
+
+    if MARKET_SELECTION.get("SP600_SMALLCAP"):
+        try:
+            url_sp600 = "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies"
+            response_sp600 = requests.get(url_sp600, headers=headers)
+            response_sp600.raise_for_status()
+            table_sp600 = pd.read_html(StringIO(response_sp600.text))[0]
+            col = "Symbol" if "Symbol" in table_sp600.columns else table_sp600.columns[0]
+            sp600_tickers = [s.replace('.', '-') for s in table_sp600[col].tolist()]
+            all_tickers.update(sp600_tickers)
+            print(f" Fetched {len(sp600_tickers)} tickers from S&P 600 SmallCap.")
+        except Exception as e:
+            print(f" Could not fetch S&P 600 SmallCap list ({e}).")
+
     if MARKET_SELECTION.get("DOW_JONES"):
         try:
             url_dow = "https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average"

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-03-12T21:26:17.429410",
+  "timestamp": "2026-03-13T00:49:12.385569",
   "backtest_end_date": "2026-03-11 00:00:00+00:00",
   "top_n": 20,
   "strategies": {
@@ -408,13 +408,13 @@
       "ON",
       "HAL",
       "VTRS",
-      "UTDI.DE",
       "STMMI.MI",
       "STMPA.PA",
       "BIIB",
       "ADM",
       "JBHT",
-      "CSX"
+      "CSX",
+      "NUE"
     ],
     "adaptive_ensemble": [],
     "volatility_ensemble": [],
