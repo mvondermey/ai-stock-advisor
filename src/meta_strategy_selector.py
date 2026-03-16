@@ -43,7 +43,7 @@ class MetaStrategyManager:
     def __init__(self, initial_capital: float):
         self.initial_capital = initial_capital
         self.day_count = 0
-        self.warmup_days = 20  # Days before meta-strategies start
+        self.warmup_days = 2  # Days before meta-strategies start
         
         # Track daily values for each sub-strategy
         self.strategy_histories: Dict[str, List[float]] = defaultdict(list)

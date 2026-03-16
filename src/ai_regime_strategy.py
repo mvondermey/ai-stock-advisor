@@ -283,7 +283,7 @@ class AIRegimeAllocator:
         max_day = self.day_count - self.forward_days  # Last day we can get a forward label for
         
         if max_day <= min_day or self.day_count < 2:
-            print(f"   ⚠️ AI Regime: Need at least 2 days of data (have {self.day_count})")
+            print(f"   ⚠️ AI Regime: Need at least 2 days of data (have {self.day_count}), using fallback")
             return False
             
         # Sample every day (or every 2 days if we have lots of data)
@@ -368,7 +368,13 @@ class AIRegimeAllocator:
             print(f"   📊 AI Regime: Training NEW {list(models.keys())} on {len(training_samples)} samples ({device})...")
         
         # Train/val split (faster than CV)
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+        # Use smaller test size for small datasets
+        test_size = min(0.2, max(0.1, len(X) // 3))
+        if len(np.unique(y)) < 3:
+            # If only 2 classes, don't stratify
+            X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=test_size, random_state=42)
+        else:
+            X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=test_size, random_state=42, stratify=y)
         
         # Train all models and evaluate
         trained_models = {}
@@ -481,23 +487,23 @@ class AIRegimeAllocator:
         return False
     
     def predict_best_strategy(self, ticker_data_grouped: Dict[str, pd.DataFrame],
-                               current_date: datetime) -> str:
+                               current_date: datetime) -> Optional[str]:
         """
         Predict which strategy will perform best.
         
         Returns:
-            Strategy name to use
+            Strategy name to use, or None if prediction fails
         """
         # Default if no model trained yet or corrupted
         if self.model is None or not hasattr(self.model, 'predict'):
             if self.model is not None:
-                print(f"   ⚠️ AI Regime: Model corrupted (type: {type(self.model)}), using fallback")
-            return 'risk_adj_mom_3m'  # Default to best simple strategy
+                print(f"   ⚠️ AI Regime: Model corrupted (type: {type(self.model)})")
+            return None  # No fallback - let strategy handle it
             
         # Extract current features
         features = self.extract_regime_features(ticker_data_grouped, current_date)
-        if features is None:
-            return self.current_strategy or 'risk_adj_mom_3m'
+        if features is None or not isinstance(features, dict):
+            return None  # No fallback - let strategy handle it
             
         # Predict
         try:
@@ -517,7 +523,7 @@ class AIRegimeAllocator:
             
         except Exception as e:
             print(f"   ⚠️ AI Regime: Prediction failed: {e}")
-            return self.current_strategy or 'risk_adj_mom_3m'
+            return None  # No fallback - let strategy handle it
     
     def should_retrain(self) -> bool:
         """Check if model should be retrained."""

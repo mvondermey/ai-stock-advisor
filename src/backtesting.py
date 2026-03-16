@@ -5011,19 +5011,22 @@ def _run_portfolio_backtest_walk_forward(
                 ai_regime_current_strategy = ai_regime_allocator.predict_best_strategy(ticker_data_grouped, current_date)
                 
                 # Select stocks using predicted strategy
-                new_ai_regime_stocks = select_ai_regime_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date,
-                    PORTFOLIO_SIZE,
-                    ai_regime_current_strategy,
-                    ai_elite_models=ai_elite_models  # Pass AI Elite models
-                )
+                if ai_regime_current_strategy is not None:
+                    new_ai_regime_stocks = select_ai_regime_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        PORTFOLIO_SIZE,
+                        ai_regime_current_strategy,
+                        ai_elite_models=ai_elite_models  # Pass AI Elite models
+                    )
+                else:
+                    new_ai_regime_stocks = []
                 
                 if new_ai_regime_stocks:
                     print(f"   📊 AI Regime Day {day_count}: {new_ai_regime_stocks}")
                     ai_regime_positions, ai_regime_cash, current_ai_regime_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name=f"AI Regime ({ai_regime_current_strategy[:10]})",
+                        strategy_name=f"AI Regime ({str(ai_regime_current_strategy)[:10]})",
                         current_stocks=current_ai_regime_stocks,
                         new_stocks=new_ai_regime_stocks,
                         positions=ai_regime_positions,
@@ -5088,19 +5091,22 @@ def _run_portfolio_backtest_walk_forward(
                 # Only rebalance at start of month
                 if ai_regime_monthly_allocator.should_rebalance(current_date):
                     # Select stocks using predicted strategy
-                    new_ai_regime_monthly_stocks = select_ai_regime_stocks(
-                        initial_top_tickers,
-                        ticker_data_grouped,
-                        current_date,
-                        PORTFOLIO_SIZE,
-                        ai_regime_monthly_current_strategy,
-                        ai_elite_models=ai_elite_models
-                    )
+                    if ai_regime_monthly_current_strategy is not None:
+                        new_ai_regime_monthly_stocks = select_ai_regime_stocks(
+                            initial_top_tickers,
+                            ticker_data_grouped,
+                            current_date,
+                            PORTFOLIO_SIZE,
+                            ai_regime_monthly_current_strategy,
+                            ai_elite_models=ai_elite_models
+                        )
+                    else:
+                        new_ai_regime_monthly_stocks = []
                     
                     if new_ai_regime_monthly_stocks:
                         print(f"   📊 AI Regime Monthly Day {day_count}: {new_ai_regime_monthly_stocks}")
                         ai_regime_monthly_positions, ai_regime_monthly_cash, current_ai_regime_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
-                            strategy_name=f"AI Regime Mth ({ai_regime_monthly_current_strategy[:10]})",
+                            strategy_name=f"AI Regime Mth ({str(ai_regime_monthly_current_strategy)[:10]})",
                             current_stocks=current_ai_regime_monthly_stocks,
                             new_stocks=new_ai_regime_monthly_stocks,
                             positions=ai_regime_monthly_positions,
@@ -8478,12 +8484,16 @@ def _run_portfolio_backtest_walk_forward(
                 ai_regime_allocator = AIRegimeAllocator(retrain_days=1, forward_days=1)
                 ai_regime_allocator.load_model()
                 ai_regime_current_strategy = ai_regime_allocator.predict_best_strategy(ticker_data_grouped, live_current_date)
-                ai_regime_stocks = select_ai_regime_stocks(
-                    initial_top_tickers, ticker_data_grouped, live_current_date, 
-                    LIVE_TRADING_TOP_N, ai_regime_current_strategy
-                )
-                live_trading_selections['strategies']['ai_regime'] = ai_regime_stocks
-                print(f"   ✅ AI Regime: Selected {len(ai_regime_stocks)} stocks using {ai_regime_current_strategy}")
+                if ai_regime_current_strategy is not None:
+                    ai_regime_stocks = select_ai_regime_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, 
+                        LIVE_TRADING_TOP_N, ai_regime_current_strategy
+                    )
+                    live_trading_selections['strategies']['ai_regime'] = ai_regime_stocks
+                    print(f"   ✅ AI Regime: Selected {len(ai_regime_stocks)} stocks using {str(ai_regime_current_strategy)}")
+                else:
+                    live_trading_selections['strategies']['ai_regime'] = []
+                    print(f"   ⚠️ AI Regime: No prediction available")
             except Exception as e:
                 print(f"   ⚠️ AI Regime live selection error: {e}")
                 live_trading_selections['strategies']['ai_regime'] = []
@@ -8494,12 +8504,16 @@ def _run_portfolio_backtest_walk_forward(
                 ai_regime_monthly_allocator = AIRegimeMonthlyAllocator(forward_days=1)
                 ai_regime_monthly_allocator.load_model()
                 ai_regime_monthly_current_strategy = ai_regime_monthly_allocator.predict_best_strategy(ticker_data_grouped, live_current_date)
-                ai_regime_monthly_stocks = select_ai_regime_stocks(
-                    initial_top_tickers, ticker_data_grouped, live_current_date,
-                    LIVE_TRADING_TOP_N, ai_regime_monthly_current_strategy
-                )
-                live_trading_selections['strategies']['ai_regime_monthly'] = ai_regime_monthly_stocks
-                print(f"   ✅ AI Regime Monthly: Selected {len(ai_regime_monthly_stocks)} stocks using {ai_regime_monthly_current_strategy}")
+                if ai_regime_monthly_current_strategy is not None:
+                    ai_regime_monthly_stocks = select_ai_regime_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, 
+                        LIVE_TRADING_TOP_N, ai_regime_monthly_current_strategy
+                    )
+                    live_trading_selections['strategies']['ai_regime_monthly'] = ai_regime_monthly_stocks
+                    print(f"   ✅ AI Regime Monthly: Selected {len(ai_regime_monthly_stocks)} stocks using {str(ai_regime_monthly_current_strategy)}")
+                else:
+                    live_trading_selections['strategies']['ai_regime_monthly'] = []
+                    print(f"   ⚠️ AI Regime Monthly: No prediction available")
             except Exception as e:
                 print(f"   ⚠️ AI Regime Monthly live selection error: {e}")
                 live_trading_selections['strategies']['ai_regime_monthly'] = []
