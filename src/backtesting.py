@@ -1832,6 +1832,66 @@ def _run_portfolio_backtest_walk_forward(
     universal_model_initialized = False
     universal_model_strategy = None  # Will be initialized on first use
 
+    # META-STRATEGY SELECTORS (10 proposals for combining strategies)
+    from config import (ENABLE_META_WEIGHTED_COMPOSITE, ENABLE_META_TIERED_SELECTION,
+                        ENABLE_META_ENSEMBLE_ALLOC, ENABLE_META_REGIME_BASED,
+                        ENABLE_META_RECENCY_WEIGHTED, ENABLE_META_EFFICIENCY_RATIO,
+                        ENABLE_META_MIN_VARIANCE, ENABLE_META_BAYESIAN,
+                        ENABLE_META_ADAPTIVE_CONVEX, ENABLE_META_CONSENSUS)
+    from meta_strategy_selector import MetaStrategyManager, calculate_meta_portfolio_value
+    
+    meta_strategy_manager = MetaStrategyManager(initial_capital_needed)
+    
+    # Proposal 1: Weighted Composite
+    meta_weighted_composite_value = initial_capital_needed
+    meta_weighted_composite_history = [meta_weighted_composite_value]
+    meta_weighted_composite_allocation = {}
+    
+    # Proposal 2: Tiered Selection
+    meta_tiered_selection_value = initial_capital_needed
+    meta_tiered_selection_history = [meta_tiered_selection_value]
+    meta_tiered_selection_allocation = {}
+    
+    # Proposal 3: Ensemble Allocation
+    meta_ensemble_alloc_value = initial_capital_needed
+    meta_ensemble_alloc_history = [meta_ensemble_alloc_value]
+    meta_ensemble_alloc_allocation = {}
+    
+    # Proposal 4: Regime-Based
+    meta_regime_based_value = initial_capital_needed
+    meta_regime_based_history = [meta_regime_based_value]
+    meta_regime_based_allocation = {}
+    
+    # Proposal 5: Recency-Weighted
+    meta_recency_weighted_value = initial_capital_needed
+    meta_recency_weighted_history = [meta_recency_weighted_value]
+    meta_recency_weighted_allocation = {}
+    
+    # Proposal 6: Efficiency Ratio
+    meta_efficiency_ratio_value = initial_capital_needed
+    meta_efficiency_ratio_history = [meta_efficiency_ratio_value]
+    meta_efficiency_ratio_allocation = {}
+    
+    # Proposal 7: Min Variance
+    meta_min_variance_value = initial_capital_needed
+    meta_min_variance_history = [meta_min_variance_value]
+    meta_min_variance_allocation = {}
+    
+    # Proposal 8: Bayesian
+    meta_bayesian_value = initial_capital_needed
+    meta_bayesian_history = [meta_bayesian_value]
+    meta_bayesian_allocation = {}
+    
+    # Proposal 9: Adaptive Convex
+    meta_adaptive_convex_value = initial_capital_needed
+    meta_adaptive_convex_history = [meta_adaptive_convex_value]
+    meta_adaptive_convex_allocation = {}
+    
+    # Proposal 10: Consensus
+    meta_consensus_value = initial_capital_needed
+    meta_consensus_history = [meta_consensus_value]
+    meta_consensus_allocation = {}
+
     # MEAN REVERSION: Initialize portfolio tracking
     mean_reversion_portfolio_value = initial_capital_needed
     mean_reversion_portfolio_history = [mean_reversion_portfolio_value]
@@ -4993,6 +5053,99 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Universal Model error: {e}")
 
+        # META-STRATEGY SELECTORS: Update daily values and calculate portfolio values
+        # Build strategy values dict for meta-strategy manager
+        meta_strategy_values = {
+            'static_bh_1y': static_bh_1y_portfolio_value if ENABLE_STATIC_BH else None,
+            'static_bh_3m': static_bh_3m_portfolio_value if ENABLE_STATIC_BH else None,
+            'static_bh_6m': static_bh_6m_portfolio_value if ENABLE_STATIC_BH_6M else None,
+            'dynamic_bh_1y': dynamic_bh_portfolio_value if ENABLE_DYNAMIC_BH_1Y else None,
+            'dynamic_bh_3m': dynamic_bh_3m_portfolio_value if ENABLE_DYNAMIC_BH_3M else None,
+            'dynamic_bh_6m': dynamic_bh_6m_portfolio_value if ENABLE_DYNAMIC_BH_6M else None,
+            'risk_adj_mom': risk_adj_mom_portfolio_value if ENABLE_RISK_ADJ_MOM else None,
+            'risk_adj_mom_3m': risk_adj_mom_3m_portfolio_value if ENABLE_RISK_ADJ_MOM_3M else None,
+            'risk_adj_mom_6m': risk_adj_mom_6m_portfolio_value if ENABLE_RISK_ADJ_MOM_6M else None,
+            'trend_atr': trend_atr_portfolio_value if ENABLE_TREND_FOLLOWING_ATR else None,
+            'dual_momentum': dual_mom_portfolio_value if ENABLE_DUAL_MOMENTUM else None,
+            'elite_hybrid': elite_hybrid_portfolio_value if ENABLE_ELITE_HYBRID else None,
+            'elite_risk': elite_risk_portfolio_value if ENABLE_ELITE_RISK else None,
+            'momentum_volatility_hybrid': momentum_volatility_hybrid_portfolio_value if ENABLE_MOMENTUM_VOLATILITY_HYBRID else None,
+            'momentum_volatility_hybrid_6m': momentum_volatility_hybrid_6m_portfolio_value if ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M else None,
+            'enhanced_volatility': enhanced_volatility_portfolio_value if ENABLE_ENHANCED_VOLATILITY else None,
+            'mean_reversion': mean_reversion_portfolio_value if ENABLE_MEAN_REVERSION else None,
+            'quality_momentum': quality_momentum_portfolio_value if ENABLE_QUALITY_MOM else None,
+            'bh_1y_monthly': static_bh_1y_monthly_portfolio_value if ENABLE_STATIC_BH_1Y_MONTHLY else None,
+            'bh_3m_monthly': static_bh_3m_monthly_portfolio_value if ENABLE_STATIC_BH_3M_MONTHLY else None,
+            'bh_6m_monthly': static_bh_6m_monthly_portfolio_value if ENABLE_STATIC_BH_6M_MONTHLY else None,
+        }
+        
+        # Record daily values
+        meta_strategy_manager.record_daily_values(meta_strategy_values)
+        
+        # Get selections from all 10 meta-strategies
+        meta_selections = meta_strategy_manager.get_all_selections()
+        
+        # Update each meta-strategy portfolio value
+        if ENABLE_META_WEIGHTED_COMPOSITE:
+            _, meta_weighted_composite_allocation = meta_selections['meta_weighted_composite']
+            meta_weighted_composite_value = calculate_meta_portfolio_value(
+                meta_weighted_composite_allocation, meta_strategy_values, initial_capital_needed)
+            meta_weighted_composite_history.append(meta_weighted_composite_value)
+        
+        if ENABLE_META_TIERED_SELECTION:
+            _, meta_tiered_selection_allocation = meta_selections['meta_tiered_selection']
+            meta_tiered_selection_value = calculate_meta_portfolio_value(
+                meta_tiered_selection_allocation, meta_strategy_values, initial_capital_needed)
+            meta_tiered_selection_history.append(meta_tiered_selection_value)
+        
+        if ENABLE_META_ENSEMBLE_ALLOC:
+            _, meta_ensemble_alloc_allocation = meta_selections['meta_ensemble_alloc']
+            meta_ensemble_alloc_value = calculate_meta_portfolio_value(
+                meta_ensemble_alloc_allocation, meta_strategy_values, initial_capital_needed)
+            meta_ensemble_alloc_history.append(meta_ensemble_alloc_value)
+        
+        if ENABLE_META_REGIME_BASED:
+            _, meta_regime_based_allocation = meta_selections['meta_regime_based']
+            meta_regime_based_value = calculate_meta_portfolio_value(
+                meta_regime_based_allocation, meta_strategy_values, initial_capital_needed)
+            meta_regime_based_history.append(meta_regime_based_value)
+        
+        if ENABLE_META_RECENCY_WEIGHTED:
+            _, meta_recency_weighted_allocation = meta_selections['meta_recency_weighted']
+            meta_recency_weighted_value = calculate_meta_portfolio_value(
+                meta_recency_weighted_allocation, meta_strategy_values, initial_capital_needed)
+            meta_recency_weighted_history.append(meta_recency_weighted_value)
+        
+        if ENABLE_META_EFFICIENCY_RATIO:
+            _, meta_efficiency_ratio_allocation = meta_selections['meta_efficiency_ratio']
+            meta_efficiency_ratio_value = calculate_meta_portfolio_value(
+                meta_efficiency_ratio_allocation, meta_strategy_values, initial_capital_needed)
+            meta_efficiency_ratio_history.append(meta_efficiency_ratio_value)
+        
+        if ENABLE_META_MIN_VARIANCE:
+            _, meta_min_variance_allocation = meta_selections['meta_min_variance']
+            meta_min_variance_value = calculate_meta_portfolio_value(
+                meta_min_variance_allocation, meta_strategy_values, initial_capital_needed)
+            meta_min_variance_history.append(meta_min_variance_value)
+        
+        if ENABLE_META_BAYESIAN:
+            _, meta_bayesian_allocation = meta_selections['meta_bayesian']
+            meta_bayesian_value = calculate_meta_portfolio_value(
+                meta_bayesian_allocation, meta_strategy_values, initial_capital_needed)
+            meta_bayesian_history.append(meta_bayesian_value)
+        
+        if ENABLE_META_ADAPTIVE_CONVEX:
+            _, meta_adaptive_convex_allocation = meta_selections['meta_adaptive_convex']
+            meta_adaptive_convex_value = calculate_meta_portfolio_value(
+                meta_adaptive_convex_allocation, meta_strategy_values, initial_capital_needed)
+            meta_adaptive_convex_history.append(meta_adaptive_convex_value)
+        
+        if ENABLE_META_CONSENSUS:
+            _, meta_consensus_allocation = meta_selections['meta_consensus']
+            meta_consensus_value = calculate_meta_portfolio_value(
+                meta_consensus_allocation, meta_strategy_values, initial_capital_needed)
+            meta_consensus_history.append(meta_consensus_value)
+
         # Update DYNAMIC BH 1Y portfolio value daily (skip if disabled)
         dynamic_bh_invested_value = 0.0
         if ENABLE_DYNAMIC_BH_1Y:
@@ -6671,6 +6824,17 @@ def _run_portfolio_backtest_walk_forward(
                 ("BH 6M Monthly", static_bh_6m_monthly_portfolio_value if ENABLE_STATIC_BH_6M_MONTHLY else None),
                 ("BH 3M Monthly", static_bh_3m_monthly_portfolio_value if ENABLE_STATIC_BH_3M_MONTHLY else None),
                 ("BH 1M Monthly", static_bh_1m_monthly_portfolio_value if ENABLE_STATIC_BH_1M_MONTHLY else None),
+                # Meta-Strategy Selectors (10 proposals)
+                ("Meta Weighted", meta_weighted_composite_value if ENABLE_META_WEIGHTED_COMPOSITE else None),
+                ("Meta Tiered", meta_tiered_selection_value if ENABLE_META_TIERED_SELECTION else None),
+                ("Meta Ensemble", meta_ensemble_alloc_value if ENABLE_META_ENSEMBLE_ALLOC else None),
+                ("Meta Regime", meta_regime_based_value if ENABLE_META_REGIME_BASED else None),
+                ("Meta Recency", meta_recency_weighted_value if ENABLE_META_RECENCY_WEIGHTED else None),
+                ("Meta Efficiency", meta_efficiency_ratio_value if ENABLE_META_EFFICIENCY_RATIO else None),
+                ("Meta MinVar", meta_min_variance_value if ENABLE_META_MIN_VARIANCE else None),
+                ("Meta Bayesian", meta_bayesian_value if ENABLE_META_BAYESIAN else None),
+                ("Meta Adaptive", meta_adaptive_convex_value if ENABLE_META_ADAPTIVE_CONVEX else None),
+                ("Meta Consensus", meta_consensus_value if ENABLE_META_CONSENSUS else None),
             ]
             
             # Filter out None values and sort by performance
@@ -7023,6 +7187,17 @@ def _run_portfolio_backtest_walk_forward(
                 ("BH 6M Monthly", static_bh_6m_monthly_portfolio_history) if ENABLE_STATIC_BH_6M_MONTHLY else None,
                 ("BH 3M Monthly", static_bh_3m_monthly_portfolio_history) if ENABLE_STATIC_BH_3M_MONTHLY else None,
                 ("BH 1M Monthly", static_bh_1m_monthly_portfolio_history) if ENABLE_STATIC_BH_1M_MONTHLY else None,
+                # Meta-Strategy Selectors (10 proposals)
+                ("Meta Weighted", meta_weighted_composite_history) if ENABLE_META_WEIGHTED_COMPOSITE else None,
+                ("Meta Tiered", meta_tiered_selection_history) if ENABLE_META_TIERED_SELECTION else None,
+                ("Meta Ensemble", meta_ensemble_alloc_history) if ENABLE_META_ENSEMBLE_ALLOC else None,
+                ("Meta Regime", meta_regime_based_history) if ENABLE_META_REGIME_BASED else None,
+                ("Meta Recency", meta_recency_weighted_history) if ENABLE_META_RECENCY_WEIGHTED else None,
+                ("Meta Efficiency", meta_efficiency_ratio_history) if ENABLE_META_EFFICIENCY_RATIO else None,
+                ("Meta MinVar", meta_min_variance_history) if ENABLE_META_MIN_VARIANCE else None,
+                ("Meta Bayesian", meta_bayesian_history) if ENABLE_META_BAYESIAN else None,
+                ("Meta Adaptive", meta_adaptive_convex_history) if ENABLE_META_ADAPTIVE_CONVEX else None,
+                ("Meta Consensus", meta_consensus_history) if ENABLE_META_CONSENSUS else None,
             ]
             strategy_to_history = {pair[0]: pair[1] for pair in strategy_history_pairs if pair is not None and pair[1] is not None}
             
@@ -7314,6 +7489,17 @@ def _run_portfolio_backtest_walk_forward(
             'bh_6m_monthly':            _strat(static_bh_6m_monthly_portfolio_value, static_bh_6m_monthly_portfolio_history, static_bh_6m_monthly_transaction_costs, static_bh_6m_monthly_cash),
             'bh_3m_monthly':            _strat(static_bh_3m_monthly_portfolio_value, static_bh_3m_monthly_portfolio_history, static_bh_3m_monthly_transaction_costs, static_bh_3m_monthly_cash),
             'bh_1m_monthly':            _strat(static_bh_1m_monthly_portfolio_value, static_bh_1m_monthly_portfolio_history, static_bh_1m_monthly_transaction_costs, static_bh_1m_monthly_cash),
+            # Meta-Strategy Selectors (10 proposals)
+            'meta_weighted_composite':  _strat(meta_weighted_composite_value, meta_weighted_composite_history, 0.0, 0.0) if ENABLE_META_WEIGHTED_COMPOSITE else _strat(0, [], 0, 0),
+            'meta_tiered_selection':    _strat(meta_tiered_selection_value, meta_tiered_selection_history, 0.0, 0.0) if ENABLE_META_TIERED_SELECTION else _strat(0, [], 0, 0),
+            'meta_ensemble_alloc':      _strat(meta_ensemble_alloc_value, meta_ensemble_alloc_history, 0.0, 0.0) if ENABLE_META_ENSEMBLE_ALLOC else _strat(0, [], 0, 0),
+            'meta_regime_based':        _strat(meta_regime_based_value, meta_regime_based_history, 0.0, 0.0) if ENABLE_META_REGIME_BASED else _strat(0, [], 0, 0),
+            'meta_recency_weighted':    _strat(meta_recency_weighted_value, meta_recency_weighted_history, 0.0, 0.0) if ENABLE_META_RECENCY_WEIGHTED else _strat(0, [], 0, 0),
+            'meta_efficiency_ratio':    _strat(meta_efficiency_ratio_value, meta_efficiency_ratio_history, 0.0, 0.0) if ENABLE_META_EFFICIENCY_RATIO else _strat(0, [], 0, 0),
+            'meta_min_variance':        _strat(meta_min_variance_value, meta_min_variance_history, 0.0, 0.0) if ENABLE_META_MIN_VARIANCE else _strat(0, [], 0, 0),
+            'meta_bayesian':            _strat(meta_bayesian_value, meta_bayesian_history, 0.0, 0.0) if ENABLE_META_BAYESIAN else _strat(0, [], 0, 0),
+            'meta_adaptive_convex':     _strat(meta_adaptive_convex_value, meta_adaptive_convex_history, 0.0, 0.0) if ENABLE_META_ADAPTIVE_CONVEX else _strat(0, [], 0, 0),
+            'meta_consensus':           _strat(meta_consensus_value, meta_consensus_history, 0.0, 0.0) if ENABLE_META_CONSENSUS else _strat(0, [], 0, 0),
         }
     }
 
@@ -7358,6 +7544,10 @@ def _run_portfolio_backtest_walk_forward(
             'ratio_1y_3m': {'tickers': list(current_ratio_1y_3m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ratio_1y_3m_positions.items()}},
             'concentrated_3m': {'tickers': list(current_concentrated_3m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in concentrated_3m_positions.items()}},
             'analyst_rec': {'tickers': list(current_analyst_rec_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in analyst_rec_positions.items()}},
+            'bh_1y_monthly': {'tickers': list(current_static_bh_1y_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_monthly_positions.items()}},
+            'bh_6m_monthly': {'tickers': list(current_static_bh_6m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_6m_monthly_positions.items()}},
+            'bh_3m_monthly': {'tickers': list(current_static_bh_3m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_3m_monthly_positions.items()}},
+            'bh_1m_monthly': {'tickers': list(current_static_bh_1m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1m_monthly_positions.items()}},
         },
         'performance': {name: {'value': data['value'], 'return_pct': ((data['value'] - INVESTMENT_PER_STOCK * PORTFOLIO_SIZE) / (INVESTMENT_PER_STOCK * PORTFOLIO_SIZE)) * 100} for name, data in results['strategies'].items()}
     }
@@ -7668,6 +7858,22 @@ def _run_portfolio_backtest_walk_forward(
                     except Exception as e:
                         print(f"   ⚠️ analyst_rec selection error: {e}")
                         live_trading_selections['strategies'][strategy_name] = []
+                elif strategy_name == 'bh_1y_monthly':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=365, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'bh_6m_monthly':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=180, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'bh_3m_monthly':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=90, top_n=LIVE_TRADING_TOP_N
+                    )
+                elif strategy_name == 'bh_1m_monthly':
+                    live_trading_selections['strategies'][strategy_name] = select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, lookback_days=30, top_n=LIVE_TRADING_TOP_N
+                    )
                 else:
                     # No fallback - strategy must be explicitly implemented
                     live_trading_selections['strategies'][strategy_name] = []
