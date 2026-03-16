@@ -423,27 +423,6 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
 
 
-
-# --- Unified Parallel Training System ---
-
-# Enable the new parallel training system that trains models by model-type instead of by ticker.
-
-# Benefits:
-
-#   - Better GPU utilization (GPU models train while CPU models train in parallel)
-
-#   - Faster overall training time (~18x speedup for large universes)
-
-#   - More granular progress tracking
-
-# Set to False to use the legacy sequential training system (train all models for one ticker, then move to next)
-
-# ENABLED: Trains all models in parallel by model type for maximum efficiency
-
-USE_UNIFIED_PARALLEL_TRAINING = True
-
-
-
 # --- Backtest windows
 
 BACKTEST_DAYS           =   70   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
@@ -654,6 +633,8 @@ ENABLE_DUAL_MOMENTUM = True   # NEW - Dual Momentum (absolute + relative momentu
 
 ENABLE_TREND_FOLLOWING_ATR = True   # NEW - Trend Following with ATR Trailing Stop
 
+ENABLE_TREND_BREAKOUT = True   # NEW - Trend Breakout (same entry as Trend ATR but no ATR selling, uses smart_rebalance)
+
 ENABLE_ELITE_HYBRID = True   # NEW - Elite Hybrid (Mom-Vol 6M + 1Y/3M Ratio - combines top 2 most consistent strategies)
 
 ENABLE_ELITE_RISK = True   # NEW - Elite Risk (Risk-Adj Mom base + Elite Hybrid dip/vol bonuses)
@@ -697,6 +678,12 @@ ENABLE_UNIVERSAL_MODEL = True   # NEW - Universal Model (single ML model for all
 ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (not implemented)
 
 # --- Meta-Strategy Selectors (10 proposals for combining strategies) ---
+# Bollinger Bands Strategies
+ENABLE_BB_MEAN_REVERSION = True      # BB Mean Reversion (buy at lower band, sell at upper)
+ENABLE_BB_BREAKOUT = True            # BB Breakout (buy when price breaks above upper band with volume)
+ENABLE_BB_SQUEEZE_BREAKOUT = True    # BB Squeeze + Breakout (wait for squeeze, trade breakout)
+ENABLE_BB_RSI_COMBO = True           # BB + RSI Combo (buy at lower band AND RSI < 30)
+
 ENABLE_META_WEIGHTED_COMPOSITE = True   # Proposal 1: Weighted composite score
 ENABLE_META_TIERED_SELECTION = True     # Proposal 2: Tiered selection (filter + rank)
 ENABLE_META_ENSEMBLE_ALLOC = True       # Proposal 3: Ensemble allocation by consistency

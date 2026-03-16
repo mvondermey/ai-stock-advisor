@@ -35,7 +35,7 @@ from config import (
     CALENDAR_DAYS_PER_YEAR,
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
     ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_6M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M_SENTIMENT, ENABLE_RISK_ADJ_MOM_3M_MARKET_UP, ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS, ENABLE_VOL_SWEET_MOM, ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET, ENABLE_RISK_ADJ_MOM_1M, ENABLE_RISK_ADJ_MOM_1M_MONTHLY, ENABLE_AI_ELITE,
-    ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_ELITE_MARKET_UP, ENABLE_AI_REGIME, ENABLE_AI_REGIME_MONTHLY, ENABLE_UNIVERSAL_MODEL,
+    ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_ELITE_MARKET_UP, ENABLE_UNIVERSAL_MODEL,
     CONCENTRATED_3M_REBALANCE_DAYS,
     AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, AI_ELITE_INTRADAY_LOOKBACK
 )
@@ -124,9 +124,10 @@ from config import (
     RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER,
     OPTIMIZE_REBALANCE_HORIZON,
     TRAINING_NUM_PROCESSES,
-    ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_REGIME, ENABLE_UNIVERSAL_MODEL,
+    ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_UNIVERSAL_MODEL,
     AI_ELITE_FORCE_FRESH_TRAIN,
-    ENABLE_INVERSE_ETF_HEDGE,
+    ENABLE_INVERSE_ETF_HEDGE, ENABLE_AI_REGIME, ENABLE_AI_REGIME_MONTHLY,
+    ENABLE_AI_ELITE_MARKET_UP,
     ENABLE_ANALYST_RECOMMENDATION, ANALYST_LOOKBACK_DAYS, ANALYST_MIN_ACTIONS, ANALYST_REBALANCE_DAYS,
 )
 from scipy.stats import uniform, beta
@@ -413,9 +414,9 @@ def _smart_rebalance_portfolio(
                     elif ENABLE_STOP_LOSS:
                         strategy_stop_loss = STOP_LOSS_PCT  # Use global stop loss
                     else:
-                        strategy_stop_loss = 0.0
+                        strategy_stop_loss = None
                     
-                    if strategy_stop_loss > 0 and loss_pct <= -strategy_stop_loss:
+                    if strategy_stop_loss is not None and loss_pct <= -strategy_stop_loss:
                         # Stop loss triggered - always sell
                         should_sell = True
                         sell_reason = f"STOP LOSS {loss_pct:.1%} (threshold: {strategy_stop_loss:.1%})"
@@ -494,6 +495,7 @@ def _smart_rebalance_portfolio(
                             updated_positions[ticker] = {'shares': shares, 'entry_price': current_price}
                             final_stocks.append(ticker)
                             newly_bought.append(ticker)
+                            positions_changed = True  # Mark that positions changed
                         else:
                             print(f"   ❌ {strategy_name} Insufficient cash for {ticker}: need ${total_cost:,.0f}, have ${updated_cash:,.0f}")
     
@@ -1808,8 +1810,7 @@ def _run_portfolio_backtest_walk_forward(
     current_ai_regime_stocks = []
     ai_regime_transaction_costs = 0.0
     ai_regime_initialized = False
-    ai_regime_allocator = None  # Will be initialized on first use
-    ai_regime_current_strategy = 'risk_adj_mom_3m'  # Default strategy
+    ai_regime_allocator = None
 
     # AI REGIME MONTHLY: Initialize portfolio tracking (same as AI Regime but monthly rebalance)
     ai_regime_monthly_portfolio_value = initial_capital_needed
@@ -1819,8 +1820,7 @@ def _run_portfolio_backtest_walk_forward(
     current_ai_regime_monthly_stocks = []
     ai_regime_monthly_transaction_costs = 0.0
     ai_regime_monthly_initialized = False
-    ai_regime_monthly_allocator = None  # Will be initialized on first use
-    ai_regime_monthly_current_strategy = 'risk_adj_mom_3m'  # Default strategy
+    ai_regime_monthly_allocator = None
 
     # UNIVERSAL MODEL: Initialize portfolio tracking (single ML model for all tickers)
     universal_model_portfolio_value = initial_capital_needed
@@ -1831,66 +1831,6 @@ def _run_portfolio_backtest_walk_forward(
     universal_model_transaction_costs = 0.0
     universal_model_initialized = False
     universal_model_strategy = None  # Will be initialized on first use
-
-    # META-STRATEGY SELECTORS (10 proposals for combining strategies)
-    from config import (ENABLE_META_WEIGHTED_COMPOSITE, ENABLE_META_TIERED_SELECTION,
-                        ENABLE_META_ENSEMBLE_ALLOC, ENABLE_META_REGIME_BASED,
-                        ENABLE_META_RECENCY_WEIGHTED, ENABLE_META_EFFICIENCY_RATIO,
-                        ENABLE_META_MIN_VARIANCE, ENABLE_META_BAYESIAN,
-                        ENABLE_META_ADAPTIVE_CONVEX, ENABLE_META_CONSENSUS)
-    from meta_strategy_selector import MetaStrategyManager, calculate_meta_portfolio_value
-    
-    meta_strategy_manager = MetaStrategyManager(initial_capital_needed)
-    
-    # Proposal 1: Weighted Composite
-    meta_weighted_composite_value = initial_capital_needed
-    meta_weighted_composite_history = [meta_weighted_composite_value]
-    meta_weighted_composite_allocation = {}
-    
-    # Proposal 2: Tiered Selection
-    meta_tiered_selection_value = initial_capital_needed
-    meta_tiered_selection_history = [meta_tiered_selection_value]
-    meta_tiered_selection_allocation = {}
-    
-    # Proposal 3: Ensemble Allocation
-    meta_ensemble_alloc_value = initial_capital_needed
-    meta_ensemble_alloc_history = [meta_ensemble_alloc_value]
-    meta_ensemble_alloc_allocation = {}
-    
-    # Proposal 4: Regime-Based
-    meta_regime_based_value = initial_capital_needed
-    meta_regime_based_history = [meta_regime_based_value]
-    meta_regime_based_allocation = {}
-    
-    # Proposal 5: Recency-Weighted
-    meta_recency_weighted_value = initial_capital_needed
-    meta_recency_weighted_history = [meta_recency_weighted_value]
-    meta_recency_weighted_allocation = {}
-    
-    # Proposal 6: Efficiency Ratio
-    meta_efficiency_ratio_value = initial_capital_needed
-    meta_efficiency_ratio_history = [meta_efficiency_ratio_value]
-    meta_efficiency_ratio_allocation = {}
-    
-    # Proposal 7: Min Variance
-    meta_min_variance_value = initial_capital_needed
-    meta_min_variance_history = [meta_min_variance_value]
-    meta_min_variance_allocation = {}
-    
-    # Proposal 8: Bayesian
-    meta_bayesian_value = initial_capital_needed
-    meta_bayesian_history = [meta_bayesian_value]
-    meta_bayesian_allocation = {}
-    
-    # Proposal 9: Adaptive Convex
-    meta_adaptive_convex_value = initial_capital_needed
-    meta_adaptive_convex_history = [meta_adaptive_convex_value]
-    meta_adaptive_convex_allocation = {}
-    
-    # Proposal 10: Consensus
-    meta_consensus_value = initial_capital_needed
-    meta_consensus_history = [meta_consensus_value]
-    meta_consensus_allocation = {}
 
     # MEAN REVERSION: Initialize portfolio tracking
     mean_reversion_portfolio_value = initial_capital_needed
@@ -1944,6 +1884,166 @@ def _run_portfolio_backtest_walk_forward(
     inverse_etf_hedge_transaction_costs = 0.0
     inverse_etf_hedge_initialized = False
     inverse_etf_hedge_days_in_hedge = 0  # Track days in hedge for minimum hold period
+
+    # META-STRATEGY SELECTORS: Initialize with actual portfolio tracking
+    from config import (ENABLE_META_WEIGHTED_COMPOSITE, ENABLE_META_TIERED_SELECTION,
+                        ENABLE_META_ENSEMBLE_ALLOC, ENABLE_META_REGIME_BASED,
+                        ENABLE_META_RECENCY_WEIGHTED, ENABLE_META_EFFICIENCY_RATIO,
+                        ENABLE_META_MIN_VARIANCE, ENABLE_META_BAYESIAN,
+                        ENABLE_META_ADAPTIVE_CONVEX, ENABLE_META_CONSENSUS)
+    from meta_strategy_selector import MetaStrategyManager, calculate_meta_portfolio_value, select_meta_strategy_stocks
+    
+    meta_strategy_manager = MetaStrategyManager(initial_capital_needed)
+    
+    # Meta Weighted Composite - actual portfolio
+    meta_weighted_composite_value = initial_capital_needed
+    meta_weighted_composite_history = [meta_weighted_composite_value]
+    meta_weighted_composite_positions = {}
+    meta_weighted_composite_cash = initial_capital_needed
+    current_meta_weighted_composite_stocks = []
+    meta_weighted_composite_transaction_costs = 0.0
+    meta_weighted_composite_initialized = False
+    meta_weighted_composite_selected_strategy = ''
+    
+    # Meta Tiered Selection - actual portfolio
+    meta_tiered_selection_value = initial_capital_needed
+    meta_tiered_selection_history = [meta_tiered_selection_value]
+    meta_tiered_selection_positions = {}
+    meta_tiered_selection_cash = initial_capital_needed
+    current_meta_tiered_selection_stocks = []
+    meta_tiered_selection_transaction_costs = 0.0
+    meta_tiered_selection_initialized = False
+    meta_tiered_selection_selected_strategy = ''
+    
+    # Meta Ensemble Allocation - actual portfolio
+    meta_ensemble_alloc_value = initial_capital_needed
+    meta_ensemble_alloc_history = [meta_ensemble_alloc_value]
+    meta_ensemble_alloc_positions = {}
+    meta_ensemble_alloc_cash = initial_capital_needed
+    current_meta_ensemble_alloc_stocks = []
+    meta_ensemble_alloc_transaction_costs = 0.0
+    meta_ensemble_alloc_initialized = False
+    meta_ensemble_alloc_selected_strategy = ''
+    
+    # Meta Regime Based - actual portfolio
+    meta_regime_based_value = initial_capital_needed
+    meta_regime_based_history = [meta_regime_based_value]
+    meta_regime_based_positions = {}
+    meta_regime_based_cash = initial_capital_needed
+    current_meta_regime_based_stocks = []
+    meta_regime_based_transaction_costs = 0.0
+    meta_regime_based_initialized = False
+    meta_regime_based_selected_strategy = ''
+    
+    # Meta Recency Weighted - actual portfolio
+    meta_recency_weighted_value = initial_capital_needed
+    meta_recency_weighted_history = [meta_recency_weighted_value]
+    meta_recency_weighted_positions = {}
+    meta_recency_weighted_cash = initial_capital_needed
+    current_meta_recency_weighted_stocks = []
+    meta_recency_weighted_transaction_costs = 0.0
+    meta_recency_weighted_initialized = False
+    meta_recency_weighted_selected_strategy = ''
+    
+    # Meta Efficiency Ratio - actual portfolio
+    meta_efficiency_ratio_value = initial_capital_needed
+    meta_efficiency_ratio_history = [meta_efficiency_ratio_value]
+    meta_efficiency_ratio_positions = {}
+    meta_efficiency_ratio_cash = initial_capital_needed
+    current_meta_efficiency_ratio_stocks = []
+    meta_efficiency_ratio_transaction_costs = 0.0
+    meta_efficiency_ratio_initialized = False
+    meta_efficiency_ratio_selected_strategy = ''
+    
+    # Meta Min Variance - actual portfolio
+    meta_min_variance_value = initial_capital_needed
+    meta_min_variance_history = [meta_min_variance_value]
+    meta_min_variance_positions = {}
+    meta_min_variance_cash = initial_capital_needed
+    current_meta_min_variance_stocks = []
+    meta_min_variance_transaction_costs = 0.0
+    meta_min_variance_initialized = False
+    meta_min_variance_selected_strategy = ''
+    
+    # Meta Bayesian - actual portfolio
+    meta_bayesian_value = initial_capital_needed
+    meta_bayesian_history = [meta_bayesian_value]
+    meta_bayesian_positions = {}
+    meta_bayesian_cash = initial_capital_needed
+    current_meta_bayesian_stocks = []
+    meta_bayesian_transaction_costs = 0.0
+    meta_bayesian_initialized = False
+    meta_bayesian_selected_strategy = ''
+    
+    # Meta Adaptive Convex - actual portfolio
+    meta_adaptive_convex_value = initial_capital_needed
+    meta_adaptive_convex_history = [meta_adaptive_convex_value]
+    meta_adaptive_convex_positions = {}
+    meta_adaptive_convex_cash = initial_capital_needed
+    current_meta_adaptive_convex_stocks = []
+    meta_adaptive_convex_transaction_costs = 0.0
+    meta_adaptive_convex_initialized = False
+    meta_adaptive_convex_selected_strategy = ''
+    
+    # Meta Consensus - actual portfolio
+    meta_consensus_value = initial_capital_needed
+    meta_consensus_history = [meta_consensus_value]
+    meta_consensus_positions = {}
+    meta_consensus_cash = initial_capital_needed
+    current_meta_consensus_stocks = []
+    meta_consensus_transaction_costs = 0.0
+    meta_consensus_initialized = False
+    meta_consensus_selected_strategy = ''
+
+    # BOLLINGER BANDS STRATEGIES: Initialize with portfolio tracking
+    from config import (ENABLE_BB_MEAN_REVERSION, ENABLE_BB_BREAKOUT, 
+                        ENABLE_BB_SQUEEZE_BREAKOUT, ENABLE_BB_RSI_COMBO)
+    
+    # BB Mean Reversion
+    bb_mean_reversion_value = initial_capital_needed
+    bb_mean_reversion_history = [bb_mean_reversion_value]
+    bb_mean_reversion_positions = {}
+    bb_mean_reversion_cash = initial_capital_needed
+    current_bb_mean_reversion_stocks = []
+    bb_mean_reversion_transaction_costs = 0.0
+    bb_mean_reversion_initialized = False
+    
+    # BB Breakout
+    bb_breakout_value = initial_capital_needed
+    bb_breakout_history = [bb_breakout_value]
+    bb_breakout_positions = {}
+    bb_breakout_cash = initial_capital_needed
+    current_bb_breakout_stocks = []
+    bb_breakout_transaction_costs = 0.0
+    bb_breakout_initialized = False
+    
+    # BB Squeeze Breakout
+    bb_squeeze_breakout_value = initial_capital_needed
+    bb_squeeze_breakout_history = [bb_squeeze_breakout_value]
+    bb_squeeze_breakout_positions = {}
+    bb_squeeze_breakout_cash = initial_capital_needed
+    current_bb_squeeze_breakout_stocks = []
+    bb_squeeze_breakout_transaction_costs = 0.0
+    bb_squeeze_breakout_initialized = False
+    
+    # BB RSI Combo
+    bb_rsi_combo_value = initial_capital_needed
+    bb_rsi_combo_history = [bb_rsi_combo_value]
+    bb_rsi_combo_positions = {}
+    bb_rsi_combo_cash = initial_capital_needed
+    current_bb_rsi_combo_stocks = []
+    bb_rsi_combo_transaction_costs = 0.0
+    bb_rsi_combo_initialized = False
+
+    # TREND BREAKOUT: Initialize with portfolio tracking
+    from config import ENABLE_TREND_BREAKOUT
+    trend_breakout_value = initial_capital_needed
+    trend_breakout_history = [trend_breakout_value]
+    trend_breakout_positions = {}
+    trend_breakout_cash = initial_capital_needed
+    current_trend_breakout_stocks = []
+    trend_breakout_transaction_costs = 0.0
+    trend_breakout_initialized = False
 
     # Reset global transaction cost tracking variables for this backtest
     global static_bh_transaction_costs, static_bh_3m_transaction_costs, static_bh_6m_transaction_costs, static_bh_1m_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_transaction_costs
@@ -3798,24 +3898,27 @@ def _run_portfolio_backtest_walk_forward(
                                     if not price_data.empty:
                                         current_price = price_data['Close'].dropna().iloc[-1]
                                         if current_price > 0:
-                                            shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
+                                            # Use target allocation or remaining cash, whichever is smaller
+                                            max_buy = min(capital_per_stock, enhanced_volatility_cash / (1 + TRANSACTION_COST))
+                                            shares = int(max_buy / current_price)
                                             if shares > 0:
                                                 buy_value = shares * current_price
                                                 buy_cost = buy_value * TRANSACTION_COST
-                                                enhanced_volatility_cash -= (buy_value + buy_cost)
-                                                
-                                                # Set ATR-based stop loss (2x ATR) and take profit (3x ATR)
-                                                stop_loss = current_price - (2 * atr)
-                                                take_profit = current_price + (3 * atr)
-                                                
-                                                enhanced_volatility_positions[ticker] = {
-                                                    'shares': shares,
-                                                    'entry_price': current_price,
-                                                    'value': buy_value,
-                                                    'stop_loss': stop_loss,
-                                                    'take_profit': take_profit,
-                                                    'atr': atr
-                                                }
+                                                if enhanced_volatility_cash >= buy_value + buy_cost:
+                                                    enhanced_volatility_cash -= (buy_value + buy_cost)
+                                                    
+                                                    # Set ATR-based stop loss (2x ATR) and take profit (3x ATR)
+                                                    stop_loss = current_price - (2 * atr)
+                                                    take_profit = current_price + (3 * atr)
+                                                    
+                                                    enhanced_volatility_positions[ticker] = {
+                                                        'shares': shares,
+                                                        'entry_price': current_price,
+                                                        'value': buy_value,
+                                                        'stop_loss': stop_loss,
+                                                        'take_profit': take_profit,
+                                                        'atr': atr
+                                                    }
                                 except Exception:
                                     continue
                         
@@ -3966,22 +4069,23 @@ def _run_portfolio_backtest_walk_forward(
                                     if not price_data.empty:
                                         current_price = price_data['Close'].dropna().iloc[-1]
                                         if current_price > 0:
-                                            # Apply volatility cap
-                                            position_value = min(capital_per_stock, max_position_value)
-                                            shares = int(position_value / (current_price * (1 + TRANSACTION_COST)))
+                                            # Apply volatility cap and use remaining cash
+                                            position_value = min(capital_per_stock, max_position_value, ai_volatility_ensemble_cash / (1 + TRANSACTION_COST))
+                                            shares = int(position_value / current_price)
                                             if shares > 0:
                                                 buy_value = shares * current_price
                                                 buy_cost = buy_value * TRANSACTION_COST
-                                                ai_volatility_ensemble_cash -= (buy_value + buy_cost)
-                                                
-                                                ai_volatility_ensemble_positions[ticker] = {
-                                                    'shares': shares,
-                                                    'entry_price': current_price,
-                                                    'value': buy_value,
-                                                    'ai_score': ai_score,
-                                                    'volatility': vol,
-                                                    'momentum': momentum
-                                                }
+                                                if ai_volatility_ensemble_cash >= buy_value + buy_cost:
+                                                    ai_volatility_ensemble_cash -= (buy_value + buy_cost)
+                                                    
+                                                    ai_volatility_ensemble_positions[ticker] = {
+                                                        'shares': shares,
+                                                        'entry_price': current_price,
+                                                        'value': buy_value,
+                                                        'ai_score': ai_score,
+                                                        'volatility': vol,
+                                                        'momentum': momentum
+                                                    }
                                 except Exception:
                                     continue
                         
@@ -4067,13 +4171,16 @@ def _run_portfolio_backtest_walk_forward(
                                 if not price_data.empty:
                                     current_price = price_data['Close'].dropna().iloc[-1]
                                     if current_price > 0:
-                                        shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
-                                        if shares > 0 and mom_accel_cash >= shares * current_price * (1 + TRANSACTION_COST):
+                                        # Use target allocation or remaining cash, whichever is smaller
+                                        max_buy = min(capital_per_stock, mom_accel_cash / (1 + TRANSACTION_COST))
+                                        shares = int(max_buy / current_price)
+                                        if shares > 0:
                                             buy_value = shares * current_price
                                             buy_cost = buy_value * TRANSACTION_COST
-                                            mom_accel_transaction_costs += buy_cost
-                                            mom_accel_cash -= (buy_value + buy_cost)
-                                            mom_accel_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
+                                            if mom_accel_cash >= buy_value + buy_cost:
+                                                mom_accel_transaction_costs += buy_cost
+                                                mom_accel_cash -= (buy_value + buy_cost)
+                                                mom_accel_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
                     
                     old_stocks = current_mom_accel_stocks.copy()
                     current_mom_accel_stocks = new_mom_accel_stocks
@@ -4212,13 +4319,16 @@ def _run_portfolio_backtest_walk_forward(
                                     if not price_data.empty:
                                         current_price = price_data['Close'].dropna().iloc[-1]
                                         if current_price > 0:
-                                            shares = int(capital_per_stock / (current_price * (1 + TRANSACTION_COST)))
-                                            if shares > 0 and trend_atr_cash >= shares * current_price * (1 + TRANSACTION_COST):
+                                            # Use target allocation or remaining cash, whichever is smaller
+                                            max_buy = min(capital_per_stock, trend_atr_cash / (1 + TRANSACTION_COST))
+                                            shares = int(max_buy / current_price)
+                                            if shares > 0:
                                                 buy_value = shares * current_price
                                                 buy_cost = buy_value * TRANSACTION_COST
-                                                trend_atr_transaction_costs += buy_cost
-                                                trend_atr_cash -= (buy_value + buy_cost)
-                                                trend_atr_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
+                                                if trend_atr_cash >= buy_value + buy_cost:
+                                                    trend_atr_transaction_costs += buy_cost
+                                                    trend_atr_cash -= (buy_value + buy_cost)
+                                                    trend_atr_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
                 
                 old_stocks = current_trend_atr_stocks.copy()
                 current_trend_atr_stocks = list(trend_atr_positions.keys())
@@ -5085,66 +5195,381 @@ def _run_portfolio_backtest_walk_forward(
         # Get selections from all 10 meta-strategies
         meta_selections = meta_strategy_manager.get_all_selections()
         
-        # Update each meta-strategy portfolio value
+        # META WEIGHTED COMPOSITE: Select actual stocks based on chosen sub-strategy
         if ENABLE_META_WEIGHTED_COMPOSITE:
-            _, meta_weighted_composite_allocation = meta_selections['meta_weighted_composite']
-            meta_weighted_composite_value = calculate_meta_portfolio_value(
-                meta_weighted_composite_allocation, meta_strategy_values, initial_capital_needed)
-            meta_weighted_composite_history.append(meta_weighted_composite_value)
+            try:
+                selected_strategy, _ = meta_selections['meta_weighted_composite']
+                if selected_strategy and selected_strategy != meta_weighted_composite_selected_strategy:
+                    meta_weighted_composite_selected_strategy = selected_strategy
+                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
+                    if new_stocks:
+                        meta_weighted_composite_positions, meta_weighted_composite_cash, current_meta_weighted_composite_stocks, rc, _ = _smart_rebalance_portfolio(
+                            strategy_name=f"Meta Weighted ({selected_strategy[:8]})",
+                            current_stocks=current_meta_weighted_composite_stocks,
+                            new_stocks=new_stocks,
+                            positions=meta_weighted_composite_positions,
+                            cash=meta_weighted_composite_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not meta_weighted_composite_initialized
+                        )
+                        meta_weighted_composite_transaction_costs += rc
+                        meta_weighted_composite_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ Meta Weighted error: {e}")
         
+        # META TIERED SELECTION: Select actual stocks
         if ENABLE_META_TIERED_SELECTION:
-            _, meta_tiered_selection_allocation = meta_selections['meta_tiered_selection']
-            meta_tiered_selection_value = calculate_meta_portfolio_value(
-                meta_tiered_selection_allocation, meta_strategy_values, initial_capital_needed)
-            meta_tiered_selection_history.append(meta_tiered_selection_value)
+            try:
+                selected_strategy, _ = meta_selections['meta_tiered_selection']
+                if selected_strategy and selected_strategy != meta_tiered_selection_selected_strategy:
+                    meta_tiered_selection_selected_strategy = selected_strategy
+                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
+                    if new_stocks:
+                        meta_tiered_selection_positions, meta_tiered_selection_cash, current_meta_tiered_selection_stocks, rc, _ = _smart_rebalance_portfolio(
+                            strategy_name=f"Meta Tiered ({selected_strategy[:8]})",
+                            current_stocks=current_meta_tiered_selection_stocks,
+                            new_stocks=new_stocks,
+                            positions=meta_tiered_selection_positions,
+                            cash=meta_tiered_selection_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not meta_tiered_selection_initialized
+                        )
+                        meta_tiered_selection_transaction_costs += rc
+                        meta_tiered_selection_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ Meta Tiered error: {e}")
         
+        # META ENSEMBLE ALLOC: Select actual stocks
         if ENABLE_META_ENSEMBLE_ALLOC:
-            _, meta_ensemble_alloc_allocation = meta_selections['meta_ensemble_alloc']
-            meta_ensemble_alloc_value = calculate_meta_portfolio_value(
-                meta_ensemble_alloc_allocation, meta_strategy_values, initial_capital_needed)
-            meta_ensemble_alloc_history.append(meta_ensemble_alloc_value)
+            try:
+                selected_strategy, _ = meta_selections['meta_ensemble_alloc']
+                if selected_strategy and selected_strategy != meta_ensemble_alloc_selected_strategy:
+                    meta_ensemble_alloc_selected_strategy = selected_strategy
+                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
+                    if new_stocks:
+                        meta_ensemble_alloc_positions, meta_ensemble_alloc_cash, current_meta_ensemble_alloc_stocks, rc, _ = _smart_rebalance_portfolio(
+                            strategy_name=f"Meta Ensemble ({selected_strategy[:8]})",
+                            current_stocks=current_meta_ensemble_alloc_stocks,
+                            new_stocks=new_stocks,
+                            positions=meta_ensemble_alloc_positions,
+                            cash=meta_ensemble_alloc_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not meta_ensemble_alloc_initialized
+                        )
+                        meta_ensemble_alloc_transaction_costs += rc
+                        meta_ensemble_alloc_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ Meta Ensemble error: {e}")
         
+        # META REGIME BASED: Select actual stocks
         if ENABLE_META_REGIME_BASED:
-            _, meta_regime_based_allocation = meta_selections['meta_regime_based']
-            meta_regime_based_value = calculate_meta_portfolio_value(
-                meta_regime_based_allocation, meta_strategy_values, initial_capital_needed)
-            meta_regime_based_history.append(meta_regime_based_value)
+            try:
+                selected_strategy, _ = meta_selections['meta_regime_based']
+                if selected_strategy and selected_strategy != meta_regime_based_selected_strategy:
+                    meta_regime_based_selected_strategy = selected_strategy
+                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
+                    if new_stocks:
+                        meta_regime_based_positions, meta_regime_based_cash, current_meta_regime_based_stocks, rc, _ = _smart_rebalance_portfolio(
+                            strategy_name=f"Meta Regime ({selected_strategy[:8]})",
+                            current_stocks=current_meta_regime_based_stocks,
+                            new_stocks=new_stocks,
+                            positions=meta_regime_based_positions,
+                            cash=meta_regime_based_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not meta_regime_based_initialized
+                        )
+                        meta_regime_based_transaction_costs += rc
+                        meta_regime_based_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ Meta Regime error: {e}")
         
+        # META RECENCY WEIGHTED: Select actual stocks
         if ENABLE_META_RECENCY_WEIGHTED:
-            _, meta_recency_weighted_allocation = meta_selections['meta_recency_weighted']
-            meta_recency_weighted_value = calculate_meta_portfolio_value(
-                meta_recency_weighted_allocation, meta_strategy_values, initial_capital_needed)
-            meta_recency_weighted_history.append(meta_recency_weighted_value)
+            try:
+                selected_strategy, _ = meta_selections['meta_recency_weighted']
+                if selected_strategy and selected_strategy != meta_recency_weighted_selected_strategy:
+                    meta_recency_weighted_selected_strategy = selected_strategy
+                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
+                    if new_stocks:
+                        meta_recency_weighted_positions, meta_recency_weighted_cash, current_meta_recency_weighted_stocks, rc, _ = _smart_rebalance_portfolio(
+                            strategy_name=f"Meta Recency ({selected_strategy[:8]})",
+                            current_stocks=current_meta_recency_weighted_stocks,
+                            new_stocks=new_stocks,
+                            positions=meta_recency_weighted_positions,
+                            cash=meta_recency_weighted_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not meta_recency_weighted_initialized
+                        )
+                        meta_recency_weighted_transaction_costs += rc
+                        meta_recency_weighted_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ Meta Recency error: {e}")
         
+        # META EFFICIENCY RATIO: Select actual stocks
         if ENABLE_META_EFFICIENCY_RATIO:
-            _, meta_efficiency_ratio_allocation = meta_selections['meta_efficiency_ratio']
-            meta_efficiency_ratio_value = calculate_meta_portfolio_value(
-                meta_efficiency_ratio_allocation, meta_strategy_values, initial_capital_needed)
-            meta_efficiency_ratio_history.append(meta_efficiency_ratio_value)
+            try:
+                selected_strategy, _ = meta_selections['meta_efficiency_ratio']
+                if selected_strategy and selected_strategy != meta_efficiency_ratio_selected_strategy:
+                    meta_efficiency_ratio_selected_strategy = selected_strategy
+                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
+                    if new_stocks:
+                        meta_efficiency_ratio_positions, meta_efficiency_ratio_cash, current_meta_efficiency_ratio_stocks, rc, _ = _smart_rebalance_portfolio(
+                            strategy_name=f"Meta Efficiency ({selected_strategy[:8]})",
+                            current_stocks=current_meta_efficiency_ratio_stocks,
+                            new_stocks=new_stocks,
+                            positions=meta_efficiency_ratio_positions,
+                            cash=meta_efficiency_ratio_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not meta_efficiency_ratio_initialized
+                        )
+                        meta_efficiency_ratio_transaction_costs += rc
+                        meta_efficiency_ratio_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ Meta Efficiency error: {e}")
         
+        # META MIN VARIANCE: Select actual stocks
         if ENABLE_META_MIN_VARIANCE:
-            _, meta_min_variance_allocation = meta_selections['meta_min_variance']
-            meta_min_variance_value = calculate_meta_portfolio_value(
-                meta_min_variance_allocation, meta_strategy_values, initial_capital_needed)
-            meta_min_variance_history.append(meta_min_variance_value)
+            try:
+                selected_strategy, _ = meta_selections['meta_min_variance']
+                if selected_strategy and selected_strategy != meta_min_variance_selected_strategy:
+                    meta_min_variance_selected_strategy = selected_strategy
+                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
+                    if new_stocks:
+                        meta_min_variance_positions, meta_min_variance_cash, current_meta_min_variance_stocks, rc, _ = _smart_rebalance_portfolio(
+                            strategy_name=f"Meta MinVar ({selected_strategy[:8]})",
+                            current_stocks=current_meta_min_variance_stocks,
+                            new_stocks=new_stocks,
+                            positions=meta_min_variance_positions,
+                            cash=meta_min_variance_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not meta_min_variance_initialized
+                        )
+                        meta_min_variance_transaction_costs += rc
+                        meta_min_variance_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ Meta MinVar error: {e}")
         
+        # META BAYESIAN: Select actual stocks
         if ENABLE_META_BAYESIAN:
-            _, meta_bayesian_allocation = meta_selections['meta_bayesian']
-            meta_bayesian_value = calculate_meta_portfolio_value(
-                meta_bayesian_allocation, meta_strategy_values, initial_capital_needed)
-            meta_bayesian_history.append(meta_bayesian_value)
+            try:
+                selected_strategy, _ = meta_selections['meta_bayesian']
+                if selected_strategy and selected_strategy != meta_bayesian_selected_strategy:
+                    meta_bayesian_selected_strategy = selected_strategy
+                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
+                    if new_stocks:
+                        meta_bayesian_positions, meta_bayesian_cash, current_meta_bayesian_stocks, rc, _ = _smart_rebalance_portfolio(
+                            strategy_name=f"Meta Bayesian ({selected_strategy[:8]})",
+                            current_stocks=current_meta_bayesian_stocks,
+                            new_stocks=new_stocks,
+                            positions=meta_bayesian_positions,
+                            cash=meta_bayesian_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not meta_bayesian_initialized
+                        )
+                        meta_bayesian_transaction_costs += rc
+                        meta_bayesian_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ Meta Bayesian error: {e}")
         
+        # META ADAPTIVE CONVEX: Select actual stocks
         if ENABLE_META_ADAPTIVE_CONVEX:
-            _, meta_adaptive_convex_allocation = meta_selections['meta_adaptive_convex']
-            meta_adaptive_convex_value = calculate_meta_portfolio_value(
-                meta_adaptive_convex_allocation, meta_strategy_values, initial_capital_needed)
-            meta_adaptive_convex_history.append(meta_adaptive_convex_value)
+            try:
+                selected_strategy, _ = meta_selections['meta_adaptive_convex']
+                if selected_strategy and selected_strategy != meta_adaptive_convex_selected_strategy:
+                    meta_adaptive_convex_selected_strategy = selected_strategy
+                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
+                    if new_stocks:
+                        meta_adaptive_convex_positions, meta_adaptive_convex_cash, current_meta_adaptive_convex_stocks, rc, _ = _smart_rebalance_portfolio(
+                            strategy_name=f"Meta Adaptive ({selected_strategy[:8]})",
+                            current_stocks=current_meta_adaptive_convex_stocks,
+                            new_stocks=new_stocks,
+                            positions=meta_adaptive_convex_positions,
+                            cash=meta_adaptive_convex_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not meta_adaptive_convex_initialized
+                        )
+                        meta_adaptive_convex_transaction_costs += rc
+                        meta_adaptive_convex_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ Meta Adaptive error: {e}")
         
+        # META CONSENSUS: Select actual stocks
         if ENABLE_META_CONSENSUS:
-            _, meta_consensus_allocation = meta_selections['meta_consensus']
-            meta_consensus_value = calculate_meta_portfolio_value(
-                meta_consensus_allocation, meta_strategy_values, initial_capital_needed)
-            meta_consensus_history.append(meta_consensus_value)
+            try:
+                selected_strategy, _ = meta_selections['meta_consensus']
+                if selected_strategy and selected_strategy != meta_consensus_selected_strategy:
+                    meta_consensus_selected_strategy = selected_strategy
+                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
+                    if new_stocks:
+                        meta_consensus_positions, meta_consensus_cash, current_meta_consensus_stocks, rc, _ = _smart_rebalance_portfolio(
+                            strategy_name=f"Meta Consensus ({selected_strategy[:8]})",
+                            current_stocks=current_meta_consensus_stocks,
+                            new_stocks=new_stocks,
+                            positions=meta_consensus_positions,
+                            cash=meta_consensus_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not meta_consensus_initialized
+                        )
+                        meta_consensus_transaction_costs += rc
+                        meta_consensus_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ Meta Consensus error: {e}")
+
+        # BOLLINGER BANDS STRATEGIES
+        # BB Mean Reversion
+        if ENABLE_BB_MEAN_REVERSION:
+            try:
+                from bollinger_bands_strategy import select_bb_mean_reversion_stocks
+                new_bb_mean_reversion_stocks = select_bb_mean_reversion_stocks(
+                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                )
+                if new_bb_mean_reversion_stocks:
+                    bb_mean_reversion_positions, bb_mean_reversion_cash, current_bb_mean_reversion_stocks, rc, _ = _smart_rebalance_portfolio(
+                        strategy_name="BB Mean Reversion",
+                        current_stocks=current_bb_mean_reversion_stocks,
+                        new_stocks=new_bb_mean_reversion_stocks,
+                        positions=bb_mean_reversion_positions,
+                        cash=bb_mean_reversion_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not bb_mean_reversion_initialized
+                    )
+                    bb_mean_reversion_transaction_costs += rc
+                    bb_mean_reversion_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ BB Mean Reversion error: {e}")
+        
+        # BB Breakout
+        if ENABLE_BB_BREAKOUT:
+            try:
+                from bollinger_bands_strategy import select_bb_breakout_stocks
+                new_bb_breakout_stocks = select_bb_breakout_stocks(
+                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                )
+                if new_bb_breakout_stocks:
+                    bb_breakout_positions, bb_breakout_cash, current_bb_breakout_stocks, rc, _ = _smart_rebalance_portfolio(
+                        strategy_name="BB Breakout",
+                        current_stocks=current_bb_breakout_stocks,
+                        new_stocks=new_bb_breakout_stocks,
+                        positions=bb_breakout_positions,
+                        cash=bb_breakout_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not bb_breakout_initialized
+                    )
+                    bb_breakout_transaction_costs += rc
+                    bb_breakout_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ BB Breakout error: {e}")
+        
+        # BB Squeeze Breakout
+        if ENABLE_BB_SQUEEZE_BREAKOUT:
+            try:
+                from bollinger_bands_strategy import select_bb_squeeze_breakout_stocks
+                new_bb_squeeze_breakout_stocks = select_bb_squeeze_breakout_stocks(
+                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                )
+                if new_bb_squeeze_breakout_stocks:
+                    bb_squeeze_breakout_positions, bb_squeeze_breakout_cash, current_bb_squeeze_breakout_stocks, rc, _ = _smart_rebalance_portfolio(
+                        strategy_name="BB Squeeze Breakout",
+                        current_stocks=current_bb_squeeze_breakout_stocks,
+                        new_stocks=new_bb_squeeze_breakout_stocks,
+                        positions=bb_squeeze_breakout_positions,
+                        cash=bb_squeeze_breakout_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not bb_squeeze_breakout_initialized
+                    )
+                    bb_squeeze_breakout_transaction_costs += rc
+                    bb_squeeze_breakout_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ BB Squeeze Breakout error: {e}")
+        
+        # BB RSI Combo
+        if ENABLE_BB_RSI_COMBO:
+            try:
+                from bollinger_bands_strategy import select_bb_rsi_combo_stocks
+                new_bb_rsi_combo_stocks = select_bb_rsi_combo_stocks(
+                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                )
+                if new_bb_rsi_combo_stocks:
+                    bb_rsi_combo_positions, bb_rsi_combo_cash, current_bb_rsi_combo_stocks, rc, _ = _smart_rebalance_portfolio(
+                        strategy_name="BB RSI Combo",
+                        current_stocks=current_bb_rsi_combo_stocks,
+                        new_stocks=new_bb_rsi_combo_stocks,
+                        positions=bb_rsi_combo_positions,
+                        cash=bb_rsi_combo_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not bb_rsi_combo_initialized
+                    )
+                    bb_rsi_combo_transaction_costs += rc
+                    bb_rsi_combo_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ BB RSI Combo error: {e}")
+
+        # TREND BREAKOUT (no ATR selling, uses smart_rebalance)
+        if ENABLE_TREND_BREAKOUT:
+            try:
+                from new_strategies import select_trend_breakout_stocks
+                new_trend_breakout_stocks = select_trend_breakout_stocks(
+                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                )
+                if new_trend_breakout_stocks:
+                    trend_breakout_positions, trend_breakout_cash, current_trend_breakout_stocks, rc, _ = _smart_rebalance_portfolio(
+                        strategy_name="Trend Breakout",
+                        current_stocks=current_trend_breakout_stocks,
+                        new_stocks=new_trend_breakout_stocks,
+                        positions=trend_breakout_positions,
+                        cash=trend_breakout_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not trend_breakout_initialized
+                    )
+                    trend_breakout_transaction_costs += rc
+                    trend_breakout_initialized = True
+            except Exception as e:
+                print(f"   ⚠️ Trend Breakout error: {e}")
 
         # Update DYNAMIC BH 1Y portfolio value daily (skip if disabled)
         dynamic_bh_invested_value = 0.0
@@ -6377,6 +6802,90 @@ def _run_portfolio_backtest_walk_forward(
         universal_model_portfolio_value = universal_model_invested_value + universal_model_cash
         universal_model_portfolio_history.append(universal_model_portfolio_value)
 
+        # Update META STRATEGIES portfolio values daily
+        def _update_meta_portfolio(positions, cash):
+            """Helper to update meta strategy portfolio value."""
+            invested = 0.0
+            for ticker in list(positions.keys()):
+                try:
+                    td = ticker_data_grouped.get(ticker)
+                    if td is not None and not td.empty:
+                        price_data = td.loc[:current_date]
+                        if not price_data.empty:
+                            valid_prices = price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if current_price > 0:
+                                    positions[ticker]['value'] = positions[ticker]['shares'] * current_price
+                                    invested += positions[ticker]['value']
+                                    continue
+                    invested += positions[ticker].get('value', 0.0)
+                except Exception:
+                    invested += positions[ticker].get('value', 0.0)
+            return invested + cash
+        
+        if ENABLE_META_WEIGHTED_COMPOSITE:
+            meta_weighted_composite_value = _update_meta_portfolio(meta_weighted_composite_positions, meta_weighted_composite_cash)
+            meta_weighted_composite_history.append(meta_weighted_composite_value)
+        
+        if ENABLE_META_TIERED_SELECTION:
+            meta_tiered_selection_value = _update_meta_portfolio(meta_tiered_selection_positions, meta_tiered_selection_cash)
+            meta_tiered_selection_history.append(meta_tiered_selection_value)
+        
+        if ENABLE_META_ENSEMBLE_ALLOC:
+            meta_ensemble_alloc_value = _update_meta_portfolio(meta_ensemble_alloc_positions, meta_ensemble_alloc_cash)
+            meta_ensemble_alloc_history.append(meta_ensemble_alloc_value)
+        
+        if ENABLE_META_REGIME_BASED:
+            meta_regime_based_value = _update_meta_portfolio(meta_regime_based_positions, meta_regime_based_cash)
+            meta_regime_based_history.append(meta_regime_based_value)
+        
+        if ENABLE_META_RECENCY_WEIGHTED:
+            meta_recency_weighted_value = _update_meta_portfolio(meta_recency_weighted_positions, meta_recency_weighted_cash)
+            meta_recency_weighted_history.append(meta_recency_weighted_value)
+        
+        if ENABLE_META_EFFICIENCY_RATIO:
+            meta_efficiency_ratio_value = _update_meta_portfolio(meta_efficiency_ratio_positions, meta_efficiency_ratio_cash)
+            meta_efficiency_ratio_history.append(meta_efficiency_ratio_value)
+        
+        if ENABLE_META_MIN_VARIANCE:
+            meta_min_variance_value = _update_meta_portfolio(meta_min_variance_positions, meta_min_variance_cash)
+            meta_min_variance_history.append(meta_min_variance_value)
+        
+        if ENABLE_META_BAYESIAN:
+            meta_bayesian_value = _update_meta_portfolio(meta_bayesian_positions, meta_bayesian_cash)
+            meta_bayesian_history.append(meta_bayesian_value)
+        
+        if ENABLE_META_ADAPTIVE_CONVEX:
+            meta_adaptive_convex_value = _update_meta_portfolio(meta_adaptive_convex_positions, meta_adaptive_convex_cash)
+            meta_adaptive_convex_history.append(meta_adaptive_convex_value)
+        
+        if ENABLE_META_CONSENSUS:
+            meta_consensus_value = _update_meta_portfolio(meta_consensus_positions, meta_consensus_cash)
+            meta_consensus_history.append(meta_consensus_value)
+
+        # Update BOLLINGER BANDS strategy portfolio values daily
+        if ENABLE_BB_MEAN_REVERSION:
+            bb_mean_reversion_value = _update_meta_portfolio(bb_mean_reversion_positions, bb_mean_reversion_cash)
+            bb_mean_reversion_history.append(bb_mean_reversion_value)
+        
+        if ENABLE_BB_BREAKOUT:
+            bb_breakout_value = _update_meta_portfolio(bb_breakout_positions, bb_breakout_cash)
+            bb_breakout_history.append(bb_breakout_value)
+        
+        if ENABLE_BB_SQUEEZE_BREAKOUT:
+            bb_squeeze_breakout_value = _update_meta_portfolio(bb_squeeze_breakout_positions, bb_squeeze_breakout_cash)
+            bb_squeeze_breakout_history.append(bb_squeeze_breakout_value)
+        
+        if ENABLE_BB_RSI_COMBO:
+            bb_rsi_combo_value = _update_meta_portfolio(bb_rsi_combo_positions, bb_rsi_combo_cash)
+            bb_rsi_combo_history.append(bb_rsi_combo_value)
+
+        # Update TREND BREAKOUT portfolio value daily
+        if ENABLE_TREND_BREAKOUT:
+            trend_breakout_value = _update_meta_portfolio(trend_breakout_positions, trend_breakout_cash)
+            trend_breakout_history.append(trend_breakout_value)
+
         # Update MEAN REVERSION portfolio value daily (skip if disabled)
         mean_reversion_invested_value = 0.0
         if ENABLE_MEAN_REVERSION:
@@ -6835,6 +7344,12 @@ def _run_portfolio_backtest_walk_forward(
                 ("Meta Bayesian", meta_bayesian_value if ENABLE_META_BAYESIAN else None),
                 ("Meta Adaptive", meta_adaptive_convex_value if ENABLE_META_ADAPTIVE_CONVEX else None),
                 ("Meta Consensus", meta_consensus_value if ENABLE_META_CONSENSUS else None),
+                # Bollinger Bands Strategies
+                ("BB Mean Rev", bb_mean_reversion_value if ENABLE_BB_MEAN_REVERSION else None),
+                ("BB Breakout", bb_breakout_value if ENABLE_BB_BREAKOUT else None),
+                ("BB Squeeze", bb_squeeze_breakout_value if ENABLE_BB_SQUEEZE_BREAKOUT else None),
+                ("BB RSI Combo", bb_rsi_combo_value if ENABLE_BB_RSI_COMBO else None),
+                ("Trend Breakout", trend_breakout_value if ENABLE_TREND_BREAKOUT else None),
             ]
             
             # Filter out None values and sort by performance
@@ -7119,6 +7634,66 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = analyst_rec_cash
                     num_positions = len(analyst_rec_positions)
                     invested = value - strat_cash
+                elif name == "Meta Weighted" and ENABLE_META_WEIGHTED_COMPOSITE:
+                    strat_cash = meta_weighted_composite_cash
+                    num_positions = len(meta_weighted_composite_positions)
+                    invested = value - strat_cash
+                elif name == "Meta Tiered" and ENABLE_META_TIERED_SELECTION:
+                    strat_cash = meta_tiered_selection_cash
+                    num_positions = len(meta_tiered_selection_positions)
+                    invested = value - strat_cash
+                elif name == "Meta Ensemble" and ENABLE_META_ENSEMBLE_ALLOC:
+                    strat_cash = meta_ensemble_alloc_cash
+                    num_positions = len(meta_ensemble_alloc_positions)
+                    invested = value - strat_cash
+                elif name == "Meta Regime" and ENABLE_META_REGIME_BASED:
+                    strat_cash = meta_regime_based_cash
+                    num_positions = len(meta_regime_based_positions)
+                    invested = value - strat_cash
+                elif name == "Meta Recency" and ENABLE_META_RECENCY_WEIGHTED:
+                    strat_cash = meta_recency_weighted_cash
+                    num_positions = len(meta_recency_weighted_positions)
+                    invested = value - strat_cash
+                elif name == "Meta Efficiency" and ENABLE_META_EFFICIENCY_RATIO:
+                    strat_cash = meta_efficiency_ratio_cash
+                    num_positions = len(meta_efficiency_ratio_positions)
+                    invested = value - strat_cash
+                elif name == "Meta MinVar" and ENABLE_META_MIN_VARIANCE:
+                    strat_cash = meta_min_variance_cash
+                    num_positions = len(meta_min_variance_positions)
+                    invested = value - strat_cash
+                elif name == "Meta Bayesian" and ENABLE_META_BAYESIAN:
+                    strat_cash = meta_bayesian_cash
+                    num_positions = len(meta_bayesian_positions)
+                    invested = value - strat_cash
+                elif name == "Meta Adaptive" and ENABLE_META_ADAPTIVE_CONVEX:
+                    strat_cash = meta_adaptive_convex_cash
+                    num_positions = len(meta_adaptive_convex_positions)
+                    invested = value - strat_cash
+                elif name == "Meta Consensus" and ENABLE_META_CONSENSUS:
+                    strat_cash = meta_consensus_cash
+                    num_positions = len(meta_consensus_positions)
+                    invested = value - strat_cash
+                elif name == "BB Mean Rev" and ENABLE_BB_MEAN_REVERSION:
+                    strat_cash = bb_mean_reversion_cash
+                    num_positions = len(bb_mean_reversion_positions)
+                    invested = value - strat_cash
+                elif name == "BB Breakout" and ENABLE_BB_BREAKOUT:
+                    strat_cash = bb_breakout_cash
+                    num_positions = len(bb_breakout_positions)
+                    invested = value - strat_cash
+                elif name == "BB Squeeze" and ENABLE_BB_SQUEEZE_BREAKOUT:
+                    strat_cash = bb_squeeze_breakout_cash
+                    num_positions = len(bb_squeeze_breakout_positions)
+                    invested = value - strat_cash
+                elif name == "BB RSI Combo" and ENABLE_BB_RSI_COMBO:
+                    strat_cash = bb_rsi_combo_cash
+                    num_positions = len(bb_rsi_combo_positions)
+                    invested = value - strat_cash
+                elif name == "Trend Breakout" and ENABLE_TREND_BREAKOUT:
+                    strat_cash = trend_breakout_cash
+                    num_positions = len(trend_breakout_positions)
+                    invested = value - strat_cash
                 
                 strategy_details.append((name, value, strat_cash, num_positions, invested))
             
@@ -7198,6 +7773,12 @@ def _run_portfolio_backtest_walk_forward(
                 ("Meta Bayesian", meta_bayesian_history) if ENABLE_META_BAYESIAN else None,
                 ("Meta Adaptive", meta_adaptive_convex_history) if ENABLE_META_ADAPTIVE_CONVEX else None,
                 ("Meta Consensus", meta_consensus_history) if ENABLE_META_CONSENSUS else None,
+                # Bollinger Bands Strategies
+                ("BB Mean Rev", bb_mean_reversion_history) if ENABLE_BB_MEAN_REVERSION else None,
+                ("BB Breakout", bb_breakout_history) if ENABLE_BB_BREAKOUT else None,
+                ("BB Squeeze", bb_squeeze_breakout_history) if ENABLE_BB_SQUEEZE_BREAKOUT else None,
+                ("BB RSI Combo", bb_rsi_combo_history) if ENABLE_BB_RSI_COMBO else None,
+                ("Trend Breakout", trend_breakout_history) if ENABLE_TREND_BREAKOUT else None,
             ]
             strategy_to_history = {pair[0]: pair[1] for pair in strategy_history_pairs if pair is not None and pair[1] is not None}
             
@@ -7489,17 +8070,23 @@ def _run_portfolio_backtest_walk_forward(
             'bh_6m_monthly':            _strat(static_bh_6m_monthly_portfolio_value, static_bh_6m_monthly_portfolio_history, static_bh_6m_monthly_transaction_costs, static_bh_6m_monthly_cash),
             'bh_3m_monthly':            _strat(static_bh_3m_monthly_portfolio_value, static_bh_3m_monthly_portfolio_history, static_bh_3m_monthly_transaction_costs, static_bh_3m_monthly_cash),
             'bh_1m_monthly':            _strat(static_bh_1m_monthly_portfolio_value, static_bh_1m_monthly_portfolio_history, static_bh_1m_monthly_transaction_costs, static_bh_1m_monthly_cash),
-            # Meta-Strategy Selectors (10 proposals)
-            'meta_weighted_composite':  _strat(meta_weighted_composite_value, meta_weighted_composite_history, 0.0, 0.0) if ENABLE_META_WEIGHTED_COMPOSITE else _strat(0, [], 0, 0),
-            'meta_tiered_selection':    _strat(meta_tiered_selection_value, meta_tiered_selection_history, 0.0, 0.0) if ENABLE_META_TIERED_SELECTION else _strat(0, [], 0, 0),
-            'meta_ensemble_alloc':      _strat(meta_ensemble_alloc_value, meta_ensemble_alloc_history, 0.0, 0.0) if ENABLE_META_ENSEMBLE_ALLOC else _strat(0, [], 0, 0),
-            'meta_regime_based':        _strat(meta_regime_based_value, meta_regime_based_history, 0.0, 0.0) if ENABLE_META_REGIME_BASED else _strat(0, [], 0, 0),
-            'meta_recency_weighted':    _strat(meta_recency_weighted_value, meta_recency_weighted_history, 0.0, 0.0) if ENABLE_META_RECENCY_WEIGHTED else _strat(0, [], 0, 0),
-            'meta_efficiency_ratio':    _strat(meta_efficiency_ratio_value, meta_efficiency_ratio_history, 0.0, 0.0) if ENABLE_META_EFFICIENCY_RATIO else _strat(0, [], 0, 0),
-            'meta_min_variance':        _strat(meta_min_variance_value, meta_min_variance_history, 0.0, 0.0) if ENABLE_META_MIN_VARIANCE else _strat(0, [], 0, 0),
-            'meta_bayesian':            _strat(meta_bayesian_value, meta_bayesian_history, 0.0, 0.0) if ENABLE_META_BAYESIAN else _strat(0, [], 0, 0),
-            'meta_adaptive_convex':     _strat(meta_adaptive_convex_value, meta_adaptive_convex_history, 0.0, 0.0) if ENABLE_META_ADAPTIVE_CONVEX else _strat(0, [], 0, 0),
-            'meta_consensus':           _strat(meta_consensus_value, meta_consensus_history, 0.0, 0.0) if ENABLE_META_CONSENSUS else _strat(0, [], 0, 0),
+            # Meta-Strategy Selectors (10 proposals) - now with actual positions
+            'meta_weighted_composite':  _strat(meta_weighted_composite_value, meta_weighted_composite_history, meta_weighted_composite_transaction_costs, meta_weighted_composite_cash) if ENABLE_META_WEIGHTED_COMPOSITE else _strat(0, [], 0, 0),
+            'meta_tiered_selection':    _strat(meta_tiered_selection_value, meta_tiered_selection_history, meta_tiered_selection_transaction_costs, meta_tiered_selection_cash) if ENABLE_META_TIERED_SELECTION else _strat(0, [], 0, 0),
+            'meta_ensemble_alloc':      _strat(meta_ensemble_alloc_value, meta_ensemble_alloc_history, meta_ensemble_alloc_transaction_costs, meta_ensemble_alloc_cash) if ENABLE_META_ENSEMBLE_ALLOC else _strat(0, [], 0, 0),
+            'meta_regime_based':        _strat(meta_regime_based_value, meta_regime_based_history, meta_regime_based_transaction_costs, meta_regime_based_cash) if ENABLE_META_REGIME_BASED else _strat(0, [], 0, 0),
+            'meta_recency_weighted':    _strat(meta_recency_weighted_value, meta_recency_weighted_history, meta_recency_weighted_transaction_costs, meta_recency_weighted_cash) if ENABLE_META_RECENCY_WEIGHTED else _strat(0, [], 0, 0),
+            'meta_efficiency_ratio':    _strat(meta_efficiency_ratio_value, meta_efficiency_ratio_history, meta_efficiency_ratio_transaction_costs, meta_efficiency_ratio_cash) if ENABLE_META_EFFICIENCY_RATIO else _strat(0, [], 0, 0),
+            'meta_min_variance':        _strat(meta_min_variance_value, meta_min_variance_history, meta_min_variance_transaction_costs, meta_min_variance_cash) if ENABLE_META_MIN_VARIANCE else _strat(0, [], 0, 0),
+            'meta_bayesian':            _strat(meta_bayesian_value, meta_bayesian_history, meta_bayesian_transaction_costs, meta_bayesian_cash) if ENABLE_META_BAYESIAN else _strat(0, [], 0, 0),
+            'meta_adaptive_convex':     _strat(meta_adaptive_convex_value, meta_adaptive_convex_history, meta_adaptive_convex_transaction_costs, meta_adaptive_convex_cash) if ENABLE_META_ADAPTIVE_CONVEX else _strat(0, [], 0, 0),
+            'meta_consensus':           _strat(meta_consensus_value, meta_consensus_history, meta_consensus_transaction_costs, meta_consensus_cash) if ENABLE_META_CONSENSUS else _strat(0, [], 0, 0),
+            # Bollinger Bands Strategies
+            'bb_mean_reversion':        _strat(bb_mean_reversion_value, bb_mean_reversion_history, bb_mean_reversion_transaction_costs, bb_mean_reversion_cash) if ENABLE_BB_MEAN_REVERSION else _strat(0, [], 0, 0),
+            'bb_breakout':              _strat(bb_breakout_value, bb_breakout_history, bb_breakout_transaction_costs, bb_breakout_cash) if ENABLE_BB_BREAKOUT else _strat(0, [], 0, 0),
+            'bb_squeeze_breakout':      _strat(bb_squeeze_breakout_value, bb_squeeze_breakout_history, bb_squeeze_breakout_transaction_costs, bb_squeeze_breakout_cash) if ENABLE_BB_SQUEEZE_BREAKOUT else _strat(0, [], 0, 0),
+            'bb_rsi_combo':             _strat(bb_rsi_combo_value, bb_rsi_combo_history, bb_rsi_combo_transaction_costs, bb_rsi_combo_cash) if ENABLE_BB_RSI_COMBO else _strat(0, [], 0, 0),
+            'trend_breakout':           _strat(trend_breakout_value, trend_breakout_history, trend_breakout_transaction_costs, trend_breakout_cash) if ENABLE_TREND_BREAKOUT else _strat(0, [], 0, 0),
         }
     }
 

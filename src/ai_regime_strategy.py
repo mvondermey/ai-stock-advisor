@@ -643,7 +643,7 @@ def select_ai_regime_stocks(
         return select_volatility_ensemble_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
         
     elif predicted_strategy == 'trend_atr':
-        from trend_following_atr_strategy import select_trend_following_atr_stocks
+        from new_strategies import select_trend_following_atr_stocks
         return select_trend_following_atr_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
         
     elif predicted_strategy == 'dual_momentum':

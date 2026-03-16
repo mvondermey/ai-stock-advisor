@@ -613,3 +613,124 @@ def calculate_meta_portfolio_value(
             total_value += weight * initial_capital
     
     return total_value
+
+
+def select_meta_strategy_stocks(
+    selected_strategy: str,
+    all_tickers: list,
+    ticker_data_grouped: dict,
+    current_date,
+    top_n: int = 10,
+    ai_elite_models: dict = None
+) -> list:
+    """
+    Select actual tickers based on the meta-strategy's chosen sub-strategy.
+    
+    Args:
+        selected_strategy: Name of the sub-strategy chosen by meta-strategy
+        all_tickers: List of ticker symbols to select from
+        ticker_data_grouped: Dict of ticker -> DataFrame
+        current_date: Current analysis date
+        top_n: Number of stocks to select
+        ai_elite_models: AI Elite models (if needed)
+    
+    Returns:
+        List of selected ticker symbols
+    """
+    if not selected_strategy:
+        return []
+    
+    try:
+        # Map sub-strategy names to their selection functions
+        if selected_strategy == 'static_bh_1y':
+            from shared_strategies import select_top_performers
+            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=top_n)
+        
+        elif selected_strategy == 'static_bh_6m':
+            from shared_strategies import select_top_performers
+            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=top_n)
+        
+        elif selected_strategy == 'static_bh_3m':
+            from shared_strategies import select_top_performers
+            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=top_n)
+        
+        elif selected_strategy == 'dynamic_bh_1y':
+            from shared_strategies import select_top_performers
+            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=top_n, apply_performance_filter=True)
+        
+        elif selected_strategy == 'dynamic_bh_6m':
+            from shared_strategies import select_top_performers
+            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=top_n, apply_performance_filter=True)
+        
+        elif selected_strategy == 'dynamic_bh_3m':
+            from shared_strategies import select_top_performers
+            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=top_n, apply_performance_filter=True)
+        
+        elif selected_strategy == 'risk_adj_mom':
+            from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
+            return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        
+        elif selected_strategy == 'risk_adj_mom_3m':
+            from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
+            return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        
+        elif selected_strategy == 'risk_adj_mom_6m':
+            from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
+            return select_risk_adj_mom_6m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        
+        elif selected_strategy == 'trend_atr':
+            from new_strategies import select_trend_following_atr_stocks
+            result = select_trend_following_atr_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            # trend_atr returns (stocks_to_buy, stocks_to_sell) tuple
+            if isinstance(result, tuple):
+                return result[0]  # Return stocks_to_buy
+            return result
+        
+        elif selected_strategy == 'dual_momentum':
+            from dual_momentum_strategy import select_dual_momentum_stocks
+            return select_dual_momentum_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        
+        elif selected_strategy == 'elite_hybrid':
+            from elite_hybrid_strategy import select_elite_hybrid_stocks
+            return select_elite_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        
+        elif selected_strategy == 'elite_risk':
+            from elite_risk_strategy import select_elite_risk_stocks
+            return select_elite_risk_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        
+        elif selected_strategy == 'momentum_volatility_hybrid':
+            from momentum_volatility_hybrid_strategy import select_momentum_volatility_hybrid_stocks
+            return select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        
+        elif selected_strategy == 'momentum_volatility_hybrid_6m':
+            from momentum_volatility_hybrid_6m_strategy import select_momentum_volatility_hybrid_6m_stocks
+            return select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        
+        elif selected_strategy == 'enhanced_volatility':
+            # Enhanced Volatility is implemented directly in backtesting.py, not as a separate module
+            # Fallback to a simple momentum strategy
+            from shared_strategies import select_top_performers
+            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=top_n)
+        
+        elif selected_strategy == 'mean_reversion':
+            from mean_reversion_strategy import select_mean_reversion_stocks
+            return select_mean_reversion_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        
+        elif selected_strategy == 'quality_momentum':
+            from quality_momentum_strategy import select_quality_momentum_stocks
+            return select_quality_momentum_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        
+        elif selected_strategy in ['bh_1y_monthly', 'bh_3m_monthly', 'bh_6m_monthly']:
+            # Monthly strategies use same selection as static BH
+            lookback = {'bh_1y_monthly': 365, 'bh_3m_monthly': 90, 'bh_6m_monthly': 180}[selected_strategy]
+            from shared_strategies import select_top_performers
+            return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=lookback)
+        
+        else:
+            # Fallback to 1Y performance
+            from shared_strategies import select_top_performers
+            return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365)
+    
+    except Exception as e:
+        print(f"   ⚠️ Meta strategy stock selection error for {selected_strategy}: {e}")
+        return []

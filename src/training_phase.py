@@ -23,8 +23,7 @@ from config import (
     GPU_CLEAR_CACHE_AFTER_EACH_TICKER,
     TRAINING_POOL_MAXTASKSPERCHILD,
     TRAINING_NUM_PROCESSES,
-    USE_UNIFIED_PARALLEL_TRAINING,
-        )
+)
 from data_utils import fetch_training_data, _ensure_dir
 from ml_models import initialize_ml_libraries, train_and_evaluate_models
 from data_validation import validate_training_data, validate_features_after_engineering, InsufficientDataError
@@ -462,77 +461,10 @@ def train_models_for_period(
     """
     print(f"\n🔍 Step 3: Training AI models for {period_name} backtest...")
     
-    # ============================================
-    # NEW: Use Unified Parallel Training if enabled
-    # ============================================
-    if USE_UNIFIED_PARALLEL_TRAINING:
-        print(f"   ⚠️ Unified Parallel Training System disabled (parallel_training.py removed)")
-        print(f"   🔄 Falling back to standard training")
-        USE_UNIFIED_PARALLEL_TRAINING = False
+    # NOTE: This function is currently not called - AI Elite uses select_ai_elite_with_training()
+    # which handles its own parallel training via ProcessPoolExecutor.
+    # Keeping this function for potential future use with other ML strategies.
     
-    if False:  # Disabled - parallel_training.py removed
-        
-        # Use PERIOD_HORIZONS for prediction horizon (10 days for 1-Year)
-        from config import PERIOD_HORIZONS
-        period_horizon = PERIOD_HORIZONS.get("1-Year", 10)  # 10-day prediction horizon
-        
-        # Get Buy & Hold returns for target percentage calculation
-        ticker_bh_returns = {}
-        for t, perf_1y in top_performers_data:
-            ticker_bh_returns[t] = perf_1y / 100.0
-        
-        # Calculate average target percentage
-        days_in_period = max((train_end - train_start).days, 1)
-        horizon_scale = min(1.0, period_horizon / days_in_period)
-        
-        # Use median B&H return for target percentage
-        if ticker_bh_returns:
-            median_bh = np.median(list(ticker_bh_returns.values()))
-            period_target_pct = max(abs(median_bh) * horizon_scale, 0.01)
-        else:
-            period_target_pct = 0.01
-        
-        print(f"   📊 Training Horizon: {period_horizon} calendar days, Target: {period_target_pct:.2%}")
-        
-        # Train all models in parallel (ticker models only, no AI Portfolio here)
-        ticker_models, _ = train_all_models_parallel(
-            tickers=tickers,
-            all_tickers_data=all_tickers_data,
-            train_start=train_start,
-            train_end=train_end,
-            class_horizon=period_horizon,
-            feature_set=feature_set,
-            include_ai_portfolio=False,  # AI Portfolio trained separately
-            ai_portfolio_features=None
-        )
-        
-        # Convert to return format expected by calling code
-        # ✅ Return None for models to avoid GPU/CPU memory issues - load from disk instead
-        training_results = []
-        for ticker, model_dict in ticker_models.items():
-            training_results.append({
-                'ticker': ticker,
-                'model': None,  # Don't pass models directly - load from disk
-                'scaler': None,  # Don't pass scalers directly - load from disk
-                'y_scaler': None,  # Don't pass y_scalers directly - load from disk
-                'gru_hyperparams': None,  # Not used in unified system
-                'winner': model_dict['model_type'],
-                'status': 'trained',
-                'reason': None
-            })
-        
-        # Add failed tickers
-        failed_tickers = set(tickers) - set(ticker_models.keys())
-        for ticker in failed_tickers:
-            training_results.append({
-                'ticker': ticker,
-                'model': None,
-                'scaler': None,
-                'y_scaler': None,
-                'gru_hyperparams': None,
-                'winner': None,
-                'status': 'failed',
-                'reason': 'Training failed or insufficient data'
-            })
-        
-        return training_results
+    training_results = []
+    print(f"   ℹ️ No ticker-level ML training needed - AI strategies use their own training pipelines")
+    return training_results
