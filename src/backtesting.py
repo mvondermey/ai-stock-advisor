@@ -5423,10 +5423,10 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_META_WEIGHTED_COMPOSITE:
             try:
                 selected_strategy, _ = meta_selections['meta_weighted_composite']
-                if selected_strategy and selected_strategy != meta_weighted_composite_selected_strategy:
+                if selected_strategy:
                     meta_weighted_composite_selected_strategy = selected_strategy
                     new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
-                    if new_stocks:
+                    if new_stocks and set(new_stocks) != set(current_meta_weighted_composite_stocks):
                         meta_weighted_composite_positions, meta_weighted_composite_cash, current_meta_weighted_composite_stocks, rc, _ = _smart_rebalance_portfolio(
                             strategy_name=f"Meta Weighted ({selected_strategy[:8]})",
                             current_stocks=current_meta_weighted_composite_stocks,
@@ -5448,10 +5448,10 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_META_TIERED_SELECTION:
             try:
                 selected_strategy, _ = meta_selections['meta_tiered_selection']
-                if selected_strategy and selected_strategy != meta_tiered_selection_selected_strategy:
+                if selected_strategy:
                     meta_tiered_selection_selected_strategy = selected_strategy
                     new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
-                    if new_stocks:
+                    if new_stocks and set(new_stocks) != set(current_meta_tiered_selection_stocks):
                         meta_tiered_selection_positions, meta_tiered_selection_cash, current_meta_tiered_selection_stocks, rc, _ = _smart_rebalance_portfolio(
                             strategy_name=f"Meta Tiered ({selected_strategy[:8]})",
                             current_stocks=current_meta_tiered_selection_stocks,
@@ -5473,10 +5473,10 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_META_ENSEMBLE_ALLOC:
             try:
                 selected_strategy, _ = meta_selections['meta_ensemble_alloc']
-                if selected_strategy and selected_strategy != meta_ensemble_alloc_selected_strategy:
+                if selected_strategy:
                     meta_ensemble_alloc_selected_strategy = selected_strategy
                     new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
-                    if new_stocks:
+                    if new_stocks and set(new_stocks) != set(current_meta_ensemble_alloc_stocks):
                         meta_ensemble_alloc_positions, meta_ensemble_alloc_cash, current_meta_ensemble_alloc_stocks, rc, _ = _smart_rebalance_portfolio(
                             strategy_name=f"Meta Ensemble ({selected_strategy[:8]})",
                             current_stocks=current_meta_ensemble_alloc_stocks,
@@ -5498,10 +5498,10 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_META_REGIME_BASED:
             try:
                 selected_strategy, _ = meta_selections['meta_regime_based']
-                if selected_strategy and selected_strategy != meta_regime_based_selected_strategy:
+                if selected_strategy:
                     meta_regime_based_selected_strategy = selected_strategy
                     new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
-                    if new_stocks:
+                    if new_stocks and set(new_stocks) != set(current_meta_regime_based_stocks):
                         meta_regime_based_positions, meta_regime_based_cash, current_meta_regime_based_stocks, rc, _ = _smart_rebalance_portfolio(
                             strategy_name=f"Meta Regime ({selected_strategy[:8]})",
                             current_stocks=current_meta_regime_based_stocks,
@@ -5523,10 +5523,10 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_META_RECENCY_WEIGHTED:
             try:
                 selected_strategy, _ = meta_selections['meta_recency_weighted']
-                if selected_strategy and selected_strategy != meta_recency_weighted_selected_strategy:
+                if selected_strategy:
                     meta_recency_weighted_selected_strategy = selected_strategy
                     new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
-                    if new_stocks:
+                    if new_stocks and set(new_stocks) != set(current_meta_recency_weighted_stocks):
                         meta_recency_weighted_positions, meta_recency_weighted_cash, current_meta_recency_weighted_stocks, rc, _ = _smart_rebalance_portfolio(
                             strategy_name=f"Meta Recency ({selected_strategy[:8]})",
                             current_stocks=current_meta_recency_weighted_stocks,
@@ -5548,10 +5548,10 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_META_EFFICIENCY_RATIO:
             try:
                 selected_strategy, _ = meta_selections['meta_efficiency_ratio']
-                if selected_strategy and selected_strategy != meta_efficiency_ratio_selected_strategy:
+                if selected_strategy:
                     meta_efficiency_ratio_selected_strategy = selected_strategy
                     new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
-                    if new_stocks:
+                    if new_stocks and set(new_stocks) != set(current_meta_efficiency_ratio_stocks):
                         meta_efficiency_ratio_positions, meta_efficiency_ratio_cash, current_meta_efficiency_ratio_stocks, rc, _ = _smart_rebalance_portfolio(
                             strategy_name=f"Meta Efficiency ({selected_strategy[:8]})",
                             current_stocks=current_meta_efficiency_ratio_stocks,
@@ -5573,10 +5573,10 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_META_MIN_VARIANCE:
             try:
                 selected_strategy, _ = meta_selections['meta_min_variance']
-                if selected_strategy and selected_strategy != meta_min_variance_selected_strategy:
+                if selected_strategy:
                     meta_min_variance_selected_strategy = selected_strategy
                     new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
-                    if new_stocks:
+                    if new_stocks and set(new_stocks) != set(current_meta_min_variance_stocks):
                         meta_min_variance_positions, meta_min_variance_cash, current_meta_min_variance_stocks, rc, _ = _smart_rebalance_portfolio(
                             strategy_name=f"Meta MinVar ({selected_strategy[:8]})",
                             current_stocks=current_meta_min_variance_stocks,
@@ -5598,10 +5598,10 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_META_BAYESIAN:
             try:
                 selected_strategy, _ = meta_selections['meta_bayesian']
-                if selected_strategy and selected_strategy != meta_bayesian_selected_strategy:
+                if selected_strategy:
                     meta_bayesian_selected_strategy = selected_strategy
                     new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
-                    if new_stocks:
+                    if new_stocks and set(new_stocks) != set(current_meta_bayesian_stocks):
                         meta_bayesian_positions, meta_bayesian_cash, current_meta_bayesian_stocks, rc, _ = _smart_rebalance_portfolio(
                             strategy_name=f"Meta Bayesian ({selected_strategy[:8]})",
                             current_stocks=current_meta_bayesian_stocks,
@@ -5623,10 +5623,10 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_META_ADAPTIVE_CONVEX:
             try:
                 selected_strategy, _ = meta_selections['meta_adaptive_convex']
-                if selected_strategy and selected_strategy != meta_adaptive_convex_selected_strategy:
+                if selected_strategy:
                     meta_adaptive_convex_selected_strategy = selected_strategy
                     new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
-                    if new_stocks:
+                    if new_stocks and set(new_stocks) != set(current_meta_adaptive_convex_stocks):
                         meta_adaptive_convex_positions, meta_adaptive_convex_cash, current_meta_adaptive_convex_stocks, rc, _ = _smart_rebalance_portfolio(
                             strategy_name=f"Meta Adaptive ({selected_strategy[:8]})",
                             current_stocks=current_meta_adaptive_convex_stocks,
@@ -5648,10 +5648,10 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_META_CONSENSUS:
             try:
                 selected_strategy, _ = meta_selections['meta_consensus']
-                if selected_strategy and selected_strategy != meta_consensus_selected_strategy:
+                if selected_strategy:
                     meta_consensus_selected_strategy = selected_strategy
                     new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE)
-                    if new_stocks:
+                    if new_stocks and set(new_stocks) != set(current_meta_consensus_stocks):
                         meta_consensus_positions, meta_consensus_cash, current_meta_consensus_stocks, rc, _ = _smart_rebalance_portfolio(
                             strategy_name=f"Meta Consensus ({selected_strategy[:8]})",
                             current_stocks=current_meta_consensus_stocks,
