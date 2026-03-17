@@ -61,6 +61,11 @@ Desktop.ini
 *.pkl
 *.pt
 *.ckpt
+*.joblib
+
+# Large model files in logs
+logs/models/
+logs/*.joblib
 
 # TensorBoard
 tb_logs/
