@@ -196,7 +196,7 @@ MARKET_SELECTION = {
 
     "NASDAQ_100": True,        # ENABLED - ~100 tech stocks for growth
 
-    "SP500": True,             # ~500 stocks  
+    "SP500": True,             # ~500 stocks
 
     "SP400_MIDCAP": True,      # ENABLED - ~400 US mid-cap stocks
 
@@ -258,7 +258,7 @@ from multiprocessing import cpu_count
 
 # Use only half of CPU cores to avoid memory exhaustion with large datasets
 
-NUM_PROCESSES           = max(1, cpu_count() // 2 - 2)  # Reduced for 1800+ tickers to avoid OOM
+NUM_PROCESSES           = max(1, cpu_count() // 2 )  # Reduced for 1800+ tickers to avoid OOM
 
 
 
@@ -316,7 +316,7 @@ def auto_configure_gpu_slots():
 
                 print(f" Detected {total_vram:.1f}GB VRAM - configuring slots dynamically")
 
-            
+
 
             # Calculate max slots for each model type (leave 20% VRAM headroom)
 
@@ -825,7 +825,7 @@ MULTI_TIMEFRAME_LOOKBACK = {
 
     "1d": 365,    # Daily: 1 year lookback
 
-    "4h": 30,     # 4-hour: 30 days lookback  
+    "4h": 30,     # 4-hour: 30 days lookback
 
     "1h": 7       # 1-hour: 7 days lookback
 
@@ -891,7 +891,7 @@ ENABLE_INVERSE_ETF_HEDGE = True     # Add inverse ETFs when market crashes
 
 INVERSE_ETF_HEDGE_THRESHOLD_LOW = 0.05    # 5% decline = 20% hedge
 
-INVERSE_ETF_HEDGE_THRESHOLD_MED = 0.10      # 10% decline = 50% hedge  
+INVERSE_ETF_HEDGE_THRESHOLD_MED = 0.10      # 10% decline = 50% hedge
 
 INVERSE_ETF_HEDGE_THRESHOLD_HIGH = 0.15     # 15% decline = 80% hedge
 
@@ -1526,4 +1526,3 @@ POSITION_SCALING_BY_CONFIDENCE = True  # Scale position size by predicted return
 # Architecture options
 
 TRY_LSTM_INSTEAD_OF_GRU = False  # Set to True to try LSTM instead of GRU for comparison
-
