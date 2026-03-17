@@ -634,6 +634,8 @@ ENABLE_DUAL_MOMENTUM = True   # NEW - Dual Momentum (absolute + relative momentu
 ENABLE_TREND_FOLLOWING_ATR = True   # NEW - Trend Following with ATR Trailing Stop
 
 ENABLE_TREND_BREAKOUT = True   # NEW - Trend Breakout (same entry as Trend ATR but no ATR selling, uses smart_rebalance)
+TREND_BREAKOUT_USE_ATR_STOP = True  # If True, Trend Breakout uses ATR trailing stop in smart_rebalance
+TREND_BREAKOUT_ATR_MULTIPLIER = 2.0  # ATR multiplier for trailing stop
 
 ENABLE_ELITE_HYBRID = True   # NEW - Elite Hybrid (Mom-Vol 6M + 1Y/3M Ratio - combines top 2 most consistent strategies)
 
@@ -1221,7 +1223,23 @@ STATIC_BH_1M_REBALANCE_DAYS = 27  # Optimal rebalance period for 1M selection
 
 STATIC_BH_6M_REBALANCE_DAYS = 34  # Optimal rebalance period for 6M selection
 
+# --- Adaptive Rebalancing Strategies (based on Static BH 1Y) ---
+# These strategies use adaptive triggers instead of fixed periodic rebalancing
 
+ENABLE_STATIC_BH_1Y_VOLATILITY = True   # Rebalance when portfolio volatility > threshold
+STATIC_BH_1Y_VOLATILITY_THRESHOLD = 0.02  # 2% volatility threshold
+
+ENABLE_STATIC_BH_1Y_PERFORMANCE = True   # Rebalance when position weights deviate > threshold
+STATIC_BH_1Y_PERFORMANCE_THRESHOLD = 0.25  # 25% deviation threshold
+
+ENABLE_STATIC_BH_1Y_MOMENTUM = True   # Rebalance when portfolio momentum turns negative
+STATIC_BH_1Y_MOMENTUM_LOOKBACK = 60   # Days for momentum calculation
+
+ENABLE_STATIC_BH_1Y_ATR = True   # Rebalance when cumulative ATR change > threshold
+STATIC_BH_1Y_ATR_THRESHOLD = 0.05  # 5% ATR change threshold
+
+ENABLE_STATIC_BH_1Y_HYBRID = True   # Hybrid approach combining multiple triggers
+STATIC_BH_1Y_HYBRID_MAX_DAYS = 15  # Safety net: rebalance at least every N days
 
 # --- Static BH Monthly Rebalance Variants ---
 

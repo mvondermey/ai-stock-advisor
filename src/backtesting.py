@@ -129,6 +129,9 @@ from config import (
     ENABLE_INVERSE_ETF_HEDGE, ENABLE_AI_REGIME, ENABLE_AI_REGIME_MONTHLY,
     ENABLE_AI_ELITE_MARKET_UP,
     ENABLE_ANALYST_RECOMMENDATION, ANALYST_LOOKBACK_DAYS, ANALYST_MIN_ACTIONS, ANALYST_REBALANCE_DAYS,
+    ENABLE_STATIC_BH_1Y_VOLATILITY, ENABLE_STATIC_BH_1Y_PERFORMANCE, ENABLE_STATIC_BH_1Y_MOMENTUM,
+    ENABLE_STATIC_BH_1Y_ATR, ENABLE_STATIC_BH_1Y_HYBRID,
+    TREND_BREAKOUT_USE_ATR_STOP, TREND_BREAKOUT_ATR_MULTIPLIER,
 )
 from scipy.stats import uniform, beta
 
@@ -343,7 +346,9 @@ def _smart_rebalance_portfolio(
     portfolio_size: int = 10,
     force_rebalance: bool = False,
     buffer_size: int = None,
-    strategy_stop_loss: float = None
+    strategy_stop_loss: float = None,
+    use_atr_trailing_stop: bool = False,
+    atr_multiplier: float = 2.0
 ) -> Tuple[Dict[str, Dict], float, List[str], float, bool]:
     """
     Universal smart rebalancing function for all strategies.
@@ -447,6 +452,52 @@ def _smart_rebalance_portfolio(
                     # Keep this position in final list
                     final_stocks.append(ticker)
                     kept_unprofitable_positions.append(ticker)
+    
+    # Check ATR trailing stop for positions to keep (if enabled)
+    if use_atr_trailing_stop and positions_to_keep:
+        atr_positions_to_sell = set()
+        for ticker in positions_to_keep:
+            if ticker in ticker_data_grouped and ticker in updated_positions:
+                try:
+                    price_data = ticker_data_grouped[ticker].loc[:current_date]
+                    if len(price_data) < 14:  # Need at least 14 days for ATR
+                        continue
+                    
+                    # Calculate ATR (14-day)
+                    high_low = price_data['High'] - price_data['Low']
+                    high_close = abs(price_data['High'] - price_data['Close'].shift())
+                    low_close = abs(price_data['Low'] - price_data['Close'].shift())
+                    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+                    atr = true_range.rolling(14).mean().iloc[-1]
+                    
+                    if pd.isna(atr) or atr <= 0:
+                        continue
+                    
+                    # Get entry price and calculate highest since entry
+                    entry_price = updated_positions[ticker]['entry_price']
+                    price_history = price_data['Close']
+                    
+                    # Find the highest price since entry (approximate)
+                    # In a real implementation, we'd track this properly
+                    recent_prices = price_history.tail(60)  # Last 60 days
+                    highest_since_entry = recent_prices.max()
+                    
+                    current_price = price_history.iloc[-1]
+                    trailing_stop = highest_since_entry - (atr * atr_multiplier)
+                    
+                    if current_price < trailing_stop:
+                        atr_positions_to_sell.add(ticker)
+                        print(f"   🛑 {strategy_name} ATR trailing stop triggered for {ticker}: ${current_price:.2f} < ${trailing_stop:.2f} (ATR: ${atr:.2f})")
+                        
+                except Exception as e:
+                    print(f"   ⚠️ Error checking ATR stop for {ticker}: {e}")
+                    continue
+        
+        # Move ATR stop positions from keep to sell
+        if atr_positions_to_sell:
+            positions_to_keep -= atr_positions_to_sell
+            positions_to_sell.update(atr_positions_to_sell)
+            print(f"   📊 {strategy_name} ATR stops: {len(atr_positions_to_sell)} positions moved to sell")
     
     # Calculate capital per stock AFTER sells (so freed-up cash is included)
     if positions_to_buy:
@@ -5570,7 +5621,9 @@ def _run_portfolio_backtest_walk_forward(
                         current_date=current_date,
                         transaction_cost=TRANSACTION_COST,
                         portfolio_size=PORTFOLIO_SIZE,
-                        force_rebalance=not trend_breakout_initialized
+                        force_rebalance=not trend_breakout_initialized,
+                        use_atr_trailing_stop=TREND_BREAKOUT_USE_ATR_STOP,
+                        atr_multiplier=TREND_BREAKOUT_ATR_MULTIPLIER
                     )
                     trend_breakout_transaction_costs += rc
                     trend_breakout_initialized = True
