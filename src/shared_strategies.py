@@ -437,9 +437,7 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
         tickers_to_use, ticker_data_grouped, current_date, "Vol-Adj Mom"
     )
 
-    # If filtering removed all tickers (early backtest days), fall back to all tickers
-    if not filtered_tickers:
-        filtered_tickers = tickers_to_use
+    # No fallback - if filtering removes all tickers, return empty list
 
     current_top_performers = []
 

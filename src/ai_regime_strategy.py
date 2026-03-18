@@ -307,8 +307,9 @@ class AIRegimeAllocator:
             training_samples.append(features)
 
         if len(training_samples) < 1:
-            print(f"   ⚠️ AI Regime: No training samples available")
-            return False
+            print(f"   ⚠️ AI Regime: No training samples available - using existing model")
+            # Don't return False - keep existing model for predictions
+            return True
 
         # Convert to DataFrame
         train_df = pd.DataFrame(training_samples)

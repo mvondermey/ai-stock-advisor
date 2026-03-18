@@ -4074,78 +4074,35 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Quality + momentum selection failed: {e}")
 
-        # VOLATILITY-ADJUSTED MOMENTUM: Rebalance to top performers by volatility-adjusted momentum DAILY
+        # VOLATILITY-ADJUSTED MOMENTUM STRATEGY
         if ENABLE_VOLATILITY_ADJ_MOM:
             try:
-                # Apply performance filters if enabled
-                from performance_filters import filter_tickers_by_performance
-                available_tickers = initial_top_tickers if initial_top_tickers else []
-                filtered_tickers = filter_tickers_by_performance(
-                    available_tickers, ticker_data_grouped, current_date, "Vol-Adj Mom"
+                from shared_strategies import select_volatility_adj_mom_stocks
+                
+                new_volatility_adj_mom_stocks = select_volatility_adj_mom_stocks(
+                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
                 )
 
-                # Calculate volatility-adjusted momentum scores
-                volatility_adj_mom_scores = []
-
-                print(f"   🔍 Vol-Adj Mom: Analyzing {len(filtered_tickers)} tickers (filtered from {len(available_tickers)}) on {current_date.strftime('%Y-%m-%d')}")
-
-                for ticker in filtered_tickers:
-                    try:
-                        if ticker not in ticker_data_grouped:
-                            continue
-                        ticker_data = ticker_data_grouped[ticker]
-                        # Filter to date range (keep DatetimeIndex)
-                        lookback_start = current_date - timedelta(days=VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW + 30)
-                        ticker_history = ticker_data.loc[
-                            (ticker_data.index >= pd.Timestamp(lookback_start).tz_localize('UTC') if ticker_data.index.tz else lookback_start) &
-                            (ticker_data.index <= pd.Timestamp(current_date).tz_localize('UTC') if ticker_data.index.tz else current_date)
-                        ]
-
-                        # Relaxed requirement: need at least 30 trading days
-                        if len(ticker_history) >= 30:
-                            # Calculate volatility-adjusted momentum score
-                            vol_adj_score = calculate_volatility_adjusted_momentum(
-                                ticker_history,
-                                current_date=current_date,
-                                lookback_days=min(VOLATILITY_ADJ_MOM_LOOKBACK, len(ticker_history) - VOLATILITY_ADJ_MOM_VOL_WINDOW),
-                                vol_window=VOLATILITY_ADJ_MOM_VOL_WINDOW
-                            )
-
-                            # Relaxed threshold: accept any positive score
-                            if vol_adj_score > 0:
-                                volatility_adj_mom_scores.append((ticker, vol_adj_score))
-
-                    except Exception:
-                        continue
-
-                print(f"   📊 Vol-Adj Mom: Found {len(volatility_adj_mom_scores)} tickers with valid data")
-
-                if volatility_adj_mom_scores:
-                    # Sort by volatility-adjusted score and get top N
-                    volatility_adj_mom_scores.sort(key=lambda x: x[1], reverse=True)
-                    new_volatility_adj_mom_stocks = [ticker for ticker, score in volatility_adj_mom_scores[:PORTFOLIO_SIZE]]
-                    print(f"   🎯 Vol-Adj Mom: Selected {new_volatility_adj_mom_stocks}")
-
-                    if new_volatility_adj_mom_stocks:
-                        print(f"   📊 Vol-Adj Mom Day {day_count}: {new_volatility_adj_mom_stocks}")
-                        # Use universal smart rebalancing function
-                        volatility_adj_mom_positions, volatility_adj_mom_cash, current_volatility_adj_mom_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
-                            strategy_name="Vol-Adj Mom",
-                            current_stocks=current_volatility_adj_mom_stocks,
-                            new_stocks=new_volatility_adj_mom_stocks,
-                            positions=volatility_adj_mom_positions,
-                            cash=volatility_adj_mom_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not current_volatility_adj_mom_stocks  # Force initial allocation
-                        )
-                        strategies_rebalanced_today['Vol-Adj Mom'] = rebalanced_flag
-                        volatility_adj_mom_transaction_costs += rebalance_costs
-                        volatility_adj_mom_last_rebalance_value = _mark_to_market_value(
-                            volatility_adj_mom_positions, volatility_adj_mom_cash, ticker_data_grouped, current_date
-                        )
+                if new_volatility_adj_mom_stocks:
+                    print(f"   📊 Vol-Adj Mom Day {day_count}: {new_volatility_adj_mom_stocks}")
+                    # Use universal smart rebalancing function
+                    volatility_adj_mom_positions, volatility_adj_mom_cash, current_volatility_adj_mom_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Vol-Adj Mom",
+                        current_stocks=current_volatility_adj_mom_stocks,
+                        new_stocks=new_volatility_adj_mom_stocks,
+                        positions=volatility_adj_mom_positions,
+                        cash=volatility_adj_mom_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_volatility_adj_mom_stocks  # Force initial allocation
+                    )
+                    strategies_rebalanced_today['Vol-Adj Mom'] = rebalanced_flag
+                    volatility_adj_mom_transaction_costs += rebalance_costs
+                    volatility_adj_mom_last_rebalance_value = _mark_to_market_value(
+                        volatility_adj_mom_positions, volatility_adj_mom_cash, ticker_data_grouped, current_date
+                    )
                 else:
                     print(f"   ⚠️ Vol-Adj Mom: No valid tickers found on {current_date.strftime('%Y-%m-%d')}")
 
@@ -4736,7 +4693,7 @@ def _run_portfolio_backtest_walk_forward(
                         initial_top_tickers,
                         ticker_data_grouped,
                         current_date=current_date,
-                        top_n=3
+                        top_n=PORTFOLIO_SIZE
                     )
 
                     if new_concentrated_3m_stocks:
