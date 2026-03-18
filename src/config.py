@@ -420,7 +420,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 
 
-TRAINING_NUM_PROCESSES = max(1, cpu_count() - 4)  # Use more CPU cores
+TRAINING_NUM_PROCESSES = max(1, cpu_count() // 2   ) # Reduced to avoid memory exhaustion
 
 
 # --- Backtest windows

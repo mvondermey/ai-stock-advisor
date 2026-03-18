@@ -392,8 +392,45 @@ class AIRegimeAllocator:
                     print(f"      🔄 {name}: Training...", end=" ", flush=True)
                     start_time = time.time()
 
+                    # Check if incremental training is safe (classes and features must match)
+                    can_increment = has_existing
+                    if can_increment:
+                        old_classes = set(m.classes_)
+                        new_classes = set(np.unique(y_train))
+                        old_n_features = m.n_features_in_ if hasattr(m, 'n_features_in_') else 0
+                        new_n_features = X_train.shape[1]
+                        
+                        if old_classes != new_classes or old_n_features != new_n_features:
+                            reason = []
+                            if old_classes != new_classes:
+                                reason.append(f"classes {len(old_classes)}→{len(new_classes)}")
+                            if old_n_features != new_n_features:
+                                reason.append(f"features {old_n_features}→{new_n_features}")
+                            print(f"{', '.join(reason)}, retraining from scratch...", end=" ", flush=True)
+                            # Recreate model from scratch
+                            if name == 'XGBoost':
+                                m = xgb.XGBClassifier(
+                                    n_estimators=100, max_depth=4, learning_rate=0.1,
+                                    subsample=0.8, random_state=42,
+                                    tree_method='hist', device=device, verbosity=0, n_jobs=-1,
+                                    use_label_encoder=False, eval_metric='mlogloss'
+                                )
+                            elif name == 'LightGBM':
+                                m = lgb.LGBMClassifier(
+                                    n_estimators=100, max_depth=4, learning_rate=0.1,
+                                    subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
+                                )
+                            elif name == 'CatBoost':
+                                import catboost as cb
+                                task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
+                                m = cb.CatBoostClassifier(
+                                    iterations=100, depth=4, learning_rate=0.1,
+                                    task_type=task_type, random_seed=42, verbose=0
+                                )
+                            can_increment = False
+
                     # True incremental training for supported models
-                    if has_existing:
+                    if can_increment:
                         if name == 'XGBoost':
                             m.fit(X_train, y_train, xgb_model=m.get_booster())
                         elif name == 'LightGBM':
@@ -513,6 +550,13 @@ class AIRegimeAllocator:
         # Predict
         try:
             X = np.array([[features.get(c, 0) for c in self.feature_cols]])
+            
+            # Validate model state before prediction
+            if not hasattr(self.model, 'n_features_in_') or self.model.n_features_in_ != X.shape[1]:
+                print(f"   ⚠️ AI Regime: Model feature mismatch, resetting model")
+                self.model = None
+                return None
+            
             pred_idx = self.model.predict(X)[0]
             pred_strategy = self.label_encoder.inverse_transform([pred_idx])[0]
 

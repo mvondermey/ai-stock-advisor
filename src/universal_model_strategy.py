@@ -296,10 +296,36 @@ class UniversalModelStrategy:
                     print(f"      🔄 {name}: Training...", end=" ", flush=True)
                     start_time = time.time()
                     
+                    # Check if incremental training is safe (features must match)
+                    can_increment = has_existing
+                    if can_increment:
+                        old_n_features = m.n_features_in_ if hasattr(m, 'n_features_in_') else 0
+                        new_n_features = X_train.shape[1]
+                        if old_n_features != new_n_features:
+                            print(f"features {old_n_features}→{new_n_features}, retraining from scratch...", end=" ", flush=True)
+                            # Recreate model from scratch
+                            if name == 'XGBoost':
+                                m = xgb.XGBRegressor(
+                                    n_estimators=100, max_depth=5, learning_rate=0.1,
+                                    subsample=0.8, random_state=42,
+                                    tree_method='hist', device=device, verbosity=0, n_jobs=-1
+                                )
+                            elif name == 'LightGBM':
+                                m = lgb.LGBMRegressor(
+                                    n_estimators=100, max_depth=5, learning_rate=0.1,
+                                    subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
+                                )
+                            elif name == 'CatBoost':
+                                import catboost as cb
+                                task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
+                                m = cb.CatBoostRegressor(
+                                    iterations=100, depth=5, learning_rate=0.1,
+                                    task_type=task_type, random_seed=42, verbose=0
+                                )
+                            can_increment = False
+                    
                     # True incremental training for supported models
-                    if has_existing:
-                        # Incremental training - retrain on new data
-                        # Note: xgb_model causes numerical instability, so we just retrain
+                    if can_increment:
                         if name == 'LightGBM':
                             m.fit(X_train, y_train, init_model=m.booster_)
                         elif name == 'CatBoost':

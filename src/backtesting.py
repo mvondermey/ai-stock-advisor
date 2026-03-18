@@ -2535,7 +2535,7 @@ def _run_portfolio_backtest_walk_forward(
             new_stocks = select_volume_filtered_bh_1y_stocks(
                 initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE, STATIC_BH_1Y_VOLUME_MIN_DAILY
             )
-            if new_stocks and set(new_stocks) != set(current_static_bh_1y_volume_stocks):
+            if new_stocks and (not static_bh_1y_volume_initialized or set(new_stocks) != set(current_static_bh_1y_volume_stocks)):
                 if not static_bh_1y_volume_initialized:
                     print(f"   🎯 Static BH 1Y Volume: Initializing")
                 else:
@@ -2556,7 +2556,7 @@ def _run_portfolio_backtest_walk_forward(
             new_stocks = select_sector_rotated_bh_1y_stocks(
                 initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE, STATIC_BH_1Y_SECTOR_MAX_PER_SECTOR
             )
-            if new_stocks and set(new_stocks) != set(current_static_bh_1y_sector_stocks):
+            if new_stocks and (not static_bh_1y_sector_initialized or set(new_stocks) != set(current_static_bh_1y_sector_stocks)):
                 if not static_bh_1y_sector_initialized:
                     print(f"   🎯 Static BH 1Y Sector: Initializing")
                 else:
@@ -2598,14 +2598,14 @@ def _run_portfolio_backtest_walk_forward(
             from enhanced_static_bh_strategies import select_market_regime_bh_1y_stocks
             static_bh_1y_market_regime_days_since_rebalance += 1
             
-            # Check if it's time to rebalance
-            if static_bh_1y_market_regime_days_since_rebalance >= static_bh_1y_market_regime_next_rebalance_days:
+            # Check if it's time to rebalance (or first initialization)
+            if not static_bh_1y_market_regime_initialized or static_bh_1y_market_regime_days_since_rebalance >= static_bh_1y_market_regime_next_rebalance_days:
                 new_stocks, next_rebalance_days = select_market_regime_bh_1y_stocks(
                     initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE,
                     STATIC_BH_1Y_MARKET_REGIME_BASE_DAYS, STATIC_BH_1Y_MARKET_REGIME_HIGH_VOL_DAYS,
                     STATIC_BH_1Y_MARKET_REGIME_LOW_VOL_DAYS, STATIC_BH_1Y_MARKET_REGIME_VOL_THRESHOLD
                 )
-                if new_stocks and set(new_stocks) != set(current_static_bh_1y_market_regime_stocks):
+                if new_stocks and (not static_bh_1y_market_regime_initialized or set(new_stocks) != set(current_static_bh_1y_market_regime_stocks)):
                     if not static_bh_1y_market_regime_initialized:
                         print(f"   🎯 Static BH 1Y Market Regime: Initializing")
                     else:
@@ -2630,7 +2630,8 @@ def _run_portfolio_backtest_walk_forward(
                 static_bh_1y_mom_persist_top_stocks_history, current_static_bh_1y_mom_persist_stocks,
                 PORTFOLIO_SIZE, STATIC_BH_1Y_MOMENTUM_PERSIST_DAYS, STATIC_BH_1Y_MOMENTUM_PERSIST_MIN_OVERLAP
             )
-            if should_rebalance and new_stocks:
+            # Force initialization on first run even if stability check fails
+            if (not static_bh_1y_mom_persist_initialized or should_rebalance) and new_stocks:
                 if not static_bh_1y_mom_persist_initialized:
                     print(f"   🎯 Static BH 1Y Mom Persist: Initializing")
                 else:
@@ -2652,7 +2653,8 @@ def _run_portfolio_backtest_walk_forward(
                 initial_top_tickers, ticker_data_grouped, current_date,
                 current_static_bh_1y_overlap_stocks, PORTFOLIO_SIZE, STATIC_BH_1Y_OVERLAP_THRESHOLD
             )
-            if should_rebalance and new_stocks:
+            # Force initialization on first run
+            if (not static_bh_1y_overlap_initialized or should_rebalance) and new_stocks:
                 if not static_bh_1y_overlap_initialized:
                     print(f"   🎯 Static BH 1Y Overlap: Initializing")
                 else:
@@ -2676,7 +2678,8 @@ def _run_portfolio_backtest_walk_forward(
                 static_bh_1y_rank_drift_previous_rankings, current_static_bh_1y_rank_drift_stocks,
                 PORTFOLIO_SIZE, STATIC_BH_1Y_RANK_DRIFT_THRESHOLD
             )
-            if should_rebalance and new_stocks:
+            # Force initialization on first run
+            if (not static_bh_1y_rank_drift_initialized or should_rebalance) and new_stocks:
                 if not static_bh_1y_rank_drift_initialized:
                     print(f"   🎯 Static BH 1Y Rank Drift: Initializing")
                 else:
@@ -2699,7 +2702,8 @@ def _run_portfolio_backtest_walk_forward(
                 current_static_bh_1y_drawdown_stocks, static_bh_1y_drawdown_portfolio_value,
                 static_bh_1y_drawdown_peak, PORTFOLIO_SIZE, STATIC_BH_1Y_DRAWDOWN_THRESHOLD
             )
-            if should_rebalance and new_stocks:
+            # Force initialization on first run
+            if (not static_bh_1y_drawdown_initialized or should_rebalance) and new_stocks:
                 if not static_bh_1y_drawdown_initialized:
                     print(f"   🎯 Static BH 1Y Drawdown: Initializing")
                 else:
@@ -2724,7 +2728,8 @@ def _run_portfolio_backtest_walk_forward(
                 static_bh_1y_smart_monthly_peak, static_bh_1y_smart_monthly_last_rebalance_month,
                 PORTFOLIO_SIZE, STATIC_BH_1Y_SMART_MONTHLY_DRAWDOWN
             )
-            if should_rebalance and new_stocks:
+            # Force initialization on first run
+            if (not static_bh_1y_smart_monthly_initialized or should_rebalance) and new_stocks:
                 if not static_bh_1y_smart_monthly_initialized:
                     print(f"   🎯 Static BH 1Y Smart Monthly: Initializing")
                 else:
@@ -4088,17 +4093,16 @@ def _run_portfolio_backtest_walk_forward(
                     try:
                         if ticker not in ticker_data_grouped:
                             continue
-                        ticker_history = ticker_data_grouped[ticker].reset_index()
-                        # ✅ FIX: Use explicit date range like other working strategies
+                        ticker_data = ticker_data_grouped[ticker]
+                        # Filter to date range (keep DatetimeIndex)
                         lookback_start = current_date - timedelta(days=VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW + 30)
-                        ticker_history = ticker_history[
-                            (ticker_history['date'] >= lookback_start) &
-                            (ticker_history['date'] <= current_date)
+                        ticker_history = ticker_data.loc[
+                            (ticker_data.index >= pd.Timestamp(lookback_start).tz_localize('UTC') if ticker_data.index.tz else lookback_start) &
+                            (ticker_data.index <= pd.Timestamp(current_date).tz_localize('UTC') if ticker_data.index.tz else current_date)
                         ]
 
-                        # Relaxed requirement: need at least 60 days instead of full lookback
-                        min_required = min(60, VOLATILITY_ADJ_MOM_LOOKBACK + VOLATILITY_ADJ_MOM_VOL_WINDOW)
-                        if len(ticker_history) >= min_required:
+                        # Relaxed requirement: need at least 30 trading days
+                        if len(ticker_history) >= 30:
                             # Calculate volatility-adjusted momentum score
                             vol_adj_score = calculate_volatility_adjusted_momentum(
                                 ticker_history,
@@ -4747,7 +4751,7 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped=ticker_data_grouped,
                             current_date=current_date,
                             transaction_cost=TRANSACTION_COST,
-                            portfolio_size=3,
+                            portfolio_size=PORTFOLIO_SIZE,
                             force_rebalance=not current_concentrated_3m_stocks  # Force initial allocation
                         )
                         strategies_rebalanced_today['Concentrated 3M'] = rebalanced_flag
@@ -8543,6 +8547,43 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = static_bh_1y_hybrid_cash
                     num_positions = len(static_bh_1y_hybrid_positions)
                     invested = value - strat_cash
+                # Enhanced Static BH 1Y Strategies
+                elif name == "BH 1Y Volume" and ENABLE_STATIC_BH_1Y_VOLUME_FILTER:
+                    strat_cash = static_bh_1y_volume_cash
+                    num_positions = len(static_bh_1y_volume_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Sector" and ENABLE_STATIC_BH_1Y_SECTOR_ROTATION:
+                    strat_cash = static_bh_1y_sector_cash
+                    num_positions = len(static_bh_1y_sector_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Perf Thresh" and ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD:
+                    strat_cash = static_bh_1y_perf_threshold_cash
+                    num_positions = len(static_bh_1y_perf_threshold_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Market Regime" and ENABLE_STATIC_BH_1Y_MARKET_REGIME:
+                    strat_cash = static_bh_1y_market_regime_cash
+                    num_positions = len(static_bh_1y_market_regime_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Mom Persist" and ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST:
+                    strat_cash = static_bh_1y_mom_persist_cash
+                    num_positions = len(static_bh_1y_mom_persist_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Overlap" and ENABLE_STATIC_BH_1Y_OVERLAP:
+                    strat_cash = static_bh_1y_overlap_cash
+                    num_positions = len(static_bh_1y_overlap_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Rank Drift" and ENABLE_STATIC_BH_1Y_RANK_DRIFT:
+                    strat_cash = static_bh_1y_rank_drift_cash
+                    num_positions = len(static_bh_1y_rank_drift_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Drawdown" and ENABLE_STATIC_BH_1Y_DRAWDOWN:
+                    strat_cash = static_bh_1y_drawdown_cash
+                    num_positions = len(static_bh_1y_drawdown_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Smart Mth" and ENABLE_STATIC_BH_1Y_SMART_MONTHLY:
+                    strat_cash = static_bh_1y_smart_monthly_cash
+                    num_positions = len(static_bh_1y_smart_monthly_positions)
+                    invested = value - strat_cash
 
                 strategy_details.append((name, value, strat_cash, num_positions, invested))
 
@@ -8634,6 +8675,16 @@ def _run_portfolio_backtest_walk_forward(
                 ("BH 1Y Mom Trig", static_bh_1y_mom_portfolio_history) if ENABLE_STATIC_BH_1Y_MOMENTUM else None,
                 ("BH 1Y ATR Trig", static_bh_1y_atr_portfolio_history) if ENABLE_STATIC_BH_1Y_ATR else None,
                 ("BH 1Y Hybrid Trig", static_bh_1y_hybrid_portfolio_history) if ENABLE_STATIC_BH_1Y_HYBRID else None,
+                # Enhanced Static BH 1Y Strategies
+                ("BH 1Y Volume", static_bh_1y_volume_portfolio_history) if ENABLE_STATIC_BH_1Y_VOLUME_FILTER else None,
+                ("BH 1Y Sector", static_bh_1y_sector_portfolio_history) if ENABLE_STATIC_BH_1Y_SECTOR_ROTATION else None,
+                ("BH 1Y Perf Thresh", static_bh_1y_perf_threshold_portfolio_history) if ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD else None,
+                ("BH 1Y Market Regime", static_bh_1y_market_regime_portfolio_history) if ENABLE_STATIC_BH_1Y_MARKET_REGIME else None,
+                ("BH 1Y Mom Persist", static_bh_1y_mom_persist_portfolio_history) if ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST else None,
+                ("BH 1Y Overlap", static_bh_1y_overlap_portfolio_history) if ENABLE_STATIC_BH_1Y_OVERLAP else None,
+                ("BH 1Y Rank Drift", static_bh_1y_rank_drift_portfolio_history) if ENABLE_STATIC_BH_1Y_RANK_DRIFT else None,
+                ("BH 1Y Drawdown", static_bh_1y_drawdown_portfolio_history) if ENABLE_STATIC_BH_1Y_DRAWDOWN else None,
+                ("BH 1Y Smart Mth", static_bh_1y_smart_monthly_portfolio_history) if ENABLE_STATIC_BH_1Y_SMART_MONTHLY else None,
             ]
             strategy_to_history = {pair[0]: pair[1] for pair in strategy_history_pairs if pair is not None and pair[1] is not None}
 

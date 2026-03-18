@@ -95,7 +95,8 @@ def select_sector_rotated_bh_1y_stocks(
     sector_counts = {}
     
     for ticker in candidates:
-        sector = ticker_to_sector.get(ticker, 'Other')
+        # Unmapped tickers get their own "sector" to avoid all being lumped into 'Other'
+        sector = ticker_to_sector.get(ticker, f'_unmapped_{ticker}')
         current_count = sector_counts.get(sector, 0)
         
         if current_count < max_per_sector:
@@ -414,7 +415,8 @@ def select_rank_drift_bh_1y_stocks(
     )
     
     # Sort by performance (highest first) and create rankings
-    sorted_perf = sorted(performances.items(), key=lambda x: x[1], reverse=True)
+    # performances is already a list of (ticker, perf) tuples
+    sorted_perf = sorted(performances, key=lambda x: x[1], reverse=True)
     current_rankings = {}
     for rank, (ticker, perf) in enumerate(sorted_perf, 1):
         current_rankings[ticker] = rank
