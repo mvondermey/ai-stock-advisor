@@ -1253,6 +1253,32 @@ ENABLE_STATIC_BH_3M_MONTHLY = True   # Static BH 3M with monthly rebalance
 
 ENABLE_STATIC_BH_1M_MONTHLY = True   # Static BH 1M with monthly rebalance
 
+# --- Enhanced Static BH 1Y Strategies ---
+
+# These strategies add smart filters and triggers to the base Static BH 1Y
+
+ENABLE_STATIC_BH_1Y_VOLUME_FILTER = True   # Volume confirmation filter
+STATIC_BH_1Y_VOLUME_MIN_DAILY = 1_000_000  # Minimum $1M daily volume
+
+ENABLE_STATIC_BH_1Y_SECTOR_ROTATION = True   # Sector rotation enhancement
+STATIC_BH_1Y_SECTOR_MAX_PER_SECTOR = 3  # Maximum 3 stocks per sector
+
+ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD = True   # Performance threshold trigger
+STATIC_BH_1Y_PERFORMANCE_MIN_IMPROVEMENT = 0.02  # 2% minimum improvement
+
+ENABLE_STATIC_BH_1Y_MARKET_REGIME = True   # Market-regime based rebalancing
+STATIC_BH_1Y_MARKET_REGIME_BASE_DAYS = 22  # Base rebalancing frequency
+STATIC_BH_1Y_MARKET_REGIME_HIGH_VOL_DAYS = 15  # High volatility: rebalance every 15 days
+STATIC_BH_1Y_MARKET_REGIME_LOW_VOL_DAYS = 30   # Low volatility: rebalance every 30 days
+STATIC_BH_1Y_MARKET_REGIME_VOL_THRESHOLD = 0.20  # 20% volatility threshold
+
+ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST = True   # Momentum persistence strategy
+STATIC_BH_1Y_MOMENTUM_PERSIST_DAYS = 5  # Require top 10 to be stable for N consecutive days
+STATIC_BH_1Y_MOMENTUM_PERSIST_MIN_OVERLAP = 0.8  # 80% overlap required for "stable"
+
+ENABLE_STATIC_BH_1Y_OVERLAP = True   # Overlap-based rebalancing
+STATIC_BH_1Y_OVERLAP_THRESHOLD = 0.7  # Rebalance when overlap drops below 70%
+
 
 
 # --- Rebalance Horizon Optimization ---

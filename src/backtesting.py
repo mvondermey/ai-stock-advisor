@@ -131,6 +131,15 @@ from config import (
     ENABLE_ANALYST_RECOMMENDATION, ANALYST_LOOKBACK_DAYS, ANALYST_MIN_ACTIONS, ANALYST_REBALANCE_DAYS,
     ENABLE_STATIC_BH_1Y_VOLATILITY, ENABLE_STATIC_BH_1Y_PERFORMANCE, ENABLE_STATIC_BH_1Y_MOMENTUM,
     ENABLE_STATIC_BH_1Y_ATR, ENABLE_STATIC_BH_1Y_HYBRID,
+    ENABLE_STATIC_BH_1Y_VOLUME_FILTER, ENABLE_STATIC_BH_1Y_SECTOR_ROTATION,
+    ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD, ENABLE_STATIC_BH_1Y_MARKET_REGIME,
+    ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST, ENABLE_STATIC_BH_1Y_OVERLAP,
+    STATIC_BH_1Y_VOLUME_MIN_DAILY, STATIC_BH_1Y_SECTOR_MAX_PER_SECTOR,
+    STATIC_BH_1Y_PERFORMANCE_MIN_IMPROVEMENT, STATIC_BH_1Y_MARKET_REGIME_BASE_DAYS,
+    STATIC_BH_1Y_MARKET_REGIME_HIGH_VOL_DAYS, STATIC_BH_1Y_MARKET_REGIME_LOW_VOL_DAYS,
+    STATIC_BH_1Y_MARKET_REGIME_VOL_THRESHOLD,
+    STATIC_BH_1Y_MOMENTUM_PERSIST_DAYS, STATIC_BH_1Y_MOMENTUM_PERSIST_MIN_OVERLAP,
+    STATIC_BH_1Y_OVERLAP_THRESHOLD,
     TREND_BREAKOUT_USE_ATR_STOP, TREND_BREAKOUT_ATR_MULTIPLIER,
 )
 from scipy.stats import uniform, beta
@@ -1422,6 +1431,63 @@ def _run_portfolio_backtest_walk_forward(
     static_bh_1y_hybrid_transaction_costs = 0.0
     static_bh_1y_hybrid_days_since_rebalance = 0
 
+    # 6. Volume Filter
+    static_bh_1y_volume_portfolio_value = initial_capital_needed
+    static_bh_1y_volume_portfolio_history = [static_bh_1y_volume_portfolio_value]
+    static_bh_1y_volume_positions = {}
+    static_bh_1y_volume_cash = initial_capital_needed
+    current_static_bh_1y_volume_stocks = []
+    static_bh_1y_volume_initialized = False
+    static_bh_1y_volume_transaction_costs = 0.0
+
+    # 7. Sector Rotation
+    static_bh_1y_sector_portfolio_value = initial_capital_needed
+    static_bh_1y_sector_portfolio_history = [static_bh_1y_sector_portfolio_value]
+    static_bh_1y_sector_positions = {}
+    static_bh_1y_sector_cash = initial_capital_needed
+    current_static_bh_1y_sector_stocks = []
+    static_bh_1y_sector_initialized = False
+    static_bh_1y_sector_transaction_costs = 0.0
+
+    # 8. Performance Threshold
+    static_bh_1y_perf_threshold_portfolio_value = initial_capital_needed
+    static_bh_1y_perf_threshold_portfolio_history = [static_bh_1y_perf_threshold_portfolio_value]
+    static_bh_1y_perf_threshold_positions = {}
+    static_bh_1y_perf_threshold_cash = initial_capital_needed
+    current_static_bh_1y_perf_threshold_stocks = []
+    static_bh_1y_perf_threshold_initialized = False
+    static_bh_1y_perf_threshold_transaction_costs = 0.0
+
+    # 9. Market Regime
+    static_bh_1y_market_regime_portfolio_value = initial_capital_needed
+    static_bh_1y_market_regime_portfolio_history = [static_bh_1y_market_regime_portfolio_value]
+    static_bh_1y_market_regime_positions = {}
+    static_bh_1y_market_regime_cash = initial_capital_needed
+    current_static_bh_1y_market_regime_stocks = []
+    static_bh_1y_market_regime_initialized = False
+    static_bh_1y_market_regime_transaction_costs = 0.0
+    static_bh_1y_market_regime_days_since_rebalance = 0
+    static_bh_1y_market_regime_next_rebalance_days = STATIC_BH_1Y_MARKET_REGIME_BASE_DAYS
+
+    # 10. Momentum Persistence
+    static_bh_1y_mom_persist_portfolio_value = initial_capital_needed
+    static_bh_1y_mom_persist_portfolio_history = [static_bh_1y_mom_persist_portfolio_value]
+    static_bh_1y_mom_persist_positions = {}
+    static_bh_1y_mom_persist_cash = initial_capital_needed
+    current_static_bh_1y_mom_persist_stocks = []
+    static_bh_1y_mom_persist_initialized = False
+    static_bh_1y_mom_persist_transaction_costs = 0.0
+    static_bh_1y_mom_persist_top_stocks_history = []  # Track history of top stocks for persistence check
+
+    # 11. Overlap-Based
+    static_bh_1y_overlap_portfolio_value = initial_capital_needed
+    static_bh_1y_overlap_portfolio_history = [static_bh_1y_overlap_portfolio_value]
+    static_bh_1y_overlap_positions = {}
+    static_bh_1y_overlap_cash = initial_capital_needed
+    current_static_bh_1y_overlap_stocks = []
+    static_bh_1y_overlap_initialized = False
+    static_bh_1y_overlap_transaction_costs = 0.0
+
     # Track STATIC BH 3M PORTFOLIO (with optional periodic rebalancing)
     static_bh_3m_portfolio_value = initial_capital_needed
     static_bh_3m_portfolio_history = [static_bh_3m_portfolio_value]
@@ -2429,45 +2495,184 @@ def _run_portfolio_backtest_walk_forward(
                     static_bh_1y_hybrid_initialized = True
                     static_bh_1y_hybrid_days_since_rebalance = 0
 
-            # STATIC BH 3M: Initialize on day 1, then rebalance every N days if configured
-            should_init_or_rebalance_3m = (
-                (not static_bh_3m_initialized) or  # Always initialize on first day
-                (STATIC_BH_3M_REBALANCE_DAYS > 0 and static_bh_3m_days_since_rebalance >= STATIC_BH_3M_REBALANCE_DAYS)
+        # 6. Volume Filter strategy
+        if ENABLE_STATIC_BH_1Y_VOLUME_FILTER:
+            from enhanced_static_bh_strategies import select_volume_filtered_bh_1y_stocks
+            new_stocks = select_volume_filtered_bh_1y_stocks(
+                initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE, STATIC_BH_1Y_VOLUME_MIN_DAILY
+            )
+            if new_stocks and set(new_stocks) != set(current_static_bh_1y_volume_stocks):
+                if not static_bh_1y_volume_initialized:
+                    print(f"   🎯 Static BH 1Y Volume: Initializing")
+                else:
+                    print(f"   🔄 Static BH 1Y Volume: Volume filter rebalance")
+                static_bh_1y_volume_positions, static_bh_1y_volume_cash, current_static_bh_1y_volume_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="Static BH 1Y Volume", current_stocks=current_static_bh_1y_volume_stocks,
+                    new_stocks=new_stocks, positions=static_bh_1y_volume_positions, cash=static_bh_1y_volume_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not static_bh_1y_volume_initialized
+                )
+                static_bh_1y_volume_transaction_costs += rc
+                static_bh_1y_volume_initialized = True
+
+        # 7. Sector Rotation strategy
+        if ENABLE_STATIC_BH_1Y_SECTOR_ROTATION:
+            from enhanced_static_bh_strategies import select_sector_rotated_bh_1y_stocks
+            new_stocks = select_sector_rotated_bh_1y_stocks(
+                initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE, STATIC_BH_1Y_SECTOR_MAX_PER_SECTOR
+            )
+            if new_stocks and set(new_stocks) != set(current_static_bh_1y_sector_stocks):
+                if not static_bh_1y_sector_initialized:
+                    print(f"   🎯 Static BH 1Y Sector: Initializing")
+                else:
+                    print(f"   🔄 Static BH 1Y Sector: Sector rotation rebalance")
+                static_bh_1y_sector_positions, static_bh_1y_sector_cash, current_static_bh_1y_sector_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="Static BH 1Y Sector", current_stocks=current_static_bh_1y_sector_stocks,
+                    new_stocks=new_stocks, positions=static_bh_1y_sector_positions, cash=static_bh_1y_sector_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not static_bh_1y_sector_initialized
+                )
+                static_bh_1y_sector_transaction_costs += rc
+                static_bh_1y_sector_initialized = True
+
+        # 8. Performance Threshold strategy
+        if ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD:
+            from enhanced_static_bh_strategies import select_performance_threshold_bh_1y_stocks
+            new_stocks, should_rebalance = select_performance_threshold_bh_1y_stocks(
+                initial_top_tickers, ticker_data_grouped, current_date, 
+                current_static_bh_1y_perf_threshold_stocks, PORTFOLIO_SIZE, STATIC_BH_1Y_PERFORMANCE_MIN_IMPROVEMENT
+            )
+            if should_rebalance and new_stocks:
+                if not static_bh_1y_perf_threshold_initialized:
+                    print(f"   🎯 Static BH 1Y Perf Thresh: Initializing")
+                else:
+                    print(f"   🔄 Static BH 1Y Perf Thresh: Performance threshold rebalance")
+                static_bh_1y_perf_threshold_positions, static_bh_1y_perf_threshold_cash, current_static_bh_1y_perf_threshold_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="Static BH 1Y Perf Thresh", current_stocks=current_static_bh_1y_perf_threshold_stocks,
+                    new_stocks=new_stocks, positions=static_bh_1y_perf_threshold_positions, cash=static_bh_1y_perf_threshold_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not static_bh_1y_perf_threshold_initialized
+                )
+                static_bh_1y_perf_threshold_transaction_costs += rc
+                static_bh_1y_perf_threshold_initialized = True
+
+        # 9. Market Regime strategy
+        if ENABLE_STATIC_BH_1Y_MARKET_REGIME:
+            from enhanced_static_bh_strategies import select_market_regime_bh_1y_stocks
+            static_bh_1y_market_regime_days_since_rebalance += 1
+            
+            # Check if it's time to rebalance
+            if static_bh_1y_market_regime_days_since_rebalance >= static_bh_1y_market_regime_next_rebalance_days:
+                new_stocks, next_rebalance_days = select_market_regime_bh_1y_stocks(
+                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE,
+                    STATIC_BH_1Y_MARKET_REGIME_BASE_DAYS, STATIC_BH_1Y_MARKET_REGIME_HIGH_VOL_DAYS,
+                    STATIC_BH_1Y_MARKET_REGIME_LOW_VOL_DAYS, STATIC_BH_1Y_MARKET_REGIME_VOL_THRESHOLD
+                )
+                if new_stocks and set(new_stocks) != set(current_static_bh_1y_market_regime_stocks):
+                    if not static_bh_1y_market_regime_initialized:
+                        print(f"   🎯 Static BH 1Y Market Regime: Initializing")
+                    else:
+                        print(f"   🔄 Static BH 1Y Market Regime: Market regime rebalance (next in {next_rebalance_days} days)")
+                    static_bh_1y_market_regime_positions, static_bh_1y_market_regime_cash, current_static_bh_1y_market_regime_stocks, rc, _ = _smart_rebalance_portfolio(
+                        strategy_name="Static BH 1Y Market Regime", current_stocks=current_static_bh_1y_market_regime_stocks,
+                        new_stocks=new_stocks, positions=static_bh_1y_market_regime_positions, cash=static_bh_1y_market_regime_cash,
+                        ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                        transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not static_bh_1y_market_regime_initialized
+                    )
+                    static_bh_1y_market_regime_transaction_costs += rc
+                    static_bh_1y_market_regime_initialized = True
+                    static_bh_1y_market_regime_days_since_rebalance = 0
+                    static_bh_1y_market_regime_next_rebalance_days = next_rebalance_days
+
+        # 10. Momentum Persistence strategy
+        if ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST:
+            from enhanced_static_bh_strategies import select_momentum_persistence_bh_1y_stocks
+            new_stocks, should_rebalance, static_bh_1y_mom_persist_top_stocks_history = select_momentum_persistence_bh_1y_stocks(
+                initial_top_tickers, ticker_data_grouped, current_date,
+                static_bh_1y_mom_persist_top_stocks_history, current_static_bh_1y_mom_persist_stocks,
+                PORTFOLIO_SIZE, STATIC_BH_1Y_MOMENTUM_PERSIST_DAYS, STATIC_BH_1Y_MOMENTUM_PERSIST_MIN_OVERLAP
+            )
+            if should_rebalance and new_stocks:
+                if not static_bh_1y_mom_persist_initialized:
+                    print(f"   🎯 Static BH 1Y Mom Persist: Initializing")
+                else:
+                    print(f"   🔄 Static BH 1Y Mom Persist: Momentum persistence confirmed, rebalancing")
+                static_bh_1y_mom_persist_positions, static_bh_1y_mom_persist_cash, current_static_bh_1y_mom_persist_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="Static BH 1Y Mom Persist", current_stocks=current_static_bh_1y_mom_persist_stocks,
+                    new_stocks=new_stocks, positions=static_bh_1y_mom_persist_positions, cash=static_bh_1y_mom_persist_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not static_bh_1y_mom_persist_initialized
+                )
+                static_bh_1y_mom_persist_transaction_costs += rc
+                static_bh_1y_mom_persist_initialized = True
+
+        # 11. Overlap-Based strategy
+        if ENABLE_STATIC_BH_1Y_OVERLAP:
+            from enhanced_static_bh_strategies import select_overlap_based_bh_1y_stocks
+            new_stocks, should_rebalance = select_overlap_based_bh_1y_stocks(
+                initial_top_tickers, ticker_data_grouped, current_date,
+                current_static_bh_1y_overlap_stocks, PORTFOLIO_SIZE, STATIC_BH_1Y_OVERLAP_THRESHOLD
+            )
+            if should_rebalance and new_stocks:
+                if not static_bh_1y_overlap_initialized:
+                    print(f"   🎯 Static BH 1Y Overlap: Initializing")
+                else:
+                    overlap = len(set(current_static_bh_1y_overlap_stocks) & set(new_stocks)) / len(current_static_bh_1y_overlap_stocks) if current_static_bh_1y_overlap_stocks else 0
+                    print(f"   🔄 Static BH 1Y Overlap: Overlap dropped to {overlap:.0%}, rebalancing")
+                static_bh_1y_overlap_positions, static_bh_1y_overlap_cash, current_static_bh_1y_overlap_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="Static BH 1Y Overlap", current_stocks=current_static_bh_1y_overlap_stocks,
+                    new_stocks=new_stocks, positions=static_bh_1y_overlap_positions, cash=static_bh_1y_overlap_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not static_bh_1y_overlap_initialized
+                )
+                static_bh_1y_overlap_transaction_costs += rc
+                static_bh_1y_overlap_initialized = True
+
+        # STATIC BH 3M: Initialize on day 1, then rebalance every N days if configured
+        should_init_or_rebalance_3m = (
+            (not static_bh_3m_initialized) or  # Always initialize on first day
+            (STATIC_BH_3M_REBALANCE_DAYS > 0 and static_bh_3m_days_since_rebalance >= STATIC_BH_3M_REBALANCE_DAYS)
+        )
+
+        if should_init_or_rebalance_3m:
+            from shared_strategies import select_top_performers
+            new_static_bh_3m_stocks = select_top_performers(
+                initial_top_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=PORTFOLIO_SIZE
             )
 
-            if should_init_or_rebalance_3m:
-                from shared_strategies import select_top_performers
-                new_static_bh_3m_stocks = select_top_performers(
-                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=PORTFOLIO_SIZE
+            if new_static_bh_3m_stocks:
+                print(f"   📊 Static BH 3M Day {day_count}: {new_static_bh_3m_stocks}")
+                if not static_bh_3m_initialized:
+                    print(f"   🎯 Static BH 3M: Initializing with top {len(new_static_bh_3m_stocks)} by 3M performance: {new_static_bh_3m_stocks}")
+                else:
+                    print(f"   🔄 Static BH 3M: Smart rebalancing to top {len(new_static_bh_3m_stocks)} by 3M performance: {new_static_bh_3m_stocks}")
+
+                # Use universal smart rebalancing function
+                static_bh_3m_positions, static_bh_3m_cash, current_static_bh_3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                    strategy_name="Static BH 3M",
+                    current_stocks=current_static_bh_3m_stocks,
+                    new_stocks=new_static_bh_3m_stocks,
+                    positions=static_bh_3m_positions,
+                    cash=static_bh_3m_cash,
+                    ticker_data_grouped=ticker_data_grouped,
+                    current_date=current_date,
+                    transaction_cost=TRANSACTION_COST,
+                    portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not static_bh_3m_initialized  # Force initial allocation
                 )
+                strategies_rebalanced_today['Static BH 3M'] = rebalanced_flag
+                static_bh_transaction_costs += rebalance_costs
 
-                if new_static_bh_3m_stocks:
-                    print(f"   📊 Static BH 3M Day {day_count}: {new_static_bh_3m_stocks}")
-                    if not static_bh_3m_initialized:
-                        print(f"   🎯 Static BH 3M: Initializing with top {len(new_static_bh_3m_stocks)} by 3M performance: {new_static_bh_3m_stocks}")
-                    else:
-                        print(f"   🔄 Static BH 3M: Smart rebalancing to top {len(new_static_bh_3m_stocks)} by 3M performance: {new_static_bh_3m_stocks}")
+                static_bh_3m_initialized = True
+                static_bh_3m_days_since_rebalance = 0
 
-                    # Use universal smart rebalancing function
-                    static_bh_3m_positions, static_bh_3m_cash, current_static_bh_3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name="Static BH 3M",
-                        current_stocks=current_static_bh_3m_stocks,
-                        new_stocks=new_static_bh_3m_stocks,
-                        positions=static_bh_3m_positions,
-                        cash=static_bh_3m_cash,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        transaction_cost=TRANSACTION_COST,
-                        portfolio_size=PORTFOLIO_SIZE,
-                        force_rebalance=not static_bh_3m_initialized  # Force initial allocation
-                    )
-                    strategies_rebalanced_today['Static BH 3M'] = rebalanced_flag
-                    static_bh_transaction_costs += rebalance_costs
-
-                    static_bh_3m_initialized = True
-                    static_bh_3m_days_since_rebalance = 0
-
-            # STATIC BH 6M: Initialize on day 1, then rebalance every N days if configured
+        # STATIC BH 6M: Initialize on day 1, then rebalance every N days if configured
         if ENABLE_STATIC_BH_6M:
             should_init_or_rebalance_6m = (
                 (not static_bh_6m_initialized) or  # Always initialize on first day
@@ -7403,6 +7608,114 @@ def _run_portfolio_backtest_walk_forward(
             static_bh_1y_hybrid_portfolio_value = static_bh_1y_hybrid_invested_value + static_bh_1y_hybrid_cash
             static_bh_1y_hybrid_portfolio_history.append(static_bh_1y_hybrid_portfolio_value)
 
+        # 6. Volume Filter
+        if ENABLE_STATIC_BH_1Y_VOLUME_FILTER:
+            static_bh_1y_volume_invested_value = 0.0
+            for ticker in list(static_bh_1y_volume_positions.keys()):
+                try:
+                    if ticker in ticker_data_grouped:
+                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
+                        if not ticker_data.empty:
+                            current_price = ticker_data['Close'].iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                position_value = static_bh_1y_volume_positions[ticker]['shares'] * current_price
+                                static_bh_1y_volume_positions[ticker]['value'] = position_value
+                                static_bh_1y_volume_invested_value += position_value
+                except Exception:
+                    pass
+            static_bh_1y_volume_portfolio_value = static_bh_1y_volume_invested_value + static_bh_1y_volume_cash
+            static_bh_1y_volume_portfolio_history.append(static_bh_1y_volume_portfolio_value)
+
+        # 7. Sector Rotation
+        if ENABLE_STATIC_BH_1Y_SECTOR_ROTATION:
+            static_bh_1y_sector_invested_value = 0.0
+            for ticker in list(static_bh_1y_sector_positions.keys()):
+                try:
+                    if ticker in ticker_data_grouped:
+                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
+                        if not ticker_data.empty:
+                            current_price = ticker_data['Close'].iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                position_value = static_bh_1y_sector_positions[ticker]['shares'] * current_price
+                                static_bh_1y_sector_positions[ticker]['value'] = position_value
+                                static_bh_1y_sector_invested_value += position_value
+                except Exception:
+                    pass
+            static_bh_1y_sector_portfolio_value = static_bh_1y_sector_invested_value + static_bh_1y_sector_cash
+            static_bh_1y_sector_portfolio_history.append(static_bh_1y_sector_portfolio_value)
+
+        # 8. Performance Threshold
+        if ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD:
+            static_bh_1y_perf_threshold_invested_value = 0.0
+            for ticker in list(static_bh_1y_perf_threshold_positions.keys()):
+                try:
+                    if ticker in ticker_data_grouped:
+                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
+                        if not ticker_data.empty:
+                            current_price = ticker_data['Close'].iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                position_value = static_bh_1y_perf_threshold_positions[ticker]['shares'] * current_price
+                                static_bh_1y_perf_threshold_positions[ticker]['value'] = position_value
+                                static_bh_1y_perf_threshold_invested_value += position_value
+                except Exception:
+                    pass
+            static_bh_1y_perf_threshold_portfolio_value = static_bh_1y_perf_threshold_invested_value + static_bh_1y_perf_threshold_cash
+            static_bh_1y_perf_threshold_portfolio_history.append(static_bh_1y_perf_threshold_portfolio_value)
+
+        # 9. Market Regime
+        if ENABLE_STATIC_BH_1Y_MARKET_REGIME:
+            static_bh_1y_market_regime_invested_value = 0.0
+            for ticker in list(static_bh_1y_market_regime_positions.keys()):
+                try:
+                    if ticker in ticker_data_grouped:
+                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
+                        if not ticker_data.empty:
+                            current_price = ticker_data['Close'].iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                position_value = static_bh_1y_market_regime_positions[ticker]['shares'] * current_price
+                                static_bh_1y_market_regime_positions[ticker]['value'] = position_value
+                                static_bh_1y_market_regime_invested_value += position_value
+                except Exception:
+                    pass
+            static_bh_1y_market_regime_portfolio_value = static_bh_1y_market_regime_invested_value + static_bh_1y_market_regime_cash
+            static_bh_1y_market_regime_portfolio_history.append(static_bh_1y_market_regime_portfolio_value)
+
+        # 10. Momentum Persistence
+        if ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST:
+            static_bh_1y_mom_persist_invested_value = 0.0
+            for ticker in list(static_bh_1y_mom_persist_positions.keys()):
+                try:
+                    if ticker in ticker_data_grouped:
+                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
+                        if not ticker_data.empty:
+                            current_price = ticker_data['Close'].iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                position_value = static_bh_1y_mom_persist_positions[ticker]['shares'] * current_price
+                                static_bh_1y_mom_persist_positions[ticker]['value'] = position_value
+                                static_bh_1y_mom_persist_invested_value += position_value
+                except Exception:
+                    pass
+            static_bh_1y_mom_persist_portfolio_value = static_bh_1y_mom_persist_invested_value + static_bh_1y_mom_persist_cash
+            static_bh_1y_mom_persist_portfolio_history.append(static_bh_1y_mom_persist_portfolio_value)
+
+        # 11. Overlap-Based
+        if ENABLE_STATIC_BH_1Y_OVERLAP:
+            static_bh_1y_overlap_invested_value = 0.0
+            for ticker in list(static_bh_1y_overlap_positions.keys()):
+                try:
+                    if ticker in ticker_data_grouped:
+                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
+                        if not ticker_data.empty:
+                            current_price = ticker_data['Close'].iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                position_value = static_bh_1y_overlap_positions[ticker]['shares'] * current_price
+                                static_bh_1y_overlap_positions[ticker]['value'] = position_value
+                                static_bh_1y_overlap_invested_value += position_value
+                except Exception:
+                    pass
+            static_bh_1y_overlap_portfolio_value = static_bh_1y_overlap_invested_value + static_bh_1y_overlap_cash
+            static_bh_1y_overlap_portfolio_history.append(static_bh_1y_overlap_portfolio_value)
+
         # Update STATIC BH 6M portfolio value daily (skip if disabled)
         static_bh_6m_invested_value = 0.0
         if ENABLE_STATIC_BH_6M:
@@ -7688,6 +8001,14 @@ def _run_portfolio_backtest_walk_forward(
                 ("BH 1Y Mom Trig", static_bh_1y_mom_portfolio_value if ENABLE_STATIC_BH_1Y_MOMENTUM else None),
                 ("BH 1Y ATR Trig", static_bh_1y_atr_portfolio_value if ENABLE_STATIC_BH_1Y_ATR else None),
                 ("BH 1Y Hybrid Trig", static_bh_1y_hybrid_portfolio_value if ENABLE_STATIC_BH_1Y_HYBRID else None),
+                # Enhanced Static BH 1Y Strategies
+                ("BH 1Y Volume", static_bh_1y_volume_portfolio_value if ENABLE_STATIC_BH_1Y_VOLUME_FILTER else None),
+                ("BH 1Y Sector", static_bh_1y_sector_portfolio_value if ENABLE_STATIC_BH_1Y_SECTOR_ROTATION else None),
+                ("BH 1Y Perf Thresh", static_bh_1y_perf_threshold_portfolio_value if ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD else None),
+                ("BH 1Y Market Regime", static_bh_1y_market_regime_portfolio_value if ENABLE_STATIC_BH_1Y_MARKET_REGIME else None),
+                # Momentum Persistence and Overlap-Based Strategies
+                ("BH 1Y Mom Persist", static_bh_1y_mom_persist_portfolio_value if ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST else None),
+                ("BH 1Y Overlap", static_bh_1y_overlap_portfolio_value if ENABLE_STATIC_BH_1Y_OVERLAP else None),
             ]
 
             # Filter out None values and sort by performance
@@ -8458,6 +8779,14 @@ def _run_portfolio_backtest_walk_forward(
             'static_bh_1y_mom':         _strat(static_bh_1y_mom_portfolio_value, static_bh_1y_mom_portfolio_history, static_bh_1y_mom_transaction_costs, static_bh_1y_mom_cash) if ENABLE_STATIC_BH_1Y_MOMENTUM else _strat(0, [], 0, 0),
             'static_bh_1y_atr':         _strat(static_bh_1y_atr_portfolio_value, static_bh_1y_atr_portfolio_history, static_bh_1y_atr_transaction_costs, static_bh_1y_atr_cash) if ENABLE_STATIC_BH_1Y_ATR else _strat(0, [], 0, 0),
             'static_bh_1y_hybrid':      _strat(static_bh_1y_hybrid_portfolio_value, static_bh_1y_hybrid_portfolio_history, static_bh_1y_hybrid_transaction_costs, static_bh_1y_hybrid_cash) if ENABLE_STATIC_BH_1Y_HYBRID else _strat(0, [], 0, 0),
+            # Enhanced Static BH 1Y Strategies
+            'static_bh_1y_volume':       _strat(static_bh_1y_volume_portfolio_value, static_bh_1y_volume_portfolio_history, static_bh_1y_volume_transaction_costs, static_bh_1y_volume_cash) if ENABLE_STATIC_BH_1Y_VOLUME_FILTER else _strat(0, [], 0, 0),
+            'static_bh_1y_sector':      _strat(static_bh_1y_sector_portfolio_value, static_bh_1y_sector_portfolio_history, static_bh_1y_sector_transaction_costs, static_bh_1y_sector_cash) if ENABLE_STATIC_BH_1Y_SECTOR_ROTATION else _strat(0, [], 0, 0),
+            'static_bh_1y_perf_threshold': _strat(static_bh_1y_perf_threshold_portfolio_value, static_bh_1y_perf_threshold_portfolio_history, static_bh_1y_perf_threshold_transaction_costs, static_bh_1y_perf_threshold_cash) if ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD else _strat(0, [], 0, 0),
+            'static_bh_1y_market_regime': _strat(static_bh_1y_market_regime_portfolio_value, static_bh_1y_market_regime_portfolio_history, static_bh_1y_market_regime_transaction_costs, static_bh_1y_market_regime_cash) if ENABLE_STATIC_BH_1Y_MARKET_REGIME else _strat(0, [], 0, 0),
+            # Momentum Persistence and Overlap-Based Strategies
+            'static_bh_1y_mom_persist': _strat(static_bh_1y_mom_persist_portfolio_value, static_bh_1y_mom_persist_portfolio_history, static_bh_1y_mom_persist_transaction_costs, static_bh_1y_mom_persist_cash) if ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST else _strat(0, [], 0, 0),
+            'static_bh_1y_overlap': _strat(static_bh_1y_overlap_portfolio_value, static_bh_1y_overlap_portfolio_history, static_bh_1y_overlap_transaction_costs, static_bh_1y_overlap_cash) if ENABLE_STATIC_BH_1Y_OVERLAP else _strat(0, [], 0, 0),
         }
     }
 
@@ -8512,6 +8841,11 @@ def _run_portfolio_backtest_walk_forward(
             'static_bh_1y_mom': {'tickers': list(current_static_bh_1y_mom_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_mom_positions.items()}},
             'static_bh_1y_atr': {'tickers': list(current_static_bh_1y_atr_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_atr_positions.items()}},
             'static_bh_1y_hybrid': {'tickers': list(current_static_bh_1y_hybrid_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_hybrid_positions.items()}},
+            # Enhanced Static BH 1Y Strategies
+            'static_bh_1y_volume': {'tickers': list(current_static_bh_1y_volume_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_volume_positions.items()}},
+            'static_bh_1y_sector': {'tickers': list(current_static_bh_1y_sector_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_sector_positions.items()}},
+            'static_bh_1y_perf_threshold': {'tickers': list(current_static_bh_1y_perf_threshold_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_perf_threshold_positions.items()}},
+            'static_bh_1y_market_regime': {'tickers': list(current_static_bh_1y_market_regime_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_market_regime_positions.items()}},
         },
         'performance': {name: {'value': data['value'], 'return_pct': ((data['value'] - INVESTMENT_PER_STOCK * PORTFOLIO_SIZE) / (INVESTMENT_PER_STOCK * PORTFOLIO_SIZE)) * 100} for name, data in results['strategies'].items()}
     }
