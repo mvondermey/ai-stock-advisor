@@ -254,11 +254,48 @@ PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls f
 
 from multiprocessing import cpu_count
 
-# Conservative CPU utilization to prevent system overload and process termination
+def _auto_detect_process_counts():
+    """
+    Automatically detect safe process counts based on available RAM.
+    - Training processes: ~3GB RAM each (ML models are memory-heavy)
+    - Data processes: ~1GB RAM each (lighter data processing tasks)
+    """
+    try:
+        import psutil
+        available_ram_gb = psutil.virtual_memory().available / (1024**3)
+        total_ram_gb = psutil.virtual_memory().total / (1024**3)
+        
+        # Use available RAM with some headroom (leave 20% free)
+        usable_ram_gb = available_ram_gb * 0.8
+        
+        # Calculate safe process counts
+        # Training: ~3GB per process (XGBoost, PyTorch models)
+        safe_training = max(1, int(usable_ram_gb / 3))
+        # Data processing: ~1GB per process (lighter tasks)
+        safe_data = max(1, int(usable_ram_gb / 1))
+        
+        # Cap at CPU count (no point having more processes than cores)
+        cores = cpu_count()
+        safe_training = min(safe_training, cores)
+        safe_data = min(safe_data, cores)
+        
+        print(f"   💾 Auto-detected: {total_ram_gb:.1f}GB total RAM, {available_ram_gb:.1f}GB available")
+        print(f"   🔧 Safe processes: {safe_data} (data), {safe_training} (training)")
+        
+        return safe_data, safe_training
+    except ImportError:
+        # psutil not available, fall back to CPU-based calculation
+        cores = cpu_count()
+        return max(1, cores // 2), max(1, cores // 4)
+    except Exception:
+        # Any other error, use conservative defaults
+        return 4, 2
 
-# Use only half of CPU cores to avoid memory exhaustion with large datasets
+# Auto-detect safe process counts based on RAM
+_safe_data_processes, _safe_training_processes = _auto_detect_process_counts()
 
-NUM_PROCESSES           = max(1, cpu_count() // 2 )  # Reduced for 1800+ tickers to avoid OOM
+NUM_PROCESSES = _safe_data_processes  # For data validation, ticker selection, performance calculations
+TRAINING_NUM_PROCESSES = _safe_training_processes  # For ML model training (heavier memory usage)
 
 
 
@@ -418,9 +455,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 #
 
-
-
-TRAINING_NUM_PROCESSES = max(1, cpu_count() // 2   ) # Reduced to avoid memory exhaustion
+# Note: TRAINING_NUM_PROCESSES is now auto-detected based on RAM (see above)
 
 
 # --- Backtest windows
