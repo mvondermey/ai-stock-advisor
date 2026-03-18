@@ -1279,6 +1279,15 @@ STATIC_BH_1Y_MOMENTUM_PERSIST_MIN_OVERLAP = 0.8  # 80% overlap required for "sta
 ENABLE_STATIC_BH_1Y_OVERLAP = True   # Overlap-based rebalancing
 STATIC_BH_1Y_OVERLAP_THRESHOLD = 0.7  # Rebalance when overlap drops below 70%
 
+ENABLE_STATIC_BH_1Y_RANK_DRIFT = True   # Rank drift rebalancing
+STATIC_BH_1Y_RANK_DRIFT_THRESHOLD = 3.0  # Rebalance when avg rank change > 3 positions
+
+ENABLE_STATIC_BH_1Y_DRAWDOWN = True   # Portfolio drawdown trigger
+STATIC_BH_1Y_DRAWDOWN_THRESHOLD = 0.05  # Rebalance when portfolio down 5% from peak
+
+ENABLE_STATIC_BH_1Y_SMART_MONTHLY = True   # Smart monthly + conditional
+STATIC_BH_1Y_SMART_MONTHLY_DRAWDOWN = 0.03  # Early rebalance if down 3% from peak
+
 
 
 # --- Rebalance Horizon Optimization ---

@@ -379,3 +379,208 @@ def select_overlap_based_bh_1y_stocks(
         return new_top_stocks, True
     else:
         return current_stocks, False
+
+
+def select_rank_drift_bh_1y_stocks(
+    tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    previous_rankings: Dict[str, int],
+    current_stocks: List[str],
+    top_n: int = 10,
+    rank_drift_threshold: float = 3.0
+) -> Tuple[List[str], bool, Dict[str, int]]:
+    """
+    Static BH 1Y with rank drift rebalancing.
+    Rebalances when stocks have moved significantly in rankings.
+    
+    Args:
+        tickers: List of tickers to consider
+        ticker_data_grouped: Price data for all tickers
+        current_date: Current date
+        previous_rankings: Previous day's rankings {ticker: rank}
+        current_stocks: Currently held stocks
+        top_n: Number of stocks to select
+        rank_drift_threshold: Avg rank change threshold to trigger rebalance
+    
+    Returns:
+        (selected_stocks, should_rebalance, updated_rankings)
+    """
+    # Get current top performers with their performances
+    from parallel_backtest import calculate_parallel_performance
+    
+    performances = calculate_parallel_performance(
+        tickers, ticker_data_grouped, current_date, period_days=365
+    )
+    
+    # Sort by performance (highest first) and create rankings
+    sorted_perf = sorted(performances.items(), key=lambda x: x[1], reverse=True)
+    current_rankings = {}
+    for rank, (ticker, perf) in enumerate(sorted_perf, 1):
+        current_rankings[ticker] = rank
+    
+    # Get new top stocks
+    new_top_stocks = [t for t, _ in sorted_perf[:top_n]]
+    
+    # No previous rankings - always rebalance (initialization)
+    if not previous_rankings:
+        return new_top_stocks, True, current_rankings
+    
+    # Calculate average rank change for current holdings
+    if current_stocks:
+        rank_changes = []
+        for ticker in current_stocks:
+            if ticker in previous_rankings and ticker in current_rankings:
+                prev_rank = previous_rankings[ticker]
+                curr_rank = current_rankings[ticker]
+                rank_changes.append(abs(curr_rank - prev_rank))
+        
+        avg_rank_change = sum(rank_changes) / len(rank_changes) if rank_changes else 0
+    else:
+        avg_rank_change = 0
+    
+    # Rebalance if average rank change exceeds threshold
+    should_rebalance = avg_rank_change > rank_drift_threshold
+    
+    if should_rebalance:
+        return new_top_stocks, True, current_rankings
+    else:
+        return current_stocks, False, current_rankings
+
+
+def check_drawdown_trigger(
+    portfolio_value: float,
+    portfolio_peak: float,
+    drawdown_threshold: float = 0.05
+) -> bool:
+    """
+    Check if portfolio drawdown exceeds threshold.
+    
+    Args:
+        portfolio_value: Current portfolio value
+        portfolio_peak: Peak portfolio value
+        drawdown_threshold: Drawdown threshold (default 5%)
+    
+    Returns:
+        True if drawdown exceeds threshold
+    """
+    if portfolio_peak == 0:
+        return False
+    
+    drawdown = (portfolio_peak - portfolio_value) / portfolio_peak
+    return drawdown >= drawdown_threshold
+
+
+def select_drawdown_trigger_bh_1y_stocks(
+    tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    current_stocks: List[str],
+    portfolio_value: float,
+    portfolio_peak: float,
+    top_n: int = 10,
+    drawdown_threshold: float = 0.05
+) -> Tuple[List[str], bool]:
+    """
+    Static BH 1Y with portfolio drawdown trigger.
+    Rebalances when portfolio drawdown exceeds threshold.
+    
+    Args:
+        tickers: List of tickers to consider
+        ticker_data_grouped: Price data for all tickers
+        current_date: Current date
+        current_stocks: Currently held stocks
+        portfolio_value: Current portfolio value
+        portfolio_peak: Peak portfolio value
+        top_n: Number of stocks to select
+        drawdown_threshold: Drawdown threshold (default 5%)
+    
+    Returns:
+        (selected_stocks, should_rebalance)
+    """
+    # Check if drawdown trigger is hit
+    should_rebalance = check_drawdown_trigger(
+        portfolio_value, portfolio_peak, drawdown_threshold
+    )
+    
+    # Get current top performers
+    new_top_stocks = select_top_performers(
+        tickers, ticker_data_grouped, current_date,
+        lookback_days=365, top_n=top_n
+    )
+    
+    # No current stocks - always rebalance (initialization)
+    if not current_stocks:
+        return new_top_stocks, True
+    
+    if should_rebalance:
+        return new_top_stocks, True
+    else:
+        return current_stocks, False
+
+
+def is_month_start(current_date: datetime) -> bool:
+    """
+    Check if current date is the first trading day of a month.
+    """
+    if current_date.day <= 3:
+        return True
+    return False
+
+
+def select_smart_monthly_bh_1y_stocks(
+    tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    current_stocks: List[str],
+    portfolio_value: float,
+    portfolio_peak: float,
+    last_rebalance_month: int,
+    top_n: int = 10,
+    early_rebalance_drawdown: float = 0.03
+) -> Tuple[List[str], bool, int]:
+    """
+    Static BH 1Y with smart monthly + conditional rebalancing.
+    Rebalances on monthly schedule BUT allows early rebalance if momentum drops.
+    
+    Args:
+        tickers: List of tickers to consider
+        ticker_data_grouped: Price data for all tickers
+        current_date: Current date
+        current_stocks: Currently held stocks
+        portfolio_value: Current portfolio value
+        portfolio_peak: Peak portfolio value
+        last_rebalance_month: Month of last rebalance (1-12)
+        top_n: Number of stocks to select
+        early_rebalance_drawdown: Early rebalance if down X% from peak
+    
+    Returns:
+        (selected_stocks, should_rebalance, current_month)
+    """
+    current_month = current_date.month
+    
+    # Get current top performers
+    new_top_stocks = select_top_performers(
+        tickers, ticker_data_grouped, current_date,
+        lookback_days=365, top_n=top_n
+    )
+    
+    # No current stocks - always rebalance (initialization)
+    if not current_stocks:
+        return new_top_stocks, True, current_month
+    
+    # Check if it's a new month (monthly rebalance)
+    is_new_month = current_month != last_rebalance_month
+    
+    # Check for early rebalance condition (significant drawdown)
+    is_early_rebalance = check_drawdown_trigger(
+        portfolio_value, portfolio_peak, early_rebalance_drawdown
+    )
+    
+    # Rebalance if new month OR early rebalance condition
+    should_rebalance = is_new_month or is_early_rebalance
+    
+    if should_rebalance:
+        return new_top_stocks, True, current_month
+    else:
+        return current_stocks, False, last_rebalance_month

@@ -134,12 +134,15 @@ from config import (
     ENABLE_STATIC_BH_1Y_VOLUME_FILTER, ENABLE_STATIC_BH_1Y_SECTOR_ROTATION,
     ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD, ENABLE_STATIC_BH_1Y_MARKET_REGIME,
     ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST, ENABLE_STATIC_BH_1Y_OVERLAP,
+    ENABLE_STATIC_BH_1Y_RANK_DRIFT, ENABLE_STATIC_BH_1Y_DRAWDOWN, ENABLE_STATIC_BH_1Y_SMART_MONTHLY,
     STATIC_BH_1Y_VOLUME_MIN_DAILY, STATIC_BH_1Y_SECTOR_MAX_PER_SECTOR,
     STATIC_BH_1Y_PERFORMANCE_MIN_IMPROVEMENT, STATIC_BH_1Y_MARKET_REGIME_BASE_DAYS,
     STATIC_BH_1Y_MARKET_REGIME_HIGH_VOL_DAYS, STATIC_BH_1Y_MARKET_REGIME_LOW_VOL_DAYS,
     STATIC_BH_1Y_MARKET_REGIME_VOL_THRESHOLD,
     STATIC_BH_1Y_MOMENTUM_PERSIST_DAYS, STATIC_BH_1Y_MOMENTUM_PERSIST_MIN_OVERLAP,
     STATIC_BH_1Y_OVERLAP_THRESHOLD,
+    STATIC_BH_1Y_RANK_DRIFT_THRESHOLD, STATIC_BH_1Y_DRAWDOWN_THRESHOLD,
+    STATIC_BH_1Y_SMART_MONTHLY_DRAWDOWN,
     TREND_BREAKOUT_USE_ATR_STOP, TREND_BREAKOUT_ATR_MULTIPLIER,
 )
 from scipy.stats import uniform, beta
@@ -1488,6 +1491,37 @@ def _run_portfolio_backtest_walk_forward(
     static_bh_1y_overlap_initialized = False
     static_bh_1y_overlap_transaction_costs = 0.0
 
+    # 12. Rank Drift
+    static_bh_1y_rank_drift_portfolio_value = initial_capital_needed
+    static_bh_1y_rank_drift_portfolio_history = [static_bh_1y_rank_drift_portfolio_value]
+    static_bh_1y_rank_drift_positions = {}
+    static_bh_1y_rank_drift_cash = initial_capital_needed
+    current_static_bh_1y_rank_drift_stocks = []
+    static_bh_1y_rank_drift_initialized = False
+    static_bh_1y_rank_drift_transaction_costs = 0.0
+    static_bh_1y_rank_drift_previous_rankings = {}  # Track previous rankings for drift calculation
+
+    # 13. Drawdown Trigger
+    static_bh_1y_drawdown_portfolio_value = initial_capital_needed
+    static_bh_1y_drawdown_portfolio_history = [static_bh_1y_drawdown_portfolio_value]
+    static_bh_1y_drawdown_positions = {}
+    static_bh_1y_drawdown_cash = initial_capital_needed
+    current_static_bh_1y_drawdown_stocks = []
+    static_bh_1y_drawdown_initialized = False
+    static_bh_1y_drawdown_transaction_costs = 0.0
+    static_bh_1y_drawdown_peak = initial_capital_needed  # Track portfolio peak for drawdown calculation
+
+    # 14. Smart Monthly
+    static_bh_1y_smart_monthly_portfolio_value = initial_capital_needed
+    static_bh_1y_smart_monthly_portfolio_history = [static_bh_1y_smart_monthly_portfolio_value]
+    static_bh_1y_smart_monthly_positions = {}
+    static_bh_1y_smart_monthly_cash = initial_capital_needed
+    current_static_bh_1y_smart_monthly_stocks = []
+    static_bh_1y_smart_monthly_initialized = False
+    static_bh_1y_smart_monthly_transaction_costs = 0.0
+    static_bh_1y_smart_monthly_peak = initial_capital_needed
+    static_bh_1y_smart_monthly_last_rebalance_month = 0
+
     # Track STATIC BH 3M PORTFOLIO (with optional periodic rebalancing)
     static_bh_3m_portfolio_value = initial_capital_needed
     static_bh_3m_portfolio_history = [static_bh_3m_portfolio_value]
@@ -2633,6 +2667,77 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 static_bh_1y_overlap_transaction_costs += rc
                 static_bh_1y_overlap_initialized = True
+
+        # 12. Rank Drift strategy
+        if ENABLE_STATIC_BH_1Y_RANK_DRIFT:
+            from enhanced_static_bh_strategies import select_rank_drift_bh_1y_stocks
+            new_stocks, should_rebalance, static_bh_1y_rank_drift_previous_rankings = select_rank_drift_bh_1y_stocks(
+                initial_top_tickers, ticker_data_grouped, current_date,
+                static_bh_1y_rank_drift_previous_rankings, current_static_bh_1y_rank_drift_stocks,
+                PORTFOLIO_SIZE, STATIC_BH_1Y_RANK_DRIFT_THRESHOLD
+            )
+            if should_rebalance and new_stocks:
+                if not static_bh_1y_rank_drift_initialized:
+                    print(f"   🎯 Static BH 1Y Rank Drift: Initializing")
+                else:
+                    print(f"   🔄 Static BH 1Y Rank Drift: Rank drift detected, rebalancing")
+                static_bh_1y_rank_drift_positions, static_bh_1y_rank_drift_cash, current_static_bh_1y_rank_drift_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="Static BH 1Y Rank Drift", current_stocks=current_static_bh_1y_rank_drift_stocks,
+                    new_stocks=new_stocks, positions=static_bh_1y_rank_drift_positions, cash=static_bh_1y_rank_drift_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not static_bh_1y_rank_drift_initialized
+                )
+                static_bh_1y_rank_drift_transaction_costs += rc
+                static_bh_1y_rank_drift_initialized = True
+
+        # 13. Drawdown Trigger strategy
+        if ENABLE_STATIC_BH_1Y_DRAWDOWN:
+            from enhanced_static_bh_strategies import select_drawdown_trigger_bh_1y_stocks
+            new_stocks, should_rebalance = select_drawdown_trigger_bh_1y_stocks(
+                initial_top_tickers, ticker_data_grouped, current_date,
+                current_static_bh_1y_drawdown_stocks, static_bh_1y_drawdown_portfolio_value,
+                static_bh_1y_drawdown_peak, PORTFOLIO_SIZE, STATIC_BH_1Y_DRAWDOWN_THRESHOLD
+            )
+            if should_rebalance and new_stocks:
+                if not static_bh_1y_drawdown_initialized:
+                    print(f"   🎯 Static BH 1Y Drawdown: Initializing")
+                else:
+                    drawdown = (static_bh_1y_drawdown_peak - static_bh_1y_drawdown_portfolio_value) / static_bh_1y_drawdown_peak if static_bh_1y_drawdown_peak > 0 else 0
+                    print(f"   🔄 Static BH 1Y Drawdown: Drawdown {drawdown:.1%} exceeded threshold, rebalancing")
+                static_bh_1y_drawdown_positions, static_bh_1y_drawdown_cash, current_static_bh_1y_drawdown_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="Static BH 1Y Drawdown", current_stocks=current_static_bh_1y_drawdown_stocks,
+                    new_stocks=new_stocks, positions=static_bh_1y_drawdown_positions, cash=static_bh_1y_drawdown_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not static_bh_1y_drawdown_initialized
+                )
+                static_bh_1y_drawdown_transaction_costs += rc
+                static_bh_1y_drawdown_initialized = True
+
+        # 14. Smart Monthly strategy
+        if ENABLE_STATIC_BH_1Y_SMART_MONTHLY:
+            from enhanced_static_bh_strategies import select_smart_monthly_bh_1y_stocks
+            new_stocks, should_rebalance, static_bh_1y_smart_monthly_last_rebalance_month = select_smart_monthly_bh_1y_stocks(
+                initial_top_tickers, ticker_data_grouped, current_date,
+                current_static_bh_1y_smart_monthly_stocks, static_bh_1y_smart_monthly_portfolio_value,
+                static_bh_1y_smart_monthly_peak, static_bh_1y_smart_monthly_last_rebalance_month,
+                PORTFOLIO_SIZE, STATIC_BH_1Y_SMART_MONTHLY_DRAWDOWN
+            )
+            if should_rebalance and new_stocks:
+                if not static_bh_1y_smart_monthly_initialized:
+                    print(f"   🎯 Static BH 1Y Smart Monthly: Initializing")
+                else:
+                    print(f"   🔄 Static BH 1Y Smart Monthly: Monthly/conditional rebalance")
+                static_bh_1y_smart_monthly_positions, static_bh_1y_smart_monthly_cash, current_static_bh_1y_smart_monthly_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="Static BH 1Y Smart Monthly", current_stocks=current_static_bh_1y_smart_monthly_stocks,
+                    new_stocks=new_stocks, positions=static_bh_1y_smart_monthly_positions, cash=static_bh_1y_smart_monthly_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not static_bh_1y_smart_monthly_initialized
+                )
+                static_bh_1y_smart_monthly_transaction_costs += rc
+                static_bh_1y_smart_monthly_initialized = True
 
         # STATIC BH 3M: Initialize on day 1, then rebalance every N days if configured
         should_init_or_rebalance_3m = (
@@ -7716,6 +7821,66 @@ def _run_portfolio_backtest_walk_forward(
             static_bh_1y_overlap_portfolio_value = static_bh_1y_overlap_invested_value + static_bh_1y_overlap_cash
             static_bh_1y_overlap_portfolio_history.append(static_bh_1y_overlap_portfolio_value)
 
+        # 12. Rank Drift
+        if ENABLE_STATIC_BH_1Y_RANK_DRIFT:
+            static_bh_1y_rank_drift_invested_value = 0.0
+            for ticker in list(static_bh_1y_rank_drift_positions.keys()):
+                try:
+                    if ticker in ticker_data_grouped:
+                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
+                        if not ticker_data.empty:
+                            current_price = ticker_data['Close'].iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                position_value = static_bh_1y_rank_drift_positions[ticker]['shares'] * current_price
+                                static_bh_1y_rank_drift_positions[ticker]['value'] = position_value
+                                static_bh_1y_rank_drift_invested_value += position_value
+                except Exception:
+                    pass
+            static_bh_1y_rank_drift_portfolio_value = static_bh_1y_rank_drift_invested_value + static_bh_1y_rank_drift_cash
+            static_bh_1y_rank_drift_portfolio_history.append(static_bh_1y_rank_drift_portfolio_value)
+
+        # 13. Drawdown Trigger
+        if ENABLE_STATIC_BH_1Y_DRAWDOWN:
+            static_bh_1y_drawdown_invested_value = 0.0
+            for ticker in list(static_bh_1y_drawdown_positions.keys()):
+                try:
+                    if ticker in ticker_data_grouped:
+                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
+                        if not ticker_data.empty:
+                            current_price = ticker_data['Close'].iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                position_value = static_bh_1y_drawdown_positions[ticker]['shares'] * current_price
+                                static_bh_1y_drawdown_positions[ticker]['value'] = position_value
+                                static_bh_1y_drawdown_invested_value += position_value
+                except Exception:
+                    pass
+            static_bh_1y_drawdown_portfolio_value = static_bh_1y_drawdown_invested_value + static_bh_1y_drawdown_cash
+            static_bh_1y_drawdown_portfolio_history.append(static_bh_1y_drawdown_portfolio_value)
+            # Update peak
+            if static_bh_1y_drawdown_portfolio_value > static_bh_1y_drawdown_peak:
+                static_bh_1y_drawdown_peak = static_bh_1y_drawdown_portfolio_value
+
+        # 14. Smart Monthly
+        if ENABLE_STATIC_BH_1Y_SMART_MONTHLY:
+            static_bh_1y_smart_monthly_invested_value = 0.0
+            for ticker in list(static_bh_1y_smart_monthly_positions.keys()):
+                try:
+                    if ticker in ticker_data_grouped:
+                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
+                        if not ticker_data.empty:
+                            current_price = ticker_data['Close'].iloc[-1]
+                            if not pd.isna(current_price) and current_price > 0:
+                                position_value = static_bh_1y_smart_monthly_positions[ticker]['shares'] * current_price
+                                static_bh_1y_smart_monthly_positions[ticker]['value'] = position_value
+                                static_bh_1y_smart_monthly_invested_value += position_value
+                except Exception:
+                    pass
+            static_bh_1y_smart_monthly_portfolio_value = static_bh_1y_smart_monthly_invested_value + static_bh_1y_smart_monthly_cash
+            static_bh_1y_smart_monthly_portfolio_history.append(static_bh_1y_smart_monthly_portfolio_value)
+            # Update peak
+            if static_bh_1y_smart_monthly_portfolio_value > static_bh_1y_smart_monthly_peak:
+                static_bh_1y_smart_monthly_peak = static_bh_1y_smart_monthly_portfolio_value
+
         # Update STATIC BH 6M portfolio value daily (skip if disabled)
         static_bh_6m_invested_value = 0.0
         if ENABLE_STATIC_BH_6M:
@@ -8009,6 +8174,10 @@ def _run_portfolio_backtest_walk_forward(
                 # Momentum Persistence and Overlap-Based Strategies
                 ("BH 1Y Mom Persist", static_bh_1y_mom_persist_portfolio_value if ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST else None),
                 ("BH 1Y Overlap", static_bh_1y_overlap_portfolio_value if ENABLE_STATIC_BH_1Y_OVERLAP else None),
+                # Rank Drift, Drawdown Trigger, Smart Monthly
+                ("BH 1Y Rank Drift", static_bh_1y_rank_drift_portfolio_value if ENABLE_STATIC_BH_1Y_RANK_DRIFT else None),
+                ("BH 1Y Drawdown", static_bh_1y_drawdown_portfolio_value if ENABLE_STATIC_BH_1Y_DRAWDOWN else None),
+                ("BH 1Y Smart Mth", static_bh_1y_smart_monthly_portfolio_value if ENABLE_STATIC_BH_1Y_SMART_MONTHLY else None),
             ]
 
             # Filter out None values and sort by performance
@@ -8787,6 +8956,10 @@ def _run_portfolio_backtest_walk_forward(
             # Momentum Persistence and Overlap-Based Strategies
             'static_bh_1y_mom_persist': _strat(static_bh_1y_mom_persist_portfolio_value, static_bh_1y_mom_persist_portfolio_history, static_bh_1y_mom_persist_transaction_costs, static_bh_1y_mom_persist_cash) if ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST else _strat(0, [], 0, 0),
             'static_bh_1y_overlap': _strat(static_bh_1y_overlap_portfolio_value, static_bh_1y_overlap_portfolio_history, static_bh_1y_overlap_transaction_costs, static_bh_1y_overlap_cash) if ENABLE_STATIC_BH_1Y_OVERLAP else _strat(0, [], 0, 0),
+            # Rank Drift, Drawdown Trigger, Smart Monthly
+            'static_bh_1y_rank_drift': _strat(static_bh_1y_rank_drift_portfolio_value, static_bh_1y_rank_drift_portfolio_history, static_bh_1y_rank_drift_transaction_costs, static_bh_1y_rank_drift_cash) if ENABLE_STATIC_BH_1Y_RANK_DRIFT else _strat(0, [], 0, 0),
+            'static_bh_1y_drawdown': _strat(static_bh_1y_drawdown_portfolio_value, static_bh_1y_drawdown_portfolio_history, static_bh_1y_drawdown_transaction_costs, static_bh_1y_drawdown_cash) if ENABLE_STATIC_BH_1Y_DRAWDOWN else _strat(0, [], 0, 0),
+            'static_bh_1y_smart_monthly': _strat(static_bh_1y_smart_monthly_portfolio_value, static_bh_1y_smart_monthly_portfolio_history, static_bh_1y_smart_monthly_transaction_costs, static_bh_1y_smart_monthly_cash) if ENABLE_STATIC_BH_1Y_SMART_MONTHLY else _strat(0, [], 0, 0),
         }
     }
 
