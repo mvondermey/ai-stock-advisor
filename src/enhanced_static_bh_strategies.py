@@ -843,6 +843,64 @@ def select_buys_with_acceleration(
     return selected
 
 
+def select_static_bh_3m_accel(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    top_n: int = 10,
+    lookback_short: int = 10,
+    lookback_long: int = 21,
+    accel_weight: float = 0.3
+) -> List[str]:
+    """
+    Static BH 3M with Acceleration
+    Uses 3-month performance lookback but prioritizes stocks with accelerating momentum.
+    Acceleration is calculated using 2W vs 1M (faster signal for shorter-term strategy).
+    
+    Returns:
+        List of selected tickers prioritized by 3M performance + acceleration
+    """
+    scored_candidates = []
+    
+    for ticker in ticker_data_grouped:
+        data = ticker_data_grouped[ticker].loc[:current_date]
+        if len(data) < 63 + 5:  # Need 3M data for primary selection
+            continue
+        
+        close = data['Close'].dropna()
+        if len(close) < 63 + 5:
+            continue
+        
+        # Calculate 3M performance (primary metric for BH 3M selection)
+        perf_3m = (close.iloc[-1] / close.iloc[-63] - 1) * 100
+        
+        # Calculate 2W and 1M momentum for acceleration
+        mom_2w = (close.iloc[-1] / close.iloc[-lookback_short] - 1) * 100 if len(close) >= lookback_short else 0
+        mom_1m = (close.iloc[-1] / close.iloc[-lookback_long] - 1) * 100 if len(close) >= lookback_long else 0
+        
+        # Calculate expected 2W return from 1M trend
+        expected_2w = mom_1m * (lookback_short / lookback_long)  # ~47% of 1M
+        acceleration = mom_2w - expected_2w
+        
+        # Combined score: 3M performance + acceleration bonus
+        total_score = perf_3m + (acceleration * accel_weight)
+        
+        scored_candidates.append((ticker, total_score, perf_3m, acceleration))
+    
+    # Sort by total score (descending)
+    scored_candidates.sort(key=lambda x: x[1], reverse=True)
+    
+    # Return top N
+    selected = [ticker for ticker, score, perf, accel in scored_candidates[:top_n]]
+    
+    # Log top selections
+    if scored_candidates:
+        print(f"   📈 Static BH 3M Accel: Top picks (2W vs 1M accel):")
+        for ticker, score, perf, accel in scored_candidates[:min(5, len(scored_candidates))]:
+            print(f"      {ticker}: 3M={perf:+.1f}%, accel={accel:+.1f}%, score={score:.1f}")
+    
+    return selected
+
+
 # =====================================================================
 # 10 NEW REBALANCING STRATEGIES
 # =====================================================================

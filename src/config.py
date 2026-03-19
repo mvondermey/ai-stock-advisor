@@ -1288,6 +1288,12 @@ ENABLE_STATIC_BH_3M_MONTHLY = True   # Static BH 3M with monthly rebalance
 
 ENABLE_STATIC_BH_1M_MONTHLY = True   # Static BH 1M with monthly rebalance
 
+# --- Static BH 3M with Acceleration ---
+ENABLE_STATIC_BH_3M_ACCEL = True   # Static BH 3M with accelerating momentum
+STATIC_BH_3M_ACCEL_LOOKBACK_SHORT = 10   # Short momentum window (2 weeks)
+STATIC_BH_3M_ACCEL_LOOKBACK_LONG = 21    # Long momentum window (1 month)
+STATIC_BH_3M_ACCEL_WEIGHT = 0.3          # Weight for acceleration score (0-1)
+
 # --- Enhanced Static BH 1Y Strategies ---
 
 # These strategies add smart filters and triggers to the base Static BH 1Y

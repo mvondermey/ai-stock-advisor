@@ -146,6 +146,7 @@ from config import (
     ENABLE_BH_1Y_VOLUME_CONFIRM, BH_1Y_VOLUME_CONFIRM_MULTIPLIER,
     ENABLE_BH_1Y_SECTOR_AWARE, BH_1Y_SECTOR_AWARE_MIN_PER_SECTOR, BH_1Y_SECTOR_AWARE_MAX_RANK,
     ENABLE_BH_1Y_ACCEL_BUY, BH_1Y_ACCEL_BUY_WEIGHT,
+    ENABLE_STATIC_BH_3M_ACCEL, STATIC_BH_3M_ACCEL_LOOKBACK_SHORT, STATIC_BH_3M_ACCEL_LOOKBACK_LONG, STATIC_BH_3M_ACCEL_WEIGHT,
     STATIC_BH_1Y_MOMENTUM_PERSIST_DAYS, STATIC_BH_1Y_MOMENTUM_PERSIST_MIN_OVERLAP,
     STATIC_BH_1Y_OVERLAP_THRESHOLD,
     STATIC_BH_1Y_RANK_DRIFT_THRESHOLD, STATIC_BH_1Y_DRAWDOWN_THRESHOLD,
@@ -1611,6 +1612,16 @@ def _run_portfolio_backtest_walk_forward(
     bh_1y_accel_buy_initialized = False
     bh_1y_accel_buy_transaction_costs = 0.0
     bh_1y_accel_buy_days_since_rebalance = 0
+
+    # Static BH 3M with Acceleration
+    static_bh_3m_accel_portfolio_value = initial_capital_needed
+    static_bh_3m_accel_portfolio_history = [static_bh_3m_accel_portfolio_value]
+    static_bh_3m_accel_positions = {}
+    static_bh_3m_accel_cash = initial_capital_needed
+    current_static_bh_3m_accel_stocks = []
+    static_bh_3m_accel_initialized = False
+    static_bh_3m_accel_transaction_costs = 0.0
+    static_bh_3m_accel_days_since_rebalance = 0
 
     # =====================================================================
     # 10 NEW REBALANCING STRATEGIES (Based on Static BH 1Y)
@@ -3230,6 +3241,38 @@ def _run_portfolio_backtest_walk_forward(
                 bh_1y_accel_buy_initialized = True
                 bh_1y_accel_buy_days_since_rebalance = 0
 
+        # Static BH 3M with Acceleration
+        if ENABLE_STATIC_BH_3M_ACCEL:
+            from enhanced_static_bh_strategies import select_static_bh_3m_accel
+            static_bh_3m_accel_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not static_bh_3m_accel_initialized) or
+                (STATIC_BH_3M_REBALANCE_DAYS > 0 and static_bh_3m_accel_days_since_rebalance >= STATIC_BH_3M_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance:
+                if not static_bh_3m_accel_initialized:
+                    print(f"   🎯 Static BH 3M Accel: Initializing")
+                
+                # Select stocks using 3M acceleration logic
+                final_stocks = select_static_bh_3m_accel(
+                    ticker_data_grouped, current_date,
+                    PORTFOLIO_SIZE, STATIC_BH_3M_ACCEL_LOOKBACK_SHORT, 
+                    STATIC_BH_3M_ACCEL_LOOKBACK_LONG, STATIC_BH_3M_ACCEL_WEIGHT
+                )
+                
+                static_bh_3m_accel_positions, static_bh_3m_accel_cash, current_static_bh_3m_accel_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="Static BH 3M Accel", current_stocks=current_static_bh_3m_accel_stocks,
+                    new_stocks=final_stocks, positions=static_bh_3m_accel_positions, cash=static_bh_3m_accel_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not static_bh_3m_accel_initialized
+                )
+                static_bh_3m_accel_transaction_costs += rc
+                static_bh_3m_accel_initialized = True
+                static_bh_3m_accel_days_since_rebalance = 0
+
         # =====================================================================
         # 10 NEW REBALANCING STRATEGIES (Based on Static BH 1Y stock selection)
         # =====================================================================
@@ -3286,10 +3329,10 @@ def _run_portfolio_backtest_walk_forward(
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 if not bh_1y_vol_adj_rebal_initialized:
-                    print(f"   🎯 BH 1Y Vol Adj Rebal: Initializing")
+                    print(f"   🎯 Rebal 1Y VolAdj: Initializing")
                 
                 bh_1y_vol_adj_rebal_positions, bh_1y_vol_adj_rebal_cash, current_bh_1y_vol_adj_rebal_stocks, rc, _ = _smart_rebalance_portfolio(
-                    strategy_name="BH 1Y Vol Adj Rebal", current_stocks=current_bh_1y_vol_adj_rebal_stocks,
+                    strategy_name="Rebal 1Y VolAdj", current_stocks=current_bh_1y_vol_adj_rebal_stocks,
                     new_stocks=new_stocks, positions=bh_1y_vol_adj_rebal_positions, cash=bh_1y_vol_adj_rebal_cash,
                     ticker_data_grouped=ticker_data_grouped, current_date=current_date,
                     transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
@@ -3316,10 +3359,10 @@ def _run_portfolio_backtest_walk_forward(
                 new_stocks = filter_by_correlation(new_stocks, ticker_data_grouped, current_date, _rebal_config)
                 
                 if not bh_1y_corr_filter_initialized:
-                    print(f"   🎯 BH 1Y Corr Filter: Initializing")
+                    print(f"   🎯 Rebal 1Y CorrFilt: Initializing")
                 
                 bh_1y_corr_filter_positions, bh_1y_corr_filter_cash, current_bh_1y_corr_filter_stocks, rc, _ = _smart_rebalance_portfolio(
-                    strategy_name="BH 1Y Corr Filter", current_stocks=current_bh_1y_corr_filter_stocks,
+                    strategy_name="Rebal 1Y CorrFilt", current_stocks=current_bh_1y_corr_filter_stocks,
                     new_stocks=new_stocks, positions=bh_1y_corr_filter_positions, cash=bh_1y_corr_filter_cash,
                     ticker_data_grouped=ticker_data_grouped, current_date=current_date,
                     transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
@@ -3358,12 +3401,12 @@ def _run_portfolio_backtest_walk_forward(
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 if not bh_1y_regime_aware_initialized:
-                    print(f"   🎯 BH 1Y Regime Aware: Initializing ({new_regime})")
+                    print(f"   🎯 Rebal 1Y Regime: Initializing ({new_regime})")
                 elif regime_changed:
-                    print(f"   🔄 BH 1Y Regime Aware: Regime changed to {new_regime}, rebalancing")
+                    print(f"   🔄 Rebal 1Y Regime: Regime changed to {new_regime}, rebalancing")
                 
                 bh_1y_regime_aware_positions, bh_1y_regime_aware_cash, current_bh_1y_regime_aware_stocks, rc, _ = _smart_rebalance_portfolio(
-                    strategy_name="BH 1Y Regime Aware", current_stocks=current_bh_1y_regime_aware_stocks,
+                    strategy_name="Rebal 1Y Regime", current_stocks=current_bh_1y_regime_aware_stocks,
                     new_stocks=new_stocks, positions=bh_1y_regime_aware_positions, cash=bh_1y_regime_aware_cash,
                     ticker_data_grouped=ticker_data_grouped, current_date=current_date,
                     transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
@@ -3388,13 +3431,13 @@ def _run_portfolio_backtest_walk_forward(
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 if not bh_1y_risk_parity_initialized:
-                    print(f"   🎯 BH 1Y Risk Parity: Initializing")
+                    print(f"   🎯 Rebal 1Y RiskPar: Initializing")
                 
                 # Get risk parity weights
                 risk_weights = get_risk_parity_weights(new_stocks, ticker_data_grouped, current_date, _rebal_config)
                 
                 bh_1y_risk_parity_positions, bh_1y_risk_parity_cash, current_bh_1y_risk_parity_stocks, rc, _ = _smart_rebalance_portfolio(
-                    strategy_name="BH 1Y Risk Parity", current_stocks=current_bh_1y_risk_parity_stocks,
+                    strategy_name="Rebal 1Y RiskPar", current_stocks=current_bh_1y_risk_parity_stocks,
                     new_stocks=new_stocks, positions=bh_1y_risk_parity_positions, cash=bh_1y_risk_parity_cash,
                     ticker_data_grouped=ticker_data_grouped, current_date=current_date,
                     transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
@@ -3425,12 +3468,12 @@ def _run_portfolio_backtest_walk_forward(
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 if not bh_1y_drift_thresh_initialized:
-                    print(f"   🎯 BH 1Y Drift Thresh: Initializing")
+                    print(f"   🎯 Rebal 1Y Drift: Initializing")
                 elif current_drift > drift_trigger:
-                    print(f"   🔄 BH 1Y Drift Thresh: Drift {current_drift:.1%} > {drift_trigger:.1%}, rebalancing")
+                    print(f"   🔄 Rebal 1Y Drift: Drift {current_drift:.1%} > {drift_trigger:.1%}, rebalancing")
                 
                 bh_1y_drift_thresh_positions, bh_1y_drift_thresh_cash, current_bh_1y_drift_thresh_stocks, rc, _ = _smart_rebalance_portfolio(
-                    strategy_name="BH 1Y Drift Thresh", current_stocks=current_bh_1y_drift_thresh_stocks,
+                    strategy_name="Rebal 1Y Drift", current_stocks=current_bh_1y_drift_thresh_stocks,
                     new_stocks=new_stocks, positions=bh_1y_drift_thresh_positions, cash=bh_1y_drift_thresh_cash,
                     ticker_data_grouped=ticker_data_grouped, current_date=current_date,
                     transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
@@ -3464,10 +3507,10 @@ def _run_portfolio_backtest_walk_forward(
                 new_stocks = [t for t, s in scored[:PORTFOLIO_SIZE]]
                 
                 if not bh_1y_mom_quality_initialized:
-                    print(f"   🎯 BH 1Y Mom Quality: Initializing")
+                    print(f"   🎯 Rebal 1Y MomQual: Initializing")
                 
                 bh_1y_mom_quality_positions, bh_1y_mom_quality_cash, current_bh_1y_mom_quality_stocks, rc, _ = _smart_rebalance_portfolio(
-                    strategy_name="BH 1Y Mom Quality", current_stocks=current_bh_1y_mom_quality_stocks,
+                    strategy_name="Rebal 1Y MomQual", current_stocks=current_bh_1y_mom_quality_stocks,
                     new_stocks=new_stocks, positions=bh_1y_mom_quality_positions, cash=bh_1y_mom_quality_cash,
                     ticker_data_grouped=ticker_data_grouped, current_date=current_date,
                     transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
@@ -3492,13 +3535,13 @@ def _run_portfolio_backtest_walk_forward(
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 if not bh_1y_liquidity_initialized:
-                    print(f"   🎯 BH 1Y Liquidity: Initializing")
+                    print(f"   🎯 Rebal 1Y Liquid: Initializing")
                 
                 # Get liquidity-based weights
                 liq_weights = get_liquidity_weights(new_stocks, ticker_data_grouped, current_date, _rebal_config)
                 
                 bh_1y_liquidity_positions, bh_1y_liquidity_cash, current_bh_1y_liquidity_stocks, rc, _ = _smart_rebalance_portfolio(
-                    strategy_name="BH 1Y Liquidity", current_stocks=current_bh_1y_liquidity_stocks,
+                    strategy_name="Rebal 1Y Liquid", current_stocks=current_bh_1y_liquidity_stocks,
                     new_stocks=new_stocks, positions=bh_1y_liquidity_positions, cash=bh_1y_liquidity_cash,
                     ticker_data_grouped=ticker_data_grouped, current_date=current_date,
                     transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
@@ -3531,10 +3574,10 @@ def _run_portfolio_backtest_walk_forward(
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 if not bh_1y_earnings_avoid_initialized:
-                    print(f"   🎯 BH 1Y Earnings Avoid: Initializing")
+                    print(f"   🎯 Rebal 1Y EarnAvd: Initializing")
                 
                 bh_1y_earnings_avoid_positions, bh_1y_earnings_avoid_cash, current_bh_1y_earnings_avoid_stocks, rc, _ = _smart_rebalance_portfolio(
-                    strategy_name="BH 1Y Earnings Avoid", current_stocks=current_bh_1y_earnings_avoid_stocks,
+                    strategy_name="Rebal 1Y EarnAvd", current_stocks=current_bh_1y_earnings_avoid_stocks,
                     new_stocks=new_stocks, positions=bh_1y_earnings_avoid_positions, cash=bh_1y_earnings_avoid_cash,
                     ticker_data_grouped=ticker_data_grouped, current_date=current_date,
                     transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
@@ -3567,10 +3610,10 @@ def _run_portfolio_backtest_walk_forward(
                 new_stocks = [t for t, s, m, q in scored[:PORTFOLIO_SIZE]]
                 
                 if not bh_1y_multi_factor_initialized:
-                    print(f"   🎯 BH 1Y Multi Factor: Initializing")
+                    print(f"   🎯 Rebal 1Y MultiFact: Initializing")
                 
                 bh_1y_multi_factor_positions, bh_1y_multi_factor_cash, current_bh_1y_multi_factor_stocks, rc, _ = _smart_rebalance_portfolio(
-                    strategy_name="BH 1Y Multi Factor", current_stocks=current_bh_1y_multi_factor_stocks,
+                    strategy_name="Rebal 1Y MultiFact", current_stocks=current_bh_1y_multi_factor_stocks,
                     new_stocks=new_stocks, positions=bh_1y_multi_factor_positions, cash=bh_1y_multi_factor_cash,
                     ticker_data_grouped=ticker_data_grouped, current_date=current_date,
                     transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
@@ -3595,10 +3638,10 @@ def _run_portfolio_backtest_walk_forward(
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 if not bh_1y_time_decay_initialized:
-                    print(f"   🎯 BH 1Y Time Decay: Initializing")
+                    print(f"   🎯 Rebal 1Y TimeDec: Initializing")
                 
                 bh_1y_time_decay_positions, bh_1y_time_decay_cash, current_bh_1y_time_decay_stocks, rc, _ = _smart_rebalance_portfolio(
-                    strategy_name="BH 1Y Time Decay", current_stocks=current_bh_1y_time_decay_stocks,
+                    strategy_name="Rebal 1Y TimeDec", current_stocks=current_bh_1y_time_decay_stocks,
                     new_stocks=new_stocks, positions=bh_1y_time_decay_positions, cash=bh_1y_time_decay_cash,
                     ticker_data_grouped=ticker_data_grouped, current_date=current_date,
                     transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
@@ -8771,6 +8814,13 @@ def _run_portfolio_backtest_walk_forward(
                 bh_1y_accel_buy_positions, bh_1y_accel_buy_cash, ticker_data_grouped, current_date
             )
             bh_1y_accel_buy_portfolio_history.append(bh_1y_accel_buy_portfolio_value)
+        
+        # Static BH 3M with Acceleration
+        if ENABLE_STATIC_BH_3M_ACCEL:
+            static_bh_3m_accel_portfolio_value = _update_smart_strategy_value(
+                static_bh_3m_accel_positions, static_bh_3m_accel_cash, ticker_data_grouped, current_date
+            )
+            static_bh_3m_accel_portfolio_history.append(static_bh_3m_accel_portfolio_value)
 
         # =====================================================================
         # 10 NEW REBALANCING STRATEGIES - Portfolio Value Updates
@@ -9150,17 +9200,18 @@ def _run_portfolio_backtest_walk_forward(
                 ("BH 1Y Vol Conf", bh_1y_volume_confirm_portfolio_value if ENABLE_BH_1Y_VOLUME_CONFIRM else None),
                 ("BH 1Y Sect Aware", bh_1y_sector_aware_portfolio_value if ENABLE_BH_1Y_SECTOR_AWARE else None),
                 ("BH 1Y Accel", bh_1y_accel_buy_portfolio_value if ENABLE_BH_1Y_ACCEL_BUY else None),
+                ("Static BH 3M Accel", static_bh_3m_accel_portfolio_value if ENABLE_STATIC_BH_3M_ACCEL else None),
                 # 10 New Rebalancing Strategies
-                ("BH 1Y Vol Adj", bh_1y_vol_adj_rebal_portfolio_value if ENABLE_BH_1Y_VOL_ADJ_REBAL else None),
-                ("BH 1Y Corr Filt", bh_1y_corr_filter_portfolio_value if ENABLE_BH_1Y_CORR_FILTER else None),
-                ("BH 1Y Regime", bh_1y_regime_aware_portfolio_value if ENABLE_BH_1Y_REGIME_AWARE else None),
-                ("BH 1Y Risk Par", bh_1y_risk_parity_portfolio_value if ENABLE_BH_1Y_RISK_PARITY else None),
-                ("BH 1Y Drift", bh_1y_drift_thresh_portfolio_value if ENABLE_BH_1Y_DRIFT_THRESH else None),
-                ("BH 1Y Mom Qual", bh_1y_mom_quality_portfolio_value if ENABLE_BH_1Y_MOM_QUALITY else None),
-                ("BH 1Y Liquid", bh_1y_liquidity_portfolio_value if ENABLE_BH_1Y_LIQUIDITY else None),
-                ("BH 1Y Earn Avd", bh_1y_earnings_avoid_portfolio_value if ENABLE_BH_1Y_EARNINGS_AVOID else None),
-                ("BH 1Y MultiFact", bh_1y_multi_factor_portfolio_value if ENABLE_BH_1Y_MULTI_FACTOR else None),
-                ("BH 1Y TimeDec", bh_1y_time_decay_portfolio_value if ENABLE_BH_1Y_TIME_DECAY else None),
+                ("Rebal 1Y VolAdj", bh_1y_vol_adj_rebal_portfolio_value if ENABLE_BH_1Y_VOL_ADJ_REBAL else None),
+                ("Rebal 1Y CorrFilt", bh_1y_corr_filter_portfolio_value if ENABLE_BH_1Y_CORR_FILTER else None),
+                ("Rebal 1Y Regime", bh_1y_regime_aware_portfolio_value if ENABLE_BH_1Y_REGIME_AWARE else None),
+                ("Rebal 1Y RiskPar", bh_1y_risk_parity_portfolio_value if ENABLE_BH_1Y_RISK_PARITY else None),
+                ("Rebal 1Y Drift", bh_1y_drift_thresh_portfolio_value if ENABLE_BH_1Y_DRIFT_THRESH else None),
+                ("Rebal 1Y MomQual", bh_1y_mom_quality_portfolio_value if ENABLE_BH_1Y_MOM_QUALITY else None),
+                ("Rebal 1Y Liquid", bh_1y_liquidity_portfolio_value if ENABLE_BH_1Y_LIQUIDITY else None),
+                ("Rebal 1Y EarnAvd", bh_1y_earnings_avoid_portfolio_value if ENABLE_BH_1Y_EARNINGS_AVOID else None),
+                ("Rebal 1Y MultiFact", bh_1y_multi_factor_portfolio_value if ENABLE_BH_1Y_MULTI_FACTOR else None),
+                ("Rebal 1Y TimeDec", bh_1y_time_decay_portfolio_value if ENABLE_BH_1Y_TIME_DECAY else None),
             ]
 
             # Filter out None values and sort by performance
@@ -9588,43 +9639,47 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = bh_1y_accel_buy_cash
                     num_positions = len(bh_1y_accel_buy_positions)
                     invested = value - strat_cash
-                elif name == "BH 1Y Vol Adj" and ENABLE_BH_1Y_VOL_ADJ_REBAL:
+                elif name == "Static BH 3M Accel" and ENABLE_STATIC_BH_3M_ACCEL:
+                    strat_cash = static_bh_3m_accel_cash
+                    num_positions = len(static_bh_3m_accel_positions)
+                    invested = value - strat_cash
+                elif name == "Rebal 1Y VolAdj" and ENABLE_BH_1Y_VOL_ADJ_REBAL:
                     strat_cash = bh_1y_vol_adj_rebal_cash
                     num_positions = len(bh_1y_vol_adj_rebal_positions)
                     invested = value - strat_cash
-                elif name == "BH 1Y Corr Filt" and ENABLE_BH_1Y_CORR_FILTER:
+                elif name == "Rebal 1Y CorrFilt" and ENABLE_BH_1Y_CORR_FILTER:
                     strat_cash = bh_1y_corr_filter_cash
                     num_positions = len(bh_1y_corr_filter_positions)
                     invested = value - strat_cash
-                elif name == "BH 1Y Regime" and ENABLE_BH_1Y_REGIME_AWARE:
+                elif name == "Rebal 1Y Regime" and ENABLE_BH_1Y_REGIME_AWARE:
                     strat_cash = bh_1y_regime_aware_cash
                     num_positions = len(bh_1y_regime_aware_positions)
                     invested = value - strat_cash
-                elif name == "BH 1Y Risk Par" and ENABLE_BH_1Y_RISK_PARITY:
+                elif name == "Rebal 1Y RiskPar" and ENABLE_BH_1Y_RISK_PARITY:
                     strat_cash = bh_1y_risk_parity_cash
                     num_positions = len(bh_1y_risk_parity_positions)
                     invested = value - strat_cash
-                elif name == "BH 1Y Drift" and ENABLE_BH_1Y_DRIFT_THRESH:
+                elif name == "Rebal 1Y Drift" and ENABLE_BH_1Y_DRIFT_THRESH:
                     strat_cash = bh_1y_drift_thresh_cash
                     num_positions = len(bh_1y_drift_thresh_positions)
                     invested = value - strat_cash
-                elif name == "BH 1Y Mom Qual" and ENABLE_BH_1Y_MOM_QUALITY:
+                elif name == "Rebal 1Y MomQual" and ENABLE_BH_1Y_MOM_QUALITY:
                     strat_cash = bh_1y_mom_quality_cash
                     num_positions = len(bh_1y_mom_quality_positions)
                     invested = value - strat_cash
-                elif name == "BH 1Y Liquid" and ENABLE_BH_1Y_LIQUIDITY:
+                elif name == "Rebal 1Y Liquid" and ENABLE_BH_1Y_LIQUIDITY:
                     strat_cash = bh_1y_liquidity_cash
                     num_positions = len(bh_1y_liquidity_positions)
                     invested = value - strat_cash
-                elif name == "BH 1Y Earn Avd" and ENABLE_BH_1Y_EARNINGS_AVOID:
+                elif name == "Rebal 1Y EarnAvd" and ENABLE_BH_1Y_EARNINGS_AVOID:
                     strat_cash = bh_1y_earnings_avoid_cash
                     num_positions = len(bh_1y_earnings_avoid_positions)
                     invested = value - strat_cash
-                elif name == "BH 1Y MultiFact" and ENABLE_BH_1Y_MULTI_FACTOR:
+                elif name == "Rebal 1Y MultiFact" and ENABLE_BH_1Y_MULTI_FACTOR:
                     strat_cash = bh_1y_multi_factor_cash
                     num_positions = len(bh_1y_multi_factor_positions)
                     invested = value - strat_cash
-                elif name == "BH 1Y TimeDec" and ENABLE_BH_1Y_TIME_DECAY:
+                elif name == "Rebal 1Y TimeDec" and ENABLE_BH_1Y_TIME_DECAY:
                     strat_cash = bh_1y_time_decay_cash
                     num_positions = len(bh_1y_time_decay_positions)
                     invested = value - strat_cash
@@ -9736,17 +9791,18 @@ def _run_portfolio_backtest_walk_forward(
                 ("BH 1Y Vol Conf", bh_1y_volume_confirm_portfolio_history) if ENABLE_BH_1Y_VOLUME_CONFIRM else None,
                 ("BH 1Y Sect Aware", bh_1y_sector_aware_portfolio_history) if ENABLE_BH_1Y_SECTOR_AWARE else None,
                 ("BH 1Y Accel", bh_1y_accel_buy_portfolio_history) if ENABLE_BH_1Y_ACCEL_BUY else None,
+                ("Static BH 3M Accel", static_bh_3m_accel_portfolio_history) if ENABLE_STATIC_BH_3M_ACCEL else None,
                 # 10 New Rebalancing Strategies
-                ("BH 1Y Vol Adj", bh_1y_vol_adj_rebal_portfolio_history) if ENABLE_BH_1Y_VOL_ADJ_REBAL else None,
-                ("BH 1Y Corr Filt", bh_1y_corr_filter_portfolio_history) if ENABLE_BH_1Y_CORR_FILTER else None,
-                ("BH 1Y Regime", bh_1y_regime_aware_portfolio_history) if ENABLE_BH_1Y_REGIME_AWARE else None,
-                ("BH 1Y Risk Par", bh_1y_risk_parity_portfolio_history) if ENABLE_BH_1Y_RISK_PARITY else None,
-                ("BH 1Y Drift", bh_1y_drift_thresh_portfolio_history) if ENABLE_BH_1Y_DRIFT_THRESH else None,
-                ("BH 1Y Mom Qual", bh_1y_mom_quality_portfolio_history) if ENABLE_BH_1Y_MOM_QUALITY else None,
-                ("BH 1Y Liquid", bh_1y_liquidity_portfolio_history) if ENABLE_BH_1Y_LIQUIDITY else None,
-                ("BH 1Y Earn Avd", bh_1y_earnings_avoid_portfolio_history) if ENABLE_BH_1Y_EARNINGS_AVOID else None,
-                ("BH 1Y MultiFact", bh_1y_multi_factor_portfolio_history) if ENABLE_BH_1Y_MULTI_FACTOR else None,
-                ("BH 1Y TimeDec", bh_1y_time_decay_portfolio_history) if ENABLE_BH_1Y_TIME_DECAY else None,
+                ("Rebal 1Y VolAdj", bh_1y_vol_adj_rebal_portfolio_history) if ENABLE_BH_1Y_VOL_ADJ_REBAL else None,
+                ("Rebal 1Y CorrFilt", bh_1y_corr_filter_portfolio_history) if ENABLE_BH_1Y_CORR_FILTER else None,
+                ("Rebal 1Y Regime", bh_1y_regime_aware_portfolio_history) if ENABLE_BH_1Y_REGIME_AWARE else None,
+                ("Rebal 1Y RiskPar", bh_1y_risk_parity_portfolio_history) if ENABLE_BH_1Y_RISK_PARITY else None,
+                ("Rebal 1Y Drift", bh_1y_drift_thresh_portfolio_history) if ENABLE_BH_1Y_DRIFT_THRESH else None,
+                ("Rebal 1Y MomQual", bh_1y_mom_quality_portfolio_history) if ENABLE_BH_1Y_MOM_QUALITY else None,
+                ("Rebal 1Y Liquid", bh_1y_liquidity_portfolio_history) if ENABLE_BH_1Y_LIQUIDITY else None,
+                ("Rebal 1Y EarnAvd", bh_1y_earnings_avoid_portfolio_history) if ENABLE_BH_1Y_EARNINGS_AVOID else None,
+                ("Rebal 1Y MultiFact", bh_1y_multi_factor_portfolio_history) if ENABLE_BH_1Y_MULTI_FACTOR else None,
+                ("Rebal 1Y TimeDec", bh_1y_time_decay_portfolio_history) if ENABLE_BH_1Y_TIME_DECAY else None,
             ]
             strategy_to_history = {pair[0]: pair[1] for pair in strategy_history_pairs if pair is not None and pair[1] is not None}
 
@@ -10080,6 +10136,7 @@ def _run_portfolio_backtest_walk_forward(
             'bh_1y_volume_confirm': _strat(bh_1y_volume_confirm_portfolio_value, bh_1y_volume_confirm_portfolio_history, bh_1y_volume_confirm_transaction_costs, bh_1y_volume_confirm_cash) if ENABLE_BH_1Y_VOLUME_CONFIRM else _strat(0, [], 0, 0),
             'bh_1y_sector_aware': _strat(bh_1y_sector_aware_portfolio_value, bh_1y_sector_aware_portfolio_history, bh_1y_sector_aware_transaction_costs, bh_1y_sector_aware_cash) if ENABLE_BH_1Y_SECTOR_AWARE else _strat(0, [], 0, 0),
             'bh_1y_accel_buy': _strat(bh_1y_accel_buy_portfolio_value, bh_1y_accel_buy_portfolio_history, bh_1y_accel_buy_transaction_costs, bh_1y_accel_buy_cash) if ENABLE_BH_1Y_ACCEL_BUY else _strat(0, [], 0, 0),
+            'static_bh_3m_accel': _strat(static_bh_3m_accel_portfolio_value, static_bh_3m_accel_portfolio_history, static_bh_3m_accel_transaction_costs, static_bh_3m_accel_cash) if ENABLE_STATIC_BH_3M_ACCEL else _strat(0, [], 0, 0),
             # 10 New Rebalancing Strategies
             'bh_1y_vol_adj_rebal': _strat(bh_1y_vol_adj_rebal_portfolio_value, bh_1y_vol_adj_rebal_portfolio_history, bh_1y_vol_adj_rebal_transaction_costs, bh_1y_vol_adj_rebal_cash) if ENABLE_BH_1Y_VOL_ADJ_REBAL else _strat(0, [], 0, 0),
             'bh_1y_corr_filter': _strat(bh_1y_corr_filter_portfolio_value, bh_1y_corr_filter_portfolio_history, bh_1y_corr_filter_transaction_costs, bh_1y_corr_filter_cash) if ENABLE_BH_1Y_CORR_FILTER else _strat(0, [], 0, 0),
