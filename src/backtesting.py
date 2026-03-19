@@ -139,10 +139,28 @@ from config import (
     STATIC_BH_1Y_PERFORMANCE_MIN_IMPROVEMENT, STATIC_BH_1Y_MARKET_REGIME_BASE_DAYS,
     STATIC_BH_1Y_MARKET_REGIME_HIGH_VOL_DAYS, STATIC_BH_1Y_MARKET_REGIME_LOW_VOL_DAYS,
     STATIC_BH_1Y_MARKET_REGIME_VOL_THRESHOLD,
+    # Smart Rebalancing Strategies
+    ENABLE_BH_1Y_MOM_SELL, BH_1Y_MOM_SELL_LOOKBACK_SHORT, BH_1Y_MOM_SELL_LOOKBACK_LONG,
+    ENABLE_BH_1Y_RANK_SELL, BH_1Y_RANK_SELL_DROP_THRESHOLD, BH_1Y_RANK_SELL_MAX_RANK,
+    ENABLE_BH_1Y_TRAILING_MOM, BH_1Y_TRAILING_MOM_SOFT_STOP, BH_1Y_TRAILING_MOM_HARD_STOP,
+    ENABLE_BH_1Y_VOLUME_CONFIRM, BH_1Y_VOLUME_CONFIRM_MULTIPLIER,
+    ENABLE_BH_1Y_SECTOR_AWARE, BH_1Y_SECTOR_AWARE_MIN_PER_SECTOR, BH_1Y_SECTOR_AWARE_MAX_RANK,
+    ENABLE_BH_1Y_ACCEL_BUY, BH_1Y_ACCEL_BUY_WEIGHT,
     STATIC_BH_1Y_MOMENTUM_PERSIST_DAYS, STATIC_BH_1Y_MOMENTUM_PERSIST_MIN_OVERLAP,
     STATIC_BH_1Y_OVERLAP_THRESHOLD,
     STATIC_BH_1Y_RANK_DRIFT_THRESHOLD, STATIC_BH_1Y_DRAWDOWN_THRESHOLD,
     STATIC_BH_1Y_SMART_MONTHLY_DRAWDOWN,
+    # 10 New Rebalancing Strategies
+    ENABLE_BH_1Y_VOL_ADJ_REBAL, BH_1Y_VOL_ADJ_REBAL_LOW_VOL_THRESH, BH_1Y_VOL_ADJ_REBAL_HIGH_VOL_THRESH, BH_1Y_VOL_ADJ_REBAL_MIN_DAYS, BH_1Y_VOL_ADJ_REBAL_MAX_DAYS,
+    ENABLE_BH_1Y_CORR_FILTER, BH_1Y_CORR_FILTER_THRESH, BH_1Y_CORR_FILTER_LOOKBACK,
+    ENABLE_BH_1Y_REGIME_AWARE, BH_1Y_REGIME_BULL_MA, BH_1Y_REGIME_BEAR_MA, BH_1Y_REGIME_REBAL_BULL, BH_1Y_REGIME_REBAL_BEAR, BH_1Y_REGIME_REBAL_SIDEWAYS,
+    ENABLE_BH_1Y_RISK_PARITY, BH_1Y_RISK_PARITY_VOL_LOOKBACK, BH_1Y_RISK_PARITY_MIN_WEIGHT, BH_1Y_RISK_PARITY_MAX_WEIGHT,
+    ENABLE_BH_1Y_DRIFT_THRESH, BH_1Y_DRIFT_THRESH_TARGET, BH_1Y_DRIFT_THRESH_TRIGGER,
+    ENABLE_BH_1Y_MOM_QUALITY, BH_1Y_MOM_QUALITY_MOM_WEIGHT, BH_1Y_MOM_QUALITY_CONS_WEIGHT, BH_1Y_MOM_QUALITY_MIN_QUALITY,
+    ENABLE_BH_1Y_LIQUIDITY, BH_1Y_LIQUIDITY_AVG_VOL_DAYS, BH_1Y_LIQUIDITY_MIN_DOLLAR_VOL, BH_1Y_LIQUIDITY_MAX_WEIGHT,
+    ENABLE_BH_1Y_EARNINGS_AVOID, BH_1Y_EARNINGS_AVOID_DAYS_BEFORE, BH_1Y_EARNINGS_AVOID_DAYS_AFTER,
+    ENABLE_BH_1Y_MULTI_FACTOR, BH_1Y_MULTI_FACTOR_MOM_WEIGHT, BH_1Y_MULTI_FACTOR_VAL_WEIGHT, BH_1Y_MULTI_FACTOR_QUAL_WEIGHT,
+    ENABLE_BH_1Y_TIME_DECAY, BH_1Y_TIME_DECAY_EXIT_DAYS, BH_1Y_TIME_DECAY_EXIT_PCT_DAILY,
     TREND_BREAKOUT_USE_ATR_STOP, TREND_BREAKOUT_ATR_MULTIPLIER,
 )
 from scipy.stats import uniform, beta
@@ -360,7 +378,8 @@ def _smart_rebalance_portfolio(
     buffer_size: int = None,
     strategy_stop_loss: float = None,
     use_atr_trailing_stop: bool = False,
-    atr_multiplier: float = 2.0
+    atr_multiplier: float = 2.0,
+    custom_weights: Dict[str, float] = None
 ) -> Tuple[Dict[str, Dict], float, List[str], float, bool]:
     """
     Universal smart rebalancing function for all strategies.
@@ -543,8 +562,13 @@ def _smart_rebalance_portfolio(
             if not price_data.empty:
                 current_price = price_data['Close'].dropna().iloc[-1]
                 if current_price > 0:
-                    # Use the lesser of capital_per_stock or available cash
-                    available_for_stock = min(capital_per_stock, updated_cash)
+                    # Use custom weights if provided, otherwise equal weight
+                    if custom_weights and ticker in custom_weights:
+                        ticker_capital = total_portfolio_value * custom_weights[ticker]
+                        available_for_stock = min(ticker_capital, updated_cash)
+                    else:
+                        # Use the lesser of capital_per_stock or available cash
+                        available_for_stock = min(capital_per_stock, updated_cash)
                     shares = int(available_for_stock / (current_price * (1 + transaction_cost)))
                     if shares > 0:
                         buy_value = shares * current_price
@@ -1521,6 +1545,178 @@ def _run_portfolio_backtest_walk_forward(
     static_bh_1y_smart_monthly_transaction_costs = 0.0
     static_bh_1y_smart_monthly_peak = initial_capital_needed
     static_bh_1y_smart_monthly_last_rebalance_month = 0
+
+    # =========================================================================
+    # SMART REBALANCING STRATEGIES (6 new strategies based on Static BH 1Y)
+    # =========================================================================
+    
+    # 1. BH 1Y Mom Sell - Momentum-Based Sell
+    bh_1y_mom_sell_portfolio_value = initial_capital_needed
+    bh_1y_mom_sell_portfolio_history = [bh_1y_mom_sell_portfolio_value]
+    bh_1y_mom_sell_positions = {}
+    bh_1y_mom_sell_cash = initial_capital_needed
+    current_bh_1y_mom_sell_stocks = []
+    bh_1y_mom_sell_initialized = False
+    bh_1y_mom_sell_transaction_costs = 0.0
+    bh_1y_mom_sell_days_since_rebalance = 0
+    
+    # 2. BH 1Y Rank Sell - Relative Strength Ranking
+    bh_1y_rank_sell_portfolio_value = initial_capital_needed
+    bh_1y_rank_sell_portfolio_history = [bh_1y_rank_sell_portfolio_value]
+    bh_1y_rank_sell_positions = {}
+    bh_1y_rank_sell_cash = initial_capital_needed
+    current_bh_1y_rank_sell_stocks = []
+    bh_1y_rank_sell_initialized = False
+    bh_1y_rank_sell_transaction_costs = 0.0
+    bh_1y_rank_sell_days_since_rebalance = 0
+    bh_1y_rank_sell_entry_ranks = {}  # ticker -> entry rank
+    
+    # 3. BH 1Y Trailing Mom - Trailing Stop + Momentum
+    bh_1y_trailing_mom_portfolio_value = initial_capital_needed
+    bh_1y_trailing_mom_portfolio_history = [bh_1y_trailing_mom_portfolio_value]
+    bh_1y_trailing_mom_positions = {}
+    bh_1y_trailing_mom_cash = initial_capital_needed
+    current_bh_1y_trailing_mom_stocks = []
+    bh_1y_trailing_mom_initialized = False
+    bh_1y_trailing_mom_transaction_costs = 0.0
+    bh_1y_trailing_mom_days_since_rebalance = 0
+    bh_1y_trailing_mom_peaks = {}  # ticker -> peak price
+    
+    # 4. BH 1Y Volume Confirm - Volume Confirmation
+    bh_1y_volume_confirm_portfolio_value = initial_capital_needed
+    bh_1y_volume_confirm_portfolio_history = [bh_1y_volume_confirm_portfolio_value]
+    bh_1y_volume_confirm_positions = {}
+    bh_1y_volume_confirm_cash = initial_capital_needed
+    current_bh_1y_volume_confirm_stocks = []
+    bh_1y_volume_confirm_initialized = False
+    bh_1y_volume_confirm_transaction_costs = 0.0
+    bh_1y_volume_confirm_days_since_rebalance = 0
+    
+    # 5. BH 1Y Sector Aware - Sector Rotation Awareness
+    bh_1y_sector_aware_portfolio_value = initial_capital_needed
+    bh_1y_sector_aware_portfolio_history = [bh_1y_sector_aware_portfolio_value]
+    bh_1y_sector_aware_positions = {}
+    bh_1y_sector_aware_cash = initial_capital_needed
+    current_bh_1y_sector_aware_stocks = []
+    bh_1y_sector_aware_initialized = False
+    bh_1y_sector_aware_transaction_costs = 0.0
+    bh_1y_sector_aware_days_since_rebalance = 0
+    
+    # 6. BH 1Y Accel Buy - Accelerating Momentum Buy
+    bh_1y_accel_buy_portfolio_value = initial_capital_needed
+    bh_1y_accel_buy_portfolio_history = [bh_1y_accel_buy_portfolio_value]
+    bh_1y_accel_buy_positions = {}
+    bh_1y_accel_buy_cash = initial_capital_needed
+    current_bh_1y_accel_buy_stocks = []
+    bh_1y_accel_buy_initialized = False
+    bh_1y_accel_buy_transaction_costs = 0.0
+    bh_1y_accel_buy_days_since_rebalance = 0
+
+    # =====================================================================
+    # 10 NEW REBALANCING STRATEGIES (Based on Static BH 1Y)
+    # =====================================================================
+
+    # 1. Volatility-Adjusted Rebalancing
+    bh_1y_vol_adj_rebal_portfolio_value = initial_capital_needed
+    bh_1y_vol_adj_rebal_portfolio_history = [bh_1y_vol_adj_rebal_portfolio_value]
+    bh_1y_vol_adj_rebal_positions = {}
+    bh_1y_vol_adj_rebal_cash = initial_capital_needed
+    current_bh_1y_vol_adj_rebal_stocks = []
+    bh_1y_vol_adj_rebal_initialized = False
+    bh_1y_vol_adj_rebal_transaction_costs = 0.0
+    bh_1y_vol_adj_rebal_days_since_rebalance = 0
+
+    # 2. Correlation-Based Filtering
+    bh_1y_corr_filter_portfolio_value = initial_capital_needed
+    bh_1y_corr_filter_portfolio_history = [bh_1y_corr_filter_portfolio_value]
+    bh_1y_corr_filter_positions = {}
+    bh_1y_corr_filter_cash = initial_capital_needed
+    current_bh_1y_corr_filter_stocks = []
+    bh_1y_corr_filter_initialized = False
+    bh_1y_corr_filter_transaction_costs = 0.0
+    bh_1y_corr_filter_days_since_rebalance = 0
+
+    # 3. Market Regime Detection
+    bh_1y_regime_aware_portfolio_value = initial_capital_needed
+    bh_1y_regime_aware_portfolio_history = [bh_1y_regime_aware_portfolio_value]
+    bh_1y_regime_aware_positions = {}
+    bh_1y_regime_aware_cash = initial_capital_needed
+    current_bh_1y_regime_aware_stocks = []
+    bh_1y_regime_aware_initialized = False
+    bh_1y_regime_aware_transaction_costs = 0.0
+    bh_1y_regime_aware_days_since_rebalance = 0
+    bh_1y_regime_aware_current_regime = 'sideways'
+
+    # 4. Risk Parity Allocation
+    bh_1y_risk_parity_portfolio_value = initial_capital_needed
+    bh_1y_risk_parity_portfolio_history = [bh_1y_risk_parity_portfolio_value]
+    bh_1y_risk_parity_positions = {}
+    bh_1y_risk_parity_cash = initial_capital_needed
+    current_bh_1y_risk_parity_stocks = []
+    bh_1y_risk_parity_initialized = False
+    bh_1y_risk_parity_transaction_costs = 0.0
+    bh_1y_risk_parity_days_since_rebalance = 0
+
+    # 5. Adaptive Drift Threshold
+    bh_1y_drift_thresh_portfolio_value = initial_capital_needed
+    bh_1y_drift_thresh_portfolio_history = [bh_1y_drift_thresh_portfolio_value]
+    bh_1y_drift_thresh_positions = {}
+    bh_1y_drift_thresh_cash = initial_capital_needed
+    current_bh_1y_drift_thresh_stocks = []
+    bh_1y_drift_thresh_initialized = False
+    bh_1y_drift_thresh_transaction_costs = 0.0
+    bh_1y_drift_thresh_days_since_rebalance = 0
+
+    # 6. Momentum Quality Score
+    bh_1y_mom_quality_portfolio_value = initial_capital_needed
+    bh_1y_mom_quality_portfolio_history = [bh_1y_mom_quality_portfolio_value]
+    bh_1y_mom_quality_positions = {}
+    bh_1y_mom_quality_cash = initial_capital_needed
+    current_bh_1y_mom_quality_stocks = []
+    bh_1y_mom_quality_initialized = False
+    bh_1y_mom_quality_transaction_costs = 0.0
+    bh_1y_mom_quality_days_since_rebalance = 0
+
+    # 7. Liquidity-Based Sizing
+    bh_1y_liquidity_portfolio_value = initial_capital_needed
+    bh_1y_liquidity_portfolio_history = [bh_1y_liquidity_portfolio_value]
+    bh_1y_liquidity_positions = {}
+    bh_1y_liquidity_cash = initial_capital_needed
+    current_bh_1y_liquidity_stocks = []
+    bh_1y_liquidity_initialized = False
+    bh_1y_liquidity_transaction_costs = 0.0
+    bh_1y_liquidity_days_since_rebalance = 0
+
+    # 8. Earnings Avoidance
+    bh_1y_earnings_avoid_portfolio_value = initial_capital_needed
+    bh_1y_earnings_avoid_portfolio_history = [bh_1y_earnings_avoid_portfolio_value]
+    bh_1y_earnings_avoid_positions = {}
+    bh_1y_earnings_avoid_cash = initial_capital_needed
+    current_bh_1y_earnings_avoid_stocks = []
+    bh_1y_earnings_avoid_initialized = False
+    bh_1y_earnings_avoid_transaction_costs = 0.0
+    bh_1y_earnings_avoid_days_since_rebalance = 0
+
+    # 9. Multi-Factor Composite
+    bh_1y_multi_factor_portfolio_value = initial_capital_needed
+    bh_1y_multi_factor_portfolio_history = [bh_1y_multi_factor_portfolio_value]
+    bh_1y_multi_factor_positions = {}
+    bh_1y_multi_factor_cash = initial_capital_needed
+    current_bh_1y_multi_factor_stocks = []
+    bh_1y_multi_factor_initialized = False
+    bh_1y_multi_factor_transaction_costs = 0.0
+    bh_1y_multi_factor_days_since_rebalance = 0
+
+    # 10. Time-Decay Holdings
+    bh_1y_time_decay_portfolio_value = initial_capital_needed
+    bh_1y_time_decay_portfolio_history = [bh_1y_time_decay_portfolio_value]
+    bh_1y_time_decay_positions = {}
+    bh_1y_time_decay_cash = initial_capital_needed
+    current_bh_1y_time_decay_stocks = []
+    bh_1y_time_decay_initialized = False
+    bh_1y_time_decay_transaction_costs = 0.0
+    bh_1y_time_decay_days_since_rebalance = 0
+    bh_1y_time_decay_entry_dates = {}  # ticker -> entry date
 
     # Track STATIC BH 3M PORTFOLIO (with optional periodic rebalancing)
     static_bh_3m_portfolio_value = initial_capital_needed
@@ -2743,6 +2939,678 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 static_bh_1y_smart_monthly_transaction_costs += rc
                 static_bh_1y_smart_monthly_initialized = True
+
+        # =====================================================================
+        # SMART REBALANCING STRATEGIES (6 new strategies)
+        # =====================================================================
+        
+        # Get top performers for all smart rebalancing strategies (shared selection)
+        from shared_strategies import select_top_performers
+        smart_rebal_candidates = select_top_performers(
+            initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE * 2
+        )
+        smart_rebal_top_n = smart_rebal_candidates[:PORTFOLIO_SIZE] if smart_rebal_candidates else []
+        
+        # 1. BH 1Y Mom Sell - Momentum-Based Sell
+        if ENABLE_BH_1Y_MOM_SELL:
+            from enhanced_static_bh_strategies import should_sell_momentum_based
+            bh_1y_mom_sell_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not bh_1y_mom_sell_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_mom_sell_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance and smart_rebal_top_n:
+                # Custom sell logic: only sell if momentum declining
+                positions_to_sell = []
+                for ticker in list(bh_1y_mom_sell_positions.keys()):
+                    if ticker not in set(smart_rebal_candidates[:PORTFOLIO_BUFFER_SIZE]):
+                        should_sell, reason = should_sell_momentum_based(
+                            ticker, ticker_data_grouped, current_date,
+                            BH_1Y_MOM_SELL_LOOKBACK_SHORT, BH_1Y_MOM_SELL_LOOKBACK_LONG
+                        )
+                        if should_sell:
+                            positions_to_sell.append(ticker)
+                
+                # Build new stocks list: keep non-sold + add new from top
+                kept_stocks = [t for t in current_bh_1y_mom_sell_stocks if t not in positions_to_sell]
+                new_stocks_needed = PORTFOLIO_SIZE - len(kept_stocks)
+                new_buys = [t for t in smart_rebal_top_n if t not in kept_stocks][:new_stocks_needed]
+                final_stocks = kept_stocks + new_buys
+                
+                if not bh_1y_mom_sell_initialized:
+                    print(f"   🎯 BH 1Y Mom Sell: Initializing")
+                    final_stocks = smart_rebal_top_n  # Use standard selection for init
+                
+                bh_1y_mom_sell_positions, bh_1y_mom_sell_cash, current_bh_1y_mom_sell_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Mom Sell", current_stocks=current_bh_1y_mom_sell_stocks,
+                    new_stocks=final_stocks, positions=bh_1y_mom_sell_positions, cash=bh_1y_mom_sell_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_mom_sell_initialized
+                )
+                bh_1y_mom_sell_transaction_costs += rc
+                bh_1y_mom_sell_initialized = True
+                bh_1y_mom_sell_days_since_rebalance = 0
+        
+        # 2. BH 1Y Rank Sell - Relative Strength Ranking
+        if ENABLE_BH_1Y_RANK_SELL:
+            from enhanced_static_bh_strategies import should_sell_rank_based
+            bh_1y_rank_sell_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not bh_1y_rank_sell_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_rank_sell_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance and smart_rebal_top_n:
+                # Update entry ranks for new positions
+                for i, ticker in enumerate(smart_rebal_candidates):
+                    if ticker not in bh_1y_rank_sell_entry_ranks:
+                        bh_1y_rank_sell_entry_ranks[ticker] = i + 1
+                
+                # Custom sell logic: sell if rank dropped significantly
+                positions_to_sell = []
+                for ticker in list(bh_1y_rank_sell_positions.keys()):
+                    try:
+                        current_rank = smart_rebal_candidates.index(ticker) + 1
+                    except ValueError:
+                        current_rank = 999  # Not in list
+                    entry_rank = bh_1y_rank_sell_entry_ranks.get(ticker, current_rank)
+                    
+                    should_sell, reason = should_sell_rank_based(
+                        ticker, current_rank, entry_rank,
+                        BH_1Y_RANK_SELL_DROP_THRESHOLD, BH_1Y_RANK_SELL_MAX_RANK
+                    )
+                    if should_sell:
+                        positions_to_sell.append(ticker)
+                
+                kept_stocks = [t for t in current_bh_1y_rank_sell_stocks if t not in positions_to_sell]
+                new_stocks_needed = PORTFOLIO_SIZE - len(kept_stocks)
+                new_buys = [t for t in smart_rebal_top_n if t not in kept_stocks][:new_stocks_needed]
+                final_stocks = kept_stocks + new_buys
+                
+                if not bh_1y_rank_sell_initialized:
+                    print(f"   🎯 BH 1Y Rank Sell: Initializing")
+                    final_stocks = smart_rebal_top_n
+                    for i, ticker in enumerate(final_stocks):
+                        bh_1y_rank_sell_entry_ranks[ticker] = i + 1
+                
+                bh_1y_rank_sell_positions, bh_1y_rank_sell_cash, current_bh_1y_rank_sell_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Rank Sell", current_stocks=current_bh_1y_rank_sell_stocks,
+                    new_stocks=final_stocks, positions=bh_1y_rank_sell_positions, cash=bh_1y_rank_sell_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_rank_sell_initialized
+                )
+                bh_1y_rank_sell_transaction_costs += rc
+                bh_1y_rank_sell_initialized = True
+                bh_1y_rank_sell_days_since_rebalance = 0
+        
+        # 3. BH 1Y Trailing Mom - Trailing Stop + Momentum
+        if ENABLE_BH_1Y_TRAILING_MOM:
+            from enhanced_static_bh_strategies import should_sell_trailing_momentum
+            bh_1y_trailing_mom_days_since_rebalance += 1
+            
+            # Update peak prices daily
+            for ticker in bh_1y_trailing_mom_positions:
+                if ticker in ticker_data_grouped:
+                    data = ticker_data_grouped[ticker].loc[:current_date]
+                    if not data.empty:
+                        current_price = data['Close'].dropna().iloc[-1]
+                        if ticker not in bh_1y_trailing_mom_peaks:
+                            bh_1y_trailing_mom_peaks[ticker] = current_price
+                        elif current_price > bh_1y_trailing_mom_peaks[ticker]:
+                            bh_1y_trailing_mom_peaks[ticker] = current_price
+            
+            should_init_or_rebalance = (
+                (not bh_1y_trailing_mom_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_trailing_mom_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance and smart_rebal_top_n:
+                positions_to_sell = []
+                for ticker in list(bh_1y_trailing_mom_positions.keys()):
+                    if ticker not in set(smart_rebal_candidates[:PORTFOLIO_BUFFER_SIZE]):
+                        entry_price = bh_1y_trailing_mom_positions[ticker].get('entry_price', 0)
+                        peak_price = bh_1y_trailing_mom_peaks.get(ticker, entry_price)
+                        
+                        should_sell, reason = should_sell_trailing_momentum(
+                            ticker, ticker_data_grouped, current_date,
+                            entry_price, peak_price,
+                            BH_1Y_TRAILING_MOM_SOFT_STOP, BH_1Y_TRAILING_MOM_HARD_STOP
+                        )
+                        if should_sell:
+                            positions_to_sell.append(ticker)
+                
+                kept_stocks = [t for t in current_bh_1y_trailing_mom_stocks if t not in positions_to_sell]
+                new_stocks_needed = PORTFOLIO_SIZE - len(kept_stocks)
+                new_buys = [t for t in smart_rebal_top_n if t not in kept_stocks][:new_stocks_needed]
+                final_stocks = kept_stocks + new_buys
+                
+                if not bh_1y_trailing_mom_initialized:
+                    print(f"   🎯 BH 1Y Trailing Mom: Initializing")
+                    final_stocks = smart_rebal_top_n
+                
+                bh_1y_trailing_mom_positions, bh_1y_trailing_mom_cash, current_bh_1y_trailing_mom_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Trailing Mom", current_stocks=current_bh_1y_trailing_mom_stocks,
+                    new_stocks=final_stocks, positions=bh_1y_trailing_mom_positions, cash=bh_1y_trailing_mom_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_trailing_mom_initialized
+                )
+                bh_1y_trailing_mom_transaction_costs += rc
+                bh_1y_trailing_mom_initialized = True
+                bh_1y_trailing_mom_days_since_rebalance = 0
+                
+                # Initialize peaks for new positions
+                for ticker in current_bh_1y_trailing_mom_stocks:
+                    if ticker not in bh_1y_trailing_mom_peaks and ticker in bh_1y_trailing_mom_positions:
+                        bh_1y_trailing_mom_peaks[ticker] = bh_1y_trailing_mom_positions[ticker].get('entry_price', 0)
+        
+        # 4. BH 1Y Volume Confirm - Volume Confirmation
+        if ENABLE_BH_1Y_VOLUME_CONFIRM:
+            from enhanced_static_bh_strategies import should_sell_volume_confirmed
+            bh_1y_volume_confirm_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not bh_1y_volume_confirm_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_volume_confirm_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance and smart_rebal_top_n:
+                buffer_set = set(smart_rebal_candidates[:PORTFOLIO_BUFFER_SIZE])
+                positions_to_sell = []
+                for ticker in list(bh_1y_volume_confirm_positions.keys()):
+                    in_buffer = ticker in buffer_set
+                    should_sell, reason = should_sell_volume_confirmed(
+                        ticker, ticker_data_grouped, current_date,
+                        in_buffer, BH_1Y_VOLUME_CONFIRM_MULTIPLIER
+                    )
+                    if should_sell:
+                        positions_to_sell.append(ticker)
+                
+                kept_stocks = [t for t in current_bh_1y_volume_confirm_stocks if t not in positions_to_sell]
+                new_stocks_needed = PORTFOLIO_SIZE - len(kept_stocks)
+                new_buys = [t for t in smart_rebal_top_n if t not in kept_stocks][:new_stocks_needed]
+                final_stocks = kept_stocks + new_buys
+                
+                if not bh_1y_volume_confirm_initialized:
+                    print(f"   🎯 BH 1Y Volume Confirm: Initializing")
+                    final_stocks = smart_rebal_top_n
+                
+                bh_1y_volume_confirm_positions, bh_1y_volume_confirm_cash, current_bh_1y_volume_confirm_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Volume Confirm", current_stocks=current_bh_1y_volume_confirm_stocks,
+                    new_stocks=final_stocks, positions=bh_1y_volume_confirm_positions, cash=bh_1y_volume_confirm_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_volume_confirm_initialized
+                )
+                bh_1y_volume_confirm_transaction_costs += rc
+                bh_1y_volume_confirm_initialized = True
+                bh_1y_volume_confirm_days_since_rebalance = 0
+        
+        # 5. BH 1Y Sector Aware - Sector Rotation Awareness
+        if ENABLE_BH_1Y_SECTOR_AWARE:
+            from enhanced_static_bh_strategies import filter_sells_sector_aware
+            bh_1y_sector_aware_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not bh_1y_sector_aware_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_sector_aware_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance and smart_rebal_top_n:
+                # Simple sector mapping (can be expanded)
+                ticker_to_sector = {}
+                for ticker in smart_rebal_candidates:
+                    # Use first letter as pseudo-sector for now
+                    ticker_to_sector[ticker] = ticker[0].upper() if ticker else 'X'
+                
+                buffer_set = set(smart_rebal_candidates[:PORTFOLIO_BUFFER_SIZE])
+                current_set = set(current_bh_1y_sector_aware_stocks)
+                positions_to_sell_raw = current_set - buffer_set
+                
+                # Apply sector-aware filtering
+                adjusted_sell, adjusted_keep = filter_sells_sector_aware(
+                    positions_to_sell_raw, current_set & buffer_set,
+                    ticker_to_sector, smart_rebal_candidates,
+                    BH_1Y_SECTOR_AWARE_MIN_PER_SECTOR, BH_1Y_SECTOR_AWARE_MAX_RANK
+                )
+                
+                kept_stocks = list(adjusted_keep)
+                new_stocks_needed = PORTFOLIO_SIZE - len(kept_stocks)
+                new_buys = [t for t in smart_rebal_top_n if t not in kept_stocks][:new_stocks_needed]
+                final_stocks = kept_stocks + new_buys
+                
+                if not bh_1y_sector_aware_initialized:
+                    print(f"   🎯 BH 1Y Sector Aware: Initializing")
+                    final_stocks = smart_rebal_top_n
+                
+                bh_1y_sector_aware_positions, bh_1y_sector_aware_cash, current_bh_1y_sector_aware_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Sector Aware", current_stocks=current_bh_1y_sector_aware_stocks,
+                    new_stocks=final_stocks, positions=bh_1y_sector_aware_positions, cash=bh_1y_sector_aware_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_sector_aware_initialized
+                )
+                bh_1y_sector_aware_transaction_costs += rc
+                bh_1y_sector_aware_initialized = True
+                bh_1y_sector_aware_days_since_rebalance = 0
+        
+        # 6. BH 1Y Accel Buy - Accelerating Momentum Buy
+        if ENABLE_BH_1Y_ACCEL_BUY:
+            from enhanced_static_bh_strategies import select_buys_with_acceleration
+            bh_1y_accel_buy_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not bh_1y_accel_buy_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_accel_buy_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance and smart_rebal_candidates:
+                # Use acceleration-weighted selection for buys
+                final_stocks = select_buys_with_acceleration(
+                    smart_rebal_candidates, ticker_data_grouped, current_date,
+                    PORTFOLIO_SIZE, BH_1Y_ACCEL_BUY_WEIGHT
+                )
+                
+                if not bh_1y_accel_buy_initialized:
+                    print(f"   🎯 BH 1Y Accel Buy: Initializing")
+                
+                bh_1y_accel_buy_positions, bh_1y_accel_buy_cash, current_bh_1y_accel_buy_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Accel Buy", current_stocks=current_bh_1y_accel_buy_stocks,
+                    new_stocks=final_stocks, positions=bh_1y_accel_buy_positions, cash=bh_1y_accel_buy_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_accel_buy_initialized
+                )
+                bh_1y_accel_buy_transaction_costs += rc
+                bh_1y_accel_buy_initialized = True
+                bh_1y_accel_buy_days_since_rebalance = 0
+
+        # =====================================================================
+        # 10 NEW REBALANCING STRATEGIES (Based on Static BH 1Y stock selection)
+        # =====================================================================
+
+        # Helper config dict for rebalancing functions
+        _rebal_config = {
+            'BH_1Y_VOL_ADJ_REBAL_LOW_VOL_THRESH': BH_1Y_VOL_ADJ_REBAL_LOW_VOL_THRESH,
+            'BH_1Y_VOL_ADJ_REBAL_HIGH_VOL_THRESH': BH_1Y_VOL_ADJ_REBAL_HIGH_VOL_THRESH,
+            'BH_1Y_VOL_ADJ_REBAL_MIN_DAYS': BH_1Y_VOL_ADJ_REBAL_MIN_DAYS,
+            'BH_1Y_VOL_ADJ_REBAL_MAX_DAYS': BH_1Y_VOL_ADJ_REBAL_MAX_DAYS,
+            'BH_1Y_CORR_FILTER_THRESH': BH_1Y_CORR_FILTER_THRESH,
+            'BH_1Y_CORR_FILTER_LOOKBACK': BH_1Y_CORR_FILTER_LOOKBACK,
+            'BH_1Y_REGIME_BULL_MA': BH_1Y_REGIME_BULL_MA,
+            'BH_1Y_REGIME_BEAR_MA': BH_1Y_REGIME_BEAR_MA,
+            'BH_1Y_REGIME_REBAL_BULL': BH_1Y_REGIME_REBAL_BULL,
+            'BH_1Y_REGIME_REBAL_BEAR': BH_1Y_REGIME_REBAL_BEAR,
+            'BH_1Y_REGIME_REBAL_SIDEWAYS': BH_1Y_REGIME_REBAL_SIDEWAYS,
+            'BH_1Y_RISK_PARITY_VOL_LOOKBACK': BH_1Y_RISK_PARITY_VOL_LOOKBACK,
+            'BH_1Y_RISK_PARITY_MIN_WEIGHT': BH_1Y_RISK_PARITY_MIN_WEIGHT,
+            'BH_1Y_RISK_PARITY_MAX_WEIGHT': BH_1Y_RISK_PARITY_MAX_WEIGHT,
+            'BH_1Y_DRIFT_THRESH_TARGET': BH_1Y_DRIFT_THRESH_TARGET,
+            'BH_1Y_DRIFT_THRESH_TRIGGER': BH_1Y_DRIFT_THRESH_TRIGGER,
+            'BH_1Y_MOM_QUALITY_MOM_WEIGHT': BH_1Y_MOM_QUALITY_MOM_WEIGHT,
+            'BH_1Y_MOM_QUALITY_CONS_WEIGHT': BH_1Y_MOM_QUALITY_CONS_WEIGHT,
+            'BH_1Y_MOM_QUALITY_MIN_QUALITY': BH_1Y_MOM_QUALITY_MIN_QUALITY,
+            'BH_1Y_LIQUIDITY_AVG_VOL_DAYS': BH_1Y_LIQUIDITY_AVG_VOL_DAYS,
+            'BH_1Y_LIQUIDITY_MIN_DOLLAR_VOL': BH_1Y_LIQUIDITY_MIN_DOLLAR_VOL,
+            'BH_1Y_LIQUIDITY_MAX_WEIGHT': BH_1Y_LIQUIDITY_MAX_WEIGHT,
+            'BH_1Y_EARNINGS_AVOID_DAYS_BEFORE': BH_1Y_EARNINGS_AVOID_DAYS_BEFORE,
+            'BH_1Y_EARNINGS_AVOID_DAYS_AFTER': BH_1Y_EARNINGS_AVOID_DAYS_AFTER,
+            'BH_1Y_MULTI_FACTOR_MOM_WEIGHT': BH_1Y_MULTI_FACTOR_MOM_WEIGHT,
+            'BH_1Y_MULTI_FACTOR_VAL_WEIGHT': BH_1Y_MULTI_FACTOR_VAL_WEIGHT,
+            'BH_1Y_MULTI_FACTOR_QUAL_WEIGHT': BH_1Y_MULTI_FACTOR_QUAL_WEIGHT,
+            'BH_1Y_TIME_DECAY_EXIT_DAYS': BH_1Y_TIME_DECAY_EXIT_DAYS,
+            'BH_1Y_TIME_DECAY_EXIT_PCT_DAILY': BH_1Y_TIME_DECAY_EXIT_PCT_DAILY,
+            'PORTFOLIO_SIZE': PORTFOLIO_SIZE,
+        }
+
+        # 1. Volatility-Adjusted Rebalancing
+        if ENABLE_BH_1Y_VOL_ADJ_REBAL:
+            from enhanced_static_bh_strategies import get_vol_adjusted_rebalance_days
+            bh_1y_vol_adj_rebal_days_since_rebalance += 1
+            
+            # Calculate adaptive rebalance days based on volatility
+            vol_adjusted_days = get_vol_adjusted_rebalance_days(ticker_data_grouped, current_date, _rebal_config)
+            
+            should_init_or_rebalance = (
+                (not bh_1y_vol_adj_rebal_initialized) or
+                (vol_adjusted_days > 0 and bh_1y_vol_adj_rebal_days_since_rebalance >= vol_adjusted_days)
+            )
+            
+            if should_init_or_rebalance:
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
+                
+                if not bh_1y_vol_adj_rebal_initialized:
+                    print(f"   🎯 BH 1Y Vol Adj Rebal: Initializing")
+                
+                bh_1y_vol_adj_rebal_positions, bh_1y_vol_adj_rebal_cash, current_bh_1y_vol_adj_rebal_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Vol Adj Rebal", current_stocks=current_bh_1y_vol_adj_rebal_stocks,
+                    new_stocks=new_stocks, positions=bh_1y_vol_adj_rebal_positions, cash=bh_1y_vol_adj_rebal_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_vol_adj_rebal_initialized
+                )
+                bh_1y_vol_adj_rebal_transaction_costs += rc
+                bh_1y_vol_adj_rebal_initialized = True
+                bh_1y_vol_adj_rebal_days_since_rebalance = 0
+
+        # 2. Correlation-Based Filtering
+        if ENABLE_BH_1Y_CORR_FILTER:
+            from enhanced_static_bh_strategies import filter_by_correlation
+            bh_1y_corr_filter_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not bh_1y_corr_filter_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_corr_filter_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance:
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE + 5)
+                # Filter by correlation
+                new_stocks = filter_by_correlation(new_stocks, ticker_data_grouped, current_date, _rebal_config)
+                
+                if not bh_1y_corr_filter_initialized:
+                    print(f"   🎯 BH 1Y Corr Filter: Initializing")
+                
+                bh_1y_corr_filter_positions, bh_1y_corr_filter_cash, current_bh_1y_corr_filter_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Corr Filter", current_stocks=current_bh_1y_corr_filter_stocks,
+                    new_stocks=new_stocks, positions=bh_1y_corr_filter_positions, cash=bh_1y_corr_filter_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_corr_filter_initialized
+                )
+                bh_1y_corr_filter_transaction_costs += rc
+                bh_1y_corr_filter_initialized = True
+                bh_1y_corr_filter_days_since_rebalance = 0
+
+        # 3. Market Regime Detection
+        if ENABLE_BH_1Y_REGIME_AWARE:
+            from enhanced_static_bh_strategies import detect_market_regime
+            bh_1y_regime_aware_days_since_rebalance += 1
+            
+            # Detect current regime
+            new_regime = detect_market_regime(ticker_data_grouped, current_date, _rebal_config)
+            regime_changed = new_regime != bh_1y_regime_aware_current_regime
+            bh_1y_regime_aware_current_regime = new_regime
+            
+            # Get rebalance days based on regime
+            if new_regime == 'bull':
+                regime_rebal_days = BH_1Y_REGIME_REBAL_BULL
+            elif new_regime == 'bear':
+                regime_rebal_days = BH_1Y_REGIME_REBAL_BEAR
+            else:
+                regime_rebal_days = BH_1Y_REGIME_REBAL_SIDEWAYS
+            
+            should_init_or_rebalance = (
+                (not bh_1y_regime_aware_initialized) or
+                (regime_rebal_days > 0 and bh_1y_regime_aware_days_since_rebalance >= regime_rebal_days) or
+                regime_changed
+            )
+            
+            if should_init_or_rebalance:
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
+                
+                if not bh_1y_regime_aware_initialized:
+                    print(f"   🎯 BH 1Y Regime Aware: Initializing ({new_regime})")
+                elif regime_changed:
+                    print(f"   🔄 BH 1Y Regime Aware: Regime changed to {new_regime}, rebalancing")
+                
+                bh_1y_regime_aware_positions, bh_1y_regime_aware_cash, current_bh_1y_regime_aware_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Regime Aware", current_stocks=current_bh_1y_regime_aware_stocks,
+                    new_stocks=new_stocks, positions=bh_1y_regime_aware_positions, cash=bh_1y_regime_aware_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_regime_aware_initialized
+                )
+                bh_1y_regime_aware_transaction_costs += rc
+                bh_1y_regime_aware_initialized = True
+                bh_1y_regime_aware_days_since_rebalance = 0
+
+        # 4. Risk Parity Allocation
+        if ENABLE_BH_1Y_RISK_PARITY:
+            from enhanced_static_bh_strategies import get_risk_parity_weights
+            bh_1y_risk_parity_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not bh_1y_risk_parity_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_risk_parity_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance:
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
+                
+                if not bh_1y_risk_parity_initialized:
+                    print(f"   🎯 BH 1Y Risk Parity: Initializing")
+                
+                # Get risk parity weights
+                risk_weights = get_risk_parity_weights(new_stocks, ticker_data_grouped, current_date, _rebal_config)
+                
+                bh_1y_risk_parity_positions, bh_1y_risk_parity_cash, current_bh_1y_risk_parity_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Risk Parity", current_stocks=current_bh_1y_risk_parity_stocks,
+                    new_stocks=new_stocks, positions=bh_1y_risk_parity_positions, cash=bh_1y_risk_parity_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_risk_parity_initialized,
+                    custom_weights=risk_weights
+                )
+                bh_1y_risk_parity_transaction_costs += rc
+                bh_1y_risk_parity_initialized = True
+                bh_1y_risk_parity_days_since_rebalance = 0
+
+        # 5. Adaptive Drift Threshold
+        if ENABLE_BH_1Y_DRIFT_THRESH:
+            from enhanced_static_bh_strategies import calculate_portfolio_drift
+            bh_1y_drift_thresh_days_since_rebalance += 1
+            
+            # Calculate current drift
+            current_drift = calculate_portfolio_drift(bh_1y_drift_thresh_positions, ticker_data_grouped, current_date, _rebal_config)
+            drift_trigger = BH_1Y_DRIFT_THRESH_TRIGGER
+            
+            should_init_or_rebalance = (
+                (not bh_1y_drift_thresh_initialized) or
+                (bh_1y_drift_thresh_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS) or
+                (current_drift > drift_trigger)
+            )
+            
+            if should_init_or_rebalance:
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
+                
+                if not bh_1y_drift_thresh_initialized:
+                    print(f"   🎯 BH 1Y Drift Thresh: Initializing")
+                elif current_drift > drift_trigger:
+                    print(f"   🔄 BH 1Y Drift Thresh: Drift {current_drift:.1%} > {drift_trigger:.1%}, rebalancing")
+                
+                bh_1y_drift_thresh_positions, bh_1y_drift_thresh_cash, current_bh_1y_drift_thresh_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Drift Thresh", current_stocks=current_bh_1y_drift_thresh_stocks,
+                    new_stocks=new_stocks, positions=bh_1y_drift_thresh_positions, cash=bh_1y_drift_thresh_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_drift_thresh_initialized
+                )
+                bh_1y_drift_thresh_transaction_costs += rc
+                bh_1y_drift_thresh_initialized = True
+                bh_1y_drift_thresh_days_since_rebalance = 0
+
+        # 6. Momentum Quality Score
+        if ENABLE_BH_1Y_MOM_QUALITY:
+            from enhanced_static_bh_strategies import score_momentum_quality
+            bh_1y_mom_quality_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not bh_1y_mom_quality_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_mom_quality_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance:
+                from shared_strategies import select_top_performers
+                candidates = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE + 10)
+                
+                # Score by momentum quality
+                scored = []
+                for t in candidates:
+                    score = score_momentum_quality(t, ticker_data_grouped, current_date, _rebal_config)
+                    if score >= BH_1Y_MOM_QUALITY_MIN_QUALITY:
+                        scored.append((t, score))
+                scored.sort(key=lambda x: x[1], reverse=True)
+                new_stocks = [t for t, s in scored[:PORTFOLIO_SIZE]]
+                
+                if not bh_1y_mom_quality_initialized:
+                    print(f"   🎯 BH 1Y Mom Quality: Initializing")
+                
+                bh_1y_mom_quality_positions, bh_1y_mom_quality_cash, current_bh_1y_mom_quality_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Mom Quality", current_stocks=current_bh_1y_mom_quality_stocks,
+                    new_stocks=new_stocks, positions=bh_1y_mom_quality_positions, cash=bh_1y_mom_quality_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_mom_quality_initialized
+                )
+                bh_1y_mom_quality_transaction_costs += rc
+                bh_1y_mom_quality_initialized = True
+                bh_1y_mom_quality_days_since_rebalance = 0
+
+        # 7. Liquidity-Based Sizing
+        if ENABLE_BH_1Y_LIQUIDITY:
+            from enhanced_static_bh_strategies import get_liquidity_weights
+            bh_1y_liquidity_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not bh_1y_liquidity_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_liquidity_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance:
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
+                
+                if not bh_1y_liquidity_initialized:
+                    print(f"   🎯 BH 1Y Liquidity: Initializing")
+                
+                # Get liquidity-based weights
+                liq_weights = get_liquidity_weights(new_stocks, ticker_data_grouped, current_date, _rebal_config)
+                
+                bh_1y_liquidity_positions, bh_1y_liquidity_cash, current_bh_1y_liquidity_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Liquidity", current_stocks=current_bh_1y_liquidity_stocks,
+                    new_stocks=new_stocks, positions=bh_1y_liquidity_positions, cash=bh_1y_liquidity_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_liquidity_initialized,
+                    custom_weights=liq_weights
+                )
+                bh_1y_liquidity_transaction_costs += rc
+                bh_1y_liquidity_initialized = True
+                bh_1y_liquidity_days_since_rebalance = 0
+
+        # 8. Earnings Avoidance
+        if ENABLE_BH_1Y_EARNINGS_AVOID:
+            from enhanced_static_bh_strategies import is_near_earnings
+            bh_1y_earnings_avoid_days_since_rebalance += 1
+            
+            # Check if any held stocks are near earnings
+            near_earnings = False
+            for ticker in list(bh_1y_earnings_avoid_positions.keys()):
+                if is_near_earnings(ticker, ticker_data_grouped, current_date, _rebal_config):
+                    near_earnings = True
+                    break
+            
+            should_init_or_rebalance = (
+                (not bh_1y_earnings_avoid_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_earnings_avoid_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance:
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
+                
+                if not bh_1y_earnings_avoid_initialized:
+                    print(f"   🎯 BH 1Y Earnings Avoid: Initializing")
+                
+                bh_1y_earnings_avoid_positions, bh_1y_earnings_avoid_cash, current_bh_1y_earnings_avoid_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Earnings Avoid", current_stocks=current_bh_1y_earnings_avoid_stocks,
+                    new_stocks=new_stocks, positions=bh_1y_earnings_avoid_positions, cash=bh_1y_earnings_avoid_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_earnings_avoid_initialized
+                )
+                bh_1y_earnings_avoid_transaction_costs += rc
+                bh_1y_earnings_avoid_initialized = True
+                bh_1y_earnings_avoid_days_since_rebalance = 0
+
+        # 9. Multi-Factor Composite
+        if ENABLE_BH_1Y_MULTI_FACTOR:
+            from enhanced_static_bh_strategies import get_multi_factor_score
+            bh_1y_multi_factor_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not bh_1y_multi_factor_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_multi_factor_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance:
+                from shared_strategies import select_top_performers
+                candidates = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE + 10)
+                
+                # Score by multi-factor
+                scored = []
+                for t in candidates:
+                    score, mom, qual = get_multi_factor_score(t, ticker_data_grouped, current_date, _rebal_config)
+                    scored.append((t, score, mom, qual))
+                scored.sort(key=lambda x: x[1], reverse=True)
+                new_stocks = [t for t, s, m, q in scored[:PORTFOLIO_SIZE]]
+                
+                if not bh_1y_multi_factor_initialized:
+                    print(f"   🎯 BH 1Y Multi Factor: Initializing")
+                
+                bh_1y_multi_factor_positions, bh_1y_multi_factor_cash, current_bh_1y_multi_factor_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Multi Factor", current_stocks=current_bh_1y_multi_factor_stocks,
+                    new_stocks=new_stocks, positions=bh_1y_multi_factor_positions, cash=bh_1y_multi_factor_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_multi_factor_initialized
+                )
+                bh_1y_multi_factor_transaction_costs += rc
+                bh_1y_multi_factor_initialized = True
+                bh_1y_multi_factor_days_since_rebalance = 0
+
+        # 10. Time-Decay Holdings
+        if ENABLE_BH_1Y_TIME_DECAY:
+            from enhanced_static_bh_strategies import get_time_decay_exit_pct
+            bh_1y_time_decay_days_since_rebalance += 1
+            
+            should_init_or_rebalance = (
+                (not bh_1y_time_decay_initialized) or
+                (STATIC_BH_1Y_REBALANCE_DAYS > 0 and bh_1y_time_decay_days_since_rebalance >= STATIC_BH_1Y_REBALANCE_DAYS)
+            )
+            
+            if should_init_or_rebalance:
+                from shared_strategies import select_top_performers
+                new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
+                
+                if not bh_1y_time_decay_initialized:
+                    print(f"   🎯 BH 1Y Time Decay: Initializing")
+                
+                bh_1y_time_decay_positions, bh_1y_time_decay_cash, current_bh_1y_time_decay_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="BH 1Y Time Decay", current_stocks=current_bh_1y_time_decay_stocks,
+                    new_stocks=new_stocks, positions=bh_1y_time_decay_positions, cash=bh_1y_time_decay_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not bh_1y_time_decay_initialized
+                )
+                bh_1y_time_decay_transaction_costs += rc
+                bh_1y_time_decay_initialized = True
+                bh_1y_time_decay_days_since_rebalance = 0
+                # Update entry dates
+                for ticker in current_bh_1y_time_decay_stocks:
+                    if ticker not in bh_1y_time_decay_entry_dates:
+                        bh_1y_time_decay_entry_dates[ticker] = current_date
 
         # STATIC BH 3M: Initialize on day 1, then rebalance every N days if configured
         should_init_or_rebalance_3m = (
@@ -7842,6 +8710,142 @@ def _run_portfolio_backtest_walk_forward(
             if static_bh_1y_smart_monthly_portfolio_value > static_bh_1y_smart_monthly_peak:
                 static_bh_1y_smart_monthly_peak = static_bh_1y_smart_monthly_portfolio_value
 
+        # =====================================================================
+        # Update portfolio values for 6 SMART REBALANCING STRATEGIES
+        # =====================================================================
+        
+        # Helper function to update portfolio value
+        def _update_smart_strategy_value(positions, cash, ticker_data_grouped, current_date):
+            invested = 0.0
+            for ticker in list(positions.keys()):
+                try:
+                    if ticker in ticker_data_grouped:
+                        data = ticker_data_grouped[ticker].loc[:current_date]
+                        if not data.empty:
+                            price = data['Close'].dropna().iloc[-1]
+                            if not pd.isna(price) and price > 0:
+                                positions[ticker]['value'] = positions[ticker]['shares'] * price
+                                invested += positions[ticker]['value']
+                except Exception:
+                    pass
+            return invested + cash
+        
+        # 1. BH 1Y Mom Sell
+        if ENABLE_BH_1Y_MOM_SELL:
+            bh_1y_mom_sell_portfolio_value = _update_smart_strategy_value(
+                bh_1y_mom_sell_positions, bh_1y_mom_sell_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_mom_sell_portfolio_history.append(bh_1y_mom_sell_portfolio_value)
+        
+        # 2. BH 1Y Rank Sell
+        if ENABLE_BH_1Y_RANK_SELL:
+            bh_1y_rank_sell_portfolio_value = _update_smart_strategy_value(
+                bh_1y_rank_sell_positions, bh_1y_rank_sell_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_rank_sell_portfolio_history.append(bh_1y_rank_sell_portfolio_value)
+        
+        # 3. BH 1Y Trailing Mom
+        if ENABLE_BH_1Y_TRAILING_MOM:
+            bh_1y_trailing_mom_portfolio_value = _update_smart_strategy_value(
+                bh_1y_trailing_mom_positions, bh_1y_trailing_mom_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_trailing_mom_portfolio_history.append(bh_1y_trailing_mom_portfolio_value)
+        
+        # 4. BH 1Y Volume Confirm
+        if ENABLE_BH_1Y_VOLUME_CONFIRM:
+            bh_1y_volume_confirm_portfolio_value = _update_smart_strategy_value(
+                bh_1y_volume_confirm_positions, bh_1y_volume_confirm_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_volume_confirm_portfolio_history.append(bh_1y_volume_confirm_portfolio_value)
+        
+        # 5. BH 1Y Sector Aware
+        if ENABLE_BH_1Y_SECTOR_AWARE:
+            bh_1y_sector_aware_portfolio_value = _update_smart_strategy_value(
+                bh_1y_sector_aware_positions, bh_1y_sector_aware_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_sector_aware_portfolio_history.append(bh_1y_sector_aware_portfolio_value)
+        
+        # 6. BH 1Y Accel Buy
+        if ENABLE_BH_1Y_ACCEL_BUY:
+            bh_1y_accel_buy_portfolio_value = _update_smart_strategy_value(
+                bh_1y_accel_buy_positions, bh_1y_accel_buy_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_accel_buy_portfolio_history.append(bh_1y_accel_buy_portfolio_value)
+
+        # =====================================================================
+        # 10 NEW REBALANCING STRATEGIES - Portfolio Value Updates
+        # =====================================================================
+
+        # 1. Volatility-Adjusted Rebalancing
+        if ENABLE_BH_1Y_VOL_ADJ_REBAL:
+            bh_1y_vol_adj_rebal_portfolio_value = _update_smart_strategy_value(
+                bh_1y_vol_adj_rebal_positions, bh_1y_vol_adj_rebal_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_vol_adj_rebal_portfolio_history.append(bh_1y_vol_adj_rebal_portfolio_value)
+
+        # 2. Correlation-Based Filtering
+        if ENABLE_BH_1Y_CORR_FILTER:
+            bh_1y_corr_filter_portfolio_value = _update_smart_strategy_value(
+                bh_1y_corr_filter_positions, bh_1y_corr_filter_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_corr_filter_portfolio_history.append(bh_1y_corr_filter_portfolio_value)
+
+        # 3. Market Regime Detection
+        if ENABLE_BH_1Y_REGIME_AWARE:
+            bh_1y_regime_aware_portfolio_value = _update_smart_strategy_value(
+                bh_1y_regime_aware_positions, bh_1y_regime_aware_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_regime_aware_portfolio_history.append(bh_1y_regime_aware_portfolio_value)
+
+        # 4. Risk Parity Allocation
+        if ENABLE_BH_1Y_RISK_PARITY:
+            bh_1y_risk_parity_portfolio_value = _update_smart_strategy_value(
+                bh_1y_risk_parity_positions, bh_1y_risk_parity_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_risk_parity_portfolio_history.append(bh_1y_risk_parity_portfolio_value)
+
+        # 5. Adaptive Drift Threshold
+        if ENABLE_BH_1Y_DRIFT_THRESH:
+            bh_1y_drift_thresh_portfolio_value = _update_smart_strategy_value(
+                bh_1y_drift_thresh_positions, bh_1y_drift_thresh_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_drift_thresh_portfolio_history.append(bh_1y_drift_thresh_portfolio_value)
+
+        # 6. Momentum Quality Score
+        if ENABLE_BH_1Y_MOM_QUALITY:
+            bh_1y_mom_quality_portfolio_value = _update_smart_strategy_value(
+                bh_1y_mom_quality_positions, bh_1y_mom_quality_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_mom_quality_portfolio_history.append(bh_1y_mom_quality_portfolio_value)
+
+        # 7. Liquidity-Based Sizing
+        if ENABLE_BH_1Y_LIQUIDITY:
+            bh_1y_liquidity_portfolio_value = _update_smart_strategy_value(
+                bh_1y_liquidity_positions, bh_1y_liquidity_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_liquidity_portfolio_history.append(bh_1y_liquidity_portfolio_value)
+
+        # 8. Earnings Avoidance
+        if ENABLE_BH_1Y_EARNINGS_AVOID:
+            bh_1y_earnings_avoid_portfolio_value = _update_smart_strategy_value(
+                bh_1y_earnings_avoid_positions, bh_1y_earnings_avoid_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_earnings_avoid_portfolio_history.append(bh_1y_earnings_avoid_portfolio_value)
+
+        # 9. Multi-Factor Composite
+        if ENABLE_BH_1Y_MULTI_FACTOR:
+            bh_1y_multi_factor_portfolio_value = _update_smart_strategy_value(
+                bh_1y_multi_factor_positions, bh_1y_multi_factor_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_multi_factor_portfolio_history.append(bh_1y_multi_factor_portfolio_value)
+
+        # 10. Time-Decay Holdings
+        if ENABLE_BH_1Y_TIME_DECAY:
+            bh_1y_time_decay_portfolio_value = _update_smart_strategy_value(
+                bh_1y_time_decay_positions, bh_1y_time_decay_cash, ticker_data_grouped, current_date
+            )
+            bh_1y_time_decay_portfolio_history.append(bh_1y_time_decay_portfolio_value)
+
         # Update STATIC BH 6M portfolio value daily (skip if disabled)
         static_bh_6m_invested_value = 0.0
         if ENABLE_STATIC_BH_6M:
@@ -8139,6 +9143,24 @@ def _run_portfolio_backtest_walk_forward(
                 ("BH 1Y Rank Drift", static_bh_1y_rank_drift_portfolio_value if ENABLE_STATIC_BH_1Y_RANK_DRIFT else None),
                 ("BH 1Y Drawdown", static_bh_1y_drawdown_portfolio_value if ENABLE_STATIC_BH_1Y_DRAWDOWN else None),
                 ("BH 1Y Smart Mth", static_bh_1y_smart_monthly_portfolio_value if ENABLE_STATIC_BH_1Y_SMART_MONTHLY else None),
+                # Smart Rebalancing Strategies
+                ("BH 1Y Mom Sell", bh_1y_mom_sell_portfolio_value if ENABLE_BH_1Y_MOM_SELL else None),
+                ("BH 1Y Rank Sell", bh_1y_rank_sell_portfolio_value if ENABLE_BH_1Y_RANK_SELL else None),
+                ("BH 1Y Trail Mom", bh_1y_trailing_mom_portfolio_value if ENABLE_BH_1Y_TRAILING_MOM else None),
+                ("BH 1Y Vol Conf", bh_1y_volume_confirm_portfolio_value if ENABLE_BH_1Y_VOLUME_CONFIRM else None),
+                ("BH 1Y Sect Aware", bh_1y_sector_aware_portfolio_value if ENABLE_BH_1Y_SECTOR_AWARE else None),
+                ("BH 1Y Accel", bh_1y_accel_buy_portfolio_value if ENABLE_BH_1Y_ACCEL_BUY else None),
+                # 10 New Rebalancing Strategies
+                ("BH 1Y Vol Adj", bh_1y_vol_adj_rebal_portfolio_value if ENABLE_BH_1Y_VOL_ADJ_REBAL else None),
+                ("BH 1Y Corr Filt", bh_1y_corr_filter_portfolio_value if ENABLE_BH_1Y_CORR_FILTER else None),
+                ("BH 1Y Regime", bh_1y_regime_aware_portfolio_value if ENABLE_BH_1Y_REGIME_AWARE else None),
+                ("BH 1Y Risk Par", bh_1y_risk_parity_portfolio_value if ENABLE_BH_1Y_RISK_PARITY else None),
+                ("BH 1Y Drift", bh_1y_drift_thresh_portfolio_value if ENABLE_BH_1Y_DRIFT_THRESH else None),
+                ("BH 1Y Mom Qual", bh_1y_mom_quality_portfolio_value if ENABLE_BH_1Y_MOM_QUALITY else None),
+                ("BH 1Y Liquid", bh_1y_liquidity_portfolio_value if ENABLE_BH_1Y_LIQUIDITY else None),
+                ("BH 1Y Earn Avd", bh_1y_earnings_avoid_portfolio_value if ENABLE_BH_1Y_EARNINGS_AVOID else None),
+                ("BH 1Y MultiFact", bh_1y_multi_factor_portfolio_value if ENABLE_BH_1Y_MULTI_FACTOR else None),
+                ("BH 1Y TimeDec", bh_1y_time_decay_portfolio_value if ENABLE_BH_1Y_TIME_DECAY else None),
             ]
 
             # Filter out None values and sort by performance
@@ -8541,6 +9563,71 @@ def _run_portfolio_backtest_walk_forward(
                     strat_cash = static_bh_1y_smart_monthly_cash
                     num_positions = len(static_bh_1y_smart_monthly_positions)
                     invested = value - strat_cash
+                # Smart Rebalancing Strategies
+                elif name == "BH 1Y Mom Sell" and ENABLE_BH_1Y_MOM_SELL:
+                    strat_cash = bh_1y_mom_sell_cash
+                    num_positions = len(bh_1y_mom_sell_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Rank Sell" and ENABLE_BH_1Y_RANK_SELL:
+                    strat_cash = bh_1y_rank_sell_cash
+                    num_positions = len(bh_1y_rank_sell_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Trail Mom" and ENABLE_BH_1Y_TRAILING_MOM:
+                    strat_cash = bh_1y_trailing_mom_cash
+                    num_positions = len(bh_1y_trailing_mom_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Vol Conf" and ENABLE_BH_1Y_VOLUME_CONFIRM:
+                    strat_cash = bh_1y_volume_confirm_cash
+                    num_positions = len(bh_1y_volume_confirm_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Sect Aware" and ENABLE_BH_1Y_SECTOR_AWARE:
+                    strat_cash = bh_1y_sector_aware_cash
+                    num_positions = len(bh_1y_sector_aware_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Accel" and ENABLE_BH_1Y_ACCEL_BUY:
+                    strat_cash = bh_1y_accel_buy_cash
+                    num_positions = len(bh_1y_accel_buy_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Vol Adj" and ENABLE_BH_1Y_VOL_ADJ_REBAL:
+                    strat_cash = bh_1y_vol_adj_rebal_cash
+                    num_positions = len(bh_1y_vol_adj_rebal_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Corr Filt" and ENABLE_BH_1Y_CORR_FILTER:
+                    strat_cash = bh_1y_corr_filter_cash
+                    num_positions = len(bh_1y_corr_filter_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Regime" and ENABLE_BH_1Y_REGIME_AWARE:
+                    strat_cash = bh_1y_regime_aware_cash
+                    num_positions = len(bh_1y_regime_aware_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Risk Par" and ENABLE_BH_1Y_RISK_PARITY:
+                    strat_cash = bh_1y_risk_parity_cash
+                    num_positions = len(bh_1y_risk_parity_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Drift" and ENABLE_BH_1Y_DRIFT_THRESH:
+                    strat_cash = bh_1y_drift_thresh_cash
+                    num_positions = len(bh_1y_drift_thresh_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Mom Qual" and ENABLE_BH_1Y_MOM_QUALITY:
+                    strat_cash = bh_1y_mom_quality_cash
+                    num_positions = len(bh_1y_mom_quality_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Liquid" and ENABLE_BH_1Y_LIQUIDITY:
+                    strat_cash = bh_1y_liquidity_cash
+                    num_positions = len(bh_1y_liquidity_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Earn Avd" and ENABLE_BH_1Y_EARNINGS_AVOID:
+                    strat_cash = bh_1y_earnings_avoid_cash
+                    num_positions = len(bh_1y_earnings_avoid_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y MultiFact" and ENABLE_BH_1Y_MULTI_FACTOR:
+                    strat_cash = bh_1y_multi_factor_cash
+                    num_positions = len(bh_1y_multi_factor_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y TimeDec" and ENABLE_BH_1Y_TIME_DECAY:
+                    strat_cash = bh_1y_time_decay_cash
+                    num_positions = len(bh_1y_time_decay_positions)
+                    invested = value - strat_cash
 
                 strategy_details.append((name, value, strat_cash, num_positions, invested))
 
@@ -8642,6 +9729,24 @@ def _run_portfolio_backtest_walk_forward(
                 ("BH 1Y Rank Drift", static_bh_1y_rank_drift_portfolio_history) if ENABLE_STATIC_BH_1Y_RANK_DRIFT else None,
                 ("BH 1Y Drawdown", static_bh_1y_drawdown_portfolio_history) if ENABLE_STATIC_BH_1Y_DRAWDOWN else None,
                 ("BH 1Y Smart Mth", static_bh_1y_smart_monthly_portfolio_history) if ENABLE_STATIC_BH_1Y_SMART_MONTHLY else None,
+                # Smart Rebalancing Strategies
+                ("BH 1Y Mom Sell", bh_1y_mom_sell_portfolio_history) if ENABLE_BH_1Y_MOM_SELL else None,
+                ("BH 1Y Rank Sell", bh_1y_rank_sell_portfolio_history) if ENABLE_BH_1Y_RANK_SELL else None,
+                ("BH 1Y Trail Mom", bh_1y_trailing_mom_portfolio_history) if ENABLE_BH_1Y_TRAILING_MOM else None,
+                ("BH 1Y Vol Conf", bh_1y_volume_confirm_portfolio_history) if ENABLE_BH_1Y_VOLUME_CONFIRM else None,
+                ("BH 1Y Sect Aware", bh_1y_sector_aware_portfolio_history) if ENABLE_BH_1Y_SECTOR_AWARE else None,
+                ("BH 1Y Accel", bh_1y_accel_buy_portfolio_history) if ENABLE_BH_1Y_ACCEL_BUY else None,
+                # 10 New Rebalancing Strategies
+                ("BH 1Y Vol Adj", bh_1y_vol_adj_rebal_portfolio_history) if ENABLE_BH_1Y_VOL_ADJ_REBAL else None,
+                ("BH 1Y Corr Filt", bh_1y_corr_filter_portfolio_history) if ENABLE_BH_1Y_CORR_FILTER else None,
+                ("BH 1Y Regime", bh_1y_regime_aware_portfolio_history) if ENABLE_BH_1Y_REGIME_AWARE else None,
+                ("BH 1Y Risk Par", bh_1y_risk_parity_portfolio_history) if ENABLE_BH_1Y_RISK_PARITY else None,
+                ("BH 1Y Drift", bh_1y_drift_thresh_portfolio_history) if ENABLE_BH_1Y_DRIFT_THRESH else None,
+                ("BH 1Y Mom Qual", bh_1y_mom_quality_portfolio_history) if ENABLE_BH_1Y_MOM_QUALITY else None,
+                ("BH 1Y Liquid", bh_1y_liquidity_portfolio_history) if ENABLE_BH_1Y_LIQUIDITY else None,
+                ("BH 1Y Earn Avd", bh_1y_earnings_avoid_portfolio_history) if ENABLE_BH_1Y_EARNINGS_AVOID else None,
+                ("BH 1Y MultiFact", bh_1y_multi_factor_portfolio_history) if ENABLE_BH_1Y_MULTI_FACTOR else None,
+                ("BH 1Y TimeDec", bh_1y_time_decay_portfolio_history) if ENABLE_BH_1Y_TIME_DECAY else None,
             ]
             strategy_to_history = {pair[0]: pair[1] for pair in strategy_history_pairs if pair is not None and pair[1] is not None}
 
@@ -8968,6 +10073,24 @@ def _run_portfolio_backtest_walk_forward(
             'static_bh_1y_rank_drift': _strat(static_bh_1y_rank_drift_portfolio_value, static_bh_1y_rank_drift_portfolio_history, static_bh_1y_rank_drift_transaction_costs, static_bh_1y_rank_drift_cash) if ENABLE_STATIC_BH_1Y_RANK_DRIFT else _strat(0, [], 0, 0),
             'static_bh_1y_drawdown': _strat(static_bh_1y_drawdown_portfolio_value, static_bh_1y_drawdown_portfolio_history, static_bh_1y_drawdown_transaction_costs, static_bh_1y_drawdown_cash) if ENABLE_STATIC_BH_1Y_DRAWDOWN else _strat(0, [], 0, 0),
             'static_bh_1y_smart_monthly': _strat(static_bh_1y_smart_monthly_portfolio_value, static_bh_1y_smart_monthly_portfolio_history, static_bh_1y_smart_monthly_transaction_costs, static_bh_1y_smart_monthly_cash) if ENABLE_STATIC_BH_1Y_SMART_MONTHLY else _strat(0, [], 0, 0),
+            # Smart Rebalancing Strategies
+            'bh_1y_mom_sell': _strat(bh_1y_mom_sell_portfolio_value, bh_1y_mom_sell_portfolio_history, bh_1y_mom_sell_transaction_costs, bh_1y_mom_sell_cash) if ENABLE_BH_1Y_MOM_SELL else _strat(0, [], 0, 0),
+            'bh_1y_rank_sell': _strat(bh_1y_rank_sell_portfolio_value, bh_1y_rank_sell_portfolio_history, bh_1y_rank_sell_transaction_costs, bh_1y_rank_sell_cash) if ENABLE_BH_1Y_RANK_SELL else _strat(0, [], 0, 0),
+            'bh_1y_trailing_mom': _strat(bh_1y_trailing_mom_portfolio_value, bh_1y_trailing_mom_portfolio_history, bh_1y_trailing_mom_transaction_costs, bh_1y_trailing_mom_cash) if ENABLE_BH_1Y_TRAILING_MOM else _strat(0, [], 0, 0),
+            'bh_1y_volume_confirm': _strat(bh_1y_volume_confirm_portfolio_value, bh_1y_volume_confirm_portfolio_history, bh_1y_volume_confirm_transaction_costs, bh_1y_volume_confirm_cash) if ENABLE_BH_1Y_VOLUME_CONFIRM else _strat(0, [], 0, 0),
+            'bh_1y_sector_aware': _strat(bh_1y_sector_aware_portfolio_value, bh_1y_sector_aware_portfolio_history, bh_1y_sector_aware_transaction_costs, bh_1y_sector_aware_cash) if ENABLE_BH_1Y_SECTOR_AWARE else _strat(0, [], 0, 0),
+            'bh_1y_accel_buy': _strat(bh_1y_accel_buy_portfolio_value, bh_1y_accel_buy_portfolio_history, bh_1y_accel_buy_transaction_costs, bh_1y_accel_buy_cash) if ENABLE_BH_1Y_ACCEL_BUY else _strat(0, [], 0, 0),
+            # 10 New Rebalancing Strategies
+            'bh_1y_vol_adj_rebal': _strat(bh_1y_vol_adj_rebal_portfolio_value, bh_1y_vol_adj_rebal_portfolio_history, bh_1y_vol_adj_rebal_transaction_costs, bh_1y_vol_adj_rebal_cash) if ENABLE_BH_1Y_VOL_ADJ_REBAL else _strat(0, [], 0, 0),
+            'bh_1y_corr_filter': _strat(bh_1y_corr_filter_portfolio_value, bh_1y_corr_filter_portfolio_history, bh_1y_corr_filter_transaction_costs, bh_1y_corr_filter_cash) if ENABLE_BH_1Y_CORR_FILTER else _strat(0, [], 0, 0),
+            'bh_1y_regime_aware': _strat(bh_1y_regime_aware_portfolio_value, bh_1y_regime_aware_portfolio_history, bh_1y_regime_aware_transaction_costs, bh_1y_regime_aware_cash) if ENABLE_BH_1Y_REGIME_AWARE else _strat(0, [], 0, 0),
+            'bh_1y_risk_parity': _strat(bh_1y_risk_parity_portfolio_value, bh_1y_risk_parity_portfolio_history, bh_1y_risk_parity_transaction_costs, bh_1y_risk_parity_cash) if ENABLE_BH_1Y_RISK_PARITY else _strat(0, [], 0, 0),
+            'bh_1y_drift_thresh': _strat(bh_1y_drift_thresh_portfolio_value, bh_1y_drift_thresh_portfolio_history, bh_1y_drift_thresh_transaction_costs, bh_1y_drift_thresh_cash) if ENABLE_BH_1Y_DRIFT_THRESH else _strat(0, [], 0, 0),
+            'bh_1y_mom_quality': _strat(bh_1y_mom_quality_portfolio_value, bh_1y_mom_quality_portfolio_history, bh_1y_mom_quality_transaction_costs, bh_1y_mom_quality_cash) if ENABLE_BH_1Y_MOM_QUALITY else _strat(0, [], 0, 0),
+            'bh_1y_liquidity': _strat(bh_1y_liquidity_portfolio_value, bh_1y_liquidity_portfolio_history, bh_1y_liquidity_transaction_costs, bh_1y_liquidity_cash) if ENABLE_BH_1Y_LIQUIDITY else _strat(0, [], 0, 0),
+            'bh_1y_earnings_avoid': _strat(bh_1y_earnings_avoid_portfolio_value, bh_1y_earnings_avoid_portfolio_history, bh_1y_earnings_avoid_transaction_costs, bh_1y_earnings_avoid_cash) if ENABLE_BH_1Y_EARNINGS_AVOID else _strat(0, [], 0, 0),
+            'bh_1y_multi_factor': _strat(bh_1y_multi_factor_portfolio_value, bh_1y_multi_factor_portfolio_history, bh_1y_multi_factor_transaction_costs, bh_1y_multi_factor_cash) if ENABLE_BH_1Y_MULTI_FACTOR else _strat(0, [], 0, 0),
+            'bh_1y_time_decay': _strat(bh_1y_time_decay_portfolio_value, bh_1y_time_decay_portfolio_history, bh_1y_time_decay_transaction_costs, bh_1y_time_decay_cash) if ENABLE_BH_1Y_TIME_DECAY else _strat(0, [], 0, 0),
         }
     }
 

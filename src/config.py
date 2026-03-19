@@ -1323,6 +1323,100 @@ STATIC_BH_1Y_DRAWDOWN_THRESHOLD = 0.05  # Rebalance when portfolio down 5% from 
 ENABLE_STATIC_BH_1Y_SMART_MONTHLY = True   # Smart monthly + conditional
 STATIC_BH_1Y_SMART_MONTHLY_DRAWDOWN = 0.03  # Early rebalance if down 3% from peak
 
+# --- Smart Rebalancing Strategies (based on Static BH 1Y) ---
+# These strategies use the same stock selection as Static BH 1Y but different sell logic
+
+# 1. Momentum-Based Sell: only sell when momentum declining
+ENABLE_BH_1Y_MOM_SELL = True
+BH_1Y_MOM_SELL_LOOKBACK_SHORT = 10  # Short momentum window (days)
+BH_1Y_MOM_SELL_LOOKBACK_LONG = 20   # Long momentum window (days)
+
+# 2. Relative Strength Ranking: sell when rank drops significantly
+ENABLE_BH_1Y_RANK_SELL = True
+BH_1Y_RANK_SELL_DROP_THRESHOLD = 5  # Sell if rank dropped by this many positions
+BH_1Y_RANK_SELL_MAX_RANK = 15       # Sell if rank is now outside this threshold
+
+# 3. Trailing Stop + Momentum: combined stops
+ENABLE_BH_1Y_TRAILING_MOM = True
+BH_1Y_TRAILING_MOM_SOFT_STOP = 0.10  # Soft stop: sell if down 10% AND momentum negative
+BH_1Y_TRAILING_MOM_HARD_STOP = 0.15  # Hard stop: always sell if down 15% from peak
+
+# 4. Volume Confirmation: sell only if volume confirms weakness
+ENABLE_BH_1Y_VOLUME_CONFIRM = True
+BH_1Y_VOLUME_CONFIRM_MULTIPLIER = 1.5  # Sell if volume > 1.5x average AND not in top 12
+
+# 5. Sector Rotation Awareness: don't sell all stocks from a sector at once
+ENABLE_BH_1Y_SECTOR_AWARE = True
+BH_1Y_SECTOR_AWARE_MIN_PER_SECTOR = 1  # Keep at least 1 stock per sector if in top 20
+BH_1Y_SECTOR_AWARE_MAX_RANK = 20       # Consider stocks in top 20 for sector protection
+
+# 6. Accelerating Momentum Buy: prioritize stocks with accelerating momentum
+ENABLE_BH_1Y_ACCEL_BUY = True
+BH_1Y_ACCEL_BUY_WEIGHT = 0.3  # Weight for acceleration score (0-1)
+
+# =====================================================================
+# 10 NEW REBALANCING STRATEGIES (Based on Static BH 1Y stock selection)
+# =====================================================================
+
+# 1. Volatility-Adjusted Rebalancing: rebalance more often in high-vol periods
+ENABLE_BH_1Y_VOL_ADJ_REBAL = True
+BH_1Y_VOL_ADJ_REBAL_LOW_VOL_THRESH = 0.15   # Annualized vol below this = reduce rebalance freq
+BH_1Y_VOL_ADJ_REBAL_HIGH_VOL_THRESH = 0.35  # Annualized vol above this = increase rebalance freq
+BH_1Y_VOL_ADJ_REBAL_MIN_DAYS = 5            # Minimum days between rebalances
+BH_1Y_VOL_ADJ_REBAL_MAX_DAYS = 30           # Maximum days between rebalances
+
+# 2. Correlation-Based Filtering: avoid holding highly correlated stocks
+ENABLE_BH_1Y_CORR_FILTER = True
+BH_1Y_CORR_FILTER_THRESH = 0.7              # Max correlation between any two holdings
+BH_1Y_CORR_FILTER_LOOKBACK = 60             # Days for correlation calculation
+
+# 3. Market Regime Detection: different rebalancing for bull/bear/sideways
+ENABLE_BH_1Y_REGIME_AWARE = True
+BH_1Y_REGIME_BULL_MA = 50                   # MA for bull detection
+BH_1Y_REGIME_BEAR_MA = 200                  # MA for bear detection
+BH_1Y_REGIME_REBAL_BULL = 30                # Rebalance every N days in bull
+BH_1Y_REGIME_REBAL_BEAR = 10                # Rebalance every N days in bear (faster exit)
+BH_1Y_REGIME_REBAL_SIDEWAYS = 20            # Rebalance every N days in sideways
+
+# 4. Risk Parity Allocation: size by inverse volatility
+ENABLE_BH_1Y_RISK_PARITY = True
+BH_1Y_RISK_PARITY_VOL_LOOKBACK = 60         # Days for volatility calculation
+BH_1Y_RISK_PARITY_MIN_WEIGHT = 0.02         # Minimum weight per position
+BH_1Y_RISK_PARITY_MAX_WEIGHT = 0.25         # Maximum weight per position
+
+# 5. Adaptive Drift Threshold: only rebalance when drift exceeds threshold
+ENABLE_BH_1Y_DRIFT_THRESH = True
+BH_1Y_DRIFT_THRESH_TARGET = 0.10            # Target weight per position (10%)
+BH_1Y_DRIFT_THRESH_TRIGGER = 0.05           # Rebalance if any position drifts 5%+ from target
+
+# 6. Momentum Quality Score: combine momentum strength + consistency
+ENABLE_BH_1Y_MOM_QUALITY = True
+BH_1Y_MOM_QUALITY_MOM_WEIGHT = 0.6          # Weight for momentum return
+BH_1Y_MOM_QUALITY_CONS_WEIGHT = 0.4         # Weight for consistency (lower vol of returns)
+BH_1Y_MOM_QUALITY_MIN_QUALITY = 0.3         # Minimum quality score to hold
+
+# 7. Liquidity-Based Sizing: larger positions in more liquid stocks
+ENABLE_BH_1Y_LIQUIDITY = True
+BH_1Y_LIQUIDITY_AVG_VOL_DAYS = 20           # Days to average volume
+BH_1Y_LIQUIDITY_MIN_DOLLAR_VOL = 1000000    # Minimum daily dollar volume
+BH_1Y_LIQUIDITY_MAX_WEIGHT = 0.20           # Max weight in high-liquidity stocks
+
+# 8. Earnings Avoidance: skip rebalancing near earnings
+ENABLE_BH_1Y_EARNINGS_AVOID = True
+BH_1Y_EARNINGS_AVOID_DAYS_BEFORE = 5        # Days to avoid before earnings
+BH_1Y_EARNINGS_AVOID_DAYS_AFTER = 2         # Days to avoid after earnings
+
+# 9. Multi-Factor Composite: blend momentum + value + quality
+ENABLE_BH_1Y_MULTI_FACTOR = True
+BH_1Y_MULTI_FACTOR_MOM_WEIGHT = 0.5         # Momentum weight
+BH_1Y_MULTI_FACTOR_VAL_WEIGHT = 0.25        # Value weight (P/E inverse)
+BH_1Y_MULTI_FACTOR_QUAL_WEIGHT = 0.25       # Quality weight (ROE)
+
+# 10. Time-Decay Holdings: gradually reduce positions over time
+ENABLE_BH_1Y_TIME_DECAY = True
+BH_1Y_TIME_DECAY_EXIT_DAYS = 10             # Days to fully exit a position
+BH_1Y_TIME_DECAY_EXIT_PCT_DAILY = 0.15      # Sell 15% of position per day when exiting
+
 
 
 # --- Rebalance Horizon Optimization ---

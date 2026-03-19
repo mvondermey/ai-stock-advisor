@@ -385,6 +385,14 @@ def _save_model(model, path: str, metadata: dict = None):
     """Save model to disk with optional metadata."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        
+        # Create backup before overwriting
+        if os.path.exists(path):
+            backup_path = path + '.backup'
+            import shutil
+            shutil.copy2(path, backup_path)
+            print(f"   📦 AI Elite: Backed up previous model to {backup_path}")
+        
         # Save model with metadata
         model_data = {
             'model': model,

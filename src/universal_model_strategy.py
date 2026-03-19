@@ -371,6 +371,14 @@ class UniversalModelStrategy:
         """Save all models, scaler, and training state to disk."""
         try:
             MODEL_SAVE_DIR.mkdir(parents=True, exist_ok=True)
+            
+            # Create backup before overwriting
+            if UNIVERSAL_MODEL_PATH.exists():
+                backup_path = UNIVERSAL_MODEL_PATH.with_suffix('.backup.joblib')
+                import shutil
+                shutil.copy2(UNIVERSAL_MODEL_PATH, backup_path)
+                print(f"   📦 Universal Model: Backed up previous model to {backup_path}")
+            
             joblib.dump({
                 'all_models': self.all_models,
                 'all_scores': self.all_scores,

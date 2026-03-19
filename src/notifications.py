@@ -133,6 +133,32 @@ def send_backtesting_notification(
 ) -> bool:
     """Send notification about backtesting completion."""
     
+    # Send push notification first
+    if error_details:
+        send_push_notification(
+            title="❌ Backtest Failed",
+            message=f"Backtest failed after {backtest_time_minutes:.1f} min - check logs",
+            priority="high",
+            tags="warning"
+        )
+    else:
+        # Get top strategy
+        top_strategy = None
+        top_return = None
+        if strategy_results:
+            for s, r in strategy_results.items():
+                if isinstance(r, dict) and 'return' in r:
+                    ret = r['return']
+                    if top_return is None or ret > top_return:
+                        top_return = ret
+                        top_strategy = s
+        send_push_notification(
+            title="✅ Backtest Complete",
+            message=f"Completed in {backtest_time_minutes:.1f} min" + (f" | Top: {top_strategy} {top_return:.1f}%" if top_strategy else ""),
+            priority="default",
+            tags="white_check_mark"
+        )
+    
     message_body = f"""
 📊 Backtesting Summary:
 • Backtest Time: {backtest_time_minutes:.1f} minutes
