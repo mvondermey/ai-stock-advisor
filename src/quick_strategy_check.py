@@ -5,15 +5,27 @@ Usage: python quick_strategy_check.py [strategy_name] [top_n]
 
 Available strategies:
   - risk_adj_mom_3m (default)
+  - risk_adj_mom_1m / 1m_volsweet
+  - risk_adj_mom_6m
   - mom_vol_hybrid_1y3m
+  - mom_vol_hybrid_6m
   - trend_atr
   - trend_breakout
   - dual_momentum
   - ai_elite
-  - dynamic_bh_1y
-  - static_bh_1y
+  - elite_hybrid
+  - elite_risk
+  - dynamic_bh_1y / dynamic_bh_6m / dynamic_bh_3m / dynamic_bh_1m
+  - static_bh_1y / static_bh_6m / static_bh_3m / static_bh_1m
   - price_acceleration
   - quality_mom
+  - turnaround
+  - ratio_3m_1y
+  - ratio_1y_3m
+  - sector_rotation
+  - mean_reversion
+  - volatility_adj_mom
+  - concentrated_3m
 """
 
 import sys
@@ -123,9 +135,90 @@ def get_strategy_recommendations(strategy_name: str, top_n: int = 10) -> List[st
             list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n
         )
     
+    # Risk-Adj Mom variants
+    elif strategy_name in ['risk_adj_mom_1m', '1m_volsweet']:
+        from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+        return select_risk_adj_mom_1m_vol_sweet_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n)
+    
+    elif strategy_name == 'risk_adj_mom_6m':
+        from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
+        return select_risk_adj_mom_6m_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n)
+    
+    # Mom-Vol Hybrid variants
+    elif strategy_name == 'mom_vol_hybrid_6m':
+        from shared_strategies import select_momentum_volatility_hybrid_stocks
+        return select_momentum_volatility_hybrid_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=180, top_n=top_n)
+    
+    # Elite strategies
+    elif strategy_name == 'elite_hybrid':
+        from elite_hybrid_strategy import select_elite_hybrid_stocks
+        return select_elite_hybrid_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n)
+    
+    elif strategy_name == 'elite_risk':
+        from elite_risk_strategy import select_elite_risk_stocks
+        return select_elite_risk_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n)
+    
+    # Dynamic BH variants
+    elif strategy_name == 'dynamic_bh_6m':
+        from shared_strategies import select_top_performers
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=180, top_n=top_n, apply_performance_filter=True)
+    
+    elif strategy_name == 'dynamic_bh_3m':
+        from shared_strategies import select_top_performers
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=90, top_n=top_n, apply_performance_filter=True)
+    
+    elif strategy_name == 'dynamic_bh_1m':
+        from shared_strategies import select_top_performers
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=30, top_n=top_n, apply_performance_filter=True)
+    
+    # Static BH variants
+    elif strategy_name == 'static_bh_6m':
+        from shared_strategies import select_top_performers
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=180, top_n=top_n, apply_performance_filter=False)
+    
+    elif strategy_name == 'static_bh_3m':
+        from shared_strategies import select_top_performers
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=90, top_n=top_n, apply_performance_filter=False)
+    
+    elif strategy_name == 'static_bh_1m':
+        from shared_strategies import select_top_performers
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=30, top_n=top_n, apply_performance_filter=False)
+    
+    # Other strategies
+    elif strategy_name == 'turnaround':
+        from shared_strategies import select_turnaround_stocks
+        return select_turnaround_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n)
+    
+    elif strategy_name == 'ratio_3m_1y':
+        from shared_strategies import select_3m_1y_ratio_stocks
+        return select_3m_1y_ratio_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n)
+    
+    elif strategy_name == 'ratio_1y_3m':
+        from shared_strategies import select_1y_3m_ratio_stocks
+        return select_1y_3m_ratio_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n)
+    
+    elif strategy_name == 'sector_rotation':
+        from shared_strategies import select_sector_rotation_etfs
+        return select_sector_rotation_etfs(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n)
+    
+    elif strategy_name == 'mean_reversion':
+        from shared_strategies import select_mean_reversion_stocks
+        return select_mean_reversion_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n)
+    
+    elif strategy_name == 'volatility_adj_mom':
+        from shared_strategies import select_volatility_adj_mom_stocks
+        return select_volatility_adj_mom_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n)
+    
+    elif strategy_name == 'concentrated_3m':
+        from shared_strategies import select_top_performers
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=90, top_n=top_n, apply_performance_filter=True)
+    
     else:
         print(f"❌ Unknown strategy: {strategy_name}")
-        print("Available: risk_adj_mom_3m, mom_vol_hybrid_1y3m, trend_atr, dual_momentum, ai_elite, dynamic_bh_1y, static_bh_1y, price_acceleration, quality_mom, trend_breakout")
+        print("Available: risk_adj_mom_3m, risk_adj_mom_1m, 1m_volsweet, risk_adj_mom_6m, mom_vol_hybrid_1y3m, mom_vol_hybrid_6m,")
+        print("          trend_atr, trend_breakout, dual_momentum, ai_elite, elite_hybrid, elite_risk,")
+        print("          dynamic_bh_1y/6m/3m/1m, static_bh_1y/6m/3m/1m, price_acceleration, quality_mom,")
+        print("          turnaround, ratio_3m_1y, ratio_1y_3m, sector_rotation, mean_reversion, volatility_adj_mom, concentrated_3m")
         return []
 
 
