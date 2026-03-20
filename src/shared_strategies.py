@@ -3,7 +3,7 @@ Shared Strategy Implementations
 Used by both backtesting and live trading to ensure identical logic.
 """
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone
@@ -2891,3 +2891,408 @@ def select_bh_1y_volsweet_accel_stocks(
     
     print(f"   ✅ BH 1Y VolSweet Accel: Selected {len(selected)} tickers: {selected}")
     return selected
+
+
+def calculate_rebalance_signal(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    market_ticker: str = "SPY"
+) -> Dict:
+    """
+    Calculate dynamic rebalance signal based on market conditions.
+    
+    Returns dict with:
+    - should_rebalance: bool - whether to rebalance today
+    - signal_strength: float - how strong the signal is (0-1)
+    - reasons: list of strings - why we should/shouldn't rebalance
+    """
+    from config import MARKET_FILTER_TICKER
+    
+    # Use SPY as market proxy
+    market_ticker = MARKET_FILTER_TICKER
+    
+    signal = {
+        'should_rebalance': False,
+        'signal_strength': 0.0,
+        'reasons': [],
+        'days_since_last': 0
+    }
+    
+    if market_ticker not in ticker_data_grouped:
+        # No market data - use time-based fallback
+        signal['reasons'].append('No market data - using time-based')
+        return signal
+    
+    try:
+        data = ticker_data_grouped[market_ticker].loc[:current_date]
+        close = data['Close'].dropna()
+        
+        if len(close) < 60:
+            signal['reasons'].append('Insufficient data')
+            return signal
+        
+        # 1. Momentum change signal
+        # Compare recent momentum to longer-term momentum
+        mom_5d = (close.iloc[-1] / close.iloc[-6] - 1) * 100 if len(close) >= 6 else 0
+        mom_21d = (close.iloc[-1] / close.iloc[-22] - 1) * 100 if len(close) >= 22 else 0
+        mom_63d = (close.iloc[-1] / close.iloc[-64] - 1) * 100 if len(close) >= 64 else 0
+        
+        # If 5d momentum is much stronger than 63d, momentum is accelerating
+        if mom_63d > 0:
+            momentum_signal = min(1.0, (mom_5d - mom_63d/3) / 10)  # Normalize
+        else:
+            momentum_signal = 0.0
+        
+        # 2. Volatility signal
+        # High volatility suggests more frequent rebalancing needed
+        returns = close.pct_change().dropna()
+        vol_5d = returns.iloc[-5:].std() * np.sqrt(252) * 100 if len(returns) >= 5 else 20
+        vol_21d = returns.iloc[-21:].std() * np.sqrt(252) * 100 if len(returns) >= 21 else 20
+        
+        # If recent vol is much higher than normal, rebalance more often
+        vol_signal = min(1.0, max(0, (vol_21d - vol_5d) / vol_21d)) if vol_21d > 0 else 0
+        
+        # 3. Trend change signal
+        # If market crossed its moving average, might need rebalance
+        sma_21 = close.rolling(21).mean().iloc[-1]
+        sma_63 = close.rolling(63).mean().iloc[-1]
+        
+        # Current position vs 21d SMA
+        price_vs_sma = (close.iloc[-1] / sma_21 - 1) * 100 if not np.isnan(sma_21) else 0
+        
+        # If price just crossed SMA, strong signal
+        prev_price_vs_sma = (close.iloc[-2] / sma_21 - 1) * 100 if len(close) >= 3 and not np.isnan(sma_21) else 0
+        
+        trend_signal = 0.0
+        if prev_price_vs_sma < 0 and price_vs_sma > 0:
+            trend_signal = 0.8  # Bullish crossover
+        elif prev_price_vs_sma > 0 and price_vs_sma < 0:
+            trend_signal = 0.8  # Bearish crossover
+        elif abs(price_vs_sma) > 5:
+            trend_signal = 0.3  # Far from SMA
+            
+        # Combine signals
+        combined_signal = (momentum_signal * 0.4 + vol_signal * 0.3 + trend_signal * 0.3)
+        
+        signal['signal_strength'] = combined_signal
+        signal['should_rebalance'] = combined_signal > 0.4  # Threshold
+        
+        if momentum_signal > 0.3:
+            signal['reasons'].append(f"Momentum accelerating: {momentum_signal:.2f}")
+        if vol_signal > 0.3:
+            signal['reasons'].append(f"Volatility increasing: {vol_signal:.2f}")
+        if trend_signal > 0.3:
+            signal['reasons'].append(f"Trend change: {trend_signal:.2f}")
+            
+    except Exception as e:
+        signal['reasons'].append(f'Error: {str(e)[:30]}')
+    
+    return signal
+
+
+def select_bh_1y_dynamic_accel_stocks(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime = None,
+    top_n: int = 10,
+    days_since_rebalance: int = 0,
+    min_days: int = 5,
+    max_days: int = 44,
+) -> Tuple[List[str], bool]:
+    """
+    BH 1Y Dynamic Acceleration Strategy:
+    Combines Static BH 1Y and 1M VolSweet tickers, ranks by acceleration.
+    Dynamically decides when to rebalance based on market conditions.
+    
+    Returns:
+        Tuple of (selected_tickers, should_rebalance)
+    """
+    from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+    
+    if current_date is None:
+        current_date = datetime.now(timezone.utc)
+    
+    # Calculate rebalance signal
+    rebalance_signal = calculate_rebalance_signal(ticker_data_grouped, current_date)
+    
+    # Force rebalance if too long since last rebalance
+    force_rebalance = days_since_rebalance >= max_days
+    
+    # Don't rebalance if too soon (unless forced)
+    if days_since_rebalance < min_days and not force_rebalance and not rebalance_signal['should_rebalance']:
+        print(f"   ⏳ BH 1Y Dynamic Accel: Skipping (days={days_since_rebalance}, signal={rebalance_signal['signal_strength']:.2f})")
+        return [], False
+    
+    should_rebalance = force_rebalance or rebalance_signal['should_rebalance']
+    
+    if not should_rebalance:
+        print(f"   ⏳ BH 1Y Dynamic Accel: No rebalance signal (days={days_since_rebalance}, signal={rebalance_signal['signal_strength']:.2f})")
+        if rebalance_signal['reasons']:
+            print(f"      Reasons: {rebalance_signal['reasons']}")
+        return [], False
+    
+    print(f"   🔄 BH 1Y Dynamic Accel: REBALANCING (days={days_since_rebalance}, signal={rebalance_signal['signal_strength']:.2f})")
+    if rebalance_signal['reasons']:
+        print(f"      Reasons: {rebalance_signal['reasons']}")
+    
+    # Get tickers from Static BH 1Y
+    print(f"   📊 BH 1Y Dynamic Accel: Getting Static BH 1Y tickers...")
+    bh_1y_tickers = select_top_performers(
+        all_tickers, ticker_data_grouped,
+        current_date=current_date,
+        lookback_days=365,
+        top_n=top_n * 2,
+        apply_performance_filter=False
+    )
+    
+    # Get tickers from 1M VolSweet
+    print(f"   📊 BH 1Y Dynamic Accel: Getting 1M VolSweet tickers...")
+    volsweet_tickers = select_risk_adj_mom_1m_vol_sweet_stocks(
+        all_tickers, ticker_data_grouped,
+        current_date=current_date,
+        top_n=top_n * 2
+    )
+    
+    # Combine unique tickers
+    combined_tickers = list(set(bh_1y_tickers) | set(volsweet_tickers))
+    print(f"   📊 BH 1Y Dynamic Accel: Combined {len(combined_tickers)} unique tickers")
+    
+    # Calculate acceleration scores
+    scored_candidates = []
+    
+    for ticker in combined_tickers:
+        if ticker not in ticker_data_grouped:
+            continue
+        
+        try:
+            data = ticker_data_grouped[ticker].loc[:current_date]
+            close = data['Close'].dropna()
+            
+            if len(close) < 60:
+                continue
+            
+            # Calculate momentum metrics
+            mom_1m = (close.iloc[-1] / close.iloc[-21] - 1) * 100 if len(close) >= 21 else 0
+            mom_3m = (close.iloc[-1] / close.iloc[-63] - 1) * 100 if len(close) >= 63 else 0
+            
+            # Acceleration
+            expected_1m_from_3m = mom_3m / 3 if mom_3m != 0 else 0
+            acceleration = mom_1m - expected_1m_from_3m
+            
+            # Velocity
+            recent_velocity = (close.iloc[-1] / close.iloc[-5] - 1) * 100 if len(close) >= 5 else 0
+            
+            # Consistency
+            returns_5d = close.pct_change(5).dropna()
+            if len(returns_5d) >= 20:
+                accel_series = returns_5d.rolling(5).mean().diff().iloc[-20:]
+                consistency = (accel_series > 0).mean()
+            else:
+                consistency = 0.5
+            
+            # Composite score
+            accel_score = (acceleration * 0.4 + acceleration * 0.4 + consistency * acceleration * 0.2)
+            final_score = accel_score * (1 + recent_velocity * 10)
+            
+            scored_candidates.append({
+                'ticker': ticker,
+                'score': final_score,
+                'acceleration': acceleration,
+                'velocity': recent_velocity,
+                'consistency': consistency
+            })
+            
+        except Exception:
+            continue
+    
+    # Sort by score
+    scored_candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Log top picks
+    if scored_candidates:
+        print(f"   📈 BH 1Y Dynamic Accel: Top picks with acceleration:")
+        for c in scored_candidates[:min(5, len(scored_candidates))]:
+            print(f"      {c['ticker']}: accel={c['acceleration']:+.1f}%, velocity={c['velocity']:+.1f}%, score={c['score']:.4f}")
+    
+    selected = [c['ticker'] for c in scored_candidates[:top_n]]
+    
+    print(f"   ✅ BH 1Y Dynamic Accel: Selected {len(selected)} tickers: {selected}")
+    return selected, True
+
+
+# =============================================================================
+# STRATEGY REGISTRY - Maps strategy names to selection functions
+# =============================================================================
+
+def _get_strategy_registry():
+    """
+    Returns a dictionary mapping strategy names to their selection functions.
+    This is the single source of truth for all strategy implementations.
+    Both backtesting and live trading should use this registry.
+    """
+    return {
+        # Static BH strategies (lookback-based)
+        'static_bh_1y': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_6m': lambda t, d, dt, n: select_top_performers(t, d, dt, 180, n),
+        'static_bh_3m': lambda t, d, dt, n: select_top_performers(t, d, dt, 90, n),
+        'static_bh_1m': lambda t, d, dt, n: select_top_performers(t, d, dt, 30, n),
+        
+        # Static BH Monthly variants
+        'static_bh_1y_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_6m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 180, n),
+        'static_bh_3m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 90, n),
+        'static_bh_1m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 30, n),
+        
+        # Dynamic BH strategies
+        'dynamic_bh_1y': lambda t, d, dt, n: select_dynamic_bh_stocks(t, d, '1y', dt, n),
+        'dynamic_bh_6m': lambda t, d, dt, n: select_dynamic_bh_stocks(t, d, '6m', dt, n),
+        'dynamic_bh_3m': lambda t, d, dt, n: select_dynamic_bh_stocks(t, d, '3m', dt, n),
+        'dynamic_bh_1m': lambda t, d, dt, n: select_dynamic_bh_stocks(t, d, '1m', dt, n),
+        'dynamic_bh_1y_vol_filter': lambda t, d, dt, n: select_top_performers_vol_filtered(t, d, dt, 365, 0.4, n)[0],
+        'dynamic_bh_1y_trailing_stop': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        
+        # Risk-Adjusted Momentum strategies
+        'risk_adj_mom': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 365, "Risk-Adj Mom"),
+        'risk_adj_mom_6m': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 180, "Risk-Adj Mom 6M"),
+        'risk_adj_mom_3m': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 90, "Risk-Adj Mom 3M"),
+        'risk_adj_mom_1m': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 30, "Risk-Adj Mom 1M"),
+        'risk_adj_mom_6m_monthly': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 180, "RiskAdj 6M Mth"),
+        'risk_adj_mom_3m_monthly': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 90, "RiskAdj 3M Mth"),
+        'risk_adj_mom_1m_monthly': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 30, "RiskAdj 1M Mth"),
+        'risk_adj_mom_3m_sentiment': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 90, "RiskAdj 3M Sent"),
+        'risk_adj_mom_3m_market_up': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 90, "RiskAdj 3M Up"),
+        'risk_adj_mom_3m_with_stops': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 90, "RiskAdj 3M Stop"),
+        'risk_adj_mom_sentiment': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 365, "RiskAdj Sent"),
+        
+        # Vol Sweet strategies
+        'risk_adj_mom_1m_vol_sweet': lambda t, d, dt, n: _select_risk_adj_mom_1m_vol_sweet(t, d, dt, n),
+        'vol_sweet_mom': lambda t, d, dt, n: _select_risk_adj_mom_1m_vol_sweet(t, d, dt, n),
+        'bh_1y_volsweet_accel': lambda t, d, dt, n: select_bh_1y_volsweet_accel_stocks(t, d, dt, n),
+        'bh_1y_dynamic_accel': lambda t, d, dt, n: select_bh_1y_dynamic_accel_stocks(t, d, dt, n, 0, 0, 44)[0],
+        
+        # Mean Reversion & Quality
+        'mean_reversion': lambda t, d, dt, n: select_mean_reversion_stocks(t, d, dt, n),
+        'quality_momentum': lambda t, d, dt, n: select_quality_momentum_stocks(t, d, dt, n),
+        'volatility_adj_mom': lambda t, d, dt, n: select_volatility_adj_mom_stocks(t, d, dt, n),
+        
+        # Ratio strategies
+        'ratio_3m_1y': lambda t, d, dt, n: select_3m_1y_ratio_stocks(t, d, dt, n),
+        '3m_1y_ratio': lambda t, d, dt, n: select_3m_1y_ratio_stocks(t, d, dt, n),
+        'ratio_1y_3m': lambda t, d, dt, n: select_1y_3m_ratio_stocks(t, d, dt, n),
+        '1y_3m_ratio': lambda t, d, dt, n: select_1y_3m_ratio_stocks(t, d, dt, n),
+        
+        # Momentum-Volatility Hybrid strategies
+        'momentum_volatility_hybrid': lambda t, d, dt, n: select_momentum_volatility_hybrid_stocks(t, d, dt, n),
+        'momentum_volatility_hybrid_6m': lambda t, d, dt, n: select_momentum_volatility_hybrid_6m_stocks(t, d, dt, n),
+        'momentum_volatility_hybrid_1y': lambda t, d, dt, n: select_momentum_volatility_hybrid_1y_stocks(t, d, dt, n),
+        'momentum_volatility_hybrid_1y3m': lambda t, d, dt, n: select_momentum_volatility_hybrid_1y3m_stocks(t, d, dt, n),
+        
+        # Other strategies
+        'turnaround': lambda t, d, dt, n: select_turnaround_stocks(t, d, dt, n),
+        'price_acceleration': lambda t, d, dt, n: select_price_acceleration_stocks(t, d, dt, n),
+        'sector_rotation': lambda t, d, dt, n: select_sector_rotation_etfs(t, d, dt, n),
+        'voting_ensemble': lambda t, d, dt, n: select_voting_ensemble_stocks(t, d, dt, n),
+        'momentum_ai_hybrid': lambda t, d, dt, n: select_momentum_ai_hybrid_stocks(t, d, dt, n),
+        
+        # AI Elite strategies
+        'ai_elite': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
+        'ai_elite_monthly': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
+        'ai_elite_filtered': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
+        'ai_elite_market_up': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
+        
+        # BH 1Y Adaptive Rebalancing variants (all use same base selection)
+        'static_bh_1y_volatility': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_performance': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_momentum': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_atr': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_hybrid': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_volume_filter': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_sector_rotation': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_performance_threshold': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_market_regime': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_momentum_persist': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_overlap': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_rank_drift': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_drawdown': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_smart_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        
+        # BH 1Y Smart Rebalancing variants
+        'bh_1y_mom_sell': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_rank_sell': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_trailing_mom': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_volume_confirm': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_sector_aware': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_accel_buy': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_3m_accel': lambda t, d, dt, n: select_top_performers(t, d, dt, 90, n),
+        
+        # Rebal 1Y variants
+        'bh_1y_vol_adj_rebal': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_corr_filter': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_regime_aware': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_risk_parity': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_drift_thresh': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_mom_quality': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_liquidity': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_earnings_avoid': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_multi_factor': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_time_decay': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+    }
+
+
+def _select_risk_adj_mom_1m_vol_sweet(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for risk_adj_mom_1m_vol_sweet strategy."""
+    try:
+        from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+        return select_risk_adj_mom_1m_vol_sweet_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+    except ImportError:
+        print("   ⚠️ risk_adj_mom_1m_vol_sweet_strategy not available, using risk_adj_mom_1m")
+        return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, 30, "Risk-Adj Mom 1M")
+
+
+def get_strategy_tickers(strategy_name: str, all_tickers: list, ticker_data_grouped: dict,
+                         current_date=None, top_n: int = 10) -> list:
+    """
+    Get tickers for a strategy using the registry.
+    
+    This is the main entry point for live execution (--live-run mode).
+    For JSON reading (--live-trading mode), use load_strategy_selections_from_json() directly.
+    
+    Args:
+        strategy_name: Name of the strategy (e.g., 'static_bh_1y', 'risk_adj_mom')
+        all_tickers: List of all available tickers
+        ticker_data_grouped: Dict mapping ticker -> DataFrame
+        current_date: Current date for analysis (None uses latest data)
+        top_n: Number of tickers to select
+        
+    Returns:
+        List of selected tickers, or empty list if strategy not found
+    """
+    from datetime import datetime, timezone
+    
+    # Default to current time if not provided
+    if current_date is None:
+        current_date = datetime.now(timezone.utc)
+    
+    # Get the strategy registry
+    registry = _get_strategy_registry()
+    
+    # Check if strategy exists in registry
+    if strategy_name not in registry:
+        print(f"   ⚠️ Strategy '{strategy_name}' not found in registry")
+        print(f"   Available strategies: {sorted(registry.keys())}")
+        return []
+    
+    # Execute the strategy
+    try:
+        result = registry[strategy_name](all_tickers, ticker_data_grouped, current_date, top_n)
+        if result:
+            return result
+        return []
+    except Exception as e:
+        print(f"   ⚠️ Strategy '{strategy_name}' execution failed: {e}")
+        return []
+
+
+def get_available_strategies() -> list:
+    """Return list of all available strategy names in the registry."""
+    return sorted(_get_strategy_registry().keys())

@@ -1380,7 +1380,7 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   💰 Running all enabled strategies")
 
     # Clear inverse ETF hedge log at start of backtest
-    from shared_strategies import clear_inverse_etf_hedge_log
+    from shared_strategies import clear_inverse_etf_hedge_log, get_strategy_tickers, select_top_performers, select_top_performers_vol_filtered
     clear_inverse_etf_hedge_log()
 
     # Centralized rebalancing tracking for all strategies (strategy_name -> bool)
@@ -2604,7 +2604,6 @@ def _run_portfolio_backtest_walk_forward(
             )
 
             if should_init_or_rebalance_1y:
-                from shared_strategies import select_top_performers
                 new_static_bh_1y_stocks = select_top_performers(
                     initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE
                 )
@@ -2641,7 +2640,6 @@ def _run_portfolio_backtest_walk_forward(
             check_volatility_trigger, check_performance_trigger,
             check_momentum_trigger, check_atr_trigger, check_hybrid_trigger
         )
-        from shared_strategies import select_top_performers
 
         # 1. Volatility-triggered rebalancing
         if ENABLE_STATIC_BH_1Y_VOLATILITY:
@@ -2989,7 +2987,6 @@ def _run_portfolio_backtest_walk_forward(
         # =====================================================================
         
         # Get top performers for all smart rebalancing strategies (shared selection)
-        from shared_strategies import select_top_performers
         smart_rebal_candidates = select_top_performers(
             initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE * 2
         )
@@ -3365,7 +3362,6 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 print(f"   📊 Rebal 1Y VolAdj Day {day_count}: {new_stocks}")
@@ -3394,7 +3390,6 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE + 5)
                 # Filter by correlation
                 new_stocks = filter_by_correlation(new_stocks, ticker_data_grouped, current_date, _rebal_config)
@@ -3439,7 +3434,6 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 print(f"   📊 Rebal 1Y Regime Day {day_count}: {new_stocks}")
@@ -3470,7 +3464,6 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 print(f"   📊 Rebal 1Y RiskPar Day {day_count}: {new_stocks}")
@@ -3508,7 +3501,6 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 print(f"   📊 Rebal 1Y Drift Day {day_count}: {new_stocks}")
@@ -3539,7 +3531,6 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance:
-                from shared_strategies import select_top_performers
                 candidates = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE + 10)
                 
                 # Score by momentum quality
@@ -3577,7 +3568,6 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 print(f"   📊 Rebal 1Y Liquid Day {day_count}: {new_stocks}")
@@ -3617,7 +3607,6 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 print(f"   📊 Rebal 1Y EarnAvd Day {day_count}: {new_stocks}")
@@ -3646,7 +3635,6 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance:
-                from shared_strategies import select_top_performers
                 candidates = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE + 10)
                 
                 # Score by multi-factor
@@ -3683,7 +3671,6 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
                 print(f"   📊 Rebal 1Y TimeDec Day {day_count}: {new_stocks}")
@@ -3712,7 +3699,6 @@ def _run_portfolio_backtest_walk_forward(
         )
 
         if should_init_or_rebalance_3m:
-            from shared_strategies import select_top_performers
             new_static_bh_3m_stocks = select_top_performers(
                 initial_top_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=PORTFOLIO_SIZE
             )
@@ -3751,7 +3737,6 @@ def _run_portfolio_backtest_walk_forward(
             )
 
             if should_init_or_rebalance_6m:
-                from shared_strategies import select_top_performers
                 new_static_bh_6m_stocks = select_top_performers(
                     initial_top_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=PORTFOLIO_SIZE
                 )
@@ -3789,7 +3774,6 @@ def _run_portfolio_backtest_walk_forward(
             )
 
             if should_init_or_rebalance_1m:
-                from shared_strategies import select_top_performers
                 new_static_bh_1m_stocks = select_top_performers(
                     initial_top_tickers, ticker_data_grouped, current_date, lookback_days=30, top_n=PORTFOLIO_SIZE
                 )
@@ -3830,7 +3814,6 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_STATIC_BH_1Y_MONTHLY:
             should_rebalance_1y_monthly = (not static_bh_1y_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_1y_monthly:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
                     print(f"   📊 Static BH 1Y Monthly Day {day_count}: {new_stocks}")
@@ -3852,7 +3835,6 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_STATIC_BH_6M_MONTHLY:
             should_rebalance_6m_monthly = (not static_bh_6m_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_6m_monthly:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
                     print(f"   📊 Static BH 6M Monthly Day {day_count}: {new_stocks}")
@@ -3874,7 +3856,6 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_STATIC_BH_3M_MONTHLY:
             should_rebalance_3m_monthly = (not static_bh_3m_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_3m_monthly:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
                     print(f"   📊 Static BH 3M Monthly Day {day_count}: {new_stocks}")
@@ -3896,7 +3877,6 @@ def _run_portfolio_backtest_walk_forward(
         if ENABLE_STATIC_BH_1M_MONTHLY:
             should_rebalance_1m_monthly = (not static_bh_1m_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_1m_monthly:
-                from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=30, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
                     print(f"   📊 Static BH 1M Monthly Day {day_count}: {new_stocks}")
@@ -3919,7 +3899,6 @@ def _run_portfolio_backtest_walk_forward(
             print(f"\n🔄 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): Dynamic BH 1Y Rebalancing...")
 
             try:
-                from shared_strategies import select_top_performers
                 new_dynamic_bh_stocks = select_top_performers(
                     initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE,
                     apply_performance_filter=True, filter_label="Dynamic BH 1Y"
@@ -3955,7 +3934,6 @@ def _run_portfolio_backtest_walk_forward(
             print(f"\n🔄 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): Dynamic BH 6M Rebalancing...")
 
             try:
-                from shared_strategies import select_top_performers
                 new_dynamic_bh_6m_stocks = select_top_performers(
                     initial_top_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=PORTFOLIO_SIZE,
                     apply_performance_filter=True, filter_label="Dynamic BH 6M"
@@ -3988,7 +3966,6 @@ def _run_portfolio_backtest_walk_forward(
 
         # DYNAMIC BH 3M PORTFOLIO: Rebalance to current top N performers DAILY
         if ENABLE_DYNAMIC_BH_3M:
-            from shared_strategies import select_top_performers
             new_dynamic_bh_3m_stocks = select_top_performers(
                 initial_top_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=PORTFOLIO_SIZE,
                 apply_performance_filter=True, filter_label="Dynamic BH 3M"
@@ -4018,7 +3995,6 @@ def _run_portfolio_backtest_walk_forward(
 
         # DYNAMIC BH 1M PORTFOLIO: Rebalance to current top N performers DAILY
         if ENABLE_DYNAMIC_BH_1M:
-            from shared_strategies import select_top_performers
             new_dynamic_bh_1m_stocks = select_top_performers(
                 initial_top_tickers, ticker_data_grouped, current_date, lookback_days=21, top_n=PORTFOLIO_SIZE,
                 apply_performance_filter=True, filter_label="Dynamic BH 1M"
@@ -4049,7 +4025,6 @@ def _run_portfolio_backtest_walk_forward(
 
         # DYNAMIC BH 1Y + VOLATILITY FILTER: Same as Dynamic BH 1Y but with volatility filter
         if ENABLE_DYNAMIC_BH_1Y_VOL_FILTER:
-            from shared_strategies import select_top_performers_vol_filtered
             new_dynamic_bh_1y_vol_filter_stocks, stocks_passed_vol_filter, stocks_evaluated = select_top_performers_vol_filtered(
                 initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365,
                 max_volatility=DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY, top_n=PORTFOLIO_SIZE
@@ -4139,7 +4114,6 @@ def _run_portfolio_backtest_walk_forward(
                         continue
 
             # Regular rebalancing (same as Dynamic BH 1Y)
-            from shared_strategies import select_top_performers
             new_dynamic_bh_1y_trailing_stop_stocks = select_top_performers(
                 initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE,
                 apply_performance_filter=True, filter_label="Dynamic BH 1Y+TS"

@@ -393,6 +393,24 @@ except ImportError:
 # - All data fetching functions (now in data_fetcher.py)
 # - All ticker selection functions (now in ticker_selection.py)
 
+def _execute_strategy_live(strategy: str, all_tickers: list, ticker_data_grouped: dict, portfolio_size: int) -> list:
+    """Execute a strategy directly with current data (for --live-run mode).
+    
+    Uses the shared strategy registry from shared_strategies.py.
+    All strategies are defined there - no need to maintain separate if/elif chains.
+    """
+    from datetime import datetime, timezone
+    from shared_strategies import get_strategy_tickers
+    
+    current_date = datetime.now(timezone.utc)
+    
+    # Handle alias
+    if strategy == '1m_volsweet':
+        strategy = 'risk_adj_mom_1m_vol_sweet'
+    
+    return get_strategy_tickers(strategy, all_tickers, ticker_data_grouped, current_date, portfolio_size)
+
+
 def get_internet_time():
     """
     Get accurate UTC time from reliable internet sources for consistent backtesting.
@@ -1775,8 +1793,8 @@ if __name__ == "__main__":
             for strategy in strategies:
                 print(f"\n🎯 Strategy: {strategy}")
                 print("-" * 40)
-                # Execute strategy live
-                selected = get_strategy_tickers(strategy, list(ticker_data_grouped.keys()), ticker_data_grouped)
+                # Execute strategy live (direct execution, not from JSON)
+                selected = _execute_strategy_live(strategy, list(ticker_data_grouped.keys()), ticker_data_grouped, config.PORTFOLIO_SIZE)
                 strategy_selections[strategy] = set(selected) if selected else set()
                 if selected:
                     print(f"   Selected {len(selected)} tickers: {selected}")
@@ -1815,7 +1833,7 @@ if __name__ == "__main__":
             num_stocks = args.num_stocks if args.num_stocks else len(strategies) * 6
             
             acceleration_selections = combine_strategies_with_acceleration(
-                strategies, ticker_data_grouped, current_date, num_stocks
+                strategies, ticker_data_grouped, current_date, num_stocks, execute_live=True
             )
             
             # === CONSENSUS TABLE ===

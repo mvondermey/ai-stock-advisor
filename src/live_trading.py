@@ -566,273 +566,6 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], ticker_data_grou
     print("=" * 80)
     return []
 
-    if strategy == 'ai_individual' or strategy == 'ai_strategy':
-        # AI Strategy: REMOVED - fallback to momentum-based selection
-        print(f"   [WARN] AI Strategy removed. Using momentum_volatility_hybrid_6m instead.")
-        return get_momentum_volatility_hybrid_tickers(all_tickers, '6m', ticker_data_grouped)
-
-    elif strategy == 'multitask':
-        # Multi-Task Learning Strategy: REMOVED - fallback to momentum-based selection
-        print(f"   [WARN] Multi-Task Learning removed. Using momentum_volatility_hybrid_6m instead.")
-        return get_momentum_volatility_hybrid_tickers(all_tickers, '6m', ticker_data_grouped)
-
-    elif strategy.startswith('dynamic_bh_'):
-        # Dynamic BH Strategy: Select based on performance period
-        period = strategy.replace('dynamic_bh_', '')  # '1y', '6m', '3m', or '1m'
-        return get_dynamic_bh_tickers(all_tickers, period, ticker_data_grouped)
-
-    elif strategy == 'risk_adj_mom':
-        # Risk-Adjusted Momentum Strategy
-        return get_risk_adj_mom_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == '3m_1y_ratio':
-        # 3M/1Y Ratio Strategy
-        return get_3m_1y_ratio_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'mean_reversion':
-        # Mean Reversion Strategy
-        return get_mean_reversion_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'volatility_adj_mom':
-        # Volatility-Adjusted Momentum Strategy
-        return get_volatility_adj_mom_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'quality_momentum':
-        # Quality + Momentum Strategy
-        return get_quality_momentum_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy.startswith('static_bh_'):
-        # Static BH Strategy: Select based on performance period but hold static
-        period = strategy.replace('static_bh_', '')  # '1y', '6m', '3m', or '1m'
-        return get_static_bh_tickers(all_tickers, period, ticker_data_grouped)
-    
-    elif strategy == 'turnaround':
-        # Turnaround Strategy: Low 3Y but high 1Y performance
-        return get_turnaround_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'ratio_3m_1y':
-        # 3M/1Y Ratio Strategy: Strong 3M momentum vs 1Y performance
-        return get_3m_1y_ratio_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'ratio_1y_3m':
-        # 1Y/3M Ratio Strategy: Strong 1Y performance but weak 3M (buy on dip)
-        return get_ratio_1y_3m_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'momentum_volatility_hybrid':
-        # Momentum-Volatility Hybrid Strategy: Combines strong momentum with controlled volatility
-        return get_momentum_volatility_hybrid_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'momentum_volatility_hybrid_6m':
-        # Momentum-Volatility Hybrid 6M Strategy: 6-month lookback variant
-        return get_momentum_volatility_hybrid_6m_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'momentum_volatility_hybrid_1y':
-        # Momentum-Volatility Hybrid 1Y Strategy: 1-year lookback variant
-        return get_momentum_volatility_hybrid_1y_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'momentum_volatility_hybrid_1y3m':
-        # Momentum-Volatility Hybrid 1Y/3M Strategy: Strong 1Y, weak 3M (buy on dip)
-        return get_momentum_volatility_hybrid_1y3m_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'adaptive_ensemble':
-        # Adaptive Ensemble Strategy: Meta-ensemble combining multiple strategies
-        return get_adaptive_ensemble_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'volatility_ensemble':
-        # Volatility-Adjusted Ensemble Strategy: Risk-managed position sizing
-        return get_volatility_ensemble_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'enhanced_volatility':
-        # Enhanced Volatility Trader: ATR-based stops + take profits
-        return get_enhanced_volatility_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'ai_volatility_ensemble':
-        # AI-Enhanced Volatility Ensemble Strategy: AI-optimized weights and volatility caps
-        return get_ai_volatility_ensemble_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'correlation_ensemble':
-        # Correlation-Filtered Ensemble Strategy: Diversification-focused
-        return get_correlation_ensemble_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'dynamic_pool':
-        # Dynamic Strategy Pool Strategy: Rotates strategies based on performance
-        return get_dynamic_pool_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'sentiment_ensemble':
-        # Mom-Vol Hybrid 6M + Sentiment Strategy: Incorporates news sentiment
-        return get_sentiment_ensemble_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'momentum_breakout':
-        # Momentum Breakout Strategy: 52-week high breakouts with volume
-        return get_momentum_breakout_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'factor_rotation':
-        # Factor Rotation Strategy: Rotates between Value/Growth/Momentum/Quality
-        return get_factor_rotation_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'pairs_trading':
-        # Pairs Trading Strategy: Statistical arbitrage on correlated pairs
-        return get_pairs_trading_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'earnings_momentum':
-        # Earnings Momentum (PEAD) Strategy: Post-earnings drift capture
-        return get_earnings_momentum_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'insider_trading':
-        # Insider Trading Signal Strategy: Follow insider buying patterns
-        return get_insider_trading_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'options_sentiment':
-        # Options-Based Sentiment Strategy: Put/call ratios and unusual activity
-        return get_options_sentiment_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'ml_ensemble':
-        # ML Ensemble Strategy: Weighted voting from multiple ML models
-        return get_ml_ensemble_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'price_acceleration':
-        # Price Acceleration Strategy: Physics-based velocity and acceleration
-        return get_price_acceleration_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'voting_ensemble':
-        # Voting Ensemble Strategy: Consensus picks from multiple strategies
-        return get_voting_ensemble_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'dual_momentum':
-        # Dual Momentum Strategy: Antonacci style absolute + relative momentum
-        return get_dual_momentum_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'momentum_ai_hybrid':
-        # Momentum AI Hybrid Strategy: Combines momentum with AI predictions
-        return get_momentum_ai_hybrid_tickers(all_tickers, ticker_data_grouped)
-    
-    elif strategy == 'elite_hybrid':
-        # Elite Hybrid Strategy: Advanced multi-factor ensemble
-        return get_elite_hybrid_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'ai_elite':
-        # AI Elite Strategy: ML-powered scoring of momentum + dip opportunities
-        return get_ai_elite_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'risk_adj_mom_6m':
-        # Risk-Adj Mom 6M Strategy: 6-month risk-adjusted momentum
-        return get_risk_adj_mom_6m_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'risk_adj_mom_3m':
-        # Risk-Adj Mom 3M Strategy: 3-month risk-adjusted momentum
-        return get_risk_adj_mom_3m_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'risk_adj_mom_1m':
-        # Risk-Adj Mom 1M Strategy: 1-month risk-adjusted momentum
-        return get_risk_adj_mom_1m_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'risk_adj_mom_1m_vol_sweet':
-        # Risk-Adj Mom 1M Vol-Sweet Strategy: 1-month risk-adjusted momentum with volatility filter
-        return get_risk_adj_mom_1m_vol_sweet_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == '1m_volsweet':
-        # 1M Vol-Sweet Strategy: Alias for risk_adj_mom_1m_vol_sweet
-        return get_1m_volsweet_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'bh_1y_volsweet_accel':
-        # BH 1Y VolSweet Acceleration Strategy
-        return get_bh_1y_volsweet_accel_tickers(all_tickers, ticker_data_grouped)
-
-    # Missing strategies from backtesting
-    elif strategy == 'momentum_ai_hybrid':
-        # Momentum AI Hybrid Strategy
-        return get_momentum_ai_hybrid_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'inverse_etf_hedge':
-        # Inverse ETF Hedge Strategy
-        return get_inverse_etf_hedge_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'trend_atr':
-        # Trend ATR Strategy
-        return get_trend_atr_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'dual_momentum':
-        # Dual Momentum Strategy
-        return get_dual_momentum_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'sector_rotation':
-        # Sector Rotation Strategy
-        return get_sector_rotation_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'volatility_adj_mom':
-        # Volatility-Adjusted Momentum Strategy
-        return get_volatility_adj_mom_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'enhanced_volatility':
-        # Enhanced Volatility Strategy
-        return get_enhanced_volatility_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'concentrated_3m':
-        # Concentrated 3M Strategy
-        return get_concentrated_3m_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'analyst_rec':
-        # Analyst Recommendations Strategy
-        return get_analyst_rec_tickers(all_tickers, ticker_data_grouped)
-
-    # Monthly rebalance strategies
-    elif strategy == 'bh_1y_monthly':
-        # BH 1Y Monthly Strategy
-        return get_bh_1y_monthly_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'bh_6m_monthly':
-        # BH 6M Monthly Strategy
-        return get_bh_6m_monthly_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'bh_3m_monthly':
-        # BH 3M Monthly Strategy
-        return get_bh_3m_monthly_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'bh_1m_monthly':
-        # BH 1M Monthly Strategy
-        return get_bh_1m_monthly_tickers(all_tickers, ticker_data_grouped)
-
-    # Static BH 1Y variant strategies
-    elif strategy == 'static_bh_1y_vol':
-        # Static BH 1Y Vol Strategy
-        return get_static_bh_1y_vol_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'static_bh_1y_perf':
-        # Static BH 1Y Perf Strategy
-        return get_static_bh_1y_perf_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'static_bh_1y_mom':
-        # Static BH 1Y Mom Strategy
-        return get_static_bh_1y_mom_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'static_bh_1y_atr':
-        # Static BH 1Y ATR Strategy
-        return get_static_bh_1y_atr_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'static_bh_1y_hybrid':
-        # Static BH 1Y Hybrid Strategy
-        return get_static_bh_1y_hybrid_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'static_bh_1y_volume':
-        # Static BH 1Y Volume Strategy
-        return get_static_bh_1y_volume_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'static_bh_1y_sector':
-        # Static BH 1Y Sector Strategy
-        return get_static_bh_1y_sector_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'static_bh_1y_perf_threshold':
-        # Static BH 1Y Perf Threshold Strategy
-        return get_static_bh_1y_perf_threshold_tickers(all_tickers, ticker_data_grouped)
-
-    elif strategy == 'static_bh_1y_market_regime':
-        # Static BH 1Y Market Regime Strategy
-        return get_static_bh_1y_market_regime_tickers(all_tickers, ticker_data_grouped)
-
-    else:
-        print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
-        return get_dynamic_bh_tickers(all_tickers, '3m', ticker_data_grouped)
-
 
 def get_ai_strategy_tickers(all_tickers: List[str]) -> List[str]:
     """AI Strategy: REMOVED - returns fallback to top tickers."""
@@ -1329,6 +1062,7 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'risk_adj_mom_1m_vol_sweet': 'Risk-Adj Mom 1M Vol-Sweet (1-Month Risk-Adjusted Momentum + Volatility Filter)',
         '1m_volsweet': 'Risk-Adj Mom 1M Vol-Sweet (1-Month Risk-Adjusted Momentum + Volatility Filter)',
         'bh_1y_volsweet_accel': 'BH 1Y VolSweet Accel (Static BH 1Y + 1M VolSweet, ranked by acceleration)',
+        'bh_1y_dynamic_accel': 'BH 1Y Dynamic Accel (dynamic rebalancing based on market conditions)',
         # Missing strategies from backtesting
         'momentum_ai_hybrid': 'Momentum AI Hybrid (Momentum + AI Predictions)',
         'inverse_etf_hedge': 'Inverse ETF Hedge (Bear Market Protection)',
@@ -1372,7 +1106,7 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
     # Pass ticker_data_grouped if available for strategies that need it
     ticker_data_grouped_for_strategy = ticker_data_grouped if LIVE_TRADING_STRATEGY in [
         'risk_adj_mom', 'risk_adj_mom_6m', 'risk_adj_mom_3m', 'risk_adj_mom_1m', 'risk_adj_mom_1m_vol_sweet', '1m_volsweet',
-        'bh_1y_volsweet_accel',
+        'bh_1y_volsweet_accel', 'bh_1y_dynamic_accel',
         'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m',
         'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
         'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
@@ -1387,7 +1121,7 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
     ] else None
     if LIVE_TRADING_STRATEGY in [
         'risk_adj_mom', 'risk_adj_mom_6m', 'risk_adj_mom_3m', 'risk_adj_mom_1m', 'risk_adj_mom_1m_vol_sweet', '1m_volsweet',
-        'bh_1y_volsweet_accel',
+        'bh_1y_volsweet_accel', 'bh_1y_dynamic_accel',
         'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m',
         'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
         'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
@@ -1502,6 +1236,20 @@ def get_bh_1y_volsweet_accel_tickers(all_tickers: List[str], ticker_data_grouped
     
     current_date = datetime.now(timezone.utc)
     return select_bh_1y_volsweet_accel_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_bh_1y_dynamic_accel_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """BH 1Y Dynamic Acceleration Strategy: Dynamic rebalancing based on market conditions."""
+    from shared_strategies import select_bh_1y_dynamic_accel_stocks
+    
+    print(f"   📊 BH 1Y Dynamic Accel: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    selected, should_rebalance = select_bh_1y_dynamic_accel_stocks(
+        all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE,
+        days_since_rebalance=0, min_days=5, max_days=44
+    )
+    return selected
 
 
 # Missing strategy functions from backtesting
