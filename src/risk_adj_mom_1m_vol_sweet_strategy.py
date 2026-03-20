@@ -8,7 +8,7 @@ Steps per ticker:
 1. Base score = 1-Month Risk-Adjusted Momentum = return_1m / sqrt(volatility_pct)
 2. Volatility sweet spot filter: accept only annualised daily volatility between 15% and 30%.
    • If outside, down-weight score linearly to zero at 8% or 50%.
-3. Rebalance: monthly (start of month only)
+3. Rebalance: daily
 
 Return top N tickers by final_score.
 """
