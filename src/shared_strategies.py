@@ -3169,6 +3169,7 @@ def _get_strategy_registry():
         'vol_sweet_mom': lambda t, d, dt, n: _select_risk_adj_mom_1m_vol_sweet(t, d, dt, n),
         'bh_1y_volsweet_accel': lambda t, d, dt, n: select_bh_1y_volsweet_accel_stocks(t, d, dt, n),
         'bh_1y_dynamic_accel': lambda t, d, dt, n: select_bh_1y_dynamic_accel_stocks(t, d, dt, n, 0, 0, 44)[0],
+        'bh_1y_accel': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),  # Alias for bh_1y_accel_buy
         
         # Mean Reversion & Quality
         'mean_reversion': lambda t, d, dt, n: select_mean_reversion_stocks(t, d, dt, n),
