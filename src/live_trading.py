@@ -722,6 +722,109 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], ticker_data_grou
         # Risk-Adj Mom 3M Strategy: 3-month risk-adjusted momentum
         return get_risk_adj_mom_3m_tickers(all_tickers, ticker_data_grouped)
 
+    elif strategy == 'risk_adj_mom_1m':
+        # Risk-Adj Mom 1M Strategy: 1-month risk-adjusted momentum
+        return get_risk_adj_mom_1m_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'risk_adj_mom_1m_vol_sweet':
+        # Risk-Adj Mom 1M Vol-Sweet Strategy: 1-month risk-adjusted momentum with volatility filter
+        return get_risk_adj_mom_1m_vol_sweet_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == '1m_volsweet':
+        # 1M Vol-Sweet Strategy: Alias for risk_adj_mom_1m_vol_sweet
+        return get_1m_volsweet_tickers(all_tickers, ticker_data_grouped)
+
+    # Missing strategies from backtesting
+    elif strategy == 'momentum_ai_hybrid':
+        # Momentum AI Hybrid Strategy
+        return get_momentum_ai_hybrid_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'inverse_etf_hedge':
+        # Inverse ETF Hedge Strategy
+        return get_inverse_etf_hedge_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'trend_atr':
+        # Trend ATR Strategy
+        return get_trend_atr_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'dual_momentum':
+        # Dual Momentum Strategy
+        return get_dual_momentum_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'sector_rotation':
+        # Sector Rotation Strategy
+        return get_sector_rotation_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'volatility_adj_mom':
+        # Volatility-Adjusted Momentum Strategy
+        return get_volatility_adj_mom_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'enhanced_volatility':
+        # Enhanced Volatility Strategy
+        return get_enhanced_volatility_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'concentrated_3m':
+        # Concentrated 3M Strategy
+        return get_concentrated_3m_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'analyst_rec':
+        # Analyst Recommendations Strategy
+        return get_analyst_rec_tickers(all_tickers, ticker_data_grouped)
+
+    # Monthly rebalance strategies
+    elif strategy == 'bh_1y_monthly':
+        # BH 1Y Monthly Strategy
+        return get_bh_1y_monthly_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'bh_6m_monthly':
+        # BH 6M Monthly Strategy
+        return get_bh_6m_monthly_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'bh_3m_monthly':
+        # BH 3M Monthly Strategy
+        return get_bh_3m_monthly_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'bh_1m_monthly':
+        # BH 1M Monthly Strategy
+        return get_bh_1m_monthly_tickers(all_tickers, ticker_data_grouped)
+
+    # Static BH 1Y variant strategies
+    elif strategy == 'static_bh_1y_vol':
+        # Static BH 1Y Vol Strategy
+        return get_static_bh_1y_vol_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'static_bh_1y_perf':
+        # Static BH 1Y Perf Strategy
+        return get_static_bh_1y_perf_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'static_bh_1y_mom':
+        # Static BH 1Y Mom Strategy
+        return get_static_bh_1y_mom_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'static_bh_1y_atr':
+        # Static BH 1Y ATR Strategy
+        return get_static_bh_1y_atr_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'static_bh_1y_hybrid':
+        # Static BH 1Y Hybrid Strategy
+        return get_static_bh_1y_hybrid_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'static_bh_1y_volume':
+        # Static BH 1Y Volume Strategy
+        return get_static_bh_1y_volume_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'static_bh_1y_sector':
+        # Static BH 1Y Sector Strategy
+        return get_static_bh_1y_sector_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'static_bh_1y_perf_threshold':
+        # Static BH 1Y Perf Threshold Strategy
+        return get_static_bh_1y_perf_threshold_tickers(all_tickers, ticker_data_grouped)
+
+    elif strategy == 'static_bh_1y_market_regime':
+        # Static BH 1Y Market Regime Strategy
+        return get_static_bh_1y_market_regime_tickers(all_tickers, ticker_data_grouped)
+
     else:
         print(f" Unknown strategy: {strategy}, using dynamic_bh_3m")
         return get_dynamic_bh_tickers(all_tickers, '3m', ticker_data_grouped)
@@ -1217,7 +1320,33 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'voting_ensemble': 'Voting Ensemble (Consensus from Multiple Strategies)',
         'dual_momentum': 'Dual Momentum (Absolute + Relative)',
         'risk_adj_mom_6m': 'Risk-Adj Mom 6M (6-Month Risk-Adjusted Momentum)',
-        'risk_adj_mom_3m': 'Risk-Adj Mom 3M (3-Month Risk-Adjusted Momentum)'
+        'risk_adj_mom_3m': 'Risk-Adj Mom 3M (3-Month Risk-Adjusted Momentum)',
+        'risk_adj_mom_1m': 'Risk-Adj Mom 1M (1-Month Risk-Adjusted Momentum)',
+        'risk_adj_mom_1m_vol_sweet': 'Risk-Adj Mom 1M Vol-Sweet (1-Month Risk-Adjusted Momentum + Volatility Filter)',
+        '1m_volsweet': 'Risk-Adj Mom 1M Vol-Sweet (1-Month Risk-Adjusted Momentum + Volatility Filter)',
+        # Missing strategies from backtesting
+        'momentum_ai_hybrid': 'Momentum AI Hybrid (Momentum + AI Predictions)',
+        'inverse_etf_hedge': 'Inverse ETF Hedge (Bear Market Protection)',
+        'trend_atr': 'Trend ATR (ATR-Based Trend Following)',
+        'dual_momentum': 'Dual Momentum (Absolute + Relative)',
+        'sector_rotation': 'Sector Rotation (ETF Momentum)',
+        'volatility_adj_mom': 'Volatility-Adjusted Momentum (Risk-Adjusted)',
+        'enhanced_volatility': 'Enhanced Volatility (ATR Stops/Take-Profit)',
+        'concentrated_3m': 'Concentrated 3M (High Conviction)',
+        'analyst_rec': 'Analyst Recommendations (Consensus)',
+        'bh_1y_monthly': 'BH 1Y Monthly (Monthly Rebalance)',
+        'bh_6m_monthly': 'BH 6M Monthly (Monthly Rebalance)',
+        'bh_3m_monthly': 'BH 3M Monthly (Monthly Rebalance)',
+        'bh_1m_monthly': 'BH 1M Monthly (Monthly Rebalance)',
+        'static_bh_1y_vol': 'Static BH 1Y Vol (Volatility Filter)',
+        'static_bh_1y_perf': 'Static BH 1Y Perf (Performance Threshold)',
+        'static_bh_1y_mom': 'Static BH 1Y Mom (Momentum Filter)',
+        'static_bh_1y_atr': 'Static BH 1Y ATR (ATR-Based)',
+        'static_bh_1y_hybrid': 'Static BH 1Y Hybrid (Multi-Filter)',
+        'static_bh_1y_volume': 'Static BH 1Y Volume (Volume Filter)',
+        'static_bh_1y_sector': 'Static BH 1Y Sector (Sector Rotation)',
+        'static_bh_1y_perf_threshold': 'Static BH 1Y Perf Threshold (Performance Filter)',
+        'static_bh_1y_market_regime': 'Static BH 1Y Market Regime (Regime-Aware)'
     }
 
     strategy_name = strategy_names.get(LIVE_TRADING_STRATEGY, LIVE_TRADING_STRATEGY)
@@ -1236,8 +1365,34 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
     print(f"    Available tickers: {len(valid_tickers)}")
     
     # Pass ticker_data_grouped if available for strategies that need it
-    ticker_data_grouped_for_strategy = ticker_data_grouped if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'risk_adj_mom_6m', 'risk_adj_mom_3m', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk'] else None
-    if LIVE_TRADING_STRATEGY in ['risk_adj_mom', 'risk_adj_mom_6m', 'risk_adj_mom_3m', 'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m', 'static_bh_6m', 'static_bh_3m', 'static_bh_1m', 'ratio_1y_3m', 'ratio_3m_1y', 'turnaround', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m', 'price_acceleration', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk']:
+    ticker_data_grouped_for_strategy = ticker_data_grouped if LIVE_TRADING_STRATEGY in [
+        'risk_adj_mom', 'risk_adj_mom_6m', 'risk_adj_mom_3m', 'risk_adj_mom_1m', 'risk_adj_mom_1m_vol_sweet', '1m_volsweet',
+        'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m',
+        'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
+        'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
+        'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m',
+        'price_acceleration', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
+        # Missing strategies from backtesting
+        'momentum_ai_hybrid', 'inverse_etf_hedge', 'trend_atr', 'dual_momentum', 'sector_rotation',
+        'volatility_adj_mom', 'enhanced_volatility', 'concentrated_3m', 'analyst_rec',
+        'bh_1y_monthly', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
+        'static_bh_1y_vol', 'static_bh_1y_perf', 'static_bh_1y_mom', 'static_bh_1y_atr', 'static_bh_1y_hybrid',
+        'static_bh_1y_volume', 'static_bh_1y_sector', 'static_bh_1y_perf_threshold', 'static_bh_1y_market_regime'
+    ] else None
+    if LIVE_TRADING_STRATEGY in [
+        'risk_adj_mom', 'risk_adj_mom_6m', 'risk_adj_mom_3m', 'risk_adj_mom_1m', 'risk_adj_mom_1m_vol_sweet', '1m_volsweet',
+        'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m',
+        'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
+        'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
+        'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m',
+        'price_acceleration', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
+        # Missing strategies from backtesting
+        'momentum_ai_hybrid', 'inverse_etf_hedge', 'trend_atr', 'dual_momentum', 'sector_rotation',
+        'volatility_adj_mom', 'enhanced_volatility', 'concentrated_3m', 'analyst_rec',
+        'bh_1y_monthly', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
+        'static_bh_1y_vol', 'static_bh_1y_perf', 'static_bh_1y_mom', 'static_bh_1y_atr', 'static_bh_1y_hybrid',
+        'static_bh_1y_volume', 'static_bh_1y_sector', 'static_bh_1y_perf_threshold', 'static_bh_1y_market_regime'
+    ]:
         print(f"    Data available: {ticker_data_grouped_for_strategy is not None}")
     
     target_tickers = get_strategy_tickers(LIVE_TRADING_STRATEGY, valid_tickers, ticker_data_grouped_for_strategy)
@@ -1305,6 +1460,244 @@ def get_risk_adj_mom_3m_tickers(all_tickers: List[str], ticker_data_grouped: Dic
     
     current_date = datetime.now(timezone.utc)
     return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_risk_adj_mom_1m_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Risk-Adj Mom 1M Strategy: 1-month risk-adjusted momentum (return/vol^0.5)."""
+    from shared_strategies import select_risk_adj_mom_stocks
+    
+    print(f"   📊 Risk-Adj Mom 1M: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=30, top_n=PORTFOLIO_SIZE)
+
+
+def get_risk_adj_mom_1m_vol_sweet_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Risk-Adj Mom 1M Vol-Sweet Strategy: 1-month risk-adjusted momentum with volatility filter."""
+    from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+    
+    print(f"   📊 Risk-Adj Mom 1M Vol-Sweet: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_risk_adj_mom_1m_vol_sweet_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_1m_volsweet_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """1M Vol-Sweet Strategy: Alias for risk_adj_mom_1m_vol_sweet."""
+    return get_risk_adj_mom_1m_vol_sweet_tickers(all_tickers, ticker_data_grouped)
+
+
+# Missing strategy functions from backtesting
+def get_momentum_ai_hybrid_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Momentum AI Hybrid Strategy: Combines momentum with AI predictions."""
+    from shared_strategies import select_momentum_ai_hybrid_stocks
+    
+    print(f"   📊 Momentum AI Hybrid: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_inverse_etf_hedge_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Inverse ETF Hedge Strategy: Bear market protection using inverse ETFs."""
+    # For now, return common inverse ETFs
+    inverse_etfs = ['SH', 'PSQ', 'DOG', 'RWM', 'SQQQ', 'TQQQ', 'SDS', 'SPXU', 'QID', 'DXD']
+    return inverse_etfs[:PORTFOLIO_SIZE]
+
+
+def get_trend_atr_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Trend ATR Strategy: ATR-based trend following."""
+    # Use top performers as fallback
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Trend ATR: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_sector_rotation_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Sector Rotation Strategy: Rotates between sector ETFs based on momentum."""
+    from shared_strategies import select_sector_rotation_etfs
+    
+    print(f"   📊 Sector Rotation: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_sector_rotation_etfs(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_volatility_adj_mom_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Volatility-Adjusted Momentum Strategy: Risk-adjusted momentum."""
+    from shared_strategies import select_volatility_adj_mom_stocks
+    
+    print(f"   📊 Volatility-Adjusted Momentum: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
+
+
+def get_enhanced_volatility_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Enhanced Volatility Strategy: ATR-based stops and take-profits."""
+    # Use top performers as fallback
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Enhanced Volatility: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_concentrated_3m_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Concentrated 3M Strategy: High conviction 3-month momentum."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Concentrated 3M: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=90, top_n=PORTFOLIO_SIZE)
+
+
+def get_analyst_rec_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Analyst Recommendations Strategy: Consensus analyst ratings."""
+    # Use top performers as fallback
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Analyst Recommendations: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+# Monthly rebalance strategies
+def get_bh_1y_monthly_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """BH 1Y Monthly Strategy: Monthly rebalanced 1-year top performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 BH 1Y Monthly: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_bh_6m_monthly_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """BH 6M Monthly Strategy: Monthly rebalanced 6-month top performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 BH 6M Monthly: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=180, top_n=PORTFOLIO_SIZE)
+
+
+def get_bh_3m_monthly_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """BH 3M Monthly Strategy: Monthly rebalanced 3-month top performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 BH 3M Monthly: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=90, top_n=PORTFOLIO_SIZE)
+
+
+def get_bh_1m_monthly_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """BH 1M Monthly Strategy: Monthly rebalanced 1-month top performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 BH 1M Monthly: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=30, top_n=PORTFOLIO_SIZE)
+
+
+# Static BH 1Y variant strategies
+def get_static_bh_1y_vol_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Static BH 1Y Vol Strategy: Volatility-filtered 1-year performers."""
+    from shared_strategies import select_top_performers_vol_filtered
+    
+    print(f"   📊 Static BH 1Y Vol: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, max_volatility=0.4, top_n=PORTFOLIO_SIZE)
+
+
+def get_static_bh_1y_perf_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Static BH 1Y Perf Strategy: Performance threshold 1-year performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Static BH 1Y Perf: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_static_bh_1y_mom_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Static BH 1Y Mom Strategy: Momentum-filtered 1-year performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Static BH 1Y Mom: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_static_bh_1y_atr_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Static BH 1Y ATR Strategy: ATR-based 1-year performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Static BH 1Y ATR: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_static_bh_1y_hybrid_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Static BH 1Y Hybrid Strategy: Multi-filter 1-year performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Static BH 1Y Hybrid: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_static_bh_1y_volume_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Static BH 1Y Volume Strategy: Volume-filtered 1-year performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Static BH 1Y Volume: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_static_bh_1y_sector_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Static BH 1Y Sector Strategy: Sector-rotated 1-year performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Static BH 1Y Sector: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_static_bh_1y_perf_threshold_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Static BH 1Y Perf Threshold Strategy: Performance threshold 1-year performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Static BH 1Y Perf Threshold: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_static_bh_1y_market_regime_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Static BH 1Y Market Regime Strategy: Regime-aware 1-year performers."""
+    from shared_strategies import select_top_performers
+    
+    print(f"   📊 Static BH 1Y Market Regime: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
 
 
 

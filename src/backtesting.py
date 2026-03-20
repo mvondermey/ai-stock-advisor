@@ -10170,6 +10170,7 @@ def _run_portfolio_backtest_walk_forward(
             'dynamic_bh_1m': {'tickers': list(current_dynamic_bh_1m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in dynamic_bh_1m_positions.items()}},
             'risk_adj_mom': {'tickers': list(current_risk_adj_mom_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_positions.items()}},
             'risk_adj_mom_1m': {'tickers': list(current_risk_adj_mom_1m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_1m_positions.items()}},
+            'risk_adj_mom_1m_vol_sweet': {'tickers': list(current_risk_adj_mom_1m_vol_sweet_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_1m_vol_sweet_positions.items()}},
             'risk_adj_mom_3m': {'tickers': list(current_risk_adj_mom_3m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_3m_positions.items()}},
             'risk_adj_mom_6m': {'tickers': list(current_risk_adj_mom_6m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_6m_positions.items()}},
             'momentum_ai_hybrid': {'tickers': list(momentum_ai_hybrid_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in momentum_ai_hybrid_positions.items()}},
@@ -10329,6 +10330,15 @@ def _run_portfolio_backtest_walk_forward(
                     live_trading_selections['strategies'][strategy_name] = new_stocks
                     live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
                     live_trading_selections['rebalanced']['risk_adj_mom_1m'] = bool(set(new_stocks) != set(current_stocks))
+                elif strategy_name == 'risk_adj_mom_1m_vol_sweet':
+                    from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+                    current_stocks = live_trading_selections['strategies'].get('risk_adj_mom_1m_vol_sweet', [])
+                    new_stocks = select_risk_adj_mom_1m_vol_sweet_stocks(
+                        initial_top_tickers, ticker_data_grouped, live_current_date, top_n=LIVE_TRADING_TOP_N
+                    )
+                    live_trading_selections['strategies'][strategy_name] = new_stocks
+                    live_trading_selections['rebalanced'] = live_trading_selections.get('rebalanced', {})
+                    live_trading_selections['rebalanced']['risk_adj_mom_1m_vol_sweet'] = bool(set(new_stocks) != set(current_stocks))
                 elif strategy_name == 'risk_adj_mom_3m':
                     from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks as select_risk_adj_mom_stocks
                     current_stocks = live_trading_selections['strategies'].get('risk_adj_mom_3m', [])
