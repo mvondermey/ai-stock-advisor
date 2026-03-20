@@ -34,7 +34,7 @@ from config import (
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
     CALENDAR_DAYS_PER_YEAR,
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
-    ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_6M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M_SENTIMENT, ENABLE_RISK_ADJ_MOM_3M_MARKET_UP, ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS, ENABLE_VOL_SWEET_MOM, ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET, ENABLE_BH_1Y_VOL_SWEET_ACCEL, ENABLE_RISK_ADJ_MOM_1M, ENABLE_RISK_ADJ_MOM_1M_MONTHLY, ENABLE_AI_ELITE,
+    ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_6M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M_SENTIMENT, ENABLE_RISK_ADJ_MOM_3M_MARKET_UP, ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS, ENABLE_VOL_SWEET_MOM, ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET, ENABLE_BH_1Y_VOL_SWEET_ACCEL, ENABLE_BH_1Y_DYNAMIC_ACCEL, ENABLE_RISK_ADJ_MOM_1M, ENABLE_RISK_ADJ_MOM_1M_MONTHLY, ENABLE_AI_ELITE,
     ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_ELITE_MARKET_UP, ENABLE_UNIVERSAL_MODEL,
     CONCENTRATED_3M_REBALANCE_DAYS,
     AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, AI_ELITE_INTRADAY_LOOKBACK
@@ -2156,6 +2156,17 @@ def _run_portfolio_backtest_walk_forward(
     bh_1y_volsweet_accel_cash = initial_capital_needed
     current_bh_1y_volsweet_accel_stocks = []
     bh_1y_volsweet_accel_transaction_costs = 0.0
+    bh_1y_volsweet_accel_days_since_rebalance = 0
+
+    # BH 1Y DYNAMIC ACCEL: Initialize portfolio tracking (dynamic rebalancing)
+    bh_1y_dynamic_accel_portfolio_value = initial_capital_needed
+    bh_1y_dynamic_accel_portfolio_history = [bh_1y_dynamic_accel_portfolio_value]
+    bh_1y_dynamic_accel_positions = {}
+    bh_1y_dynamic_accel_cash = initial_capital_needed
+    current_bh_1y_dynamic_accel_stocks = []
+    bh_1y_dynamic_accel_transaction_costs = 0.0
+    bh_1y_dynamic_accel_days_since_rebalance = 0
+    bh_1y_dynamic_accel_initialized = False
 
     # RISK-ADJ MOM 1M: Initialize portfolio tracking
     risk_adj_mom_1m_portfolio_value = initial_capital_needed
@@ -2640,6 +2651,7 @@ def _run_portfolio_backtest_walk_forward(
             if should_rebalance_vol:
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
+                    print(f"   📊 Static BH 1Y Vol Day {day_count}: {new_stocks}")
                     if not static_bh_1y_vol_initialized:
                         print(f"   🎯 Static BH 1Y Vol: Initializing")
                     else:
@@ -2662,6 +2674,7 @@ def _run_portfolio_backtest_walk_forward(
             if should_rebalance_perf:
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
+                    print(f"   📊 Static BH 1Y Perf Day {day_count}: {new_stocks}")
                     if not static_bh_1y_perf_initialized:
                         print(f"   🎯 Static BH 1Y Perf: Initializing")
                     else:
@@ -2684,6 +2697,7 @@ def _run_portfolio_backtest_walk_forward(
             if should_rebalance_mom:
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
+                    print(f"   📊 Static BH 1Y Mom Day {day_count}: {new_stocks}")
                     if not static_bh_1y_mom_initialized:
                         print(f"   🎯 Static BH 1Y Mom: Initializing")
                     else:
@@ -2706,6 +2720,7 @@ def _run_portfolio_backtest_walk_forward(
             if should_rebalance_atr:
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
+                    print(f"   📊 Static BH 1Y ATR Day {day_count}: {new_stocks}")
                     if not static_bh_1y_atr_initialized:
                         print(f"   🎯 Static BH 1Y ATR: Initializing")
                     else:
@@ -2729,6 +2744,7 @@ def _run_portfolio_backtest_walk_forward(
             if should_rebalance_hybrid:
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
+                    print(f"   📊 Static BH 1Y Hybrid Day {day_count}: {new_stocks}")
                     if not static_bh_1y_hybrid_initialized:
                         print(f"   🎯 Static BH 1Y Hybrid: Initializing")
                     else:
@@ -2751,6 +2767,7 @@ def _run_portfolio_backtest_walk_forward(
                 initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE, STATIC_BH_1Y_VOLUME_MIN_DAILY
             )
             if new_stocks and (not static_bh_1y_volume_initialized or set(new_stocks) != set(current_static_bh_1y_volume_stocks)):
+                print(f"   📊 Static BH 1Y Volume Day {day_count}: {new_stocks}")
                 if not static_bh_1y_volume_initialized:
                     print(f"   🎯 Static BH 1Y Volume: Initializing")
                 else:
@@ -2772,6 +2789,7 @@ def _run_portfolio_backtest_walk_forward(
                 initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE, STATIC_BH_1Y_SECTOR_MAX_PER_SECTOR
             )
             if new_stocks and (not static_bh_1y_sector_initialized or set(new_stocks) != set(current_static_bh_1y_sector_stocks)):
+                print(f"   📊 Static BH 1Y Sector Day {day_count}: {new_stocks}")
                 if not static_bh_1y_sector_initialized:
                     print(f"   🎯 Static BH 1Y Sector: Initializing")
                 else:
@@ -2794,6 +2812,7 @@ def _run_portfolio_backtest_walk_forward(
                 current_static_bh_1y_perf_threshold_stocks, PORTFOLIO_SIZE, STATIC_BH_1Y_PERFORMANCE_MIN_IMPROVEMENT
             )
             if should_rebalance and new_stocks:
+                print(f"   📊 Static BH 1Y Perf Thresh Day {day_count}: {new_stocks}")
                 if not static_bh_1y_perf_threshold_initialized:
                     print(f"   🎯 Static BH 1Y Perf Thresh: Initializing")
                 else:
@@ -2821,6 +2840,7 @@ def _run_portfolio_backtest_walk_forward(
                     STATIC_BH_1Y_MARKET_REGIME_LOW_VOL_DAYS, STATIC_BH_1Y_MARKET_REGIME_VOL_THRESHOLD
                 )
                 if new_stocks and (not static_bh_1y_market_regime_initialized or set(new_stocks) != set(current_static_bh_1y_market_regime_stocks)):
+                    print(f"   📊 Static BH 1Y Market Regime Day {day_count}: {new_stocks}")
                     if not static_bh_1y_market_regime_initialized:
                         print(f"   🎯 Static BH 1Y Market Regime: Initializing")
                     else:
@@ -2847,6 +2867,7 @@ def _run_portfolio_backtest_walk_forward(
             )
             # Force initialization on first run even if stability check fails
             if (not static_bh_1y_mom_persist_initialized or should_rebalance) and new_stocks:
+                print(f"   📊 Static BH 1Y Mom Persist Day {day_count}: {new_stocks}")
                 if not static_bh_1y_mom_persist_initialized:
                     print(f"   🎯 Static BH 1Y Mom Persist: Initializing")
                 else:
@@ -2870,6 +2891,7 @@ def _run_portfolio_backtest_walk_forward(
             )
             # Force initialization on first run
             if (not static_bh_1y_overlap_initialized or should_rebalance) and new_stocks:
+                print(f"   📊 Static BH 1Y Overlap Day {day_count}: {new_stocks}")
                 if not static_bh_1y_overlap_initialized:
                     print(f"   🎯 Static BH 1Y Overlap: Initializing")
                 else:
@@ -2895,6 +2917,7 @@ def _run_portfolio_backtest_walk_forward(
             )
             # Force initialization on first run
             if (not static_bh_1y_rank_drift_initialized or should_rebalance) and new_stocks:
+                print(f"   📊 Static BH 1Y Rank Drift Day {day_count}: {new_stocks}")
                 if not static_bh_1y_rank_drift_initialized:
                     print(f"   🎯 Static BH 1Y Rank Drift: Initializing")
                 else:
@@ -2919,6 +2942,7 @@ def _run_portfolio_backtest_walk_forward(
             )
             # Force initialization on first run
             if (not static_bh_1y_drawdown_initialized or should_rebalance) and new_stocks:
+                print(f"   📊 Static BH 1Y Drawdown Day {day_count}: {new_stocks}")
                 if not static_bh_1y_drawdown_initialized:
                     print(f"   🎯 Static BH 1Y Drawdown: Initializing")
                 else:
@@ -2945,6 +2969,7 @@ def _run_portfolio_backtest_walk_forward(
             )
             # Force initialization on first run
             if (not static_bh_1y_smart_monthly_initialized or should_rebalance) and new_stocks:
+                print(f"   📊 Static BH 1Y Smart Monthly Day {day_count}: {new_stocks}")
                 if not static_bh_1y_smart_monthly_initialized:
                     print(f"   🎯 Static BH 1Y Smart Monthly: Initializing")
                 else:
@@ -2998,6 +3023,7 @@ def _run_portfolio_backtest_walk_forward(
                 new_buys = [t for t in smart_rebal_top_n if t not in kept_stocks][:new_stocks_needed]
                 final_stocks = kept_stocks + new_buys
                 
+                print(f"   📊 BH 1Y Mom Sell Day {day_count}: {final_stocks}")
                 if not bh_1y_mom_sell_initialized:
                     print(f"   🎯 BH 1Y Mom Sell: Initializing")
                     final_stocks = smart_rebal_top_n  # Use standard selection for init
@@ -3050,6 +3076,7 @@ def _run_portfolio_backtest_walk_forward(
                 new_buys = [t for t in smart_rebal_top_n if t not in kept_stocks][:new_stocks_needed]
                 final_stocks = kept_stocks + new_buys
                 
+                print(f"   📊 BH 1Y Rank Sell Day {day_count}: {final_stocks}")
                 if not bh_1y_rank_sell_initialized:
                     print(f"   🎯 BH 1Y Rank Sell: Initializing")
                     final_stocks = smart_rebal_top_n
@@ -3108,6 +3135,7 @@ def _run_portfolio_backtest_walk_forward(
                 new_buys = [t for t in smart_rebal_top_n if t not in kept_stocks][:new_stocks_needed]
                 final_stocks = kept_stocks + new_buys
                 
+                print(f"   📊 BH 1Y Trailing Mom Day {day_count}: {final_stocks}")
                 if not bh_1y_trailing_mom_initialized:
                     print(f"   🎯 BH 1Y Trailing Mom: Initializing")
                     final_stocks = smart_rebal_top_n
@@ -3155,6 +3183,7 @@ def _run_portfolio_backtest_walk_forward(
                 new_buys = [t for t in smart_rebal_top_n if t not in kept_stocks][:new_stocks_needed]
                 final_stocks = kept_stocks + new_buys
                 
+                print(f"   📊 BH 1Y Volume Confirm Day {day_count}: {final_stocks}")
                 if not bh_1y_volume_confirm_initialized:
                     print(f"   🎯 BH 1Y Volume Confirm: Initializing")
                     final_stocks = smart_rebal_top_n
@@ -3203,6 +3232,7 @@ def _run_portfolio_backtest_walk_forward(
                 new_buys = [t for t in smart_rebal_top_n if t not in kept_stocks][:new_stocks_needed]
                 final_stocks = kept_stocks + new_buys
                 
+                print(f"   📊 BH 1Y Sector Aware Day {day_count}: {final_stocks}")
                 if not bh_1y_sector_aware_initialized:
                     print(f"   🎯 BH 1Y Sector Aware: Initializing")
                     final_stocks = smart_rebal_top_n
@@ -3235,6 +3265,7 @@ def _run_portfolio_backtest_walk_forward(
                     PORTFOLIO_SIZE, BH_1Y_ACCEL_BUY_WEIGHT
                 )
                 
+                print(f"   📊 BH 1Y Accel Buy Day {day_count}: {final_stocks}")
                 if not bh_1y_accel_buy_initialized:
                     print(f"   🎯 BH 1Y Accel Buy: Initializing")
                 
@@ -3260,15 +3291,16 @@ def _run_portfolio_backtest_walk_forward(
             )
             
             if should_init_or_rebalance:
-                if not static_bh_3m_accel_initialized:
-                    print(f"   🎯 Static BH 3M Accel: Initializing")
-                
                 # Select stocks using 3M acceleration logic
                 final_stocks = select_static_bh_3m_accel(
                     ticker_data_grouped, current_date,
                     PORTFOLIO_SIZE, STATIC_BH_3M_ACCEL_LOOKBACK_SHORT, 
                     STATIC_BH_3M_ACCEL_LOOKBACK_LONG, STATIC_BH_3M_ACCEL_WEIGHT
                 )
+                
+                print(f"   📊 Static BH 3M Accel Day {day_count}: {final_stocks}")
+                if not static_bh_3m_accel_initialized:
+                    print(f"   🎯 Static BH 3M Accel: Initializing")
                 
                 static_bh_3m_accel_positions, static_bh_3m_accel_cash, current_static_bh_3m_accel_stocks, rc, _ = _smart_rebalance_portfolio(
                     strategy_name="Static BH 3M Accel", current_stocks=current_static_bh_3m_accel_stocks,
@@ -3336,6 +3368,7 @@ def _run_portfolio_backtest_walk_forward(
                 from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
+                print(f"   📊 Rebal 1Y VolAdj Day {day_count}: {new_stocks}")
                 if not bh_1y_vol_adj_rebal_initialized:
                     print(f"   🎯 Rebal 1Y VolAdj: Initializing")
                 
@@ -3366,6 +3399,7 @@ def _run_portfolio_backtest_walk_forward(
                 # Filter by correlation
                 new_stocks = filter_by_correlation(new_stocks, ticker_data_grouped, current_date, _rebal_config)
                 
+                print(f"   📊 Rebal 1Y CorrFilt Day {day_count}: {new_stocks}")
                 if not bh_1y_corr_filter_initialized:
                     print(f"   🎯 Rebal 1Y CorrFilt: Initializing")
                 
@@ -3408,6 +3442,7 @@ def _run_portfolio_backtest_walk_forward(
                 from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
+                print(f"   📊 Rebal 1Y Regime Day {day_count}: {new_stocks}")
                 if not bh_1y_regime_aware_initialized:
                     print(f"   🎯 Rebal 1Y Regime: Initializing ({new_regime})")
                 elif regime_changed:
@@ -3438,6 +3473,7 @@ def _run_portfolio_backtest_walk_forward(
                 from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
+                print(f"   📊 Rebal 1Y RiskPar Day {day_count}: {new_stocks}")
                 if not bh_1y_risk_parity_initialized:
                     print(f"   🎯 Rebal 1Y RiskPar: Initializing")
                 
@@ -3475,6 +3511,7 @@ def _run_portfolio_backtest_walk_forward(
                 from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
+                print(f"   📊 Rebal 1Y Drift Day {day_count}: {new_stocks}")
                 if not bh_1y_drift_thresh_initialized:
                     print(f"   🎯 Rebal 1Y Drift: Initializing")
                 elif current_drift > drift_trigger:
@@ -3514,6 +3551,7 @@ def _run_portfolio_backtest_walk_forward(
                 scored.sort(key=lambda x: x[1], reverse=True)
                 new_stocks = [t for t, s in scored[:PORTFOLIO_SIZE]]
                 
+                print(f"   📊 Rebal 1Y MomQual Day {day_count}: {new_stocks}")
                 if not bh_1y_mom_quality_initialized:
                     print(f"   🎯 Rebal 1Y MomQual: Initializing")
                 
@@ -3542,6 +3580,7 @@ def _run_portfolio_backtest_walk_forward(
                 from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
+                print(f"   📊 Rebal 1Y Liquid Day {day_count}: {new_stocks}")
                 if not bh_1y_liquidity_initialized:
                     print(f"   🎯 Rebal 1Y Liquid: Initializing")
                 
@@ -3581,6 +3620,7 @@ def _run_portfolio_backtest_walk_forward(
                 from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
+                print(f"   📊 Rebal 1Y EarnAvd Day {day_count}: {new_stocks}")
                 if not bh_1y_earnings_avoid_initialized:
                     print(f"   🎯 Rebal 1Y EarnAvd: Initializing")
                 
@@ -3617,6 +3657,7 @@ def _run_portfolio_backtest_walk_forward(
                 scored.sort(key=lambda x: x[1], reverse=True)
                 new_stocks = [t for t, s, m, q in scored[:PORTFOLIO_SIZE]]
                 
+                print(f"   📊 Rebal 1Y MultiFact Day {day_count}: {new_stocks}")
                 if not bh_1y_multi_factor_initialized:
                     print(f"   🎯 Rebal 1Y MultiFact: Initializing")
                 
@@ -3645,6 +3686,7 @@ def _run_portfolio_backtest_walk_forward(
                 from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=252, top_n=PORTFOLIO_SIZE)
                 
+                print(f"   📊 Rebal 1Y TimeDec Day {day_count}: {new_stocks}")
                 if not bh_1y_time_decay_initialized:
                     print(f"   🎯 Rebal 1Y TimeDec: Initializing")
                 
@@ -3791,6 +3833,7 @@ def _run_portfolio_backtest_walk_forward(
                 from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
+                    print(f"   📊 Static BH 1Y Monthly Day {day_count}: {new_stocks}")
                     if not static_bh_1y_monthly_initialized:
                         print(f"   🎯 Static BH 1Y Monthly: Initializing with {new_stocks}")
                     else:
@@ -3812,6 +3855,7 @@ def _run_portfolio_backtest_walk_forward(
                 from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
+                    print(f"   📊 Static BH 6M Monthly Day {day_count}: {new_stocks}")
                     if not static_bh_6m_monthly_initialized:
                         print(f"   🎯 Static BH 6M Monthly: Initializing with {new_stocks}")
                     else:
@@ -3833,6 +3877,7 @@ def _run_portfolio_backtest_walk_forward(
                 from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
+                    print(f"   📊 Static BH 3M Monthly Day {day_count}: {new_stocks}")
                     if not static_bh_3m_monthly_initialized:
                         print(f"   🎯 Static BH 3M Monthly: Initializing with {new_stocks}")
                     else:
@@ -3854,6 +3899,7 @@ def _run_portfolio_backtest_walk_forward(
                 from shared_strategies import select_top_performers
                 new_stocks = select_top_performers(initial_top_tickers, ticker_data_grouped, current_date, lookback_days=30, top_n=PORTFOLIO_SIZE)
                 if new_stocks:
+                    print(f"   📊 Static BH 1M Monthly Day {day_count}: {new_stocks}")
                     if not static_bh_1m_monthly_initialized:
                         print(f"   🎯 Static BH 1M Monthly: Initializing with {new_stocks}")
                     else:
@@ -3949,7 +3995,7 @@ def _run_portfolio_backtest_walk_forward(
             )
 
             if new_dynamic_bh_3m_stocks:
-                print(f"   🏆 Top {PORTFOLIO_SIZE} performers (3-month): {', '.join(new_dynamic_bh_3m_stocks)}")
+                print(f"   📊 Dynamic BH 3M Day {day_count}: {new_dynamic_bh_3m_stocks}")
 
                 # Use universal smart rebalancing function
                 dynamic_bh_3m_positions, dynamic_bh_3m_cash, current_dynamic_bh_3m_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
@@ -3979,6 +4025,7 @@ def _run_portfolio_backtest_walk_forward(
             )
 
             if new_dynamic_bh_1m_stocks:
+                print(f"   📊 Dynamic BH 1M Day {day_count}: {new_dynamic_bh_1m_stocks}")
                 print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-month): {', '.join(new_dynamic_bh_1m_stocks)}")
 
                 # Use universal smart rebalancing function
@@ -4009,6 +4056,7 @@ def _run_portfolio_backtest_walk_forward(
             )
 
             if new_dynamic_bh_1y_vol_filter_stocks:
+                print(f"   📊 Dynamic BH 1Y+Vol Day {day_count}: {new_dynamic_bh_1y_vol_filter_stocks}")
                 print(f"   🎯 Top {PORTFOLIO_SIZE} performers (1Y + Vol Filter): {', '.join(new_dynamic_bh_1y_vol_filter_stocks)}")
                 print(f"   🔍 Filter stats: {stocks_passed_vol_filter}/{stocks_evaluated} stocks passed volatility filter")
 
@@ -4098,6 +4146,7 @@ def _run_portfolio_backtest_walk_forward(
             )
 
             if new_dynamic_bh_1y_trailing_stop_stocks:
+                print(f"   📊 Dynamic BH 1Y+TS Day {day_count}: {new_dynamic_bh_1y_trailing_stop_stocks}")
                 print(f"   🏆 Top {PORTFOLIO_SIZE} performers (1-year + Trailing Stop): {', '.join(new_dynamic_bh_1y_trailing_stop_stocks)}")
 
                 # Use universal smart rebalancing function
@@ -4135,6 +4184,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_sector_rotation_etfs:
+                    print(f"   📊 Sector Rotation Day {day_count}: {new_sector_rotation_etfs}")
                     # Use universal smart rebalancing function
                     sector_rotation_positions, sector_rotation_cash, current_sector_rotation_etfs, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="Sector Rotation",
@@ -4700,6 +4750,7 @@ def _run_portfolio_backtest_walk_forward(
                     new_correlation_ensemble_stocks = selected_stocks
 
                     if new_correlation_ensemble_stocks:
+                        print(f"   📊 Correlation Ensemble Day {day_count}: {new_correlation_ensemble_stocks}")
                         print(f"   🎯 Correlation Ensemble: Selected {len(new_correlation_ensemble_stocks)} low-correlation stocks")
 
                         # Use universal smart rebalancing function
@@ -5860,6 +5911,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
 
                     if new_stocks:
+                        print(f"   📊 Risk-Adj Mom 6M Monthly Day {day_count}: {new_stocks}")
                         if not risk_adj_mom_6m_monthly_initialized:
                             print(f"   🎯 Risk-Adj Mom 6M Monthly: Initializing with {new_stocks}")
                         else:
@@ -5930,6 +5982,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
 
                     if new_stocks:
+                        print(f"   📊 Risk-Adj Mom 3M Monthly Day {day_count}: {new_stocks}")
                         if not risk_adj_mom_3m_monthly_initialized:
                             print(f"   🎯 Risk-Adj Mom 3M Monthly: Initializing with {new_stocks}")
                         else:
@@ -5966,6 +6019,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_stocks:
+                    print(f"   📊 RiskAdj 3M Sent Day {day_count}: {new_stocks}")
                     risk_adj_mom_3m_sentiment_positions, risk_adj_mom_3m_sentiment_cash, current_risk_adj_mom_3m_sentiment_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="RiskAdj 3M Sent",
                         current_stocks=current_risk_adj_mom_3m_sentiment_stocks,
@@ -5997,6 +6051,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_stocks:
+                    print(f"   📊 VolSweet Mom Day {day_count}: {new_stocks}")
                     vol_sweet_mom_positions, vol_sweet_mom_cash, current_vol_sweet_mom_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="VolSweet Mom",
                         current_stocks=current_vol_sweet_mom_stocks,
@@ -6031,6 +6086,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_stocks:
+                    print(f"   📊 RiskAdj 3M Up Day {day_count}: {new_stocks}")
                     # Store previous positions before rebalancing for tracking
                     prev_risk_adj_mom_3m_market_up_stocks = current_risk_adj_mom_3m_market_up_stocks.copy()
                     risk_adj_mom_3m_market_up_positions, risk_adj_mom_3m_market_up_cash, current_risk_adj_mom_3m_market_up_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
@@ -6066,6 +6122,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_stocks:
+                    print(f"   📊 RiskAdj 3M Stop Day {day_count}: {new_stocks}")
                     # Store previous positions before rebalancing for tracking
                     prev_risk_adj_mom_3m_with_stops_stocks = current_risk_adj_mom_3m_with_stops_stocks.copy()
                     risk_adj_mom_3m_with_stops_positions, risk_adj_mom_3m_with_stops_cash, current_risk_adj_mom_3m_with_stops_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
@@ -6112,6 +6169,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_stocks:
+                    print(f"   📊 1M VolSweet Day {day_count}: {new_stocks}")
                     risk_adj_mom_1m_vol_sweet_positions, risk_adj_mom_1m_vol_sweet_cash, current_risk_adj_mom_1m_vol_sweet_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="1M VolSweet",
                         current_stocks=current_risk_adj_mom_1m_vol_sweet_stocks,
@@ -6143,6 +6201,7 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_bh_1y_volsweet_accel_stocks:
+                    print(f"   📊 BH 1Y VolSweet Accel Day {day_count}: {new_bh_1y_volsweet_accel_stocks}")
                     bh_1y_volsweet_accel_positions, bh_1y_volsweet_accel_cash, current_bh_1y_volsweet_accel_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
                         strategy_name="BH 1Y VolSweet Accel",
                         current_stocks=current_bh_1y_volsweet_accel_stocks,
@@ -6160,6 +6219,48 @@ def _run_portfolio_backtest_walk_forward(
 
             except Exception as e:
                 print(f"   ⚠️ BH 1Y VolSweet Accel error: {e}")
+
+        # BH 1Y DYNAMIC ACCEL STRATEGY (dynamic rebalancing)
+        if ENABLE_BH_1Y_DYNAMIC_ACCEL:
+            try:
+                from shared_strategies import select_bh_1y_dynamic_accel_stocks
+                
+                bh_1y_dynamic_accel_days_since_rebalance += 1
+                
+                new_bh_1y_dynamic_accel_stocks, should_rebalance = select_bh_1y_dynamic_accel_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE,
+                    days_since_rebalance=bh_1y_dynamic_accel_days_since_rebalance,
+                    min_days=5,
+                    max_days=44
+                )
+                
+                if should_rebalance and new_bh_1y_dynamic_accel_stocks:
+                    print(f"   📊 BH 1Y Dynamic Accel Day {day_count}: {new_bh_1y_dynamic_accel_stocks}")
+                    if not bh_1y_dynamic_accel_initialized:
+                        print(f"   🎯 BH 1Y Dynamic Accel: Initializing")
+                        bh_1y_dynamic_accel_initialized = True
+                    
+                    bh_1y_dynamic_accel_positions, bh_1y_dynamic_accel_cash, current_bh_1y_dynamic_accel_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="BH 1Y Dynamic Accel",
+                        current_stocks=current_bh_1y_dynamic_accel_stocks,
+                        new_stocks=new_bh_1y_dynamic_accel_stocks,
+                        positions=bh_1y_dynamic_accel_positions,
+                        cash=bh_1y_dynamic_accel_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not bh_1y_dynamic_accel_initialized
+                    )
+                    strategies_rebalanced_today['BH 1Y Dynamic Accel'] = rebalanced_flag
+                    bh_1y_dynamic_accel_transaction_costs += rebalance_costs
+                    bh_1y_dynamic_accel_days_since_rebalance = 0
+
+            except Exception as e:
+                print(f"   ⚠️ BH 1Y Dynamic Accel error: {e}")
 
         # RISK-ADJ MOM 1M STRATEGY
         if ENABLE_RISK_ADJ_MOM_1M:
@@ -6208,6 +6309,7 @@ def _run_portfolio_backtest_walk_forward(
                     )
 
                     if new_stocks:
+                        print(f"   📊 Risk-Adj Mom 1M Monthly Day {day_count}: {new_stocks}")
                         if not risk_adj_mom_1m_monthly_initialized:
                             print(f"   🎯 Risk-Adj Mom 1M Monthly: Initializing with {new_stocks}")
                         else:
@@ -6899,6 +7001,7 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
                 )
                 if new_bb_mean_reversion_stocks:
+                    print(f"   📊 BB Mean Reversion Day {day_count}: {new_bb_mean_reversion_stocks}")
                     bb_mean_reversion_positions, bb_mean_reversion_cash, current_bb_mean_reversion_stocks, rc, _ = _smart_rebalance_portfolio(
                         strategy_name="BB Mean Reversion",
                         current_stocks=current_bb_mean_reversion_stocks,
@@ -6924,6 +7027,7 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
                 )
                 if new_bb_breakout_stocks:
+                    print(f"   📊 BB Breakout Day {day_count}: {new_bb_breakout_stocks}")
                     bb_breakout_positions, bb_breakout_cash, current_bb_breakout_stocks, rc, _ = _smart_rebalance_portfolio(
                         strategy_name="BB Breakout",
                         current_stocks=current_bb_breakout_stocks,
@@ -6949,6 +7053,7 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
                 )
                 if new_bb_squeeze_breakout_stocks:
+                    print(f"   📊 BB Squeeze Breakout Day {day_count}: {new_bb_squeeze_breakout_stocks}")
                     bb_squeeze_breakout_positions, bb_squeeze_breakout_cash, current_bb_squeeze_breakout_stocks, rc, _ = _smart_rebalance_portfolio(
                         strategy_name="BB Squeeze Breakout",
                         current_stocks=current_bb_squeeze_breakout_stocks,
@@ -6974,6 +7079,7 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
                 )
                 if new_bb_rsi_combo_stocks:
+                    print(f"   📊 BB RSI Combo Day {day_count}: {new_bb_rsi_combo_stocks}")
                     bb_rsi_combo_positions, bb_rsi_combo_cash, current_bb_rsi_combo_stocks, rc, _ = _smart_rebalance_portfolio(
                         strategy_name="BB RSI Combo",
                         current_stocks=current_bb_rsi_combo_stocks,
@@ -6999,6 +7105,7 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
                 )
                 if new_trend_breakout_stocks:
+                    print(f"   📊 Trend Breakout Day {day_count}: {new_trend_breakout_stocks}")
                     trend_breakout_positions, trend_breakout_cash, current_trend_breakout_stocks, rc, _ = _smart_rebalance_portfolio(
                         strategy_name="Trend Breakout",
                         current_stocks=current_trend_breakout_stocks,
@@ -8066,6 +8173,22 @@ def _run_portfolio_backtest_walk_forward(
                     pass
         bh_1y_volsweet_accel_portfolio_value = bh_1y_volsweet_accel_invested_value + bh_1y_volsweet_accel_cash
         bh_1y_volsweet_accel_portfolio_history.append(bh_1y_volsweet_accel_portfolio_value)
+
+        # Update BH 1Y Dynamic Accel portfolio value daily
+        bh_1y_dynamic_accel_invested_value = 0.0
+        if ENABLE_BH_1Y_DYNAMIC_ACCEL:
+            for ticker in list(bh_1y_dynamic_accel_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = bh_1y_dynamic_accel_positions[ticker].get('shares', 0)
+                            bh_1y_dynamic_accel_invested_value += shares * current_price
+                except Exception:
+                    pass
+        bh_1y_dynamic_accel_portfolio_value = bh_1y_dynamic_accel_invested_value + bh_1y_dynamic_accel_cash
+        bh_1y_dynamic_accel_portfolio_history.append(bh_1y_dynamic_accel_portfolio_value)
 
         # Update RISK-ADJ MOM 1M portfolio value daily
         risk_adj_mom_1m_invested_value = 0.0
@@ -9179,6 +9302,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("Volatility Ensemble", volatility_ensemble_portfolio_value if ENABLE_VOLATILITY_ENSEMBLE else None),
                 ("Enhanced Volatility", enhanced_volatility_portfolio_value if ENABLE_ENHANCED_VOLATILITY else None),
                 ("AI Volatility Ensemble", ai_volatility_ensemble_portfolio_value if ENABLE_AI_VOLATILITY_ENSEMBLE else None),
+                ("Multi-TF Ensemble", multi_tf_ensemble_portfolio_value if ENABLE_MULTI_TIMEFRAME_ENSEMBLE else None),
                 ("Correlation Ensemble", correlation_ensemble_portfolio_value if ENABLE_CORRELATION_ENSEMBLE else None),
                 ("Dynamic Pool", dynamic_pool_portfolio_value if ENABLE_DYNAMIC_POOL else None),
                 ("RiskAdj Sent", risk_adj_mom_sentiment_portfolio_value if ENABLE_RISK_ADJ_MOM_SENTIMENT else None),
@@ -9198,6 +9322,8 @@ def _run_portfolio_backtest_walk_forward(
                 ("RiskAdj 3M Stop", risk_adj_mom_3m_with_stops_portfolio_value if ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS else None),
                 ("VolSweet Mom", vol_sweet_mom_portfolio_value if ENABLE_VOL_SWEET_MOM else None),
                 ("1M VolSweet", risk_adj_mom_1m_vol_sweet_portfolio_value if ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET else None),
+                ("BH 1Y VolSweet Accel", bh_1y_volsweet_accel_portfolio_value if ENABLE_BH_1Y_VOL_SWEET_ACCEL else None),
+                ("BH 1Y Dynamic Accel", bh_1y_dynamic_accel_portfolio_value if ENABLE_BH_1Y_DYNAMIC_ACCEL else None),
                 ("Risk-Adj Mom 1M", risk_adj_mom_1m_portfolio_value if ENABLE_RISK_ADJ_MOM_1M else None),
                 ("RiskAdj 1M Mth", risk_adj_mom_1m_monthly_portfolio_value if ENABLE_RISK_ADJ_MOM_1M_MONTHLY else None),
                 ("AI Elite", ai_elite_portfolio_value if ENABLE_AI_ELITE else None),
@@ -9434,6 +9560,14 @@ def _run_portfolio_backtest_walk_forward(
                 elif name == "1M VolSweet" and ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET:
                     strat_cash = risk_adj_mom_1m_vol_sweet_cash
                     num_positions = len(risk_adj_mom_1m_vol_sweet_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y VolSweet Accel" and ENABLE_BH_1Y_VOL_SWEET_ACCEL:
+                    strat_cash = bh_1y_volsweet_accel_cash
+                    num_positions = len(bh_1y_volsweet_accel_positions)
+                    invested = value - strat_cash
+                elif name == "BH 1Y Dynamic Accel" and ENABLE_BH_1Y_DYNAMIC_ACCEL:
+                    strat_cash = bh_1y_dynamic_accel_cash
+                    num_positions = len(bh_1y_dynamic_accel_positions)
                     invested = value - strat_cash
                 elif name == "Risk-Adj Mom 1M" and ENABLE_RISK_ADJ_MOM_1M:
                     strat_cash = risk_adj_mom_1m_cash
@@ -9772,6 +9906,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("Volatility Ensemble", volatility_ensemble_portfolio_history) if ENABLE_VOLATILITY_ENSEMBLE else None,
                 ("Enhanced Volatility", enhanced_volatility_portfolio_history) if ENABLE_ENHANCED_VOLATILITY else None,
                 ("AI Volatility Ensemble", ai_volatility_ensemble_portfolio_history) if ENABLE_AI_VOLATILITY_ENSEMBLE else None,
+                ("Multi-TF Ensemble", multi_tf_ensemble_portfolio_history) if ENABLE_MULTI_TIMEFRAME_ENSEMBLE else None,
                 ("Correlation Ensemble", correlation_ensemble_portfolio_history) if ENABLE_CORRELATION_ENSEMBLE else None,
                 ("Dynamic Pool", dynamic_pool_portfolio_history) if ENABLE_DYNAMIC_POOL else None,
                 ("RiskAdj Sent", risk_adj_mom_sentiment_portfolio_history) if ENABLE_RISK_ADJ_MOM_SENTIMENT else None,
@@ -9791,6 +9926,8 @@ def _run_portfolio_backtest_walk_forward(
                 ("RiskAdj 3M Stop", risk_adj_mom_3m_with_stops_portfolio_history) if ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS else None,
                 ("VolSweet Mom", vol_sweet_mom_portfolio_history) if ENABLE_VOL_SWEET_MOM else None,
                 ("1M VolSweet", risk_adj_mom_1m_vol_sweet_portfolio_history) if ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET else None,
+                ("BH 1Y VolSweet Accel", bh_1y_volsweet_accel_portfolio_history) if ENABLE_BH_1Y_VOL_SWEET_ACCEL else None,
+                ("BH 1Y Dynamic Accel", bh_1y_dynamic_accel_portfolio_history) if ENABLE_BH_1Y_DYNAMIC_ACCEL else None,
                 ("Risk-Adj Mom 1M", risk_adj_mom_1m_portfolio_history) if ENABLE_RISK_ADJ_MOM_1M else None,
                 ("RiskAdj 1M Mth", risk_adj_mom_1m_monthly_portfolio_history) if ENABLE_RISK_ADJ_MOM_1M_MONTHLY else None,
                 ("AI Elite", ai_elite_portfolio_history) if ENABLE_AI_ELITE else None,
@@ -10134,6 +10271,7 @@ def _run_portfolio_backtest_walk_forward(
             'vol_sweet_mom':            _strat(vol_sweet_mom_portfolio_value, vol_sweet_mom_portfolio_history, vol_sweet_mom_transaction_costs, vol_sweet_mom_cash),
             'risk_adj_mom_1m_vol_sweet': _strat(risk_adj_mom_1m_vol_sweet_portfolio_value, risk_adj_mom_1m_vol_sweet_portfolio_history, risk_adj_mom_1m_vol_sweet_transaction_costs, risk_adj_mom_1m_vol_sweet_cash),
             'bh_1y_volsweet_accel': _strat(bh_1y_volsweet_accel_portfolio_value, bh_1y_volsweet_accel_portfolio_history, bh_1y_volsweet_accel_transaction_costs, bh_1y_volsweet_accel_cash),
+            'bh_1y_dynamic_accel': _strat(bh_1y_dynamic_accel_portfolio_value, bh_1y_dynamic_accel_portfolio_history, bh_1y_dynamic_accel_transaction_costs, bh_1y_dynamic_accel_cash),
             'risk_adj_mom_1m':          _strat(risk_adj_mom_1m_portfolio_value, risk_adj_mom_1m_portfolio_history, risk_adj_mom_1m_transaction_costs, risk_adj_mom_1m_cash),
             'risk_adj_mom_1m_monthly':  _strat(risk_adj_mom_1m_monthly_portfolio_value, risk_adj_mom_1m_monthly_portfolio_history, risk_adj_mom_1m_monthly_transaction_costs, risk_adj_mom_1m_monthly_cash),
             'ai_elite':                 _strat(ai_elite_portfolio_value, ai_elite_portfolio_history, ai_elite_transaction_costs, ai_elite_cash),
@@ -10228,6 +10366,7 @@ def _run_portfolio_backtest_walk_forward(
             'risk_adj_mom_1m': {'tickers': list(current_risk_adj_mom_1m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_1m_positions.items()}},
             'risk_adj_mom_1m_vol_sweet': {'tickers': list(current_risk_adj_mom_1m_vol_sweet_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_1m_vol_sweet_positions.items()}},
             'bh_1y_volsweet_accel': {'tickers': list(current_bh_1y_volsweet_accel_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_volsweet_accel_positions.items()}},
+            'bh_1y_dynamic_accel': {'tickers': list(current_bh_1y_dynamic_accel_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_dynamic_accel_positions.items()}},
             'risk_adj_mom_3m': {'tickers': list(current_risk_adj_mom_3m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_3m_positions.items()}},
             'risk_adj_mom_6m': {'tickers': list(current_risk_adj_mom_6m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_6m_positions.items()}},
             'momentum_ai_hybrid': {'tickers': list(momentum_ai_hybrid_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in momentum_ai_hybrid_positions.items()}},
@@ -10265,6 +10404,72 @@ def _run_portfolio_backtest_walk_forward(
             'static_bh_1y_sector': {'tickers': list(current_static_bh_1y_sector_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_sector_positions.items()}},
             'static_bh_1y_perf_threshold': {'tickers': list(current_static_bh_1y_perf_threshold_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_perf_threshold_positions.items()}},
             'static_bh_1y_market_regime': {'tickers': list(current_static_bh_1y_market_regime_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_market_regime_positions.items()}},
+            'static_bh_1y_mom_persist': {'tickers': list(current_static_bh_1y_mom_persist_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_mom_persist_positions.items()}},
+            'static_bh_1y_overlap': {'tickers': list(current_static_bh_1y_overlap_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_overlap_positions.items()}},
+            'static_bh_1y_rank_drift': {'tickers': list(current_static_bh_1y_rank_drift_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_rank_drift_positions.items()}},
+            'static_bh_1y_drawdown': {'tickers': list(current_static_bh_1y_drawdown_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_drawdown_positions.items()}},
+            'static_bh_1y_smart_monthly': {'tickers': list(current_static_bh_1y_smart_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_smart_monthly_positions.items()}},
+            'bh_1y_mom_sell': {'tickers': list(current_bh_1y_mom_sell_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_mom_sell_positions.items()}},
+            'bh_1y_rank_sell': {'tickers': list(current_bh_1y_rank_sell_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_rank_sell_positions.items()}},
+            'bh_1y_trailing_mom': {'tickers': list(current_bh_1y_trailing_mom_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_trailing_mom_positions.items()}},
+            'bh_1y_volume_confirm': {'tickers': list(current_bh_1y_volume_confirm_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_volume_confirm_positions.items()}},
+            'bh_1y_sector_aware': {'tickers': list(current_bh_1y_sector_aware_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_sector_aware_positions.items()}},
+            'bh_1y_accel_buy': {'tickers': list(current_bh_1y_accel_buy_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_accel_buy_positions.items()}},
+            'static_bh_3m_accel': {'tickers': list(current_static_bh_3m_accel_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_3m_accel_positions.items()}},
+            'bh_1y_vol_adj_rebal': {'tickers': list(current_bh_1y_vol_adj_rebal_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_vol_adj_rebal_positions.items()}},
+            'bh_1y_corr_filter': {'tickers': list(current_bh_1y_corr_filter_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_corr_filter_positions.items()}},
+            'bh_1y_regime_aware': {'tickers': list(current_bh_1y_regime_aware_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_regime_aware_positions.items()}},
+            'bh_1y_risk_parity': {'tickers': list(current_bh_1y_risk_parity_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_risk_parity_positions.items()}},
+            'bh_1y_drift_thresh': {'tickers': list(current_bh_1y_drift_thresh_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_drift_thresh_positions.items()}},
+            'bh_1y_mom_quality': {'tickers': list(current_bh_1y_mom_quality_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_mom_quality_positions.items()}},
+            'bh_1y_liquidity': {'tickers': list(current_bh_1y_liquidity_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_liquidity_positions.items()}},
+            'bh_1y_earnings_avoid': {'tickers': list(current_bh_1y_earnings_avoid_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_earnings_avoid_positions.items()}},
+            'bh_1y_multi_factor': {'tickers': list(current_bh_1y_multi_factor_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_multi_factor_positions.items()}},
+            'bh_1y_time_decay': {'tickers': list(current_bh_1y_time_decay_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_time_decay_positions.items()}},
+            'multi_tf_ensemble': {'tickers': list(current_multi_tf_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in multi_tf_ensemble_positions.items()}},
+            'trend_breakout': {'tickers': list(current_trend_breakout_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in trend_breakout_positions.items()}},
+            # Additional strategies
+            'ai_elite_filtered': {'tickers': list(ai_elite_filtered_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_elite_filtered_positions.items()}},
+            'ai_elite_market_up': {'tickers': list(ai_elite_market_up_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_elite_market_up_positions.items()}},
+            'ai_elite_monthly': {'tickers': list(ai_elite_monthly_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_elite_monthly_positions.items()}},
+            'adaptive_ensemble': {'tickers': list(current_adaptive_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in adaptive_ensemble_positions.items()}},
+            'bb_breakout': {'tickers': list(current_bb_breakout_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bb_breakout_positions.items()}},
+            'bb_mean_reversion': {'tickers': list(current_bb_mean_reversion_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bb_mean_reversion_positions.items()}},
+            'bb_rsi_combo': {'tickers': list(current_bb_rsi_combo_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bb_rsi_combo_positions.items()}},
+            'bb_squeeze_breakout': {'tickers': list(current_bb_squeeze_breakout_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bb_squeeze_breakout_positions.items()}},
+            'correlation_ensemble': {'tickers': list(current_correlation_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in correlation_ensemble_positions.items()}},
+            'dynamic_bh_1y_trailing_stop': {'tickers': list(current_dynamic_bh_1y_trailing_stop_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in dynamic_bh_1y_trailing_stop_positions.items()}},
+            'dynamic_bh_1y_vol_filter': {'tickers': list(current_dynamic_bh_1y_vol_filter_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in dynamic_bh_1y_vol_filter_positions.items()}},
+            'dynamic_pool': {'tickers': list(current_dynamic_pool_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in dynamic_pool_positions.items()}},
+            'momentum_volatility_hybrid': {'tickers': list(momentum_volatility_hybrid_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in momentum_volatility_hybrid_positions.items()}},
+            'momentum_volatility_hybrid_1y': {'tickers': list(momentum_volatility_hybrid_1y_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in momentum_volatility_hybrid_1y_positions.items()}},
+            'momentum_volatility_hybrid_1y3m': {'tickers': list(momentum_volatility_hybrid_1y3m_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in momentum_volatility_hybrid_1y3m_positions.items()}},
+            'multitask': {'tickers': list(current_multitask_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in multitask_positions.items()}},
+            'risk_adj_mom_3m_market_up': {'tickers': list(current_risk_adj_mom_3m_market_up_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_3m_market_up_positions.items()}},
+            'risk_adj_mom_3m_with_stops': {'tickers': list(current_risk_adj_mom_3m_with_stops_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_3m_with_stops_positions.items()}},
+            'risk_adj_mom_1m_monthly': {'tickers': list(current_risk_adj_mom_1m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_1m_monthly_positions.items()}},
+            'risk_adj_mom_3m_monthly': {'tickers': list(current_risk_adj_mom_3m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_3m_monthly_positions.items()}},
+            'risk_adj_mom_3m_sentiment': {'tickers': list(current_risk_adj_mom_3m_sentiment_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_3m_sentiment_positions.items()}},
+            'risk_adj_mom_6m_monthly': {'tickers': list(current_risk_adj_mom_6m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_6m_monthly_positions.items()}},
+            'risk_adj_mom_sentiment': {'tickers': list(current_risk_adj_mom_sentiment_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_sentiment_positions.items()}},
+            'universal_model': {'tickers': list(current_universal_model_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in universal_model_positions.items()}},
+            'vol_sweet_mom': {'tickers': list(current_vol_sweet_mom_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in vol_sweet_mom_positions.items()}},
+            'voting_ensemble': {'tickers': list(current_voting_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in voting_ensemble_positions.items()}},
+            'ai_regime': {'tickers': list(ai_regime_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_regime_positions.items()}},
+            'ai_regime_monthly': {'tickers': list(ai_regime_monthly_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_regime_monthly_positions.items()}},
+            'ai_volatility_ensemble': {'tickers': list(current_ai_volatility_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_volatility_ensemble_positions.items()}},
+            'mom_accel': {'tickers': list(current_mom_accel_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in mom_accel_positions.items()}},
+            'sentiment_ensemble': {'tickers': list(current_sentiment_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in sentiment_ensemble_positions.items()}},
+            'meta_weighted_composite': {'tickers': list(meta_weighted_composite_positions.keys()) if 'meta_weighted_composite_positions' in dir() else [], 'positions': {}},
+            'meta_tiered_selection': {'tickers': list(meta_tiered_selection_positions.keys()) if 'meta_tiered_selection_positions' in dir() else [], 'positions': {}},
+            'meta_ensemble_alloc': {'tickers': list(meta_ensemble_alloc_positions.keys()) if 'meta_ensemble_alloc_positions' in dir() else [], 'positions': {}},
+            'meta_regime_based': {'tickers': list(meta_regime_based_positions.keys()) if 'meta_regime_based_positions' in dir() else [], 'positions': {}},
+            'meta_recency_weighted': {'tickers': list(meta_recency_weighted_positions.keys()) if 'meta_recency_weighted_positions' in dir() else [], 'positions': {}},
+            'meta_efficiency_ratio': {'tickers': list(meta_efficiency_ratio_positions.keys()) if 'meta_efficiency_ratio_positions' in dir() else [], 'positions': {}},
+            'meta_min_variance': {'tickers': list(meta_min_variance_positions.keys()) if 'meta_min_variance_positions' in dir() else [], 'positions': {}},
+            'meta_bayesian': {'tickers': list(meta_bayesian_positions.keys()) if 'meta_bayesian_positions' in dir() else [], 'positions': {}},
+            'meta_adaptive_convex': {'tickers': list(meta_adaptive_convex_positions.keys()) if 'meta_adaptive_convex_positions' in dir() else [], 'positions': {}},
+            'meta_consensus': {'tickers': list(meta_consensus_positions.keys()) if 'meta_consensus_positions' in dir() else [], 'positions': {}},
         },
         'performance': {name: {'value': data['value'], 'return_pct': ((data['value'] - INVESTMENT_PER_STOCK * PORTFOLIO_SIZE) / (INVESTMENT_PER_STOCK * PORTFOLIO_SIZE)) * 100} for name, data in results['strategies'].items()}
     }
