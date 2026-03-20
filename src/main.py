@@ -1767,7 +1767,48 @@ if __name__ == "__main__":
         
         if len(strategies) > 1:
             # Multi-strategy live run with acceleration ranking
-            print(f"\n📊 Running {len(strategies)} strategies live...")
+            print("\n" + "=" * 80)
+            print("📊 MULTI-STRATEGY TICKER SELECTION")
+            print("=" * 80)
+            
+            strategy_selections = {}
+            for strategy in strategies:
+                print(f"\n🎯 Strategy: {strategy}")
+                print("-" * 40)
+                # Execute strategy live
+                selected = get_strategy_tickers(strategy, list(ticker_data_grouped.keys()), ticker_data_grouped)
+                strategy_selections[strategy] = set(selected) if selected else set()
+                if selected:
+                    print(f"   Selected {len(selected)} tickers: {selected}")
+                else:
+                    print(f"   ⚠️ No tickers selected")
+            
+            # Show comparison
+            print("\n" + "=" * 80)
+            print("📊 STRATEGY COMPARISON")
+            print("=" * 80)
+            
+            # Find common tickers (intersection of all)
+            if strategy_selections:
+                common = set.intersection(*strategy_selections.values()) if all(strategy_selections.values()) else set()
+                print(f"\n✅ COMMON to all strategies ({len(common)}): {sorted(common) if common else 'None'}")
+                
+                # Show unique tickers for each strategy
+                print(f"\n🔀 UNIQUE to each strategy:")
+                for strategy in strategies:
+                    others = set.union(*[s for name, s in strategy_selections.items() if name != strategy]) if len(strategies) > 1 else set()
+                    unique = strategy_selections[strategy] - others
+                    if unique:
+                        print(f"   {strategy}: {sorted(unique)}")
+                    else:
+                        print(f"   {strategy}: None (all shared)")
+            
+            # === ACCELERATION RANKING (Additional Insight) ===
+            print("\n" + "=" * 80)
+            print("🚀 ACCELERATION-ENHANCED RANKING (Additional Insight)")
+            print("=" * 80)
+            print(f"Combined strategies ranked by momentum acceleration score\n")
+            
             from multi_strategy_acceleration import combine_strategies_with_acceleration
             
             current_date = datetime.now(timezone.utc)
@@ -1777,34 +1818,78 @@ if __name__ == "__main__":
                 strategies, ticker_data_grouped, current_date, num_stocks
             )
             
-            # Show final recommendations
-            final_tickers = [s[0] for s in acceleration_selections]
-            print(f"\n🎯 FINAL LIVE RECOMMENDATIONS ({len(final_tickers)} stocks):")
+            # === CONSENSUS TABLE ===
+            print("\n" + "=" * 80)
+            print("📊 CONSENSUS RANKING TABLE")
             print("=" * 80)
-            for i, ticker in enumerate(final_tickers, 1):
-                print(f"   {i:2}. {ticker}")
+            print(f"Stocks ranked by number of strategy votes (out of {len(strategies)} strategies)\n")
             
-            print(f"\n💡 Execute these trades on your broker platform")
+            # Count votes for each ticker
+            from collections import Counter
+            ticker_votes = Counter()
+            ticker_strategies = {}  # Track which strategies voted for each ticker
+            
+            for strategy, tickers in strategy_selections.items():
+                for ticker in tickers:
+                    ticker_votes[ticker] += 1
+                    if ticker not in ticker_strategies:
+                        ticker_strategies[ticker] = []
+                    ticker_strategies[ticker].append(strategy)
+            
+            # Sort by vote count (descending), then alphabetically
+            sorted_tickers = sorted(ticker_votes.items(), key=lambda x: (-x[1], x[0]))
+            
+            # Print header
+            print(f"{'Rank':<6} {'Ticker':<12} {'Votes':<8} {'Strategies':<40}")
+            print("-" * 80)
+            
+            # Print each ticker with vote info - show ALL with 2+ votes
+            min_votes = 2  # Show only stocks with 2 or more votes
+            filtered_tickers = [(t, v) for t, v in sorted_tickers if v >= min_votes]
+            
+            for rank, (ticker, votes) in enumerate(filtered_tickers, 1):
+                vote_bar = "█" * votes + "░" * (len(strategies) - votes)
+                strategies_short = ", ".join([s[:8] for s in ticker_strategies[ticker]])
+                print(f"{rank:<6} {ticker:<12} {votes}/{len(strategies)} {vote_bar:<8}  {strategies_short}")
+            
+            if not filtered_tickers:
+                print(f"   ⚠️ No stocks with {min_votes}+ strategy votes found")
+            
+            # Recommended portfolio (top 10 by consensus)
+            print("\n" + "=" * 80)
+            print("🎯 RECOMMENDED CONSENSUS PORTFOLIO (Top 10 by votes)")
+            print("=" * 80)
+            top_consensus = [t for t, v in sorted_tickers[:10]]
+            if top_consensus:
+                print(f"   {top_consensus}")
+                print(f"\n   💡 These stocks have the highest agreement across strategies")
+                print(f"   💡 Consider running: python src/main.py --live-trading --strategy consensus")
+            else:
+                print("   ⚠️ No consensus stocks found")
+            
+            print("\n" + "=" * 80)
+            print("💡 To execute trades with a single strategy, run:")
+            print(f"   python src/main.py --live-run --strategy <strategy_name>")
             print("=" * 80)
             
         else:
             # Single strategy live run
             strategy = strategies[0]
-            print(f"\n🎯 Running {strategy} strategy live...")
+            print(f"\n🎯 Single Strategy Mode: {strategy}")
             
             selected = get_strategy_tickers(strategy, list(ticker_data_grouped.keys()), ticker_data_grouped)
             
             if selected:
-                print(f"\n🎯 LIVE RECOMMENDATIONS ({strategy})")
+                print(f"\n" + "=" * 80)
+                print(f"📊 RECOMMENDED PORTFOLIO ({strategy})")
                 print("=" * 80)
-                print(f"   Stocks to buy: {selected}")
+                print(f"   Stocks to hold: {selected}")
                 print(f"   Number of positions: {len(selected)}")
                 print(f"   Investment per stock: ${config.TOTAL_CAPITAL / len(selected):,.2f}")
                 print(f"   Total investment: ${config.TOTAL_CAPITAL:,.2f}")
                 print("=" * 80)
-                print(f"\n💡 Execute these trades on your broker platform")
             else:
-                print(f"   ❌ No tickers selected for {strategy}")
+                print(f"   ❌ No tickers found for strategy '{strategy}'")
         
         sys.exit(0)
     
