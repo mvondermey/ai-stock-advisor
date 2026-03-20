@@ -1828,6 +1828,46 @@ if __name__ == "__main__":
                         else:
                             print(f"   {strategy}: None (all shared)")
                 
+                # === ACCELERATION RANKING ===
+                print("\n" + "=" * 80)
+                print("🚀 ACCELERATION-ENHANCED RANKING")
+                print("=" * 80)
+                print(f"Combined strategies ranked by momentum acceleration score\n")
+                
+                # Load data for acceleration scoring
+                from data_utils import load_all_market_data
+                from ticker_selection import get_all_tickers
+                from multi_strategy_acceleration import combine_strategies_with_acceleration
+                
+                print("   📊 Loading market data for acceleration scoring...")
+                all_tickers = get_all_tickers()
+                all_tickers_data = load_all_market_data(all_tickers)
+                
+                # Convert to ticker_data_grouped format
+                ticker_data_grouped = {}
+                grouped = all_tickers_data.groupby('ticker')
+                
+                for ticker in all_tickers_data['ticker'].unique():
+                    try:
+                        ticker_df = grouped.get_group(ticker).copy()
+                        if 'date' in ticker_df.columns:
+                            ticker_df = ticker_df.set_index('date')
+                        ticker_df = ticker_df.drop('ticker', axis=1, errors='ignore')
+                        ticker_data_grouped[ticker] = ticker_df
+                    except KeyError:
+                        pass
+                
+                print(f"   ✅ Loaded data for {len(ticker_data_grouped)} tickers")
+                
+                # Get acceleration-ranked selections
+                from datetime import datetime, timezone
+                current_date = datetime.now(timezone.utc)
+                num_stocks = args.num_stocks if args.num_stocks else len(strategies) * 6  # Default 6 per strategy
+                
+                acceleration_selections = combine_strategies_with_acceleration(
+                    strategies, ticker_data_grouped, current_date, num_stocks
+                )
+                
                 # === CONSENSUS TABLE ===
                 print("\n" + "=" * 80)
                 print("📊 CONSENSUS RANKING TABLE")
