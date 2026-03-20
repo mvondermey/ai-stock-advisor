@@ -697,6 +697,7 @@ ENABLE_RISK_ADJ_MOM_1M = True   # NEW - Risk-Adj Mom 1M (same as Risk-Adj Mom bu
 ENABLE_RISK_ADJ_MOM_1M_MONTHLY = True   # NEW - Risk-Adj Mom 1M Monthly (same scoring, rebalance start of month only)
 
 ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET = True   # NEW - Risk-Adj Mom 1M + Vol-Sweet (best Sharpe + vol filter)
+ENABLE_BH_1Y_VOL_SWEET_ACCEL = True        # NEW - BH 1Y VolSweet Accel (Static BH 1Y + 1M VolSweet, ranked by acceleration)
 
 ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip opportunities)
 

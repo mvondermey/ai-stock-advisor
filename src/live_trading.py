@@ -734,6 +734,10 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], ticker_data_grou
         # 1M Vol-Sweet Strategy: Alias for risk_adj_mom_1m_vol_sweet
         return get_1m_volsweet_tickers(all_tickers, ticker_data_grouped)
 
+    elif strategy == 'bh_1y_volsweet_accel':
+        # BH 1Y VolSweet Acceleration Strategy
+        return get_bh_1y_volsweet_accel_tickers(all_tickers, ticker_data_grouped)
+
     # Missing strategies from backtesting
     elif strategy == 'momentum_ai_hybrid':
         # Momentum AI Hybrid Strategy
@@ -1324,6 +1328,7 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'risk_adj_mom_1m': 'Risk-Adj Mom 1M (1-Month Risk-Adjusted Momentum)',
         'risk_adj_mom_1m_vol_sweet': 'Risk-Adj Mom 1M Vol-Sweet (1-Month Risk-Adjusted Momentum + Volatility Filter)',
         '1m_volsweet': 'Risk-Adj Mom 1M Vol-Sweet (1-Month Risk-Adjusted Momentum + Volatility Filter)',
+        'bh_1y_volsweet_accel': 'BH 1Y VolSweet Accel (Static BH 1Y + 1M VolSweet, ranked by acceleration)',
         # Missing strategies from backtesting
         'momentum_ai_hybrid': 'Momentum AI Hybrid (Momentum + AI Predictions)',
         'inverse_etf_hedge': 'Inverse ETF Hedge (Bear Market Protection)',
@@ -1367,6 +1372,7 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
     # Pass ticker_data_grouped if available for strategies that need it
     ticker_data_grouped_for_strategy = ticker_data_grouped if LIVE_TRADING_STRATEGY in [
         'risk_adj_mom', 'risk_adj_mom_6m', 'risk_adj_mom_3m', 'risk_adj_mom_1m', 'risk_adj_mom_1m_vol_sweet', '1m_volsweet',
+        'bh_1y_volsweet_accel',
         'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m',
         'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
         'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
@@ -1381,6 +1387,7 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
     ] else None
     if LIVE_TRADING_STRATEGY in [
         'risk_adj_mom', 'risk_adj_mom_6m', 'risk_adj_mom_3m', 'risk_adj_mom_1m', 'risk_adj_mom_1m_vol_sweet', '1m_volsweet',
+        'bh_1y_volsweet_accel',
         'dynamic_bh_1y', 'dynamic_bh_6m', 'dynamic_bh_3m', 'dynamic_bh_1m',
         'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
         'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
@@ -1485,6 +1492,16 @@ def get_risk_adj_mom_1m_vol_sweet_tickers(all_tickers: List[str], ticker_data_gr
 def get_1m_volsweet_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """1M Vol-Sweet Strategy: Alias for risk_adj_mom_1m_vol_sweet."""
     return get_risk_adj_mom_1m_vol_sweet_tickers(all_tickers, ticker_data_grouped)
+
+
+def get_bh_1y_volsweet_accel_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """BH 1Y VolSweet Acceleration Strategy: Combines Static BH 1Y and 1M VolSweet tickers, ranks by acceleration."""
+    from shared_strategies import select_bh_1y_volsweet_accel_stocks
+    
+    print(f"   📊 BH 1Y VolSweet Accel: Processing {len(all_tickers)} tickers")
+    
+    current_date = datetime.now(timezone.utc)
+    return select_bh_1y_volsweet_accel_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 # Missing strategy functions from backtesting

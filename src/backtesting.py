@@ -34,7 +34,7 @@ from config import (
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
     CALENDAR_DAYS_PER_YEAR,
     ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M, ENABLE_DUAL_MOMENTUM, ENABLE_TREND_FOLLOWING_ATR,
-    ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_6M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M_SENTIMENT, ENABLE_RISK_ADJ_MOM_3M_MARKET_UP, ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS, ENABLE_VOL_SWEET_MOM, ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET, ENABLE_RISK_ADJ_MOM_1M, ENABLE_RISK_ADJ_MOM_1M_MONTHLY, ENABLE_AI_ELITE,
+    ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_6M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_3M_MONTHLY, ENABLE_RISK_ADJ_MOM_3M_SENTIMENT, ENABLE_RISK_ADJ_MOM_3M_MARKET_UP, ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS, ENABLE_VOL_SWEET_MOM, ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET, ENABLE_BH_1Y_VOL_SWEET_ACCEL, ENABLE_RISK_ADJ_MOM_1M, ENABLE_RISK_ADJ_MOM_1M_MONTHLY, ENABLE_AI_ELITE,
     ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_ELITE_MARKET_UP, ENABLE_UNIVERSAL_MODEL,
     CONCENTRATED_3M_REBALANCE_DAYS,
     AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, AI_ELITE_INTRADAY_LOOKBACK
@@ -2148,6 +2148,14 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_1m_vol_sweet_cash = initial_capital_needed
     current_risk_adj_mom_1m_vol_sweet_stocks = []
     risk_adj_mom_1m_vol_sweet_transaction_costs = 0.0
+
+    # BH 1Y VOL-SWEET ACCEL: Initialize portfolio tracking
+    bh_1y_volsweet_accel_portfolio_value = initial_capital_needed
+    bh_1y_volsweet_accel_portfolio_history = [bh_1y_volsweet_accel_portfolio_value]
+    bh_1y_volsweet_accel_positions = {}
+    bh_1y_volsweet_accel_cash = initial_capital_needed
+    current_bh_1y_volsweet_accel_stocks = []
+    bh_1y_volsweet_accel_transaction_costs = 0.0
 
     # RISK-ADJ MOM 1M: Initialize portfolio tracking
     risk_adj_mom_1m_portfolio_value = initial_capital_needed
@@ -6122,6 +6130,37 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ 1M VolSweet error: {e}")
 
+        # BH 1Y VOL-SWEET ACCEL STRATEGY
+        if ENABLE_BH_1Y_VOL_SWEET_ACCEL:
+            try:
+                from shared_strategies import select_bh_1y_volsweet_accel_stocks
+
+                new_bh_1y_volsweet_accel_stocks = select_bh_1y_volsweet_accel_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE
+                )
+
+                if new_bh_1y_volsweet_accel_stocks:
+                    bh_1y_volsweet_accel_positions, bh_1y_volsweet_accel_cash, current_bh_1y_volsweet_accel_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="BH 1Y VolSweet Accel",
+                        current_stocks=current_bh_1y_volsweet_accel_stocks,
+                        new_stocks=new_bh_1y_volsweet_accel_stocks,
+                        positions=bh_1y_volsweet_accel_positions,
+                        cash=bh_1y_volsweet_accel_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_bh_1y_volsweet_accel_stocks
+                    )
+                    strategies_rebalanced_today['BH 1Y VolSweet Accel'] = rebalanced_flag
+                    bh_1y_volsweet_accel_transaction_costs += rebalance_costs
+
+            except Exception as e:
+                print(f"   ⚠️ BH 1Y VolSweet Accel error: {e}")
+
         # RISK-ADJ MOM 1M STRATEGY
         if ENABLE_RISK_ADJ_MOM_1M:
             try:
@@ -8011,6 +8050,22 @@ def _run_portfolio_backtest_walk_forward(
                     risk_adj_mom_1m_vol_sweet_invested_value += risk_adj_mom_1m_vol_sweet_positions[ticker].get('value', 0.0)
         risk_adj_mom_1m_vol_sweet_portfolio_value = risk_adj_mom_1m_vol_sweet_invested_value + risk_adj_mom_1m_vol_sweet_cash
         risk_adj_mom_1m_vol_sweet_portfolio_history.append(risk_adj_mom_1m_vol_sweet_portfolio_value)
+
+        # Update BH 1Y VolSweet Accel portfolio value daily
+        bh_1y_volsweet_accel_invested_value = 0.0
+        if ENABLE_BH_1Y_VOL_SWEET_ACCEL:
+            for ticker in list(bh_1y_volsweet_accel_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = bh_1y_volsweet_accel_positions[ticker].get('shares', 0)
+                            bh_1y_volsweet_accel_invested_value += shares * current_price
+                except Exception:
+                    pass
+        bh_1y_volsweet_accel_portfolio_value = bh_1y_volsweet_accel_invested_value + bh_1y_volsweet_accel_cash
+        bh_1y_volsweet_accel_portfolio_history.append(bh_1y_volsweet_accel_portfolio_value)
 
         # Update RISK-ADJ MOM 1M portfolio value daily
         risk_adj_mom_1m_invested_value = 0.0
@@ -10078,6 +10133,7 @@ def _run_portfolio_backtest_walk_forward(
             'risk_adj_mom_3m_with_stops': _strat(risk_adj_mom_3m_with_stops_portfolio_value, risk_adj_mom_3m_with_stops_portfolio_history, risk_adj_mom_3m_with_stops_transaction_costs, risk_adj_mom_3m_with_stops_cash),
             'vol_sweet_mom':            _strat(vol_sweet_mom_portfolio_value, vol_sweet_mom_portfolio_history, vol_sweet_mom_transaction_costs, vol_sweet_mom_cash),
             'risk_adj_mom_1m_vol_sweet': _strat(risk_adj_mom_1m_vol_sweet_portfolio_value, risk_adj_mom_1m_vol_sweet_portfolio_history, risk_adj_mom_1m_vol_sweet_transaction_costs, risk_adj_mom_1m_vol_sweet_cash),
+            'bh_1y_volsweet_accel': _strat(bh_1y_volsweet_accel_portfolio_value, bh_1y_volsweet_accel_portfolio_history, bh_1y_volsweet_accel_transaction_costs, bh_1y_volsweet_accel_cash),
             'risk_adj_mom_1m':          _strat(risk_adj_mom_1m_portfolio_value, risk_adj_mom_1m_portfolio_history, risk_adj_mom_1m_transaction_costs, risk_adj_mom_1m_cash),
             'risk_adj_mom_1m_monthly':  _strat(risk_adj_mom_1m_monthly_portfolio_value, risk_adj_mom_1m_monthly_portfolio_history, risk_adj_mom_1m_monthly_transaction_costs, risk_adj_mom_1m_monthly_cash),
             'ai_elite':                 _strat(ai_elite_portfolio_value, ai_elite_portfolio_history, ai_elite_transaction_costs, ai_elite_cash),
@@ -10171,6 +10227,7 @@ def _run_portfolio_backtest_walk_forward(
             'risk_adj_mom': {'tickers': list(current_risk_adj_mom_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_positions.items()}},
             'risk_adj_mom_1m': {'tickers': list(current_risk_adj_mom_1m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_1m_positions.items()}},
             'risk_adj_mom_1m_vol_sweet': {'tickers': list(current_risk_adj_mom_1m_vol_sweet_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_1m_vol_sweet_positions.items()}},
+            'bh_1y_volsweet_accel': {'tickers': list(current_bh_1y_volsweet_accel_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_volsweet_accel_positions.items()}},
             'risk_adj_mom_3m': {'tickers': list(current_risk_adj_mom_3m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_3m_positions.items()}},
             'risk_adj_mom_6m': {'tickers': list(current_risk_adj_mom_6m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_6m_positions.items()}},
             'momentum_ai_hybrid': {'tickers': list(momentum_ai_hybrid_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in momentum_ai_hybrid_positions.items()}},

@@ -2775,3 +2775,119 @@ def select_ai_elite_with_training(
     )
 
     return selected, ai_elite_models
+
+
+def select_bh_1y_volsweet_accel_stocks(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime = None,
+    top_n: int = 10,
+) -> List[str]:
+    """
+    BH 1Y VolSweet Acceleration Strategy:
+    Combines Static BH 1Y and 1M VolSweet tickers, ranks by acceleration score.
+    
+    Selection process:
+    1. Get top performers from Static BH 1Y (1-year lookback)
+    2. Get top performers from 1M VolSweet (1-month risk-adjusted momentum + vol filter)
+    3. Combine unique tickers from both strategies
+    4. Rank by momentum acceleration score
+    5. Return top N
+    
+    Returns:
+        List of selected tickers
+    """
+    from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+    
+    if current_date is None:
+        current_date = datetime.now(timezone.utc)
+    
+    print(f"   📊 BH 1Y VolSweet Accel: Getting Static BH 1Y tickers...")
+    bh_1y_tickers = select_top_performers(
+        all_tickers, ticker_data_grouped,
+        current_date=current_date,
+        lookback_days=365,
+        top_n=top_n * 2,  # Get more for combination
+        apply_performance_filter=False
+    )
+    
+    print(f"   📊 BH 1Y VolSweet Accel: Getting 1M VolSweet tickers...")
+    volsweet_tickers = select_risk_adj_mom_1m_vol_sweet_stocks(
+        all_tickers, ticker_data_grouped,
+        current_date=current_date,
+        top_n=top_n * 2
+    )
+    
+    # Combine unique tickers from both strategies
+    combined_tickers = list(set(bh_1y_tickers) | set(volsweet_tickers))
+    print(f"   📊 BH 1Y VolSweet Accel: Combined {len(combined_tickers)} unique tickers")
+    
+    # Calculate acceleration scores for combined tickers
+    scored_candidates = []
+    
+    for ticker in combined_tickers:
+        if ticker not in ticker_data_grouped:
+            continue
+        
+        try:
+            data = ticker_data_grouped[ticker].loc[:current_date]
+            close = data['Close'].dropna()
+            
+            if len(close) < 60:
+                continue
+            
+            # Calculate momentum metrics
+            mom_1m = (close.iloc[-1] / close.iloc[-21] - 1) * 100 if len(close) >= 21 else 0
+            mom_3m = (close.iloc[-1] / close.iloc[-63] - 1) * 100 if len(close) >= 63 else 0
+            
+            # Calculate acceleration: 1M momentum vs expected from 3M trend
+            expected_1m_from_3m = mom_3m / 3 if mom_3m != 0 else 0
+            acceleration = mom_1m - expected_1m_from_3m
+            
+            # Calculate velocity (recent momentum strength)
+            recent_velocity = (close.iloc[-1] / close.iloc[-5] - 1) * 100 if len(close) >= 5 else 0
+            
+            # Calculate consistency (how consistent is the momentum)
+            returns_5d = close.pct_change(5).dropna()
+            if len(returns_5d) >= 20:
+                accel_series = returns_5d.rolling(5).mean().diff().iloc[-20:]
+                consistency = (accel_series > 0).mean()
+            else:
+                consistency = 0.5
+            
+            # Composite acceleration score (same weights as shared_strategies.py)
+            # 40% avg acceleration, 40% latest acceleration, 20% consistency
+            accel_score = (acceleration * 0.4 +
+                          acceleration * 0.4 +
+                          consistency * acceleration * 0.2)
+            
+            # Scale by velocity
+            final_score = accel_score * (1 + recent_velocity * 10)
+            
+            scored_candidates.append({
+                'ticker': ticker,
+                'score': final_score,
+                'acceleration': acceleration,
+                'velocity': recent_velocity,
+                'consistency': consistency,
+                'mom_1m': mom_1m,
+                'mom_3m': mom_3m
+            })
+            
+        except Exception as e:
+            continue
+    
+    # Sort by acceleration score (highest first)
+    scored_candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Log top selections
+    if scored_candidates:
+        print(f"   📈 BH 1Y VolSweet Accel: Top picks with acceleration:")
+        for c in scored_candidates[:min(5, len(scored_candidates))]:
+            print(f"      {c['ticker']}: accel={c['acceleration']:+.1f}%, velocity={c['velocity']:+.1f}%, score={c['score']:.4f}")
+    
+    # Return top N
+    selected = [c['ticker'] for c in scored_candidates[:top_n]]
+    
+    print(f"   ✅ BH 1Y VolSweet Accel: Selected {len(selected)} tickers: {selected}")
+    return selected
