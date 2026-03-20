@@ -1713,12 +1713,102 @@ if __name__ == "__main__":
                        help="Number of stocks to select (overrides PORTFOLIO_SIZE from config)")
     parser.add_argument("--live-trading", action="store_true", 
                        help="Run in live trading mode instead of backtesting")
+    parser.add_argument("--live-run", action="store_true",
+                       help="Run strategies live with current data (like quick_strategy_check.py)")
     parser.add_argument("--strategy", type=str, default="volatility_ensemble",
                        help="Strategy for live trading. Available: volatility_ensemble, enhanced_volatility, correlation_ensemble, momentum_breakout, factor_rotation, pairs_trading, earnings_momentum, insider_trading, options_sentiment, ml_ensemble, risk_adj_mom, dynamic_bh_1y, quality_momentum, momentum_ai_hybrid, elite_hybrid")
     
     args = parser.parse_args()
     
-    if args.live_trading:
+    if args.live_run:
+        # Live run mode: execute strategies with current data (like quick_strategy_check.py)
+        import src.config as config
+        
+        # Override PORTFOLIO_SIZE if --num-stocks is specified
+        if args.num_stocks is not None:
+            config.PORTFOLIO_SIZE = args.num_stocks
+            print(f"📊 Portfolio size: {args.num_stocks} stocks")
+        
+        print(f"🚀 Live Strategy Execution Mode")
+        print("=" * 80)
+        
+        # Load market data
+        from data_utils import load_all_market_data
+        from ticker_selection import get_all_tickers
+        from live_trading import get_strategy_tickers
+        from datetime import datetime, timezone
+        
+        print("\n📊 Loading market data...")
+        all_tickers = get_all_tickers()
+        all_tickers_data = load_all_market_data(all_tickers)
+        
+        if all_tickers_data.empty:
+            print("❌ No data loaded!")
+            sys.exit(1)
+        
+        # Convert to ticker_data_grouped format
+        ticker_data_grouped = {}
+        grouped = all_tickers_data.groupby('ticker')
+        
+        for ticker in all_tickers_data['ticker'].unique():
+            try:
+                ticker_df = grouped.get_group(ticker).copy()
+                if 'date' in ticker_df.columns:
+                    ticker_df = ticker_df.set_index('date')
+                ticker_df = ticker_df.drop('ticker', axis=1, errors='ignore')
+                ticker_data_grouped[ticker] = ticker_df
+            except KeyError:
+                pass
+        
+        print(f"   ✅ Got data for {len(ticker_data_grouped)} tickers")
+        
+        # Check if multiple strategies requested
+        strategies = [s.strip() for s in args.strategy.split(',')]
+        
+        if len(strategies) > 1:
+            # Multi-strategy live run with acceleration ranking
+            print(f"\n📊 Running {len(strategies)} strategies live...")
+            from multi_strategy_acceleration import combine_strategies_with_acceleration
+            
+            current_date = datetime.now(timezone.utc)
+            num_stocks = args.num_stocks if args.num_stocks else len(strategies) * 6
+            
+            acceleration_selections = combine_strategies_with_acceleration(
+                strategies, ticker_data_grouped, current_date, num_stocks
+            )
+            
+            # Show final recommendations
+            final_tickers = [s[0] for s in acceleration_selections]
+            print(f"\n🎯 FINAL LIVE RECOMMENDATIONS ({len(final_tickers)} stocks):")
+            print("=" * 80)
+            for i, ticker in enumerate(final_tickers, 1):
+                print(f"   {i:2}. {ticker}")
+            
+            print(f"\n💡 Execute these trades on your broker platform")
+            print("=" * 80)
+            
+        else:
+            # Single strategy live run
+            strategy = strategies[0]
+            print(f"\n🎯 Running {strategy} strategy live...")
+            
+            selected = get_strategy_tickers(strategy, list(ticker_data_grouped.keys()), ticker_data_grouped)
+            
+            if selected:
+                print(f"\n🎯 LIVE RECOMMENDATIONS ({strategy})")
+                print("=" * 80)
+                print(f"   Stocks to buy: {selected}")
+                print(f"   Number of positions: {len(selected)}")
+                print(f"   Investment per stock: ${config.TOTAL_CAPITAL / len(selected):,.2f}")
+                print(f"   Total investment: ${config.TOTAL_CAPITAL:,.2f}")
+                print("=" * 80)
+                print(f"\n💡 Execute these trades on your broker platform")
+            else:
+                print(f"   ❌ No tickers selected for {strategy}")
+        
+        sys.exit(0)
+    
+    elif args.live_trading:
         # Set strategy in config for live trading
         import src.config as config
         config.LIVE_TRADING_STRATEGY = args.strategy
