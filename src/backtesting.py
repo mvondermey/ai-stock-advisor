@@ -5199,6 +5199,42 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Voting Ensemble strategy error: {e}")
 
+        # MULTI-TIMEFRAME ENSEMBLE: Rebalance using multi-timeframe signals DAILY
+        if ENABLE_MULTI_TIMEFRAME_ENSEMBLE:
+            try:
+                from multi_timeframe_ensemble import select_multi_timeframe_stocks
+
+                new_multi_tf_ensemble_stocks = select_multi_timeframe_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE
+                )
+
+                if new_multi_tf_ensemble_stocks:
+                    print(f"   📊 Multi-TF Ensemble Day {day_count}: {new_multi_tf_ensemble_stocks}")
+                    # Use universal smart rebalancing function
+                    multi_tf_ensemble_positions, multi_tf_ensemble_cash, current_multi_tf_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Multi-TF Ensemble",
+                        current_stocks=current_multi_tf_ensemble_stocks,
+                        new_stocks=new_multi_tf_ensemble_stocks,
+                        positions=multi_tf_ensemble_positions,
+                        cash=multi_tf_ensemble_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_multi_tf_ensemble_stocks  # Force initial allocation
+                    )
+                    strategies_rebalanced_today['Multi-TF Ensemble'] = rebalanced_flag
+                    multi_tf_ensemble_transaction_costs += rebalance_costs
+                    multi_tf_ensemble_last_rebalance_value = multi_tf_ensemble_portfolio_value
+                else:
+                    print(f"   ⚠️ Multi-TF Ensemble: No stocks selected (no consensus)")
+
+            except Exception as e:
+                print(f"   ⚠️ Multi-TF Ensemble strategy error: {e}")
+
         # === MEAN REVERSION, QUALITY+MOM, VOL-ADJ MOM STRATEGIES ===
         # These strategies run independently of Dynamic BH performance data
 
