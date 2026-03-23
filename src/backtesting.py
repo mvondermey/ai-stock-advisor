@@ -6567,6 +6567,9 @@ def _run_portfolio_backtest_walk_forward(
             try:
                 from shared_strategies import select_bh_1y_dynamic_accel_stocks
 
+                # Check if this is initial allocation (no positions yet)
+                is_initial = not bh_1y_dynamic_accel_initialized and len(bh_1y_dynamic_accel_positions) == 0
+
                 bh_1y_dynamic_accel_days_since_rebalance += 1
 
                 new_bh_1y_dynamic_accel_stocks, should_rebalance = select_bh_1y_dynamic_accel_stocks(
@@ -6574,7 +6577,7 @@ def _run_portfolio_backtest_walk_forward(
                     ticker_data_grouped,
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE,
-                    days_since_rebalance=bh_1y_dynamic_accel_days_since_rebalance,
+                    days_since_rebalance=0 if is_initial else bh_1y_dynamic_accel_days_since_rebalance,  # Pass 0 for initial
                     min_days=5,
                     max_days=44
                 )
