@@ -233,14 +233,10 @@ def load_strategy_selections_with_comparison(strategy_name: str) -> Optional[Lis
     print(f"   " + "=" * 60)
     
     # Return live selections for actual trading (limited to PORTFOLIO_SIZE)
+    # NO FALLBACKS - only return live_selections, never backtest_selections
     if live_selections:
         num_to_use = min(len(live_selections), config.PORTFOLIO_SIZE)
         return live_selections[:num_to_use]
-    elif backtest_selections:
-        # Fallback to backtest selections
-        num_to_use = min(len(backtest_selections), config.PORTFOLIO_SIZE)
-        print(f"   [INFO] Using backtest selections as fallback")
-        return backtest_selections[:num_to_use]
     else:
         print(f"   [WARN] No selections available for {strategy_name}")
         return None
@@ -248,9 +244,8 @@ def load_strategy_selections_with_comparison(strategy_name: str) -> Optional[Lis
 
 def load_strategy_selections_from_json(strategy_name: str) -> Optional[List[str]]:
     """
-    Load strategy selections from the JSON file saved by backtesting.
-    First tries live_trading_selections.json (20 tickers per strategy),
-    then falls back to strategy_selections.json (actual positions).
+    Load strategy selections from live_trading_selections.json ONLY.
+    NO FALLBACKS - if file doesn't exist or strategy not found, return None.
     
     Args:
         strategy_name: Name of the strategy (e.g., 'momentum_volatility_hybrid_6m')
@@ -261,25 +256,16 @@ def load_strategy_selections_from_json(strategy_name: str) -> Optional[List[str]
     import json
     from pathlib import Path
     
-    # Try live trading selections first (20 tickers per strategy)
+    # ONLY use live_trading_selections.json - NO FALLBACKS
     live_selections_file = Path('logs/live_trading_selections.json')
-    selections_file = Path('logs/strategy_selections.json')
     
-    # Prefer live_trading_selections.json (has 20 tickers per strategy)
-    file_to_use = None
-    if live_selections_file.exists():
-        file_to_use = live_selections_file
-        print(f"   [INFO] Using live trading selections (20 tickers per strategy)")
-    elif selections_file.exists():
-        file_to_use = selections_file
-        print(f"   [INFO] Using backtest positions (fallback)")
-    else:
-        print(f"   [WARN] No strategy selections file found")
+    if not live_selections_file.exists():
+        print(f"   [ERROR] live_trading_selections.json not found")
         print(f"   [INFO] Run backtesting first to generate strategy selections")
         return None
     
     try:
-        with open(file_to_use, 'r') as f:
+        with open(live_selections_file, 'r') as f:
             data = json.load(f)
         
         # Check file age
@@ -293,8 +279,15 @@ def load_strategy_selections_from_json(strategy_name: str) -> Optional[List[str]
         
         # Get strategy tickers
         strategies = data.get('strategies', {})
+        
+        # Normalize strategy name
+        normalized_name = normalize_strategy_name(strategy_name, list(strategies.keys()))
+        if normalized_name != strategy_name:
+            print(f"   [INFO] Normalized '{strategy_name}' -> '{normalized_name}'")
+        strategy_name = normalized_name
+        
         if strategy_name in strategies:
-            # live_trading_selections.json has list directly, strategy_selections.json has dict with 'tickers' key
+            # live_trading_selections.json has list directly
             strategy_data = strategies[strategy_name]
             if isinstance(strategy_data, list):
                 tickers = strategy_data
@@ -305,44 +298,37 @@ def load_strategy_selections_from_json(strategy_name: str) -> Optional[List[str]
             num_to_use = min(len(tickers), config.PORTFOLIO_SIZE)
             tickers = tickers[:num_to_use]
             
-            print(f"   [INFO] Loaded {len(tickers)} tickers for {strategy_name} from {file_to_use.name}")
+            print(f"   [INFO] Loaded {len(tickers)} tickers for {strategy_name} from live_trading_selections.json")
             print(f"   [INFO] Backtest end date: {data.get('backtest_end_date', 'unknown')}")
             return tickers
         else:
-            print(f"   [WARN] Strategy '{strategy_name}' not found in selections file")
-            print(f"   [INFO] Available strategies: {list(strategies.keys())}")
+            print(f"   [ERROR] Strategy '{strategy_name}' not found in live_trading_selections.json")
             return None
             
     except Exception as e:
-        print(f"   [FAIL] Error loading strategy selections: {e}")
+        print(f"   [ERROR] Error loading strategy selections: {e}")
         return None
 
 
 def get_all_strategy_selections() -> Optional[Dict]:
-    """Load all strategy selections from JSON file.
-    Prefers live_trading_selections.json (has all 62 strategies with 20 tickers each).
-    Falls back to strategy_selections.json if live_trading_selections.json doesn't exist.
+    """Load all strategy selections from live_trading_selections.json ONLY.
+    NO FALLBACKS - returns None if file doesn't exist.
     """
     import json
     from pathlib import Path
     
-    # Prefer live_trading_selections.json (has all 62 strategies)
+    # ONLY use live_trading_selections.json - NO FALLBACKS
     live_selections_file = Path('logs/live_trading_selections.json')
-    selections_file = Path('logs/strategy_selections.json')
     
-    file_to_use = None
-    if live_selections_file.exists():
-        file_to_use = live_selections_file
-    elif selections_file.exists():
-        file_to_use = selections_file
-    else:
+    if not live_selections_file.exists():
+        print(f"   [ERROR] live_trading_selections.json not found")
         return None
     
     try:
-        with open(file_to_use, 'r') as f:
+        with open(live_selections_file, 'r') as f:
             return json.load(f)
     except Exception as e:
-        print(f"   ⚠️ Error loading selections from {file_to_use}: {e}")
+        print(f"   [ERROR] Error loading selections: {e}")
         return None
 
 
