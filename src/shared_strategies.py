@@ -16,13 +16,9 @@ from config import (
     RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER,
     RISK_ADJ_MOM_MIN_SCORE, VOLATILITY_ADJ_MOM_LOOKBACK, VOLATILITY_ADJ_MOM_VOL_WINDOW,
     VOLATILITY_ADJ_MOM_MIN_SCORE, DATA_FRESHNESS_MAX_DAYS,
-    ENABLE_MULTITASK_LEARNING,
     MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M, MIN_DATA_DAYS_GENERAL,
     ENABLE_INVERSE_ETF_HEDGE, INVERSE_ETF_HEDGE_THRESHOLD_LOW, INVERSE_ETF_HEDGE_BASE_ALLOCATION, INVERSE_ETF_HEDGE_PREFERENCE
 )
-
-# Multi-task learning strategy removed
-MULTITASK_AVAILABLE = False
 
 # Import AI Elite helper functions
 from ai_elite_strategy import _calculate_market_return
@@ -1100,57 +1096,6 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
     else:
         print(f"   ❌ No Annualized Acceleration candidates found")
         print(f"   ❌ Analyzed {len(filtered_tickers)} tickers, found {len(ratio_candidates)} valid candidates")
-        return []
-
-
-def select_multitask_learning_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame],
-                                     current_date: datetime = None, train_end_date: datetime = None, top_n: int = 20) -> List[str]:
-    """
-    Multi-Task Learning stock selection strategy wrapper.
-
-    This strategy uses unified models that learn from all tickers simultaneously,
-    enabling knowledge sharing and better generalization.
-
-    Args:
-        all_tickers: List of ticker symbols to analyze
-        ticker_data_grouped: Dict mapping ticker -> price data
-        current_date: Current date for analysis
-        train_start_date: Start date for training
-        train_end_date: End date for training
-        top_n: Number of stocks to select
-
-    Returns:
-        List[str]: Selected ticker symbols
-    """
-    from config import INVERSE_ETFS
-
-    # Exclude inverse ETFs
-    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
-
-    # Apply performance filters if enabled
-    from performance_filters import filter_tickers_by_performance
-    filtered_tickers = filter_tickers_by_performance(
-        tickers_to_use, ticker_data_grouped, current_date, "MultiTask"
-    )
-
-    if not MULTITASK_AVAILABLE:
-        print("   ⚠️ Multi-Task Learning not available, using fallback")
-        return []
-
-    if train_end_date is None:
-        print("   ⚠️ Multi-Task Learning requires training end date")
-        return []
-
-    try:
-        return select_multitask_stocks(
-            all_tickers=filtered_tickers,
-            ticker_data_grouped=ticker_data_grouped,
-            current_date=current_date,
-            train_end_date=train_end_date,
-            top_n=top_n
-        )
-    except Exception as e:
-        print(f"   ❌ Multi-Task Learning strategy error: {e}")
         return []
 
 

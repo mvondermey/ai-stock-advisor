@@ -576,9 +576,7 @@ ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validat
 
 ENABLE_MOMENTUM_AI_HYBRID = True  # ENABLED - Momentum+AI Hybrid
 
-ENABLE_MULTITASK_LEARNING = False # DISABLED - Multi-task learning
-
-ENABLE_AI_VOLATILITY_ENSEMBLE = False  # DISABLED - AI Volatility Ensemble
+ENABLE_AI_VOLATILITY_ENSEMBLE = True  # ENABLED - AI Volatility Ensemble
 
 
 
@@ -656,7 +654,7 @@ ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 
 ENABLE_PRICE_ACCELERATION = True   # ENABLED - Price Acceleration Strategy (physics-based velocity/acceleration)
 
-ENABLE_VOTING_ENSEMBLE = False   # DISABLED - Voting Ensemble Strategy (not performing well)
+ENABLE_VOTING_ENSEMBLE = True   # ENABLED - Voting Ensemble Strategy
 
 
 

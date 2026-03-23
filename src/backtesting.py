@@ -29,7 +29,7 @@ from config import (
     ENABLE_STATIC_BH_6M, ENABLE_STATIC_BH, ENABLE_DYNAMIC_BH_1Y, ENABLE_DYNAMIC_BH_6M, ENABLE_DYNAMIC_BH_3M, ENABLE_DYNAMIC_BH_1M,
     ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, ENABLE_SECTOR_ROTATION,
     MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M, MIN_DATA_DAYS_GENERAL,
-    ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_1M_3M_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M, ENABLE_ADAPTIVE_STRATEGY, ENABLE_TURNAROUND, ENABLE_PRICE_ACCELERATION,
+    ENABLE_3M_1Y_RATIO, ENABLE_1M_3M_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M, ENABLE_ADAPTIVE_STRATEGY, ENABLE_TURNAROUND, ENABLE_PRICE_ACCELERATION,
     ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_RISK_ADJ_MOM_SENTIMENT, ENABLE_AI_VOLATILITY_ENSEMBLE,
     ENABLE_PARALLEL_STRATEGIES, ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
     CALENDAR_DAYS_PER_YEAR,
@@ -116,7 +116,7 @@ from config import (
     ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY,
     ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP, DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT,
     ENABLE_SECTOR_ROTATION, AI_REBALANCE_FREQUENCY_DAYS, ENABLE_PROFIT_GUARD, ENABLE_STOP_LOSS, STOP_LOSS_PCT, STRATEGY_STOP_LOSS_PCT, PORTFOLIO_BUFFER_SIZE,
-    ENABLE_MULTITASK_LEARNING, ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M, ENABLE_ADAPTIVE_STRATEGY,
+    ENABLE_3M_1Y_RATIO, ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M, ENABLE_ADAPTIVE_STRATEGY,
     ENABLE_VOLATILITY_ENSEMBLE, ENABLE_ENHANCED_VOLATILITY, ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL, ENABLE_RISK_ADJ_MOM_SENTIMENT,
     ENABLE_TURNAROUND, ENABLE_VOTING_ENSEMBLE,
     ENABLE_STATIC_BH_1Y_MONTHLY, ENABLE_STATIC_BH_6M_MONTHLY, ENABLE_STATIC_BH_3M_MONTHLY, ENABLE_STATIC_BH_1M_MONTHLY,
@@ -187,7 +187,6 @@ STRATEGY_DISPLAY_NAMES = {
     'momentum_ai_hybrid': 'Momentum+AI',
     'volatility_adj_mom': 'Vol-Adj Mom',
     'sector_rotation': 'Sector Rotation',
-    'multitask': 'Multi-Task',
     'ratio_3m_1y': '3M/1Y Ratio',
     'ratio_1y_3m': '1Y/3M Ratio',
     'ratio_1m_3m': '1M/3M Ratio',
@@ -302,7 +301,6 @@ quality_momentum_transaction_costs = 0
 momentum_ai_hybrid_transaction_costs = 0
 volatility_adj_mom_transaction_costs = 0
 sector_rotation_transaction_costs = 0
-multitask_transaction_costs = 0
 ratio_3m_1y_transaction_costs = 0
 ratio_1y_3m_transaction_costs = 0
 turnaround_transaction_costs = 0
@@ -333,11 +331,11 @@ def _build_daily_strategy_data(locals_dict):
     # Helper to safely get value from locals
     def _get(name, default=None):
         return locals_dict.get(name, default)
-    
+
     # Build strategy data - each entry has value, history, cash, num_positions
     # Only include strategies that are enabled (value is not None/0)
     data = {}
-    
+
     # Define strategy mappings: (key, value_var, history_var, cash_var, positions_var_or_count)
     strategy_mappings = [
         ('static_bh_1y', 'static_bh_1y_portfolio_value', 'static_bh_1y_portfolio_history', 'static_bh_1y_cash', 'current_static_bh_1y_stocks'),
@@ -356,7 +354,6 @@ def _build_daily_strategy_data(locals_dict):
         ('momentum_ai_hybrid', 'momentum_ai_hybrid_portfolio_value', 'momentum_ai_hybrid_portfolio_history', 'momentum_ai_hybrid_cash', 'momentum_ai_hybrid_positions'),
         ('volatility_adj_mom', 'volatility_adj_mom_portfolio_value', 'volatility_adj_mom_portfolio_history', 'volatility_adj_mom_cash', 'current_volatility_adj_mom_stocks'),
         ('sector_rotation', 'sector_rotation_portfolio_value', 'sector_rotation_portfolio_history', 'sector_rotation_cash', 'current_sector_rotation_etfs'),
-        ('multitask', 'multitask_portfolio_value', 'multitask_portfolio_history', 'multitask_cash', 'multitask_positions'),
         ('ratio_3m_1y', 'ratio_3m_1y_portfolio_value', 'ratio_3m_1y_portfolio_history', 'ratio_3m_1y_cash', 'ratio_3m_1y_positions'),
         ('ratio_1y_3m', 'ratio_1y_3m_portfolio_value', 'ratio_1y_3m_portfolio_history', 'ratio_1y_3m_cash', 'ratio_1y_3m_positions'),
         ('ratio_1m_3m', 'ratio_1m_3m_portfolio_value', 'ratio_1m_3m_portfolio_history', 'ratio_1m_3m_cash', 'ratio_1m_3m_positions'),
@@ -460,7 +457,7 @@ def _build_daily_strategy_data(locals_dict):
         ('bh_1y_multi_factor', 'bh_1y_multi_factor_portfolio_value', 'bh_1y_multi_factor_portfolio_history', 'bh_1y_multi_factor_cash', 'bh_1y_multi_factor_positions'),
         ('bh_1y_time_decay', 'bh_1y_time_decay_portfolio_value', 'bh_1y_time_decay_portfolio_history', 'bh_1y_time_decay_cash', 'bh_1y_time_decay_positions'),
     ]
-    
+
     for key, value_var, history_var, cash_var, positions_var in strategy_mappings:
         value = _get(value_var)
         if value is not None and value > 0:
@@ -474,7 +471,7 @@ def _build_daily_strategy_data(locals_dict):
                 num_positions = len(positions)
             else:
                 num_positions = 0
-            
+
             data[key] = {
                 'value': value,
                 'history': history,
@@ -482,7 +479,7 @@ def _build_daily_strategy_data(locals_dict):
                 'positions': num_positions,
                 'display_name': STRATEGY_DISPLAY_NAMES.get(key, key)
             }
-    
+
     return data
 
 
@@ -2144,14 +2141,6 @@ def _run_portfolio_backtest_walk_forward(
     current_risk_adj_mom_stocks = []  # Current top N stocks held by risk-adjusted momentum
     risk_adj_mom_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
-    # MULTI-TASK LEARNING: Initialize portfolio tracking
-    multitask_portfolio_value = initial_capital_needed
-    multitask_portfolio_history = [multitask_portfolio_value]
-    multitask_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
-    multitask_cash = initial_capital_needed  # Start with same capital as AI
-    current_multitask_stocks = []  # Current top stocks held by multi-task learning
-    multitask_last_rebalance_value = initial_capital_needed  # Transaction cost guard
-
     # 3M/1Y RATIO: Initialize portfolio tracking
     ratio_3m_1y_portfolio_value = initial_capital_needed
     ratio_3m_1y_portfolio_history = [ratio_3m_1y_portfolio_value]
@@ -2761,7 +2750,7 @@ def _run_portfolio_backtest_walk_forward(
 
     # Reset global transaction cost tracking variables for this backtest
     global static_bh_transaction_costs, static_bh_3m_transaction_costs, static_bh_6m_transaction_costs, static_bh_1m_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_transaction_costs
-    global dynamic_bh_3m_transaction_costs, dynamic_bh_6m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs, multitask_transaction_costs, ratio_3m_1y_transaction_costs, ratio_1y_3m_transaction_costs, turnaround_transaction_costs, adaptive_ensemble_transaction_costs, volatility_ensemble_transaction_costs, correlation_ensemble_transaction_costs, dynamic_pool_transaction_costs, sentiment_ensemble_transaction_costs
+    global dynamic_bh_3m_transaction_costs, dynamic_bh_6m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs, ratio_3m_1y_transaction_costs, ratio_1y_3m_transaction_costs, turnaround_transaction_costs, adaptive_ensemble_transaction_costs, volatility_ensemble_transaction_costs, correlation_ensemble_transaction_costs, dynamic_pool_transaction_costs, sentiment_ensemble_transaction_costs
     global sector_rotation_transaction_costs, momentum_volatility_hybrid_transaction_costs, momentum_volatility_hybrid_6m_transaction_costs, momentum_volatility_hybrid_1y_transaction_costs, momentum_volatility_hybrid_1y3m_transaction_costs, enhanced_volatility_transaction_costs, ai_volatility_ensemble_transaction_costs, multi_tf_ensemble_transaction_costs
     static_bh_transaction_costs = 0.0  # Static BH has no transaction costs (buy once, hold)
     static_bh_3m_transaction_costs = 0.0
@@ -2779,7 +2768,6 @@ def _run_portfolio_backtest_walk_forward(
     volatility_adj_mom_transaction_costs = 0.0
     dynamic_bh_1y_vol_filter_transaction_costs = 0.0
     dynamic_bh_1y_trailing_stop_transaction_costs = 0.0
-    multitask_transaction_costs = 0.0
     ratio_3m_1y_transaction_costs = 0.0
     ratio_1y_3m_transaction_costs = 0.0
     ratio_1m_3m_transaction_costs = 0.0
@@ -4506,50 +4494,6 @@ def _run_portfolio_backtest_walk_forward(
                 risk_adj_mom_last_rebalance_value = _mark_to_market_value(
                     risk_adj_mom_positions, risk_adj_mom_cash, ticker_data_grouped, current_date
                 )
-
-        # === MULTI-TASK LEARNING STRATEGY ===
-        # Runs independently of Dynamic BH performance data
-        if ENABLE_MULTITASK_LEARNING:
-            from shared_strategies import select_multitask_learning_stocks
-
-            # Calculate training end date (day before current date to avoid lookahead bias)
-            multitask_train_end = current_date - timedelta(days=1)
-
-            try:
-                # Use multi-task learning strategy
-                new_multitask_stocks = select_multitask_learning_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date,
-                    multitask_train_end,    # Required for multi-task training
-                    top_n=PORTFOLIO_SIZE
-                )
-
-                if new_multitask_stocks:
-                    print(f"   📊 Multi-Task Day {day_count}: {new_multitask_stocks}")
-                    # Use universal smart rebalancing function
-                    multitask_positions, multitask_cash, current_multitask_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name="Multi-Task Learning",
-                        current_stocks=current_multitask_stocks,
-                        new_stocks=new_multitask_stocks,
-                        positions=multitask_positions,
-                        cash=multitask_cash,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        transaction_cost=TRANSACTION_COST,
-                        portfolio_size=PORTFOLIO_SIZE,
-                        force_rebalance=not current_multitask_stocks  # Force initial allocation
-                    )
-                    strategies_rebalanced_today['Multi-Task'] = rebalanced_flag
-                    multitask_transaction_costs += rebalance_costs
-                    multitask_last_rebalance_value = _mark_to_market_value(
-                        multitask_positions, multitask_cash, ticker_data_grouped, current_date
-                    )
-                else:
-                    print(f"   ⚠️ Multi-Task Learning: No stocks selected")
-
-            except Exception as e:
-                print(f"   ⚠️ Multi-Task Learning strategy error: {e}")
 
         # 3M/1Y RATIO: Rebalance to highest 3M/1Y ratio stocks DAILY
         if ENABLE_3M_1Y_RATIO:
@@ -7728,36 +7672,6 @@ def _run_portfolio_backtest_walk_forward(
             risk_adj_mom_sentiment_portfolio_value = risk_adj_mom_sentiment_invested_value + risk_adj_mom_sentiment_cash
             risk_adj_mom_sentiment_portfolio_history.append(risk_adj_mom_sentiment_portfolio_value)
 
-        # Update MULTI-TASK LEARNING portfolio value daily (skip if disabled)
-        multitask_invested_value = 0.0
-        if ENABLE_MULTITASK_LEARNING:
-            # Iterate over actual positions, not just current stocks list
-            for ticker in list(multitask_positions.keys()):
-                    try:
-                        ticker_data = ticker_data_grouped.get(ticker)
-                        if ticker_data is not None and not ticker_data.empty:
-                            # ticker_data already has date as index
-                            current_price_data = ticker_data.loc[:current_date]
-                            if not current_price_data.empty:
-                                # Drop NaN values to avoid NaN propagation
-                                valid_prices = current_price_data['Close'].dropna()
-                                if len(valid_prices) > 0:
-                                    current_price = valid_prices.iloc[-1]
-                                    if not pd.isna(current_price) and current_price > 0:
-                                        position_value = multitask_positions[ticker]['shares'] * current_price
-                                        multitask_positions[ticker]['value'] = position_value
-                                        multitask_invested_value += position_value
-                                else:
-                                    multitask_invested_value += multitask_positions[ticker].get('value', 0.0)
-                            else:
-                                multitask_invested_value += multitask_positions[ticker].get('value', 0.0)
-                    except Exception as e:
-                        print(f"   ⚠️ Error updating multi-task learning position for {ticker}: {e}")
-                        multitask_invested_value += multitask_positions[ticker].get('value', 0.0)
-
-            multitask_portfolio_value = multitask_invested_value + multitask_cash
-            multitask_portfolio_history.append(multitask_portfolio_value)
-
         # Update 3M/1Y RATIO portfolio value daily (skip if disabled)
         if ENABLE_3M_1Y_RATIO:
             ratio_3m_1y_invested_value = 0.0
@@ -9900,7 +9814,6 @@ def _run_portfolio_backtest_walk_forward(
             'dynamic_bh_1y_vol_filter': _strat(dynamic_bh_1y_vol_filter_portfolio_value, dynamic_bh_1y_vol_filter_portfolio_history, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_vol_filter_cash),
             'dynamic_bh_1y_trailing_stop': _strat(dynamic_bh_1y_trailing_stop_portfolio_value, dynamic_bh_1y_trailing_stop_portfolio_history, dynamic_bh_1y_trailing_stop_transaction_costs, dynamic_bh_1y_trailing_stop_cash),
             'risk_adj_mom':             _strat(risk_adj_mom_portfolio_value, risk_adj_mom_portfolio_history, risk_adj_mom_transaction_costs, risk_adj_mom_cash),
-            'multitask':                _strat(multitask_portfolio_value, multitask_portfolio_history, multitask_transaction_costs, multitask_cash),
             'mean_reversion':           _strat(mean_reversion_portfolio_value, mean_reversion_portfolio_history, mean_reversion_transaction_costs, mean_reversion_cash),
             'quality_momentum':         _strat(quality_momentum_portfolio_value, quality_momentum_portfolio_history, quality_momentum_transaction_costs, quality_momentum_cash),
             'momentum_ai_hybrid':       _strat(momentum_ai_hybrid_portfolio_value, momentum_ai_hybrid_portfolio_history, momentum_ai_hybrid_transaction_costs, momentum_ai_hybrid_cash),
@@ -10113,7 +10026,6 @@ def _run_portfolio_backtest_walk_forward(
             'momentum_volatility_hybrid': {'tickers': list(momentum_volatility_hybrid_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in momentum_volatility_hybrid_positions.items()}},
             'momentum_volatility_hybrid_1y': {'tickers': list(momentum_volatility_hybrid_1y_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in momentum_volatility_hybrid_1y_positions.items()}},
             'momentum_volatility_hybrid_1y3m': {'tickers': list(momentum_volatility_hybrid_1y3m_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in momentum_volatility_hybrid_1y3m_positions.items()}},
-            'multitask': {'tickers': list(current_multitask_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in multitask_positions.items()}},
             'risk_adj_mom_3m_market_up': {'tickers': list(current_risk_adj_mom_3m_market_up_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_3m_market_up_positions.items()}},
             'risk_adj_mom_3m_with_stops': {'tickers': list(current_risk_adj_mom_3m_with_stops_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_3m_with_stops_positions.items()}},
             'risk_adj_mom_1m_monthly': {'tickers': list(current_risk_adj_mom_1m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_1m_monthly_positions.items()}},
@@ -10161,7 +10073,7 @@ def _run_portfolio_backtest_walk_forward(
         select_mean_reversion_stocks, select_volatility_adj_mom_stocks,
         select_price_acceleration_stocks, select_turnaround_stocks,
         select_3m_1y_ratio_stocks, select_1y_3m_ratio_stocks,
-        select_top_performers_vol_filtered, select_multitask_learning_stocks,
+        select_top_performers_vol_filtered,
         select_momentum_volatility_hybrid_stocks
     )
 
