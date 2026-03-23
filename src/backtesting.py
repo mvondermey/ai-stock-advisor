@@ -166,6 +166,126 @@ from config import (
 )
 from scipy.stats import uniform, beta
 
+# =============================================================================
+# STRATEGY DISPLAY NAMES - Single source of truth for strategy name mapping
+# Maps internal strategy key to display name for daily summary and results
+# =============================================================================
+STRATEGY_DISPLAY_NAMES = {
+    'static_bh_1y': 'Static BH 1Y',
+    'static_bh_6m': 'Static BH 6M',
+    'static_bh_3m': 'Static BH 3M',
+    'static_bh_1m': 'Static BH 1M',
+    'dynamic_bh_1y': 'Dynamic BH 1Y',
+    'dynamic_bh_6m': 'Dynamic BH 6M',
+    'dynamic_bh_3m': 'Dynamic BH 3M',
+    'dynamic_bh_1m': 'Dynamic BH 1M',
+    'dynamic_bh_1y_vol_filter': 'Dynamic BH 1Y+Vol',
+    'dynamic_bh_1y_trailing_stop': 'Dynamic BH 1Y+TS',
+    'risk_adj_mom': 'Risk-Adj Mom',
+    'mean_reversion': 'Mean Reversion',
+    'quality_momentum': 'Quality+Mom',
+    'momentum_ai_hybrid': 'Momentum+AI',
+    'volatility_adj_mom': 'Vol-Adj Mom',
+    'sector_rotation': 'Sector Rotation',
+    'multitask': 'Multi-Task',
+    'ratio_3m_1y': '3M/1Y Ratio',
+    'ratio_1y_3m': '1Y/3M Ratio',
+    'ratio_1m_3m': '1M/3M Ratio',
+    'momentum_volatility_hybrid': 'Mom-Vol Hybrid',
+    'momentum_volatility_hybrid_6m': 'Mom-Vol Hybrid 6M',
+    'momentum_volatility_hybrid_1y': 'Mom-Vol Hybrid 1Y',
+    'momentum_volatility_hybrid_1y3m': 'Mom-Vol Hybrid 1Y/3M',
+    'price_acceleration': 'Price Acceleration',
+    'turnaround': 'Turnaround',
+    'adaptive_ensemble': 'Adaptive Ensemble',
+    'volatility_ensemble': 'Volatility Ensemble',
+    'enhanced_volatility': 'Enhanced Volatility',
+    'ai_volatility_ensemble': 'AI Volatility Ensemble',
+    'multi_tf_ensemble': 'Multi-TF Ensemble',
+    'correlation_ensemble': 'Correlation Ensemble',
+    'dynamic_pool': 'Dynamic Pool',
+    'risk_adj_mom_sentiment': 'RiskAdj Sent',
+    'voting_ensemble': 'Voting Ensemble',
+    'mom_accel': 'Mom Acceleration',
+    'concentrated_3m': 'Concentrated 3M',
+    'dual_momentum': 'Dual Momentum',
+    'trend_atr': 'Trend ATR',
+    'elite_hybrid': 'Elite Hybrid',
+    'elite_risk': 'Elite Risk',
+    'risk_adj_mom_6m': 'Risk-Adj Mom 6M',
+    'risk_adj_mom_6m_monthly': 'RiskAdj 6M Mth',
+    'risk_adj_mom_3m': 'Risk-Adj Mom 3M',
+    'risk_adj_mom_3m_monthly': 'RiskAdj 3M Mth',
+    'risk_adj_mom_3m_sentiment': 'RiskAdj 3M Sent',
+    'risk_adj_mom_3m_market_up': 'RiskAdj 3M Up',
+    'risk_adj_mom_3m_with_stops': 'RiskAdj 3M Stop',
+    'vol_sweet_mom': 'VolSweet Mom',
+    'risk_adj_mom_1m_vol_sweet': '1M VolSweet',
+    'bh_1y_volsweet_accel': 'BH 1Y VolSweet Accel',
+    'bh_1y_dynamic_accel': 'BH 1Y Dynamic Accel',
+    'risk_adj_mom_1m': 'Risk-Adj Mom 1M',
+    'risk_adj_mom_1m_monthly': 'RiskAdj 1M Mth',
+    'ai_elite': 'AI Elite',
+    'ai_elite_monthly': 'AI Elite Mth',
+    'ai_elite_filtered': 'AI Elite Flt',
+    'ai_elite_market_up': 'AI Elite Mkt-Up',
+    'ai_regime': 'AI Regime',
+    'ai_regime_monthly': 'AI Regime Mth',
+    'universal_model': 'Universal Model',
+    'inverse_etf_hedge': '🛡️ Inv ETF Hedge',
+    'analyst_rec': 'Analyst Rec',
+    'bh_1y_monthly': 'BH 1Y Monthly',
+    'bh_6m_monthly': 'BH 6M Monthly',
+    'bh_3m_monthly': 'BH 3M Monthly',
+    'bh_1m_monthly': 'BH 1M Monthly',
+    'meta_weighted_composite': 'Meta Weighted',
+    'meta_tiered_selection': 'Meta Tiered',
+    'meta_ensemble_alloc': 'Meta Ensemble',
+    'meta_regime_based': 'Meta Regime',
+    'meta_recency_weighted': 'Meta Recency',
+    'meta_efficiency_ratio': 'Meta Efficiency',
+    'meta_min_variance': 'Meta MinVar',
+    'meta_bayesian': 'Meta Bayesian',
+    'meta_adaptive_convex': 'Meta Adaptive',
+    'meta_consensus': 'Meta Consensus',
+    'bb_mean_reversion': 'BB Mean Rev',
+    'bb_breakout': 'BB Breakout',
+    'bb_squeeze_breakout': 'BB Squeeze',
+    'bb_rsi_combo': 'BB RSI Combo',
+    'trend_breakout': 'Trend Breakout',
+    'static_bh_1y_vol': 'BH 1Y Vol Trig',
+    'static_bh_1y_perf': 'BH 1Y Perf Trig',
+    'static_bh_1y_mom': 'BH 1Y Mom Trig',
+    'static_bh_1y_atr': 'BH 1Y ATR Trig',
+    'static_bh_1y_hybrid': 'BH 1Y Hybrid Trig',
+    'static_bh_1y_volume': 'BH 1Y Volume',
+    'static_bh_1y_sector': 'BH 1Y Sector',
+    'static_bh_1y_perf_threshold': 'BH 1Y Perf Thresh',
+    'static_bh_1y_market_regime': 'BH 1Y Market Regime',
+    'static_bh_1y_mom_persist': 'BH 1Y Mom Persist',
+    'static_bh_1y_overlap': 'BH 1Y Overlap',
+    'static_bh_1y_rank_drift': 'BH 1Y Rank Drift',
+    'static_bh_1y_drawdown': 'BH 1Y Drawdown',
+    'static_bh_1y_smart_monthly': 'BH 1Y Smart Mth',
+    'bh_1y_mom_sell': 'BH 1Y Mom Sell',
+    'bh_1y_rank_sell': 'BH 1Y Rank Sell',
+    'bh_1y_trailing_mom': 'BH 1Y Trail Mom',
+    'bh_1y_volume_confirm': 'BH 1Y Vol Conf',
+    'bh_1y_sector_aware': 'BH 1Y Sect Aware',
+    'bh_1y_accel_buy': 'BH 1Y Accel',
+    'static_bh_3m_accel': 'Static BH 3M Accel',
+    'bh_1y_vol_adj_rebal': 'Rebal 1Y VolAdj',
+    'bh_1y_corr_filter': 'Rebal 1Y CorrFilt',
+    'bh_1y_regime_aware': 'Rebal 1Y Regime',
+    'bh_1y_risk_parity': 'Rebal 1Y RiskPar',
+    'bh_1y_drift_thresh': 'Rebal 1Y Drift',
+    'bh_1y_mom_quality': 'Rebal 1Y MomQual',
+    'bh_1y_liquidity': 'Rebal 1Y Liquid',
+    'bh_1y_earnings_avoid': 'Rebal 1Y EarnAvd',
+    'bh_1y_multi_factor': 'Rebal 1Y MultiFact',
+    'bh_1y_time_decay': 'Rebal 1Y TimeDec',
+}
+
 # Global transaction cost tracking variables (initialized in main function)
 static_bh_transaction_costs = 0
 static_bh_3m_transaction_costs = 0
@@ -202,6 +322,168 @@ dynamic_bh_1y_trailing_stop_transaction_costs = 0
 adaptive_ensemble_transaction_costs = 0
 ai_volatility_ensemble_transaction_costs = 0
 multi_tf_ensemble_transaction_costs = 0
+
+
+def _build_daily_strategy_data(locals_dict):
+    """
+    Build strategy data for daily summary from local variables.
+    Returns dict mapping strategy_key -> {'value': float, 'history': list, 'cash': float, 'positions': int}
+    Uses STRATEGY_DISPLAY_NAMES for display name lookup.
+    """
+    # Helper to safely get value from locals
+    def _get(name, default=None):
+        return locals_dict.get(name, default)
+    
+    # Build strategy data - each entry has value, history, cash, num_positions
+    # Only include strategies that are enabled (value is not None/0)
+    data = {}
+    
+    # Define strategy mappings: (key, value_var, history_var, cash_var, positions_var_or_count)
+    strategy_mappings = [
+        ('static_bh_1y', 'static_bh_1y_portfolio_value', 'static_bh_1y_portfolio_history', 'static_bh_1y_cash', 'current_static_bh_1y_stocks'),
+        ('static_bh_6m', 'static_bh_6m_portfolio_value', 'static_bh_6m_portfolio_history', 'static_bh_6m_cash', 'current_static_bh_6m_stocks'),
+        ('static_bh_3m', 'static_bh_3m_portfolio_value', 'static_bh_3m_portfolio_history', 'static_bh_3m_cash', 'current_static_bh_3m_stocks'),
+        ('static_bh_1m', 'static_bh_1m_portfolio_value', 'static_bh_1m_portfolio_history', 'static_bh_1m_cash', 'current_static_bh_1m_stocks'),
+        ('dynamic_bh_1y', 'dynamic_bh_portfolio_value', 'dynamic_bh_portfolio_history', 'dynamic_bh_cash', 'current_dynamic_bh_stocks'),
+        ('dynamic_bh_6m', 'dynamic_bh_6m_portfolio_value', 'dynamic_bh_6m_portfolio_history', 'dynamic_bh_6m_cash', 'current_dynamic_bh_6m_stocks'),
+        ('dynamic_bh_3m', 'dynamic_bh_3m_portfolio_value', 'dynamic_bh_3m_portfolio_history', 'dynamic_bh_3m_cash', 'current_dynamic_bh_3m_stocks'),
+        ('dynamic_bh_1m', 'dynamic_bh_1m_portfolio_value', 'dynamic_bh_1m_portfolio_history', 'dynamic_bh_1m_cash', 'current_dynamic_bh_1m_stocks'),
+        ('dynamic_bh_1y_vol_filter', 'dynamic_bh_1y_vol_filter_portfolio_value', 'dynamic_bh_1y_vol_filter_portfolio_history', 'dynamic_bh_1y_vol_filter_cash', 'current_dynamic_bh_1y_vol_filter_stocks'),
+        ('dynamic_bh_1y_trailing_stop', 'dynamic_bh_1y_trailing_stop_portfolio_value', 'dynamic_bh_1y_trailing_stop_portfolio_history', 'dynamic_bh_1y_trailing_stop_cash', 'current_dynamic_bh_1y_trailing_stop_stocks'),
+        ('risk_adj_mom', 'risk_adj_mom_portfolio_value', 'risk_adj_mom_portfolio_history', 'risk_adj_mom_cash', 'current_risk_adj_mom_stocks'),
+        ('mean_reversion', 'mean_reversion_portfolio_value', 'mean_reversion_portfolio_history', 'mean_reversion_cash', 'current_mean_reversion_stocks'),
+        ('quality_momentum', 'quality_momentum_portfolio_value', 'quality_momentum_portfolio_history', 'quality_momentum_cash', 'current_quality_momentum_stocks'),
+        ('momentum_ai_hybrid', 'momentum_ai_hybrid_portfolio_value', 'momentum_ai_hybrid_portfolio_history', 'momentum_ai_hybrid_cash', 'momentum_ai_hybrid_positions'),
+        ('volatility_adj_mom', 'volatility_adj_mom_portfolio_value', 'volatility_adj_mom_portfolio_history', 'volatility_adj_mom_cash', 'current_volatility_adj_mom_stocks'),
+        ('sector_rotation', 'sector_rotation_portfolio_value', 'sector_rotation_portfolio_history', 'sector_rotation_cash', 'current_sector_rotation_etfs'),
+        ('multitask', 'multitask_portfolio_value', 'multitask_portfolio_history', 'multitask_cash', 'current_multitask_stocks'),
+        ('ratio_3m_1y', 'ratio_3m_1y_portfolio_value', 'ratio_3m_1y_portfolio_history', 'ratio_3m_1y_cash', 'ratio_3m_1y_positions'),
+        ('ratio_1y_3m', 'ratio_1y_3m_portfolio_value', 'ratio_1y_3m_portfolio_history', 'ratio_1y_3m_cash', 'ratio_1y_3m_positions'),
+        ('ratio_1m_3m', 'ratio_1m_3m_portfolio_value', 'ratio_1m_3m_portfolio_history', 'ratio_1m_3m_cash', 'ratio_1m_3m_positions'),
+        ('momentum_volatility_hybrid', 'momentum_volatility_hybrid_portfolio_value', 'momentum_volatility_hybrid_portfolio_history', 'momentum_volatility_hybrid_cash', 'momentum_volatility_hybrid_positions'),
+        ('momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_6m_portfolio_value', 'momentum_volatility_hybrid_6m_portfolio_history', 'momentum_volatility_hybrid_6m_cash', 'momentum_volatility_hybrid_6m_positions'),
+        ('momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y_portfolio_value', 'momentum_volatility_hybrid_1y_portfolio_history', 'momentum_volatility_hybrid_1y_cash', 'momentum_volatility_hybrid_1y_positions'),
+        ('momentum_volatility_hybrid_1y3m', 'momentum_volatility_hybrid_1y3m_portfolio_value', 'momentum_volatility_hybrid_1y3m_portfolio_history', 'momentum_volatility_hybrid_1y3m_cash', 'momentum_volatility_hybrid_1y3m_positions'),
+        ('price_acceleration', 'price_acceleration_portfolio_value', 'price_acceleration_portfolio_history', 'price_acceleration_cash', 'current_price_acceleration_stocks'),
+        ('turnaround', 'turnaround_portfolio_value', 'turnaround_portfolio_history', 'turnaround_cash', 'current_turnaround_stocks'),
+        ('adaptive_ensemble', 'adaptive_ensemble_portfolio_value', 'adaptive_ensemble_portfolio_history', 'adaptive_ensemble_cash', 'adaptive_ensemble_positions'),
+        ('volatility_ensemble', 'volatility_ensemble_portfolio_value', 'volatility_ensemble_portfolio_history', 'volatility_ensemble_cash', 'current_volatility_ensemble_stocks'),
+        ('enhanced_volatility', 'enhanced_volatility_portfolio_value', 'enhanced_volatility_portfolio_history', 'enhanced_volatility_cash', 'enhanced_volatility_positions'),
+        ('ai_volatility_ensemble', 'ai_volatility_ensemble_portfolio_value', 'ai_volatility_ensemble_portfolio_history', 'ai_volatility_ensemble_cash', 'ai_volatility_ensemble_positions'),
+        ('multi_tf_ensemble', 'multi_tf_ensemble_portfolio_value', 'multi_tf_ensemble_portfolio_history', 'multi_tf_ensemble_cash', 'multi_tf_ensemble_positions'),
+        ('correlation_ensemble', 'correlation_ensemble_portfolio_value', 'correlation_ensemble_portfolio_history', 'correlation_ensemble_cash', 'correlation_ensemble_positions'),
+        ('dynamic_pool', 'dynamic_pool_portfolio_value', 'dynamic_pool_portfolio_history', 'dynamic_pool_cash', 'dynamic_pool_positions'),
+        ('risk_adj_mom_sentiment', 'risk_adj_mom_sentiment_portfolio_value', 'risk_adj_mom_sentiment_portfolio_history', 'risk_adj_mom_sentiment_cash', 'risk_adj_mom_sentiment_positions'),
+        ('voting_ensemble', 'voting_ensemble_portfolio_value', 'voting_ensemble_portfolio_history', 'voting_ensemble_cash', 'voting_ensemble_positions'),
+        ('mom_accel', 'mom_accel_portfolio_value', 'mom_accel_portfolio_history', 'mom_accel_cash', 'mom_accel_positions'),
+        ('concentrated_3m', 'concentrated_3m_portfolio_value', 'concentrated_3m_portfolio_history', 'concentrated_3m_cash', 'concentrated_3m_positions'),
+        ('dual_momentum', 'dual_mom_portfolio_value', 'dual_mom_portfolio_history', 'dual_mom_cash', 'dual_mom_positions'),
+        ('trend_atr', 'trend_atr_portfolio_value', 'trend_atr_portfolio_history', 'trend_atr_cash', 'trend_atr_positions'),
+        ('elite_hybrid', 'elite_hybrid_portfolio_value', 'elite_hybrid_portfolio_history', 'elite_hybrid_cash', 'elite_hybrid_positions'),
+        ('elite_risk', 'elite_risk_portfolio_value', 'elite_risk_portfolio_history', 'elite_risk_cash', 'elite_risk_positions'),
+        ('risk_adj_mom_6m', 'risk_adj_mom_6m_portfolio_value', 'risk_adj_mom_6m_portfolio_history', 'risk_adj_mom_6m_cash', 'current_risk_adj_mom_6m_stocks'),
+        ('risk_adj_mom_6m_monthly', 'risk_adj_mom_6m_monthly_portfolio_value', 'risk_adj_mom_6m_monthly_portfolio_history', 'risk_adj_mom_6m_monthly_cash', 'risk_adj_mom_6m_monthly_positions'),
+        ('risk_adj_mom_3m', 'risk_adj_mom_3m_portfolio_value', 'risk_adj_mom_3m_portfolio_history', 'risk_adj_mom_3m_cash', 'current_risk_adj_mom_3m_stocks'),
+        ('risk_adj_mom_3m_monthly', 'risk_adj_mom_3m_monthly_portfolio_value', 'risk_adj_mom_3m_monthly_portfolio_history', 'risk_adj_mom_3m_monthly_cash', 'risk_adj_mom_3m_monthly_positions'),
+        ('risk_adj_mom_3m_sentiment', 'risk_adj_mom_3m_sentiment_portfolio_value', 'risk_adj_mom_3m_sentiment_portfolio_history', 'risk_adj_mom_3m_sentiment_cash', 'risk_adj_mom_3m_sentiment_positions'),
+        ('risk_adj_mom_3m_market_up', 'risk_adj_mom_3m_market_up_portfolio_value', 'risk_adj_mom_3m_market_up_portfolio_history', 'risk_adj_mom_3m_market_up_cash', 'risk_adj_mom_3m_market_up_positions'),
+        ('risk_adj_mom_3m_with_stops', 'risk_adj_mom_3m_with_stops_portfolio_value', 'risk_adj_mom_3m_with_stops_portfolio_history', 'risk_adj_mom_3m_with_stops_cash', 'risk_adj_mom_3m_with_stops_positions'),
+        ('vol_sweet_mom', 'vol_sweet_mom_portfolio_value', 'vol_sweet_mom_portfolio_history', 'vol_sweet_mom_cash', 'vol_sweet_mom_positions'),
+        ('risk_adj_mom_1m_vol_sweet', 'risk_adj_mom_1m_vol_sweet_portfolio_value', 'risk_adj_mom_1m_vol_sweet_portfolio_history', 'risk_adj_mom_1m_vol_sweet_cash', 'current_risk_adj_mom_1m_vol_sweet_stocks'),
+        ('bh_1y_volsweet_accel', 'bh_1y_volsweet_accel_portfolio_value', 'bh_1y_volsweet_accel_portfolio_history', 'bh_1y_volsweet_accel_cash', 'current_bh_1y_volsweet_accel_stocks'),
+        ('bh_1y_dynamic_accel', 'bh_1y_dynamic_accel_portfolio_value', 'bh_1y_dynamic_accel_portfolio_history', 'bh_1y_dynamic_accel_cash', 'current_bh_1y_dynamic_accel_stocks'),
+        ('risk_adj_mom_1m', 'risk_adj_mom_1m_portfolio_value', 'risk_adj_mom_1m_portfolio_history', 'risk_adj_mom_1m_cash', 'current_risk_adj_mom_1m_stocks'),
+        ('risk_adj_mom_1m_monthly', 'risk_adj_mom_1m_monthly_portfolio_value', 'risk_adj_mom_1m_monthly_portfolio_history', 'risk_adj_mom_1m_monthly_cash', 'risk_adj_mom_1m_monthly_positions'),
+        ('ai_elite', 'ai_elite_portfolio_value', 'ai_elite_portfolio_history', 'ai_elite_cash', 'ai_elite_positions'),
+        ('ai_elite_monthly', 'ai_elite_monthly_portfolio_value', 'ai_elite_monthly_portfolio_history', 'ai_elite_monthly_cash', 'ai_elite_monthly_positions'),
+        ('ai_elite_filtered', 'ai_elite_filtered_portfolio_value', 'ai_elite_filtered_portfolio_history', 'ai_elite_filtered_cash', 'ai_elite_filtered_positions'),
+        ('ai_elite_market_up', 'ai_elite_market_up_portfolio_value', 'ai_elite_market_up_portfolio_history', 'ai_elite_market_up_cash', 'ai_elite_market_up_positions'),
+        ('ai_regime', 'ai_regime_portfolio_value', 'ai_regime_portfolio_history', 'ai_regime_cash', 'ai_regime_positions'),
+        ('ai_regime_monthly', 'ai_regime_monthly_portfolio_value', 'ai_regime_monthly_portfolio_history', 'ai_regime_monthly_cash', 'ai_regime_monthly_positions'),
+        ('universal_model', 'universal_model_portfolio_value', 'universal_model_portfolio_history', 'universal_model_cash', 'universal_model_positions'),
+        ('inverse_etf_hedge', 'inverse_etf_hedge_portfolio_value', 'inverse_etf_hedge_portfolio_history', 'inverse_etf_hedge_cash', 'current_inverse_etf_hedge_stocks'),
+        ('analyst_rec', 'analyst_rec_portfolio_value', 'analyst_rec_portfolio_history', 'analyst_rec_cash', 'analyst_rec_positions'),
+        ('bh_1y_monthly', 'static_bh_1y_monthly_portfolio_value', 'static_bh_1y_monthly_portfolio_history', 'static_bh_1y_monthly_cash', 'static_bh_1y_monthly_positions'),
+        ('bh_6m_monthly', 'static_bh_6m_monthly_portfolio_value', 'static_bh_6m_monthly_portfolio_history', 'static_bh_6m_monthly_cash', 'static_bh_6m_monthly_positions'),
+        ('bh_3m_monthly', 'static_bh_3m_monthly_portfolio_value', 'static_bh_3m_monthly_portfolio_history', 'static_bh_3m_monthly_cash', 'static_bh_3m_monthly_positions'),
+        ('bh_1m_monthly', 'static_bh_1m_monthly_portfolio_value', 'static_bh_1m_monthly_portfolio_history', 'static_bh_1m_monthly_cash', 'static_bh_1m_monthly_positions'),
+        # Meta-Strategy Selectors
+        ('meta_weighted_composite', 'meta_weighted_composite_value', 'meta_weighted_composite_history', 'meta_weighted_composite_cash', 'meta_weighted_composite_positions'),
+        ('meta_tiered_selection', 'meta_tiered_selection_value', 'meta_tiered_selection_history', 'meta_tiered_selection_cash', 'meta_tiered_selection_positions'),
+        ('meta_ensemble_alloc', 'meta_ensemble_alloc_value', 'meta_ensemble_alloc_history', 'meta_ensemble_alloc_cash', 'meta_ensemble_alloc_positions'),
+        ('meta_regime_based', 'meta_regime_based_value', 'meta_regime_based_history', 'meta_regime_based_cash', 'meta_regime_based_positions'),
+        ('meta_recency_weighted', 'meta_recency_weighted_value', 'meta_recency_weighted_history', 'meta_recency_weighted_cash', 'meta_recency_weighted_positions'),
+        ('meta_efficiency_ratio', 'meta_efficiency_ratio_value', 'meta_efficiency_ratio_history', 'meta_efficiency_ratio_cash', 'meta_efficiency_ratio_positions'),
+        ('meta_min_variance', 'meta_min_variance_value', 'meta_min_variance_history', 'meta_min_variance_cash', 'meta_min_variance_positions'),
+        ('meta_bayesian', 'meta_bayesian_value', 'meta_bayesian_history', 'meta_bayesian_cash', 'meta_bayesian_positions'),
+        ('meta_adaptive_convex', 'meta_adaptive_convex_value', 'meta_adaptive_convex_history', 'meta_adaptive_convex_cash', 'meta_adaptive_convex_positions'),
+        ('meta_consensus', 'meta_consensus_value', 'meta_consensus_history', 'meta_consensus_cash', 'meta_consensus_positions'),
+        # Bollinger Bands Strategies
+        ('bb_mean_reversion', 'bb_mean_reversion_value', 'bb_mean_reversion_history', 'bb_mean_reversion_cash', 'bb_mean_reversion_positions'),
+        ('bb_breakout', 'bb_breakout_value', 'bb_breakout_history', 'bb_breakout_cash', 'bb_breakout_positions'),
+        ('bb_squeeze_breakout', 'bb_squeeze_breakout_value', 'bb_squeeze_breakout_history', 'bb_squeeze_breakout_cash', 'bb_squeeze_breakout_positions'),
+        ('bb_rsi_combo', 'bb_rsi_combo_value', 'bb_rsi_combo_history', 'bb_rsi_combo_cash', 'bb_rsi_combo_positions'),
+        ('trend_breakout', 'trend_breakout_value', 'trend_breakout_history', 'trend_breakout_cash', 'trend_breakout_positions'),
+        # Adaptive Rebalancing Strategies
+        ('static_bh_1y_vol', 'static_bh_1y_vol_portfolio_value', 'static_bh_1y_vol_portfolio_history', 'static_bh_1y_vol_cash', 'static_bh_1y_vol_positions'),
+        ('static_bh_1y_perf', 'static_bh_1y_perf_portfolio_value', 'static_bh_1y_perf_portfolio_history', 'static_bh_1y_perf_cash', 'static_bh_1y_perf_positions'),
+        ('static_bh_1y_mom', 'static_bh_1y_mom_portfolio_value', 'static_bh_1y_mom_portfolio_history', 'static_bh_1y_mom_cash', 'static_bh_1y_mom_positions'),
+        ('static_bh_1y_atr', 'static_bh_1y_atr_portfolio_value', 'static_bh_1y_atr_portfolio_history', 'static_bh_1y_atr_cash', 'static_bh_1y_atr_positions'),
+        ('static_bh_1y_hybrid', 'static_bh_1y_hybrid_portfolio_value', 'static_bh_1y_hybrid_portfolio_history', 'static_bh_1y_hybrid_cash', 'static_bh_1y_hybrid_positions'),
+        # Enhanced Static BH 1Y Strategies
+        ('static_bh_1y_volume', 'static_bh_1y_volume_portfolio_value', 'static_bh_1y_volume_portfolio_history', 'static_bh_1y_volume_cash', 'static_bh_1y_volume_positions'),
+        ('static_bh_1y_sector', 'static_bh_1y_sector_portfolio_value', 'static_bh_1y_sector_portfolio_history', 'static_bh_1y_sector_cash', 'static_bh_1y_sector_positions'),
+        ('static_bh_1y_perf_threshold', 'static_bh_1y_perf_threshold_portfolio_value', 'static_bh_1y_perf_threshold_portfolio_history', 'static_bh_1y_perf_threshold_cash', 'static_bh_1y_perf_threshold_positions'),
+        ('static_bh_1y_market_regime', 'static_bh_1y_market_regime_portfolio_value', 'static_bh_1y_market_regime_portfolio_history', 'static_bh_1y_market_regime_cash', 'static_bh_1y_market_regime_positions'),
+        ('static_bh_1y_mom_persist', 'static_bh_1y_mom_persist_portfolio_value', 'static_bh_1y_mom_persist_portfolio_history', 'static_bh_1y_mom_persist_cash', 'static_bh_1y_mom_persist_positions'),
+        ('static_bh_1y_overlap', 'static_bh_1y_overlap_portfolio_value', 'static_bh_1y_overlap_portfolio_history', 'static_bh_1y_overlap_cash', 'static_bh_1y_overlap_positions'),
+        ('static_bh_1y_rank_drift', 'static_bh_1y_rank_drift_portfolio_value', 'static_bh_1y_rank_drift_portfolio_history', 'static_bh_1y_rank_drift_cash', 'static_bh_1y_rank_drift_positions'),
+        ('static_bh_1y_drawdown', 'static_bh_1y_drawdown_portfolio_value', 'static_bh_1y_drawdown_portfolio_history', 'static_bh_1y_drawdown_cash', 'static_bh_1y_drawdown_positions'),
+        ('static_bh_1y_smart_monthly', 'static_bh_1y_smart_monthly_portfolio_value', 'static_bh_1y_smart_monthly_portfolio_history', 'static_bh_1y_smart_monthly_cash', 'static_bh_1y_smart_monthly_positions'),
+        # Smart Rebalancing Strategies
+        ('bh_1y_mom_sell', 'bh_1y_mom_sell_portfolio_value', 'bh_1y_mom_sell_portfolio_history', 'bh_1y_mom_sell_cash', 'bh_1y_mom_sell_positions'),
+        ('bh_1y_rank_sell', 'bh_1y_rank_sell_portfolio_value', 'bh_1y_rank_sell_portfolio_history', 'bh_1y_rank_sell_cash', 'bh_1y_rank_sell_positions'),
+        ('bh_1y_trailing_mom', 'bh_1y_trailing_mom_portfolio_value', 'bh_1y_trailing_mom_portfolio_history', 'bh_1y_trailing_mom_cash', 'bh_1y_trailing_mom_positions'),
+        ('bh_1y_volume_confirm', 'bh_1y_volume_confirm_portfolio_value', 'bh_1y_volume_confirm_portfolio_history', 'bh_1y_volume_confirm_cash', 'bh_1y_volume_confirm_positions'),
+        ('bh_1y_sector_aware', 'bh_1y_sector_aware_portfolio_value', 'bh_1y_sector_aware_portfolio_history', 'bh_1y_sector_aware_cash', 'bh_1y_sector_aware_positions'),
+        ('bh_1y_accel_buy', 'bh_1y_accel_buy_portfolio_value', 'bh_1y_accel_buy_portfolio_history', 'bh_1y_accel_buy_cash', 'bh_1y_accel_buy_positions'),
+        ('static_bh_3m_accel', 'static_bh_3m_accel_portfolio_value', 'static_bh_3m_accel_portfolio_history', 'static_bh_3m_accel_cash', 'static_bh_3m_accel_positions'),
+        # 10 New Rebalancing Strategies
+        ('bh_1y_vol_adj_rebal', 'bh_1y_vol_adj_rebal_portfolio_value', 'bh_1y_vol_adj_rebal_portfolio_history', 'bh_1y_vol_adj_rebal_cash', 'bh_1y_vol_adj_rebal_positions'),
+        ('bh_1y_corr_filter', 'bh_1y_corr_filter_portfolio_value', 'bh_1y_corr_filter_portfolio_history', 'bh_1y_corr_filter_cash', 'bh_1y_corr_filter_positions'),
+        ('bh_1y_regime_aware', 'bh_1y_regime_aware_portfolio_value', 'bh_1y_regime_aware_portfolio_history', 'bh_1y_regime_aware_cash', 'bh_1y_regime_aware_positions'),
+        ('bh_1y_risk_parity', 'bh_1y_risk_parity_portfolio_value', 'bh_1y_risk_parity_portfolio_history', 'bh_1y_risk_parity_cash', 'bh_1y_risk_parity_positions'),
+        ('bh_1y_drift_thresh', 'bh_1y_drift_thresh_portfolio_value', 'bh_1y_drift_thresh_portfolio_history', 'bh_1y_drift_thresh_cash', 'bh_1y_drift_thresh_positions'),
+        ('bh_1y_mom_quality', 'bh_1y_mom_quality_portfolio_value', 'bh_1y_mom_quality_portfolio_history', 'bh_1y_mom_quality_cash', 'bh_1y_mom_quality_positions'),
+        ('bh_1y_liquidity', 'bh_1y_liquidity_portfolio_value', 'bh_1y_liquidity_portfolio_history', 'bh_1y_liquidity_cash', 'bh_1y_liquidity_positions'),
+        ('bh_1y_earnings_avoid', 'bh_1y_earnings_avoid_portfolio_value', 'bh_1y_earnings_avoid_portfolio_history', 'bh_1y_earnings_avoid_cash', 'bh_1y_earnings_avoid_positions'),
+        ('bh_1y_multi_factor', 'bh_1y_multi_factor_portfolio_value', 'bh_1y_multi_factor_portfolio_history', 'bh_1y_multi_factor_cash', 'bh_1y_multi_factor_positions'),
+        ('bh_1y_time_decay', 'bh_1y_time_decay_portfolio_value', 'bh_1y_time_decay_portfolio_history', 'bh_1y_time_decay_cash', 'bh_1y_time_decay_positions'),
+    ]
+    
+    for key, value_var, history_var, cash_var, positions_var in strategy_mappings:
+        value = _get(value_var)
+        if value is not None and value > 0:
+            history = _get(history_var, [])
+            cash = _get(cash_var, 0)
+            positions = _get(positions_var)
+            # Handle both list and dict for positions
+            if isinstance(positions, dict):
+                num_positions = len(positions)
+            elif isinstance(positions, (list, tuple)):
+                num_positions = len(positions)
+            else:
+                num_positions = 0
+            
+            data[key] = {
+                'value': value,
+                'history': history,
+                'cash': cash,
+                'positions': num_positions,
+                'display_name': STRATEGY_DISPLAY_NAMES.get(key, key)
+            }
+    
+    return data
 
 
 def _collect_data_worker(args):
@@ -9340,6 +9622,7 @@ def _run_portfolio_backtest_walk_forward(
                 ("Multi-Task", multitask_portfolio_value if ENABLE_MULTITASK_LEARNING else None),
                 ("3M/1Y Ratio", ratio_3m_1y_portfolio_value if ENABLE_3M_1Y_RATIO else None),
                 ("1Y/3M Ratio", ratio_1y_3m_portfolio_value),
+                ("1M/3M Ratio", ratio_1m_3m_portfolio_value if ENABLE_1M_3M_RATIO else None),
                 ("Mom-Vol Hybrid", momentum_volatility_hybrid_portfolio_value if ENABLE_MOMENTUM_VOLATILITY_HYBRID else None),
                 ("Mom-Vol Hybrid 6M", momentum_volatility_hybrid_6m_portfolio_value if ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M else None),
                 ("Mom-Vol Hybrid 1Y", momentum_volatility_hybrid_1y_portfolio_value if ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y else None),
