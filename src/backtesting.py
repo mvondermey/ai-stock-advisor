@@ -153,6 +153,7 @@ from config import (
     STATIC_BH_1Y_SMART_MONTHLY_DRAWDOWN,
     # 10 New Rebalancing Strategies
     ENABLE_BH_1Y_VOL_ADJ_REBAL, BH_1Y_VOL_ADJ_REBAL_LOW_VOL_THRESH, BH_1Y_VOL_ADJ_REBAL_HIGH_VOL_THRESH, BH_1Y_VOL_ADJ_REBAL_MIN_DAYS, BH_1Y_VOL_ADJ_REBAL_MAX_DAYS,
+    ENABLE_RATIO_1M3M_VOL_ADJ_REBAL,
     ENABLE_BH_1Y_CORR_FILTER, BH_1Y_CORR_FILTER_THRESH, BH_1Y_CORR_FILTER_LOOKBACK,
     ENABLE_BH_1Y_REGIME_AWARE, BH_1Y_REGIME_BULL_MA, BH_1Y_REGIME_BEAR_MA, BH_1Y_REGIME_REBAL_BULL, BH_1Y_REGIME_REBAL_BEAR, BH_1Y_REGIME_REBAL_SIDEWAYS,
     ENABLE_BH_1Y_RISK_PARITY, BH_1Y_RISK_PARITY_VOL_LOOKBACK, BH_1Y_RISK_PARITY_MIN_WEIGHT, BH_1Y_RISK_PARITY_MAX_WEIGHT,
@@ -274,6 +275,7 @@ STRATEGY_DISPLAY_NAMES = {
     'bh_1y_accel_buy': 'BH 1Y Accel',
     'static_bh_3m_accel': 'Static BH 3M Accel',
     'bh_1y_vol_adj_rebal': 'Rebal 1Y VolAdj',
+    'ratio_1m3m_vol_adj_rebal': 'Rebal 1M3M VolAdj',
     'bh_1y_corr_filter': 'Rebal 1Y CorrFilt',
     'bh_1y_regime_aware': 'Rebal 1Y Regime',
     'bh_1y_risk_parity': 'Rebal 1Y RiskPar',
@@ -1915,6 +1917,16 @@ def _run_portfolio_backtest_walk_forward(
     bh_1y_vol_adj_rebal_initialized = False
     bh_1y_vol_adj_rebal_transaction_costs = 0.0
     bh_1y_vol_adj_rebal_days_since_rebalance = 0
+
+    # 1b. Volatility-Adjusted Rebalancing with 1M/3M Ratio ranking
+    ratio_1m3m_vol_adj_rebal_portfolio_value = initial_capital_needed
+    ratio_1m3m_vol_adj_rebal_portfolio_history = [ratio_1m3m_vol_adj_rebal_portfolio_value]
+    ratio_1m3m_vol_adj_rebal_positions = {}
+    ratio_1m3m_vol_adj_rebal_cash = initial_capital_needed
+    current_ratio_1m3m_vol_adj_rebal_stocks = []
+    ratio_1m3m_vol_adj_rebal_initialized = False
+    ratio_1m3m_vol_adj_rebal_transaction_costs = 0.0
+    ratio_1m3m_vol_adj_rebal_days_since_rebalance = 0
 
     # 2. Correlation-Based Filtering
     bh_1y_corr_filter_portfolio_value = initial_capital_needed
@@ -3657,6 +3669,39 @@ def _run_portfolio_backtest_walk_forward(
                 bh_1y_vol_adj_rebal_transaction_costs += rc
                 bh_1y_vol_adj_rebal_initialized = True
                 bh_1y_vol_adj_rebal_days_since_rebalance = 0
+
+        # 1b. Volatility-Adjusted Rebalancing with 1M/3M Ratio ranking
+        if ENABLE_RATIO_1M3M_VOL_ADJ_REBAL:
+            from enhanced_static_bh_strategies import get_vol_adjusted_rebalance_days
+            from shared_strategies import select_1y_performers_ranked_by_1m3m_ratio
+            ratio_1m3m_vol_adj_rebal_days_since_rebalance += 1
+
+            # Calculate adaptive rebalance days based on volatility (same logic as original)
+            vol_adjusted_days = get_vol_adjusted_rebalance_days(ticker_data_grouped, current_date, _rebal_config)
+
+            should_init_or_rebalance = (
+                (not ratio_1m3m_vol_adj_rebal_initialized) or
+                (vol_adjusted_days > 0 and ratio_1m3m_vol_adj_rebal_days_since_rebalance >= vol_adjusted_days)
+            )
+
+            if should_init_or_rebalance:
+                # Select top 1Y performers, then rank by 1M/3M ratio (acceleration)
+                new_stocks = select_1y_performers_ranked_by_1m3m_ratio(initial_top_tickers, ticker_data_grouped, current_date, top_n=PORTFOLIO_SIZE)
+
+                print(f"   📊 Rebal 1M3M VolAdj Day {day_count}: {new_stocks}")
+                if not ratio_1m3m_vol_adj_rebal_initialized:
+                    print(f"   🎯 Rebal 1M3M VolAdj: Initializing")
+
+                ratio_1m3m_vol_adj_rebal_positions, ratio_1m3m_vol_adj_rebal_cash, current_ratio_1m3m_vol_adj_rebal_stocks, rc, _ = _smart_rebalance_portfolio(
+                    strategy_name="Rebal 1M3M VolAdj", current_stocks=current_ratio_1m3m_vol_adj_rebal_stocks,
+                    new_stocks=new_stocks, positions=ratio_1m3m_vol_adj_rebal_positions, cash=ratio_1m3m_vol_adj_rebal_cash,
+                    ticker_data_grouped=ticker_data_grouped, current_date=current_date,
+                    transaction_cost=TRANSACTION_COST, portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=not ratio_1m3m_vol_adj_rebal_initialized
+                )
+                ratio_1m3m_vol_adj_rebal_transaction_costs += rc
+                ratio_1m3m_vol_adj_rebal_initialized = True
+                ratio_1m3m_vol_adj_rebal_days_since_rebalance = 0
 
         # 2. Correlation-Based Filtering
         if ENABLE_BH_1Y_CORR_FILTER:
@@ -9294,6 +9339,13 @@ def _run_portfolio_backtest_walk_forward(
             )
             bh_1y_vol_adj_rebal_portfolio_history.append(bh_1y_vol_adj_rebal_portfolio_value)
 
+        # 1b. Volatility-Adjusted Rebalancing with 1M/3M Ratio ranking
+        if ENABLE_RATIO_1M3M_VOL_ADJ_REBAL:
+            ratio_1m3m_vol_adj_rebal_portfolio_value = _update_smart_strategy_value(
+                ratio_1m3m_vol_adj_rebal_positions, ratio_1m3m_vol_adj_rebal_cash, ticker_data_grouped, current_date
+            )
+            ratio_1m3m_vol_adj_rebal_portfolio_history.append(ratio_1m3m_vol_adj_rebal_portfolio_value)
+
         # 2. Correlation-Based Filtering
         if ENABLE_BH_1Y_CORR_FILTER:
             bh_1y_corr_filter_portfolio_value = _update_smart_strategy_value(
@@ -9915,6 +9967,7 @@ def _run_portfolio_backtest_walk_forward(
             'static_bh_3m_accel': _strat(static_bh_3m_accel_portfolio_value, static_bh_3m_accel_portfolio_history, static_bh_3m_accel_transaction_costs, static_bh_3m_accel_cash) if ENABLE_STATIC_BH_3M_ACCEL else _strat(0, [], 0, 0),
             # 10 New Rebalancing Strategies
             'bh_1y_vol_adj_rebal': _strat(bh_1y_vol_adj_rebal_portfolio_value, bh_1y_vol_adj_rebal_portfolio_history, bh_1y_vol_adj_rebal_transaction_costs, bh_1y_vol_adj_rebal_cash) if ENABLE_BH_1Y_VOL_ADJ_REBAL else _strat(0, [], 0, 0),
+            'ratio_1m3m_vol_adj_rebal': _strat(ratio_1m3m_vol_adj_rebal_portfolio_value, ratio_1m3m_vol_adj_rebal_portfolio_history, ratio_1m3m_vol_adj_rebal_transaction_costs, ratio_1m3m_vol_adj_rebal_cash) if ENABLE_RATIO_1M3M_VOL_ADJ_REBAL else _strat(0, [], 0, 0),
             'bh_1y_corr_filter': _strat(bh_1y_corr_filter_portfolio_value, bh_1y_corr_filter_portfolio_history, bh_1y_corr_filter_transaction_costs, bh_1y_corr_filter_cash) if ENABLE_BH_1Y_CORR_FILTER else _strat(0, [], 0, 0),
             'bh_1y_regime_aware': _strat(bh_1y_regime_aware_portfolio_value, bh_1y_regime_aware_portfolio_history, bh_1y_regime_aware_transaction_costs, bh_1y_regime_aware_cash) if ENABLE_BH_1Y_REGIME_AWARE else _strat(0, [], 0, 0),
             'bh_1y_risk_parity': _strat(bh_1y_risk_parity_portfolio_value, bh_1y_risk_parity_portfolio_history, bh_1y_risk_parity_transaction_costs, bh_1y_risk_parity_cash) if ENABLE_BH_1Y_RISK_PARITY else _strat(0, [], 0, 0),
@@ -9999,6 +10052,7 @@ def _run_portfolio_backtest_walk_forward(
             'bh_1y_accel_buy': {'tickers': list(current_bh_1y_accel_buy_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_accel_buy_positions.items()}},
             'static_bh_3m_accel': {'tickers': list(current_static_bh_3m_accel_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_3m_accel_positions.items()}},
             'bh_1y_vol_adj_rebal': {'tickers': list(current_bh_1y_vol_adj_rebal_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_vol_adj_rebal_positions.items()}},
+            'ratio_1m3m_vol_adj_rebal': {'tickers': list(current_ratio_1m3m_vol_adj_rebal_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ratio_1m3m_vol_adj_rebal_positions.items()}},
             'bh_1y_corr_filter': {'tickers': list(current_bh_1y_corr_filter_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_corr_filter_positions.items()}},
             'bh_1y_regime_aware': {'tickers': list(current_bh_1y_regime_aware_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_regime_aware_positions.items()}},
             'bh_1y_risk_parity': {'tickers': list(current_bh_1y_risk_parity_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_risk_parity_positions.items()}},

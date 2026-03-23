@@ -1375,6 +1375,139 @@ def select_1m_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
         return []
 
 
+def select_1y_performers_ranked_by_1m3m_ratio(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+    """
+    Hybrid Strategy: Select top 1Y performers, then rank by 1M/3M ratio (momentum acceleration).
+
+    Step 1: Get top 1Y performers (larger pool, e.g., top 50)
+    Step 2: Calculate 1M/3M ratio for each
+    Step 3: Rank by 1M/3M ratio (acceleration) and return top N
+
+    This combines long-term strength (1Y performance) with short-term momentum (1M/3M acceleration).
+    """
+    from parallel_backtest import calculate_parallel_performance
+    from config import INVERSE_ETFS
+
+    # Exclude inverse ETFs
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
+
+    # Step 1: Get top 1Y performers (larger pool - 3x the final selection)
+    pool_size = top_n * 3
+    performances = calculate_parallel_performance(
+        tickers_to_use, ticker_data_grouped, current_date, period_days=365
+    )
+
+    if not performances:
+        print(f"   ❌ 1Y+1M3M Ratio: No 1Y performance data available")
+        return []
+
+    # Sort by 1Y performance and get top pool
+    performances.sort(key=lambda x: x[1], reverse=True)
+    top_1y_pool = [ticker for ticker, _ in performances[:pool_size]]
+
+    print(f"   📊 1Y+1M3M Ratio: Selected top {len(top_1y_pool)} 1Y performers for ranking")
+
+    # Step 2: Calculate 1M/3M ratio for each ticker in the pool
+    ratio_candidates = []
+    data_insufficient = 0
+
+    # Ensure current_date is timezone-aware
+    if current_date is None:
+        latest_dates = [ticker_data_grouped[t].index.max() for t in top_1y_pool
+                       if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
+        if latest_dates:
+            current_date = max(latest_dates)
+        else:
+            return []
+
+    if hasattr(current_date, 'tzinfo') and current_date.tzinfo is None:
+        current_date = current_date.replace(tzinfo=timezone.utc)
+
+    for ticker in top_1y_pool:
+        try:
+            if ticker not in ticker_data_grouped:
+                continue
+
+            ticker_data = ticker_data_grouped[ticker]
+
+            # Convert current_date to pandas Timestamp with timezone
+            current_date_tz = pd.Timestamp(current_date)
+            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                if current_date_tz.tz is None:
+                    current_date_tz = current_date_tz.tz_localize(ticker_data.index.tz)
+                else:
+                    current_date_tz = current_date_tz.tz_convert(ticker_data.index.tz)
+
+            # Calculate 1-month and 3-month start dates
+            one_month_start = current_date_tz - timedelta(days=30)
+            three_month_start = current_date_tz - timedelta(days=90)
+
+            # Get 1-month data
+            one_month_data = ticker_data[(ticker_data.index >= one_month_start) &
+                                        (ticker_data.index <= current_date_tz)]
+
+            # Get 3-month data
+            three_month_data = ticker_data[(ticker_data.index >= three_month_start) &
+                                          (ticker_data.index <= current_date_tz)]
+
+            # Check data sufficiency
+            if len(one_month_data) < MIN_DATA_DAYS_1M or len(three_month_data) < MIN_DATA_DAYS_3M:
+                data_insufficient += 1
+                continue
+
+            one_month_valid = one_month_data['Close'].dropna()
+            three_month_valid = three_month_data['Close'].dropna()
+
+            if len(one_month_valid) < 2 or len(three_month_valid) < 2:
+                data_insufficient += 1
+                continue
+
+            # Calculate performances
+            one_month_start_price = one_month_valid.iloc[0]
+            one_month_end_price = one_month_valid.iloc[-1]
+            three_month_start_price = three_month_valid.iloc[0]
+            three_month_end_price = three_month_valid.iloc[-1]
+
+            if any(price <= 0 or pd.isna(price) for price in [one_month_start_price, one_month_end_price,
+                                                               three_month_start_price, three_month_end_price]):
+                data_insufficient += 1
+                continue
+
+            one_month_performance = ((one_month_end_price - one_month_start_price) /
+                                    one_month_start_price) * 100
+            three_month_performance = ((three_month_end_price - three_month_start_price) /
+                                      three_month_start_price) * 100
+
+            # Annualize 1M for fair comparison with 3M
+            annualized_1m = one_month_performance * 3  # 1M * 3 = 3M equivalent
+
+            # Calculate acceleration: how much 1M is outpacing 3M
+            acceleration = annualized_1m - three_month_performance
+
+            # Get 1Y performance for this ticker
+            perf_1y = next((p for t, p in performances if t == ticker), 0)
+
+            ratio_candidates.append((ticker, acceleration, one_month_performance, three_month_performance, perf_1y))
+
+        except Exception as e:
+            data_insufficient += 1
+            continue
+
+    # Step 3: Sort by 1M/3M acceleration (highest first)
+    ratio_candidates.sort(key=lambda x: x[1], reverse=True)
+
+    if ratio_candidates:
+        print(f"   📊 1Y+1M3M Ratio: Ranked {len(ratio_candidates)} stocks by acceleration")
+        print(f"   🎯 Top {min(len(ratio_candidates), top_n)} stocks (1Y performers ranked by 1M/3M):")
+        for ticker, accel, one_month, three_month, perf_1y in ratio_candidates[:top_n]:
+            print(f"      {ticker}: 1Y={perf_1y:+.1f}%, accel={accel:+.1f}%, 1M={one_month:+.1f}%, 3M={three_month:+.1f}%")
+
+        return [ticker for ticker, _, _, _, _ in ratio_candidates[:top_n]]
+    else:
+        print(f"   ❌ 1Y+1M3M Ratio: No candidates found ({data_insufficient} insufficient data)")
+        return []
+
+
 def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
     """
     1Y/3M Ratio Strategy: Select stocks with strong 1Y performance but weak 3M performance.
@@ -3317,6 +3450,7 @@ def _get_strategy_registry():
 
         # Rebal 1Y variants
         'bh_1y_vol_adj_rebal': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'ratio_1m3m_vol_adj_rebal': lambda t, d, dt, n: select_1y_performers_ranked_by_1m3m_ratio(t, d, dt, n),
         'bh_1y_corr_filter': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'bh_1y_regime_aware': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'bh_1y_risk_parity': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
@@ -3377,9 +3511,13 @@ def get_strategy_tickers(strategy_name: str, all_tickers: list, ticker_data_grou
         result = registry[strategy_name](all_tickers, ticker_data_grouped, current_date, top_n)
         if result:
             return result
+        # Debug: log when result is empty/None
+        print(f"   ⚠️ Strategy '{strategy_name}' returned empty result (type: {type(result).__name__})")
         return []
     except Exception as e:
         print(f"   ⚠️ Strategy '{strategy_name}' execution failed: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 

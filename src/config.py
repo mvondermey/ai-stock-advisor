@@ -1373,6 +1373,9 @@ BH_1Y_VOL_ADJ_REBAL_HIGH_VOL_THRESH = 0.35  # Annualized vol above this = increa
 BH_1Y_VOL_ADJ_REBAL_MIN_DAYS = 5            # Minimum days between rebalances
 BH_1Y_VOL_ADJ_REBAL_MAX_DAYS = 30           # Maximum days between rebalances
 
+# 1b. Volatility-Adjusted Rebalancing with 1M/3M Ratio ranking (instead of 1Y performance)
+ENABLE_RATIO_1M3M_VOL_ADJ_REBAL = True      # Uses same vol thresholds as above
+
 # 2. Correlation-Based Filtering: avoid holding highly correlated stocks
 ENABLE_BH_1Y_CORR_FILTER = True
 BH_1Y_CORR_FILTER_THRESH = 0.7              # Max correlation between any two holdings
