@@ -449,6 +449,7 @@ def _build_daily_strategy_data(locals_dict):
         ('static_bh_3m_accel', 'static_bh_3m_accel_portfolio_value', 'static_bh_3m_accel_portfolio_history', 'static_bh_3m_accel_cash', 'static_bh_3m_accel_positions'),
         # 10 New Rebalancing Strategies
         ('bh_1y_vol_adj_rebal', 'bh_1y_vol_adj_rebal_portfolio_value', 'bh_1y_vol_adj_rebal_portfolio_history', 'bh_1y_vol_adj_rebal_cash', 'bh_1y_vol_adj_rebal_positions'),
+        ('ratio_1m3m_vol_adj_rebal', 'ratio_1m3m_vol_adj_rebal_portfolio_value', 'ratio_1m3m_vol_adj_rebal_portfolio_history', 'ratio_1m3m_vol_adj_rebal_cash', 'ratio_1m3m_vol_adj_rebal_positions'),
         ('bh_1y_corr_filter', 'bh_1y_corr_filter_portfolio_value', 'bh_1y_corr_filter_portfolio_history', 'bh_1y_corr_filter_cash', 'bh_1y_corr_filter_positions'),
         ('bh_1y_regime_aware', 'bh_1y_regime_aware_portfolio_value', 'bh_1y_regime_aware_portfolio_history', 'bh_1y_regime_aware_cash', 'bh_1y_regime_aware_positions'),
         ('bh_1y_risk_parity', 'bh_1y_risk_parity_portfolio_value', 'bh_1y_risk_parity_portfolio_history', 'bh_1y_risk_parity_cash', 'bh_1y_risk_parity_positions'),
