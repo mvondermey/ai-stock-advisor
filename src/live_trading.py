@@ -79,6 +79,82 @@ def get_live_trading_strategy():
     return getattr(config, 'LIVE_TRADING_STRATEGY', 'risk_adj_mom')
 
 
+def normalize_strategy_name(strategy_name: str, available_strategies: List[str]) -> str:
+    """
+    Normalize user-provided strategy name to match JSON keys.
+    
+    Handles common variations:
+    - Case insensitive matching
+    - Underscore vs space vs hyphen
+    - Common abbreviations and aliases
+    
+    Args:
+        strategy_name: User-provided strategy name
+        available_strategies: List of valid strategy names from JSON
+        
+    Returns:
+        Normalized strategy name that matches JSON, or original if no match
+    """
+    # First try exact match
+    if strategy_name in available_strategies:
+        return strategy_name
+    
+    # Normalize input: lowercase, replace common separators with underscore
+    normalized = strategy_name.lower().replace('-', '_').replace(' ', '_')
+    
+    # Try direct match after normalization
+    if normalized in available_strategies:
+        return normalized
+    
+    # Build lookup dict: normalized form -> original form
+    lookup = {}
+    for strat in available_strategies:
+        # Normalize the available strategy name
+        norm_strat = strat.lower().replace('-', '_').replace(' ', '_')
+        lookup[norm_strat] = strat
+    
+    # Try to find match
+    if normalized in lookup:
+        return lookup[normalized]
+    
+    # Common aliases mapping (user input -> JSON key)
+    aliases = {
+        '1m_volsweet': 'risk_adj_mom_1m_vol_sweet',
+        'volsweet_mom': 'vol_sweet_mom',
+        'vol_sweet': 'vol_sweet_mom',
+        'rebal_1y_voladj': 'bh_1y_vol_adj_rebal',
+        'bh_1y_voladj': 'bh_1y_vol_adj_rebal',
+        'mom_vol_hybrid': 'momentum_volatility_hybrid',
+        'mom_vol_6m': 'momentum_volatility_hybrid_6m',
+        'mom_vol_1y': 'momentum_volatility_hybrid_1y',
+        'risk_adj_3m': 'risk_adj_mom_3m',
+        'risk_adj_6m': 'risk_adj_mom_6m',
+        'risk_adj_1m': 'risk_adj_mom_1m',
+        'risk_adj_1y': 'risk_adj_mom',
+        'ai_elite': 'ai_elite',
+        'elite': 'elite_hybrid',
+        'dynamic_1y': 'dynamic_bh_1y',
+        'dynamic_6m': 'dynamic_bh_6m',
+        'dynamic_3m': 'dynamic_bh_3m',
+        'static_1y': 'static_bh_1y',
+        'static_6m': 'static_bh_6m',
+        'static_3m': 'static_bh_3m',
+    }
+    
+    if normalized in aliases:
+        alias_target = aliases[normalized]
+        if alias_target in available_strategies:
+            return alias_target
+    
+    # Fuzzy match: find strategies containing the normalized input
+    matches = [s for s in available_strategies if normalized in s.lower().replace('-', '_').replace(' ', '_')]
+    if len(matches) == 1:
+        return matches[0]
+    
+    # No match found, return original (will fail with helpful error)
+    return strategy_name
+
+
 def load_strategy_selections_with_comparison(strategy_name: str) -> Optional[List[str]]:
     """
     Load strategy selections from both JSON files and show comparison.
@@ -105,6 +181,13 @@ def load_strategy_selections_with_comparison(strategy_name: str) -> Optional[Lis
             with open(selections_file, 'r') as f:
                 data = json.load(f)
             strategies = data.get('strategies', {})
+            
+            # Normalize strategy name to match JSON keys
+            normalized_name = normalize_strategy_name(strategy_name, list(strategies.keys()))
+            if normalized_name != strategy_name:
+                print(f"   [INFO] Normalized '{strategy_name}' -> '{normalized_name}'")
+            strategy_name = normalized_name
+            
             if strategy_name in strategies:
                 strategy_data = strategies[strategy_name]
                 if isinstance(strategy_data, list):
