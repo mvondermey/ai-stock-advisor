@@ -732,7 +732,7 @@ def select_ai_regime_stocks(
     from bollinger_bands_strategy import select_bb_squeeze_breakout_stocks, select_bb_rsi_combo_stocks
     from enhanced_static_bh_strategies import select_sector_rotated_bh_1y_stocks
     from inverse_etf_hedge_strategy import select_inverse_etf_hedge_stocks
-    from analyst_recommendation_strategy import select_analyst_rec_stocks
+    from analyst_recommendation_strategy import select_analyst_recommendation_stocks as select_analyst_rec_stocks
 
     # Map strategy names to their implementations
     strategy_map = {
