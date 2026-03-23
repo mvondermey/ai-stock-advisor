@@ -37,7 +37,7 @@ SUB_STRATEGIES = [
     'risk_adj_mom_1m',           # Risk-Adj Mom 1M
     'risk_adj_mom_1m_monthly',   # Risk-Adj Mom 1M Monthly
     'risk_adj_mom_3m_sent',      # Risk-Adj Mom 3M Sentiment
-    
+
     # AI/ML Strategies
     'elite_hybrid',              # Elite Hybrid
     'elite_risk',                # Elite Risk
@@ -46,7 +46,7 @@ SUB_STRATEGIES = [
     'ai_elite_market_up',        # AI Elite Market Up
     'ai_elite_filtered',         # AI Elite Filtered
     'momentum_ai_hybrid',        # Momentum+AI
-    
+
     # Momentum Strategies
     'momentum_volatility_hybrid_6m',  # Mom-Vol Hybrid 6M
     'momentum_volatility_hybrid',     # Mom-Vol Hybrid
@@ -55,7 +55,7 @@ SUB_STRATEGIES = [
     'vol_sweet_mom',             # VolSweet Mom
     '1m_vol_sweet',              # 1M VolSweet
     'price_acceleration',       # Price Acceleration
-    
+
     # Buy & Hold Strategies
     'static_bh_1y',              # Static BH 1Y
     'static_bh_6m',             # Static BH 6M
@@ -65,7 +65,7 @@ SUB_STRATEGIES = [
     'bh_6m_monthly',             # BH 6M Monthly
     'bh_3m_monthly',             # BH 3M Monthly
     'bh_1m_monthly',             # BH 1M Monthly
-    
+
     # Dynamic Buy & Hold Strategies
     'dynamic_bh_1y',            # Dynamic BH 1Y
     'dynamic_bh_6m',            # Dynamic BH 6M
@@ -73,7 +73,7 @@ SUB_STRATEGIES = [
     'dynamic_bh_1m',            # Dynamic BH 1M
     'dynamic_bh_1y_vol',        # Dynamic BH 1Y+Vol Filter
     'dynamic_bh_1y_ts',         # Dynamic BH 1Y+Trailing Stop
-    
+
     # Enhanced BH Strategies
     'bh_1y_vol_trigger',         # BH 1Y Vol Trigger
     'bh_1y_perf_trigger',       # BH 1Y Perf Trigger
@@ -89,7 +89,7 @@ SUB_STRATEGIES = [
     'bh_1y_rank_drift',         # BH 1Y Rank Drift
     'bh_1y_drawdown',           # BH 1Y Drawdown
     'bh_1y_smart_monthly',      # BH 1Y Smart Monthly
-    
+
     # Technical Analysis Strategies
     'concentrated_3m',          # Concentrated 3M
     'dual_momentum',            # Dual Momentum
@@ -99,7 +99,7 @@ SUB_STRATEGIES = [
     'bb_breakout',              # BB Breakout
     'bb_mean_rev',              # BB Mean Reversion
     'trend_breakout',           # Trend Breakout
-    
+
     # Ensemble Strategies
     'adaptive_ensemble',        # Adaptive Ensemble
     'volatility_ensemble',      # Volatility Ensemble
@@ -107,18 +107,18 @@ SUB_STRATEGIES = [
     'dynamic_pool',             # Dynamic Pool
     '3m_1y_ratio',              # 3M/1Y Ratio
     '1y_3m_ratio',              # 1Y/3M Ratio
-    
+
     # Quality Strategies
     'quality_momentum',         # Quality+Mom
-    
+
     # Sentiment Strategies
     'risk_adj_sent',            # RiskAdj Sent
     'analyst_rec',              # Analyst Recommendation
-    
+
     # Special Strategies
     'turnaround',               # Turnaround
     'inverse_etf_hedge',        # Inverse ETF Hedge
-    
+
     # Meta Strategies (if enabled)
     'meta_weighted',            # Meta Weighted
     'meta_tiered',              # Meta Tiered
@@ -484,7 +484,7 @@ class AIRegimeAllocator:
                         new_classes = set(np.unique(y_train))
                         old_n_features = m.n_features_in_ if hasattr(m, 'n_features_in_') else 0
                         new_n_features = X_train.shape[1]
-                        
+
                         if old_classes != new_classes or old_n_features != new_n_features:
                             reason = []
                             if old_classes != new_classes:
@@ -570,14 +570,14 @@ class AIRegimeAllocator:
         """Save all models, label encoder, and training state to disk."""
         try:
             MODEL_SAVE_DIR.mkdir(parents=True, exist_ok=True)
-            
+
             # Create backup before overwriting
             if AI_REGIME_MODEL_PATH.exists():
                 backup_path = AI_REGIME_MODEL_PATH.with_suffix('.backup.joblib')
                 import shutil
                 shutil.copy2(AI_REGIME_MODEL_PATH, backup_path)
                 print(f"   📦 AI Regime: Backed up previous model to {backup_path}")
-            
+
             joblib.dump({
                 'all_models': self.all_models,
                 'all_scores': self.all_scores,
@@ -643,13 +643,13 @@ class AIRegimeAllocator:
         # Predict
         try:
             X = np.array([[features.get(c, 0) for c in self.feature_cols]])
-            
+
             # Validate model state before prediction
             if not hasattr(self.model, 'n_features_in_') or self.model.n_features_in_ != X.shape[1]:
                 print(f"   ⚠️ AI Regime: Model feature mismatch, resetting model")
                 self.model = None
                 return None
-            
+
             pred_idx = self.model.predict(X)[0]
             pred_strategy = self.label_encoder.inverse_transform([pred_idx])[0]
 
@@ -729,11 +729,11 @@ def select_ai_regime_stocks(
         select_ai_elite_with_training
     )
     from new_strategies import select_concentrated_3m_stocks, select_dual_momentum_stocks
-    from bollinger_bands_strategy import select_bb_squeeze_stocks, select_bb_rsi_combo_stocks
+    from bollinger_bands_strategy import select_bb_squeeze_breakout_stocks, select_bb_rsi_combo_stocks
     from enhanced_static_bh_strategies import select_sector_rotated_bh_1y_stocks
-    from inverse_etf_hedge import select_inverse_etf_stocks
+    from inverse_etf_hedge_strategy import select_inverse_etf_hedge_stocks
     from analyst_recommendation_strategy import select_analyst_rec_stocks
-    
+
     # Map strategy names to their implementations
     strategy_map = {
         # Risk-Adjusted Momentum (use shared function with different lookbacks)
@@ -744,44 +744,44 @@ def select_ai_regime_stocks(
         'risk_adj_mom': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
         'risk_adj_mom_1m': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=30),
         'risk_adj_mom_1m_monthly': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=30),
-        
+
         # AI/ML Strategies
         'ai_elite': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n),
         'momentum_ai_hybrid': lambda: select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        
+
         # Momentum Strategies
         'momentum_volatility_hybrid_6m': lambda: select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=126),
         'momentum_volatility_hybrid': lambda: select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'momentum_volatility_hybrid_1y_3m': lambda: select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'vol_adj_mom': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        
+
         # Buy & Hold Strategies
         'static_bh_1y': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
         'static_bh_6m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=180),
         'static_bh_3m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
         'static_bh_1m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=30),
-        
+
         # Dynamic Buy & Hold Strategies
         'dynamic_bh_1y': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365, apply_performance_filter=True),
         'dynamic_bh_6m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=180, apply_performance_filter=True),
         'dynamic_bh_3m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90, apply_performance_filter=True),
         'dynamic_bh_1m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=30, apply_performance_filter=True),
         'dynamic_bh_1y_vol': lambda: select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365, max_volatility=0.4),
-        
+
         # Technical Strategies
         'concentrated_3m': lambda: select_concentrated_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'dual_momentum': lambda: select_dual_momentum_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'bb_squeeze': lambda: select_bb_squeeze_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
+        'bb_squeeze': lambda: select_bb_squeeze_breakout_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'bb_rsi_combo': lambda: select_bb_rsi_combo_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        
+
         # Other Strategies
         'analyst_rec': lambda: select_analyst_rec_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'inverse_etf_hedge': lambda: select_inverse_etf_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
+        'inverse_etf_hedge': lambda: select_inverse_etf_hedge_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
     }
-    
+
     # Try to get the strategy function
     strategy_func = strategy_map.get(predicted_strategy)
-    
+
     if strategy_func:
         try:
             return strategy_func()

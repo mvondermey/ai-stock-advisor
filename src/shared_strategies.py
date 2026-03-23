@@ -1290,6 +1290,146 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
         return []
 
 
+def select_1m_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+    """
+    1M/3M Ratio Strategy: Select stocks with strong 1M performance relative to 3M performance.
+    This identifies stocks with short-term momentum acceleration - recent outperformance.
+
+    Positive 1M/3M ratio means 1M is outpacing 3M (accelerating momentum).
+    Useful for catching stocks that are breaking out or gaining momentum recently.
+    """
+    from config import INVERSE_ETFS
+
+    # Exclude inverse ETFs
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
+
+    # Apply performance filters if enabled
+    from performance_filters import filter_tickers_by_performance
+    filtered_tickers = filter_tickers_by_performance(
+        tickers_to_use, ticker_data_grouped, current_date, "1M/3M Ratio"
+    )
+
+    ratio_candidates = []
+    data_insufficient = 0
+    filtered_1m_negative = 0
+    filtered_3m_negative = 0
+
+    print(f"   🔍 1M/3M Ratio: Analyzing {len(filtered_tickers)} tickers")
+
+    # Use current date or last available date
+    if current_date is None:
+        latest_dates = [ticker_data_grouped[t].index.max() for t in filtered_tickers
+                       if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
+        if latest_dates:
+            current_date = max(latest_dates)
+        else:
+            return []
+
+    # Ensure current_date is timezone-aware
+    if hasattr(current_date, 'tzinfo') and current_date.tzinfo is None:
+        current_date = current_date.replace(tzinfo=timezone.utc)
+
+    for ticker in filtered_tickers:
+        try:
+            if ticker not in ticker_data_grouped:
+                continue
+
+            ticker_data = ticker_data_grouped[ticker]
+
+            # Convert current_date to pandas Timestamp with timezone
+            current_date_tz = pd.Timestamp(current_date)
+            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
+                if current_date_tz.tz is None:
+                    current_date_tz = current_date_tz.tz_localize(ticker_data.index.tz)
+                else:
+                    current_date_tz = current_date_tz.tz_convert(ticker_data.index.tz)
+
+            # Calculate 1-month and 3-month start dates
+            one_month_start = current_date_tz - timedelta(days=30)
+            three_month_start = current_date_tz - timedelta(days=90)
+
+            # Get 1-month data
+            one_month_data = ticker_data[(ticker_data.index >= one_month_start) &
+                                        (ticker_data.index <= current_date_tz)]
+
+            # Get 3-month data
+            three_month_data = ticker_data[(ticker_data.index >= three_month_start) &
+                                          (ticker_data.index <= current_date_tz)]
+
+            # Check data sufficiency
+            if len(one_month_data) < MIN_DATA_DAYS_1M or len(three_month_data) < MIN_DATA_DAYS_3M:
+                data_insufficient += 1
+                continue
+
+            one_month_valid = one_month_data['Close'].dropna()
+            three_month_valid = three_month_data['Close'].dropna()
+
+            if len(one_month_valid) < 2 or len(three_month_valid) < 2:
+                data_insufficient += 1
+                continue
+
+            # Calculate performances
+            one_month_start_price = one_month_valid.iloc[0]
+            one_month_end_price = one_month_valid.iloc[-1]
+            three_month_start_price = three_month_valid.iloc[0]
+            three_month_end_price = three_month_valid.iloc[-1]
+
+            if any(price <= 0 or pd.isna(price) for price in [one_month_start_price, one_month_end_price,
+                                                               three_month_start_price, three_month_end_price]):
+                data_insufficient += 1
+                continue
+
+            one_month_performance = ((one_month_end_price - one_month_start_price) /
+                                    one_month_start_price) * 100
+            three_month_performance = ((three_month_end_price - three_month_start_price) /
+                                      three_month_start_price) * 100
+
+            # Annualize 1M for fair comparison with 3M
+            annualized_1m = one_month_performance * 3  # 1M * 3 = 3M equivalent
+
+            # Calculate acceleration: how much 1M is outpacing 3M
+            acceleration = annualized_1m - three_month_performance
+
+            # Debug first few stocks
+            if len(ratio_candidates) < 5:
+                print(f"   🔍 DEBUG {ticker}: 1M={one_month_performance:+.1f}%, 3M={three_month_performance:+.1f}%, accel={acceleration:+.1f}%")
+
+            # Selection criteria:
+            # 1. Positive 1M performance (recent momentum)
+            # 2. Positive acceleration (1M outpacing 3M)
+            if one_month_performance <= 0:
+                filtered_1m_negative += 1
+                continue
+
+            if three_month_performance < -20:  # Avoid stocks in freefall
+                filtered_3m_negative += 1
+                continue
+
+            # Add to candidates if showing acceleration
+            if acceleration > 0:  # 1M is outpacing 3M
+                ratio_candidates.append((ticker, acceleration, one_month_performance, three_month_performance))
+
+        except Exception as e:
+            data_insufficient += 1
+            continue
+
+    # Sort by acceleration (highest first)
+    ratio_candidates.sort(key=lambda x: x[1], reverse=True)
+
+    if ratio_candidates:
+        print(f"   📊 1M/3M Ratio: Selected {len(ratio_candidates)} acceleration candidates")
+        print(f"   📊 Filter breakdown: {filtered_1m_negative} filtered (1M negative), {filtered_3m_negative} filtered (3M crash), {data_insufficient} insufficient data")
+        print(f"   🎯 Selected {min(len(ratio_candidates), top_n)} accelerating stocks:")
+        for ticker, accel, one_month, three_month in ratio_candidates[:top_n]:
+            print(f"      {ticker}: accel={accel:+.1f}%, 1M={one_month:+.1f}%, 3M={three_month:+.1f}%")
+
+        return [ticker for ticker, _, _, _ in ratio_candidates[:top_n]]
+    else:
+        print(f"   ❌ No acceleration candidates found")
+        print(f"   📊 Filter breakdown: {filtered_1m_negative} filtered (1M negative), {filtered_3m_negative} filtered (3M crash), {data_insufficient} insufficient data")
+        return []
+
+
 def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
     """
     1Y/3M Ratio Strategy: Select stocks with strong 1Y performance but weak 3M performance.
@@ -2786,22 +2926,22 @@ def select_bh_1y_volsweet_accel_stocks(
     """
     BH 1Y VolSweet Acceleration Strategy:
     Combines Static BH 1Y and 1M VolSweet tickers, ranks by acceleration score.
-    
+
     Selection process:
     1. Get top performers from Static BH 1Y (1-year lookback)
     2. Get top performers from 1M VolSweet (1-month risk-adjusted momentum + vol filter)
     3. Combine unique tickers from both strategies
     4. Rank by momentum acceleration score
     5. Return top N
-    
+
     Returns:
         List of selected tickers
     """
     from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
-    
+
     if current_date is None:
         current_date = datetime.now(timezone.utc)
-    
+
     print(f"   📊 BH 1Y VolSweet Accel: Getting Static BH 1Y tickers...")
     bh_1y_tickers = select_top_performers(
         all_tickers, ticker_data_grouped,
@@ -2810,43 +2950,43 @@ def select_bh_1y_volsweet_accel_stocks(
         top_n=top_n * 2,  # Get more for combination
         apply_performance_filter=False
     )
-    
+
     print(f"   📊 BH 1Y VolSweet Accel: Getting 1M VolSweet tickers...")
     volsweet_tickers = select_risk_adj_mom_1m_vol_sweet_stocks(
         all_tickers, ticker_data_grouped,
         current_date=current_date,
         top_n=top_n * 2
     )
-    
+
     # Combine unique tickers from both strategies
     combined_tickers = list(set(bh_1y_tickers) | set(volsweet_tickers))
     print(f"   📊 BH 1Y VolSweet Accel: Combined {len(combined_tickers)} unique tickers")
-    
+
     # Calculate acceleration scores for combined tickers
     scored_candidates = []
-    
+
     for ticker in combined_tickers:
         if ticker not in ticker_data_grouped:
             continue
-        
+
         try:
             data = ticker_data_grouped[ticker].loc[:current_date]
             close = data['Close'].dropna()
-            
+
             if len(close) < 60:
                 continue
-            
+
             # Calculate momentum metrics
             mom_1m = (close.iloc[-1] / close.iloc[-21] - 1) * 100 if len(close) >= 21 else 0
             mom_3m = (close.iloc[-1] / close.iloc[-63] - 1) * 100 if len(close) >= 63 else 0
-            
+
             # Calculate acceleration: 1M momentum vs expected from 3M trend
             expected_1m_from_3m = mom_3m / 3 if mom_3m != 0 else 0
             acceleration = mom_1m - expected_1m_from_3m
-            
+
             # Calculate velocity (recent momentum strength)
             recent_velocity = (close.iloc[-1] / close.iloc[-5] - 1) * 100 if len(close) >= 5 else 0
-            
+
             # Calculate consistency (how consistent is the momentum)
             returns_5d = close.pct_change(5).dropna()
             if len(returns_5d) >= 20:
@@ -2854,16 +2994,16 @@ def select_bh_1y_volsweet_accel_stocks(
                 consistency = (accel_series > 0).mean()
             else:
                 consistency = 0.5
-            
+
             # Composite acceleration score (same weights as shared_strategies.py)
             # 40% avg acceleration, 40% latest acceleration, 20% consistency
             accel_score = (acceleration * 0.4 +
                           acceleration * 0.4 +
                           consistency * acceleration * 0.2)
-            
+
             # Scale by velocity
             final_score = accel_score * (1 + recent_velocity * 10)
-            
+
             scored_candidates.append({
                 'ticker': ticker,
                 'score': final_score,
@@ -2873,22 +3013,22 @@ def select_bh_1y_volsweet_accel_stocks(
                 'mom_1m': mom_1m,
                 'mom_3m': mom_3m
             })
-            
+
         except Exception as e:
             continue
-    
+
     # Sort by acceleration score (highest first)
     scored_candidates.sort(key=lambda x: x['score'], reverse=True)
-    
+
     # Log top selections
     if scored_candidates:
         print(f"   📈 BH 1Y VolSweet Accel: Top picks with acceleration:")
         for c in scored_candidates[:min(5, len(scored_candidates))]:
             print(f"      {c['ticker']}: accel={c['acceleration']:+.1f}%, velocity={c['velocity']:+.1f}%, score={c['score']:.4f}")
-    
+
     # Return top N
     selected = [c['ticker'] for c in scored_candidates[:top_n]]
-    
+
     print(f"   ✅ BH 1Y VolSweet Accel: Selected {len(selected)} tickers: {selected}")
     return selected
 
@@ -2900,69 +3040,69 @@ def calculate_rebalance_signal(
 ) -> Dict:
     """
     Calculate dynamic rebalance signal based on market conditions.
-    
+
     Returns dict with:
     - should_rebalance: bool - whether to rebalance today
     - signal_strength: float - how strong the signal is (0-1)
     - reasons: list of strings - why we should/shouldn't rebalance
     """
     from config import MARKET_FILTER_TICKER
-    
+
     # Use SPY as market proxy
     market_ticker = MARKET_FILTER_TICKER
-    
+
     signal = {
         'should_rebalance': False,
         'signal_strength': 0.0,
         'reasons': [],
         'days_since_last': 0
     }
-    
+
     if market_ticker not in ticker_data_grouped:
         # No market data - use time-based fallback
         signal['reasons'].append('No market data - using time-based')
         return signal
-    
+
     try:
         data = ticker_data_grouped[market_ticker].loc[:current_date]
         close = data['Close'].dropna()
-        
+
         if len(close) < 60:
             signal['reasons'].append('Insufficient data')
             return signal
-        
+
         # 1. Momentum change signal
         # Compare recent momentum to longer-term momentum
         mom_5d = (close.iloc[-1] / close.iloc[-6] - 1) * 100 if len(close) >= 6 else 0
         mom_21d = (close.iloc[-1] / close.iloc[-22] - 1) * 100 if len(close) >= 22 else 0
         mom_63d = (close.iloc[-1] / close.iloc[-64] - 1) * 100 if len(close) >= 64 else 0
-        
+
         # If 5d momentum is much stronger than 63d, momentum is accelerating
         if mom_63d > 0:
             momentum_signal = min(1.0, (mom_5d - mom_63d/3) / 10)  # Normalize
         else:
             momentum_signal = 0.0
-        
+
         # 2. Volatility signal
         # High volatility suggests more frequent rebalancing needed
         returns = close.pct_change().dropna()
         vol_5d = returns.iloc[-5:].std() * np.sqrt(252) * 100 if len(returns) >= 5 else 20
         vol_21d = returns.iloc[-21:].std() * np.sqrt(252) * 100 if len(returns) >= 21 else 20
-        
+
         # If recent vol is much higher than normal, rebalance more often
         vol_signal = min(1.0, max(0, (vol_21d - vol_5d) / vol_21d)) if vol_21d > 0 else 0
-        
+
         # 3. Trend change signal
         # If market crossed its moving average, might need rebalance
         sma_21 = close.rolling(21).mean().iloc[-1]
         sma_63 = close.rolling(63).mean().iloc[-1]
-        
+
         # Current position vs 21d SMA
         price_vs_sma = (close.iloc[-1] / sma_21 - 1) * 100 if not np.isnan(sma_21) else 0
-        
+
         # If price just crossed SMA, strong signal
         prev_price_vs_sma = (close.iloc[-2] / sma_21 - 1) * 100 if len(close) >= 3 and not np.isnan(sma_21) else 0
-        
+
         trend_signal = 0.0
         if prev_price_vs_sma < 0 and price_vs_sma > 0:
             trend_signal = 0.8  # Bullish crossover
@@ -2970,23 +3110,23 @@ def calculate_rebalance_signal(
             trend_signal = 0.8  # Bearish crossover
         elif abs(price_vs_sma) > 5:
             trend_signal = 0.3  # Far from SMA
-            
+
         # Combine signals
         combined_signal = (momentum_signal * 0.4 + vol_signal * 0.3 + trend_signal * 0.3)
-        
+
         signal['signal_strength'] = combined_signal
         signal['should_rebalance'] = combined_signal > 0.4  # Threshold
-        
+
         if momentum_signal > 0.3:
             signal['reasons'].append(f"Momentum accelerating: {momentum_signal:.2f}")
         if vol_signal > 0.3:
             signal['reasons'].append(f"Volatility increasing: {vol_signal:.2f}")
         if trend_signal > 0.3:
             signal['reasons'].append(f"Trend change: {trend_signal:.2f}")
-            
+
     except Exception as e:
         signal['reasons'].append(f'Error: {str(e)[:30]}')
-    
+
     return signal
 
 
@@ -3003,38 +3143,40 @@ def select_bh_1y_dynamic_accel_stocks(
     BH 1Y Dynamic Acceleration Strategy:
     Combines Static BH 1Y and 1M VolSweet tickers, ranks by acceleration.
     Dynamically decides when to rebalance based on market conditions.
-    
+
     Returns:
         Tuple of (selected_tickers, should_rebalance)
     """
     from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
-    
+
     if current_date is None:
         current_date = datetime.now(timezone.utc)
-    
+
     # Calculate rebalance signal
     rebalance_signal = calculate_rebalance_signal(ticker_data_grouped, current_date)
-    
+
     # Force rebalance if too long since last rebalance
     force_rebalance = days_since_rebalance >= max_days
-    
-    # Don't rebalance if too soon (unless forced)
-    if days_since_rebalance < min_days and not force_rebalance and not rebalance_signal['should_rebalance']:
+
+    # Don't rebalance if too soon (unless forced or day 1)
+    if days_since_rebalance < min_days and days_since_rebalance > 0 and not force_rebalance and not rebalance_signal['should_rebalance']:
         print(f"   ⏳ BH 1Y Dynamic Accel: Skipping (days={days_since_rebalance}, signal={rebalance_signal['signal_strength']:.2f})")
         return [], False
-    
-    should_rebalance = force_rebalance or rebalance_signal['should_rebalance']
-    
+
+    # Day 0 = initial selection, always proceed
+    is_initial = days_since_rebalance == 0
+    should_rebalance = is_initial or force_rebalance or rebalance_signal['should_rebalance']
+
     if not should_rebalance:
         print(f"   ⏳ BH 1Y Dynamic Accel: No rebalance signal (days={days_since_rebalance}, signal={rebalance_signal['signal_strength']:.2f})")
         if rebalance_signal['reasons']:
             print(f"      Reasons: {rebalance_signal['reasons']}")
         return [], False
-    
+
     print(f"   🔄 BH 1Y Dynamic Accel: REBALANCING (days={days_since_rebalance}, signal={rebalance_signal['signal_strength']:.2f})")
     if rebalance_signal['reasons']:
         print(f"      Reasons: {rebalance_signal['reasons']}")
-    
+
     # Get tickers from Static BH 1Y
     print(f"   📊 BH 1Y Dynamic Accel: Getting Static BH 1Y tickers...")
     bh_1y_tickers = select_top_performers(
@@ -3044,7 +3186,7 @@ def select_bh_1y_dynamic_accel_stocks(
         top_n=top_n * 2,
         apply_performance_filter=False
     )
-    
+
     # Get tickers from 1M VolSweet
     print(f"   📊 BH 1Y Dynamic Accel: Getting 1M VolSweet tickers...")
     volsweet_tickers = select_risk_adj_mom_1m_vol_sweet_stocks(
@@ -3052,36 +3194,36 @@ def select_bh_1y_dynamic_accel_stocks(
         current_date=current_date,
         top_n=top_n * 2
     )
-    
+
     # Combine unique tickers
     combined_tickers = list(set(bh_1y_tickers) | set(volsweet_tickers))
     print(f"   📊 BH 1Y Dynamic Accel: Combined {len(combined_tickers)} unique tickers")
-    
+
     # Calculate acceleration scores
     scored_candidates = []
-    
+
     for ticker in combined_tickers:
         if ticker not in ticker_data_grouped:
             continue
-        
+
         try:
             data = ticker_data_grouped[ticker].loc[:current_date]
             close = data['Close'].dropna()
-            
+
             if len(close) < 60:
                 continue
-            
+
             # Calculate momentum metrics
             mom_1m = (close.iloc[-1] / close.iloc[-21] - 1) * 100 if len(close) >= 21 else 0
             mom_3m = (close.iloc[-1] / close.iloc[-63] - 1) * 100 if len(close) >= 63 else 0
-            
+
             # Acceleration
             expected_1m_from_3m = mom_3m / 3 if mom_3m != 0 else 0
             acceleration = mom_1m - expected_1m_from_3m
-            
+
             # Velocity
             recent_velocity = (close.iloc[-1] / close.iloc[-5] - 1) * 100 if len(close) >= 5 else 0
-            
+
             # Consistency
             returns_5d = close.pct_change(5).dropna()
             if len(returns_5d) >= 20:
@@ -3089,11 +3231,11 @@ def select_bh_1y_dynamic_accel_stocks(
                 consistency = (accel_series > 0).mean()
             else:
                 consistency = 0.5
-            
+
             # Composite score
             accel_score = (acceleration * 0.4 + acceleration * 0.4 + consistency * acceleration * 0.2)
             final_score = accel_score * (1 + recent_velocity * 10)
-            
+
             scored_candidates.append({
                 'ticker': ticker,
                 'score': final_score,
@@ -3101,21 +3243,21 @@ def select_bh_1y_dynamic_accel_stocks(
                 'velocity': recent_velocity,
                 'consistency': consistency
             })
-            
+
         except Exception:
             continue
-    
+
     # Sort by score
     scored_candidates.sort(key=lambda x: x['score'], reverse=True)
-    
+
     # Log top picks
     if scored_candidates:
         print(f"   📈 BH 1Y Dynamic Accel: Top picks with acceleration:")
         for c in scored_candidates[:min(5, len(scored_candidates))]:
             print(f"      {c['ticker']}: accel={c['acceleration']:+.1f}%, velocity={c['velocity']:+.1f}%, score={c['score']:.4f}")
-    
+
     selected = [c['ticker'] for c in scored_candidates[:top_n]]
-    
+
     print(f"   ✅ BH 1Y Dynamic Accel: Selected {len(selected)} tickers: {selected}")
     return selected, True
 
@@ -3136,13 +3278,13 @@ def _get_strategy_registry():
         'static_bh_6m': lambda t, d, dt, n: select_top_performers(t, d, dt, 180, n),
         'static_bh_3m': lambda t, d, dt, n: select_top_performers(t, d, dt, 90, n),
         'static_bh_1m': lambda t, d, dt, n: select_top_performers(t, d, dt, 30, n),
-        
+
         # Static BH Monthly variants
         'static_bh_1y_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'static_bh_6m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 180, n),
         'static_bh_3m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 90, n),
         'static_bh_1m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 30, n),
-        
+
         # Dynamic BH strategies
         'dynamic_bh_1y': lambda t, d, dt, n: select_dynamic_bh_stocks(t, d, '1y', dt, n),
         'dynamic_bh_6m': lambda t, d, dt, n: select_dynamic_bh_stocks(t, d, '6m', dt, n),
@@ -3150,7 +3292,7 @@ def _get_strategy_registry():
         'dynamic_bh_1m': lambda t, d, dt, n: select_dynamic_bh_stocks(t, d, '1m', dt, n),
         'dynamic_bh_1y_vol_filter': lambda t, d, dt, n: select_top_performers_vol_filtered(t, d, dt, 365, 0.4, n)[0],
         'dynamic_bh_1y_trailing_stop': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
-        
+
         # Risk-Adjusted Momentum strategies
         'risk_adj_mom': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 365, "Risk-Adj Mom"),
         'risk_adj_mom_6m': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 180, "Risk-Adj Mom 6M"),
@@ -3163,44 +3305,46 @@ def _get_strategy_registry():
         'risk_adj_mom_3m_market_up': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 90, "RiskAdj 3M Up"),
         'risk_adj_mom_3m_with_stops': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 90, "RiskAdj 3M Stop"),
         'risk_adj_mom_sentiment': lambda t, d, dt, n: select_risk_adj_mom_stocks(t, d, dt, n, 365, "RiskAdj Sent"),
-        
+
         # Vol Sweet strategies
         'risk_adj_mom_1m_vol_sweet': lambda t, d, dt, n: _select_risk_adj_mom_1m_vol_sweet(t, d, dt, n),
         'vol_sweet_mom': lambda t, d, dt, n: _select_risk_adj_mom_1m_vol_sweet(t, d, dt, n),
         'bh_1y_volsweet_accel': lambda t, d, dt, n: select_bh_1y_volsweet_accel_stocks(t, d, dt, n),
         'bh_1y_dynamic_accel': lambda t, d, dt, n: select_bh_1y_dynamic_accel_stocks(t, d, dt, n, 0, 0, 44)[0],
         'bh_1y_accel': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),  # Alias for bh_1y_accel_buy
-        
+
         # Mean Reversion & Quality
         'mean_reversion': lambda t, d, dt, n: select_mean_reversion_stocks(t, d, dt, n),
         'quality_momentum': lambda t, d, dt, n: select_quality_momentum_stocks(t, d, dt, n),
         'volatility_adj_mom': lambda t, d, dt, n: select_volatility_adj_mom_stocks(t, d, dt, n),
-        
+
         # Ratio strategies
         'ratio_3m_1y': lambda t, d, dt, n: select_3m_1y_ratio_stocks(t, d, dt, n),
         '3m_1y_ratio': lambda t, d, dt, n: select_3m_1y_ratio_stocks(t, d, dt, n),
         'ratio_1y_3m': lambda t, d, dt, n: select_1y_3m_ratio_stocks(t, d, dt, n),
         '1y_3m_ratio': lambda t, d, dt, n: select_1y_3m_ratio_stocks(t, d, dt, n),
-        
+        'ratio_1m_3m': lambda t, d, dt, n: select_1m_3m_ratio_stocks(t, d, dt, n),
+        '1m_3m_ratio': lambda t, d, dt, n: select_1m_3m_ratio_stocks(t, d, dt, n),
+
         # Momentum-Volatility Hybrid strategies
         'momentum_volatility_hybrid': lambda t, d, dt, n: select_momentum_volatility_hybrid_stocks(t, d, dt, n),
         'momentum_volatility_hybrid_6m': lambda t, d, dt, n: select_momentum_volatility_hybrid_6m_stocks(t, d, dt, n),
         'momentum_volatility_hybrid_1y': lambda t, d, dt, n: select_momentum_volatility_hybrid_1y_stocks(t, d, dt, n),
         'momentum_volatility_hybrid_1y3m': lambda t, d, dt, n: select_momentum_volatility_hybrid_1y3m_stocks(t, d, dt, n),
-        
+
         # Other strategies
         'turnaround': lambda t, d, dt, n: select_turnaround_stocks(t, d, dt, n),
         'price_acceleration': lambda t, d, dt, n: select_price_acceleration_stocks(t, d, dt, n),
         'sector_rotation': lambda t, d, dt, n: select_sector_rotation_etfs(t, d, dt, n),
         'voting_ensemble': lambda t, d, dt, n: select_voting_ensemble_stocks(t, d, dt, n),
         'momentum_ai_hybrid': lambda t, d, dt, n: select_momentum_ai_hybrid_stocks(t, d, dt, n),
-        
+
         # AI Elite strategies
         'ai_elite': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
         'ai_elite_monthly': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
         'ai_elite_filtered': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
         'ai_elite_market_up': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
-        
+
         # BH 1Y Adaptive Rebalancing variants (all use same base selection)
         'static_bh_1y_volatility': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'static_bh_1y_performance': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
@@ -3216,7 +3360,7 @@ def _get_strategy_registry():
         'static_bh_1y_rank_drift': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'static_bh_1y_drawdown': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'static_bh_1y_smart_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
-        
+
         # BH 1Y Smart Rebalancing variants
         'bh_1y_mom_sell': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'bh_1y_rank_sell': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
@@ -3225,7 +3369,7 @@ def _get_strategy_registry():
         'bh_1y_sector_aware': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'bh_1y_accel_buy': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'static_bh_3m_accel': lambda t, d, dt, n: select_top_performers(t, d, dt, 90, n),
-        
+
         # Rebal 1Y variants
         'bh_1y_vol_adj_rebal': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'bh_1y_corr_filter': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
@@ -3254,35 +3398,35 @@ def get_strategy_tickers(strategy_name: str, all_tickers: list, ticker_data_grou
                          current_date=None, top_n: int = 10) -> list:
     """
     Get tickers for a strategy using the registry.
-    
+
     This is the main entry point for live execution (--live-run mode).
     For JSON reading (--live-trading mode), use load_strategy_selections_from_json() directly.
-    
+
     Args:
         strategy_name: Name of the strategy (e.g., 'static_bh_1y', 'risk_adj_mom')
         all_tickers: List of all available tickers
         ticker_data_grouped: Dict mapping ticker -> DataFrame
         current_date: Current date for analysis (None uses latest data)
         top_n: Number of tickers to select
-        
+
     Returns:
         List of selected tickers, or empty list if strategy not found
     """
     from datetime import datetime, timezone
-    
+
     # Default to current time if not provided
     if current_date is None:
         current_date = datetime.now(timezone.utc)
-    
+
     # Get the strategy registry
     registry = _get_strategy_registry()
-    
+
     # Check if strategy exists in registry
     if strategy_name not in registry:
         print(f"   ⚠️ Strategy '{strategy_name}' not found in registry")
         print(f"   Available strategies: {sorted(registry.keys())}")
         return []
-    
+
     # Execute the strategy
     try:
         result = registry[strategy_name](all_tickers, ticker_data_grouped, current_date, top_n)

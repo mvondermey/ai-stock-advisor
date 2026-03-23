@@ -864,7 +864,7 @@ def select_meta_strategy_stocks(
 
         # === ENHANCED VOLATILITY STRATEGIES ===
         elif selected_strategy in ['enhanced_volatility', 'enhanced_volatility_6m', 'enhanced_volatility_3m']:
-            from enhanced_volatility_strategy import select_enhanced_volatility_stocks
+            from enhanced_volatility_trader import select_enhanced_volatility_stocks
             return select_enhanced_volatility_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
         # === TREND AND MOMENTUM STRATEGIES ===

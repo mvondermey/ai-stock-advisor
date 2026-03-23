@@ -264,24 +264,24 @@ def _auto_detect_process_counts():
         import psutil
         available_ram_gb = psutil.virtual_memory().available / (1024**3)
         total_ram_gb = psutil.virtual_memory().total / (1024**3)
-        
+
         # Use available RAM with some headroom (leave 20% free)
         usable_ram_gb = available_ram_gb * 0.8
-        
+
         # Calculate safe process counts
         # Training: ~3GB per process (XGBoost, PyTorch models)
         safe_training = max(1, int(usable_ram_gb / 3))
         # Data processing: ~1GB per process (lighter tasks)
         safe_data = max(1, int(usable_ram_gb / 1))
-        
+
         # Cap at CPU count (no point having more processes than cores)
         cores = cpu_count()
         safe_training = min(safe_training, cores)
         safe_data = min(safe_data, cores)
-        
+
         print(f"   💾 Auto-detected: {total_ram_gb:.1f}GB total RAM, {available_ram_gb:.1f}GB available")
         print(f"   🔧 Safe processes: {safe_data} (data), {safe_training} (training)")
-        
+
         return safe_data, safe_training
     except ImportError:
         # psutil not available, fall back to CPU-based calculation
@@ -614,6 +614,8 @@ ENABLE_SECTOR_ROTATION = True   # ENABLED - Sector Rotation Strategy
 
 ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 
+ENABLE_1M_3M_RATIO = True   # ENABLED - 1M/3M Ratio Strategy (short-term momentum acceleration)
+
 ENABLE_MOMENTUM_VOLATILITY_HYBRID = True   # ENABLED - Momentum-Volatility Hybrid Strategy
 
 ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M = True   # ENABLED - Momentum-Volatility Hybrid 6M Strategy (6-month lookback)
@@ -698,6 +700,7 @@ ENABLE_RISK_ADJ_MOM_1M_MONTHLY = True   # NEW - Risk-Adj Mom 1M Monthly (same sc
 
 ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET = True   # NEW - Risk-Adj Mom 1M + Vol-Sweet (best Sharpe + vol filter)
 ENABLE_BH_1Y_VOL_SWEET_ACCEL = True        # NEW - BH 1Y VolSweet Accel (Static BH 1Y + 1M VolSweet, ranked by acceleration)
+ENABLE_BH_1Y_DYNAMIC_ACCEL = True          # NEW - BH 1Y Dynamic Accel (dynamic rebalancing based on market conditions)
 
 ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip opportunities)
 
