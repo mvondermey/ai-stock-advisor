@@ -3684,7 +3684,12 @@ def _run_portfolio_backtest_walk_forward(
                 (not ratio_1m3m_vol_adj_rebal_initialized) or
                 (vol_adjusted_days > 0 and ratio_1m3m_vol_adj_rebal_days_since_rebalance >= vol_adjusted_days)
             )
-
+            
+            # Force initialization on first day
+            if day_count == 1 and not ratio_1m3m_vol_adj_rebal_initialized:
+                should_init_or_rebalance = True
+            
+            
             if should_init_or_rebalance:
                 # Select top 1Y performers, then rank by 1M/3M ratio (acceleration)
                 new_stocks = select_1y_performers_ranked_by_1m3m_ratio(initial_top_tickers, ticker_data_grouped, current_date, top_n=PORTFOLIO_SIZE)
