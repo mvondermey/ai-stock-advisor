@@ -3423,6 +3423,19 @@ def _get_strategy_registry():
         'ai_elite_filtered': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
         'ai_elite_market_up': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
 
+        # AI Regime strategies
+        'ai_regime': lambda t, d, dt, n: _select_ai_regime_stocks(t, d, dt, n),
+        'ai_regime_monthly': lambda t, d, dt, n: _select_ai_regime_stocks(t, d, dt, n),
+
+        # Universal Model
+        'universal_model': lambda t, d, dt, n: _select_universal_model_stocks(t, d, dt, n),
+
+        # Inverse ETF Hedge
+        'inverse_etf_hedge': lambda t, d, dt, n: _select_inverse_etf_hedge_stocks(t, d, dt, n),
+
+        # Analyst Recommendation
+        'analyst_rec': lambda t, d, dt, n: _select_analyst_rec_stocks(t, d, dt, n),
+
         # BH 1Y Adaptive Rebalancing variants (all use same base selection)
         'static_bh_1y_volatility': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'static_bh_1y_performance': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
@@ -3471,6 +3484,42 @@ def _select_risk_adj_mom_1m_vol_sweet(all_tickers, ticker_data_grouped, current_
     except ImportError:
         print("   ⚠️ risk_adj_mom_1m_vol_sweet_strategy not available, using risk_adj_mom_1m")
         return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, 30, "Risk-Adj Mom 1M")
+
+
+def _select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for AI Regime strategy."""
+    try:
+        from ai_regime_strategy import select_ai_regime_stocks
+        return select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+    except ImportError:
+        return []
+
+
+def _select_universal_model_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for Universal Model strategy."""
+    try:
+        from universal_model_strategy import select_universal_model_stocks
+        return select_universal_model_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+    except ImportError:
+        return []
+
+
+def _select_inverse_etf_hedge_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for Inverse ETF Hedge strategy."""
+    try:
+        from inverse_etf_hedge_strategy import select_inverse_etf_hedge_stocks
+        return select_inverse_etf_hedge_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+    except ImportError:
+        return []
+
+
+def _select_analyst_rec_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for Analyst Recommendation strategy."""
+    try:
+        from analyst_recommendation_strategy import select_analyst_recommendation_stocks
+        return select_analyst_recommendation_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+    except ImportError:
+        return []
 
 
 def get_strategy_tickers(strategy_name: str, all_tickers: list, ticker_data_grouped: dict,
