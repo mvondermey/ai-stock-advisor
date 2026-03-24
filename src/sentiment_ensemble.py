@@ -357,6 +357,10 @@ def select_sentiment_ensemble_stocks(all_tickers: List[str],
     Returns:
         List[str]: Selected ticker symbols
     """
+    # Filter out inverse ETFs - they should only be in inverse_etf_hedge strategy
+    from config import INVERSE_ETFS
+    all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
+    
     if current_date is None:
         latest_dates = [ticker_data_grouped[t].index.max()
                        for t in all_tickers

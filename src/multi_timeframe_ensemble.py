@@ -218,9 +218,13 @@ def select_multi_timeframe_stocks(
     Returns:
         List of selected tickers
     """
+    # Filter out inverse ETFs - they should only be in inverse_etf_hedge strategy
+    from config import INVERSE_ETFS
+    tickers_to_use = [t for t in initial_tickers if t not in INVERSE_ETFS]
+    
     stock_scores = []
     
-    for ticker in initial_tickers:
+    for ticker in tickers_to_use:
         if ticker not in ticker_data_grouped:
             continue
         

@@ -390,6 +390,10 @@ def select_adaptive_ensemble_stocks(all_tickers: List[str],
     Returns:
         List[str]: Selected ticker symbols
     """
+    # Filter out inverse ETFs - they should only be in inverse_etf_hedge strategy
+    from config import INVERSE_ETFS
+    all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
+    
     # Use current date or last available date
     if current_date is None:
         latest_dates = [ticker_data_grouped[t].index.max() 
