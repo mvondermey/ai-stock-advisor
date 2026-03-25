@@ -620,17 +620,33 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             hours_to_fetch = days_to_fetch * 24
             print(f"  Updating {ticker} (+{hours_to_fetch} hours)... (DATA_INTERVAL={DATA_INTERVAL})")
         
+        # Track which providers we tried
+        providers_tried = []
+        
         # [PASS] FIX: Try providers in order: Alpaca → TwelveData → Yahoo (cascade fallback)
         # Try Alpaca first (if available)
         if new_df.empty and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
-            new_df = _fetch_from_alpaca(ticker, start_utc, end_utc)
+            providers_tried.append("Alpaca")
+            try:
+                new_df = _fetch_from_alpaca(ticker, start_utc, end_utc)
+                if not new_df.empty:
+                    print(f"  [SUCCESS] {ticker}: Got {len(new_df)} rows from Alpaca")
+            except Exception as e:
+                print(f"  [ERROR] {ticker}: Alpaca failed - {str(e)[:100]}")
         
         # Try TwelveData second (if available)
         if new_df.empty and TWELVEDATA_SDK_AVAILABLE and TWELVEDATA_API_KEY:
-            new_df = _fetch_from_twelvedata(ticker, start_utc, end_utc)
+            providers_tried.append("TwelveData")
+            try:
+                new_df = _fetch_from_twelvedata(ticker, start_utc, end_utc)
+                if not new_df.empty:
+                    print(f"  [SUCCESS] {ticker}: Got {len(new_df)} rows from TwelveData")
+            except Exception as e:
+                print(f"  [ERROR] {ticker}: TwelveData failed - {str(e)[:100]}")
         
         # Yahoo as final fallback (always try if others fail)
         if new_df.empty:
+            providers_tried.append("Yahoo")
             try:
                 # Suppress yfinance stderr output for delisted tickers
                 with suppress_yfinance_output():
@@ -639,8 +655,18 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                                                multi_level_index=False)
                 if downloaded_df is not None and not downloaded_df.empty:
                     new_df = downloaded_df.dropna()
-            except Exception:
-                pass
+                    if not new_df.empty:
+                        print(f"  [SUCCESS] {ticker}: Got {len(new_df)} rows from Yahoo")
+                else:
+                    print(f"  [ERROR] {ticker}: Yahoo returned empty data")
+            except Exception as e:
+                print(f"  [ERROR] {ticker}: Yahoo failed - {str(e)[:100]}")
+        
+        # If all providers failed, log the failure
+        if new_df.empty:
+            print(f"  [FAIL] {ticker}: All providers failed ({', '.join(providers_tried)}) - using stale cache")
+        else:
+            print(f"  [SUCCESS] {ticker}: Successfully fetched {len(new_df)} rows of data")
         
         # Fallback to daily data if hourly data is empty (only for ETFs, not stocks)
         # ETFs are identified by: inverse ETFs list, or common ETF patterns (3-4 letter tickers without dots)
@@ -670,9 +696,13 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 if downloaded_df is not None and not downloaded_df.empty:
                     new_df = downloaded_df.dropna()
                     if not new_df.empty:
-                        print(f"  [INFO] {ticker}: Using daily data fallback ({len(new_df)} rows)")
-            except Exception:
-                pass
+                        print(f"  [SUCCESS] {ticker}: Using daily data fallback ({len(new_df)} rows)")
+                    else:
+                        print(f"  [ERROR] {ticker}: Daily data fallback returned empty data")
+                else:
+                    print(f"  [ERROR] {ticker}: Daily data fallback returned None")
+            except Exception as e:
+                print(f"  [ERROR] {ticker}: Daily data fallback failed - {str(e)[:100]}")
     else:
         print(f"  [DEBUG] Skipping fetch for {ticker} - cache is current")
     

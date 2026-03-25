@@ -1115,8 +1115,8 @@ def find_top_performers(
             if latest_date >= (today - timedelta(days=7)):  # Allow up to 7 days (weekends + holidays)
                 yahoo_return = _calculate_1y_return_from_dataframe(df, today, lookback_days)
             else:
-                # Data is stale - this shouldn't happen after initial download
-                print(f"   ⚠️ {ticker}: Cached data is stale (latest: {latest_date.date()}), skipping fresh fetch")
+                # Data is stale - download likely failed, using stale cache for calculations
+                print(f"   ⚠️ {ticker}: Using stale cache data (latest: {latest_date.date()}) - download may have failed")
                 yahoo_return = _calculate_1y_return_from_dataframe(df, today, lookback_days)  # Use anyway
         else:
             # Ticker not in cache - use fallback
