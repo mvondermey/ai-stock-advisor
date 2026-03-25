@@ -311,7 +311,98 @@ def _is_market_day_complete(date):
     return True
 
 
-def _get_last_trading_day():
+def _get_market_trading_days(start_date, end_date, market='US'):
+    """
+    Get trading days for a specific market using pandas_market_calendars.
+    
+    Args:
+        start_date: Start date for trading days
+        end_date: End date for trading days
+        market: Market identifier ('US', 'DE', 'UK', 'CA')
+    
+    Returns:
+        List of trading days (pandas Timestamps)
+    """
+    try:
+        import pandas_market_calendars as mcal
+        
+        # Map market to calendar
+        calendar_map = {
+            'US': 'NYSE',      # US stocks (NASDAQ, NYSE, etc.)
+            'DE': 'XETR',      # German stocks (DAX)
+            'UK': 'LSE',       # UK stocks
+            'CA': 'TSX'        # Canadian stocks
+        }
+        
+        if market not in calendar_map:
+            # Fallback to simple weekday filter
+            date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+            return [d for d in date_range if d.weekday() < 5]
+        
+        calendar = mcal.get_calendar(calendar_map[market])
+        trading_days = calendar.valid_days(start_date=start_date, end_date=end_date)
+        return list(trading_days)
+        
+    except ImportError:
+        # Fallback to simple weekday filter
+        date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+        return [d for d in date_range if d.weekday() < 5]
+
+
+def _get_last_trading_day(ticker_symbol=None):
+    """
+    Get the last trading day (excludes weekends and market-specific holidays).
+    
+    Args:
+        ticker_symbol: Optional ticker to determine market for market-specific holidays
+    """
+    now_utc = datetime.now(timezone.utc)
+    today = now_utc.date()
+    
+    # Determine market based on ticker suffix
+    market = 'US'  # Default
+    if ticker_symbol:
+        if ticker_symbol.endswith('.DE') or ticker_symbol.endswith('.F'):
+            market = 'DE'
+        elif ticker_symbol.endswith('.L'):
+            market = 'UK'
+        elif ticker_symbol.endswith(('.TO', '.V')):
+            market = 'CA'
+    
+    # Get trading days for the last 7 days
+    start_date = today - timedelta(days=7)
+    end_date = today
+    
+    trading_days = _get_market_trading_days(start_date, end_date, market)
+    
+    # Find the most recent trading day
+    if trading_days:
+        # Convert to date objects for comparison
+        trading_dates = [d.date() for d in trading_days]
+        # Filter out future dates (today if market hasn't closed yet)
+        past_trading_days = [d for d in trading_dates if d <= today]
+        if past_trading_days:
+            return max(past_trading_days)
+    
+    # Fallback to simple logic if no trading days found
+    weekday = today.weekday()
+    if weekday == 5:  # Saturday
+        return today - timedelta(days=1)  # Friday
+    elif weekday == 6:  # Sunday
+        return today - timedelta(days=2)  # Friday
+    elif weekday == 0:  # Monday
+        if now_utc.hour < 23:  # Before 11pm UTC
+            return today - timedelta(days=3)  # Friday
+        else:
+            return today
+    else:  # Tuesday-Friday
+        if now_utc.hour < 23:  # Before 11pm UTC
+            return today - timedelta(days=1)  # Yesterday
+        else:
+            return today
+
+
+def _get_last_trading_day_old():
     """
     Get the last trading day (excludes weekends and US holidays).
     For US markets: Mon-Fri are trading days except holidays.
@@ -394,7 +485,7 @@ def _is_cache_current(last_cached_date, ticker_symbol=None):
         last_cached_date: The date of the last cached data
         ticker_symbol: Optional ticker symbol to determine exchange/market
     """
-    last_trading_day = _get_last_trading_day()
+    last_trading_day = _get_last_trading_day(ticker_symbol)
     
     # Convert cached_date to proper date object
     try:
@@ -419,28 +510,10 @@ def _is_cache_current(last_cached_date, ticker_symbol=None):
         except:
             return False
     
-    # Proper trading day validation for different markets
-    if ticker_symbol and any(suffix in ticker_symbol for suffix in ['.SW', '.DE', '.PA', '.MI', '.MC', '.L']):
-        # EU stocks - check if cache date is a valid trading day AND recent enough
-        # Allow cache date to be newer than last US trading day (time zone differences)
-        # But ensure cache date itself is a weekday (not weekend)
-        
-        if cached_date.weekday() >= 5:  # Weekend (Saturday=5, Sunday=6)
-            print(f"  [DEBUG] {ticker_symbol}: EU Cache on weekend ({cached_date}) - not valid")
-            return False
-        
-        # Check if cache has data up to or after last US trading day
-        if cached_date >= last_trading_day:
-            print(f"  [DEBUG] {ticker_symbol}: EU Cache OK ({cached_date} >= {last_trading_day}, weekday)")
-            return True  # Cache has data we need and is on a trading day
-        else:
-            print(f"  [DEBUG] {ticker_symbol}: EU Cache too old ({cached_date} < {last_trading_day})")
-            return False  # Cache doesn't have recent enough data
-    else:
-        # US stocks - strict check (already validated by _get_last_trading_day)
-        is_current = cached_date >= last_trading_day
-        print(f"  [DEBUG] {ticker_symbol}: US cache check {cached_date} >= {last_trading_day} = {is_current}")
-        return is_current
+    # Check if cache has data up to or after last trading day
+    is_current = cached_date >= last_trading_day
+    print(f"  [DEBUG] {ticker_symbol}: Cache check {cached_date} >= {last_trading_day} = {is_current}")
+    return is_current
 
 # CLASS_HORIZON is now imported from config above
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
