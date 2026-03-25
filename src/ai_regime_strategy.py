@@ -178,7 +178,18 @@ class AIRegimeAllocator:
         """
         for name in SUB_STRATEGIES:
             if name in strategy_values and strategy_values[name] is not None:
-                self.strategy_histories[name].append(strategy_values[name])
+                value = strategy_values[name]
+                # Ensure value is a number, not a list or other type
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    self.strategy_histories[name].append(float(value))
+                elif isinstance(value, list):
+                    # If it's a list, take the last value (common error case)
+                    if value and isinstance(value[-1], (int, float)):
+                        self.strategy_histories[name].append(float(value[-1]))
+                    else:
+                        continue  # Skip invalid list
+                else:
+                    continue  # Skip invalid types
         self.day_count += 1
 
     def extract_regime_features(self, ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -521,6 +532,8 @@ class AIRegimeAllocator:
                         elif name == 'LightGBM':
                             m.fit(X_train, y_train, init_model=m.booster_)
                         elif name == 'CatBoost':
+                            # CatBoost GPU doesn't support continuation - switch to CPU for this
+                            m._init_params['task_type'] = 'CPU'
                             m.fit(X_train, y_train, init_model=m)
                         else:
                             m.fit(X_train, y_train)
@@ -769,41 +782,41 @@ def select_ai_regime_stocks(
         'vol_adj_mom': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'vol_sweet_mom': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         '1m_vol_sweet': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'price_acceleration': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
+        'price_acceleration': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n),
 
         # Buy & Hold Strategies
-        'static_bh_1y': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'static_bh_6m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=180),
-        'static_bh_3m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
-        'static_bh_1m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=30),
-        'bh_1y_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_6m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=180),
-        'bh_3m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
-        'bh_1m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=30),
+        'static_bh_1y': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'static_bh_6m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 180, top_n),
+        'static_bh_3m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n),
+        'static_bh_1m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 30, top_n),
+        'bh_1y_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_6m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 180, top_n),
+        'bh_3m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n),
+        'bh_1m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 30, top_n),
 
         # Dynamic Buy & Hold Strategies
-        'dynamic_bh_1y': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365, apply_performance_filter=True),
-        'dynamic_bh_6m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=180, apply_performance_filter=True),
-        'dynamic_bh_3m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90, apply_performance_filter=True),
-        'dynamic_bh_1m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=30, apply_performance_filter=True),
+        'dynamic_bh_1y': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, apply_performance_filter=True),
+        'dynamic_bh_6m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 180, top_n, apply_performance_filter=True),
+        'dynamic_bh_3m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n, apply_performance_filter=True),
+        'dynamic_bh_1m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 30, top_n, apply_performance_filter=True),
         'dynamic_bh_1y_vol': lambda: select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365, max_volatility=0.4),
-        'dynamic_bh_1y_ts': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
+        'dynamic_bh_1y_ts': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
 
         # Enhanced BH Strategies (all use 1Y lookback with different triggers - simplified to base selection)
-        'bh_1y_vol_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_perf_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_mom_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_atr_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_hybrid_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_volume': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_sector': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_perf_thresh': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_market_regime': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_mom_persist': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_overlap': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_rank_drift': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_drawdown': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'bh_1y_smart_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
+        'bh_1y_vol_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_perf_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_mom_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_atr_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_hybrid_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_volume': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_sector': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_perf_thresh': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_market_regime': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_mom_persist': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_overlap': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_rank_drift': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_drawdown': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_smart_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
 
         # Technical Strategies
         'concentrated_3m': lambda: select_concentrated_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n),

@@ -111,7 +111,7 @@ def _prepare_labels(train_df: pd.DataFrame) -> pd.DataFrame:
     """Compute forward return for regression target (simpler, more predictable)."""
     # Use raw forward return as target - more predictable than risk-adjusted
     train_df['label'] = train_df['forward_return']
-    
+
     # Clip extreme outliers for stability
     mean_ret = train_df['label'].mean()
     std_ret = train_df['label'].std()
@@ -119,7 +119,7 @@ def _prepare_labels(train_df: pd.DataFrame) -> pd.DataFrame:
         train_df['label'] = train_df['label'].clip(
             lower=mean_ret - 3 * std_ret, upper=mean_ret + 3 * std_ret
         )
-    
+
     return train_df
 
 
@@ -133,12 +133,12 @@ def train_shared_base_model(
     """
     Train ENSEMBLE of models on data from ALL tickers (REGRESSION version).
     Returns ensemble of top 3 models for more robust predictions.
-    
+
     Args:
         all_training_data: Combined list of sample dicts from all tickers
         save_path: Path to save the ensemble
         existing_model: Existing ensemble to continue training (not used for ensembles)
-        
+
     Returns:
         (ensemble_dict, avg_r2_score) or (None, 0.0)
         ensemble_dict contains {'models': [model1, model2, ...], 'weights': [w1, w2, ...]}
@@ -157,19 +157,19 @@ def train_shared_base_model(
 
     # Check if we have existing models to continue training
     has_existing = existing_model is not None and isinstance(existing_model, dict) and 'all_models' in existing_model
-    
+
     status_msg = "Continuing" if has_existing else "Training NEW"
     print(f"   📊 AI Elite: {status_msg} training on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
-    
+
     # Use XGBoost + LightGBM + CatBoost (all support GPU + incremental training)
     import xgboost as xgb
     import lightgbm as lgb
     import warnings
     from sklearn.metrics import r2_score
     from sklearn.model_selection import train_test_split
-    
+
     device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
-    
+
     if has_existing:
         # Load existing models for incremental training
         models = existing_model['all_models']
@@ -213,40 +213,46 @@ def train_shared_base_model(
     # Train with incremental learning (no CV for speed - just train/val split)
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
     print(f"   📊 Train/Val split: {len(X_train)} train, {len(X_val)} val samples")
-    
+
     trained_models = []
     model_scores = []
     model_names = []
-    
+
     import time
 
     for name, m in models.items():
         try:
             print(f"      🔄 {name}: Training started...", end=" ", flush=True)
             start_time = time.time()
-            
+
             # Validate training data
             if len(X_train) < 10:
                 print(f"skipped (insufficient data: {len(X_train)} samples)")
                 continue
-                
+
             # Check for valid target values
             if np.all(y_train == y_train[0]):
                 print(f"skipped (constant target)")
                 continue
-                
+
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 if has_existing:
-                    # Incremental training - retrain on new data
-                    # Note: True incremental learning (adding trees) causes numerical instability
-                    # Instead, we retrain the model on new data but keep the same hyperparameters
-                    # This is still beneficial as it adapts to recent market conditions
-                    m.fit(X_train, y_train)
+                    # True incremental training for supported models
+                    if name == 'XGBoost':
+                        m.fit(X_train, y_train, xgb_model=m.get_booster())
+                    elif name == 'LightGBM':
+                        m.fit(X_train, y_train, init_model=m.booster_)
+                    elif name == 'CatBoost':
+                        # CatBoost GPU doesn't support continuation - switch to CPU
+                        m._init_params['task_type'] = 'CPU'
+                        m.fit(X_train, y_train, init_model=m)
+                    else:
+                        m.fit(X_train, y_train)
                 else:
                     # Fresh training
                     m.fit(X_train, y_train)
-                
+
                 # Validate model was trained (has trees/estimators)
                 if name == 'CatBoost':
                     try:
@@ -256,26 +262,26 @@ def train_shared_base_model(
                             continue
                     except:
                         pass
-                
+
                 # Validate on held-out set (faster than CV)
                 y_pred = m.predict(X_val)
-                
+
                 # Check for numerical instability
                 if np.any(np.isnan(y_pred)) or np.any(np.isinf(y_pred)):
                     print(f"      ⚠️ {name}: Predictions contain NaN/Inf, skipping")
                     continue
-                
+
                 if len(y_pred) == 0 or len(y_val) == 0:
                     print(f"failed: Empty predictions")
                     continue
-                
+
                 score = r2_score(y_val, y_pred)
-                
+
                 # Clip to reasonable bounds - extreme values indicate numerical overflow
                 if score < -10 or score > 1 or np.isnan(score) or np.isinf(score):
                     print(f"      ⚠️ {name}: R² = {score:.3f} (invalid, clipping to -10)")
                     score = -10.0
-            
+
             elapsed = time.time() - start_time
             status = "incremental" if has_existing else "fresh"
             print(f"R² = {score:.3f} ({status}, {elapsed:.1f}s)")
@@ -295,7 +301,7 @@ def train_shared_base_model(
     best_name = model_names[best_idx]
     best_score = model_scores[best_idx]
     best_model = trained_models[best_idx]
-    
+
     # Create model dict with ALL models stored, best_model for prediction
     model_dict = {
         'all_models': dict(zip(model_names, trained_models)),  # All models by name
@@ -331,7 +337,7 @@ def fine_tune_per_ticker(
     """
     Fine-tune a COPY of the shared base model on ticker-specific data.
     Uses fewer boosting rounds to avoid overfitting on small data.
-    
+
     Returns:
         Fine-tuned model or None
     """
@@ -385,14 +391,14 @@ def _save_model(model, path: str, metadata: dict = None):
     """Save model to disk with optional metadata."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        
+
         # Create backup before overwriting
         if os.path.exists(path):
             backup_path = path + '.backup'
             import shutil
             shutil.copy2(path, backup_path)
             print(f"   📦 AI Elite: Backed up previous model to {backup_path}")
-        
+
         # Save model with metadata
         model_data = {
             'model': model,
