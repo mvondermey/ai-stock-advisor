@@ -589,9 +589,12 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                     
                     # [PASS] FIX: Use proper trading day check to avoid fetching on weekends
                     is_current = _is_cache_current(last_cached_date, ticker)
-                    # Reduced logging - only show for problematic cases
-                    if not is_current or ticker.endswith(('.SW', '.DE', '.PA', '.MI', '.MC', '.L')):
-                        print(f"  [DEBUG] Cache check for {ticker}: last_cached={last_cached_date.date()}, is_current={is_current}")
+                    # Log cache status (use tqdm.write to avoid progress bar conflicts)
+                    try:
+                        from tqdm import tqdm
+                        tqdm.write(f"  [DEBUG] {ticker}: cache={last_cached_date.date()}, current={is_current}")
+                    except:
+                        print(f"  [DEBUG] {ticker}: cache={last_cached_date.date()}, current={is_current}")
                     if is_current:
                         # Cache already has data up to the last trading day
                         needs_fetch = False
@@ -660,22 +663,20 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                                                multi_level_index=False)
                 if downloaded_df is not None and not downloaded_df.empty:
                     new_df = downloaded_df.dropna()
-                    if not new_df.empty:
-                        print(f"  [SUCCESS] {ticker}: Got {len(new_df)} rows from Yahoo")
                 else:
-                    print(f"  [ERROR] {ticker}: Yahoo returned empty data")
+                    try:
+                        from tqdm import tqdm
+                        tqdm.write(f"  [ERROR] {ticker}: Yahoo returned empty data")
+                    except:
+                        print(f"  [ERROR] {ticker}: Yahoo returned empty data")
             except Exception as e:
-                print(f"  [ERROR] {ticker}: Yahoo failed - {str(e)[:100]}")
+                try:
+                    from tqdm import tqdm
+                    tqdm.write(f"  [ERROR] {ticker}: Yahoo failed - {str(e)[:100]}")
+                except:
+                    print(f"  [ERROR] {ticker}: Yahoo failed - {str(e)[:100]}")
         
-        # If all providers failed, log the failure with helpful info
-        if new_df.empty:
-            if DATA_INTERVAL in ['1h', '30m', '15m', '5m', '1m']:
-                print(f"  [FAIL] {ticker}: No recent {DATA_INTERVAL} data available ({', '.join(providers_tried)})")
-                print(f"         Note: Some tickers don't have intraday data - using stale cache")
-            else:
-                print(f"  [FAIL] {ticker}: All providers failed ({', '.join(providers_tried)}) - using stale cache")
-        else:
-            print(f"  [SUCCESS] {ticker}: Successfully fetched {len(new_df)} rows of data")
+        # If all providers failed, silently use stale cache (reduces log noise)
         
         # Fallback to daily data if hourly data is empty (only for ETFs, not stocks)
         # ETFs are identified by: inverse ETFs list, or common ETF patterns (3-4 letter tickers without dots)
