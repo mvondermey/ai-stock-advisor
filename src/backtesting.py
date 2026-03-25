@@ -2832,11 +2832,38 @@ def _run_portfolio_backtest_walk_forward(
     # ✅ NEW: Track per-stock contributions
     stock_performance_tracking = {}  # ticker -> {'days_held': int, 'contribution': float, 'max_shares': float, 'entry_value': float, 'exit_value': float}
 
-    # Get all trading days in the backtest period
-    date_range = pd.date_range(start=backtest_start_date, end=backtest_end_date, freq='D')
-    business_days = [d for d in date_range if d.weekday() < 5]  # Filter to weekdays
-
-    print(f"   📅 Total trading days to process: {len(business_days)}")
+    # Get all trading days in the backtest period using market calendars
+    try:
+        import pandas_market_calendars as mcal
+        
+        # Get trading calendars for different markets
+        nyse = mcal.get_calendar('NYSE')      # US stocks (NASDAQ, NYSE, etc.)
+        xetra = mcal.get_calendar('XETRA')    # German stocks (DAX)
+        lse = mcal.get_calendar('LSE')        # UK stocks
+        tsx = mcal.get_calendar('TSX')        # Canadian stocks
+        
+        # Get valid trading days for each market
+        us_trading_days = nyse.valid_days(start_date=backtest_start_date, end_date=backtest_end_date)
+        german_trading_days = xetra.valid_days(start_date=backtest_start_date, end_date=backtest_end_date)
+        uk_trading_days = lse.valid_days(start_date=backtest_start_date, end_date=backtest_end_date)
+        canadian_trading_days = tsx.valid_days(start_date=backtest_start_date, end_date=backtest_end_date)
+        
+        # Combine all trading days (union of all markets)
+        all_trading_days = sorted(set(us_trading_days) | set(german_trading_days) | 
+                                 set(uk_trading_days) | set(canadian_trading_days))
+        
+        # Convert to list like before
+        business_days = list(all_trading_days)
+        
+        print(f"   📅 Trading days (US: {len(us_trading_days)}, DE: {len(german_trading_days)}, UK: {len(uk_trading_days)}, CA: {len(canadian_trading_days)})")
+        print(f"   📅 Combined trading days to process: {len(business_days)}")
+        
+    except ImportError:
+        # Fallback to simple weekday filter if pandas_market_calendars not available
+        print("   ⚠️ pandas_market_calendars not available, using simple weekday filter")
+        date_range = pd.date_range(start=backtest_start_date, end=backtest_end_date, freq='D')
+        business_days = [d for d in date_range if d.weekday() < 5]  # Filter to weekdays
+        print(f"   📅 Total trading days to process: {len(business_days)}")
 
     # ✅ OPTIMIZATION: Pre-group data by ticker ONCE (instead of filtering 5644 times per day!)
     print(f"   🔧 Pre-grouping data by ticker for fast lookups...", flush=True)
