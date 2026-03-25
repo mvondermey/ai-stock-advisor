@@ -779,13 +779,13 @@ def select_ai_regime_stocks(
         'risk_adj_mom_3m_sent': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
         'risk_adj_sent': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
 
-        # AI/ML Strategies
-        'ai_elite': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n),
-        'ai_elite_monthly': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n),
-        'ai_elite_market_up': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n),
-        'ai_elite_filtered': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n),
-        'elite_hybrid': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n),
-        'elite_risk': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n),
+        # AI/ML Strategies (select_ai_elite_with_training returns tuple, extract first element)
+        'ai_elite': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
+        'ai_elite_monthly': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
+        'ai_elite_market_up': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
+        'ai_elite_filtered': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
+        'elite_hybrid': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
+        'elite_risk': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
         'momentum_ai_hybrid': lambda: select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
 
         # Momentum Strategies
