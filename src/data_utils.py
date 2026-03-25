@@ -556,9 +556,14 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
         if cache_file.exists():
             try:
-                # Check if cache has 'Date' or 'Datetime' column
+                # Check if cache has 'Date' or 'Datetime' column, or use first column as index
                 temp_df = pd.read_csv(cache_file, nrows=1)
-                index_col = 'Date' if 'Date' in temp_df.columns else 'Datetime'
+                if 'Date' in temp_df.columns:
+                    index_col = 'Date'
+                elif 'Datetime' in temp_df.columns:
+                    index_col = 'Datetime'
+                else:
+                    index_col = 0  # Use first column (unnamed index)
                 cached_df = pd.read_csv(cache_file, index_col=index_col, parse_dates=True)
                 if cached_df.index.tzinfo is None:
                     cached_df.index = cached_df.index.tz_localize('UTC')
