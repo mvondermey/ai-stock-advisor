@@ -2838,7 +2838,7 @@ def _run_portfolio_backtest_walk_forward(
         
         # Get trading calendars for different markets
         nyse = mcal.get_calendar('NYSE')      # US stocks (NASDAQ, NYSE, etc.)
-        xetra = mcal.get_calendar('XETRA')    # German stocks (DAX)
+        xetra = mcal.get_calendar('XETR')     # German stocks (DAX)
         lse = mcal.get_calendar('LSE')        # UK stocks
         tsx = mcal.get_calendar('TSX')        # Canadian stocks
         
