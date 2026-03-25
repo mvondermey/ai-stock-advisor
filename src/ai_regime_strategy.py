@@ -481,6 +481,13 @@ class AIRegimeAllocator:
         trained_models = {}
         model_scores = {}
 
+        # Remap ALL labels to be consecutive BEFORE training (XGBoost requires this)
+        # e.g., [0, 1, 3, 6] -> [0, 1, 2, 3]
+        unique_labels_all = np.unique(y_train)
+        label_map_all = {old: new for new, old in enumerate(unique_labels_all)}
+        y_train_mapped = np.array([label_map_all[l] for l in y_train])
+        y_val_mapped = np.array([label_map_all.get(l, 0) for l in y_val])
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             for name, m in models.items():
@@ -527,6 +534,7 @@ class AIRegimeAllocator:
 
                     # True incremental training for supported models
                     if can_increment:
+                        # Use original labels for incremental training (model already knows the classes)
                         if name == 'XGBoost':
                             m.fit(X_train, y_train, xgb_model=m.get_booster())
                         elif name == 'LightGBM':
@@ -538,11 +546,16 @@ class AIRegimeAllocator:
                         else:
                             m.fit(X_train, y_train)
                     else:
-                        m.fit(X_train, y_train)
+                        # Fresh training - use mapped labels (consecutive: 0, 1, 2, ...)
+                        m.fit(X_train, y_train_mapped)
 
-                    # Validate on held-out set
-                    y_pred = m.predict(X_val)
-                    score = accuracy_score(y_val, y_pred)
+                    # Validate on held-out set (use mapped labels for fresh, original for incremental)
+                    if can_increment:
+                        y_pred = m.predict(X_val)
+                        score = accuracy_score(y_val, y_pred)
+                    else:
+                        y_pred = m.predict(X_val)
+                        score = accuracy_score(y_val_mapped, y_pred)
 
                     elapsed = time.time() - start_time
                     status = "incremental" if has_existing else "fresh"
