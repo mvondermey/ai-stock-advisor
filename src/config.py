@@ -896,9 +896,9 @@ ATR_MULT_TRAIL          = 2.0
 
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
 
-PORTFOLIO_SIZE          = 10        # Number of stocks to hold in portfolio
+PORTFOLIO_SIZE          = 3         # Number of stocks to hold in portfolio
 
-PORTFOLIO_BUFFER_SIZE    = 12        # Sell when stock not in top X (buffer for stability)
+PORTFOLIO_BUFFER_SIZE    = 6         # Sell when stock not in top X (buffer for stability)
 
 TOTAL_CAPITAL           = 300000     # Total capital to invest ($300,000)
 

@@ -15,12 +15,18 @@ BACKTEST_DAYS = 90
 TX_COST_PCT = 0.011  # 1.1% per trade
 
 # (size, buffer) combinations
-PARAM_COMBINATIONS = [(3, 4), (3, 5), (5, 6), (5, 7), (10, 12)]
+PARAM_COMBINATIONS = [
+    (1, 2), (1, 3), (1, 4),
+    (2, 3), (2, 4), (2, 5),
+    (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9),
+    (5, 6), (5, 7), (10, 12)
+]
 
 STRATEGIES = [
     ("BH 1Y", 365, 30),   # Monthly rebalance
-    ("BH 3M", 90, 14),    # Bi-weekly rebalance
-    ("BH 1M", 30, 7),     # Weekly rebalance
+    ("BH 6M", 180, 30),   # Monthly rebalance
+    ("BH 3M", 90, 30),    # Monthly rebalance
+    ("BH 1M", 30, 30),    # Monthly rebalance
 ]
 
 def load_data():
