@@ -26,6 +26,10 @@ config.ENABLE_AI_ELITE = False
 config.ENABLE_AI_ELITE_MONTHLY = False
 config.ENABLE_AI_ELITE_FILTERED = False
 config.ENABLE_AI_ELITE_MARKET_UP = False
+config.ENABLE_ELITE_HYBRID = False
+config.ENABLE_ELITE_RISK = False
+config.ENABLE_AI_REGIME = False
+config.ENABLE_AI_REGIME_MONTHLY = False
 
 # Enable ONLY the strategies we want to test
 config.ENABLE_DYNAMIC_BH_1Y = True
@@ -109,6 +113,8 @@ def run_backtest_with_params(portfolio_size, buffer_size, all_tickers_data, init
     print(f"DEBUG IN BACKTESTING: ENABLE_STATIC_BH = {config.ENABLE_STATIC_BH}")
     print(f"DEBUG IN BACKTESTING: ENABLE_3M_1Y_RATIO = {config.ENABLE_3M_1Y_RATIO}")
     print(f"DEBUG IN BACKTESTING: ENABLE_1M_3M_RATIO = {config.ENABLE_1M_3M_RATIO}")
+    print(f"DEBUG IN BACKTESTING: ENABLE_AI_ELITE = {config.ENABLE_AI_ELITE}")
+    print(f"DEBUG IN BACKTESTING: ENABLE_AI_ELITE_MONTHLY = {config.ENABLE_AI_ELITE_MONTHLY}")
 
     # Override config with test parameters
     config.PORTFOLIO_SIZE = portfolio_size
