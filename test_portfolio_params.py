@@ -14,6 +14,28 @@ for attr in dir(config):
     if attr.startswith('ENABLE_') and isinstance(getattr(config, attr), bool):
         setattr(config, attr, False)
 
+# Double-check some key strategies are disabled
+config.ENABLE_MOMENTUM_AI_HYBRID = False
+config.ENABLE_AI_VOLATILITY_ENSEMBLE = False
+config.ENABLE_RISK_ADJ_MOM = False
+config.ENABLE_MEAN_REVERSION = False
+config.ENABLE_QUALITY_MOM = False
+config.ENABLE_VOLATILITY_ADJ_MOM = False
+config.ENABLE_SECTOR_ROTATION = False
+config.ENABLE_MOMENTUM_VOLATILITY_HYBRID = False
+config.ENABLE_ENHANCED_VOLATILITY = False
+config.ENABLE_PRICE_ACCELERATION = False
+config.ENABLE_DUAL_MOMENTUM = False
+config.ENABLE_TREND_FOLLOWING_ATR = False
+config.ENABLE_MOMENTUM_ACCELERATION = False
+config.ENABLE_CONCENTRATED_3M = False
+config.ENABLE_VOL_SWEET_MOM = False
+config.ENABLE_RISK_ADJ_MOM_6M = False
+config.ENABLE_RISK_ADJ_MOM_3M = False
+config.ENABLE_RISK_ADJ_MOM_1M = False
+config.ENABLE_BH_1Y_VOL_SWEET_ACCEL = False
+config.ENABLE_BH_1Y_DYNAMIC_ACCEL = False
+
 # Explicitly disable the master STATIC_BH flag
 config.ENABLE_STATIC_BH = False
 
