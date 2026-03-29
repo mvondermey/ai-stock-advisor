@@ -188,15 +188,19 @@ def extract_strategy_results(result, initial_capital):
     }
 
     for key, display_name in strategy_map.items():
-        if key in strategies and strategies[key]['value']:
+        if key in strategies:
             value = strategies[key]['value']
-            ret = ((value - initial_capital) / initial_capital) * 100
-            costs = strategies[key].get('costs', 0)
-            extracted[display_name] = {
-                'value': value,
-                'return': ret,
-                'costs': costs
-            }
+            # Debug: print if strategy is missing or has 0 value
+            if not value or value == 0:
+                print(f"  DEBUG: {display_name} ({key}) has value {value}")
+            if value:
+                ret = ((value - initial_capital) / initial_capital) * 100
+                costs = strategies[key].get('costs', 0)
+                extracted[display_name] = {
+                    'value': value,
+                    'return': ret,
+                    'costs': costs
+                }
 
     return extracted
 
