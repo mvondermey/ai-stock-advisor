@@ -241,14 +241,37 @@ def main():
         except Exception as e:
             print(f"  ERROR: {e}")
 
-    # Summary
+    # Summary - Show ALL results for every strategy and parameter combination
     print("\n" + "=" * 120)
-    print("RESULTS SUMMARY - Sorted by Return")
+    print("COMPLETE RESULTS - All 8 Strategies x All Portfolio/Buffer Combinations")
+    print("=" * 120)
+    
+    # Group by strategy and show ALL results for each
+    strategy_names = sorted(set(r['strategy'] for r in all_results))
+    
+    for strat in strategy_names:
+        print(f"\n{'─' * 80}")
+        print(f"📊 {strat}")
+        print(f"{'─' * 80}")
+        print(f"{'Size':<6} {'Buffer':<8} {'Value':<15} {'Return':<12} {'Costs'}")
+        print(f"{'-' * 60}")
+        
+        strat_results = sorted([r for r in all_results if r['strategy'] == strat], 
+                               key=lambda x: x['return'], reverse=True)
+        for r in strat_results:
+            print(f"{r['size']:<6} {r['buffer']:<8} ${r['value']:>12,.0f} {r['return']:>+10.1f}% ${r['costs']:>8,.0f}")
+        
+        if strat_results:
+            best = strat_results[0]
+            print(f"  ✅ Best: Size={best['size']}, Buffer={best['buffer']} → {best['return']:+.1f}%")
+    
+    # Overall top 10
+    print("\n" + "=" * 120)
+    print("TOP 10 OVERALL (all strategies combined)")
     print("=" * 120)
     print(f"{'Strategy':<15} {'Size':<6} {'Buffer':<8} {'Value':<15} {'Return':<12} {'Costs'}")
     print("-" * 120)
-
-    for r in sorted(all_results, key=lambda x: x['return'], reverse=True)[:30]:
+    for r in sorted(all_results, key=lambda x: x['return'], reverse=True)[:10]:
         print(f"{r['strategy']:<15} {r['size']:<6} {r['buffer']:<8} ${r['value']:>12,.0f} {r['return']:>+10.1f}% ${r['costs']:>8,.0f}")
 
     # Best per strategy
