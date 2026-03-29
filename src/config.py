@@ -34,6 +34,12 @@ DATA_CACHE_DIR          = Path("data_cache")
 
 
 
+# --- JSON output control ---
+
+ENABLE_JSON_OUTPUT       = True       # Control whether to write strategy_selections.json and live_trading_selections.json
+
+
+
 def get_data_lookback_days():
 
     """Get the number of days to look back for data downloads based on DATA_INTERVAL."""
@@ -460,7 +466,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 # --- Backtest windows
 
-BACKTEST_DAYS           =   70   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   40   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 

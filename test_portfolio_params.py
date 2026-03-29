@@ -30,6 +30,7 @@ config.ENABLE_ELITE_HYBRID = False
 config.ENABLE_ELITE_RISK = False
 config.ENABLE_AI_REGIME = False
 config.ENABLE_AI_REGIME_MONTHLY = False
+config.ENABLE_ANALYST_REC = False
 
 # Enable ONLY the strategies we want to test
 config.ENABLE_DYNAMIC_BH_1Y = True

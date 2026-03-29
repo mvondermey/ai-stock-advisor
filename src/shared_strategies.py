@@ -3517,7 +3517,9 @@ def _select_analyst_rec_stocks(all_tickers, ticker_data_grouped, current_date, t
     """Wrapper for Analyst Recommendation strategy."""
     try:
         from analyst_recommendation_strategy import select_analyst_recommendation_stocks
-        return select_analyst_recommendation_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        # Analyst strategy requires analyst_data which we don't have, so return empty
+        # This strategy should be disabled in config
+        return []
     except ImportError:
         return []
 
