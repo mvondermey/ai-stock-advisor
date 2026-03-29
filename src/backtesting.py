@@ -308,13 +308,41 @@ def _build_daily_strategy_data(locals_dict):
     Build strategy data for daily summary from local variables.
     Returns dict mapping strategy_key -> {'value': float, 'history': list, 'cash': float, 'positions': int}
     Uses STRATEGY_DISPLAY_NAMES for display name lookup.
+    Only includes strategies that are enabled via config flags.
     """
     # Helper to safely get value from locals
     def _get(name, default=None):
         return locals_dict.get(name, default)
 
+    # Map strategy keys to their config enable flags
+    STRATEGY_ENABLE_FLAGS = {
+        'static_bh_1y': config.ENABLE_STATIC_BH,
+        'static_bh_6m': config.ENABLE_STATIC_BH,
+        'static_bh_3m': config.ENABLE_STATIC_BH,
+        'static_bh_1m': config.ENABLE_STATIC_BH,
+        'dynamic_bh_1y': config.ENABLE_DYNAMIC_BH_1Y,
+        'dynamic_bh_6m': config.ENABLE_DYNAMIC_BH_6M,
+        'dynamic_bh_3m': config.ENABLE_DYNAMIC_BH_3M,
+        'dynamic_bh_1m': config.ENABLE_DYNAMIC_BH_1M,
+        'dynamic_bh_1y_vol_filter': config.ENABLE_DYNAMIC_BH_1Y_VOL_FILTER,
+        'dynamic_bh_1y_trailing_stop': config.ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP,
+        'risk_adj_mom': config.ENABLE_RISK_ADJ_MOM,
+        'mean_reversion': config.ENABLE_MEAN_REVERSION,
+        'quality_momentum': config.ENABLE_QUALITY_MOM,
+        'momentum_ai_hybrid': config.ENABLE_MOMENTUM_AI_HYBRID,
+        'multi_tf_ensemble': config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
+        'bh_1y_monthly': config.ENABLE_STATIC_BH_1Y_MONTHLY,
+        'bh_6m_monthly': config.ENABLE_STATIC_BH_6M_MONTHLY,
+        'bh_3m_monthly': config.ENABLE_STATIC_BH_3M_MONTHLY,
+        'bh_1m_monthly': config.ENABLE_STATIC_BH_1M_MONTHLY,
+        'ai_elite': config.ENABLE_AI_ELITE,
+        'ai_elite_monthly': config.ENABLE_AI_ELITE_MONTHLY,
+        'ai_elite_filtered': config.ENABLE_AI_ELITE_FILTERED,
+        'ai_elite_market_up': config.ENABLE_AI_ELITE_MARKET_UP,
+    }
+
     # Build strategy data - each entry has value, history, cash, num_positions
-    # Only include strategies that are enabled (value is not None/0)
+    # Only include strategies that are enabled via config flags
     data = {}
 
     # Define strategy mappings: (key, value_var, history_var, cash_var, positions_var_or_count)
@@ -441,6 +469,9 @@ def _build_daily_strategy_data(locals_dict):
     ]
 
     for key, value_var, history_var, cash_var, positions_var in strategy_mappings:
+        # Skip strategies that are disabled via config flags
+        if key in STRATEGY_ENABLE_FLAGS and not STRATEGY_ENABLE_FLAGS[key]:
+            continue
         value = _get(value_var)
         if value is not None and value > 0:
             history = _get(history_var, [])
