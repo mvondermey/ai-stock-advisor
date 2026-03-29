@@ -120,6 +120,7 @@ def run_backtest_with_params(portfolio_size, buffer_size, all_tickers_data, init
     config.PORTFOLIO_SIZE = portfolio_size
     config.PORTFOLIO_BUFFER_SIZE = buffer_size
     config.INVESTMENT_PER_STOCK = config.TOTAL_CAPITAL / portfolio_size
+    config.BACKTEST_DAYS = 70  # Increase to 70 days for more comprehensive testing
 
     # Use max CPU cores since no AI training
     config.NUM_PROCESSES = cpu_count()
