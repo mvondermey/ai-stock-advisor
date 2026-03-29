@@ -310,6 +310,9 @@ def _build_daily_strategy_data(locals_dict):
     Uses STRATEGY_DISPLAY_NAMES for display name lookup.
     Only includes strategies that are enabled via config flags.
     """
+    # Import config to access enable flags
+    import config
+    
     # Helper to safely get value from locals
     def _get(name, default=None):
         return locals_dict.get(name, default)
@@ -470,7 +473,9 @@ def _build_daily_strategy_data(locals_dict):
 
     for key, value_var, history_var, cash_var, positions_var in strategy_mappings:
         # Skip strategies that are disabled via config flags
-        if key in STRATEGY_ENABLE_FLAGS and not STRATEGY_ENABLE_FLAGS[key]:
+        # Only include strategies that are explicitly enabled in STRATEGY_ENABLE_FLAGS
+        # If a strategy is not in the mapping, skip it (assume disabled)
+        if key not in STRATEGY_ENABLE_FLAGS or not STRATEGY_ENABLE_FLAGS[key]:
             continue
         value = _get(value_var)
         if value is not None and value > 0:
