@@ -698,6 +698,8 @@ ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS = True   # NEW - Risk-Adj Mom 3M with Stops (5
 
 ENABLE_VOL_SWEET_MOM = True        # NEW - Vol-Sweet Momentum (3M momentum + vol sweet spot + sentiment)
 
+ENABLE_ULTIMATE = True            # NEW - Ultimate Strategy (multi-factor hybrid: 1M/3M momentum + vol sweet spot + acceleration + trend + volume)
+
 ENABLE_RISK_ADJ_MOM_1M = True   # NEW - Risk-Adj Mom 1M (same as Risk-Adj Mom but 1M window)
 
 ENABLE_RISK_ADJ_MOM_1M_MONTHLY = True   # NEW - Risk-Adj Mom 1M Monthly (same scoring, rebalance start of month only)
@@ -902,9 +904,9 @@ ATR_MULT_TRAIL          = 2.0
 
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
 
-PORTFOLIO_SIZE          = 3         # Number of stocks to hold in portfolio
+PORTFOLIO_SIZE          = 10        # Number of stocks to hold in portfolio
 
-PORTFOLIO_BUFFER_SIZE    = 6         # Sell when stock not in top X (buffer for stability)
+PORTFOLIO_BUFFER_SIZE    = 2         # Sell when stock not in top X (buffer for stability)
 
 TOTAL_CAPITAL           = 300000     # Total capital to invest ($300,000)
 
