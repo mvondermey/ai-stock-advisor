@@ -8055,8 +8055,8 @@ def _run_portfolio_backtest_walk_forward(
         enhanced_volatility_portfolio_value = enhanced_volatility_invested_value + enhanced_volatility_cash
         enhanced_volatility_portfolio_history.append(enhanced_volatility_portfolio_value)
 
-        # DEBUG: Log Enhanced Volatility state
-        if day_count <= 5:
+        # DEBUG: Log Enhanced Volatility state (only when enabled)
+        if config.ENABLE_ENHANCED_VOLATILITY and day_count <= 5:
             print(f"   🔧 DEBUG: Enhanced Volatility Day {day_count} - Cash: ${enhanced_volatility_cash:.2f}, Invested: ${enhanced_volatility_invested_value:.2f}, Total: ${enhanced_volatility_portfolio_value:.2f}, Positions: {len(enhanced_volatility_positions)}")
 
         # Update AI VOLATILITY ENSEMBLE portfolio value daily (skip if disabled)
@@ -10187,7 +10187,9 @@ def _run_portfolio_backtest_walk_forward(
     }
 
     # Map strategy names to their enable flags
+    # This prevents disabled strategies from running during live trading selection
     strategy_enable_flags = {
+        # AI strategies
         'ai_elite': config.ENABLE_AI_ELITE,
         'ai_elite_monthly': config.ENABLE_AI_ELITE_MONTHLY,
         'ai_elite_filtered': config.ENABLE_AI_ELITE_FILTERED,
@@ -10195,6 +10197,53 @@ def _run_portfolio_backtest_walk_forward(
         'ai_regime': config.ENABLE_AI_REGIME,
         'ai_regime_monthly': config.ENABLE_AI_REGIME_MONTHLY,
         'universal_model': config.ENABLE_UNIVERSAL_MODEL,
+        # Core strategies
+        'sector_rotation': config.ENABLE_SECTOR_ROTATION,
+        'quality_momentum': config.ENABLE_QUALITY_MOM,
+        'mean_reversion': config.ENABLE_MEAN_REVERSION,
+        'volatility_adj_mom': config.ENABLE_VOLATILITY_ADJ_MOM,
+        'price_acceleration': config.ENABLE_PRICE_ACCELERATION,
+        'momentum_ai_hybrid': config.ENABLE_MOMENTUM_AI_HYBRID,
+        'enhanced_volatility': config.ENABLE_ENHANCED_VOLATILITY,
+        'ai_volatility_ensemble': config.ENABLE_AI_VOLATILITY_ENSEMBLE,
+        'momentum_volatility_hybrid': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID,
+        'momentum_volatility_hybrid_6m': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M,
+        'momentum_volatility_hybrid_1y': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y,
+        'momentum_volatility_hybrid_1y3m': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M,
+        'turnaround': config.ENABLE_TURNAROUND,
+        'risk_adj_mom': config.ENABLE_RISK_ADJ_MOM,
+        'risk_adj_mom_3m': config.ENABLE_RISK_ADJ_MOM_3M,
+        'risk_adj_mom_6m': config.ENABLE_RISK_ADJ_MOM_6M,
+        'risk_adj_mom_1m': config.ENABLE_RISK_ADJ_MOM_1M,
+        'vol_sweet_mom': config.ENABLE_VOL_SWEET_MOM,
+        'dual_momentum': config.ENABLE_DUAL_MOMENTUM,
+        'trend_following_atr': config.ENABLE_TREND_FOLLOWING_ATR,
+        'momentum_acceleration': config.ENABLE_MOMENTUM_ACCELERATION,
+        'concentrated_3m': config.ENABLE_CONCENTRATED_3M,
+        # Ratio strategies
+        'ratio_3m_1y': config.ENABLE_3M_1Y_RATIO,
+        '3m_1y_ratio': config.ENABLE_3M_1Y_RATIO,
+        'ratio_1m_3m': config.ENABLE_1M_3M_RATIO,
+        '1m_3m_ratio': config.ENABLE_1M_3M_RATIO,
+        # Static BH strategies
+        'static_bh_1y': config.ENABLE_STATIC_BH,
+        'static_bh_3m': config.ENABLE_STATIC_BH,
+        'static_bh_6m': config.ENABLE_STATIC_BH_6M,
+        'static_bh_1m': config.ENABLE_STATIC_BH,
+        # Dynamic BH strategies
+        'dynamic_bh_1y': config.ENABLE_DYNAMIC_BH_1Y,
+        'dynamic_bh_6m': config.ENABLE_DYNAMIC_BH_6M,
+        'dynamic_bh_3m': config.ENABLE_DYNAMIC_BH_3M,
+        'dynamic_bh_1m': config.ENABLE_DYNAMIC_BH_1M,
+        'dynamic_bh_1y_vol_filter': config.ENABLE_DYNAMIC_BH_1Y_VOL_FILTER,
+        'dynamic_bh_1y_trailing_stop': config.ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP,
+        # Monthly strategies
+        'bh_1y_monthly': config.ENABLE_STATIC_BH_1Y_MONTHLY,
+        'bh_6m_monthly': config.ENABLE_STATIC_BH_6M_MONTHLY,
+        'bh_3m_monthly': config.ENABLE_STATIC_BH_3M_MONTHLY,
+        'bh_1m_monthly': config.ENABLE_STATIC_BH_1M_MONTHLY,
+        # Multi-timeframe
+        'multi_tf_ensemble': config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
     }
 
     try:
