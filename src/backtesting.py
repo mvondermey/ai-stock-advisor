@@ -10186,6 +10186,17 @@ def _run_portfolio_backtest_walk_forward(
         'strategies': {}
     }
 
+    # Map strategy names to their enable flags
+    strategy_enable_flags = {
+        'ai_elite': config.ENABLE_AI_ELITE,
+        'ai_elite_monthly': config.ENABLE_AI_ELITE_MONTHLY,
+        'ai_elite_filtered': config.ENABLE_AI_ELITE_FILTERED,
+        'ai_elite_market_up': config.ENABLE_AI_ELITE_MARKET_UP,
+        'ai_regime': config.ENABLE_AI_REGIME,
+        'ai_regime_monthly': config.ENABLE_AI_REGIME_MONTHLY,
+        'universal_model': config.ENABLE_UNIVERSAL_MODEL,
+    }
+
     try:
         # Auto-generate selections for ALL strategies using the centralized registry
         # This ensures live trading always has all strategies without manual updates
@@ -10193,6 +10204,11 @@ def _run_portfolio_backtest_walk_forward(
             try:
                 # Skip strategies that don't have selection functions (e.g., meta strategies)
                 if strategy_name in ['meta_strategy_ml', 'meta_strategy_mom']:
+                    continue
+
+                # Skip disabled strategies (especially AI strategies that are slow to run)
+                if strategy_name in strategy_enable_flags and not strategy_enable_flags[strategy_name]:
+                    live_trading_selections['strategies'][strategy_name] = []
                     continue
 
                 # Use the centralized strategy registry from shared_strategies.py
