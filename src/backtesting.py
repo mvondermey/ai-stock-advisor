@@ -545,9 +545,10 @@ def _build_daily_strategy_data(locals_dict):
     ]
 
     for key, value_var, history_var, cash_var, positions_var in strategy_mappings:
-        # Skip strategies that are explicitly disabled in STRATEGY_ENABLE_FLAGS
-        # If strategy is not in mapping, assume it's enabled (default behavior for backtesting)
-        if key in STRATEGY_ENABLE_FLAGS and not STRATEGY_ENABLE_FLAGS[key]:
+        # Skip strategies that are disabled via config flags
+        # Only include strategies that are explicitly enabled in STRATEGY_ENABLE_FLAGS
+        # If a strategy is not in the mapping, skip it (assume disabled)
+        if key not in STRATEGY_ENABLE_FLAGS or not STRATEGY_ENABLE_FLAGS[key]:
             continue
         value = _get(value_var)
         if value is not None and value > 0:
