@@ -884,12 +884,13 @@ def main(
     ticker_data_dict = {}
     if isinstance(all_tickers_data, pd.DataFrame):
         if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
-            # Long format - convert to dict
-            for ticker in all_available_tickers:
-                ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-                if not ticker_df.empty:
-                    ticker_df = ticker_df.set_index('date')
-                    ticker_data_dict[ticker] = ticker_df
+            # Long format - convert to dict using groupby (much faster than filtering)
+            print("   Converting data to dict format...")
+            grouped = all_tickers_data.groupby('ticker')
+            for ticker, group in grouped:
+                ticker_df = group.set_index('date')
+                ticker_data_dict[ticker] = ticker_df
+            print(f"   Converted {len(ticker_data_dict)} tickers to dict format")
         else:
             # Should not happen with new long format data
             print(f"   [WARN] Unexpected data format in main.py")
