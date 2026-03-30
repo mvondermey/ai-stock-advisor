@@ -589,15 +589,6 @@ def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[
 
         perf_1y = (end_price / start_price - 1.0) * 100.0
 
-        # ✅ Data quality check: Flag extreme returns (likely data issues or penny stocks)
-        # Filter out stocks with >300% annual returns (usually data quality issues)
-        if perf_1y > 300.0:
-            start_date = s.index[0]
-            end_date = s.index[-1]
-            days_of_data = (end_date - start_date).days
-            # Only log, don't exclude - let the user see what's happening
-            print(f"  ⚠️ High return: {ticker}: {perf_1y:.1f}% | ${start_price:.4f} → ${end_price:.2f} | {days_of_data} days ({len(s)} data points)")
-
         if np.isfinite(perf_1y):
             out = df_1y.copy()
             if price_col != 'Close':
