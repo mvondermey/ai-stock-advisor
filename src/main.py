@@ -31,6 +31,28 @@ src_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(src_dir))
 sys.path.insert(1, str(project_root))
 
+# Parse command-line arguments BEFORE importing config to enable --no-download flag
+parser = argparse.ArgumentParser(description="AI Stock Advisor - Backtesting and Live Trading")
+parser.add_argument("--num-stocks", type=int, default=None,
+                   help="Number of stocks to select (overrides PORTFOLIO_SIZE from config)")
+parser.add_argument("--live-trading", action="store_true",
+                   help="Run in live trading mode instead of backtesting")
+parser.add_argument("--live-run", action="store_true",
+                   help="Run strategies live with current data (like quick_strategy_check.py)")
+parser.add_argument("--strategy", type=str, default="volatility_ensemble",
+                   help="Strategy for live trading. Available: volatility_ensemble, enhanced_volatility, correlation_ensemble, momentum_breakout, factor_rotation, pairs_trading, earnings_momentum, insider_trading, options_sentiment, ml_ensemble, risk_adj_mom, dynamic_bh_1y, quality_momentum, momentum_ai_hybrid, elite_hybrid")
+parser.add_argument("--no-download", action="store_true",
+                   help="Disable data downloads (use only cached data)")
+
+args = parser.parse_args()
+
+# Override ENABLE_DATA_DOWNLOAD if --no-download is specified
+# Must do this BEFORE importing config to ensure it takes effect
+if args.no_download:
+    import config as config_module
+    config_module.ENABLE_DATA_DOWNLOAD = False
+    print("📦 Data downloads disabled (--no-download flag). Using only cached data.")
+
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
@@ -1468,28 +1490,13 @@ def main(
 # Main
 
 if __name__ == "__main__":
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="AI Stock Advisor - Backtesting and Live Trading")
-    parser.add_argument("--num-stocks", type=int, default=None,
-                       help="Number of stocks to select (overrides PORTFOLIO_SIZE from config)")
-    parser.add_argument("--live-trading", action="store_true",
-                       help="Run in live trading mode instead of backtesting")
-    parser.add_argument("--live-run", action="store_true",
-                       help="Run strategies live with current data (like quick_strategy_check.py)")
-    parser.add_argument("--strategy", type=str, default="volatility_ensemble",
-                       help="Strategy for live trading. Available: volatility_ensemble, enhanced_volatility, correlation_ensemble, momentum_breakout, factor_rotation, pairs_trading, earnings_momentum, insider_trading, options_sentiment, ml_ensemble, risk_adj_mom, dynamic_bh_1y, quality_momentum, momentum_ai_hybrid, elite_hybrid")
-
-    args = parser.parse_args()
+    # Override PORTFOLIO_SIZE if --num-stocks is specified
+    if args.num_stocks is not None:
+        config.PORTFOLIO_SIZE = args.num_stocks
+        print(f"📊 Portfolio size: {args.num_stocks} stocks")
 
     if args.live_run:
         # Live run mode: execute strategies with current data (like quick_strategy_check.py)
-        import src.config as config
-
-        # Override PORTFOLIO_SIZE if --num-stocks is specified
-        if args.num_stocks is not None:
-            config.PORTFOLIO_SIZE = args.num_stocks
-            print(f"📊 Portfolio size: {args.num_stocks} stocks")
-
         print(f"🚀 Live Strategy Execution Mode")
         print("=" * 80)
 

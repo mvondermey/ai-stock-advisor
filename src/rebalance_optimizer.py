@@ -8,13 +8,34 @@ and identifies the best performing horizon for each strategy type.
 import pandas as pd
 import numpy as np
 import gc
+import os
+import tempfile
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 import multiprocessing as mp
+import joblib
 from config import (
     TRAINING_NUM_PROCESSES, PORTFOLIO_SIZE, TRANSACTION_COST,
     REBALANCE_HORIZON_MIN, REBALANCE_HORIZON_MAX
 )
+
+# Global variable for shared data (loaded lazily by workers)
+_SHARED_TICKER_DATA = None
+_SHARED_DATA_PATH = None
+
+
+def _init_worker(data_path: str):
+    """Initialize worker with path to shared data file."""
+    global _SHARED_DATA_PATH
+    _SHARED_DATA_PATH = data_path
+
+
+def _get_shared_data() -> Dict:
+    """Lazily load shared data in worker process."""
+    global _SHARED_TICKER_DATA, _SHARED_DATA_PATH
+    if _SHARED_TICKER_DATA is None and _SHARED_DATA_PATH:
+        _SHARED_TICKER_DATA = joblib.load(_SHARED_DATA_PATH)
+    return _SHARED_TICKER_DATA
 
 
 def _simulate_static_strategy(args) -> Tuple[str, int, float, float]:
@@ -22,14 +43,17 @@ def _simulate_static_strategy(args) -> Tuple[str, int, float, float]:
     Simulate a static buy & hold strategy with a specific rebalance horizon.
 
     Args:
-        args: Tuple of (strategy_type, rebalance_days, ticker_data_dict, top_performers,
+        args: Tuple of (strategy_type, rebalance_days,
               backtest_start, backtest_end, initial_capital, portfolio_size)
 
     Returns:
         Tuple of (strategy_type, rebalance_days, final_value, total_txn_cost)
     """
-    (strategy_type, rebalance_days, ticker_data_dict, top_performers,
+    (strategy_type, rebalance_days,
      backtest_start, backtest_end, initial_capital, portfolio_size) = args
+
+    # Load shared data lazily (avoids pickling huge DataFrames per task)
+    ticker_data_dict = _get_shared_data()
 
     try:
         # Initialize portfolio
@@ -231,48 +255,64 @@ def optimize_rebalance_horizons(
 
     print(f"   📊 Prepared data for {len(ticker_data_dict)} tickers", flush=True)
 
-    # Generate all tasks
-    horizons = list(range(REBALANCE_HORIZON_MIN, REBALANCE_HORIZON_MAX + 1))
-    tasks = []
+    # Write data to temp file to avoid pickling huge DataFrames per task (OOM fix)
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.joblib')
+    temp_path = temp_file.name
+    temp_file.close()
 
-    for strategy_type in strategy_types:
-        for horizon in horizons:
-            tasks.append((
-                strategy_type, horizon, ticker_data_dict, None,
-                optimization_start, backtest_end, initial_capital, portfolio_size
-            ))
+    try:
+        print(f"   💾 Writing shared data to temp file...", flush=True)
+        joblib.dump(ticker_data_dict, temp_path)
 
-    total_tasks = len(tasks)
-    print(f"   🚀 Running {total_tasks} simulations in parallel ({len(horizons)} horizons × {len(strategy_types)} strategies)", flush=True)
+        # Generate all tasks (no data - workers load from temp file)
+        horizons = list(range(REBALANCE_HORIZON_MIN, REBALANCE_HORIZON_MAX + 1))
+        tasks = []
 
-    # Run in parallel using NUM_PROCESSES (rebalance optimization is not training)
-    from config import NUM_PROCESSES
-    n_workers = min(NUM_PROCESSES, total_tasks)
-    print(f"   🔧 Using {n_workers} workers (NUM_PROCESSES - not GPU training)", flush=True)
+        for strategy_type in strategy_types:
+            for horizon in horizons:
+                tasks.append((
+                    strategy_type, horizon,
+                    optimization_start, backtest_end, initial_capital, portfolio_size
+                ))
 
-    results = {}
-    for st in strategy_types:
-        results[st] = {'all_results': [], 'best_horizon': None, 'best_return': -float('inf'), 'best_txn_cost': 0}
+        total_tasks = len(tasks)
+        print(f"   🚀 Running {total_tasks} simulations in parallel ({len(horizons)} horizons × {len(strategy_types)} strategies)", flush=True)
 
-    # Use imap_unordered for streaming results (no blocking on slow tasks)
-    # maxtasksperchild=20 recycles workers periodically to prevent semaphore leaks in WSL
-    completed = 0
-    with mp.Pool(processes=n_workers, maxtasksperchild=20) as pool:
-        # Process all tasks with streaming results
-        for strategy_type, horizon, final_value, txn_cost in pool.imap_unordered(_simulate_static_strategy, tasks):
-            return_pct = ((final_value / initial_capital) - 1) * 100
-            results[strategy_type]['all_results'].append((horizon, return_pct, txn_cost))
+        # Run in parallel using NUM_PROCESSES (rebalance optimization is not training)
+        from config import NUM_PROCESSES
+        n_workers = min(NUM_PROCESSES, total_tasks)
+        print(f"   🔧 Using {n_workers} workers (NUM_PROCESSES - not GPU training)", flush=True)
 
-            if return_pct > results[strategy_type]['best_return']:
-                results[strategy_type]['best_return'] = return_pct
-                results[strategy_type]['best_horizon'] = horizon
-                results[strategy_type]['best_txn_cost'] = txn_cost
+        results = {}
+        for st in strategy_types:
+            results[st] = {'all_results': [], 'best_horizon': None, 'best_return': -float('inf'), 'best_txn_cost': 0}
 
-            completed += 1
-            print(f"   📊 Progress: {completed}/{total_tasks} ({completed*100//total_tasks}%)", flush=True)
+        # Use imap_unordered for streaming results (no blocking on slow tasks)
+        # maxtasksperchild=20 recycles workers periodically to prevent semaphore leaks in WSL
+        # initializer passes temp file path to workers for lazy loading
+        completed = 0
+        with mp.Pool(processes=n_workers, maxtasksperchild=20,
+                     initializer=_init_worker, initargs=(temp_path,)) as pool:
+            # Process all tasks with streaming results
+            for strategy_type, horizon, final_value, txn_cost in pool.imap_unordered(_simulate_static_strategy, tasks):
+                return_pct = ((final_value / initial_capital) - 1) * 100
+                results[strategy_type]['all_results'].append((horizon, return_pct, txn_cost))
 
-    # Force garbage collection to release semaphores after Pool closes (WSL fix)
-    gc.collect()
+                if return_pct > results[strategy_type]['best_return']:
+                    results[strategy_type]['best_return'] = return_pct
+                    results[strategy_type]['best_horizon'] = horizon
+                    results[strategy_type]['best_txn_cost'] = txn_cost
+
+                completed += 1
+                print(f"   📊 Progress: {completed}/{total_tasks} ({completed*100//total_tasks}%)", flush=True)
+
+        # Force garbage collection to release semaphores after Pool closes (WSL fix)
+        gc.collect()
+
+    finally:
+        # Clean up temp file
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
     # Print summary
     print(f"\n   ✅ OPTIMIZATION COMPLETE", flush=True)

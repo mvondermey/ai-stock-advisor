@@ -32,6 +32,9 @@ DATA_INTERVAL           = '1h'       # '1m', '5m', '15m', '30m', '1h', '1d', '1w
 
 DATA_CACHE_DIR          = Path("data_cache")
 
+# Master switch to enable/disable data downloads
+ENABLE_DATA_DOWNLOAD    = True       # Set to False to use only cached data (no new downloads)
+
 
 
 # --- JSON output control ---
