@@ -314,14 +314,18 @@ def get_llm_predictions(
     predictions = []
     summaries = {}
     
+    # Pre-convert to dict using groupby (O(n) vs O(n*m))
+    ticker_data_dict = {}
+    for ticker, group in all_tickers_data.groupby('ticker'):
+        ticker_data_dict[ticker] = group.set_index('date')
+    
     # Prepare summaries for all tickers
     for ticker in tickers:
         try:
-            ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker]
-            if ticker_data.empty:
+            if ticker not in ticker_data_dict:
                 continue
+            ticker_data = ticker_data_dict[ticker]
             
-            ticker_data = ticker_data.set_index('date')
             data_slice = ticker_data.loc[:current_date].tail(60)  # Last 60 days for short-term
             full_year_data = ticker_data.loc[:current_date].tail(365)  # Full year for 1Y metrics
             
