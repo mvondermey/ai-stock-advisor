@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-03-29T18:16:52.828755",
-  "backtest_end_date": "2026-03-29 16:13:18.514933+00:00",
+  "timestamp": "2026-03-29T23:00:37.758435",
+  "backtest_end_date": "2026-03-29 20:54:06.140493+00:00",
   "strategies": {
     "static_bh_1y": {
       "tickers": [],
@@ -20,199 +20,194 @@
     },
     "dynamic_bh_1y": {
       "tickers": [
-        "WDC",
-        "CIEN",
-        "LITE",
-        "SNDK",
-        "ARWR",
         "ZEC-USD",
-        "PARR"
+        "SNDK",
+        "CIEN",
+        "ARWR",
+        "WDC",
+        "LITE",
+        "PARR",
+        "SATS"
       ],
       "positions": {
-        "WDC": {
-          "shares": 105,
-          "avg_price": 281.6099853515625
-        },
-        "LITE": {
-          "shares": 52,
-          "avg_price": 562.739990234375
+        "ZEC-USD": {
+          "shares": 82,
+          "avg_price": 360.6871643066406
         },
         "SNDK": {
-          "shares": 47,
-          "avg_price": 626.7999877929688
+          "shares": 71,
+          "avg_price": 413.6199951171875
         },
-        "ZEC-USD": {
-          "shares": 101,
-          "avg_price": 293.5405578613281
+        "WDC": {
+          "shares": 133,
+          "avg_price": 221.5709991455078
+        },
+        "LITE": {
+          "shares": 75,
+          "avg_price": 391.9200134277344
         },
         "CIEN": {
-          "shares": 80,
+          "shares": 79,
           "avg_price": 294.0400085449219
         },
         "ARWR": {
-          "shares": 428,
+          "shares": 307,
           "avg_price": 60.81999969482422
         },
         "PARR": {
-          "shares": 376,
+          "shares": 386,
           "avg_price": 63.02999877929688
+        },
+        "SATS": {
+          "shares": 204,
+          "avg_price": 111.5199966430664
         }
       }
     },
     "dynamic_bh_6m": {
       "tickers": [
-        "VICR",
-        "FORM",
-        "LITE",
-        "SNDK",
-        "VIAV",
         "ZEC-USD",
-        "ICHR",
+        "FORM",
+        "SNDK",
+        "LITE",
+        "VICR",
+        "VIAV",
         "CIEN",
-        "DOCN",
-        "AZN"
+        "AZN",
+        "ICHR"
       ],
       "positions": {
-        "LITE": {
-          "shares": 52,
-          "avg_price": 562.739990234375
+        "ZEC-USD": {
+          "shares": 82,
+          "avg_price": 360.6871643066406
         },
         "SNDK": {
-          "shares": 47,
-          "avg_price": 626.7999877929688
+          "shares": 71,
+          "avg_price": 413.6199951171875
         },
-        "ZEC-USD": {
-          "shares": 101,
-          "avg_price": 293.5405578613281
+        "LITE": {
+          "shares": 69,
+          "avg_price": 423.4500122070313
         },
         "VICR": {
-          "shares": 150,
+          "shares": 146,
           "avg_price": 190.3000030517578
         },
         "VIAV": {
-          "shares": 748,
+          "shares": 718,
           "avg_price": 35.939998626708984
         },
         "FORM": {
-          "shares": 248,
+          "shares": 237,
           "avg_price": 108.05999755859376
         },
-        "ICHR": {
-          "shares": 545,
-          "avg_price": 45.41999816894531
-        },
         "CIEN": {
-          "shares": 63,
+          "shares": 60,
           "avg_price": 388.4700012207031
         },
-        "DOCN": {
-          "shares": 289,
-          "avg_price": 85.5999984741211
-        },
         "AZN": {
-          "shares": 70,
+          "shares": 113,
           "avg_price": 206.00999450683597
+        },
+        "ICHR": {
+          "shares": 188,
+          "avg_price": 45.41999816894531
         }
       }
     },
     "dynamic_bh_3m": {
       "tickers": [
-        "ICHR",
-        "UCTT",
-        "SNDK",
-        "AZN",
-        "VAL",
         "AIXA.DE",
-        "LITE",
-        "PBF",
-        "PTEN"
+        "SNDK",
+        "ICHR",
+        "VAL",
+        "UCTT",
+        "AZN",
+        "PTEN",
+        "PBF"
       ],
       "positions": {
+        "SNDK": {
+          "shares": 71,
+          "avg_price": 413.6199951171875
+        },
         "ICHR": {
-          "shares": 634,
-          "avg_price": 46.79999923706055
+          "shares": 925,
+          "avg_price": 30.325000762939453
         },
         "UCTT": {
-          "shares": 534,
-          "avg_price": 55.470001220703125
-        },
-        "SNDK": {
-          "shares": 47,
-          "avg_price": 626.7999877929688
+          "shares": 567,
+          "avg_price": 48.34000015258789
         },
         "AZN": {
-          "shares": 138,
+          "shares": 136,
           "avg_price": 206.00999450683597
         },
         "VAL": {
-          "shares": 250,
+          "shares": 251,
           "avg_price": 100.2699966430664
         },
         "AIXA.DE": {
-          "shares": 684,
+          "shares": 687,
           "avg_price": 36.75
         },
-        "LITE": {
-          "shares": 34,
-          "avg_price": 688.8400268554688
+        "PTEN": {
+          "shares": 2089,
+          "avg_price": 11.260000228881836
         },
         "PBF": {
-          "shares": 467,
+          "shares": 352,
           "avg_price": 50.380001068115234
-        },
-        "PTEN": {
-          "shares": 2091,
-          "avg_price": 11.260000228881836
         }
       }
     },
     "dynamic_bh_1m": {
       "tickers": [
-        "ARM",
         "SEDG",
-        "DOCN",
         "SRPT",
-        "NSP",
-        "HIMS",
+        "ARM",
+        "DOCN",
         "APA",
         "CC",
+        "NSP",
+        "HIMS",
         "CAR"
       ],
       "positions": {
         "DOCN": {
-          "shares": 274,
+          "shares": 216,
           "avg_price": 82.5199966430664
         },
-        "ARM": {
-          "shares": 134,
-          "avg_price": 157.00999450683594
-        },
         "SRPT": {
-          "shares": 887,
+          "shares": 708,
           "avg_price": 23.76000022888184
         },
         "SEDG": {
-          "shares": 411,
+          "shares": 328,
           "avg_price": 51.2599983215332
         },
-        "NSP": {
-          "shares": 747,
-          "avg_price": 26.809999465942383
-        },
-        "HIMS": {
-          "shares": 960,
-          "avg_price": 20.86000061035156
+        "ARM": {
+          "shares": 107,
+          "avg_price": 157.00999450683594
         },
         "APA": {
-          "shares": 467,
+          "shares": 373,
           "avg_price": 42.83000183105469
         },
         "CC": {
-          "shares": 928,
+          "shares": 740,
           "avg_price": 21.57999992370605
         },
+        "NSP": {
+          "shares": 596,
+          "avg_price": 26.809999465942383
+        },
+        "HIMS": {
+          "shares": 766,
+          "avg_price": 20.86000061035156
+        },
         "CAR": {
-          "shares": 143,
+          "shares": 114,
           "avg_price": 140.00999450683594
         }
       }
@@ -327,139 +322,154 @@
     },
     "bh_1y_monthly": {
       "tickers": [
+        "ZEC-USD",
+        "SNDK",
+        "VSAT",
         "WDC",
         "LITE",
-        "SNDK",
-        "HL",
-        "VSAT",
-        "ZEC-USD",
-        "CIEN"
+        "CIEN",
+        "TTMI",
+        "HL"
       ],
       "positions": {
-        "WDC": {
-          "shares": 105,
-          "avg_price": 281.6099853515625
-        },
-        "LITE": {
-          "shares": 52,
-          "avg_price": 562.739990234375
+        "ZEC-USD": {
+          "shares": 82,
+          "avg_price": 360.6871643066406
         },
         "SNDK": {
-          "shares": 47,
-          "avg_price": 626.7999877929688
+          "shares": 71,
+          "avg_price": 413.6199951171875
+        },
+        "VSAT": {
+          "shares": 645,
+          "avg_price": 45.93999862670898
+        },
+        "WDC": {
+          "shares": 133,
+          "avg_price": 221.5709991455078
+        },
+        "LITE": {
+          "shares": 91,
+          "avg_price": 324.1700134277344
+        },
+        "CIEN": {
+          "shares": 93,
+          "avg_price": 348.2200012207031
+        },
+        "TTMI": {
+          "shares": 313,
+          "avg_price": 104.23999786376952
         },
         "HL": {
           "shares": 1313,
-          "avg_price": 22.59499931335449
-        },
-        "VSAT": {
-          "shares": 607,
-          "avg_price": 48.86000061035156
-        },
-        "ZEC-USD": {
-          "shares": 101,
-          "avg_price": 293.5405578613281
-        },
-        "CIEN": {
-          "shares": 85,
-          "avg_price": 348.2200012207031
+          "avg_price": 24.88999938964844
         }
       }
     },
     "bh_6m_monthly": {
       "tickers": [
-        "VICR",
         "MU",
-        "CIEN",
-        "LITE",
-        "SNDK",
         "ZEC-USD",
+        "SNDK",
+        "VICR",
+        "FORM",
+        "CIEN",
         "ICHR",
-        "COHR"
+        "COHR",
+        "WDC",
+        "LITE"
       ],
       "positions": {
-        "VICR": {
-          "shares": 190,
-          "avg_price": 156.07000732421875
+        "ZEC-USD": {
+          "shares": 82,
+          "avg_price": 360.6871643066406
         },
         "MU": {
-          "shares": 72,
-          "avg_price": 411.739990234375
-        },
-        "CIEN": {
-          "shares": 97,
-          "avg_price": 303.7900085449219
-        },
-        "LITE": {
-          "shares": 52,
-          "avg_price": 562.739990234375
+          "shares": 81,
+          "avg_price": 362.7550048828125
         },
         "SNDK": {
-          "shares": 47,
-          "avg_price": 626.7999877929688
+          "shares": 71,
+          "avg_price": 413.6199951171875
         },
-        "ZEC-USD": {
-          "shares": 101,
-          "avg_price": 293.5405578613281
+        "VICR": {
+          "shares": 187,
+          "avg_price": 157.86000061035156
+        },
+        "FORM": {
+          "shares": 292,
+          "avg_price": 98.80999755859376
+        },
+        "CIEN": {
+          "shares": 82,
+          "avg_price": 348.2200012207031
         },
         "ICHR": {
-          "shares": 643,
+          "shares": 607,
           "avg_price": 47.52999877929688
         },
         "COHR": {
-          "shares": 118,
+          "shares": 111,
           "avg_price": 258.9800109863281
+        },
+        "WDC": {
+          "shares": 103,
+          "avg_price": 279.6400146484375
+        },
+        "LITE": {
+          "shares": 17,
+          "avg_price": 700.9000244140625
         }
       }
     },
     "bh_3m_monthly": {
       "tickers": [
-        "ICHR",
-        "UCTT",
+        "MRNA",
         "SNDK",
         "LITE",
-        "AZN",
-        "TPL",
-        "VICR",
+        "ICHR",
+        "NEOG",
         "GLW",
-        "MRNA"
+        "TPL",
+        "UCTT",
+        "VICR"
       ],
       "positions": {
-        "ICHR": {
-          "shares": 634,
-          "avg_price": 46.79999923706055
-        },
-        "UCTT": {
-          "shares": 534,
-          "avg_price": 55.470001220703125
-        },
         "SNDK": {
-          "shares": 47,
-          "avg_price": 626.7999877929688
+          "shares": 71,
+          "avg_price": 413.6199951171875
         },
         "LITE": {
-          "shares": 52,
-          "avg_price": 562.739990234375
-        },
-        "AZN": {
-          "shares": 144,
-          "avg_price": 206.00999450683597
-        },
-        "TPL": {
-          "shares": 55,
-          "avg_price": 524.0900268554688
-        },
-        "VICR": {
-          "shares": 144,
-          "avg_price": 201.3999938964844
-        },
-        "GLW": {
-          "shares": 193,
-          "avg_price": 150.3800048828125
+          "shares": 91,
+          "avg_price": 324.1700134277344
         },
         "MRNA": {
-          "shares": 543,
-          "avg_price": 53.584999084472656
+          "shares": 675,
+          "avg_price": 44.06999969482422
+        },
+        "ICHR": {
+          "shares": 981,
+          "avg_price": 30.325000762939453
+        },
+        "NEOG": {
+          "shares": 3131,
+          "avg_price": 11.220000267028809
+        },
+        "GLW": {
+          "shares": 233,
+          "avg_price": 150.3800048828125
+        },
+        "TPL": {
+          "shares": 67,
+          "avg_price": 524.0900268554688
+        },
+        "UCTT": {
+          "shares": 578,
+          "avg_price": 60.68000030517578
+        },
+        "VICR": {
+          "shares": 106,
+          "avg_price": 201.3999938964844
         }
       }
     },
@@ -597,47 +607,47 @@
     },
     "multi_tf_ensemble": {
       "tickers": [
-        "PARR",
         "CIEN",
-        "SATS",
         "AGX",
+        "PARR",
+        "SATS",
+        "FIX",
         "VSAT",
-        "VIAV",
         "TTMI",
-        "FIX"
+        "VIAV"
       ],
       "positions": {
-        "AGX": {
-          "shares": 72,
-          "avg_price": 410.5199890136719
-        },
         "CIEN": {
-          "shares": 97,
-          "avg_price": 303.7900085449219
+          "shares": 121,
+          "avg_price": 243.4499969482422
+        },
+        "AGX": {
+          "shares": 77,
+          "avg_price": 384.1099853515625
         },
         "PARR": {
-          "shares": 534,
+          "shares": 632,
           "avg_price": 57.9900016784668
         },
         "SATS": {
-          "shares": 269,
+          "shares": 318,
           "avg_price": 109.72000122070312
         },
+        "FIX": {
+          "shares": 25,
+          "avg_price": 1359.300048828125
+        },
         "VSAT": {
-          "shares": 621,
+          "shares": 735,
           "avg_price": 47.84000015258789
         },
-        "VIAV": {
-          "shares": 862,
-          "avg_price": 34.439998626708984
-        },
         "TTMI": {
-          "shares": 309,
+          "shares": 366,
           "avg_price": 95.91999816894533
         },
-        "FIX": {
-          "shares": 21,
-          "avg_price": 1359.300048828125
+        "VIAV": {
+          "shares": 1021,
+          "avg_price": 34.439998626708984
         }
       }
     },
@@ -824,20 +834,20 @@
       "return_pct": -70.0
     },
     "dynamic_bh_1y": {
-      "value": 239649.24226245307,
-      "return_pct": -76.03507577375468
+      "value": 245537.78111713412,
+      "return_pct": -75.44622188828659
     },
     "dynamic_bh_6m": {
-      "value": 249494.26687348168,
-      "return_pct": -75.05057331265184
+      "value": 235300.67885160635,
+      "return_pct": -76.46993211483937
     },
     "dynamic_bh_3m": {
-      "value": 237282.23019353097,
-      "return_pct": -76.2717769806469
+      "value": 237374.917225152,
+      "return_pct": -76.2625082774848
     },
     "dynamic_bh_1m": {
-      "value": 201466.2061161008,
-      "return_pct": -79.85337938838992
+      "value": 160773.65737454162,
+      "return_pct": -83.92263426254584
     },
     "dynamic_bh_1y_vol_filter": {
       "value": 300000.0,
@@ -924,8 +934,8 @@
       "return_pct": -70.0
     },
     "multi_tf_ensemble": {
-      "value": 299190.4834935398,
-      "return_pct": -70.08095165064603
+      "value": 354022.4779387741,
+      "return_pct": -64.59775220612259
     },
     "correlation_ensemble": {
       "value": 300000.0,
@@ -1060,16 +1070,16 @@
       "return_pct": -70.0
     },
     "bh_1y_monthly": {
-      "value": 291594.724433218,
-      "return_pct": -70.8405275566782
+      "value": 317941.3456980668,
+      "return_pct": -68.20586543019333
     },
     "bh_6m_monthly": {
-      "value": 295095.5341213226,
-      "return_pct": -70.49044658786772
+      "value": 275342.56152829743,
+      "return_pct": -72.46574384717026
     },
     "bh_3m_monthly": {
-      "value": 279703.4478509578,
-      "return_pct": -72.02965521490422
+      "value": 332566.69090010924,
+      "return_pct": -66.74333090998907
     },
     "bh_1m_monthly": {
       "value": 300000.0,

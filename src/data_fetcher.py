@@ -42,7 +42,7 @@ try:
 
     from alpaca.data.requests import StockBarsRequest
 
-    from alpaca.data.timeframe import TimeFrame
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
     from alpaca.data.historical import StockHistoricalDataClient
 
@@ -98,23 +98,23 @@ def _is_market_day_complete(date: datetime) -> bool:
     """
     now_utc = datetime.now(timezone.utc)
     target_date = date.date() if isinstance(date, datetime) else date
-    
+
     # If date is in the future, we can't have data yet
     if target_date > now_utc.date():
         return False
-    
+
     # If date is today, check if market close + data processing time has passed
     if target_date == now_utc.date():
         # Market data typically available after 11pm UTC (6pm ET + 1hr processing)
         market_data_ready_hour = 23  # 11pm UTC
         if now_utc.hour < market_data_ready_hour:
             return False
-    
+
     # If it's a weekend, no new data
     weekday = now_utc.weekday()
     if target_date == now_utc.date() and weekday >= 5:  # Saturday=5, Sunday=6
         return False
-    
+
     # For past dates (including yesterday), data should be available
     return True
 
@@ -147,7 +147,7 @@ def _normalize_symbol(symbol: str, provider: str) -> str:
 
     symbol = symbol.upper().strip()
 
-    
+
 
     if provider == 'stooq':
 
@@ -165,7 +165,7 @@ def _normalize_symbol(symbol: str, provider: str) -> str:
 
             return symbol[:-3]
 
-    
+
 
     return symbol
 
@@ -221,22 +221,22 @@ def _fetch_from_alpaca(ticker: str, start: datetime, end: datetime) -> pd.DataFr
 
         return pd.DataFrame()
 
-    
+
 
     try:
 
         client = StockHistoricalDataClient(ALPACA_API_KEY, ALPACA_SECRET_KEY)
 
-        # Convert DATA_INTERVAL to Alpaca TimeFrame
-        if DATA_INTERVAL in ['1d', '1day']:
-            timeframe = TimeFrame.Day
-        elif DATA_INTERVAL in ['1h', '1hour']:
-            timeframe = TimeFrame.Hour
-        elif DATA_INTERVAL in ['1m', '1min']:
-            timeframe = TimeFrame.Minute
-        else:
-            # Default to Day for unsupported intervals
-            timeframe = TimeFrame.Day
+        # Convert DATA_INTERVAL to Alpaca TimeFrame (no fallback to daily)
+        interval_map = {
+            '1d': TimeFrame.Day, '1day': TimeFrame.Day,
+            '1h': TimeFrame.Hour, '1hour': TimeFrame.Hour,
+            '30m': TimeFrame(30, TimeFrameUnit.Minute), '30min': TimeFrame(30, TimeFrameUnit.Minute),
+            '15m': TimeFrame(15, TimeFrameUnit.Minute), '15min': TimeFrame(15, TimeFrameUnit.Minute),
+            '5m': TimeFrame(5, TimeFrameUnit.Minute), '5min': TimeFrame(5, TimeFrameUnit.Minute),
+            '1m': TimeFrame.Minute, '1min': TimeFrame.Minute,
+        }
+        timeframe = interval_map.get(DATA_INTERVAL, TimeFrame.Hour)  # Default to Hour, not Day
 
         request_params = StockBarsRequest(
             symbol_or_symbols=[ticker],
@@ -250,13 +250,13 @@ def _fetch_from_alpaca(ticker: str, start: datetime, end: datetime) -> pd.DataFr
 
         df = bars.df
 
-        
+
 
         if df.empty:
 
             return pd.DataFrame()
 
-        
+
 
         # Alpaca returns a MultiIndex DataFrame, we need to flatten it
 
@@ -296,13 +296,13 @@ def _fetch_batch_from_alpaca(tickers: List[str], start: datetime, end: datetime)
     """
     if not ALPACA_AVAILABLE or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
         return pd.DataFrame(), tickers  # All failed
-    
+
     if not tickers:
         return pd.DataFrame(), []
-    
+
     try:
         client = StockHistoricalDataClient(ALPACA_API_KEY, ALPACA_SECRET_KEY)
-        
+
         # Convert DATA_INTERVAL to Alpaca TimeFrame
         if DATA_INTERVAL in ['1d', '1day']:
             timeframe = TimeFrame.Day
@@ -312,7 +312,7 @@ def _fetch_batch_from_alpaca(tickers: List[str], start: datetime, end: datetime)
             timeframe = TimeFrame.Minute
         else:
             timeframe = TimeFrame.Day
-        
+
         request_params = StockBarsRequest(
             symbol_or_symbols=tickers,
             timeframe=timeframe,
@@ -320,31 +320,31 @@ def _fetch_batch_from_alpaca(tickers: List[str], start: datetime, end: datetime)
             end=end,
             adjustment='split'  # ✅ Apply split adjustments to prevent fake gains
         )
-        
+
         bars = client.get_stock_bars(request_params)
         df = bars.df
-        
+
         if df.empty:
             return pd.DataFrame(), tickers  # All failed
-        
+
         # Convert Alpaca format to yfinance-like MultiIndex format
         # Alpaca returns MultiIndex (symbol, timestamp) on rows
         # We need MultiIndex (Field, Ticker) on columns
         result_frames = []
         successful_tickers = []
         failed_tickers = []
-        
+
         for ticker in tickers:
             try:
                 if ticker in df.index.get_level_values(0):
                     ticker_df = df.loc[ticker].copy()
                     ticker_df = ticker_df.rename(columns={
-                        'open': 'Open', 'high': 'High', 'low': 'Low', 
+                        'open': 'Open', 'high': 'High', 'low': 'Low',
                         'close': 'Close', 'volume': 'Volume'
                     })
                     ticker_df.index = pd.to_datetime(ticker_df.index, utc=True)
                     ticker_df.index.name = "Date"
-                    
+
                     # Convert to yfinance-like MultiIndex columns
                     ticker_df.columns = pd.MultiIndex.from_product([ticker_df.columns, [ticker]])
                     result_frames.append(ticker_df)
@@ -353,13 +353,13 @@ def _fetch_batch_from_alpaca(tickers: List[str], start: datetime, end: datetime)
                     failed_tickers.append(ticker)
             except Exception:
                 failed_tickers.append(ticker)
-        
+
         if result_frames:
             combined = pd.concat(result_frames, axis=1)
             return combined, failed_tickers
         else:
             return pd.DataFrame(), tickers
-            
+
     except Exception as e:
         error_msg = str(e)
         if "subscription does not permit querying recent SIP data" in error_msg:
@@ -386,24 +386,18 @@ def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime, api_key:
 
         tdc = TDClient(apikey=key_to_use)
 
-        
 
-        # Convert DATA_INTERVAL to TwelveData format
-        if DATA_INTERVAL in ['1d', '1day']:
-            twelivedata_interval = "1day"
-        elif DATA_INTERVAL in ['1h', '1hour']:
-            twelivedata_interval = "1h"
-        elif DATA_INTERVAL in ['30m', '30min']:
-            twelivedata_interval = "30min"
-        elif DATA_INTERVAL in ['15m', '15min']:
-            twelivedata_interval = "15min"
-        elif DATA_INTERVAL in ['5m', '5min']:
-            twelivedata_interval = "5min"
-        elif DATA_INTERVAL in ['1m', '1min']:
-            twelivedata_interval = "1min"
-        else:
-            # Default to 1day for unsupported intervals
-            twelivedata_interval = "1day"
+
+        # Convert DATA_INTERVAL to TwelveData format (no fallback to daily)
+        interval_map = {
+            '1d': '1day', '1day': '1day',
+            '1h': '1h', '1hour': '1h',
+            '30m': '30min', '30min': '30min',
+            '15m': '15min', '15min': '15min',
+            '5m': '5min', '5min': '5min',
+            '1m': '1min', '1min': '1min',
+        }
+        twelivedata_interval = interval_map.get(DATA_INTERVAL, '1h')  # Default to 1h, not 1day
 
         ts = tdc.time_series(
             symbol=ticker,
@@ -427,13 +421,13 @@ def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime, api_key:
 
         df = ts.copy()
 
-        
+
 
         df.index = pd.to_datetime(df.index, utc=True)
 
         df.index.name = "Date"
 
-        
+
 
         df = df.rename(columns={
 
@@ -441,7 +435,7 @@ def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime, api_key:
 
         })
 
-        
+
 
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
 
@@ -458,7 +452,7 @@ def _fetch_from_twelvedata(ticker: str, start: datetime, end: datetime, api_key:
         # Re-raise rate limit errors so caller can detect them
         if "run out of api credits" in error_msg or "api credits were used" in error_msg:
             raise
-        
+
         print(f"  ⚠️ An error occurred while fetching data from TwelveData SDK for {ticker}: {e}")
 
         return pd.DataFrame()
@@ -474,7 +468,7 @@ def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: dateti
     result_frames = []
     max_retries = 7
     base_wait_time = 30
-    
+
     # 1. Try Alpaca first (if available and configured)
     if DATA_PROVIDER == 'alpaca' and ALPACA_AVAILABLE and ALPACA_API_KEY and ALPACA_SECRET_KEY:
         print(f"  📡 Trying Alpaca for {len(remaining_tickers)} tickers...")
@@ -484,14 +478,14 @@ def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: dateti
             success_count = len(remaining_tickers) - len(failed_tickers)
             print(f"  ✅ Alpaca: {success_count}/{len(remaining_tickers)} tickers")
         remaining_tickers = failed_tickers
-    
+
     # 2. Try TwelveData for remaining tickers (PARALLEL with rate limit detection)
     if remaining_tickers and TWELVEDATA_SDK_AVAILABLE and TWELVEDATA_API_KEY:
         print(f"  📡 Trying TwelveData for {len(remaining_tickers)} remaining tickers in parallel...")
         twelvedata_frames = []
         twelvedata_failed = []
         rate_limit_hit = False
-        
+
         def _fetch_td_single(ticker):
             """Helper for parallel TwelveData fetch"""
             try:
@@ -507,17 +501,17 @@ def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: dateti
                 if "run out of api credits" in error_msg or "api credits were used" in error_msg:
                     return (ticker, None, False, "RATE_LIMIT")
                 return (ticker, None, False, str(e))
-        
+
         # Use thread pool for parallel API requests (I/O bound)
         max_workers = min(TWELVEDATA_MAX_WORKERS, len(remaining_tickers))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(_fetch_td_single, ticker): ticker for ticker in remaining_tickers}
-            
+
             pbar = tqdm(total=len(remaining_tickers), desc="TwelveData", unit="ticker")
             for future in as_completed(futures):
                 try:
                     ticker, df, success, error = future.result()
-                    
+
                     # Check for rate limit
                     if error == "RATE_LIMIT":
                         if not rate_limit_hit:
@@ -538,7 +532,7 @@ def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: dateti
                 finally:
                     pbar.update(1)
             pbar.close()
-        
+
         if twelvedata_frames:
             result_frames.extend(twelvedata_frames)
             success_count = len(remaining_tickers) - len(twelvedata_failed)
@@ -547,12 +541,12 @@ def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: dateti
             else:
                 print(f"  ✅ TwelveData: {success_count}/{len(remaining_tickers)} tickers")
         remaining_tickers = twelvedata_failed
-    
+
     # 3. Fall back to yfinance for remaining tickers
     if remaining_tickers:
         if DATA_PROVIDER == 'alpaca':
             print(f"  📡 Falling back to yfinance for {len(remaining_tickers)} remaining tickers...")
-        
+
         for attempt in range(max_retries):
             try:
                 yf_data = yf.download(
@@ -566,7 +560,7 @@ def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: dateti
                     keepna=False,
                     multi_level_index=False
                 )
-                
+
                 if not yf_data.empty and not yf_data.isnull().all().all():
                     print(f"  ✅ yfinance: {len(remaining_tickers)} tickers")
                     result_frames.append(yf_data)
@@ -575,7 +569,7 @@ def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: dateti
                     if attempt == 0:
                         print(f"  ℹ️  yfinance returned empty data")
                     break
-                    
+
             except Exception as e:
                 error_str = str(e).lower()
                 if "yfratelimiterror" in error_str or "rate limit" in error_str or "429" in error_str:
@@ -585,7 +579,7 @@ def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: dateti
                 else:
                     print(f"  ⚠️ yfinance error: {e}")
                     break
-    
+
     return result_frames
 
 
@@ -597,9 +591,9 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
     """Fetch key financial metrics from yfinance and prepare them for merging."""
     time.sleep(PAUSE_BETWEEN_YF_CALLS)
     yf_ticker = yf.Ticker(ticker)
-    
+
     financial_data = {}
-    
+
     # Get income statement data (EBITDA)
     try:
         income_stmt = yf_ticker.quarterly_income_stmt
@@ -609,7 +603,7 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
                 financial_data['EBITDA'] = float(latest_ebitda)
     except Exception:
         pass
-    
+
     # Get cash flow data (Free Cash Flow)
     try:
         cash_flow = yf_ticker.quarterly_cash_flow
@@ -619,7 +613,7 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
                 financial_data['FCF'] = float(latest_fcf)
     except Exception:
         pass
-    
+
     if financial_data:
         df_financial = pd.DataFrame(financial_data, index=[pd.Timestamp.now(tz=timezone.utc)])
         df_financial = df_financial.sort_index()

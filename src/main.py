@@ -14,6 +14,11 @@ Trading AI — Improved Rule-Based System with Optional ML Gate
 - Optional ML classification gate (5-day horizon) to filter entries
 """
 
+# Suppress multiprocessing resource_tracker semaphore warnings at shutdown
+# These are harmless cleanup warnings when using 'spawn' start method
+import warnings
+warnings.filterwarnings("ignore", message="resource_tracker: There appear to be .* leaked semaphore objects")
+
 # Import config FIRST before any other local imports to avoid circular dependencies
 import sys
 import argparse
@@ -100,7 +105,7 @@ def validate_single_ticker(ticker, ticker_counts):
     else:
         status = 'EMPTY'
         message = 'No data'
-    
+
     return {
         'ticker': ticker,
         'rows': row_count,
@@ -119,7 +124,7 @@ def _gpu_diag():
                 print(f"[GPU] torch.cuda.is_available(): {torch.cuda.is_available()}")
         except Exception as e:
             print("[GPU] torch check failed:", e)
-    
+
     # Only check XGBoost if it's enabled
     if USE_XGBOOST:
         try:
@@ -129,7 +134,7 @@ def _gpu_diag():
                 print("[GPU] XGBoost version:", getattr(xgb, "__version__", "?"))
         except Exception as e:
             print("[GPU] XGBoost check failed:", e)
-    
+
     # Only check LightGBM if it's enabled
     if USE_LIGHTGBM:
         try:
@@ -192,7 +197,7 @@ try:
 except ImportError:
     tqdm = lambda x, **kwargs: x  # Fallback: no progress bar
 from data_utils import (
-    load_prices, fetch_training_data, load_prices_robust, _ensure_dir, 
+    load_prices, fetch_training_data, load_prices_robust, _ensure_dir,
     _download_batch_robust, _fetch_financial_data, _fetch_financial_data_from_alpaca,
     _fetch_from_stooq, _fetch_from_alpaca, _fetch_from_twelvedata, _fetch_intermarket_data
 )
@@ -389,19 +394,19 @@ except ImportError:
 
 def _execute_strategy_live(strategy: str, all_tickers: list, ticker_data_grouped: dict, portfolio_size: int) -> list:
     """Execute a strategy directly with current data (for --live-run mode).
-    
+
     Uses the shared strategy registry from shared_strategies.py.
     All strategies are defined there - no need to maintain separate if/elif chains.
     """
     from datetime import datetime, timezone
     from shared_strategies import get_strategy_tickers
-    
+
     current_date = datetime.now(timezone.utc)
-    
+
     # Handle alias
     if strategy == '1m_volsweet':
         strategy = 'risk_adj_mom_1m_vol_sweet'
-    
+
     return get_strategy_tickers(strategy, all_tickers, ticker_data_grouped, current_date, portfolio_size)
 
 
@@ -445,7 +450,7 @@ def main(
     single_ticker: Optional[str] = None,
     optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None
 ) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[Dict]]:
-    
+
     # Set the start method for multiprocessing to 'spawn'
     # This is crucial for CUDA compatibility with multiprocessing
     try:
@@ -468,39 +473,39 @@ def main(
 
     # Get accurate time from internet source for consistent backtesting
     end_date = get_internet_time()
-    
+
     # IMPORTANT: Use last trading day, not today's date (to avoid holiday issues)
     from data_utils import _get_last_trading_day
     last_trading_day = _get_last_trading_day()
     bt_end = datetime.combine(last_trading_day, datetime.min.time(), tzinfo=timezone.utc)
-    
+
     # Update end_date to last trading day for consistency
     end_date = bt_end
-    
+
     print(f"📅 Today: {get_internet_time().date()}, Last Trading Day: {last_trading_day}")
     print(f"📅 Using last trading day for backtesting: {bt_end.date()}")
-    
+
     # Store TODAY's date for data fetching (always fetch up to current date)
     today_for_data_fetch = end_date
-    
-        
+
+
     # Track timing for notifications
     script_start_time = time.time()
     training_start_time = None
     backtest_start_time = None
-    
+
     alpaca_trading_client = None
 
     # Initialize ML libraries to determine CUDA availability
     initialize_ml_libraries()
-    
+
     # Note: multiprocessing with CUDA-enabled DL models uses 'spawn' start method for stability
     if PYTORCH_AVAILABLE and CUDA_AVAILABLE and (USE_LSTM or USE_GRU):
         print("✅ CUDA + DL enabled: multiprocessing ON with 'spawn' start method for stability.")
         run_parallel = True
-    
+
     # Initialize initial_balance_used here with a default value
-    initial_balance_used = INITIAL_BALANCE 
+    initial_balance_used = INITIAL_BALANCE
     print(f"Using initial balance: ${initial_balance_used:,.2f}")
 
     # Initialize filtered ticker lists to avoid UnboundLocalError
@@ -511,7 +516,7 @@ def main(
         print(f"🔍 Running analysis for single ticker: {single_ticker}")
         start_date_1y = end_date - timedelta(days=365)
         ytd_start_date = datetime(end_date.year, 1, 1, tzinfo=timezone.utc)
-        
+
         df_1y = load_prices_robust(single_ticker, start_date_1y, end_date)
         perf_1y = np.nan
         if df_1y is not None and not df_1y.empty:
@@ -524,7 +529,7 @@ def main(
 
         # YTD performance calculation removed since YTD support was removed
         top_performers_data = [(single_ticker, perf_1y)]
-    
+
     # --- Step 1: Get all tickers and perform a single, comprehensive data download ---
     all_available_tickers = get_all_tickers()
     if not all_available_tickers:
@@ -535,15 +540,15 @@ def main(
     print(f"🚀 Step 1: Loading market data...")
     from data_utils import load_all_market_data
     all_tickers_data = load_all_market_data(all_available_tickers, end_date=today_for_data_fetch)
-    
+
     if all_tickers_data.empty:
         print("❌ Data loading failed. Aborting.")
         return (None,) * 15
-    
+
     # Data is in long format with date and ticker columns
     print(f"   📊 Data shape: {all_tickers_data.shape}")
     print(f"   📊 Columns: {list(all_tickers_data.columns[:5])}")
-    
+
     # Expand all_available_tickers to include any extra tickers found in downloaded data
     if 'ticker' in all_tickers_data.columns:
         tickers_in_data = set(all_tickers_data['ticker'].unique())
@@ -555,27 +560,27 @@ def main(
     else:
         print("   ⚠️ No 'ticker' column found in data")
         return (None,) * 15
-    
+
     # Filter out delisted stocks (no recent data within last 30 days)
     print(" Filtering out delisted stocks (no recent data)...")
     cutoff_date = today_for_data_fetch - timedelta(days=30)
-    
+
     # Find tickers with data in the last 30 days
     recent_data = all_tickers_data[all_tickers_data['date'] >= cutoff_date]
     active_tickers = recent_data['ticker'].unique().tolist()
-    
+
     # Remove tickers without recent data
     all_tickers_before = all_tickers_data['ticker'].nunique()
     all_tickers_data = all_tickers_data[all_tickers_data['ticker'].isin(active_tickers)]
     all_tickers_after = all_tickers_data['ticker'].nunique()
-    
+
     delisted_count = all_tickers_before - all_tickers_after
     if delisted_count > 0:
         print(f"   ✅ Filtered out {delisted_count} delisted/stale tickers (no data in last 30 days)")
         print(f"   ✅ Remaining: {all_tickers_after} active tickers")
     else:
         print(f"   ✅ All {all_tickers_after} tickers have recent data")
-    
+
     # Ensure 'date' column is timezone-aware
     if 'date' in all_tickers_data.columns:
         if all_tickers_data['date'].dtype == 'object' or not hasattr(all_tickers_data['date'].iloc[0], 'tzinfo'):
@@ -584,7 +589,7 @@ def main(
             all_tickers_data['date'] = all_tickers_data['date'].dt.tz_localize('UTC')
         else:
             all_tickers_data['date'] = all_tickers_data['date'].dt.tz_convert('UTC')
-    
+
     print("✅ Comprehensive data download complete.")
 
     # Cap bt_end to the latest available data to avoid future-dated slices
@@ -592,19 +597,19 @@ def main(
         last_available = pd.to_datetime(all_tickers_data['date'].max())
     else:
         last_available = all_tickers_data.index.max()
-    
+
     if last_available < bt_end:
         print(f"ℹ️ Capping backtest end date from {bt_end.date()} to last available data {last_available.date()}")
         end_date = last_available
         bt_end = last_available
-    
+
     # Calculate initial backtest dates (needed for all conditional blocks)
     # Note: BACKTEST_DAYS only affects the backtest period, NOT data fetching range
     bt_start_1y = bt_end - timedelta(days=BACKTEST_DAYS)  # When stocks will be bought
-    
+
     # Import RETRAIN_FREQUENCY_DAYS to ensure it's available
     from config import RETRAIN_FREQUENCY_DAYS
-    
+
     # Control backtest end date based on config
     if RUN_BACKTEST_UNTIL_TODAY:
         # Run backtest until today (ignoring prediction horizon constraint)
@@ -618,11 +623,11 @@ def main(
         # This ensures we have enough future data to validate all predictions made during backtest
         prediction_horizon = PERIOD_HORIZONS.get("1-Year", 10)  # 10 calendar days from config
         bt_end_with_horizon = bt_end - timedelta(days=prediction_horizon)
-        
+
         print(f"📅 Data available until: {bt_end.date()}")
         print(f"📅 Prediction horizon: {prediction_horizon} days")
         print(f"📅 Backtest will end: {bt_end_with_horizon.date()} (ensuring {prediction_horizon} days of future data for validation)")
-        
+
         bt_end = bt_end_with_horizon
         end_date = bt_end_with_horizon
         training_end_date = bt_end_with_horizon
@@ -631,7 +636,7 @@ def main(
     # Use shared function to calculate start date
     from config import get_data_lookback_days
     data_start_date = today_for_data_fetch - timedelta(days=get_data_lookback_days())
-    
+
     print("🔍 Fetching SPY data for Market Momentum feature...")
     spy_df = load_prices_robust('SPY', data_start_date, today_for_data_fetch)
     if not spy_df.empty:
@@ -639,7 +644,7 @@ def main(
         spy_df['Market_Momentum_SPY'] = spy_df['SPY_Returns'].rolling(window=FEAT_VOL_WINDOW).mean()
         spy_df = spy_df[['Market_Momentum_SPY']].reset_index()
         spy_df.columns = ['date', 'Market_Momentum_SPY']
-        
+
         # ✅ FIX 2: Merge SPY data on 'date' column (long format)
         if 'date' in all_tickers_data.columns:
             all_tickers_data = all_tickers_data.merge(spy_df, on='date', how='left')
@@ -662,10 +667,10 @@ def main(
             intermarket_df.index = intermarket_df.index.tz_localize('UTC')
         else:
             intermarket_df.index = intermarket_df.index.tz_convert('UTC')
-        
+
         intermarket_df = intermarket_df.reset_index()
         intermarket_df.columns = ['date'] + [f'Intermarket_{col}' for col in intermarket_df.columns[1:]]
-        
+
         # Merge intermarket data on 'date' column (long format)
         if 'date' in all_tickers_data.columns:
             all_tickers_data = all_tickers_data.merge(intermarket_df, on='date', how='left')
@@ -688,12 +693,12 @@ def main(
         print("❌ ERROR: 'ticker' column not found in all_tickers_data after conversion!")
         print(f"   Available columns: {list(all_tickers_data.columns)}")
         return (None,) * 15
-    
+
     if 'date' not in all_tickers_data.columns:
         print("❌ ERROR: 'date' column not found in all_tickers_data after conversion!")
         print(f"   Available columns: {list(all_tickers_data.columns)}")
         return (None,) * 15
-    
+
     # Check for required OHLCV columns
     required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
     missing_cols = [col for col in required_cols if col not in all_tickers_data.columns]
@@ -701,37 +706,38 @@ def main(
         print(f"❌ ERROR: Missing required columns: {missing_cols}")
         print(f"   Available columns: {list(all_tickers_data.columns)}")
         return (None,) * 15
-    
+
     print(f"✅ Data validation passed:")
     print(f"   - Shape: {all_tickers_data.shape}")
     print(f"   - Tickers: {len(all_tickers_data['ticker'].unique())}")
     print(f"   - Date range: {all_tickers_data['date'].min()} to {all_tickers_data['date'].max()}")
     print(f"   - Columns: {list(all_tickers_data.columns)}")
-    
+
     # ✅ OPTIMIZED: Generate data quality diagnostics efficiently
     print("\n🔍 Analyzing data quality for each ticker...")
-    
+
     # For large ticker lists (>1000), use fast aggregation without detailed checks
     if len(all_available_tickers) > 1000:
         print(f"   📊 Fast validation for {len(all_available_tickers)} tickers...")
-        
+
         # Quick aggregation: count rows per ticker
         ticker_counts = all_tickers_data.groupby('ticker').size()
-        
+
         # Use parallel processing for large ticker sets
         if len(all_available_tickers) > PARALLEL_THRESHOLD:
             print(f"   Using parallel validation for {len(all_available_tickers)} tickers...")
             from multiprocessing import Pool
             import functools
-            
+
             # Add progress bar
             progress_bar = tqdm(total=len(all_available_tickers), desc="   [INFO] Validating tickers", ncols=100)
-            
+
             # Partial function to pass ticker_counts
             validate_func = functools.partial(validate_single_ticker, ticker_counts=ticker_counts)
-            
+
+            import gc
             num_workers = min(NUM_PROCESSES, len(all_available_tickers))
-            with Pool(processes=num_workers) as pool:
+            with Pool(processes=num_workers, maxtasksperchild=50) as pool:
                 if progress_bar:
                     data_summaries = []
                     for result in pool.imap_unordered(validate_func, all_available_tickers):
@@ -740,19 +746,20 @@ def main(
                     progress_bar.close()
                 else:
                     data_summaries = list(pool.imap(validate_func, all_available_tickers))
+            gc.collect()  # Release semaphores after Pool closes (WSL fix)
         else:
             # Sequential for small lists
-            data_summaries = [validate_single_ticker(ticker, ticker_counts) 
+            data_summaries = [validate_single_ticker(ticker, ticker_counts)
                              for ticker in tqdm(all_available_tickers, desc="   [INFO] Quick validation", ncols=100)]
-        
+
         # Print summary stats
         ok_count = sum(1 for s in data_summaries if s['status'] == 'OK')
         insufficient_count = sum(1 for s in data_summaries if s['status'] == 'INSUFFICIENT')
         empty = sum(1 for s in data_summaries if s['status'] == 'EMPTY')
-        
+
         print(f"\n   ✅ Validation complete: {ok_count} OK, {insufficient_count} insufficient, {empty} empty")
         print(f"   📊 Overall data: {all_tickers_data.shape[0]} rows, {len(all_available_tickers)} tickers\n")
-        
+
         # Show problematic tickers (INSUFFICIENT or EMPTY)
         problematic = [s for s in data_summaries if s['status'] in ['INSUFFICIENT', 'EMPTY', 'ERROR']]
         if problematic:
@@ -760,16 +767,16 @@ def main(
             print("   " + "=" * 90)
             print(f"   {'Ticker':<10} {'Rows':<8} {'Status':<15} {'Message':<40}")
             print("   " + "-" * 90)
-            
+
             # Show first 50 problematic tickers
             for i, s in enumerate(problematic[:50]):
                 print(f"   {s['ticker']:<10} {s['rows']:<8} {s['status']:<15} {s.get('message', ''):<40}")
-            
+
             if len(problematic) > 50:
                 print(f"   ... and {len(problematic) - 50} more problematic tickers")
             print("   " + "=" * 90)
             print()
-        
+
         # Warn if many tickers have insufficient data
         if insufficient_count > len(data_summaries) * 0.3:
             print(f"   ⚠️  WARNING: {insufficient_count}/{len(data_summaries)} tickers have insufficient data!")
@@ -777,16 +784,16 @@ def main(
     else:
         # For smaller lists, use optimized groupby approach
         data_summaries = []
-        
+
         # Optimize: Group by ticker once (much faster than filtering repeatedly)
         global _grouped_data
         _grouped_data = all_tickers_data.groupby('ticker')
-        
+
         # Use parallel processing for large ticker sets
         if len(all_available_tickers) > PARALLEL_THRESHOLD:
             print(f"   Using parallel detailed validation for {len(all_available_tickers)} tickers...")
             from concurrent.futures import ThreadPoolExecutor
-            
+
             num_workers = min(NUM_PROCESSES, len(all_available_tickers))
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 data_summaries = list(tqdm(
@@ -800,17 +807,17 @@ def main(
             data_summaries = []
             for ticker in tqdm(all_available_tickers, desc="Validating data quality"):
                 data_summaries.append(validate_detailed_ticker(ticker))
-        
+
         # Clean up global variable
         _grouped_data = None
-        
+
         # Print diagnostics table (includes warnings)
         print_data_diagnostics(data_summaries)
-    
+
     # --- Calculate backtest dates first (needed for ticker selection) ---
     # bt_end and last_available are already calculated above (lines 634-643)
     # No need to recalculate - use the existing values
-    
+
     # --- Identify top performers if not provided ---
     if top_performers_data is None:
         title = "🚀 AI-Powered Momentum & Trend Strategy"
@@ -830,7 +837,7 @@ def main(
             fcf_min_threshold=fcf_threshold,
             ebitda_min_threshold=ebitda_threshold
         )
-        
+
 
     top_performers_data = market_selected_performers
 
@@ -847,7 +854,7 @@ def main(
     print("📊 Running Selection Strategy Comparison...")
     print("   This compares different stock selection criteria to find the best approach.")
     print("="*80)
-    
+
     # Convert all_tickers_data to dict format for selection backtester
     ticker_data_dict = {}
     if isinstance(all_tickers_data, pd.DataFrame):
@@ -864,7 +871,7 @@ def main(
             print(f"   Available columns: {list(all_tickers_data.columns[:5])}")
     elif isinstance(all_tickers_data, dict):
         ticker_data_dict = all_tickers_data
-    
+
     # Run the comparison
     # Use 20 tickers per strategy for meaningful comparison between strategies
     selection_comparison_results = run_selection_strategy_comparison(
@@ -875,7 +882,7 @@ def main(
         n_top=20,
         benchmark_ticker='SPY'
     )
-    
+
     # Print stock overlap analysis
     if selection_comparison_results and 'strategy_results' in selection_comparison_results:
         print_strategy_stock_overlap(selection_comparison_results['strategy_results'])
@@ -908,10 +915,10 @@ def main(
         actual_period_name = f"{BACKTEST_DAYS}-Day"
 
     # --- Training Models (for 1-Year Backtest) ---
-    
+
     # Initialize variables that are used outside the if-block
     failed_training_tickers_1y = {}
-    
+
     # --- Clean up old models before fresh training ---
     if FORCE_TRAINING:
         print(f"\n🧹 Step 2: Cleaning up old models before fresh training...")
@@ -923,14 +930,14 @@ def main(
             old_y_scaler_files = list(models_dir.glob("*_y_scaler.joblib"))
             old_json_files = list(models_dir.glob("*.json"))
             total_old_files = len(old_model_files) + len(old_scaler_files) + len(old_y_scaler_files) + len(old_json_files)
-            
+
             if total_old_files > 0:
                 print(f"   🗑️  Found {total_old_files} old model files:")
                 print(f"      - {len(old_model_files)} model files")
                 print(f"      - {len(old_scaler_files)} scaler files")
                 print(f"      - {len(old_y_scaler_files)} y-scaler files")
                 print(f"      - {len(old_json_files)} hyperparameter files")
-                
+
                 # Remove all old model files
                 import shutil
                 shutil.rmtree(models_dir)
@@ -940,25 +947,25 @@ def main(
                 print(f"   ℹ️  No old models found. Ready for fresh training.")
         else:
             print(f"   ℹ️  Models directory doesn't exist. Will create during training.")
-    
+
     # --- Step 3: Prepare for walk-forward backtest ---
     # Per-ticker models removed - AI Elite uses shared base model trained during backtest
     from config import ENABLE_WALK_FORWARD_RETRAINING
-    
+
     # All tickers available for strategies
     top_tickers_ai_filtered = top_tickers
     top_tickers_1y_filtered = top_tickers
-    
+
     print(f"  ✅ {len(top_tickers)} tickers available for all strategies: {', '.join(top_tickers[:10])}{'...' if len(top_tickers) > 10 else ''}", flush=True)
 
     # 🧠 Initialize dictionaries for model training data before threshold optimization
     X_train_dict, y_train_dict, X_test_dict, y_test_dict = {}, {}, {}, {}
     prices_dict, signals_dict = {}, {}
-    
+
     # Update top_performers_data to reflect only successfully trained tickers (for AI strategies only)
     # Non-AI strategies use the full top_performers_data
     top_performers_data_1y_filtered = [item for item in top_performers_data if item[0] in top_tickers_1y_filtered]
-    
+
     # Set capital_per_stock to the fixed investment amount
     capital_per_stock_1y = INVESTMENT_PER_STOCK
     # Ensure logs directory exists for optimized parameters
@@ -999,12 +1006,12 @@ def main(
     # ========================================================================
     # PHASE 2: OPTIMIZE THRESHOLDS FOR ALL PERIODS
     # ========================================================================
-    
+
     # Initialize optimized_params dictionaries (only 1-year period supported)
     # ========================================================================
     # PHASE 3: RUN ALL BACKTESTS
     # ========================================================================
-    
+
     # Optional: Run rebalance optimization
     try:
         rebalance_optimization_results = optimize_rebalance_horizons(
@@ -1019,10 +1026,10 @@ def main(
         print(f"   ⚠️ Rebalance optimization failed: {e}", flush=True)
         import traceback
         traceback.print_exc()
-    
+
     # AI Strategy removed - running comparison strategies only
     print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (comparison strategies only)...")
-    
+
     # Send push notification at start of backtest
     from notifications import send_push_notification
     send_push_notification(
@@ -1031,10 +1038,10 @@ def main(
         priority="low",
         tags="rocket"
     )
-    
+
     n_top_rebal = 3
     initial_capital_1y = capital_per_stock_1y * n_top_rebal
-    
+
     # Use walk-forward backtest with periodic retraining and rebalancing
     try:
         result = _run_portfolio_backtest_walk_forward(
@@ -1047,17 +1054,17 @@ def main(
             top_performers_data=top_performers_data,
             horizon_days=PERIOD_HORIZONS.get("1-Year", 10),  # 10 calendar days from config
         )
-        
+
         if result is None:
             print("\n" + "="*100)
             print("❌ CRITICAL ERROR: _run_portfolio_backtest_walk_forward returned None!")
             print("="*100)
             raise ValueError("Backtest function returned None instead of expected dict")
-        
+
         # Results are now a clean dict - no more fragile 149-value tuple unpacking
         r = result  # results dict from backtesting.py
         s = r['strategies']  # shorthand for strategy results
-        
+
         # Extract general values
         final_strategy_value_1y = r['general']['final_strategy_value']
         portfolio_values_1y = r['general']['portfolio_values_history']
@@ -1065,13 +1072,13 @@ def main(
         performance_metrics_1y = r['general']['performance_metrics']
         buy_hold_histories_1y = r['general']['buy_hold_histories']
         day_count_1y = r['general']['day_count']
-        
+
         # Extract strategy portfolio values (used for print_final_summary and debug)
         bh_portfolio_value_1y = s['static_bh_1y']['value']
         bh_3m_portfolio_value_1y = s['static_bh_3m']['value']
         bh_6m_portfolio_value_1y = s['static_bh_6m']['value']
         bh_1m_portfolio_value_1y = s['static_bh_1m']['value']
-        
+
     except Exception as e:
         print("\n" + "="*100)
         print("EXCEPTION CAUGHT IN MAIN.PY:")
@@ -1083,7 +1090,7 @@ def main(
         tb_str = traceback.format_exc()
         print(tb_str)
         print("="*100 + "\n")
-        
+
         # Send error notification
         send_error_notification(
             error_type=type(e).__name__,
@@ -1091,13 +1098,13 @@ def main(
             traceback_str=tb_str
         )
         raise
-    
+
     # AI Strategy removed - compute return using portfolio initial capital for consistency
     portfolio_initial_capital_for_ret = INVESTMENT_PER_STOCK * PORTFOLIO_SIZE
     ai_1y_return = ((final_strategy_value_1y - portfolio_initial_capital_for_ret) / portfolio_initial_capital_for_ret) * 100 if portfolio_initial_capital_for_ret != 0 else 0.0
     prediction_stats_1y = {}  # Not provided by this function
     strategy_results_1y = []  # Per-ticker results in performance_metrics_1y
-    
+
     # 🔍 DEBUG: Check backtest results
     print(f"\n[DEBUG] 1-Year Backtest Results:")
     print(f"  - top_tickers_1y_filtered: {top_tickers_1y_filtered}")
@@ -1111,7 +1118,7 @@ def main(
     rule_results_1y = {}  # Placeholder - rule-based strategy disabled
     final_rule_value_1y = rule_results_1y.get('final_value', initial_capital_1y)
     rule_1y_return = rule_results_1y.get('total_return', 0) * 100
-    
+
     # Simple Rule Strategy removed - using AI strategy only
     final_simple_rule_value_1y = None
     simple_rule_results_1y = []
@@ -1146,14 +1153,14 @@ def main(
             start_price = float(df_bh["Close"].iloc[0])
             shares_bh = int(capital_per_stock_1y / start_price) if start_price > 0 else 0
             cash_bh = capital_per_stock_1y - shares_bh * start_price
-            
+
             bh_history_for_ticker = []
             for price_day in df_bh["Close"].tolist():
                 bh_history_for_ticker.append(cash_bh + shares_bh * price_day)
-            
+
             final_bh_val_ticker = bh_history_for_ticker[-1] if bh_history_for_ticker else capital_per_stock_1y
             buy_hold_results_1y.append(final_bh_val_ticker)
-            
+
             perf_data_bh = calculate_buy_hold_performance_metrics(bh_history_for_ticker, ticker)
             performance_metrics_buy_hold_1y_actual.append({
                 'ticker': ticker,
@@ -1171,7 +1178,7 @@ def main(
                 'individual_bh_return': 0.0,
                 'final_shares': 0.0
             })
-    
+
     # Build prediction vs B&H rows for all candidate tickers (whether AI held them or not)
     bh_returns_lookup = {d['ticker']: d.get('individual_bh_return') for d in performance_metrics_buy_hold_1y_actual}
     prediction_vs_bh_1y = []
@@ -1202,7 +1209,7 @@ def main(
     # --- Prepare data for the final summary table (using 1-Year results for the table) ---
     print("\n📝 Preparing final summary data...")
     final_results = []
-    
+
     # Combine all failed tickers from all periods
     all_failed_tickers = {}
 
@@ -1222,7 +1229,7 @@ def main(
     # Add successfully processed tickers (✅ Updated for new tracking system)
     for ticker in processed_tickers_1y:
         backtest_result_for_ticker = next((res for res in performance_metrics_1y if res['ticker'] == ticker), None)
-        
+
         if backtest_result_for_ticker:
             # ✅ NEW: Use new performance tracking structure
             strategy_gain = backtest_result_for_ticker.get('strategy_gain', 0.0)
@@ -1245,7 +1252,7 @@ def main(
             if t == ticker:
                 perf_1y_benchmark = p1y if np.isfinite(p1y) else np.nan
                 break
-        
+
         final_results.append({
             'ticker': ticker,
             'performance': total_invested + strategy_gain,  # Final value
@@ -1263,7 +1270,7 @@ def main(
             'status': 'trained',
             'reason': None
         })
-    
+
     # Add failed tickers to the final results (only if they didn't succeed in 1Y)
     # Don't add tickers that already appear in processed_tickers_1y
     for ticker, reason in all_failed_tickers.items():
@@ -1285,7 +1292,7 @@ def main(
 
     # Sort by 1Y performance for the final table, handling potential NaN values
     sorted_final_results = sorted(final_results, key=lambda x: x.get('one_year_perf', -np.inf) if pd.notna(x.get('one_year_perf')) else -np.inf, reverse=True)
-    
+
     # 🔍 DEBUG: Check values before summary
     print(f"\n[DEBUG] Before print_final_summary:")
     print(f"  - final_strategy_value_1y: ${final_strategy_value_1y:,.2f}")
@@ -1302,11 +1309,11 @@ def main(
     actual_initial_capital_1y = portfolio_initial_capital
     # ✅ FIX: Use ALL top tickers for the summary, not just AI-processed ones
     actual_tickers_analyzed = len(top_tickers)
-    
+
     # ✅ Calculate actual backtest days for annualization (use actual day count from backtest)
     actual_backtest_days = (bt_end - bt_start_1y).days
     print(f"   📅 Actual backtest days: {actual_backtest_days} (config BACKTEST_DAYS={BACKTEST_DAYS})")
-    
+
     # Final summary removed - last daily summary already shows all strategy results
 
     # --- Print Meta-Strategy Results ---
@@ -1345,12 +1352,12 @@ def main(
                 config_var = f"STATIC_BH_{strategy_type}_REBALANCE_DAYS"
                 print(f"      {config_var} = {r['best_horizon']}")
         print("=" * 80)
-        
+
         # --- Print detailed table with all horizons and returns ---
         print("\n" + "=" * 100)
         print("              📊 DETAILED HORIZON vs RETURN TABLE 📊")
         print("=" * 100)
-        
+
         # Build sorted results for each strategy
         strategy_results = {}
         for strategy_type in ['1Y', '6M', '3M', '1M']:
@@ -1358,7 +1365,7 @@ def main(
                 results = rebalance_optimization_results[strategy_type]['all_results']
                 # Sort by horizon
                 strategy_results[strategy_type] = sorted(results, key=lambda x: x[0])
-        
+
         # Print header
         header = f"{'Horizon':<10}"
         for st in ['1Y', '6M', '3M', '1M']:
@@ -1366,7 +1373,7 @@ def main(
                 header += f" | {'Static BH ' + st:>15}"
         print(header)
         print("-" * 100)
-        
+
         # Print each horizon row
         horizons = list(range(REBALANCE_HORIZON_MIN, REBALANCE_HORIZON_MAX + 1))
         for horizon in horizons:
@@ -1387,7 +1394,7 @@ def main(
                     else:
                         row += f" | {'N/A':>15}"
             print(row)
-        
+
         print("-" * 100)
         print("   🏆 = Best performing horizon for each strategy")
         print("=" * 100)
@@ -1395,36 +1402,36 @@ def main(
     # Send backtesting completion notification
     if backtest_start_time:
         backtest_time_minutes = (time.time() - backtest_start_time) / 60
-        
+
         # Prepare strategy results for email
         strategy_results = {}
         if 'final_buy_hold_value_1y' in locals():
             portfolio_cap = INVESTMENT_PER_STOCK * PORTFOLIO_SIZE
             strategy_results['Buy & Hold'] = {'return': ((final_buy_hold_value_1y - portfolio_cap) / portfolio_cap) * 100 if portfolio_cap != 0 else 0.0}
-        
+
         send_backtesting_notification(
             strategy_results=strategy_results,
             backtest_time_minutes=backtest_time_minutes
         )
-        
+
         # Build full strategy summary for push notification
         from notifications import send_push_summary
         all_strategy_returns = []
         for name, data in s.items():
             ret = ((data['value'] - portfolio_initial_capital) / abs(portfolio_initial_capital)) * 100 if portfolio_initial_capital != 0 else 0.0
             all_strategy_returns.append((name, ret))
-        
+
         # Sort by return descending
         all_strategy_returns.sort(key=lambda x: x[1], reverse=True)
-        
+
         send_push_summary(
             backtest_time_minutes=backtest_time_minutes,
             strategy_returns=all_strategy_returns[:10]  # Top 10
         )
-    
+
     # Send final completion notification
     total_time_minutes = (time.time() - script_start_time) / 60
-    
+
     # Use the generic send_completion_notification function
     from notifications import send_completion_notification
     send_completion_notification(
@@ -1448,12 +1455,12 @@ def main(
     performance_values = {
         actual_period_name: final_strategy_value_1y
     }
-    
+
     best_period_name = max(performance_values, key=performance_values.get)
-    
+
     # AI Elite models are saved during walk-forward backtest to logs/models/
     print(f"\n🏆 AI Elite models saved during walk-forward backtest")
-    
+
     # Return all_tickers_data for performance table
     return all_tickers_data
 
@@ -1465,45 +1472,45 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AI Stock Advisor - Backtesting and Live Trading")
     parser.add_argument("--num-stocks", type=int, default=None,
                        help="Number of stocks to select (overrides PORTFOLIO_SIZE from config)")
-    parser.add_argument("--live-trading", action="store_true", 
+    parser.add_argument("--live-trading", action="store_true",
                        help="Run in live trading mode instead of backtesting")
     parser.add_argument("--live-run", action="store_true",
                        help="Run strategies live with current data (like quick_strategy_check.py)")
     parser.add_argument("--strategy", type=str, default="volatility_ensemble",
                        help="Strategy for live trading. Available: volatility_ensemble, enhanced_volatility, correlation_ensemble, momentum_breakout, factor_rotation, pairs_trading, earnings_momentum, insider_trading, options_sentiment, ml_ensemble, risk_adj_mom, dynamic_bh_1y, quality_momentum, momentum_ai_hybrid, elite_hybrid")
-    
+
     args = parser.parse_args()
-    
+
     if args.live_run:
         # Live run mode: execute strategies with current data (like quick_strategy_check.py)
         import src.config as config
-        
+
         # Override PORTFOLIO_SIZE if --num-stocks is specified
         if args.num_stocks is not None:
             config.PORTFOLIO_SIZE = args.num_stocks
             print(f"📊 Portfolio size: {args.num_stocks} stocks")
-        
+
         print(f"🚀 Live Strategy Execution Mode")
         print("=" * 80)
-        
+
         # Load market data
         from data_utils import load_all_market_data
         from ticker_selection import get_all_tickers
         from live_trading import get_strategy_tickers
         from datetime import datetime, timezone
-        
+
         print("\n📊 Loading market data...")
         all_tickers = get_all_tickers()
         all_tickers_data = load_all_market_data(all_tickers)
-        
+
         if all_tickers_data.empty:
             print("❌ No data loaded!")
             sys.exit(1)
-        
+
         # Convert to ticker_data_grouped format
         ticker_data_grouped = {}
         grouped = all_tickers_data.groupby('ticker')
-        
+
         for ticker in all_tickers_data['ticker'].unique():
             try:
                 ticker_df = grouped.get_group(ticker).copy()
@@ -1513,18 +1520,18 @@ if __name__ == "__main__":
                 ticker_data_grouped[ticker] = ticker_df
             except KeyError:
                 pass
-        
+
         print(f"   ✅ Got data for {len(ticker_data_grouped)} tickers")
-        
+
         # Check if multiple strategies requested
         strategies = [s.strip() for s in args.strategy.split(',')]
-        
+
         if len(strategies) > 1:
             # Multi-strategy live run with acceleration ranking
             print("\n" + "=" * 80)
             print("📊 MULTI-STRATEGY TICKER SELECTION")
             print("=" * 80)
-            
+
             strategy_selections = {}
             for strategy in strategies:
                 print(f"\n🎯 Strategy: {strategy}")
@@ -1536,17 +1543,17 @@ if __name__ == "__main__":
                     print(f"   Selected {len(selected)} tickers: {selected}")
                 else:
                     print(f"   ⚠️ No tickers selected")
-            
+
             # Show comparison
             print("\n" + "=" * 80)
             print("📊 STRATEGY COMPARISON")
             print("=" * 80)
-            
+
             # Find common tickers (intersection of all)
             if strategy_selections:
                 common = set.intersection(*strategy_selections.values()) if all(strategy_selections.values()) else set()
                 print(f"\n✅ COMMON to all strategies ({len(common)}): {sorted(common) if common else 'None'}")
-                
+
                 # Show unique tickers for each strategy
                 print(f"\n🔀 UNIQUE to each strategy:")
                 for strategy in strategies:
@@ -1556,44 +1563,44 @@ if __name__ == "__main__":
                         print(f"   {strategy}: {sorted(unique)}")
                     else:
                         print(f"   {strategy}: None (all shared)")
-            
+
             # === CONSENSUS TABLE ===
             print("\n" + "=" * 80)
             print("📊 CONSENSUS RANKING TABLE")
             print("=" * 80)
             print(f"Stocks ranked by number of strategy votes (out of {len(strategies)} strategies)\n")
-            
+
             # Count votes for each ticker
             from collections import Counter
             ticker_votes = Counter()
             ticker_strategies = {}  # Track which strategies voted for each ticker
-            
+
             for strategy, tickers in strategy_selections.items():
                 for ticker in tickers:
                     ticker_votes[ticker] += 1
                     if ticker not in ticker_strategies:
                         ticker_strategies[ticker] = []
                     ticker_strategies[ticker].append(strategy)
-            
+
             # Sort by vote count (descending), then alphabetically
             sorted_tickers = sorted(ticker_votes.items(), key=lambda x: (-x[1], x[0]))
-            
+
             # Print header
             print(f"{'Rank':<6} {'Ticker':<12} {'Votes':<8} {'Strategies':<40}")
             print("-" * 80)
-            
+
             # Print each ticker with vote info - show ALL with 2+ votes
             min_votes = 2  # Show only stocks with 2 or more votes
             filtered_tickers = [(t, v) for t, v in sorted_tickers if v >= min_votes]
-            
+
             for rank, (ticker, votes) in enumerate(filtered_tickers, 1):
                 vote_bar = "█" * votes + "░" * (len(strategies) - votes)
                 strategies_short = ", ".join([s[:8] for s in ticker_strategies[ticker]])
                 print(f"{rank:<6} {ticker:<12} {votes}/{len(strategies)} {vote_bar:<8}  {strategies_short}")
-            
+
             if not filtered_tickers:
                 print(f"   ⚠️ No stocks with {min_votes}+ strategy votes found")
-            
+
             # Recommended portfolio (top 10 by consensus)
             print("\n" + "=" * 80)
             print("🎯 RECOMMENDED CONSENSUS PORTFOLIO (Top 10 by votes)")
@@ -1605,19 +1612,19 @@ if __name__ == "__main__":
                 print(f"   💡 Consider running: python src/main.py --live-trading --strategy consensus")
             else:
                 print("   ⚠️ No consensus stocks found")
-            
+
             print("\n" + "=" * 80)
             print("💡 To execute trades with a single strategy, run:")
             print(f"   python src/main.py --live-run --strategy <strategy_name>")
             print("=" * 80)
-            
+
         else:
             # Single strategy live run
             strategy = strategies[0]
             print(f"\n🎯 Single Strategy Mode: {strategy}")
-            
+
             selected = get_strategy_tickers(strategy, list(ticker_data_grouped.keys()), ticker_data_grouped)
-            
+
             if selected:
                 print(f"\n" + "=" * 80)
                 print(f"📊 RECOMMENDED PORTFOLIO ({strategy})")
@@ -1629,43 +1636,43 @@ if __name__ == "__main__":
                 print("=" * 80)
             else:
                 print(f"   ❌ No tickers found for strategy '{strategy}'")
-        
+
         sys.exit(0)
-    
+
     elif args.live_trading:
         # Set strategy in config for live trading
         import src.config as config
         config.LIVE_TRADING_STRATEGY = args.strategy
-        
+
         # Override PORTFOLIO_SIZE if --num-stocks is specified
         if args.num_stocks is not None:
             config.PORTFOLIO_SIZE = args.num_stocks
             config.INVESTMENT_PER_STOCK = config.TOTAL_CAPITAL / args.num_stocks
             print(f"📊 Overriding portfolio size to {args.num_stocks} stocks (${config.INVESTMENT_PER_STOCK:,.0f} per stock)")
-        
+
         print(f"🚀 Starting Live Trading with Strategy: {args.strategy}")
-        
+
         # Load strategy selections first to get available strategies
         print("\n📂 Reading strategy selections from JSON (no data download needed)...")
         from live_trading import get_all_strategy_selections, get_strategy_tickers
-        
+
         all_selections = get_all_strategy_selections()
         if all_selections is None:
             print("   ❌ No strategy selections found!")
             print("   ❌ Run backtesting first: python src/main.py")
             print("   ❌ JSON file: logs/strategy_selections.json")
             sys.exit(1)
-        
+
         print(f"   ✅ Loaded selections from backtest ({all_selections.get('backtest_end_date', 'unknown')})")
         print(f"   ✅ Available strategies: {len(all_selections.get('strategies', {}))}")
-        
+
         # Display all strategies from JSON
         print(f"📋 Available strategies:")
         strategies_list = list(all_selections.get('strategies', {}).keys())
-        
+
         # Sort strategies for consistent display
         strategies_list.sort()
-        
+
         # Display all strategies with icons
         for i, strategy in enumerate(strategies_list):
             # Assign icons based on strategy type
@@ -1691,17 +1698,17 @@ if __name__ == "__main__":
                 icon = "🎯"
             else:
                 icon = "🆕"
-            
+
             # Format strategy name for display
             display_name = strategy.replace('_', ' ').title()
             print(f"   {icon} {display_name.lower()}")
-        
+
         print(f"💡 Example: python src/main.py --live-trading --strategy {strategies_list[0]}")
         print("=" * 80)
-        
+
         # Check if multiple strategies requested (comma-separated)
         strategies = [s.strip() for s in args.strategy.split(',')]
-        
+
         # Use the live trading implementation - no data needed, reads from JSON
         try:
             if len(strategies) > 1:
@@ -1709,7 +1716,7 @@ if __name__ == "__main__":
                 print("\n" + "=" * 80)
                 print("📊 MULTI-STRATEGY TICKER SELECTION")
                 print("=" * 80)
-                
+
                 strategy_selections = {}
                 for strategy in strategies:
                     print(f"\n🎯 Strategy: {strategy}")
@@ -1721,17 +1728,17 @@ if __name__ == "__main__":
                         print(f"   Selected {len(selected)} tickers: {selected}")
                     else:
                         print(f"   ⚠️ No tickers selected")
-                
+
                 # Show comparison
                 print("\n" + "=" * 80)
                 print("📊 STRATEGY COMPARISON")
                 print("=" * 80)
-                
+
                 # Find common tickers (intersection of all)
                 if strategy_selections:
                     common = set.intersection(*strategy_selections.values()) if all(strategy_selections.values()) else set()
                     print(f"\n✅ COMMON to all strategies ({len(common)}): {sorted(common) if common else 'None'}")
-                    
+
                     # Show unique tickers for each strategy
                     print(f"\n🔀 UNIQUE to each strategy:")
                     for strategy in strategies:
@@ -1741,45 +1748,45 @@ if __name__ == "__main__":
                             print(f"   {strategy}: {sorted(unique)}")
                         else:
                             print(f"   {strategy}: None (all shared)")
-                
+
                 # === CONSENSUS TABLE ===
                 print("\n" + "=" * 80)
                 print("📊 CONSENSUS RANKING TABLE")
                 print("=" * 80)
                 print(f"Stocks ranked by number of strategy votes (out of {len(strategies)} strategies)\n")
-                
+
                 # Count votes for each ticker
                 from collections import Counter
                 ticker_votes = Counter()
                 ticker_strategies = {}  # Track which strategies voted for each ticker
-                
+
                 for strategy, tickers in strategy_selections.items():
                     for ticker in tickers:
                         ticker_votes[ticker] += 1
                         if ticker not in ticker_strategies:
                             ticker_strategies[ticker] = []
                         ticker_strategies[ticker].append(strategy)
-                
+
                 # Sort by vote count (descending), then alphabetically
                 sorted_tickers = sorted(ticker_votes.items(), key=lambda x: (-x[1], x[0]))
-                
+
                 # Print header
                 print(f"{'Rank':<6} {'Ticker':<12} {'Votes':<8} {'Strategies':<40}")
                 print("-" * 80)
-                
+
                 # Print each ticker with vote info - show ALL with 2+ votes
                 from config import PORTFOLIO_SIZE
                 min_votes = 2  # Show only stocks with 2 or more votes
                 filtered_tickers = [(t, v) for t, v in sorted_tickers if v >= min_votes]
-                
+
                 for rank, (ticker, votes) in enumerate(filtered_tickers, 1):
                     vote_bar = "█" * votes + "░" * (len(strategies) - votes)
                     strategies_short = ", ".join([s[:8] for s in ticker_strategies[ticker]])
                     print(f"{rank:<6} {ticker:<12} {votes}/{len(strategies)} {vote_bar:<8}  {strategies_short}")
-                
+
                 if not filtered_tickers:
                     print(f"   ⚠️ No stocks with {min_votes}+ strategy votes found")
-                
+
                 # Summary statistics
                 print("\n" + "-" * 80)
                 print("📈 CONSENSUS SUMMARY:")
@@ -1789,7 +1796,7 @@ if __name__ == "__main__":
                     if count > 0:
                         emoji = "🟢" if vote_count == len(strategies) else "🔵" if vote_count >= len(strategies)//2 + 1 else "⚪"
                         print(f"   {emoji} {vote_count} vote{'s' if vote_count > 1 else ''}: {count} stocks {tickers_with_votes if count <= 5 else ''}")
-                
+
                 # Recommended portfolio (top 10 by consensus)
                 print("\n" + "=" * 80)
                 print("🎯 RECOMMENDED CONSENSUS PORTFOLIO (Top 10 by votes)")
@@ -1801,7 +1808,7 @@ if __name__ == "__main__":
                     print(f"   💡 Consider running: python src/main.py --live-trading --strategy consensus")
                 else:
                     print("   ⚠️ No consensus stocks found")
-                
+
                 print("\n" + "=" * 80)
                 print("💡 To execute trades with a single strategy, run:")
                 print(f"   python src/main.py --live-trading --strategy <strategy_name>")
@@ -1809,16 +1816,16 @@ if __name__ == "__main__":
             else:
                 # Single strategy: read from JSON - no data needed
                 print(f"\n🎯 Single Strategy Mode: {strategies[0]}")
-                
+
                 # Debug: Check all_selections type
                 print(f"   [DEBUG] all_selections type: {type(all_selections)}")
                 if isinstance(all_selections, list):
                     print(f"   [ERROR] all_selections is a list, expected dict!")
                     print(f"   [DEBUG] First few items: {all_selections[:3] if len(all_selections) > 0 else 'empty'}")
                     all_selections = {}  # Fallback to empty dict
-                
+
                 selected = get_strategy_tickers(strategies[0], [], None)
-                
+
                 if selected:
                     print(f"\n" + "=" * 80)
                     print(f"📊 RECOMMENDED PORTFOLIO ({strategies[0]})")
@@ -1829,7 +1836,7 @@ if __name__ == "__main__":
                     print(f"   Investment per stock: ${INVESTMENT_PER_STOCK:,.2f}")
                     print(f"   Total investment: ${INVESTMENT_PER_STOCK * len(selected):,.2f}")
                     print("=" * 80)
-                    
+
                     # Show all strategies from JSON
                     print(f"\n📊 ALL STRATEGY SELECTIONS (from backtest {all_selections.get('backtest_end_date', 'unknown') if isinstance(all_selections, dict) else 'N/A'}):")
                     print("-" * 80)
@@ -1842,7 +1849,7 @@ if __name__ == "__main__":
                     else:
                         print(f"   [WARN] Cannot display strategy selections - invalid data format")
                     print("-" * 80)
-                    
+
                     print("\n✅ LIVE TRADING RECOMMENDATIONS COMPLETE")
                     print("   Use these selections to manually execute trades on your broker")
                 else:
@@ -1852,27 +1859,27 @@ if __name__ == "__main__":
     else:
         # Run normal backtesting and get the data
         all_tickers_data = main()
-    
+
     # Add 3M performance table at the end (only for backtesting mode - live trading skips this)
     if not args.live_trading:
         try:
             print("\n" + "=" * 100)
             print("📊 UNIFIED TICKER PERFORMANCE TABLE (Sorted by 3M Performance)")
             print("=" * 100)
-            
+
             from ticker_selection import _calculate_1y_return_from_dataframe
-            
+
             today = datetime.now(timezone.utc)
-            
+
             # Use the already loaded all_tickers_data from backtest instead of fetching fresh data
             if all_tickers_data is not None and not all_tickers_data.empty:
                 print(f"🔍 Using backtest data for performance calculation...")
                 print(f"   Data shape: {all_tickers_data.shape}")
                 print(f"   Columns: {list(all_tickers_data.columns)[:5]}...")  # Show first 5 columns
-                
+
                 # Data is in long format
                 print("   Data is in long format")
-                
+
                 # Check if date is in index or column
                 if 'date' not in all_tickers_data.columns:
                     if hasattr(all_tickers_data.index, 'names') and 'date' in all_tickers_data.index.names:
@@ -1882,7 +1889,7 @@ if __name__ == "__main__":
                     else:
                         print("   ⚠️ No 'date' column found in data")
                         raise ValueError("Date column not found in data")
-                
+
                 # Ensure we have a 'ticker' column in long format
                 if 'ticker' not in all_tickers_data.columns:
                     print("   ⚠️ No 'ticker' column found in long format data")
@@ -1894,7 +1901,7 @@ if __name__ == "__main__":
                         all_tickers_data = all_tickers_data.rename(columns={ticker_col: 'ticker'})
                     else:
                         raise ValueError("Data is in long format but missing 'ticker' column and cannot infer it")
-                
+
                 # Get unique tickers from the backtest data
                 if 'ticker' in all_tickers_data.columns:
                     all_available_tickers = all_tickers_data['ticker'].unique().tolist()
@@ -1903,7 +1910,7 @@ if __name__ == "__main__":
                     # Fallback to fetching fresh data
                     raise ValueError("Ticker column not found")
                 print(f"   Found {len(all_available_tickers)} tickers in backtest data")
-                
+
                 # Group data by ticker for easier processing
                 ticker_data_dict = {}
                 for ticker in all_available_tickers:
@@ -1912,29 +1919,29 @@ if __name__ == "__main__":
                         if 'date' in ticker_df.columns:
                             ticker_df = ticker_df.set_index('date')
                         ticker_data_dict[ticker] = ticker_df
-                
+
                 # Calculate 3M and 1Y performance for all tickers in backtest data
                 performance_data = []
-                
+
                 print(f"🔍 Calculating performance metrics for {len(all_available_tickers)} tickers...")
-                
+
                 for ticker in all_available_tickers:
                     try:
                         ticker_df = ticker_data_dict[ticker]
-                        
+
                         # Calculate 1Y performance
                         perf_1y = _calculate_1y_return_from_dataframe(ticker_df, today, 365)
-                        
+
                         # Calculate 3M performance
                         perf_3m = _calculate_1y_return_from_dataframe(ticker_df, today, 90)
-                        
+
                         if perf_1y is not None and perf_3m is not None:
                             performance_data.append({
                                 'Ticker': ticker,
                                 '3M_Perf': perf_3m,
                                 '1Y_Perf': perf_1y
                             })
-                            
+
                     except Exception:
                         # Skip tickers with errors
                         continue
@@ -1942,49 +1949,49 @@ if __name__ == "__main__":
                 print("⚠️ No backtest data available, fetching fresh data...")
                 # Fallback to original behavior if no backtest data
                 from ticker_selection import get_all_tickers, _get_current_1y_return_from_cache
-                
+
                 try:
                     all_available_tickers = get_all_tickers()
                 except Exception as e:
                     print(f"⚠️ Could not fetch tickers: {e}")
                     all_available_tickers = []
-                
+
                 # Calculate 3M and 1Y performance for all available tickers
                 performance_data = []
-                
+
                 print(f"🔍 Calculating performance metrics for {len(all_available_tickers)} tickers...")
-                
+
                 for ticker in all_available_tickers:
                     try:
                         # Get 1Y performance
                         perf_1y = _get_current_1y_return_from_cache(ticker, {}, today, 365)
-                        
+
                         # Get 3M performance (reuse the same function with 90 days)
                         perf_3m = _get_current_1y_return_from_cache(ticker, {}, today, 90)
-                        
+
                         if perf_1y is not None and perf_3m is not None:
                             performance_data.append({
                                 'Ticker': ticker,
                                 '3M_Perf': perf_3m,
                                 '1Y_Perf': perf_1y
                             })
-                            
+
                     except Exception:
                         # Skip tickers with errors
                         continue
-            
+
             # Sort by 3M performance (descending)
             performance_data.sort(key=lambda x: x['3M_Perf'], reverse=True)
-            
+
             # Print table
             print(f"{'Ticker':<10} {'3M_Perf':>12} {'1Y_Perf':>12}")
             print("-" * 38)
-            
+
             for data in performance_data:  # Show ALL tickers
                 ticker = data['Ticker']
                 perf_3m = data['3M_Perf']
                 perf_1y = data['1Y_Perf']
-                
+
                 # Color coding for performance
                 if perf_3m >= 20:
                     color_3m = "🟢"  # Strong positive
@@ -1994,9 +2001,9 @@ if __name__ == "__main__":
                     color_3m = "⚪"  # Neutral
                 else:
                     color_3m = "🔴"  # Negative
-                
+
                 print(f"{ticker:<10} {color_3m} {perf_3m:+10.2f}% {perf_1y:+10.2f}%")
-            
+
             print(f"\n📈 Summary:")
             print(f"   Total tickers analyzed: {len(performance_data)}")
             if performance_data:
@@ -2006,8 +2013,8 @@ if __name__ == "__main__":
                 print(f"   Average 1Y performance: {avg_1y:+.2f}%")
                 print(f"   Best 3M performer: {performance_data[0]['Ticker']} ({performance_data[0]['3M_Perf']:+.2f}%)")
                 print(f"   Worst 3M performer: {performance_data[-1]['Ticker']} ({performance_data[-1]['3M_Perf']:+.2f}%)")
-            
+
             print("=" * 100)
-            
+
         except Exception as e:
             print(f"⚠️ Error generating performance table: {e}")

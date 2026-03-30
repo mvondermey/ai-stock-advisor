@@ -24,41 +24,46 @@ def calculate_sentiment_score(data: pd.DataFrame, current_date: datetime = None)
     try:
         if data is None or len(data) < 30:
             return 0.0
-        
+
         # Filter to current date if provided
         if current_date is not None:
+            # Always convert to UTC-aware timestamp for consistent comparison
             current_ts = pd.Timestamp(current_date)
-            if current_ts.tz is None and data.index.tz is not None:
-                current_ts = current_ts.tz_localize(data.index.tz)
-            elif current_ts.tz is not None and data.index.tz is None:
+            if current_ts.tz is None:
+                current_ts = current_ts.tz_localize('UTC')
+
+            # Ensure data index is also UTC
+            if data.index.tz is None:
                 data = data.copy()
                 data.index = data.index.tz_localize('UTC')
+            elif str(data.index.tz) != 'UTC':
+                data = data.copy()
+                data.index = data.index.tz_convert('UTC')
+
             data = data[data.index <= current_ts]
-        
+
         if len(data) < 30:
             return 0.0
-        
+
         close = data['Close'].dropna()
         if len(close) < 30:
             return 0.0
-        
+
         # Use calendar days for performance calculations
         current_price = close.iloc[-1]
-        
+
         # 1. Short-term reversal (acceleration signal) using calendar days
-        # Positive = recent acceleration (bullish), negative = fading (bearish)
-        start_5d = current_date - timedelta(days=5)
-        data_5d = close[close.index >= start_5d]
+        # Use tail() to avoid timezone comparison issues
+        data_5d = close.tail(5) if len(close) >= 5 else close
         perf_5d = (current_price / data_5d.iloc[0] - 1) * 100 if len(data_5d) >= 3 else 0
-        
-        start_20d = current_date - timedelta(days=20)
-        data_20d = close[close.index >= start_20d]
+
+        data_20d = close.tail(20) if len(close) >= 20 else close
         perf_20d = (current_price / data_20d.iloc[0] - 1) * 100 if len(data_20d) >= 10 else 0
-        
+
         short_term_reversal = perf_5d - perf_20d
         # Normalize to [-1, 1] range (assume ±10% is extreme)
         reversal_score = np.clip(short_term_reversal / 10.0, -1.0, 1.0)
-        
+
         # 2. Volume sentiment (conviction signal)
         volume_score = 0.0
         if 'Volume' in data.columns:
@@ -70,7 +75,7 @@ def calculate_sentiment_score(data: pd.DataFrame, current_date: datetime = None)
                 # Sign by 5-day price direction
                 price_direction = 1.0 if perf_5d > 0 else (-1.0 if perf_5d < 0 else 0.0)
                 volume_score = np.clip(vol_surge * price_direction, -1.0, 1.0)
-        
+
         # 3. RSI momentum (overbought/oversold)
         daily_returns = close.pct_change().dropna()
         if len(daily_returns) >= 14:
@@ -89,7 +94,7 @@ def calculate_sentiment_score(data: pd.DataFrame, current_date: datetime = None)
             rsi_score = np.clip(rsi_score, -1.0, 1.0)
         else:
             rsi_score = 0.0
-        
+
         # 4. Trend strength (SMA alignment)
         trend_score = 0.0
         if len(close) >= 50:
@@ -106,7 +111,7 @@ def calculate_sentiment_score(data: pd.DataFrame, current_date: datetime = None)
                 trend_score = -0.5
             elif current_price < sma_20:
                 trend_score = -0.25
-        
+
         # Combine scores with weights
         # Reversal (acceleration) is most important for momentum
         combined = (
@@ -115,9 +120,9 @@ def calculate_sentiment_score(data: pd.DataFrame, current_date: datetime = None)
             rsi_score * 0.15 +        # 15% weight - mean reversion
             trend_score * 0.20        # 20% weight - trend alignment
         )
-        
+
         return np.clip(combined, -1.0, 1.0)
-        
+
     except Exception as e:
         print(f"   ⚠️ Sentiment analysis error: {e}")
         return 0.0
@@ -132,7 +137,7 @@ def select_risk_adj_mom_3m_sentiment_stocks(
 ) -> List[str]:
     """
     Select stocks using Risk-Adj Mom 3M + Sentiment scoring.
-    
+
     Uses shared parallel function for base scoring, then applies sentiment adjustment.
     Final score = base_score * (1 + sentiment_weight * sentiment_score)
     """
@@ -148,7 +153,7 @@ def select_risk_adj_mom_3m_sentiment_stocks(
 
     # Filter out inverse ETFs
     tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
-    
+
     # Apply performance filters
     filtered_tickers = filter_tickers_by_performance(
         tickers_to_use, ticker_data_grouped, current_date, "RiskAdj 3M Sent"
@@ -166,14 +171,14 @@ def select_risk_adj_mom_3m_sentiment_stocks(
     sentiment_stats = {'positive': 0, 'negative': 0, 'neutral': 0}
     momentum_filtered = 0
     volume_filtered = 0
-    
+
     print(f"   📊 RiskAdj 3M Sent: Analyzing {len(scores_data)} tickers (PARALLEL)")
 
     for ticker, base_score, return_pct, volatility_pct in scores_data:
         try:
             if base_score <= RISK_ADJ_MOM_MIN_SCORE:
                 continue
-                
+
             ticker_data = ticker_data_grouped.get(ticker)
             if ticker_data is None:
                 continue
@@ -192,7 +197,7 @@ def select_risk_adj_mom_3m_sentiment_stocks(
 
             # Calculate sentiment score
             sentiment = calculate_sentiment_score(ticker_data, current_date)
-            
+
             # Track sentiment distribution
             if sentiment > 0.1:
                 sentiment_stats['positive'] += 1
@@ -200,10 +205,10 @@ def select_risk_adj_mom_3m_sentiment_stocks(
                 sentiment_stats['negative'] += 1
             else:
                 sentiment_stats['neutral'] += 1
-            
+
             # Final score: boost/penalize by sentiment
             final_score = base_score * (1 + sentiment_weight * sentiment)
-            
+
             candidates.append({
                 'ticker': ticker,
                 'final_score': final_score,
@@ -228,7 +233,7 @@ def select_risk_adj_mom_3m_sentiment_stocks(
     print(f"   ✅ RiskAdj 3M Sent: Found {len(candidates)} candidates, selected {len(selected)}")
     print(f"   📈 Sentiment: {sentiment_stats['positive']} bullish, {sentiment_stats['negative']} bearish, {sentiment_stats['neutral']} neutral")
     print(f"   📊 Filtered: {momentum_filtered} momentum, {volume_filtered} volume")
-    
+
     for c in candidates[:top_n]:
         sent_emoji = "🟢" if c['sentiment'] > 0.1 else ("🔴" if c['sentiment'] < -0.1 else "⚪")
         print(f"      {c['ticker']}: score={c['final_score']:.2f} (base={c['base_score']:.2f}, sent={c['sentiment']:+.2f}{sent_emoji}), ret={c['return']:.1f}%, vol={c['volatility']:.1f}%")

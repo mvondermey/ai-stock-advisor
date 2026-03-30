@@ -312,7 +312,7 @@ def _build_daily_strategy_data(locals_dict):
     """
     # Import config to access enable flags
     import config
-    
+
     # Helper to safely get value from locals
     def _get(name, default=None):
         return locals_dict.get(name, default)
@@ -336,7 +336,7 @@ def _build_daily_strategy_data(locals_dict):
         'volatility_adj_mom': config.ENABLE_VOLATILITY_ADJ_MOM,
         'sector_rotation': config.ENABLE_SECTOR_ROTATION,
         'ratio_3m_1y': config.ENABLE_3M_1Y_RATIO,
-        'ratio_1y_3m': config.ENABLE_1Y_3M_RATIO,
+        'ratio_1y_3m': config.ENABLE_3M_1Y_RATIO,
         'ratio_1m_3m': config.ENABLE_1M_3M_RATIO,
         'momentum_volatility_hybrid': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID,
         'momentum_volatility_hybrid_6m': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M,
@@ -380,7 +380,7 @@ def _build_daily_strategy_data(locals_dict):
         'ai_regime_monthly': config.ENABLE_AI_REGIME_MONTHLY,
         'universal_model': config.ENABLE_UNIVERSAL_MODEL,
         'inverse_etf_hedge': config.ENABLE_INVERSE_ETF_HEDGE,
-        'analyst_rec': config.ENABLE_ANALYST_REC,
+        'analyst_rec': config.ENABLE_ANALYST_RECOMMENDATION,
         'risk_adj_mom_sentiment': config.ENABLE_RISK_ADJ_MOM_SENTIMENT,
         'bh_1y_monthly': config.ENABLE_STATIC_BH_1Y_MONTHLY,
         'bh_6m_monthly': config.ENABLE_STATIC_BH_6M_MONTHLY,
@@ -1540,15 +1540,17 @@ def optimize_single_ticker_worker(params):
     }
 
 def optimize_thresholds_for_portfolio_parallel(optimization_params, num_processes=None):
+    import gc
     num_processes = num_processes or max(1, cpu_count() - 5)
     print(f"\nOptimizing thresholds for {len(optimization_params)} tickers using {num_processes} processes...")
 
-    with Pool(processes=num_processes) as pool:
+    with Pool(processes=num_processes, maxtasksperchild=20) as pool:
         results = list(tqdm(
             pool.imap_unordered(optimize_single_ticker_worker, optimization_params),
             total=len(optimization_params),
             desc="Optimizing Thresholds"
         ))
+    gc.collect()  # Release semaphores after Pool closes (WSL fix)
 
     optimized_params = {}
     all_tested_combinations = {}  # Store all tested combinations per ticker
