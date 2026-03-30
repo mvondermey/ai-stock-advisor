@@ -289,23 +289,22 @@ def optimize_rebalance_horizons(
         # Use imap_unordered for streaming results (no blocking on slow tasks)
         # maxtasksperchild=10 recycles workers more frequently to prevent semaphore leaks in WSL
         # initializer passes temp file path to workers for lazy loading
-        completed = 0
         pool = mp.Pool(processes=n_workers, maxtasksperchild=10,
                        initializer=_init_worker, initargs=(temp_path,))
         try:
-            # Process all tasks with streaming results
-            for strategy_type, horizon, final_value, txn_cost in pool.imap_unordered(_simulate_static_strategy, tasks):
-                return_pct = ((final_value / initial_capital) - 1) * 100
-                results[strategy_type]['all_results'].append((horizon, return_pct, txn_cost))
+            # Process all tasks with tqdm progress bar
+            from tqdm import tqdm
+            with tqdm(total=total_tasks, desc="   Optimizing horizons", ncols=100) as pbar:
+                for strategy_type, horizon, final_value, txn_cost in pool.imap_unordered(_simulate_static_strategy, tasks):
+                    return_pct = ((final_value / initial_capital) - 1) * 100
+                    results[strategy_type]['all_results'].append((horizon, return_pct, txn_cost))
 
-                if return_pct > results[strategy_type]['best_return']:
-                    results[strategy_type]['best_return'] = return_pct
-                    results[strategy_type]['best_horizon'] = horizon
-                    results[strategy_type]['best_txn_cost'] = txn_cost
+                    if return_pct > results[strategy_type]['best_return']:
+                        results[strategy_type]['best_return'] = return_pct
+                        results[strategy_type]['best_horizon'] = horizon
+                        results[strategy_type]['best_txn_cost'] = txn_cost
 
-                completed += 1
-                if completed % 10 == 0 or completed == total_tasks:
-                    print(f"   📊 Progress: {completed}/{total_tasks} ({completed*100//total_tasks}%)", flush=True)
+                    pbar.update(1)
         finally:
             pool.close()
             pool.join()
