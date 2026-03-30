@@ -1154,27 +1154,27 @@ def main(
     # --- Calculate Buy & Hold ---
     print(f"\n📊 Calculating Buy & Hold performance for {actual_period_name} period...")
     print(f"   Processing {len(top_tickers)} tickers (using cached data)...")
+    
+    # Pre-convert DataFrame to dict using groupby if needed (O(n) vs O(n*m))
+    if isinstance(all_tickers_data, pd.DataFrame):
+        print("   Converting to dict format for fast lookup...")
+        _ticker_lookup = {}
+        for ticker, group in all_tickers_data.groupby('ticker'):
+            _ticker_lookup[ticker] = group.set_index('date')
+    else:
+        _ticker_lookup = all_tickers_data
+    
     buy_hold_results_1y = []
     performance_metrics_buy_hold_1y_actual = []
     for idx, ticker in enumerate(top_tickers):
-        if (idx + 1) % 50 == 0:
+        if (idx + 1) % 500 == 0:
             print(f"   [{idx+1}/{len(top_tickers)}] Processed...")
-        # Use cached data instead of re-fetching
-        # ✅ FIX: Handle both dict and DataFrame (long format) data structures
-        if isinstance(all_tickers_data, dict):
-            if ticker in all_tickers_data and not all_tickers_data[ticker].empty:
-                df_full = all_tickers_data[ticker]
-                df_bh = df_full[(df_full.index >= bt_start_1y) & (df_full.index <= bt_end)].copy()
-            else:
-                df_bh = pd.DataFrame()
+        # Use pre-converted dict for fast O(1) lookup
+        if ticker in _ticker_lookup and not _ticker_lookup[ticker].empty:
+            df_full = _ticker_lookup[ticker]
+            df_bh = df_full[(df_full.index >= bt_start_1y) & (df_full.index <= bt_end)].copy()
         else:
-            # DataFrame in long format - filter by ticker
-            ticker_data = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-            if not ticker_data.empty:
-                ticker_data = ticker_data.set_index('date')
-                df_bh = ticker_data[(ticker_data.index >= bt_start_1y) & (ticker_data.index <= bt_end)].copy()
-            else:
-                df_bh = pd.DataFrame()
+            df_bh = pd.DataFrame()
         if not df_bh.empty:
             start_price = float(df_bh["Close"].iloc[0])
             shares_bh = int(capital_per_stock_1y / start_price) if start_price > 0 else 0
@@ -1922,14 +1922,11 @@ if __name__ == "__main__":
                     raise ValueError("Ticker column not found")
                 print(f"   Found {len(all_available_tickers)} tickers in backtest data")
 
-                # Group data by ticker for easier processing
+                # Group data by ticker for easier processing (using groupby - O(n) vs O(n*m))
                 ticker_data_dict = {}
-                for ticker in all_available_tickers:
-                    ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-                    if not ticker_df.empty:
-                        if 'date' in ticker_df.columns:
-                            ticker_df = ticker_df.set_index('date')
-                        ticker_data_dict[ticker] = ticker_df
+                for ticker, group in all_tickers_data.groupby('ticker'):
+                    ticker_df = group.set_index('date') if 'date' in group.columns else group
+                    ticker_data_dict[ticker] = ticker_df
 
                 # Calculate 3M and 1Y performance for all tickers in backtest data
                 performance_data = []
