@@ -244,13 +244,12 @@ def optimize_rebalance_horizons(
     print(f"   Strategy types: {strategy_types}", flush=True)
     print(f"   Optimization period: {optimization_start.date()} to {backtest_end.date()}", flush=True)
 
-    # Convert data to dict format for faster access in workers
+    # Convert data to dict format for faster access in workers (using groupby - O(n) vs O(n*m))
     print(f"   📊 Preparing data for parallel processing...", flush=True)
     ticker_data_dict = {}
-    for ticker in all_tickers_data['ticker'].unique():
-        ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-        if 'date' in ticker_df.columns:
-            ticker_df = ticker_df.set_index('date')
+    grouped = all_tickers_data.groupby('ticker')
+    for ticker, group in grouped:
+        ticker_df = group.set_index('date') if 'date' in group.columns else group
         ticker_data_dict[ticker] = ticker_df
 
     print(f"   📊 Prepared data for {len(ticker_data_dict)} tickers", flush=True)
