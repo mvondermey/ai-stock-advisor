@@ -51,7 +51,10 @@ args = parser.parse_args()
 if args.no_download:
     import config as config_module
     config_module.ENABLE_DATA_DOWNLOAD = False
-    print("📦 Data downloads disabled (--no-download flag). Using only cached data.")
+    # Only print in main process (not in multiprocessing workers)
+    import multiprocessing
+    if multiprocessing.current_process().name == 'MainProcess':
+        print("📦 Data downloads disabled (--no-download flag). Using only cached data.")
 
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,

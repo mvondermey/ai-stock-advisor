@@ -538,7 +538,10 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     - Much faster on subsequent runs
     """
     import threading
-    from config import ENABLE_DATA_DOWNLOAD
+    import config as config_module
+
+    # Get ENABLE_DATA_DOWNLOAD directly from module (not cached import)
+    ENABLE_DATA_DOWNLOAD = config_module.ENABLE_DATA_DOWNLOAD
 
     # Global cache lock for thread safety
     if not hasattr(load_prices, '_cache_lock'):
@@ -850,14 +853,17 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
     Download multiple tickers with incremental caching.
     Returns DataFrame in long format (no MultiIndex).
     """
-    from config import ENABLE_DATA_DOWNLOAD
-    
+    import config as config_module
+
+    # Get ENABLE_DATA_DOWNLOAD directly from module (not cached import)
+    ENABLE_DATA_DOWNLOAD = config_module.ENABLE_DATA_DOWNLOAD
+
     # Check if data downloads are disabled
     if not ENABLE_DATA_DOWNLOAD:
         print(f"  [INFO] Data downloads disabled (ENABLE_DATA_DOWNLOAD=False)")
         print(f"  [INFO] Using only cached data for {len(tickers)} tickers...")
-        
-        # Load only from cache
+
+        # Load from cache with checking (but no downloads)
         all_data_frames = []
         for ticker in tickers:
             try:
@@ -875,39 +881,29 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                     elif df.index.name in [None, '']:
                         df = df.rename(columns={df.columns[0]: 'date'})
                     all_data_frames.append(df)
-            except Exception as e:
-                print(f"  Warning: Could not load cache for {ticker}: {e}")
-        
+            except Exception:
+                pass  # Skip silently - no downloads allowed
+
         if all_data_frames:
             return pd.concat(all_data_frames, ignore_index=True)
         else:
             print(f"  [INFO] No cached data found")
             return pd.DataFrame()
-    
+
     all_data_frames = []
 
-    print(f"  [INFO] Processing {len(tickers)} tickers with incremental caching...")
+    print(f"  [INFO] Processing {len(tickers)} tickers with incremental caching (parallel)...")
 
-    # Add progress bar
-    try:
-        from tqdm import tqdm
-        ticker_iterator = tqdm(tickers, desc="  [INFO] Downloading tickers", ncols=100)
-    except ImportError:
-        # Fallback to no progress bar if tqdm not available
-        ticker_iterator = tickers
-        print("  [INFO] Note: Install tqdm for progress bars: pip install tqdm")
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    for ticker in ticker_iterator:
+    def download_single_ticker(ticker):
+        """Download a single ticker - thread-safe via load_prices lock"""
         try:
             df = load_prices(ticker, start, end)
             if not df.empty:
-                # Add ticker column and keep in long format
                 df = df.copy()
                 df['ticker'] = ticker
-                # Reset index to make date a column, and standardize name to 'date'
                 df = df.reset_index()
-                # Rename index column to 'date' for consistency
-                # Handle various possible names: 'Date', 'Datetime', 'index', or unnamed (level_0)
                 if 'Date' in df.columns:
                     df = df.rename(columns={'Date': 'date'})
                 elif 'Datetime' in df.columns:
@@ -916,9 +912,29 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
                     df = df.rename(columns={'index': 'date'})
                 elif 'level_0' in df.columns:
                     df = df.rename(columns={'level_0': 'date'})
-                all_data_frames.append(df)
+                return df
         except Exception as e:
-            print(f"  [WARN] Failed to download {ticker}: {e}")
+            pass  # Errors logged inside load_prices
+        return None
+
+    # Use 8 workers for downloads (balance between speed and API rate limits)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(download_single_ticker, ticker): ticker for ticker in tickers}
+
+        try:
+            from tqdm import tqdm
+            pbar = tqdm(total=len(tickers), desc="  [INFO] Downloading tickers", ncols=100)
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    all_data_frames.append(result)
+                pbar.update(1)
+            pbar.close()
+        except ImportError:
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    all_data_frames.append(result)
 
     if all_data_frames:
         # Concatenate all tickers into long format
@@ -1382,9 +1398,13 @@ def load_all_market_data(all_tickers: list, end_date: datetime = None) -> pd.Dat
     Returns:
         DataFrame with all ticker data in long format (with 'ticker' and 'date' columns)
     """
-    from config import DATA_INTERVAL, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, ENABLE_DATA_DOWNLOAD
+    from config import DATA_INTERVAL, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES
+    import config as config_module
     from utils import _to_utc
     import time
+
+    # Get ENABLE_DATA_DOWNLOAD directly from module (not cached import)
+    ENABLE_DATA_DOWNLOAD = config_module.ENABLE_DATA_DOWNLOAD
 
     if end_date is None:
         end_date = _get_last_trading_day()
@@ -1434,17 +1454,55 @@ def load_all_market_data(all_tickers: list, end_date: datetime = None) -> pd.Dat
                 print(f"  - Pausing for {PAUSE_BETWEEN_BATCHES} seconds before next batch...")
                 time.sleep(PAUSE_BETWEEN_BATCHES)
     else:
-        # No batching needed - just load all tickers from cache
-        batch_data = _download_batch_robust(all_tickers, start=start_date, end=end_date)
-        if not batch_data.empty:
-            if 'date' in batch_data.columns:
-                batch_data['date'] = pd.to_datetime(batch_data['date'], utc=True)
-            filtered_batch_data = batch_data[
-                (batch_data['date'] >= _to_utc(start_date)) &
-                (batch_data['date'] <= _to_utc(end_date))
-            ]
-            if not filtered_batch_data.empty:
-                all_tickers_data_list.append(filtered_batch_data)
+        # No batching - load directly from CSV files in parallel (bypass load_prices lock)
+        print(f"  [INFO] Loading cache for {len(all_tickers)} tickers (parallel)...")
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        # Pre-convert dates to UTC for use in nested function
+        start_utc = _to_utc(start_date)
+        end_utc = _to_utc(end_date)
+        cache_dir = _RESOLVED_DATA_CACHE_DIR
+
+        def load_ticker_csv_direct(ticker):
+            """Load ticker directly from CSV - no locks, no debug messages"""
+            try:
+                cache_file = cache_dir / f"{ticker}.csv"
+                if cache_file.exists():
+                    df = pd.read_csv(cache_file)
+                    # Handle both 'Date' and 'Datetime' column names
+                    date_col = 'Datetime' if 'Datetime' in df.columns else 'Date'
+                    df[date_col] = pd.to_datetime(df[date_col], utc=True)
+                    df = df.set_index(date_col)
+                    df = df.loc[(df.index >= start_utc) & (df.index <= end_utc)].copy()
+                    if not df.empty:
+                        df['ticker'] = ticker
+                        df = df.reset_index()
+                        df = df.rename(columns={date_col: 'date'})
+                        return df
+            except Exception as e:
+                pass
+            return None
+
+        all_data_frames = []
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            futures = {executor.submit(load_ticker_csv_direct, ticker): ticker for ticker in all_tickers}
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    all_data_frames.append(result)
+
+        print(f"  [INFO] Loaded {len(all_data_frames)}/{len(all_tickers)} tickers from cache")
+
+        if all_data_frames:
+            all_tickers_data = pd.concat(all_data_frames, ignore_index=True)
+            if 'date' in all_tickers_data.columns:
+                all_tickers_data['date'] = pd.to_datetime(all_tickers_data['date'], utc=True)
+            print(f"   📊 Data shape: {all_tickers_data.shape}")
+            print(f"   📊 Columns: {list(all_tickers_data.columns[:5])}")
+            return all_tickers_data
+        else:
+            print("❌ No cached data found")
+            return pd.DataFrame()
 
     if not all_tickers_data_list:
         print("❌ Batch download failed - no data retrieved")
