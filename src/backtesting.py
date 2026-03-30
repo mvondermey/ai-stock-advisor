@@ -333,15 +333,88 @@ def _build_daily_strategy_data(locals_dict):
         'mean_reversion': config.ENABLE_MEAN_REVERSION,
         'quality_momentum': config.ENABLE_QUALITY_MOM,
         'momentum_ai_hybrid': config.ENABLE_MOMENTUM_AI_HYBRID,
+        'volatility_adj_mom': config.ENABLE_VOLATILITY_ADJ_MOM,
+        'sector_rotation': config.ENABLE_SECTOR_ROTATION,
+        'ratio_3m_1y': config.ENABLE_3M_1Y_RATIO,
+        'ratio_1y_3m': config.ENABLE_1Y_3M_RATIO,
+        'ratio_1m_3m': config.ENABLE_1M_3M_RATIO,
+        'momentum_volatility_hybrid': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID,
+        'momentum_volatility_hybrid_6m': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M,
+        'momentum_volatility_hybrid_1y': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y,
+        'momentum_volatility_hybrid_1y3m': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M,
+        'price_acceleration': config.ENABLE_PRICE_ACCELERATION,
+        'turnaround': config.ENABLE_TURNAROUND,
+        'adaptive_ensemble': config.ENABLE_ADAPTIVE_STRATEGY,
+        'volatility_ensemble': config.ENABLE_VOLATILITY_ENSEMBLE,
+        'enhanced_volatility': config.ENABLE_ENHANCED_VOLATILITY,
+        'ai_volatility_ensemble': config.ENABLE_AI_VOLATILITY_ENSEMBLE,
         'multi_tf_ensemble': config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
-        'bh_1y_monthly': config.ENABLE_STATIC_BH_1Y_MONTHLY,
-        'bh_6m_monthly': config.ENABLE_STATIC_BH_6M_MONTHLY,
-        'bh_3m_monthly': config.ENABLE_STATIC_BH_3M_MONTHLY,
-        'bh_1m_monthly': config.ENABLE_STATIC_BH_1M_MONTHLY,
+        'correlation_ensemble': config.ENABLE_CORRELATION_ENSEMBLE,
+        'dynamic_pool': config.ENABLE_DYNAMIC_POOL,
+        'sentiment_ensemble': config.ENABLE_SENTIMENT_ENSEMBLE,
+        'voting_ensemble': config.ENABLE_VOTING_ENSEMBLE,
+        'mom_accel': config.ENABLE_MOMENTUM_ACCELERATION,
+        'concentrated_3m': config.ENABLE_CONCENTRATED_3M,
+        'dual_momentum': config.ENABLE_DUAL_MOMENTUM,
+        'trend_atr': config.ENABLE_TREND_FOLLOWING_ATR,
+        'elite_hybrid': config.ENABLE_ELITE_HYBRID,
+        'elite_risk': config.ENABLE_ELITE_RISK,
+        'risk_adj_mom_6m': config.ENABLE_RISK_ADJ_MOM_6M,
+        'risk_adj_mom_6m_monthly': config.ENABLE_RISK_ADJ_MOM_6M_MONTHLY,
+        'risk_adj_mom_3m': config.ENABLE_RISK_ADJ_MOM_3M,
+        'risk_adj_mom_3m_monthly': config.ENABLE_RISK_ADJ_MOM_3M_MONTHLY,
+        'risk_adj_mom_3m_sentiment': config.ENABLE_RISK_ADJ_MOM_3M_SENTIMENT,
+        'risk_adj_mom_3m_market_up': config.ENABLE_RISK_ADJ_MOM_3M_MARKET_UP,
+        'risk_adj_mom_3m_with_stops': config.ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS,
+        'vol_sweet_mom': config.ENABLE_VOL_SWEET_MOM,
+        'risk_adj_mom_1m_vol_sweet': config.ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET,
+        'bh_1y_volsweet_accel': config.ENABLE_BH_1Y_VOL_SWEET_ACCEL,
+        'bh_1y_dynamic_accel': config.ENABLE_BH_1Y_DYNAMIC_ACCEL,
+        'risk_adj_mom_1m': config.ENABLE_RISK_ADJ_MOM_1M,
+        'risk_adj_mom_1m_monthly': config.ENABLE_RISK_ADJ_MOM_1M_MONTHLY,
         'ai_elite': config.ENABLE_AI_ELITE,
         'ai_elite_monthly': config.ENABLE_AI_ELITE_MONTHLY,
         'ai_elite_filtered': config.ENABLE_AI_ELITE_FILTERED,
         'ai_elite_market_up': config.ENABLE_AI_ELITE_MARKET_UP,
+        'ai_regime': config.ENABLE_AI_REGIME,
+        'ai_regime_monthly': config.ENABLE_AI_REGIME_MONTHLY,
+        'universal_model': config.ENABLE_UNIVERSAL_MODEL,
+        'inverse_etf_hedge': config.ENABLE_INVERSE_ETF_HEDGE,
+        'analyst_rec': config.ENABLE_ANALYST_REC,
+        'risk_adj_mom_sentiment': config.ENABLE_RISK_ADJ_MOM_SENTIMENT,
+        'bh_1y_monthly': config.ENABLE_STATIC_BH_1Y_MONTHLY,
+        'bh_6m_monthly': config.ENABLE_STATIC_BH_6M_MONTHLY,
+        'bh_3m_monthly': config.ENABLE_STATIC_BH_3M_MONTHLY,
+        'bh_1m_monthly': config.ENABLE_STATIC_BH_1M_MONTHLY,
+        # Meta-Strategy Selectors
+        'meta_weighted_composite': config.ENABLE_META_WEIGHTED_COMPOSITE,
+        'meta_tiered_selection': config.ENABLE_META_TIERED_SELECTION,
+        'meta_ensemble_alloc': config.ENABLE_META_ENSEMBLE_ALLOC,
+        'meta_regime_based': config.ENABLE_META_REGIME_BASED,
+        'meta_recency_weighted': config.ENABLE_META_RECENCY_WEIGHTED,
+        'meta_efficiency_ratio': config.ENABLE_META_EFFICIENCY_RATIO,
+        'meta_min_variance': config.ENABLE_META_MIN_VARIANCE,
+        'meta_bayesian': config.ENABLE_META_BAYESIAN,
+        'meta_adaptive_convex': config.ENABLE_META_ADAPTIVE_CONVEX,
+        'meta_consensus': config.ENABLE_META_CONSENSUS,
+        # Bollinger Bands Strategies
+        'bb_mean_reversion': config.ENABLE_BB_MEAN_REVERSION,
+        'bb_breakout': config.ENABLE_BB_BREAKOUT,
+        'bb_squeeze_breakout': config.ENABLE_BB_SQUEEZE_BREAKOUT,
+        'bb_rsi_combo': config.ENABLE_BB_RSI_COMBO,
+        'trend_breakout': config.ENABLE_TREND_BREAKOUT,
+        # Adaptive Rebalancing Strategies
+        'static_bh_1y_vol': config.ENABLE_STATIC_BH_1Y_VOLATILITY,
+        'static_bh_1y_perf': config.ENABLE_STATIC_BH_1Y_PERFORMANCE,
+        'static_bh_1y_mom': config.ENABLE_STATIC_BH_1Y_MOMENTUM,
+        'static_bh_1y_atr': config.ENABLE_STATIC_BH_1Y_ATR,
+        'static_bh_1y_hybrid': config.ENABLE_STATIC_BH_1Y_HYBRID,
+        'static_bh_1y_volume': config.ENABLE_STATIC_BH_1Y_VOLUME_FILTER,
+        'static_bh_1y_sector': config.ENABLE_STATIC_BH_1Y_SECTOR_ROTATION,
+        'static_bh_1y_perf_threshold': config.ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD,
+        'static_bh_1y_market_regime': config.ENABLE_STATIC_BH_1Y_MARKET_REGIME,
+        'static_bh_1y_mom_persist': config.ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST,
+        'static_bh_1y_overlap': config.ENABLE_STATIC_BH_1Y_OVERLAP,
     }
 
     # Build strategy data - each entry has value, history, cash, num_positions
@@ -472,10 +545,9 @@ def _build_daily_strategy_data(locals_dict):
     ]
 
     for key, value_var, history_var, cash_var, positions_var in strategy_mappings:
-        # Skip strategies that are disabled via config flags
-        # Only include strategies that are explicitly enabled in STRATEGY_ENABLE_FLAGS
-        # If a strategy is not in the mapping, skip it (assume disabled)
-        if key not in STRATEGY_ENABLE_FLAGS or not STRATEGY_ENABLE_FLAGS[key]:
+        # Skip strategies that are explicitly disabled in STRATEGY_ENABLE_FLAGS
+        # If strategy is not in mapping, assume it's enabled (default behavior for backtesting)
+        if key in STRATEGY_ENABLE_FLAGS and not STRATEGY_ENABLE_FLAGS[key]:
             continue
         value = _get(value_var)
         if value is not None and value > 0:
