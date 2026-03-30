@@ -277,21 +277,22 @@ def optimize_rebalance_horizons(
         total_tasks = len(tasks)
         print(f"   🚀 Running {total_tasks} simulations in parallel ({len(horizons)} horizons × {len(strategy_types)} strategies)", flush=True)
 
-        # Run in parallel using NUM_PROCESSES (rebalance optimization is not training)
+        # Run in parallel - use fewer workers to reduce memory pressure and semaphore issues
         from config import NUM_PROCESSES
-        n_workers = min(NUM_PROCESSES, total_tasks)
-        print(f"   🔧 Using {n_workers} workers (NUM_PROCESSES - not GPU training)", flush=True)
+        n_workers = min(4, NUM_PROCESSES, total_tasks)  # Cap at 4 workers for stability
+        print(f"   🔧 Using {n_workers} workers (capped for WSL stability)", flush=True)
 
         results = {}
         for st in strategy_types:
             results[st] = {'all_results': [], 'best_horizon': None, 'best_return': -float('inf'), 'best_txn_cost': 0}
 
         # Use imap_unordered for streaming results (no blocking on slow tasks)
-        # maxtasksperchild=20 recycles workers periodically to prevent semaphore leaks in WSL
+        # maxtasksperchild=10 recycles workers more frequently to prevent semaphore leaks in WSL
         # initializer passes temp file path to workers for lazy loading
         completed = 0
-        with mp.Pool(processes=n_workers, maxtasksperchild=20,
-                     initializer=_init_worker, initargs=(temp_path,)) as pool:
+        pool = mp.Pool(processes=n_workers, maxtasksperchild=10,
+                       initializer=_init_worker, initargs=(temp_path,))
+        try:
             # Process all tasks with streaming results
             for strategy_type, horizon, final_value, txn_cost in pool.imap_unordered(_simulate_static_strategy, tasks):
                 return_pct = ((final_value / initial_capital) - 1) * 100
@@ -303,10 +304,16 @@ def optimize_rebalance_horizons(
                     results[strategy_type]['best_txn_cost'] = txn_cost
 
                 completed += 1
-                print(f"   📊 Progress: {completed}/{total_tasks} ({completed*100//total_tasks}%)", flush=True)
+                if completed % 10 == 0 or completed == total_tasks:
+                    print(f"   📊 Progress: {completed}/{total_tasks} ({completed*100//total_tasks}%)", flush=True)
+        finally:
+            pool.close()
+            pool.join()
+            pool.terminate()  # Force terminate any lingering processes
 
         # Force garbage collection to release semaphores after Pool closes (WSL fix)
         gc.collect()
+        gc.collect()  # Double collect for thorough cleanup
 
     finally:
         # Clean up temp file
