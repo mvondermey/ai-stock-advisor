@@ -24,8 +24,10 @@ config.ENABLE_PARALLEL_STRATEGIES = True
 
 from datetime import datetime, timedelta, timezone
 from multiprocessing import cpu_count
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import pandas as pd
+import threading
 
 # Backtest parameters
 BACKTEST_DAYS = 51  # Same as output22.03.log (51 trading days)
@@ -71,24 +73,33 @@ def load_data_once():
 
 
 def run_simple_backtest(strategy_name, select_func, all_tickers_data, initial_top_tickers,
-                        backtest_start, backtest_end, portfolio_size, initial_capital):
+                        backtest_start, backtest_end, portfolio_size, initial_capital,
+                        verbose=False, ticker_data_grouped=None, trading_days=None):
     """Run a simple daily rebalancing backtest for a single strategy."""
+    import sys
 
-    # Group data by ticker for fast lookups
-    ticker_data_grouped = {}
-    for ticker in initial_top_tickers:
-        ticker_df = all_tickers_data[all_tickers_data['ticker'] == ticker].copy()
-        if len(ticker_df) > 0:
-            ticker_df = ticker_df.set_index('date').sort_index()
-            ticker_data_grouped[ticker] = ticker_df
+    # Use pre-grouped data if provided (much faster for parallel execution)
+    if ticker_data_grouped is None:
+        # Group data by ticker for fast lookups - use pandas groupby (MUCH faster)
+        grouped = all_tickers_data.groupby('ticker')
 
-    # Get trading days
-    all_dates = set()
-    for ticker, df in ticker_data_grouped.items():
-        all_dates.update(df.index.tolist())
+        ticker_data_grouped = {}
+        for ticker in initial_top_tickers:
+            if ticker in grouped.groups:
+                ticker_df = grouped.get_group(ticker).copy()
+                if len(ticker_df) > 0:
+                    ticker_df = ticker_df.set_index('date').sort_index()
+                    # Resample to daily (use last price of each day)
+                    ticker_df = ticker_df.resample('D').last().dropna(subset=['Close'])
+                    if len(ticker_df) > 0:
+                        ticker_data_grouped[ticker] = ticker_df
 
-    trading_days = sorted([d for d in all_dates if backtest_start <= d <= backtest_end])
-    print(f"\n📊 {strategy_name}: Running {len(trading_days)} trading days")
+    # Use pre-calculated trading days if provided
+    if trading_days is None:
+        all_dates = set()
+        for ticker, df in ticker_data_grouped.items():
+            all_dates.update(df.index.tolist())
+        trading_days = sorted([d for d in all_dates if backtest_start <= d <= backtest_end])
 
     # Initialize portfolio
     cash = initial_capital
@@ -97,14 +108,32 @@ def run_simple_backtest(strategy_name, select_func, all_tickers_data, initial_to
     transaction_costs = 0.0
 
     for day_idx, current_date in enumerate(trading_days):
+        # Verbose on day 1, 10, 20, 30, etc.
+        is_verbose_day = (day_idx == 0) or ((day_idx + 1) % 10 == 0)
+
         # Get current stock selections
         try:
+            new_stocks = select_func(
+                initial_top_tickers, ticker_data_grouped, current_date, portfolio_size,
+                verbose=is_verbose_day
+            )
+        except TypeError:
+            # Fallback for strategies that don't support verbose parameter
             new_stocks = select_func(
                 initial_top_tickers, ticker_data_grouped, current_date, portfolio_size
             )
         except Exception as e:
-            print(f"   ⚠️ Error on day {day_idx + 1}: {e}")
             new_stocks = list(positions.keys())  # Keep current positions
+
+        # Print progress
+        if is_verbose_day:
+            portfolio_value = cash + sum(
+                positions[t]['shares'] * ticker_data_grouped.get(t, {}).get('Close', pd.Series([0])).iloc[-1]
+                for t in positions if t in ticker_data_grouped
+            )
+            ret = (portfolio_value / initial_capital - 1) * 100 if initial_capital > 0 else 0
+            print(f"   📅 {strategy_name} Day {day_idx + 1}: ${portfolio_value:,.0f} ({ret:+.1f}%) Holdings: {list(positions.keys())[:5]}", flush=True)
+            sys.stdout.flush()
 
         current_stocks = list(positions.keys())
 
@@ -157,11 +186,6 @@ def run_simple_backtest(strategy_name, select_func, all_tickers_data, initial_to
         portfolio_value = cash + invested_value
         portfolio_history.append(portfolio_value)
 
-        # Print progress every 10 days
-        if (day_idx + 1) % 10 == 0 or day_idx == len(trading_days) - 1:
-            ret = (portfolio_value / initial_capital - 1) * 100
-            print(f"   Day {day_idx + 1}: ${portfolio_value:,.0f} ({ret:+.1f}%) - Holdings: {list(positions.keys())[:5]}...")
-
     # Final results
     final_value = portfolio_history[-1]
     total_return = (final_value / initial_capital - 1) * 100
@@ -189,9 +213,10 @@ def run_simple_backtest(strategy_name, select_func, all_tickers_data, initial_to
 
 
 def main():
-    print("=" * 80)
-    print("ULTIMATE STRATEGY TEST")
-    print("=" * 80)
+    import sys
+    print("=" * 80, flush=True)
+    print("ULTIMATE STRATEGY TEST", flush=True)
+    print("=" * 80, flush=True)
 
     # Load data
     all_tickers_data, initial_top_tickers = load_data_once()
@@ -200,28 +225,141 @@ def main():
     bt_end = datetime(2026, 3, 20, tzinfo=timezone.utc)
     bt_start = bt_end - timedelta(days=70)  # ~51 trading days
 
-    print(f"\nBacktest period: {bt_start.date()} to {bt_end.date()}")
-    print(f"Portfolio size: {PORTFOLIO_SIZE}")
-    print(f"Initial capital: ${INITIAL_CAPITAL:,}")
+    print(f"\nBacktest period: {bt_start.date()} to {bt_end.date()}", flush=True)
+    print(f"Portfolio size: {PORTFOLIO_SIZE}", flush=True)
+    print(f"Initial capital: ${INITIAL_CAPITAL:,}", flush=True)
+    sys.stdout.flush()
 
     # Import strategy functions
+    print("\nImporting strategies...", flush=True)
+    import sys
+    sys.stdout.flush()
+
+    print("  - Importing ultimate_strategy...", flush=True)
     from ultimate_strategy import select_ultimate_stocks
+    print("  - Importing risk_adj_mom_1m_vol_sweet_strategy...", flush=True)
     from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+    print("  - Importing vol_sweet_mom_strategy...", flush=True)
     from vol_sweet_mom_strategy import select_vol_sweet_mom_stocks
+    print("  - Importing multi_timeframe_ensemble...", flush=True)
+    from multi_timeframe_ensemble import select_multi_timeframe_stocks
+    print("  - Importing sector_rotation...", flush=True)
+    from shared_strategies import select_sector_rotation_etfs
+    print("  - Importing bb_squeeze...", flush=True)
+    from bollinger_bands_strategy import select_bb_squeeze_breakout_stocks
+    print("  - Importing risk_adj_mom_3m_market_up...", flush=True)
+    from risk_adj_mom_3m_market_up_strategy import select_risk_adj_mom_3m_market_up_stocks
+    print("  - Importing inverse_etf_hedge...", flush=True)
+    from inverse_etf_hedge_strategy import select_inverse_etf_hedge_stocks
+    print("  - Importing select_top_performers (BH 1Y)...", flush=True)
+    from shared_strategies import select_top_performers
+    print("✅ All strategies imported!", flush=True)
+
+    # Wrapper for BH 1Y (365-day lookback)
+    def select_bh_1y_stocks(all_tickers, ticker_data_grouped, current_date, top_n, verbose=True):
+        stocks = select_top_performers(all_tickers, ticker_data_grouped, current_date,
+                                       lookback_days=365, top_n=top_n)
+        if verbose:
+            print(f"   📊 BH 1Y: Selected {stocks[:5]}...")
+        return stocks
 
     strategies = [
         ("Ultimate", select_ultimate_stocks),
+        ("Multi-TF Ensemble", select_multi_timeframe_stocks),
         ("1M VolSweet", select_risk_adj_mom_1m_vol_sweet_stocks),
         ("VolSweet Mom", select_vol_sweet_mom_stocks),
+        ("Sector Rotation", select_sector_rotation_etfs),
+        ("BB Squeeze", select_bb_squeeze_breakout_stocks),
+        ("RiskAdj 3M Up", select_risk_adj_mom_3m_market_up_stocks),
+        ("Inv ETF Hedge", select_inverse_etf_hedge_stocks),
+        ("BH 1Y", select_bh_1y_stocks),
     ]
 
+    # PRE-GROUP DATA ONCE (major speedup - avoid doing this 9x in parallel)
+    import sys
+    print("\n📊 Pre-grouping ticker data (one-time)...", flush=True)
+    sys.stdout.flush()
+
+    grouped = all_tickers_data.groupby('ticker')
+    ticker_data_grouped = {}
+    for ticker in initial_top_tickers:
+        if ticker in grouped.groups:
+            ticker_df = grouped.get_group(ticker).copy()
+            if len(ticker_df) > 0:
+                ticker_df = ticker_df.set_index('date').sort_index()
+                # Resample to daily (use last price of each day)
+                ticker_df = ticker_df.resample('D').last().dropna(subset=['Close'])
+                if len(ticker_df) > 0:
+                    ticker_data_grouped[ticker] = ticker_df
+
+    # Pre-calculate trading days
+    all_dates = set()
+    for ticker, df in ticker_data_grouped.items():
+        all_dates.update(df.index.tolist())
+    trading_days = sorted([d for d in all_dates if bt_start <= d <= bt_end])
+
+    print(f"   ✅ Grouped {len(ticker_data_grouped)} tickers, {len(trading_days)} trading days", flush=True)
+    sys.stdout.flush()
+
+    # Run strategies in PARALLEL for speed
     results = []
-    for name, func in strategies:
-        result = run_simple_backtest(
-            name, func, all_tickers_data, initial_top_tickers,
-            bt_start, bt_end, PORTFOLIO_SIZE, INITIAL_CAPITAL
-        )
-        results.append(result)
+    print_lock = threading.Lock()
+    completed_count = [0]  # Use list for mutable counter in closure
+
+    started_count = [0]
+
+    def run_strategy_wrapper(strategy_tuple):
+        """Wrapper to run a single strategy and handle output."""
+        name, func = strategy_tuple
+        with print_lock:
+            started_count[0] += 1
+            print(f"   🔄 Starting {name}... ({started_count[0]}/{len(strategies)})", flush=True)
+            sys.stdout.flush()
+        try:
+            result = run_simple_backtest(
+                name, func, all_tickers_data, initial_top_tickers,
+                bt_start, bt_end, PORTFOLIO_SIZE, INITIAL_CAPITAL,
+                ticker_data_grouped=ticker_data_grouped,
+                trading_days=trading_days
+            )
+            with print_lock:
+                completed_count[0] += 1
+                print(f"   ✅ [{completed_count[0]}/{len(strategies)}] {name} complete: {result['return']:+.1f}%", flush=True)
+                sys.stdout.flush()
+            return result
+        except Exception as e:
+            import traceback
+            with print_lock:
+                completed_count[0] += 1
+                print(f"   ❌ [{completed_count[0]}/{len(strategies)}] {name} FAILED: {e}", flush=True)
+                traceback.print_exc()
+                sys.stdout.flush()
+            return {
+                'strategy': name,
+                'final_value': INITIAL_CAPITAL,
+                'return': 0.0,
+                'volatility': 0.0,
+                'costs': 0.0,
+            }
+
+    # Determine number of parallel workers (limit to avoid memory issues)
+    max_workers = min(len(strategies), 4)  # Max 4 parallel backtests
+
+    print(f"\n🚀 Starting backtests for {len(strategies)} strategies in PARALLEL ({max_workers} workers)...", flush=True)
+    sys.stdout.flush()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all strategies
+        futures = {executor.submit(run_strategy_wrapper, s): s[0] for s in strategies}
+
+        # Collect results as they complete
+        for future in as_completed(futures):
+            result = future.result()
+            results.append(result)
+            sys.stdout.flush()
+
+    print(f"\n✅ All {len(results)} strategies completed!", flush=True)
+    sys.stdout.flush()
 
     # Summary
     print("\n" + "=" * 80)

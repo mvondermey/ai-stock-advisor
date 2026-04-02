@@ -48,6 +48,7 @@ def select_risk_adj_mom_1m_vol_sweet_stocks(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
     top_n: int = 10,
+    verbose: bool = True,
 ) -> List[str]:
     from performance_filters import filter_tickers_by_performance
 
@@ -55,7 +56,8 @@ def select_risk_adj_mom_1m_vol_sweet_stocks(
     MIN_SCORE = 0.5  # With annualized vol ~30-40%, scores are ~1-5 range
 
     filtered = filter_tickers_by_performance(all_tickers, ticker_data_grouped, current_date, "RiskAdj1MVol")
-    print(f"   📊 1M VolSweet: analyzing {len(filtered)} tickers")
+    if verbose:
+        print(f"   📊 1M VolSweet: analyzing {len(filtered)} tickers")
 
     candidates = []
     for tkr in filtered:
@@ -90,15 +92,18 @@ def select_risk_adj_mom_1m_vol_sweet_stocks(
 
             candidates.append((tkr, score, basic_ret, vol_pct))
         except Exception as e:
-            print(f"   ⚠️ Error processing {tkr}: {e}")
+            if verbose:
+                print(f"   ⚠️ Error processing {tkr}: {e}")
             continue
 
     if not candidates:
-        print("   ⚠️ 1M VolSweet: no candidates")
+        if verbose:
+            print("   ⚠️ 1M VolSweet: no candidates")
         return []
 
     candidates.sort(key=lambda x: x[1], reverse=True)
     selected = [c[0] for c in candidates[:top_n]]
 
-    print(f"   ✅ 1M VolSweet: selected {selected}")
+    if verbose:
+        print(f"   ✅ 1M VolSweet: selected {selected}")
     return selected

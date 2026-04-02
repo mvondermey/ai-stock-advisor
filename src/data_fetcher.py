@@ -549,6 +549,8 @@ def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: dateti
 
         for attempt in range(max_retries):
             try:
+                # CRITICAL: threads=False prevents yfinance internal threading bugs
+                # that cause data corruption (wrong ticker's data returned)
                 yf_data = yf.download(
                     remaining_tickers,
                     start=start,
@@ -556,7 +558,7 @@ def _fetch_batch_multi_provider(tickers: List[str], start: datetime, end: dateti
                     interval=DATA_INTERVAL,
                     auto_adjust=True,
                     progress=show_progress,
-                    threads=True,  # ✅ Enable yfinance internal threading
+                    threads=False,  # DISABLED: yfinance threading causes data corruption
                     keepna=False,
                     multi_level_index=False
                 )

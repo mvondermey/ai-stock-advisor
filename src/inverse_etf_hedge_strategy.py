@@ -1,8 +1,8 @@
 """
 Inverse ETF Hedge Strategy
 
-Selects inverse ETFs when market is down to hedge against declines.
-Only holds inverse ETFs during market downturns, stays in cash otherwise.
+Selects inverse ETFs based on recent performance.
+Always selects top performing inverse ETFs for comparison purposes.
 """
 
 from typing import List, Dict
@@ -13,10 +13,11 @@ def select_inverse_etf_hedge_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime,
-    top_n: int = 4
+    top_n: int = 4,
+    verbose: bool = True
 ) -> List[str]:
     """
-    Select inverse ETFs based on current market conditions.
+    Select inverse ETFs based on recent performance.
 
     Args:
         all_tickers: List of available ticker symbols
@@ -25,39 +26,14 @@ def select_inverse_etf_hedge_stocks(
         top_n: Number of ETFs to select (max 4)
 
     Returns:
-        List of selected inverse ETF symbols (empty list if market is up)
+        List of selected inverse ETF symbols
     """
-    from config import (
-        INVERSE_ETF_HEDGE_THRESHOLD_LOW, INVERSE_ETF_HEDGE_THRESHOLD_MED,
-        INVERSE_ETF_HEDGE_THRESHOLD_HIGH, INVERSE_ETF_HEDGE_PREFERENCE
-    )
-    from shared_strategies import get_market_conditions
+    from config import INVERSE_ETF_HEDGE_PREFERENCE
 
-    # Get market conditions
-    market_conditions = get_market_conditions(ticker_data_grouped, current_date)
+    if verbose:
+        print(f"   🛡️ Inverse ETF Strategy: Selecting top {top_n} inverse ETFs by 3M performance")
 
-    # Check if market is down significantly
-    market_decline = 0
-    for metric, value in market_conditions.items():
-        if '_3m' in metric and value < 0:  # Negative 3-month performance
-            market_decline = max(market_decline, abs(value))
-
-    # Determine if we should hedge
-    if market_decline <= INVERSE_ETF_HEDGE_THRESHOLD_LOW:
-        print(f"   🛡️ Market up {market_decline:.1%} (threshold {INVERSE_ETF_HEDGE_THRESHOLD_LOW:.1%}) - No hedge needed")
-        return []
-
-    # Calculate hedge level for logging
-    if market_decline >= INVERSE_ETF_HEDGE_THRESHOLD_HIGH:
-        hedge_level = "HIGH"
-    elif market_decline >= INVERSE_ETF_HEDGE_THRESHOLD_MED:
-        hedge_level = "MED"
-    else:
-        hedge_level = "LOW"
-
-    print(f"   🛡️ Market down {market_decline:.1%} ({hedge_level} hedge) - Selecting inverse ETFs")
-
-    # Score inverse ETFs by recent performance (better performers during decline)
+    # Score inverse ETFs by recent performance
     inverse_etf_scores = []
     for etf in INVERSE_ETF_HEDGE_PREFERENCE:
         if etf in ticker_data_grouped:
@@ -87,14 +63,17 @@ def select_inverse_etf_hedge_stocks(
                         if start_price > 0:
                             perf_3m = (end_price / start_price - 1) * 100
                             inverse_etf_scores.append((etf, perf_3m))
-                            print(f"      📈 {etf}: {perf_3m:+.1f}% (3M)")
+                            if verbose:
+                                print(f"      📈 {etf}: {perf_3m:+.1f}% (3M)")
 
             except Exception as e:
-                print(f"      ⚠️ Error scoring {etf}: {e}")
+                if verbose:
+                    print(f"      ⚠️ Error scoring {etf}: {e}")
                 continue
 
     if not inverse_etf_scores:
-        print(f"   ⚠️ No inverse ETFs with valid data")
+        if verbose:
+            print(f"   ⚠️ No inverse ETFs with valid data")
         return []
 
     # Sort by performance (best performers during decline)
@@ -104,5 +83,6 @@ def select_inverse_etf_hedge_stocks(
     num_etfs = min(top_n, len(inverse_etf_scores))
     selected_etfs = [etf for etf, _ in inverse_etf_scores[:num_etfs]]
 
-    print(f"   ✅ Selected {num_etfs} inverse ETFs: {selected_etfs}")
+    if verbose:
+        print(f"   ✅ Selected {num_etfs} inverse ETFs: {selected_etfs}")
     return selected_etfs

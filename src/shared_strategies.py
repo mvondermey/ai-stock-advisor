@@ -1636,7 +1636,7 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
 
 def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame],
 
-                                current_date: datetime, top_n: int = 5) -> List[str]:
+                                current_date: datetime, top_n: int = 5, verbose: bool = True) -> List[str]:
 
     """
 
@@ -1649,14 +1649,15 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
     from config import SECTOR_ROTATION_MOMENTUM_WINDOW, SECTOR_ROTATION_MIN_MOMENTUM
 
 
+    if verbose:
+        print(f"   🔍 Sector Rotation Debug: Looking for ETFs in {len(all_tickers)} available tickers")
 
-    print(f"   🔍 Sector Rotation Debug: Looking for ETFs in {len(all_tickers)} available tickers")
-
-    print(f"   🔍 Momentum window: {SECTOR_ROTATION_MOMENTUM_WINDOW} days, Min threshold: {SECTOR_ROTATION_MIN_MOMENTUM}%")
+        print(f"   🔍 Momentum window: {SECTOR_ROTATION_MOMENTUM_WINDOW} days, Min threshold: {SECTOR_ROTATION_MIN_MOMENTUM}%")
 
 
 
-    # Check if sector ETFs are in the available tickers
+    # Check if sector ETFs are in the available tickers OR in ticker_data_grouped
+    # (ticker_data_grouped may have more tickers than all_tickers)
 
     sector_etfs = [
 
@@ -1668,15 +1669,17 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
 
 
 
-    available_sector_etfs = [etf for etf in sector_etfs if etf in all_tickers]
+    # Check both all_tickers AND ticker_data_grouped (more comprehensive)
+    available_sector_etfs = [etf for etf in sector_etfs if etf in all_tickers or etf in ticker_data_grouped]
 
-    print(f"   🔍 Available sector ETFs: {available_sector_etfs}")
+    if verbose:
+        print(f"   🔍 Available sector ETFs: {available_sector_etfs}")
 
 
 
     if not available_sector_etfs:
-
-        print(f"   ❌ No sector ETFs found in ticker list! Strategy cannot execute.")
+        if verbose:
+            print(f"   ❌ No sector ETFs found in ticker list or data! Strategy cannot execute.")
 
         return []
 
@@ -1690,7 +1693,8 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
 
     for etf in available_sector_etfs:
 
-        if etf in all_tickers and etf in ticker_data_grouped:
+        # Only need ETF to be in ticker_data_grouped (data available)
+        if etf in ticker_data_grouped:
 
             found_etfs.append(etf)
 
@@ -1727,8 +1731,8 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
                 etf_filtered = etf_data[(etf_data.index >= start_date) & (etf_data.index <= current_date_tz)]
 
 
-
-                print(f"   🔍 {etf}: {len(etf_filtered)} data points available")
+                if verbose:
+                    print(f"   🔍 {etf}: {len(etf_filtered)} data points available")
 
 
 
@@ -1741,8 +1745,8 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
                     momentum_pct = ((end_price - start_price) / start_price) * 100
 
 
-
-                    print(f"   🔍 {etf}: momentum = {momentum_pct:.1f}% (threshold: {SECTOR_ROTATION_MIN_MOMENTUM}%)")
+                    if verbose:
+                        print(f"   🔍 {etf}: momentum = {momentum_pct:.1f}% (threshold: {SECTOR_ROTATION_MIN_MOMENTUM}%)")
 
 
 
@@ -1751,22 +1755,22 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
                         sector_performance.append((etf, momentum_pct))
 
                 else:
-
-                    print(f"   🔍 {etf}: insufficient data (need 20, have {len(etf_filtered)})")
+                    if verbose:
+                        print(f"   🔍 {etf}: insufficient data (need 20, have {len(etf_filtered)})")
 
 
 
             except Exception as e:
-
-                print(f"   🔍 {etf}: error calculating momentum - {e}")
+                if verbose:
+                    print(f"   🔍 {etf}: error calculating momentum - {e}")
 
                 continue
 
 
+    if verbose:
+        print(f"   🔍 Found {len(found_etfs)} sector ETFs: {found_etfs}")
 
-    print(f"   🔍 Found {len(found_etfs)} sector ETFs: {found_etfs}")
-
-    print(f"   🔍 {len(sector_performance)} ETFs met momentum threshold")
+        print(f"   🔍 {len(sector_performance)} ETFs met momentum threshold")
 
 
 
@@ -1779,24 +1783,24 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
         selected_etfs = [etf for etf, momentum in sector_performance[:top_n]]
 
 
+        if verbose:
+            print(f"   🏢 Top {len(selected_etfs)} sector ETFs by {SECTOR_ROTATION_MOMENTUM_WINDOW}-day momentum:")
 
-        print(f"   🏢 Top {len(selected_etfs)} sector ETFs by {SECTOR_ROTATION_MOMENTUM_WINDOW}-day momentum:")
+            for etf, momentum in sector_performance[:top_n]:
 
-        for etf, momentum in sector_performance[:top_n]:
-
-            print(f"      {etf}: {momentum:+.1f}%")
+                print(f"      {etf}: {momentum:+.1f}%")
 
 
 
-        print(f"   ✅ Sector Rotation selected {len(selected_etfs)} ETFs: {selected_etfs}")
+            print(f"   ✅ Sector Rotation selected {len(selected_etfs)} ETFs: {selected_etfs}")
 
         return selected_etfs
 
     else:
+        if verbose:
+            print(f"   ❌ No sector ETFs met minimum momentum threshold ({SECTOR_ROTATION_MIN_MOMENTUM}%)")
 
-        print(f"   ❌ No sector ETFs met minimum momentum threshold ({SECTOR_ROTATION_MIN_MOMENTUM}%)")
-
-        print(f"   ❌ Total ETFs analyzed: {len(sector_performance)}")
+            print(f"   ❌ Total ETFs analyzed: {len(sector_performance)}")
 
         return []
 
@@ -2344,9 +2348,9 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
 
 
 
-            # Check data sufficiency (reduced requirements for available data)
+            # Check data sufficiency (minimal requirements)
 
-            if len(one_year_valid) < 100 or len(three_year_valid) < 100:  # Reduced requirements
+            if len(one_year_valid) < 10 or len(three_year_valid) < 10:  # Reduced from 100
 
                 data_insufficient += 1
 
@@ -3302,13 +3306,9 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
 
 
 
-    # Use filtered tickers for analysis
+    # Use filtered tickers for analysis (don't add all tickers - respect the filter!)
 
     tickers_to_scan = set(filtered_tickers)
-
-    if isinstance(ticker_data_grouped, dict):
-
-        tickers_to_scan.update(ticker_data_grouped.keys())
 
 
 
@@ -3546,13 +3546,9 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
 
 
 
-    # Use filtered tickers for analysis
+    # Use filtered tickers for analysis (don't add all tickers - respect the filter!)
 
     tickers_to_scan = set(filtered_tickers)
-
-    if isinstance(ticker_data_grouped, dict):
-
-        tickers_to_scan.update(ticker_data_grouped.keys())
 
 
 
@@ -3670,10 +3666,6 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
 
             if len(daily_returns) < 30:
 
-                if ticker in ['SNDK', 'MTS.MC']:
-
-                    print(f"   ⚠️ DEBUG {ticker}: SKIPPED - daily_returns < 30 ({len(daily_returns)})")
-
                 continue
 
             volatility = daily_returns.std() * (252 ** 0.5)  # Annualized volatility
@@ -3683,16 +3675,6 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
             # Calculate average volume
 
             avg_volume = ticker_data['Volume'].dropna().mean() if 'Volume' in ticker_data.columns else 100000
-
-
-
-            # Debug for specific tickers
-
-            if ticker in ['SNDK', 'MTS.MC']:
-
-                print(f"   🔍 DEBUG {ticker}: price={latest_price:.2f}, 6m_ann={annualized_6m:.4f}, 1y={performance_1y:.4f}, vol={volatility:.4f}, avg_vol={avg_volume:.0f}")
-
-                print(f"   🔍 DEBUG {ticker}: data_len={len(ticker_data)}, close_len={len(ticker_data['Close'].dropna())}, cols={list(ticker_data.columns[:10])}")
 
 
 
@@ -3718,12 +3700,6 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
 
 
 
-                if ticker in ['SNDK', 'MTS.MC']:
-
-                    print(f"   ✅ DEBUG {ticker}: PASSED all filters, score={composite_score:.4f}")
-
-
-
                 candidates.append({
 
                     'ticker': ticker,
@@ -3738,33 +3714,9 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
 
                 })
 
-            else:
-
-                if ticker in ['SNDK', 'MTS.MC']:
-
-                    fails = []
-
-                    if annualized_6m <= 0.0: fails.append(f"6m_ann={annualized_6m:.4f}<=0")
-
-                    if performance_1y <= -0.3: fails.append(f"1y={performance_1y:.4f}<=-0.3")
-
-                    if volatility >= 3.0: fails.append(f"vol={volatility:.4f}>=3.0")
-
-                    if avg_volume <= 10000: fails.append(f"vol={avg_volume:.0f}<=10000")
-
-                    print(f"   ❌ DEBUG {ticker}: FAILED filters: {', '.join(fails)}")
 
 
-
-        except Exception as e:
-
-            if ticker in ['SNDK', 'MTS.MC']:
-
-                import traceback
-
-                print(f"   ⚠️ DEBUG {ticker}: EXCEPTION in scoring: {e}")
-
-                traceback.print_exc()
+        except Exception:
 
             continue
 
@@ -3775,26 +3727,6 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
     candidates.sort(key=lambda x: x['score'], reverse=True)
 
 
-
-    # Debug: Check if specific tickers made it
-
-    candidate_tickers = {c['ticker'] for c in candidates}
-
-    for debug_ticker in ['SNDK', 'MTS.MC']:
-
-        if debug_ticker in candidate_tickers:
-
-            c = next(c for c in candidates if c['ticker'] == debug_ticker)
-
-            print(f"   🔍 DEBUG {debug_ticker}: IN candidates, score={c['score']:.4f}")
-
-        else:
-
-            print(f"   🔍 DEBUG {debug_ticker}: NOT in candidates")
-
-
-
-    # Debug output
 
     if candidates:
 
@@ -3856,13 +3788,9 @@ def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_group
 
 
 
-    # Use filtered tickers for analysis
+    # Use filtered tickers for analysis (don't add all tickers - respect the filter!)
 
     tickers_to_scan = set(filtered_tickers)
-
-    if isinstance(ticker_data_grouped, dict):
-
-        tickers_to_scan.update(ticker_data_grouped.keys())
 
 
 
@@ -4104,13 +4032,9 @@ def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped
 
 
 
-    # Use filtered tickers for analysis
+    # Use filtered tickers for analysis (don't add all tickers - respect the filter!)
 
     tickers_to_scan = set(filtered_tickers)
-
-    if isinstance(ticker_data_grouped, dict):
-
-        tickers_to_scan.update(ticker_data_grouped.keys())
 
 
 
@@ -4168,7 +4092,7 @@ def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped
 
 
 
-            if n_prices < 100:
+            if n_prices < 10:  # Reduced from 100 - minimum for any calculation
 
                 continue
 
@@ -4188,7 +4112,7 @@ def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped
 
             lookback_1y = min(252, n_prices - 1)
 
-            if lookback_1y < 100:
+            if lookback_1y < 10:  # Reduced from 100 - allow stocks with less history
 
                 continue
 
@@ -7001,36 +6925,71 @@ def _select_ultimate_stocks(all_tickers, ticker_data_grouped, current_date, top_
 
 
 def _select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for AI Regime strategy.
 
-    """Wrapper for AI Regime strategy."""
-
+    Note: This strategy requires a predicted_strategy from the AI Regime model.
+    When called from the simple registry without context, it falls back to momentum.
+    For full functionality, use the AI Regime system directly.
+    """
     try:
+        from ai_regime_strategy import select_ai_regime_stocks, AIRegimeStrategy
 
-        from ai_regime_strategy import select_ai_regime_stocks
+        # Try to predict the best strategy based on current market conditions
+        try:
+            regime_model = AIRegimeStrategy()
+            predicted_strategy = regime_model.predict_best_strategy(ticker_data_grouped, current_date)
+            if predicted_strategy is None:
+                predicted_strategy = "momentum"
+        except Exception:
+            # Default to momentum if prediction fails
+            predicted_strategy = "momentum"
 
-        return select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
-
+        return select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top_n, predicted_strategy)
     except ImportError:
-
         return []
+    except Exception as e:
+        print(f"  ⚠️ AI Regime fallback to momentum: {e}")
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
 
 
 
 
 
 def _select_universal_model_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for Universal Model strategy.
 
-    """Wrapper for Universal Model strategy."""
-
+    Note: This strategy requires a trained model, business_days list, and current_day_idx.
+    When called from the simple registry without context, it falls back to momentum.
+    For full functionality, use the Universal Model system directly.
+    """
     try:
+        from universal_model_strategy import UniversalModelStrategy, select_universal_model_stocks
 
-        from universal_model_strategy import select_universal_model_stocks
+        # Create business days list from ticker data
+        sample_ticker = next(iter(ticker_data_grouped.keys()), None)
+        if sample_ticker is None:
+            return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
 
-        return select_universal_model_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        sample_df = ticker_data_grouped[sample_ticker]
+        business_days = sorted(sample_df.index.tolist())
 
+        # Find current day index
+        current_day_idx = len([d for d in business_days if d <= current_date]) - 1
+        if current_day_idx < 0:
+            current_day_idx = 0
+
+        # Create and train model on-the-fly (simplified for registry usage)
+        model = UniversalModelStrategy()
+
+        return select_universal_model_stocks(
+            all_tickers, ticker_data_grouped, current_date, top_n,
+            model, business_days, current_day_idx
+        )
     except ImportError:
-
         return []
+    except Exception as e:
+        print(f"  ⚠️ Universal Model fallback to momentum: {e}")
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
 
 
 

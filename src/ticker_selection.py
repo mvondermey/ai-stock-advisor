@@ -4,6 +4,7 @@ import json
 import re
 import time
 import gc
+import threading
 from datetime import datetime, timedelta, timezone
 from multiprocessing import Pool
 from typing import List, Dict, Tuple, Optional
@@ -13,6 +14,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import pandas as pd
 import yfinance as yf
+
+# Global lock for yfinance calls - yfinance has threading bugs that cause data corruption
+_yfinance_lock = threading.Lock()
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
@@ -205,8 +209,25 @@ def get_all_tickers() -> List[str]:
             if not etf_tickers:
                 raise ValueError("No ETF tickers found on the page.")
 
-            # Add sector ETFs that may not be on Wikipedia (newer sectors)
-            etf_tickers.update(['XLRE', 'XLC'])  # Real Estate and Communication Services sectors
+            # Add sector ETFs required for Sector Rotation strategy
+            # These may not be scraped from Wikipedia but are essential
+            sector_etfs = [
+                'XLK',   # Technology
+                'XLF',   # Financials
+                'XLE',   # Energy
+                'XLV',   # Healthcare
+                'XLI',   # Industrials
+                'XLP',   # Consumer Staples
+                'XLY',   # Consumer Discretionary
+                'XLU',   # Utilities
+                'XLRE',  # Real Estate
+                'XLC',   # Communication Services
+                'XLB',   # Materials
+                'GDX',   # Gold Miners
+                'USO',   # Oil
+                'TLT',   # Long-term Treasuries
+            ]
+            etf_tickers.update(sector_etfs)
 
             all_tickers.update(etf_tickers)
             print(f"✅ Fetched {len(etf_tickers)} tickers from Popular ETFs list.")
@@ -440,6 +461,15 @@ def get_all_tickers() -> List[str]:
     # ✅ Always include benchmark tickers to ensure they're cached
     final_tickers.update(['QQQ', 'SPY'])
 
+    # ✅ Include inverse ETFs for hedging strategies (from config.INVERSE_ETFS)
+    try:
+        from config import INVERSE_ETFS, ENABLE_INVERSE_ETFS
+        if ENABLE_INVERSE_ETFS and INVERSE_ETFS:
+            final_tickers.update(INVERSE_ETFS)
+            print(f"✅ Added {len(INVERSE_ETFS)} inverse ETFs for hedging strategies.")
+    except ImportError:
+        pass
+
     # ❌ Remove known delisted/renamed ETFs and stocks
     DELISTED_TICKERS = {
         # Delisted leveraged/inverse ETFs
@@ -510,9 +540,11 @@ def _get_yahoo_1y_return(ticker: str, end_date: datetime) -> Optional[float]:
     """
     try:
         start_date = end_date - timedelta(days=365)
-        # Quick fetch with 1-year data
-        ticker_obj = yf.Ticker(ticker)
-        hist = ticker_obj.history(start=start_date, end=end_date + timedelta(days=1))
+        # CRITICAL: Use global lock - yfinance has threading bugs that cause
+        # data corruption when called concurrently
+        with _yfinance_lock:
+            ticker_obj = yf.Ticker(ticker)
+            hist = ticker_obj.history(start=start_date, end=end_date + timedelta(days=1))
 
         if hist.empty or len(hist) < 10:
             return None
@@ -541,6 +573,8 @@ def _prepare_ticker_data_worker(args: Tuple) -> Optional[Tuple[str, pd.DataFrame
                 break
 
         if close_col is None:
+            if ticker == 'SNDK':
+                print(f"   🔍 DEBUG SNDK PREP: No close column in {list(ticker_data_slice.columns)}")
             return None
 
         # Create time series
@@ -548,12 +582,20 @@ def _prepare_ticker_data_worker(args: Tuple) -> Optional[Tuple[str, pd.DataFrame
         s = s.ffill().bfill()
 
         if s.dropna().shape[0] < 2:
+            if ticker == 'SNDK':
+                print(f"   🔍 DEBUG SNDK PREP: < 2 rows after cleanup (shape={s.dropna().shape[0]})")
             return None
 
         ticker_df = pd.DataFrame({'Close': s})
+
+        if ticker == 'SNDK':
+            print(f"   🔍 DEBUG SNDK PREP: OK - {len(ticker_df)} rows, first={s.iloc[0]:.2f}, last={s.iloc[-1]:.2f}")
+
         return (ticker, ticker_df)
 
-    except Exception:
+    except Exception as e:
+        if ticker == 'SNDK':
+            print(f"   🔍 DEBUG SNDK PREP: Exception {e}")
         return None
 
 
@@ -570,20 +612,24 @@ def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[
                     price_col = lower[key]
                     break
         if price_col is None:
+            if ticker == 'SNDK':
+                print(f"   🔍 DEBUG SNDK: No price column found in {list(df_1y.columns)}")
             return None
 
         s = pd.to_numeric(df_1y[price_col], errors='coerce').ffill().bfill()
         s = s.dropna()
         if s.empty or len(s) < 2:
+            if ticker == 'SNDK':
+                print(f"   🔍 DEBUG SNDK: Empty or < 2 rows after cleanup (len={len(s)})")
             return None
-
-        # ✅ Data quality check: Require at least 200 trading days (~10 months minimum)
-        # This filters out recent IPOs and stocks with insufficient history
-        if len(s) < 200:
-            return None  # Insufficient data for reliable 1-year performance
 
         start_price = s.iloc[0]
         end_price = s.iloc[-1]
+
+        # Debug SNDK
+        if ticker == 'SNDK':
+            print(f"   🔍 DEBUG SNDK: rows={len(s)}, start=${start_price:.2f}, end=${end_price:.2f}, perf={(end_price/start_price-1)*100:.1f}%")
+
         if start_price <= 0:
             return None
 
@@ -594,7 +640,9 @@ def _calculate_performance_worker(params: Tuple[str, pd.DataFrame]) -> Optional[
             if price_col != 'Close':
                 out = out.rename(columns={price_col: 'Close'})
             return (ticker, float(perf_1y), out)
-    except Exception:
+    except Exception as e:
+        if ticker == 'SNDK':
+            print(f"   🔍 DEBUG SNDK: Exception {e}")
         return None
     return None
 
@@ -723,8 +771,17 @@ def find_top_performers(
         valid_tickers = list(grouped.groups.keys())
         print(f"   📊 Found {len(valid_tickers)} tickers with data", flush=True)
 
+        # Debug: Check if SNDK is in the valid tickers
+        if 'SNDK' in valid_tickers:
+            sndk_data = grouped.get_group('SNDK')
+            print(f"   🔍 DEBUG SNDK: IN valid_tickers, rows={len(sndk_data)}, dates={sndk_data['date'].min()} to {sndk_data['date'].max()}")
+        else:
+            print(f"   🔍 DEBUG SNDK: NOT in valid_tickers (not in 1Y period)")
+
         # Build prep_args using pre-grouped data (very fast!)
         print(f"   🔧 Building parameter list...", flush=True)
+        sys.stdout.flush()
+        sys.stderr.flush()
         prep_args = []
         for ticker in tqdm(valid_tickers, desc="Building params", ncols=100):
             try:
@@ -735,21 +792,31 @@ def find_top_performers(
                 pass
 
         # Parallelize actual data preparation (finding Close column, cleaning data)
-        num_prep_workers = min(NUM_PROCESSES, len(prep_args)) if prep_args else 1
+        # Limit workers to avoid WSL multiprocessing issues
+        num_prep_workers = min(NUM_PROCESSES, len(prep_args), 8) if prep_args else 1
         prep_chunksize = max(1, len(prep_args) // (num_prep_workers * 2))
 
         print(f"   🚀 Processing {len(prep_args)} tickers with {num_prep_workers} workers (chunksize={prep_chunksize})", flush=True)
         sys.stdout.flush()
+        sys.stderr.flush()
 
         params = []
-        with Pool(processes=num_prep_workers, maxtasksperchild=50) as pool:
-            prep_results = list(tqdm(
-                pool.imap(_prepare_ticker_data_worker, prep_args, chunksize=prep_chunksize),
-                total=len(prep_args),
-                desc="Processing ticker data",
-                ncols=100
-            ))
-            params = [r for r in prep_results if r is not None]
+        try:
+            with Pool(processes=num_prep_workers, maxtasksperchild=20) as pool:
+                prep_results = list(tqdm(
+                    pool.imap(_prepare_ticker_data_worker, prep_args, chunksize=prep_chunksize),
+                    total=len(prep_args),
+                    desc="Processing ticker data",
+                    ncols=100
+                ))
+                params = [r for r in prep_results if r is not None]
+        except Exception as e:
+            print(f"   ⚠️ Parallel processing failed ({e}), falling back to sequential...", flush=True)
+            params = []
+            for args in tqdm(prep_args, desc="Processing ticker data (sequential)", ncols=100):
+                result = _prepare_ticker_data_worker(args)
+                if result is not None:
+                    params.append(result)
         gc.collect()  # Release semaphores after Pool closes (WSL fix)
     else:
         # Wide format: use original logic
@@ -784,16 +851,25 @@ def find_top_performers(
 
         print(f"   🚀 Processing {len(prep_args)} tickers with {num_prep_workers} workers (chunksize={prep_chunksize})", flush=True)
         sys.stdout.flush()
+        sys.stderr.flush()
 
         params = []
-        with Pool(processes=num_prep_workers, maxtasksperchild=50) as pool:
-            prep_results = list(tqdm(
-                pool.imap(_prepare_ticker_data_worker, prep_args, chunksize=prep_chunksize),
-                total=len(prep_args),
-                desc="Processing ticker data",
-                ncols=100
-            ))
-            params = [r for r in prep_results if r is not None]
+        try:
+            with Pool(processes=num_prep_workers, maxtasksperchild=20) as pool:
+                prep_results = list(tqdm(
+                    pool.imap(_prepare_ticker_data_worker, prep_args, chunksize=prep_chunksize),
+                    total=len(prep_args),
+                    desc="Processing ticker data",
+                    ncols=100
+                ))
+                params = [r for r in prep_results if r is not None]
+        except Exception as e:
+            print(f"   ⚠️ Parallel processing failed ({e}), falling back to sequential...", flush=True)
+            params = []
+            for args in tqdm(prep_args, desc="Processing ticker data (sequential)", ncols=100):
+                result = _prepare_ticker_data_worker(args)
+                if result is not None:
+                    params.append(result)
         gc.collect()  # Release semaphores after Pool closes (WSL fix)
 
     # Prepare for parallel processing
@@ -804,23 +880,31 @@ def find_top_performers(
     print(f"   📊 Prepared {len(params)} tickers for performance calculation", flush=True)
 
     all_tickers_performance_with_df = []
-    # Use configured number of processes for optimal performance
-    num_workers = min(NUM_PROCESSES, len(params)) if params else 1
+    # Use configured number of processes for optimal performance - limit to 8 for WSL stability
+    num_workers = min(NUM_PROCESSES, len(params), 8) if params else 1
     chunksize = max(1, len(params) // (num_workers * 4)) if params else 1  # Optimal chunking
 
     print(f"   🚀 Starting parallel calculation with {num_workers} workers (chunksize={chunksize})", flush=True)
     sys.stdout.flush()
+    sys.stderr.flush()
 
-    with Pool(processes=num_workers, maxtasksperchild=50) as pool:
-        results = list(tqdm(
-            pool.imap(_calculate_performance_worker, params, chunksize=chunksize),
-            total=len(params),
-            desc="Calculating 1Y Performance",
-            ncols=100
-        ))
-        for res in results:
-            if res:
-                all_tickers_performance_with_df.append(res)
+    try:
+        with Pool(processes=num_workers, maxtasksperchild=20) as pool:
+            results = list(tqdm(
+                pool.imap(_calculate_performance_worker, params, chunksize=chunksize),
+                total=len(params),
+                desc="Calculating 1Y Performance",
+                ncols=100
+            ))
+            for res in results:
+                if res:
+                    all_tickers_performance_with_df.append(res)
+    except Exception as e:
+        print(f"   ⚠️ Parallel calculation failed ({e}), falling back to sequential...", flush=True)
+        for p in tqdm(params, desc="Calculating 1Y Performance (sequential)", ncols=100):
+            result = _calculate_performance_worker(p)
+            if result:
+                all_tickers_performance_with_df.append(result)
     gc.collect()  # Release semaphores after Pool closes (WSL fix)
 
     print(f"   ✅ Performance calculation complete! Processed {len(all_tickers_performance_with_df)}/{len(params)} tickers")
@@ -831,7 +915,7 @@ def find_top_performers(
 
     sorted_all_tickers_performance_with_df = sorted(all_tickers_performance_with_df, key=lambda item: item[1], reverse=True)
 
-    sorted_all_tickers_performance_with_df = [item for item in sorted_all_tickers_performance_with_df if item[1] < 1000]
+    # Note: Removed arbitrary 1000% cap - legitimate high performers should not be excluded
 
     if n_top > 0:
         final_performers_for_selection = sorted_all_tickers_performance_with_df[:n_top]

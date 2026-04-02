@@ -1,195 +1,131 @@
 """
 Rebalance Horizon Optimizer
 
-Tests multiple rebalance horizons (30-90 days) for static strategies in parallel
-and identifies the best performing horizon for each strategy type.
+Tests multiple rebalance horizons for static strategies and identifies
+the best performing horizon for each strategy type.
+
+Optimized for speed using vectorized operations and pre-computed price matrices.
 """
 
 import pandas as pd
 import numpy as np
 import gc
-import os
-import tempfile
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
-import multiprocessing as mp
-import joblib
 from config import (
-    TRAINING_NUM_PROCESSES, PORTFOLIO_SIZE, TRANSACTION_COST,
+    PORTFOLIO_SIZE, TRANSACTION_COST,
     REBALANCE_HORIZON_MIN, REBALANCE_HORIZON_MAX
 )
 
-# Global variable for shared data (loaded lazily by workers)
-_SHARED_TICKER_DATA = None
-_SHARED_DATA_PATH = None
 
-
-def _init_worker(data_path: str):
-    """Initialize worker with path to shared data file."""
-    global _SHARED_DATA_PATH
-    _SHARED_DATA_PATH = data_path
-
-
-def _get_shared_data() -> Dict:
-    """Lazily load shared data in worker process."""
-    global _SHARED_TICKER_DATA, _SHARED_DATA_PATH
-    if _SHARED_TICKER_DATA is None and _SHARED_DATA_PATH:
-        _SHARED_TICKER_DATA = joblib.load(_SHARED_DATA_PATH)
-    return _SHARED_TICKER_DATA
-
-
-def _simulate_static_strategy(args) -> Tuple[str, int, float, float]:
+def _simulate_strategy_vectorized(
+    price_matrix: np.ndarray,
+    dates: np.ndarray,
+    tickers: List[str],
+    strategy_type: str,
+    rebalance_days: int,
+    initial_capital: float,
+    portfolio_size: int
+) -> Tuple[float, float]:
     """
-    Simulate a static buy & hold strategy with a specific rebalance horizon.
+    Vectorized simulation of a static buy & hold strategy.
 
     Args:
-        args: Tuple of (strategy_type, rebalance_days,
-              backtest_start, backtest_end, initial_capital, portfolio_size)
+        price_matrix: 2D array of prices [dates x tickers]
+        dates: Array of dates
+        tickers: List of ticker names
+        strategy_type: '1Y', '6M', '3M', or '1M'
+        rebalance_days: Days between rebalances
+        initial_capital: Starting capital
+        portfolio_size: Number of stocks to hold
 
     Returns:
-        Tuple of (strategy_type, rebalance_days, final_value, total_txn_cost)
+        Tuple of (final_value, total_txn_cost)
     """
-    (strategy_type, rebalance_days,
-     backtest_start, backtest_end, initial_capital, portfolio_size) = args
+    n_dates, n_tickers = price_matrix.shape
 
-    # Load shared data lazily (avoids pickling huge DataFrames per task)
-    ticker_data_dict = _get_shared_data()
+    if n_dates < 20:
+        return initial_capital, 0.0
 
-    try:
-        # Initialize portfolio
-        positions = {}  # ticker -> {'shares': float, 'entry_price': float}
-        cash = initial_capital
-        days_since_rebalance = 0
-        initialized = False
-        total_txn_cost = 0.0
+    # Lookback period based on strategy
+    lookback_map = {'1Y': 365, '6M': 180, '3M': 90, '1M': 30}
+    lookback_days = lookback_map.get(strategy_type, 90)
 
-        # Get trading days
-        all_dates = set()
-        for ticker, data in ticker_data_dict.items():
-            if isinstance(data.index, pd.DatetimeIndex):
-                all_dates.update(data.index.tolist())
-            elif 'date' in data.columns:
-                all_dates.update(data['date'].tolist())
+    # Initialize
+    cash = initial_capital
+    holdings = np.zeros(n_tickers)  # shares held per ticker
+    total_txn_cost = 0.0
+    days_since_rebalance = rebalance_days  # Force initial rebalance
 
-        trading_days = sorted([d for d in all_dates if backtest_start <= d <= backtest_end])
+    for day_idx in range(n_dates):
+        days_since_rebalance += 1
 
-        if not trading_days:
-            return (strategy_type, rebalance_days, initial_capital, 0.0)
+        # Check if we should rebalance
+        if days_since_rebalance >= rebalance_days:
+            current_prices = price_matrix[day_idx]
 
-        # Pre-compute all closing prices in a single DataFrame for faster lookups
-        all_prices = {}
-        close_col = 'Close' if 'Close' in next(iter(ticker_data_dict.values())).columns else 'close'
+            # Find lookback start index (approximate by days)
+            lookback_idx = max(0, day_idx - lookback_days)
 
-        for ticker, data in ticker_data_dict.items():
-            if close_col in data.columns:
-                prices = data[close_col].dropna()
-                if isinstance(data.index, pd.DatetimeIndex):
-                    all_prices[ticker] = prices
-                else:
-                    all_prices[ticker] = prices.set_index('date')
-
-        # Simulate each trading day
-        for current_date in trading_days:
-            days_since_rebalance += 1
-
-            # Check if we should rebalance
-            should_rebalance = (
-                (not initialized) or
-                (rebalance_days > 0 and days_since_rebalance >= rebalance_days)
-            )
-
-            if should_rebalance:
-                # Get current top performers for this strategy type
-                if strategy_type == '1Y':
-                    lookback_days = 365
-                elif strategy_type == '6M':
-                    lookback_days = 180
-                elif strategy_type == '3M':
-                    lookback_days = 90
-                else:  # 1M
-                    lookback_days = 30
-
-                # Calculate performance for each ticker (optimized)
-                perf_list = []
-                lookback_start = current_date - timedelta(days=lookback_days)
-
-                for ticker, prices in all_prices.items():
-                    try:
-                        # Get price range efficiently
-                        if isinstance(prices.index, pd.DatetimeIndex):
-                            price_slice = prices.loc[lookback_start:current_date]
-                        else:
-                            price_slice = prices[(prices.index >= lookback_start) & (prices.index <= current_date)]
-
-                        if len(price_slice) < 20:
-                            continue
-
-                        perf = (price_slice.iloc[-1] / price_slice.iloc[0] - 1) * 100
-                        current_price = price_slice.iloc[-1]
-                        perf_list.append((ticker, perf, current_price))
-                    except:
-                        continue
-
-                # Sort by performance and get top N
-                perf_list.sort(key=lambda x: x[1], reverse=True)
-                new_stocks = [t[0] for t in perf_list[:portfolio_size]]
-                price_map = {t[0]: t[2] for t in perf_list}
-
-                if new_stocks:
-                    # Sell positions not in new_stocks
-                    for ticker in list(positions.keys()):
-                        if ticker not in new_stocks:
-                            if ticker in price_map:
-                                sell_value = positions[ticker]['shares'] * price_map[ticker]
-                                txn_cost = sell_value * TRANSACTION_COST
-                                cash += sell_value - txn_cost
-                                total_txn_cost += txn_cost
-                            del positions[ticker]
-
-                    # Buy new positions
-                    stocks_to_buy = [t for t in new_stocks if t not in positions]
-                    if stocks_to_buy and cash > 0:
-                        capital_per_stock = cash / len(stocks_to_buy)
-                        for ticker in stocks_to_buy:
-                            if ticker in price_map and price_map[ticker] > 0:
-                                shares = capital_per_stock / price_map[ticker]
-                                txn_cost = capital_per_stock * TRANSACTION_COST
-                                positions[ticker] = {
-                                    'shares': shares,
-                                    'entry_price': price_map[ticker]
-                                }
-                                cash -= capital_per_stock
-                                total_txn_cost += txn_cost
-
-                    initialized = True
-                    days_since_rebalance = 0
-
-        # Calculate final portfolio value
-        final_value = cash
-        final_date = trading_days[-1] if trading_days else backtest_end
-
-        for ticker, pos in positions.items():
-            try:
-                data = ticker_data_dict.get(ticker)
-                if data is None:
-                    continue
-
-                if isinstance(data.index, pd.DatetimeIndex):
-                    recent = data.loc[:final_date].tail(5)
-                else:
-                    recent = data[data['date'] <= final_date].tail(5)
-
-                close_col = 'Close' if 'Close' in recent.columns else 'close'
-                if close_col in recent.columns and len(recent) > 0:
-                    final_price = recent[close_col].dropna().iloc[-1]
-                    final_value += pos['shares'] * final_price
-            except:
+            # Skip if not enough history
+            if day_idx - lookback_idx < 20:
                 continue
 
-        return (strategy_type, rebalance_days, final_value, total_txn_cost)
+            start_prices = price_matrix[lookback_idx]
 
-    except Exception as e:
-        return (strategy_type, rebalance_days, initial_capital, 0.0)
+            # Calculate returns (vectorized)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                returns = (current_prices / start_prices - 1) * 100
+
+            # Mask invalid returns
+            valid_mask = np.isfinite(returns) & (start_prices > 0) & (current_prices > 0)
+            returns = np.where(valid_mask, returns, -np.inf)
+
+            # Get top N performers
+            top_indices = np.argsort(returns)[-portfolio_size:][::-1]
+            top_indices = top_indices[returns[top_indices] > -np.inf]
+
+            if len(top_indices) == 0:
+                continue
+
+            # Sell current holdings not in top picks
+            for i in range(n_tickers):
+                if holdings[i] > 0 and i not in top_indices:
+                    if current_prices[i] > 0:
+                        sell_value = holdings[i] * current_prices[i]
+                        txn_cost = sell_value * TRANSACTION_COST
+                        cash += sell_value - txn_cost
+                        total_txn_cost += txn_cost
+                    holdings[i] = 0
+
+            # Calculate current portfolio value
+            portfolio_value = cash
+            for i in range(n_tickers):
+                if holdings[i] > 0 and current_prices[i] > 0:
+                    portfolio_value += holdings[i] * current_prices[i]
+
+            # Buy new positions (equal weight)
+            stocks_to_buy = [i for i in top_indices if holdings[i] == 0]
+            if stocks_to_buy and cash > 100:  # Min cash threshold
+                capital_per_stock = cash / len(stocks_to_buy)
+                for i in stocks_to_buy:
+                    if current_prices[i] > 0:
+                        shares = capital_per_stock / current_prices[i]
+                        txn_cost = capital_per_stock * TRANSACTION_COST
+                        holdings[i] = shares
+                        cash -= capital_per_stock
+                        total_txn_cost += txn_cost
+
+            days_since_rebalance = 0
+
+    # Calculate final portfolio value
+    final_prices = price_matrix[-1]
+    final_value = cash
+    for i in range(n_tickers):
+        if holdings[i] > 0 and final_prices[i] > 0:
+            final_value += holdings[i] * final_prices[i]
+
+    return final_value, total_txn_cost
 
 
 def optimize_rebalance_horizons(
@@ -201,35 +137,16 @@ def optimize_rebalance_horizons(
     strategy_types: List[str] = ['1Y', '6M', '3M', '1M']
 ) -> Dict[str, Dict]:
     """
-    Test all rebalance horizons from REBALANCE_HORIZON_MIN to REBALANCE_HORIZON_MAX
+    Test rebalance horizons from REBALANCE_HORIZON_MIN to REBALANCE_HORIZON_MAX
     for each strategy type and find the best performing horizon.
 
-    Note: Uses a minimum 180-day optimization period to properly evaluate horizons,
-    regardless of the actual backtest period length.
-
-    Args:
-        all_tickers_data: DataFrame with all ticker data (long format with 'ticker' column)
-        backtest_start: Start date for backtesting
-        backtest_end: End date for backtesting
-        initial_capital: Starting capital
-        portfolio_size: Number of stocks to hold
-        strategy_types: List of strategy types to test ('1Y', '3M', '1M')
-
-    Returns:
-        Dict with results for each strategy type:
-        {
-            '1Y': {'best_horizon': 45, 'best_return': 55.6, 'all_results': [(30, 50.2), (31, 51.1), ...]},
-            '3M': {...},
-            '1M': {...}
-        }
+    Uses vectorized operations for speed - runs sequentially but very fast.
     """
-    # Ensure minimum optimization period = 3x max horizon for proper evaluation
-    # With 40-day max horizon, need at least 120 days to see 3 rebalance cycles
+    # Ensure minimum optimization period
     MIN_OPTIMIZATION_DAYS = REBALANCE_HORIZON_MAX * 3
     actual_days = (backtest_end - backtest_start).days
 
     if actual_days < MIN_OPTIMIZATION_DAYS:
-        # Extend start date backwards to get enough data for proper optimization
         optimization_start = backtest_end - timedelta(days=MIN_OPTIMIZATION_DAYS)
         print(f"\n🔄 REBALANCE HORIZON OPTIMIZATION", flush=True)
         print("=" * 50, flush=True)
@@ -244,80 +161,71 @@ def optimize_rebalance_horizons(
     print(f"   Strategy types: {strategy_types}", flush=True)
     print(f"   Optimization period: {optimization_start.date()} to {backtest_end.date()}", flush=True)
 
-    # Convert data to dict format for faster access in workers (using groupby - O(n) vs O(n*m))
-    print(f"   📊 Preparing data for parallel processing...", flush=True)
-    ticker_data_dict = {}
-    grouped = all_tickers_data.groupby('ticker')
-    for ticker, group in grouped:
-        ticker_df = group.set_index('date') if 'date' in group.columns else group
-        ticker_data_dict[ticker] = ticker_df
+    # Build price matrix (vectorized)
+    print(f"   📊 Building price matrix...", flush=True)
 
-    print(f"   📊 Prepared data for {len(ticker_data_dict)} tickers", flush=True)
+    # Filter data to optimization period
+    if 'date' in all_tickers_data.columns:
+        mask = (all_tickers_data['date'] >= optimization_start) & (all_tickers_data['date'] <= backtest_end)
+        filtered_data = all_tickers_data[mask].copy()
+    else:
+        filtered_data = all_tickers_data.copy()
 
-    # Write data to temp file to avoid pickling huge DataFrames per task (OOM fix)
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.joblib')
-    temp_path = temp_file.name
-    temp_file.close()
+    # Pivot to get price matrix
+    close_col = 'Close' if 'Close' in filtered_data.columns else 'close'
+    pivot_df = filtered_data.pivot_table(
+        index='date',
+        columns='ticker',
+        values=close_col,
+        aggfunc='last'
+    )
 
-    try:
-        print(f"   💾 Writing shared data to temp file...", flush=True)
-        joblib.dump(ticker_data_dict, temp_path)
+    # Forward fill missing prices (stock didn't trade that day)
+    pivot_df = pivot_df.ffill()
 
-        # Generate all tasks (no data - workers load from temp file)
-        horizons = list(range(REBALANCE_HORIZON_MIN, REBALANCE_HORIZON_MAX + 1))
-        tasks = []
+    # Convert to numpy for speed
+    price_matrix = pivot_df.values.astype(np.float64)
+    dates = pivot_df.index.values
+    tickers = list(pivot_df.columns)
 
+    print(f"   📊 Price matrix: {price_matrix.shape[0]} days × {price_matrix.shape[1]} tickers", flush=True)
+
+    # Test horizons
+    horizons = list(range(REBALANCE_HORIZON_MIN, REBALANCE_HORIZON_MAX + 1))
+    total_sims = len(horizons) * len(strategy_types)
+
+    print(f"   🚀 Running {total_sims} simulations (vectorized, sequential)...", flush=True)
+
+    results = {}
+    for st in strategy_types:
+        results[st] = {'all_results': [], 'best_horizon': None, 'best_return': -float('inf'), 'best_txn_cost': 0}
+
+    # Run simulations with progress
+    from tqdm import tqdm
+    completed = 0
+
+    with tqdm(total=total_sims, desc="   Optimizing horizons", ncols=100) as pbar:
         for strategy_type in strategy_types:
             for horizon in horizons:
-                tasks.append((
-                    strategy_type, horizon,
-                    optimization_start, backtest_end, initial_capital, portfolio_size
-                ))
+                final_value, txn_cost = _simulate_strategy_vectorized(
+                    price_matrix=price_matrix,
+                    dates=dates,
+                    tickers=tickers,
+                    strategy_type=strategy_type,
+                    rebalance_days=horizon,
+                    initial_capital=initial_capital,
+                    portfolio_size=portfolio_size
+                )
 
-        total_tasks = len(tasks)
-        print(f"   🚀 Running {total_tasks} simulations in parallel ({len(horizons)} horizons × {len(strategy_types)} strategies)", flush=True)
+                return_pct = ((final_value / initial_capital) - 1) * 100
+                results[strategy_type]['all_results'].append((horizon, return_pct, txn_cost))
 
-        # Run in parallel - use fewer workers to reduce memory pressure and semaphore issues
-        from config import NUM_PROCESSES
-        n_workers = min(4, NUM_PROCESSES, total_tasks)  # Cap at 4 workers for stability
-        print(f"   🔧 Using {n_workers} workers (capped for WSL stability)", flush=True)
+                if return_pct > results[strategy_type]['best_return']:
+                    results[strategy_type]['best_return'] = return_pct
+                    results[strategy_type]['best_horizon'] = horizon
+                    results[strategy_type]['best_txn_cost'] = txn_cost
 
-        results = {}
-        for st in strategy_types:
-            results[st] = {'all_results': [], 'best_horizon': None, 'best_return': -float('inf'), 'best_txn_cost': 0}
-
-        # Use imap_unordered for streaming results (no blocking on slow tasks)
-        # maxtasksperchild=10 recycles workers more frequently to prevent semaphore leaks in WSL
-        # initializer passes temp file path to workers for lazy loading
-        pool = mp.Pool(processes=n_workers, maxtasksperchild=10,
-                       initializer=_init_worker, initargs=(temp_path,))
-        try:
-            # Process all tasks with tqdm progress bar
-            from tqdm import tqdm
-            with tqdm(total=total_tasks, desc="   Optimizing horizons", ncols=100) as pbar:
-                for strategy_type, horizon, final_value, txn_cost in pool.imap_unordered(_simulate_static_strategy, tasks):
-                    return_pct = ((final_value / initial_capital) - 1) * 100
-                    results[strategy_type]['all_results'].append((horizon, return_pct, txn_cost))
-
-                    if return_pct > results[strategy_type]['best_return']:
-                        results[strategy_type]['best_return'] = return_pct
-                        results[strategy_type]['best_horizon'] = horizon
-                        results[strategy_type]['best_txn_cost'] = txn_cost
-
-                    pbar.update(1)
-        finally:
-            pool.close()
-            pool.join()
-            pool.terminate()  # Force terminate any lingering processes
-
-        # Force garbage collection to release semaphores after Pool closes (WSL fix)
-        gc.collect()
-        gc.collect()  # Double collect for thorough cleanup
-
-    finally:
-        # Clean up temp file
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
+                pbar.update(1)
 
     # Print summary
     print(f"\n   ✅ OPTIMIZATION COMPLETE", flush=True)
@@ -329,11 +237,15 @@ def optimize_rebalance_horizons(
         print(f"      Best return: {r['best_return']:+.1f}%", flush=True)
         print(f"      Transaction costs: ${r['best_txn_cost']:.0f}", flush=True)
 
-        # Show all horizons sorted by return
-        all_sorted = sorted(r['all_results'], key=lambda x: x[1], reverse=True)
+        # Show top 5 horizons
+        all_sorted = sorted(r['all_results'], key=lambda x: x[1], reverse=True)[:5]
         horizon_str = ", ".join([f"{h}d={ret:+.1f}%" for h, ret, _ in all_sorted])
-        print(f"      All horizons: {horizon_str}", flush=True)
+        print(f"      Top 5: {horizon_str}", flush=True)
     print("-" * 50, flush=True)
+
+    # Cleanup
+    del price_matrix, pivot_df, filtered_data
+    gc.collect()
 
     return results
 
@@ -341,9 +253,6 @@ def optimize_rebalance_horizons(
 def get_best_horizons(optimization_results: Dict) -> Dict[str, int]:
     """
     Extract the best horizon for each strategy type from optimization results.
-
-    Returns:
-        Dict mapping strategy type to best horizon days
     """
     return {
         st: results['best_horizon']

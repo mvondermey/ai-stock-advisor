@@ -266,22 +266,22 @@ from multiprocessing import cpu_count
 def _auto_detect_process_counts():
     """
     Automatically detect safe process counts based on available RAM.
-    - Training processes: ~3GB RAM each (ML models are memory-heavy)
-    - Data processes: ~1GB RAM each (lighter data processing tasks)
+    - Training processes: ~5GB RAM each (ML models are memory-heavy)
+    - Data processes: ~2GB RAM each (lighter data processing tasks)
     """
     try:
         import psutil
         available_ram_gb = psutil.virtual_memory().available / (1024**3)
         total_ram_gb = psutil.virtual_memory().total / (1024**3)
 
-        # Use available RAM with some headroom (leave 20% free)
-        usable_ram_gb = available_ram_gb * 0.8
+        # Use available RAM with some headroom (leave 30% free for OS/other apps)
+        usable_ram_gb = available_ram_gb * 0.7
 
         # Calculate safe process counts
-        # Training: ~3GB per process (XGBoost, PyTorch models)
-        safe_training = max(1, int(usable_ram_gb / 3))
-        # Data processing: ~1GB per process (lighter tasks)
-        safe_data = max(1, int(usable_ram_gb / 1))
+        # Training: ~5GB per process (XGBoost, PyTorch models - increased for safety)
+        safe_training = max(1, int(usable_ram_gb / 5))
+        # Data processing: ~2GB per process (increased for safety)
+        safe_data = max(1, int(usable_ram_gb / 2))
 
         # Cap at CPU count (no point having more processes than cores)
         cores = cpu_count()
@@ -869,25 +869,25 @@ TREND_ATR_ENTRY_BREAKOUT = 20  # Days for breakout detection
 
 
 
-MULTI_TIMEFRAMES = ["1d", "4h", "1h"]    # Timeframes to analyze
+MULTI_TIMEFRAMES = ["long_term", "medium_term", "short_term"]    # Analysis horizons to score
 
 MULTI_TIMEFRAME_LOOKBACK = {
 
-    "1d": 365,    # Daily: 1 year lookback
+    "long_term": 365,    # Long-term horizon: 1 year lookback
 
-    "4h": 30,     # 4-hour: 30 days lookback
+    "medium_term": 30,     # Medium-term horizon: 30 days lookback
 
-    "1h": 7       # 1-hour: 7 days lookback
+    "short_term": 7       # Short-term horizon: 7 days lookback
 
 }
 
 MULTI_TIMEFRAME_WEIGHTS = {
 
-    "1d": 0.6,    # Daily gets 60% weight (trend direction)
+    "long_term": 0.6,    # Long-term gets 60% weight (trend direction)
 
-    "4h": 0.3,    # 4-hour gets 30% weight (momentum confirmation)
+    "medium_term": 0.3,    # Medium-term gets 30% weight (momentum confirmation)
 
-    "1h": 0.1     # 1-hour gets 10% weight (timing)
+    "short_term": 0.1     # Short-term gets 10% weight (timing)
 
 }
 
@@ -911,13 +911,15 @@ ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
 
 PORTFOLIO_SIZE          = 10        # Number of stocks to hold in portfolio
 
-PORTFOLIO_BUFFER_SIZE    = 2         # Sell when stock not in top X (buffer for stability)
+PORTFOLIO_BUFFER_SIZE    = 3         # Sell when stock not in top X (buffer for stability)
 
 TOTAL_CAPITAL           = 300000     # Total capital to invest ($300,000)
 
 INVESTMENT_PER_STOCK    = TOTAL_CAPITAL / PORTFOLIO_SIZE  # Automatically calculated
 
 TRANSACTION_COST        = 0.011      # 1.1% per trade leg (buy or sell)
+
+DEBUG_REBALANCE_LOGS   = True       # Print detailed portfolio state before/after smart rebalancing
 
 ENABLE_STOP_LOSS        = False      # Global enable/disable stop loss protection (overridden by per-strategy settings)
 

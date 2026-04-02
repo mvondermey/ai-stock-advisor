@@ -52,6 +52,7 @@ def select_vol_sweet_mom_stocks(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
     top_n: int = 10,
+    verbose: bool = True,
 ) -> List[str]:
     from performance_filters import filter_tickers_by_performance
 
@@ -59,13 +60,14 @@ def select_vol_sweet_mom_stocks(
     MIN_SCORE = 0.5  # With annualized vol ~30-40%, scores are ~1-5 range
 
     filtered = filter_tickers_by_performance(all_tickers, ticker_data_grouped, current_date, "VolSweetMom")
-    print(f"   📊 VSM: analysing {len(filtered)} tickers")
+    if verbose:
+        print(f"   📊 VSM: analysing {len(filtered)} tickers")
 
     candidates = []
     for tkr in filtered:
         try:
             df = ticker_data_grouped.get(tkr)
-            if df is None or len(df) < 100:
+            if df is None or len(df) < 10:  # Reduced from 100
                 continue
             close = df["Close"].dropna()
             if len(close) < 30:
@@ -101,11 +103,13 @@ def select_vol_sweet_mom_stocks(
             continue
 
     if not candidates:
-        print("   ⚠️ VSM: no candidates")
+        if verbose:
+            print("   ⚠️ VSM: no candidates")
         return []
 
     candidates.sort(key=lambda x: x[1], reverse=True)
     selected = [c[0] for c in candidates[:top_n]]
 
-    print(f"   ✅ VSM: selected {selected}")
+    if verbose:
+        print(f"   ✅ VSM: selected {selected}")
     return selected

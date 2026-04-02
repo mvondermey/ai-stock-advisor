@@ -748,30 +748,19 @@ def main(
         # Quick aggregation: count rows per ticker
         ticker_counts = all_tickers_data.groupby('ticker').size()
 
-        # Use parallel processing for large ticker sets
+        # Use sequential processing - parallel caused stderr issues in WSL2/CUDA
         if len(all_available_tickers) > PARALLEL_THRESHOLD:
-            print(f"   Using parallel validation for {len(all_available_tickers)} tickers...")
-            from multiprocessing import Pool
+            print(f"   Using fast validation for {len(all_available_tickers)} tickers...")
             import functools
-
-            # Add progress bar
-            progress_bar = tqdm(total=len(all_available_tickers), desc="   [INFO] Validating tickers", ncols=100)
 
             # Partial function to pass ticker_counts
             validate_func = functools.partial(validate_single_ticker, ticker_counts=ticker_counts)
 
-            import gc
-            num_workers = min(NUM_PROCESSES, len(all_available_tickers))
-            with Pool(processes=num_workers, maxtasksperchild=50) as pool:
-                if progress_bar:
-                    data_summaries = []
-                    for result in pool.imap_unordered(validate_func, all_available_tickers):
-                        data_summaries.append(result)
-                        progress_bar.update(1)
-                    progress_bar.close()
-                else:
-                    data_summaries = list(pool.imap(validate_func, all_available_tickers))
-            gc.collect()  # Release semaphores after Pool closes (WSL fix)
+            # Sequential but fast (validation is just a dict lookup)
+            data_summaries = []
+            for ticker in all_available_tickers:
+                data_summaries.append(validate_func(ticker))
+            print(f"   ✅ Validated {len(data_summaries)} tickers")
         else:
             # Sequential for small lists
             data_summaries = [validate_single_ticker(ticker, ticker_counts)
@@ -1154,7 +1143,7 @@ def main(
     # --- Calculate Buy & Hold ---
     print(f"\n📊 Calculating Buy & Hold performance for {actual_period_name} period...")
     print(f"   Processing {len(top_tickers)} tickers (using cached data)...")
-    
+
     # Pre-convert DataFrame to dict using groupby if needed (O(n) vs O(n*m))
     if isinstance(all_tickers_data, pd.DataFrame):
         print("   Converting to dict format for fast lookup...")
@@ -1163,7 +1152,7 @@ def main(
             _ticker_lookup[ticker] = group.set_index('date')
     else:
         _ticker_lookup = all_tickers_data
-    
+
     buy_hold_results_1y = []
     performance_metrics_buy_hold_1y_actual = []
     for idx, ticker in enumerate(top_tickers):
@@ -1878,7 +1867,7 @@ if __name__ == "__main__":
             print("📊 UNIFIED TICKER PERFORMANCE TABLE (Sorted by 3M Performance)")
             print("=" * 100)
 
-            from ticker_selection import _calculate_1y_return_from_dataframe
+            from parallel_strategies import calculate_performance_for_period
 
             today = datetime.now(timezone.utc)
 
@@ -1937,11 +1926,13 @@ if __name__ == "__main__":
                     try:
                         ticker_df = ticker_data_dict[ticker]
 
-                        # Calculate 1Y performance
-                        perf_1y = _calculate_1y_return_from_dataframe(ticker_df, today, 365)
+                        # Calculate 1Y performance using existing function
+                        result_1y = calculate_performance_for_period((ticker, ticker_df, today, 365))
+                        perf_1y = result_1y[1] if result_1y else None
 
-                        # Calculate 3M performance
-                        perf_3m = _calculate_1y_return_from_dataframe(ticker_df, today, 90)
+                        # Calculate 3M performance using existing function
+                        result_3m = calculate_performance_for_period((ticker, ticker_df, today, 90))
+                        perf_3m = result_3m[1] if result_3m else None
 
                         if perf_1y is not None and perf_3m is not None:
                             performance_data.append({

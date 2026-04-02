@@ -110,15 +110,23 @@ def collect_ticker_training_data(
 def _prepare_labels(train_df: pd.DataFrame) -> pd.DataFrame:
     """Compute forward return for regression target (simpler, more predictable)."""
     # Use raw forward return as target - more predictable than risk-adjusted
-    train_df['label'] = train_df['forward_return']
+    train_df['label'] = train_df['forward_return'].copy()
 
-    # Clip extreme outliers for stability
+    # First, hard clip to reasonable bounds (e.g., -100% to +200% forward return)
+    # This prevents extreme outliers from crypto/penny stocks from destabilizing training
+    train_df['label'] = train_df['label'].clip(lower=-100.0, upper=200.0)
+
+    # Then apply 3-sigma clipping for remaining outliers
     mean_ret = train_df['label'].mean()
     std_ret = train_df['label'].std()
     if std_ret > 0:
         train_df['label'] = train_df['label'].clip(
             lower=mean_ret - 3 * std_ret, upper=mean_ret + 3 * std_ret
         )
+
+    # Replace any NaN/Inf that might have slipped through
+    train_df['label'] = train_df['label'].replace([np.inf, -np.inf], np.nan)
+    train_df = train_df.dropna(subset=['label'])
 
     return train_df
 
@@ -191,6 +199,7 @@ def train_shared_base_model(
             'XGBoost': xgb.XGBRegressor(
                 n_estimators=100, max_depth=4, learning_rate=0.1,
                 subsample=0.8, random_state=42,
+                reg_alpha=0.1, reg_lambda=1.0,  # L1/L2 regularization to prevent exploding
                 tree_method='hist', device=device, verbosity=0, n_jobs=-1
             ),
             'LightGBM': lgb.LGBMRegressor(
@@ -237,20 +246,52 @@ def train_shared_base_model(
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
+                incremental_failed = False
                 if has_existing:
                     # True incremental training for supported models
-                    if name == 'XGBoost':
-                        m.fit(X_train, y_train, xgb_model=m.get_booster())
-                    elif name == 'LightGBM':
-                        m.fit(X_train, y_train, init_model=m.booster_)
-                    elif name == 'CatBoost':
-                        # CatBoost GPU doesn't support continuation - switch to CPU
-                        m._init_params['task_type'] = 'CPU'
-                        m.fit(X_train, y_train, init_model=m)
-                    else:
-                        m.fit(X_train, y_train)
-                else:
-                    # Fresh training
+                    try:
+                        if name == 'XGBoost':
+                            m.fit(X_train, y_train, xgb_model=m.get_booster())
+                        elif name == 'LightGBM':
+                            m.fit(X_train, y_train, init_model=m.booster_)
+                        elif name == 'CatBoost':
+                            # CatBoost GPU doesn't support continuation - switch to CPU
+                            m._init_params['task_type'] = 'CPU'
+                            m.fit(X_train, y_train, init_model=m)
+                        else:
+                            m.fit(X_train, y_train)
+
+                        # Quick sanity check for incremental training - detect numerical instability
+                        quick_pred = m.predict(X_val[:100])
+                        if np.any(np.isnan(quick_pred)) or np.any(np.isinf(quick_pred)) or np.max(np.abs(quick_pred)) > 1e10:
+                            print(f"(incremental unstable, retraining fresh)...", end=" ", flush=True)
+                            incremental_failed = True
+                    except Exception as e:
+                        print(f"(incremental failed: {e}, retraining fresh)...", end=" ", flush=True)
+                        incremental_failed = True
+
+                if not has_existing or incremental_failed:
+                    # Fresh training - create new model instance if incremental failed
+                    if incremental_failed:
+                        if name == 'XGBoost':
+                            m = xgb.XGBRegressor(
+                                n_estimators=100, max_depth=4, learning_rate=0.1,
+                                subsample=0.8, random_state=42,
+                                reg_alpha=0.1, reg_lambda=1.0,
+                                tree_method='hist', device=device, verbosity=0, n_jobs=-1
+                            )
+                        elif name == 'LightGBM':
+                            m = lgb.LGBMRegressor(
+                                n_estimators=100, max_depth=4, learning_rate=0.1,
+                                subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
+                            )
+                        elif name == 'CatBoost':
+                            import catboost as cb
+                            task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
+                            m = cb.CatBoostRegressor(
+                                iterations=100, depth=4, learning_rate=0.1,
+                                task_type=task_type, random_seed=42, verbose=0
+                            )
                     m.fit(X_train, y_train)
 
                 # Validate model was trained (has trees/estimators)

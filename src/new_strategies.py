@@ -77,7 +77,7 @@ def select_momentum_acceleration_stocks(
             start_3m = current_ts - timedelta(days=MOM_ACCEL_LOOKBACK_DAYS)
             data_3m = ticker_data[(ticker_data.index >= start_3m) & (ticker_data.index <= current_ts)]
 
-            if len(data_3m) < 50:
+            if len(data_3m) < 5:  # Reduced from 50 to allow stocks with less history
                 continue
 
             valid_close = data_3m['Close'].dropna()
@@ -204,7 +204,7 @@ def select_concentrated_3m_stocks(
             start_3m = current_ts - timedelta(days=90)
             data_3m = ticker_data[(ticker_data.index >= start_3m) & (ticker_data.index <= current_ts)]
 
-            if len(data_3m) < 50:
+            if len(data_3m) < 5:  # Reduced from 50 to allow stocks with less history
                 continue
 
             valid_close = data_3m['Close'].dropna()
@@ -307,7 +307,7 @@ def select_dual_momentum_stocks(
             start_date = current_ts - timedelta(days=DUAL_MOM_LOOKBACK_DAYS)
             data = ticker_data[(ticker_data.index >= start_date) & (ticker_data.index <= current_ts)]
 
-            if len(data) < 50:
+            if len(data) < 5:  # Reduced from 50 to allow stocks with less history
                 continue
 
             valid_close = data['Close'].dropna()
@@ -536,7 +536,7 @@ def select_trend_following_atr_stocks(
             start_3m = current_ts - timedelta(days=TREND_ATR_LOOKBACK_DAYS)
             data_3m = ticker_data[(ticker_data.index >= start_3m) & (ticker_data.index <= current_ts)]
 
-            if len(data_3m) < 50:
+            if len(data_3m) < 5:  # Reduced from 50 to allow stocks with less history
                 continue
 
             valid_close = data_3m['Close'].dropna()
@@ -629,7 +629,7 @@ def select_trend_breakout_stocks(
             start_3m = current_ts - timedelta(days=TREND_ATR_LOOKBACK_DAYS)
             data_3m = ticker_data[(ticker_data.index >= start_3m) & (ticker_data.index <= current_ts)]
 
-            if len(data_3m) < 50:
+            if len(data_3m) < 5:  # Reduced from 50 to allow stocks with less history
                 continue
 
             valid_close = data_3m['Close'].dropna()

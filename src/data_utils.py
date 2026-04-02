@@ -1,6 +1,7 @@
 # data_utils.py
 import pandas as pd
 import numpy as np
+import threading
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta, timezone
 from pathlib import Path # Import Path for _ensure_dir
@@ -19,24 +20,24 @@ logging.getLogger('yfinance').setLevel(logging.ERROR)
 # Suppress pandas FutureWarnings that yfinance might trigger
 warnings.filterwarnings('ignore', category=FutureWarning)
 
-# Context manager to suppress yfinance stderr output
+# Suppress yfinance logging noise (thread-safe approach)
 import contextlib
 import os
 import sys
+import logging
+
+# Suppress yfinance warnings globally (thread-safe, no stderr manipulation)
+logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
 @contextlib.contextmanager
 def suppress_yfinance_output():
-    """Context manager to suppress yfinance stderr output for delisted tickers."""
-    # Save original stderr
-    original_stderr = sys.stderr
-    try:
-        # Create a null file descriptor
-        with open(os.devnull, 'w') as devnull:
-            sys.stderr = devnull
-            yield
-    finally:
-        # Restore original stderr
-        sys.stderr = original_stderr
+    """
+    Context manager for yfinance output suppression.
+
+    Now a no-op since we suppress via logging level globally above.
+    Kept for backward compatibility with existing code that uses it.
+    """
+    yield
 
 # Import pandas_datareader for Stooq
 try:
@@ -71,8 +72,6 @@ except ImportError:
 # Resolve cache directory relative to repo root (not current working directory)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _RESOLVED_DATA_CACHE_DIR = DATA_CACHE_DIR if Path(DATA_CACHE_DIR).is_absolute() else (_REPO_ROOT / DATA_CACHE_DIR)
-_MISSING_TICKER_CACHE_DIR = _RESOLVED_DATA_CACHE_DIR / "_missing"
-_MISSING_TICKER_RETRY_HOURS = 24
 
 # Optional Stooq provider
 try:
@@ -527,6 +526,10 @@ def _is_cache_current(last_cached_date, ticker_symbol=None):
     print(f"  [DEBUG] {ticker_symbol}: Cache check {cached_date} >= {last_trading_day} = {is_current}")
     return is_current
 
+# Global lock for yfinance calls - yfinance has threading bugs that cause data corruption
+# when called concurrently. This lock serializes all yfinance API calls.
+_yfinance_global_lock = threading.Lock()
+
 # CLASS_HORIZON is now imported from config above
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """
@@ -543,14 +546,19 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     # Get ENABLE_DATA_DOWNLOAD directly from module (not cached import)
     ENABLE_DATA_DOWNLOAD = config_module.ENABLE_DATA_DOWNLOAD
 
-    # Global cache lock for thread safety
-    if not hasattr(load_prices, '_cache_lock'):
-        load_prices._cache_lock = threading.Lock()
+    # Per-ticker locks for fine-grained thread safety (allows parallel downloads)
+    if not hasattr(load_prices, '_ticker_locks'):
+        load_prices._ticker_locks = {}
+        load_prices._locks_lock = threading.Lock()  # Lock for creating new ticker locks
+
+    # Get or create per-ticker lock
+    with load_prices._locks_lock:
+        if ticker not in load_prices._ticker_locks:
+            load_prices._ticker_locks[ticker] = threading.Lock()
+        ticker_lock = load_prices._ticker_locks[ticker]
 
     _ensure_dir(_RESOLVED_DATA_CACHE_DIR)
-    _ensure_dir(_MISSING_TICKER_CACHE_DIR)
     cache_file = _RESOLVED_DATA_CACHE_DIR / f"{ticker}.csv"
-    missing_marker_file = _MISSING_TICKER_CACHE_DIR / f"{ticker}.txt"
 
     cached_df = pd.DataFrame()
     new_df = pd.DataFrame()
@@ -559,17 +567,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     needs_fetch = True if ENABLE_DATA_DOWNLOAD else False
 
     # --- Step 1: Check existing cache and determine what to fetch ---
-    with load_prices._cache_lock:
-        # If we recently failed to fetch this ticker and have no local cache, skip re-fetch for a while
-        if not cache_file.exists() and missing_marker_file.exists():
-            try:
-                marker_mtime = datetime.fromtimestamp(missing_marker_file.stat().st_mtime, tz=timezone.utc)
-                marker_age_hours = (datetime.now(timezone.utc) - marker_mtime).total_seconds() / 3600
-                if marker_age_hours < _MISSING_TICKER_RETRY_HOURS:
-                    return pd.DataFrame()
-            except Exception:
-                pass
-
+    with ticker_lock:
         if cache_file.exists():
             try:
                 # Check if cache has 'Date' or 'Datetime' column, or use first column as index
@@ -673,10 +671,13 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             providers_tried.append("Yahoo")
             try:
                 # Suppress yfinance stderr output for delisted tickers
-                with suppress_yfinance_output():
-                    downloaded_df = yf.download(ticker, start=start_utc, end=end_utc,
-                                               interval=DATA_INTERVAL, auto_adjust=True, progress=False,
-                                               multi_level_index=False)
+                # CRITICAL: Use global lock - yfinance has threading bugs that cause
+                # data corruption when called concurrently (returns wrong ticker's data)
+                with _yfinance_global_lock:
+                    with suppress_yfinance_output():
+                        downloaded_df = yf.download(ticker, start=start_utc, end=end_utc,
+                                                   interval=DATA_INTERVAL, auto_adjust=True, progress=False,
+                                                   multi_level_index=False, threads=False)
                 if downloaded_df is not None and not downloaded_df.empty:
                     new_df = downloaded_df.dropna()
                 else:
@@ -702,16 +703,23 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
 
     # Clean up new data (only if we fetched anything)
     if not new_df.empty:
+        # Make an explicit copy to avoid SettingWithCopyWarning
+        new_df = new_df.copy()
+
         # Handle MultiIndex columns from yfinance (e.g., ('Close', 'AAPL') -> 'Close')
         if isinstance(new_df.columns, pd.MultiIndex):
             new_df.columns = [col[0] if isinstance(col, tuple) else col for col in new_df.columns]
         new_df.columns = [str(col).capitalize() for col in new_df.columns]
+
+        # Remove duplicate columns (can happen with MultiIndex flattening)
+        new_df = new_df.loc[:, ~new_df.columns.duplicated()]
+
         if "Close" not in new_df.columns and "Adj close" in new_df.columns:
             new_df = new_df.rename(columns={"Adj close": "Close"})
         if "Volume" in new_df.columns:
-            new_df.loc[:, "Volume"] = new_df["Volume"].fillna(0).astype(int)
+            new_df["Volume"] = new_df["Volume"].fillna(0).astype(int)
         else:
-            new_df.loc[:, "Volume"] = 0
+            new_df["Volume"] = 0
 
         if new_df.index.tzinfo is None:
             new_df.index = new_df.index.tz_localize('UTC')
@@ -728,37 +736,38 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     elif not new_df.empty:
         price_df = new_df
     else:
-        # Persist a short-lived marker for unavailable/delisted tickers to avoid re-fetching every run
-        if cached_df.empty:
-            with load_prices._cache_lock:
-                try:
-                    missing_marker_file.write_text(datetime.now(timezone.utc).isoformat(), encoding='utf-8')
-                except Exception:
-                    pass
         return pd.DataFrame()
 
     # --- Step 4: Save updated cache (always save original 1h data) ---
     if needs_fetch and not new_df.empty:
-        with load_prices._cache_lock:
+        with ticker_lock:
             try:
                 # Debug: Show cache save info for specific tickers
                 if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
                     print(f"  💾 Saving {ticker}: shape={price_df.shape}, Close[0]={price_df['Close'].iloc[0]:.2f}, Close[-1]={price_df['Close'].iloc[-1]:.2f}")
+                # Ensure index has a name for proper CSV loading later
+                if price_df.index.name is None:
+                    price_df.index.name = 'Datetime'
                 price_df.to_csv(cache_file)
             except Exception as e:
                 print(f"  Warning: Could not save cache for {ticker}: {e}")
 
-    # Clear missing-marker once we have valid price data
-    if not price_df.empty and missing_marker_file.exists():
-        with load_prices._cache_lock:
-            try:
-                missing_marker_file.unlink(missing_ok=True)
-            except Exception:
-                pass
-
     # --- Step 5: Convert 1h data to daily data if DATA_INTERVAL is 1h ---
     if DATA_INTERVAL == '1h' and not price_df.empty:
         try:
+            # Make explicit copy to avoid SettingWithCopyWarning
+            price_df = price_df.copy()
+
+            # Normalize column names (handle case variations)
+            price_df.columns = [str(col).strip().capitalize() for col in price_df.columns]
+
+            # Remove duplicate columns if any (can happen with malformed yfinance data)
+            price_df = price_df.loc[:, ~price_df.columns.duplicated()]
+
+            # Verify Close column is a Series not a DataFrame (safety check)
+            if isinstance(price_df['Close'], pd.DataFrame):
+                price_df['Close'] = price_df['Close'].iloc[:, 0]
+
             # --- Step 5.1: Calculate Core 1h Features before aggregation ---
             # Calculate intraday returns
             price_df['Hourly_Return'] = price_df['Close'].pct_change()
@@ -896,45 +905,83 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    def download_single_ticker(ticker):
-        """Download a single ticker - thread-safe via load_prices lock"""
-        try:
-            df = load_prices(ticker, start, end)
-            if not df.empty:
-                df = df.copy()
-                df['ticker'] = ticker
-                df = df.reset_index()
-                if 'Date' in df.columns:
-                    df = df.rename(columns={'Date': 'date'})
-                elif 'Datetime' in df.columns:
-                    df = df.rename(columns={'Datetime': 'date'})
-                elif 'index' in df.columns:
-                    df = df.rename(columns={'index': 'date'})
-                elif 'level_0' in df.columns:
-                    df = df.rename(columns={'level_0': 'date'})
-                return df
-        except Exception as e:
-            pass  # Errors logged inside load_prices
-        return None
+    # Global rate limiter for API calls (shared across threads)
+    import threading
+    import time
+    if not hasattr(_download_batch_robust, '_rate_limiter'):
+        _download_batch_robust._rate_limiter = threading.Semaphore(8)  # Max 8 concurrent API calls
+        _download_batch_robust._last_call_time = 0
+        _download_batch_robust._call_lock = threading.Lock()
 
-    # Use 8 workers for downloads (balance between speed and API rate limits)
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    def download_single_ticker(ticker):
+        """Download a single ticker with rate limiting"""
+        # Acquire rate limiter (limits concurrent API calls)
+        with _download_batch_robust._rate_limiter:
+            # Add small delay between API calls to avoid burst requests
+            with _download_batch_robust._call_lock:
+                elapsed = time.time() - _download_batch_robust._last_call_time
+                if elapsed < 0.1:  # Minimum 100ms between API calls
+                    time.sleep(0.1 - elapsed)
+                _download_batch_robust._last_call_time = time.time()
+
+            try:
+                # Use load_prices_robust for automatic retry on rate limits
+                df = load_prices_robust(ticker, start, end)
+                if not df.empty:
+                    df = df.copy()
+                    df['ticker'] = ticker
+                    df = df.reset_index()
+                    if 'Date' in df.columns:
+                        df = df.rename(columns={'Date': 'date'})
+                    elif 'Datetime' in df.columns:
+                        df = df.rename(columns={'Datetime': 'date'})
+                    elif 'index' in df.columns:
+                        df = df.rename(columns={'index': 'date'})
+                    elif 'level_0' in df.columns:
+                        df = df.rename(columns={'level_0': 'date'})
+                    return df
+            except Exception as e:
+                pass  # Errors logged inside load_prices_robust
+            return None
+
+    # Use 16 workers for downloads, but rate limiter caps concurrent API calls to 8
+    import sys
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
         futures = {executor.submit(download_single_ticker, ticker): ticker for ticker in tickers}
 
+        pbar = None
         try:
             from tqdm import tqdm
-            pbar = tqdm(total=len(tickers), desc="  [INFO] Downloading tickers", ncols=100)
+            pbar = tqdm(total=len(tickers), desc="  [INFO] Downloading tickers", ncols=100, file=sys.stdout)
             for future in as_completed(futures):
-                result = future.result()
-                if result is not None:
-                    all_data_frames.append(result)
+                try:
+                    result = future.result()
+                    if result is not None:
+                        all_data_frames.append(result)
+                except Exception:
+                    pass  # Ignore individual ticker errors
                 pbar.update(1)
-            pbar.close()
         except ImportError:
             for future in as_completed(futures):
-                result = future.result()
-                if result is not None:
-                    all_data_frames.append(result)
+                try:
+                    result = future.result()
+                    if result is not None:
+                        all_data_frames.append(result)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"  [WARN] Download progress tracking error: {e}", flush=True)
+        finally:
+            if pbar is not None:
+                try:
+                    pbar.close()
+                except Exception:
+                    pass
+            sys.stdout.flush()
+            sys.stderr.flush()
 
     if all_data_frames:
         # Concatenate all tickers into long format
@@ -1389,31 +1436,43 @@ def _fetch_intermarket_data(start: datetime = None, end: datetime = None) -> pd.
 def _load_from_cache_parallel(all_tickers: list, start_date: datetime, end_date: datetime) -> pd.DataFrame:
     """
     Load data from cache files in parallel. Fast path - no API calls, no locks.
-    
+
     Args:
         all_tickers: List of ticker symbols
         start_date: Start date for data filtering
         end_date: End date for data filtering
-    
+
     Returns:
         DataFrame with all ticker data in long format
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from utils import _to_utc
-    
+
     print(f"  [INFO] Loading cache for {len(all_tickers)} tickers (parallel)...")
-    
+
     start_utc = _to_utc(start_date)
     end_utc = _to_utc(end_date)
     cache_dir = _RESOLVED_DATA_CACHE_DIR
-    
+
     def load_ticker_csv_direct(ticker):
         """Load ticker directly from CSV - no locks, no debug messages"""
         try:
             cache_file = cache_dir / f"{ticker}.csv"
             if cache_file.exists():
                 df = pd.read_csv(cache_file)
-                date_col = 'Datetime' if 'Datetime' in df.columns else 'Date'
+
+                # Handle different date column formats
+                if 'Datetime' in df.columns:
+                    date_col = 'Datetime'
+                elif 'Date' in df.columns:
+                    date_col = 'Date'
+                elif 'Unnamed: 0' in df.columns:
+                    # Handle CSV saved with unnamed index column (ETFs often have this format)
+                    date_col = 'Unnamed: 0'
+                else:
+                    # No recognizable date column
+                    return None
+
                 df[date_col] = pd.to_datetime(df[date_col], utc=True)
                 df = df.set_index(date_col)
                 df = df.loc[(df.index >= start_utc) & (df.index <= end_utc)].copy()
@@ -1425,7 +1484,7 @@ def _load_from_cache_parallel(all_tickers: list, start_date: datetime, end_date:
         except Exception:
             pass
         return None
-    
+
     all_data_frames = []
     with ThreadPoolExecutor(max_workers=16) as executor:
         futures = {executor.submit(load_ticker_csv_direct, ticker): ticker for ticker in all_tickers}
@@ -1433,9 +1492,9 @@ def _load_from_cache_parallel(all_tickers: list, start_date: datetime, end_date:
             result = future.result()
             if result is not None:
                 all_data_frames.append(result)
-    
+
     print(f"  [INFO] Loaded {len(all_data_frames)}/{len(all_tickers)} tickers from cache")
-    
+
     if all_data_frames:
         all_tickers_data = pd.concat(all_data_frames, ignore_index=True)
         if 'date' in all_tickers_data.columns:
@@ -1449,7 +1508,7 @@ def _download_and_update_cache(all_tickers: list, start_date: datetime, end_date
     """
     Download data and update cache files. Does NOT return data - just updates cache.
     After this, use _load_from_cache_parallel() to read the data.
-    
+
     Args:
         all_tickers: List of ticker symbols to download
         start_date: Start date for data
@@ -1457,24 +1516,24 @@ def _download_and_update_cache(all_tickers: list, start_date: datetime, end_date
     """
     from config import BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES
     import time
-    
+
     print(f"🚀 Downloading/updating cache for {len(all_tickers)} tickers...")
-    
+
     # Use parallel downloads within _download_batch_robust (already parallelized)
     # This calls load_prices() which checks cache freshness and downloads if needed
     _download_batch_robust(all_tickers, start=start_date, end=end_date)
-    
+
     print(f"  ✅ Cache update complete")
 
 
 def load_all_market_data(all_tickers: list, end_date: datetime = None) -> pd.DataFrame:
     """
     Load market data for all tickers.
-    
+
     Two-phase approach:
     1. If downloads enabled: update cache files (download new data where needed)
     2. Always: load from cache in parallel (fast path)
-    
+
     Args:
         all_tickers: List of ticker symbols
         end_date: End date for data (defaults to last trading day)
@@ -1483,7 +1542,7 @@ def load_all_market_data(all_tickers: list, end_date: datetime = None) -> pd.Dat
         DataFrame with all ticker data in long format (with 'ticker' and 'date' columns)
     """
     import config as config_module
-    
+
     # Get ENABLE_DATA_DOWNLOAD directly from module (not cached import)
     ENABLE_DATA_DOWNLOAD = config_module.ENABLE_DATA_DOWNLOAD
 
@@ -1508,7 +1567,7 @@ def load_all_market_data(all_tickers: list, end_date: datetime = None) -> pd.Dat
 
     # Phase 2: Load from cache (always - fast parallel path)
     all_tickers_data = _load_from_cache_parallel(all_tickers, start_date, end_date)
-    
+
     if all_tickers_data.empty:
         print("❌ No data found in cache")
         return pd.DataFrame()

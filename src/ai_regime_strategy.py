@@ -402,7 +402,10 @@ class AIRegimeAllocator:
             training_samples.append(features)
 
         if len(training_samples) < 1:
-            print(f"   ⚠️ AI Regime: No training samples available - using existing model")
+            if self.day_count <= self.forward_days + 1:
+                print(f"   ℹ️ AI Regime: Day {self.day_count} - waiting for {self.forward_days} days of data before training")
+            else:
+                print(f"   ⚠️ AI Regime: No training samples available - using existing model")
             # Don't return False - keep existing model for predictions
             return True
 
