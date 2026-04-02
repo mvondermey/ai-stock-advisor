@@ -647,11 +647,12 @@ ENABLE_SENTIMENT_ENSEMBLE = True   # ENABLED - Sentiment-Enhanced Ensemble Strat
 
 
 
-# --- Multi-Timeframe Ensemble Strategy ---
+# --- Multi-Horizon Ensemble Strategy ---
 
 # Combines signals from different timeframes for better entry/exit timing
 
-ENABLE_MULTI_TIMEFRAME_ENSEMBLE = True   # NEW - Multi-Timeframe Ensemble Strategy
+ENABLE_MULTI_TIMEFRAME_ENSEMBLE = True   # NEW - Multi-Horizon Ensemble Strategy
+ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE = True   # NEW - Multi-Horizon Ensemble using hourly data for medium/short horizons
 
 
 

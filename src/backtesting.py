@@ -180,7 +180,8 @@ STRATEGY_DISPLAY_NAMES = {
     'volatility_ensemble': 'Volatility Ensemble',
     'enhanced_volatility': 'Enhanced Volatility',
     'ai_volatility_ensemble': 'AI Volatility Ensemble',
-    'multi_tf_ensemble': 'Multi-TF Ensemble',
+    'multi_tf_ensemble': 'Multi-Horizon Ensemble',
+    'multi_tf_intraday_ensemble': 'Multi-Horizon Intraday',
     'correlation_ensemble': 'Correlation Ensemble',
     'dynamic_pool': 'Dynamic Pool',
     'risk_adj_mom_sentiment': 'RiskAdj Sent',
@@ -301,6 +302,7 @@ dynamic_bh_1y_trailing_stop_transaction_costs = 0
 adaptive_ensemble_transaction_costs = 0
 ai_volatility_ensemble_transaction_costs = 0
 multi_tf_ensemble_transaction_costs = 0
+multi_tf_intraday_ensemble_transaction_costs = 0
 
 
 def _build_daily_strategy_data(locals_dict):
@@ -349,6 +351,7 @@ def _build_daily_strategy_data(locals_dict):
         'enhanced_volatility': config.ENABLE_ENHANCED_VOLATILITY,
         'ai_volatility_ensemble': config.ENABLE_AI_VOLATILITY_ENSEMBLE,
         'multi_tf_ensemble': config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
+        'multi_tf_intraday_ensemble': config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE,
         'correlation_ensemble': config.ENABLE_CORRELATION_ENSEMBLE,
         'dynamic_pool': config.ENABLE_DYNAMIC_POOL,
         'sentiment_ensemble': config.ENABLE_SENTIMENT_ENSEMBLE,
@@ -453,6 +456,7 @@ def _build_daily_strategy_data(locals_dict):
         ('enhanced_volatility', 'enhanced_volatility_portfolio_value', 'enhanced_volatility_portfolio_history', 'enhanced_volatility_cash', 'enhanced_volatility_positions'),
         ('ai_volatility_ensemble', 'ai_volatility_ensemble_portfolio_value', 'ai_volatility_ensemble_portfolio_history', 'ai_volatility_ensemble_cash', 'ai_volatility_ensemble_positions'),
         ('multi_tf_ensemble', 'multi_tf_ensemble_portfolio_value', 'multi_tf_ensemble_portfolio_history', 'multi_tf_ensemble_cash', 'multi_tf_ensemble_positions'),
+        ('multi_tf_intraday_ensemble', 'multi_tf_intraday_ensemble_portfolio_value', 'multi_tf_intraday_ensemble_portfolio_history', 'multi_tf_intraday_ensemble_cash', 'multi_tf_intraday_ensemble_positions'),
         ('correlation_ensemble', 'correlation_ensemble_portfolio_value', 'correlation_ensemble_portfolio_history', 'correlation_ensemble_cash', 'correlation_ensemble_positions'),
         ('dynamic_pool', 'dynamic_pool_portfolio_value', 'dynamic_pool_portfolio_history', 'dynamic_pool_cash', 'dynamic_pool_positions'),
         ('risk_adj_mom_sentiment', 'risk_adj_mom_sentiment_portfolio_value', 'risk_adj_mom_sentiment_portfolio_history', 'risk_adj_mom_sentiment_cash', 'risk_adj_mom_sentiment_positions'),
@@ -2346,13 +2350,21 @@ def _run_portfolio_backtest_walk_forward(
     current_ai_volatility_ensemble_stocks = []  # Current stocks held by AI volatility ensemble
     ai_volatility_ensemble_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
-    # MULTI-TIMEFRAME ENSEMBLE: Initialize portfolio tracking
+    # MULTI-HORIZON ENSEMBLE: Initialize portfolio tracking
     multi_tf_ensemble_portfolio_value = initial_capital_needed
     multi_tf_ensemble_portfolio_history = [multi_tf_ensemble_portfolio_value]
     multi_tf_ensemble_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
     multi_tf_ensemble_cash = initial_capital_needed  # Start with same capital as AI
     current_multi_tf_ensemble_stocks = []  # Current multi-timeframe ensemble stocks held
     multi_tf_ensemble_last_rebalance_value = initial_capital_needed  # Transaction cost guard
+
+    # MULTI-HORIZON INTRADAY: Initialize portfolio tracking
+    multi_tf_intraday_ensemble_portfolio_value = initial_capital_needed
+    multi_tf_intraday_ensemble_portfolio_history = [multi_tf_intraday_ensemble_portfolio_value]
+    multi_tf_intraday_ensemble_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    multi_tf_intraday_ensemble_cash = initial_capital_needed
+    current_multi_tf_intraday_ensemble_stocks = []
+    multi_tf_intraday_ensemble_last_rebalance_value = initial_capital_needed
 
     # CORRELATION ENSEMBLE: Initialize portfolio tracking
     correlation_ensemble_portfolio_value = initial_capital_needed
@@ -2847,7 +2859,7 @@ def _run_portfolio_backtest_walk_forward(
     # Reset global transaction cost tracking variables for this backtest
     global static_bh_transaction_costs, static_bh_3m_transaction_costs, static_bh_6m_transaction_costs, static_bh_1m_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_transaction_costs
     global dynamic_bh_3m_transaction_costs, dynamic_bh_6m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs, ratio_3m_1y_transaction_costs, ratio_1y_3m_transaction_costs, turnaround_transaction_costs, adaptive_ensemble_transaction_costs, volatility_ensemble_transaction_costs, correlation_ensemble_transaction_costs, dynamic_pool_transaction_costs, sentiment_ensemble_transaction_costs
-    global sector_rotation_transaction_costs, momentum_volatility_hybrid_transaction_costs, momentum_volatility_hybrid_6m_transaction_costs, momentum_volatility_hybrid_1y_transaction_costs, momentum_volatility_hybrid_1y3m_transaction_costs, enhanced_volatility_transaction_costs, ai_volatility_ensemble_transaction_costs, multi_tf_ensemble_transaction_costs
+    global sector_rotation_transaction_costs, momentum_volatility_hybrid_transaction_costs, momentum_volatility_hybrid_6m_transaction_costs, momentum_volatility_hybrid_1y_transaction_costs, momentum_volatility_hybrid_1y3m_transaction_costs, enhanced_volatility_transaction_costs, ai_volatility_ensemble_transaction_costs, multi_tf_ensemble_transaction_costs, multi_tf_intraday_ensemble_transaction_costs
     static_bh_transaction_costs = 0.0  # Static BH has no transaction costs (buy once, hold)
     static_bh_3m_transaction_costs = 0.0
     static_bh_6m_transaction_costs = 0.0
@@ -2878,6 +2890,7 @@ def _run_portfolio_backtest_walk_forward(
     enhanced_volatility_transaction_costs = 0.0
     ai_volatility_ensemble_transaction_costs = 0.0
     multi_tf_ensemble_transaction_costs = 0.0
+    multi_tf_intraday_ensemble_transaction_costs = 0.0
     correlation_ensemble_transaction_costs = 0.0
     dynamic_pool_transaction_costs = 0.0
     sentiment_ensemble_transaction_costs = 0.0
@@ -5332,7 +5345,7 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Voting Ensemble strategy error: {e}")
 
-        # MULTI-TIMEFRAME ENSEMBLE: Rebalance using multi-timeframe signals DAILY
+        # MULTI-HORIZON ENSEMBLE: Rebalance using multi-horizon signals from daily data
         if config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE:
             try:
                 from multi_timeframe_ensemble import select_multi_timeframe_stocks
@@ -5345,10 +5358,10 @@ def _run_portfolio_backtest_walk_forward(
                 )
 
                 if new_multi_tf_ensemble_stocks:
-                    print(f"   📊 Multi-TF Ensemble Day {day_count}: {new_multi_tf_ensemble_stocks}")
+                    print(f"   📊 Multi-Horizon Ensemble Day {day_count}: {new_multi_tf_ensemble_stocks}")
                     # Use universal smart rebalancing function
                     multi_tf_ensemble_positions, multi_tf_ensemble_cash, current_multi_tf_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name="Multi-TF Ensemble",
+                        strategy_name="Multi-Horizon Ensemble",
                         current_stocks=current_multi_tf_ensemble_stocks,
                         new_stocks=new_multi_tf_ensemble_stocks,
                         positions=multi_tf_ensemble_positions,
@@ -5359,14 +5372,49 @@ def _run_portfolio_backtest_walk_forward(
                         portfolio_size=PORTFOLIO_SIZE,
                         force_rebalance=not current_multi_tf_ensemble_stocks  # Force initial allocation
                     )
-                    strategies_rebalanced_today['Multi-TF Ensemble'] = rebalanced_flag
+                    strategies_rebalanced_today['Multi-Horizon Ensemble'] = rebalanced_flag
                     multi_tf_ensemble_transaction_costs += rebalance_costs
                     multi_tf_ensemble_last_rebalance_value = multi_tf_ensemble_portfolio_value
                 else:
-                    print(f"   ⚠️ Multi-TF Ensemble: No stocks selected (no consensus)")
+                    print(f"   ⚠️ Multi-Horizon Ensemble: No stocks selected (no consensus)")
 
             except Exception as e:
-                print(f"   ⚠️ Multi-TF Ensemble strategy error: {e}")
+                print(f"   ⚠️ Multi-Horizon Ensemble strategy error: {e}")
+
+        # MULTI-HORIZON INTRADAY: Rebalance using hourly data for medium/short horizons
+        if config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE:
+            try:
+                from multi_timeframe_intraday_ensemble import select_multi_timeframe_intraday_stocks
+
+                new_multi_tf_intraday_ensemble_stocks = select_multi_timeframe_intraday_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                )
+
+                if new_multi_tf_intraday_ensemble_stocks:
+                    print(f"   📊 Multi-Horizon Intraday Day {day_count}: {new_multi_tf_intraday_ensemble_stocks}")
+                    multi_tf_intraday_ensemble_positions, multi_tf_intraday_ensemble_cash, current_multi_tf_intraday_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Multi-Horizon Intraday",
+                        current_stocks=current_multi_tf_intraday_ensemble_stocks,
+                        new_stocks=new_multi_tf_intraday_ensemble_stocks,
+                        positions=multi_tf_intraday_ensemble_positions,
+                        cash=multi_tf_intraday_ensemble_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_multi_tf_intraday_ensemble_stocks
+                    )
+                    strategies_rebalanced_today['Multi-Horizon Intraday'] = rebalanced_flag
+                    multi_tf_intraday_ensemble_transaction_costs += rebalance_costs
+                    multi_tf_intraday_ensemble_last_rebalance_value = multi_tf_intraday_ensemble_portfolio_value
+                else:
+                    print(f"   ⚠️ Multi-Horizon Intraday: No stocks selected (no consensus)")
+
+            except Exception as e:
+                print(f"   ⚠️ Multi-Horizon Intraday strategy error: {e}")
 
         # === MEAN REVERSION, QUALITY+MOM, VOL-ADJ MOM STRATEGIES ===
         # These strategies run independently of Dynamic BH performance data
@@ -8195,7 +8243,7 @@ def _run_portfolio_backtest_walk_forward(
         ai_volatility_ensemble_portfolio_value = ai_volatility_ensemble_invested_value + ai_volatility_ensemble_cash
         ai_volatility_ensemble_portfolio_history.append(ai_volatility_ensemble_portfolio_value)
 
-        # Update MULTI-TIMEFRAME ENSEMBLE portfolio value daily (skip if disabled)
+        # Update MULTI-HORIZON ENSEMBLE portfolio value daily (skip if disabled)
         multi_tf_ensemble_invested_value = 0.0
         if config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE:
             # Iterate over actual positions, not just current stocks list
@@ -8224,6 +8272,33 @@ def _run_portfolio_backtest_walk_forward(
 
         multi_tf_ensemble_portfolio_value = multi_tf_ensemble_invested_value + multi_tf_ensemble_cash
         multi_tf_ensemble_portfolio_history.append(multi_tf_ensemble_portfolio_value)
+
+        # Update MULTI-HORIZON INTRADAY portfolio value daily (skip if disabled)
+        multi_tf_intraday_ensemble_invested_value = 0.0
+        if config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE:
+            for ticker in list(multi_tf_intraday_ensemble_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price_data = ticker_data.loc[:current_date]
+                        if not current_price_data.empty:
+                            valid_prices = current_price_data['Close'].dropna()
+                            if len(valid_prices) > 0:
+                                current_price = valid_prices.iloc[-1]
+                                if not pd.isna(current_price) and current_price > 0:
+                                    position_value = multi_tf_intraday_ensemble_positions[ticker]['shares'] * current_price
+                                    multi_tf_intraday_ensemble_positions[ticker]['value'] = position_value
+                                    multi_tf_intraday_ensemble_invested_value += position_value
+                                else:
+                                    multi_tf_intraday_ensemble_invested_value += multi_tf_intraday_ensemble_positions[ticker].get('value', 0.0)
+                            else:
+                                multi_tf_intraday_ensemble_invested_value += multi_tf_intraday_ensemble_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating multi-timeframe intraday ensemble position for {ticker}: {e}")
+                    multi_tf_intraday_ensemble_invested_value += multi_tf_intraday_ensemble_positions[ticker].get('value', 0.0)
+
+        multi_tf_intraday_ensemble_portfolio_value = multi_tf_intraday_ensemble_invested_value + multi_tf_intraday_ensemble_cash
+        multi_tf_intraday_ensemble_portfolio_history.append(multi_tf_intraday_ensemble_portfolio_value)
 
         # Update CORRELATION ENSEMBLE portfolio value daily (skip if disabled)
         correlation_ensemble_invested_value = 0.0
@@ -10050,6 +10125,7 @@ def _run_portfolio_backtest_walk_forward(
             'enhanced_volatility':      _strat(enhanced_volatility_portfolio_value, enhanced_volatility_portfolio_history, enhanced_volatility_transaction_costs, enhanced_volatility_cash),
             'ai_volatility_ensemble':   _strat(ai_volatility_ensemble_portfolio_value, ai_volatility_ensemble_portfolio_history, ai_volatility_ensemble_transaction_costs, ai_volatility_ensemble_cash),
             'multi_tf_ensemble':        _strat(multi_tf_ensemble_portfolio_value, multi_tf_ensemble_portfolio_history, multi_tf_ensemble_transaction_costs, multi_tf_ensemble_cash),
+            'multi_tf_intraday_ensemble': _strat(multi_tf_intraday_ensemble_portfolio_value, multi_tf_intraday_ensemble_portfolio_history, multi_tf_intraday_ensemble_transaction_costs, multi_tf_intraday_ensemble_cash),
             'correlation_ensemble':     _strat(correlation_ensemble_portfolio_value, correlation_ensemble_portfolio_history, correlation_ensemble_transaction_costs, correlation_ensemble_cash),
             'dynamic_pool':             _strat(dynamic_pool_portfolio_value, dynamic_pool_portfolio_history, dynamic_pool_transaction_costs, dynamic_pool_cash),
             'sentiment_ensemble':       _strat(sentiment_ensemble_portfolio_value, sentiment_ensemble_portfolio_history, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash),
@@ -10228,6 +10304,7 @@ def _run_portfolio_backtest_walk_forward(
             'bh_1y_multi_factor': {'tickers': list(current_bh_1y_multi_factor_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_multi_factor_positions.items()}},
             'bh_1y_time_decay': {'tickers': list(current_bh_1y_time_decay_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_time_decay_positions.items()}},
             'multi_tf_ensemble': {'tickers': list(current_multi_tf_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in multi_tf_ensemble_positions.items()}},
+            'multi_tf_intraday_ensemble': {'tickers': list(current_multi_tf_intraday_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in multi_tf_intraday_ensemble_positions.items()}},
             'trend_breakout': {'tickers': list(current_trend_breakout_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in trend_breakout_positions.items()}},
             # Additional strategies
             'ai_elite_filtered': {'tickers': list(ai_elite_filtered_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_elite_filtered_positions.items()}},
@@ -10364,6 +10441,7 @@ def _run_portfolio_backtest_walk_forward(
         'bh_1m_monthly': config.ENABLE_STATIC_BH_1M_MONTHLY,
         # Multi-timeframe
         'multi_tf_ensemble': config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
+        'multi_tf_intraday_ensemble': config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE,
     }
 
     try:

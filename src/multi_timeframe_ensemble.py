@@ -1,5 +1,5 @@
 """
-Multi-Timeframe Ensemble Strategy
+Multi-Horizon Ensemble Strategy
 Combines signals from different analysis horizons (long_term, medium_term, short_term)
 for better entry/exit timing.
 """
@@ -250,14 +250,14 @@ def select_multi_timeframe_stocks(
     selected_stocks = [ticker for ticker, score, signals in stock_scores[:top_n]]
 
     if verbose:
-        print(f"   📊 Multi-TF Ensemble: {len(stock_scores)} candidates with consensus")
+        print(f"   📊 Multi-Horizon Ensemble: {len(stock_scores)} candidates with consensus")
         print(f"   🎯 Selected: {selected_stocks[:5]}..." if len(selected_stocks) > 5 else f"   🎯 Selected: {selected_stocks}")
 
     return selected_stocks
 
 def print_multi_timeframe_analysis(selected_stocks: List[str], stock_scores: List[Tuple]):
     """Print detailed multi-timeframe analysis"""
-    print(f"\n🎯 Multi-Timeframe Ensemble Analysis:")
+    print(f"\n🎯 Multi-Horizon Ensemble Analysis:")
     print(f"   Selected {len(selected_stocks)} stocks from {len(stock_scores)} candidates")
     print(f"   Consensus requirement: {MULTI_TIMEFRAME_MIN_CONSENSUS}/{len(MULTI_TIMEFRAMES)} timeframes")
 

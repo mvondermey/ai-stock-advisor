@@ -6718,6 +6718,14 @@ def _get_strategy_registry():
 
 
 
+        # Multi-timeframe ensembles
+
+        'multi_tf_ensemble': lambda t, d, dt, n: _select_multi_tf_ensemble(t, d, dt, n),
+
+        'multi_tf_intraday_ensemble': lambda t, d, dt, n: _select_multi_tf_intraday_ensemble(t, d, dt, n),
+
+
+
         # Ratio strategies
 
         'ratio_3m_1y': lambda t, d, dt, n: select_3m_1y_ratio_stocks(t, d, dt, n),
@@ -7010,7 +7018,34 @@ def _select_inverse_etf_hedge_stocks(all_tickers, ticker_data_grouped, current_d
         return []
 
 
+def _select_multi_tf_ensemble(all_tickers, ticker_data_grouped, current_date, top_n):
 
+    """Wrapper for the daily multi-timeframe ensemble."""
+
+    try:
+
+        from multi_timeframe_ensemble import select_multi_timeframe_stocks
+
+        return select_multi_timeframe_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+
+    except ImportError:
+
+        return []
+
+
+def _select_multi_tf_intraday_ensemble(all_tickers, ticker_data_grouped, current_date, top_n):
+
+    """Wrapper for the intraday-enhanced multi-timeframe ensemble."""
+
+    try:
+
+        from multi_timeframe_intraday_ensemble import select_multi_timeframe_intraday_stocks
+
+        return select_multi_timeframe_intraday_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+
+    except ImportError:
+
+        return []
 
 
 def _select_analyst_rec_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
