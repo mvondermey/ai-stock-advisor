@@ -6,7 +6,7 @@ repos:
     hooks:
       - id: rolling-windows-tests
         name: Rolling Windows Tests
-        entry: python3 tests/run_rolling_windows_tests.py
+        entry: ./venv/bin/python tests/run_rolling_windows_tests.py
         language: system
         pass_filenames: false
         always_run: true
@@ -16,7 +16,7 @@ repos:
 
       - id: current-date-parameter-check
         name: Current Date Parameter Check
-        entry: python3 tests/check_current_date_params.py
+        entry: ./venv/bin/python tests/check_current_date_params.py
         language: system
         pass_filenames: false
         always_run: true
@@ -25,7 +25,7 @@ repos:
 
       - id: static-behavior-detection
         name: Static Behavior Detection
-        entry: python3 tests/check_static_behavior.py
+        entry: ./venv/bin/python tests/check_static_behavior.py
         language: system
         pass_filenames: false
         always_run: true
