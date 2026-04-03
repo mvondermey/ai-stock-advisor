@@ -209,9 +209,11 @@ STRATEGY_DISPLAY_NAMES = {
     'ai_elite_monthly': 'AI Elite Mth',
     'ai_elite_filtered': 'AI Elite Flt',
     'ai_elite_market_up': 'AI Elite Mkt-Up',
+    'ai_champion': 'AI Champion',
     'ai_regime': 'AI Regime',
     'ai_regime_monthly': 'AI Regime Mth',
     'universal_model': 'Universal Model',
+    'savgol_trend': 'SavGol Trend',
     'inverse_etf_hedge': '🛡️ Inv ETF Hedge',
     'analyst_rec': 'Analyst Rec',
     'bh_1y_monthly': 'BH 1Y Monthly',
@@ -379,9 +381,11 @@ def _build_daily_strategy_data(locals_dict):
         'ai_elite_monthly': config.ENABLE_AI_ELITE_MONTHLY,
         'ai_elite_filtered': config.ENABLE_AI_ELITE_FILTERED,
         'ai_elite_market_up': config.ENABLE_AI_ELITE_MARKET_UP,
+        'ai_champion': config.ENABLE_AI_CHAMPION,
         'ai_regime': config.ENABLE_AI_REGIME,
         'ai_regime_monthly': config.ENABLE_AI_REGIME_MONTHLY,
         'universal_model': config.ENABLE_UNIVERSAL_MODEL,
+        'savgol_trend': config.ENABLE_SAVGOL_TREND,
         'inverse_etf_hedge': config.ENABLE_INVERSE_ETF_HEDGE,
         'analyst_rec': config.ENABLE_ANALYST_RECOMMENDATION,
         'risk_adj_mom_sentiment': config.ENABLE_RISK_ADJ_MOM_SENTIMENT,
@@ -484,9 +488,11 @@ def _build_daily_strategy_data(locals_dict):
         ('ai_elite_monthly', 'ai_elite_monthly_portfolio_value', 'ai_elite_monthly_portfolio_history', 'ai_elite_monthly_cash', 'ai_elite_monthly_positions'),
         ('ai_elite_filtered', 'ai_elite_filtered_portfolio_value', 'ai_elite_filtered_portfolio_history', 'ai_elite_filtered_cash', 'ai_elite_filtered_positions'),
         ('ai_elite_market_up', 'ai_elite_market_up_portfolio_value', 'ai_elite_market_up_portfolio_history', 'ai_elite_market_up_cash', 'ai_elite_market_up_positions'),
+        ('ai_champion', 'ai_champion_portfolio_value', 'ai_champion_portfolio_history', 'ai_champion_cash', 'ai_champion_positions'),
         ('ai_regime', 'ai_regime_portfolio_value', 'ai_regime_portfolio_history', 'ai_regime_cash', 'ai_regime_positions'),
         ('ai_regime_monthly', 'ai_regime_monthly_portfolio_value', 'ai_regime_monthly_portfolio_history', 'ai_regime_monthly_cash', 'ai_regime_monthly_positions'),
         ('universal_model', 'universal_model_portfolio_value', 'universal_model_portfolio_history', 'universal_model_cash', 'universal_model_positions'),
+        ('savgol_trend', 'savgol_trend_portfolio_value', 'savgol_trend_portfolio_history', 'savgol_trend_cash', 'savgol_trend_positions'),
         ('inverse_etf_hedge', 'inverse_etf_hedge_portfolio_value', 'inverse_etf_hedge_portfolio_history', 'inverse_etf_hedge_cash', 'inverse_etf_hedge_positions'),
         ('analyst_rec', 'analyst_rec_portfolio_value', 'analyst_rec_portfolio_history', 'analyst_rec_cash', 'analyst_rec_positions'),
         ('bh_1y_monthly', 'static_bh_1y_monthly_portfolio_value', 'static_bh_1y_monthly_portfolio_history', 'static_bh_1y_monthly_cash', 'static_bh_1y_monthly_positions'),
@@ -989,6 +995,89 @@ def _smart_rebalance_portfolio(
         print(f"   💵 {strategy_name} End cash: ${updated_cash:,.2f}, transaction costs: ${total_transaction_costs:,.2f}")
 
     return updated_positions, updated_cash, final_stocks, total_transaction_costs, positions_changed
+
+
+def _run_ai_elite_step(
+    initial_top_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    day_count: int,
+    ai_elite_models: Dict,
+    ai_elite_last_train_days: Dict[str, int],
+    ai_elite_positions: Dict[str, Dict],
+    ai_elite_cash: float,
+    current_ai_elite_stocks: List[str],
+    ai_elite_transaction_costs: float,
+    ai_elite_portfolio_value: float,
+    ai_elite_last_rebalance_value: float,
+) -> Tuple[Dict, Dict[str, int], Dict[str, Dict], float, List[str], float, float, bool]:
+    """Run one AI Elite backtest step and return updated state."""
+    from shared_strategies import select_ai_elite_with_training
+
+    should_train_ai_elite = False
+    if ai_elite_models.get('_shared_base') is not None:
+        last_train_day = max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 0
+        days_since_train = day_count - last_train_day
+        if days_since_train >= AI_ELITE_RETRAIN_DAYS:
+            should_train_ai_elite = True
+            print(
+                f"   📊 AI Elite: Retraining triggered (day {day_count}, "
+                f"last train day {last_train_day}, interval {AI_ELITE_RETRAIN_DAYS})"
+            )
+
+    if not should_train_ai_elite and ai_elite_models.get('_shared_base') is not None:
+        last_train_day = max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 0
+        days_ago = day_count - last_train_day if last_train_day > 0 else 0
+        print(f"   📊 AI Elite: Using existing model (trained {days_ago} days ago)")
+
+    new_ai_elite_stocks, ai_elite_models = select_ai_elite_with_training(
+        all_tickers=initial_top_tickers,
+        ticker_data_grouped=ticker_data_grouped,
+        current_date=current_date,
+        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+        ai_elite_models=ai_elite_models,
+        force_train=should_train_ai_elite,
+    )
+
+    if should_train_ai_elite and ai_elite_models.get('_shared_base') is not None:
+        for ticker in initial_top_tickers:
+            ai_elite_last_train_days[ticker] = day_count
+
+    rebalanced_flag = False
+    if new_ai_elite_stocks:
+        print(f"   📊 AI Elite Day {day_count}: {new_ai_elite_stocks}")
+        (
+            ai_elite_positions,
+            ai_elite_cash,
+            current_ai_elite_stocks,
+            rebalance_costs,
+            rebalanced_flag,
+        ) = _smart_rebalance_portfolio(
+            strategy_name="AI Elite",
+            current_stocks=current_ai_elite_stocks,
+            new_stocks=new_ai_elite_stocks,
+            positions=ai_elite_positions,
+            cash=ai_elite_cash,
+            ticker_data_grouped=ticker_data_grouped,
+            current_date=current_date,
+            transaction_cost=TRANSACTION_COST,
+            portfolio_size=PORTFOLIO_SIZE,
+            buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+            force_rebalance=not current_ai_elite_stocks,
+        )
+        ai_elite_transaction_costs += rebalance_costs
+        ai_elite_last_rebalance_value = ai_elite_portfolio_value
+
+    return (
+        ai_elite_models,
+        ai_elite_last_train_days,
+        ai_elite_positions,
+        ai_elite_cash,
+        current_ai_elite_stocks,
+        ai_elite_transaction_costs,
+        ai_elite_last_rebalance_value,
+        rebalanced_flag,
+    )
 
 
 from data_validation import validate_prediction_data, validate_features_after_engineering, InsufficientDataError
@@ -2618,6 +2707,16 @@ def _run_portfolio_backtest_walk_forward(
     ai_elite_market_up_transaction_costs = 0.0
     ai_elite_market_up_initialized = False
 
+    # AI CHAMPION: Initialize portfolio tracking (ML selector across top candidates)
+    ai_champion_portfolio_value = initial_capital_needed
+    ai_champion_portfolio_history = [ai_champion_portfolio_value] if config.ENABLE_AI_CHAMPION else []
+    ai_champion_positions = {}
+    ai_champion_cash = initial_capital_needed
+    current_ai_champion_stocks = []
+    ai_champion_transaction_costs = 0.0
+    ai_champion_initialized = False
+    ai_champion_allocator = None
+
     # AI REGIME: Initialize portfolio tracking (ML predicts which strategy to use)
     ai_regime_portfolio_value = initial_capital_needed
     ai_regime_portfolio_history = [ai_regime_portfolio_value]
@@ -2647,6 +2746,16 @@ def _run_portfolio_backtest_walk_forward(
     universal_model_transaction_costs = 0.0
     universal_model_initialized = False
     universal_model_strategy = None  # Will be initialized on first use
+
+    # SAVGOL TREND: Initialize portfolio tracking (pooled ML on local polynomial trend features)
+    savgol_trend_portfolio_value = initial_capital_needed
+    savgol_trend_portfolio_history = [savgol_trend_portfolio_value] if config.ENABLE_SAVGOL_TREND else []
+    savgol_trend_positions = {}
+    savgol_trend_cash = initial_capital_needed
+    current_savgol_trend_stocks = []
+    savgol_trend_transaction_costs = 0.0
+    savgol_trend_initialized = False
+    savgol_trend_strategy = None
 
     # MEAN REVERSION: Initialize portfolio tracking
     mean_reversion_portfolio_value = initial_capital_needed
@@ -3026,6 +3135,36 @@ def _run_portfolio_backtest_walk_forward(
 
     for current_date in business_days:
         day_count += 1
+
+        # AI ELITE STRATEGY (ML-powered scoring) - PER-TICKER MODELS
+        if config.ENABLE_AI_ELITE:
+            try:
+                (
+                    ai_elite_models,
+                    ai_elite_last_train_days,
+                    ai_elite_positions,
+                    ai_elite_cash,
+                    current_ai_elite_stocks,
+                    ai_elite_transaction_costs,
+                    ai_elite_last_rebalance_value,
+                    rebalanced_flag,
+                ) = _run_ai_elite_step(
+                    initial_top_tickers=initial_top_tickers,
+                    ticker_data_grouped=ticker_data_grouped,
+                    current_date=current_date,
+                    day_count=day_count,
+                    ai_elite_models=ai_elite_models,
+                    ai_elite_last_train_days=ai_elite_last_train_days,
+                    ai_elite_positions=ai_elite_positions,
+                    ai_elite_cash=ai_elite_cash,
+                    current_ai_elite_stocks=current_ai_elite_stocks,
+                    ai_elite_transaction_costs=ai_elite_transaction_costs,
+                    ai_elite_portfolio_value=ai_elite_portfolio_value,
+                    ai_elite_last_rebalance_value=ai_elite_last_rebalance_value,
+                )
+                strategies_rebalanced_today['AI Elite'] = rebalanced_flag
+            except Exception as e:
+                print(f"   ⚠️ AI Elite error: {e}")
 
 
         # STATIC BH PORTFOLIOS: Initialize on day 1 and optional periodic rebalancing
@@ -5606,37 +5745,40 @@ def _run_portfolio_backtest_walk_forward(
         # Standalone strategy: holds inverse ETFs when market is down, cash when market is up
         if config.ENABLE_INVERSE_ETF_HEDGE:
             try:
-                from shared_strategies import get_market_conditions
+                from market_regime import get_trailing_market_regime
                 from config import (INVERSE_ETF_HEDGE_THRESHOLD_LOW, INVERSE_ETF_HEDGE_THRESHOLD_MED,
                                     INVERSE_ETF_HEDGE_THRESHOLD_HIGH, INVERSE_ETF_HEDGE_BASE_ALLOCATION,
                                     INVERSE_ETF_HEDGE_MAX_ALLOCATION, INVERSE_ETF_HEDGE_PREFERENCE,
                                     INVERSE_ETF_HEDGE_MIN_HOLD_DAYS)
 
-                # Get market conditions
-                market_cond = get_market_conditions(ticker_data_grouped, current_date)
-                spy_3m = market_cond.get('sp500_3m', 0)  # Key is sp500_3m, not spy_3m
-                qqq_3m = market_cond.get('nasdaq_3m', 0)  # Key is nasdaq_3m, not qqq_3m
-                worst_decline = min(spy_3m, qqq_3m)
+                market_return, is_market_up, proxy = get_trailing_market_regime(
+                    ticker_data_grouped,
+                    current_date,
+                    lookback_days=5,
+                )
 
                 # Debug: Show market conditions periodically
                 if day_count % 20 == 0:
-                    print(f"   🛡️ Hedge Check: SPY 3M={spy_3m*100:+.1f}%, QQQ 3M={qqq_3m*100:+.1f}%, Worst={worst_decline*100:+.1f}%")
+                    if market_return is None:
+                        print(f"   🛡️ Hedge Check: trailing 5d market return unavailable")
+                    else:
+                        print(f"   🛡️ Hedge Check: trailing 5d market return={market_return:+.1f}% via {proxy}")
 
                 # === HYBRID INVERSE ETF HEDGE LOGIC ===
-                # Gradual scaling based on market stress:
-                # - 5% decline -> 20% hedge allocation
-                # - 10% decline -> 50% hedge allocation
-                # - 15% decline -> 80% hedge allocation
-                # Always keep 20% in equity, never go 100% hedge
-
-                market_decline = abs(worst_decline) if worst_decline < 0 else 0
+                # Uses the inverse of the shared market-up regime signal:
+                # - trailing 5d return <= 0 starts hedge mode
+                # - larger declines scale hedge allocation
+                market_decline_pct = abs(market_return) if market_return is not None and market_return <= 0 else 0.0
+                low_threshold_pct = INVERSE_ETF_HEDGE_THRESHOLD_LOW * 100
+                med_threshold_pct = INVERSE_ETF_HEDGE_THRESHOLD_MED * 100
+                high_threshold_pct = INVERSE_ETF_HEDGE_THRESHOLD_HIGH * 100
 
                 # Calculate target hedge allocation
-                if market_decline >= INVERSE_ETF_HEDGE_THRESHOLD_HIGH:
+                if market_decline_pct >= high_threshold_pct:
                     target_hedge_pct = INVERSE_ETF_HEDGE_MAX_ALLOCATION  # 80% hedge
-                elif market_decline >= INVERSE_ETF_HEDGE_THRESHOLD_MED:
+                elif market_decline_pct >= med_threshold_pct:
                     target_hedge_pct = 0.50  # 50% hedge
-                elif market_decline >= INVERSE_ETF_HEDGE_THRESHOLD_LOW:
+                elif market_return is not None and not is_market_up:
                     target_hedge_pct = INVERSE_ETF_HEDGE_BASE_ALLOCATION  # 20% hedge
                 else:
                     target_hedge_pct = 0.0  # No hedge
@@ -5653,7 +5795,7 @@ def _run_portfolio_backtest_walk_forward(
                         if day_count % 20 == 0:
                             print(f"   🛡️ Hedge hold period: {inverse_etf_hedge_days_in_hedge}/{INVERSE_ETF_HEDGE_MIN_HOLD_DAYS} days (preventing whipsaw)")
 
-                if in_hedge_mode and market_decline > 0:
+                if in_hedge_mode and market_return is not None and not is_market_up:
                     # Market is down - select inverse ETFs based on allocation level
                     inverse_etf_hedge_days_in_hedge += 1
 
@@ -5679,7 +5821,7 @@ def _run_portfolio_backtest_walk_forward(
                         new_inverse_etf_stocks = [etf for etf, _ in inverse_etf_scores[:num_etfs]]
 
                         if new_inverse_etf_stocks != current_inverse_etf_hedge_stocks:
-                            print(f"   🛡️ Hybrid Hedge: Market down {market_decline:.1%} -> {target_hedge_pct:.0%} allocation, selecting {new_inverse_etf_stocks}")
+                            print(f"   🛡️ Hybrid Hedge: Market down {market_return:+.1f}% over trailing 5d -> {target_hedge_pct:.0%} allocation, selecting {new_inverse_etf_stocks}")
 
                             # Rebalance to inverse ETFs
                             inverse_etf_hedge_positions, inverse_etf_hedge_cash, current_inverse_etf_hedge_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
@@ -5699,16 +5841,21 @@ def _run_portfolio_backtest_walk_forward(
                             inverse_etf_hedge_initialized = True
 
                             # Log detailed allocation
-                            total_invested = sum(p['shares'] * p['avg_price'] for p in inverse_etf_hedge_positions.values())
+                            total_invested = sum(
+                                p['shares'] * p.get('entry_price', p.get('avg_price', 0))
+                                for p in inverse_etf_hedge_positions.values()
+                            )
                             print(f"   🛡️ Hedge Active: {target_hedge_pct:.0%} allocation, Cash=${inverse_etf_hedge_cash:,.0f}, Invested=${total_invested:,.0f}, Days in hedge={inverse_etf_hedge_days_in_hedge}")
                             for etf, pos in inverse_etf_hedge_positions.items():
-                                value = pos['shares'] * pos['avg_price']
+                                avg_price = pos.get('entry_price', pos.get('avg_price', 0))
+                                value = pos['shares'] * avg_price
                                 pct = (value / (total_invested + inverse_etf_hedge_cash)) * 100 if (total_invested + inverse_etf_hedge_cash) > 0 else 0
-                                print(f"      📈 {etf}: {pos['shares']:.0f} shares @ ${pos['avg_price']:.2f} = ${value:,.0f} ({pct:.1f}%)")
+                                print(f"      📈 {etf}: {pos['shares']:.0f} shares @ ${avg_price:.2f} = ${value:,.0f} ({pct:.1f}%)")
                 else:
                     # Market is up or recovery period - reset hedge days and sell all inverse ETFs
                     if current_inverse_etf_hedge_stocks:
-                        print(f"   🛡️ Hybrid Hedge: Market recovered (SPY={spy_3m*100:+.1f}%, QQQ={qqq_3m*100:+.1f}%), selling hedge after {inverse_etf_hedge_days_in_hedge} days")
+                        recovered_msg = f"{market_return:+.1f}% over trailing 5d" if market_return is not None else "market signal unavailable"
+                        print(f"   🛡️ Hybrid Hedge: Market recovered ({recovered_msg}), selling hedge after {inverse_etf_hedge_days_in_hedge} days")
                         inverse_etf_hedge_days_in_hedge = 0  # Reset counter
 
                         # Sell all positions
@@ -6859,65 +7006,6 @@ def _run_portfolio_backtest_walk_forward(
                 except Exception as e:
                     print(f"   ⚠️ Risk-Adj Mom 1M Monthly error: {e}")
 
-        # AI ELITE STRATEGY (ML-powered scoring) - PER-TICKER MODELS
-        if config.ENABLE_AI_ELITE:
-            try:
-                from shared_strategies import select_ai_elite_with_training
-
-                # Determine if we should force retrain
-                should_train_ai_elite = False
-                if ai_elite_models.get('_shared_base') is None:
-                    # No model loaded yet - let select_ai_elite_with_training load from disk first
-                    should_train_ai_elite = False
-                else:
-                    last_train_day = max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 0
-                    days_since_train = day_count - last_train_day
-                    if days_since_train >= AI_ELITE_RETRAIN_DAYS:
-                        should_train_ai_elite = True
-                        print(f"   📊 AI Elite: Retraining triggered (day {day_count}, last train day {last_train_day}, interval {AI_ELITE_RETRAIN_DAYS})")
-
-                if not should_train_ai_elite and ai_elite_models.get('_shared_base') is not None:
-                    last_train_day = max(ai_elite_last_train_days.values()) if ai_elite_last_train_days else 0
-                    days_ago = day_count - last_train_day if last_train_day > 0 else 0
-                    print(f"   📊 AI Elite: Using existing model (trained {days_ago} days ago)")
-
-                # Call shared function (handles load/train/select)
-                new_ai_elite_stocks, ai_elite_models = select_ai_elite_with_training(
-                    all_tickers=initial_top_tickers,
-                    ticker_data_grouped=ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,  # Get 12 candidates for buffer
-                    ai_elite_models=ai_elite_models,
-                    force_train=should_train_ai_elite
-                )
-
-                # Update train day tracking
-                if should_train_ai_elite and ai_elite_models.get('_shared_base') is not None:
-                    for ticker in initial_top_tickers:
-                        ai_elite_last_train_days[ticker] = day_count
-
-                if new_ai_elite_stocks:
-                    print(f"   📊 AI Elite Day {day_count}: {new_ai_elite_stocks}")
-                    ai_elite_positions, ai_elite_cash, current_ai_elite_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name="AI Elite",
-                        current_stocks=current_ai_elite_stocks,
-                        new_stocks=new_ai_elite_stocks,
-                        positions=ai_elite_positions,
-                        cash=ai_elite_cash,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        transaction_cost=TRANSACTION_COST,
-                        portfolio_size=PORTFOLIO_SIZE,
-                        buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,  # Keep if in top 12
-                        force_rebalance=not current_ai_elite_stocks
-                    )
-                    strategies_rebalanced_today['AI Elite'] = rebalanced_flag
-                    ai_elite_transaction_costs += rebalance_costs
-                    ai_elite_last_rebalance_value = ai_elite_portfolio_value
-
-            except Exception as e:
-                print(f"   ⚠️ AI Elite error: {e}")
-
         # AI ELITE MONTHLY STRATEGY (same ML scoring, retrain + rebalance start of month only)
         if config.ENABLE_AI_ELITE_MONTHLY:
             should_act_ai_elite_monthly = (not ai_elite_monthly_initialized) or is_first_trading_day_of_month
@@ -7042,6 +7130,68 @@ def _run_portfolio_backtest_walk_forward(
 
             except Exception as e:
                 print(f"   ⚠️ AI Elite Market-Up error: {e}")
+
+        # AI CHAMPION STRATEGY (ML selector across top-performing AI/ensemble variants)
+        if config.ENABLE_AI_CHAMPION:
+            try:
+                from ai_champion_strategy import AIChampionAllocator, select_ai_champion_stocks
+
+                if ai_champion_allocator is None:
+                    ai_champion_allocator = AIChampionAllocator(
+                        retrain_days=config.AI_CHAMPION_RETRAIN_DAYS,
+                        forward_days=config.AI_CHAMPION_FORWARD_DAYS,
+                        confidence_threshold=config.AI_CHAMPION_CONFIDENCE_THRESHOLD,
+                        hold_margin=config.AI_CHAMPION_HOLD_MARGIN,
+                    )
+                    ai_champion_allocator.load_model()
+
+                strategy_values_for_champion = {
+                    'ai_elite': ai_elite_portfolio_value if config.ENABLE_AI_ELITE else None,
+                    'ai_elite_market_up': ai_elite_market_up_portfolio_value if config.ENABLE_AI_ELITE_MARKET_UP else None,
+                    'ai_elite_filtered': ai_elite_filtered_portfolio_value if config.ENABLE_AI_ELITE_FILTERED else None,
+                    'multi_tf_ensemble': multi_tf_ensemble_portfolio_value if config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE else None,
+                }
+                ai_champion_allocator.record_daily_values(strategy_values_for_champion)
+
+                if ai_champion_allocator.should_retrain():
+                    print(f"   🧠 AI Champion: Training model (day {day_count})...")
+                    ai_champion_allocator.train_model(ticker_data_grouped, business_days[:day_count])
+
+                ai_champion_current_strategy = ai_champion_allocator.predict_best_strategy(ticker_data_grouped, current_date)
+
+                if ai_champion_current_strategy is not None:
+                    new_ai_champion_stocks = select_ai_champion_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        ai_champion_current_strategy,
+                        ai_elite_models=ai_elite_models,
+                    )
+                else:
+                    new_ai_champion_stocks = []
+
+                if new_ai_champion_stocks:
+                    print(f"   📊 AI Champion Day {day_count}: {new_ai_champion_stocks}")
+                    ai_champion_positions, ai_champion_cash, current_ai_champion_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name=f"AI Champion ({str(ai_champion_current_strategy)[:10]})",
+                        current_stocks=current_ai_champion_stocks,
+                        new_stocks=new_ai_champion_stocks,
+                        positions=ai_champion_positions,
+                        cash=ai_champion_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        force_rebalance=not ai_champion_initialized
+                    )
+                    strategies_rebalanced_today['AI Champion'] = rebalanced_flag
+                    ai_champion_transaction_costs += rc
+                    ai_champion_initialized = True
+
+            except Exception as e:
+                print(f"   ⚠️ AI Champion error: {e}")
 
         # AI REGIME STRATEGY (ML predicts which strategy to use based on market conditions)
         if config.ENABLE_AI_REGIME:
@@ -7248,6 +7398,54 @@ def _run_portfolio_backtest_walk_forward(
 
             except Exception as e:
                 print(f"   ⚠️ Universal Model error: {e}")
+
+        # SAVGOL TREND STRATEGY (pooled ML using local polynomial trend features)
+        if config.ENABLE_SAVGOL_TREND:
+            try:
+                from savgol_trend_strategy import SavgolTrendStrategy, select_savgol_trend_stocks
+
+                if savgol_trend_strategy is None:
+                    savgol_trend_strategy = SavgolTrendStrategy(
+                        retrain_days=config.SAVGOL_TREND_RETRAIN_DAYS,
+                        min_samples=config.SAVGOL_TREND_MIN_SAMPLES,
+                        lookback_days=config.SAVGOL_TREND_LOOKBACK_DAYS,
+                        forward_days=config.SAVGOL_TREND_FORWARD_DAYS,
+                    )
+                    savgol_trend_strategy.load_model()
+
+                savgol_trend_strategy.increment_day()
+
+                new_savgol_trend_stocks = select_savgol_trend_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date,
+                    PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    savgol_trend_strategy,
+                    business_days,
+                    day_count,
+                )
+
+                if new_savgol_trend_stocks:
+                    print(f"   📊 SavGol Trend Day {day_count}: {new_savgol_trend_stocks}")
+                    savgol_trend_positions, savgol_trend_cash, current_savgol_trend_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="SavGol Trend",
+                        current_stocks=current_savgol_trend_stocks,
+                        new_stocks=new_savgol_trend_stocks,
+                        positions=savgol_trend_positions,
+                        cash=savgol_trend_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        force_rebalance=not savgol_trend_initialized
+                    )
+                    strategies_rebalanced_today['SavGol Trend'] = rebalanced_flag
+                    savgol_trend_transaction_costs += rc
+                    savgol_trend_initialized = True
+
+            except Exception as e:
+                print(f"   ⚠️ SavGol Trend error: {e}")
 
         # META-STRATEGY SELECTORS: Update daily values and calculate portfolio values
         # Build strategy values dict for meta-strategy manager
@@ -8882,6 +9080,28 @@ def _run_portfolio_backtest_walk_forward(
         ai_elite_market_up_portfolio_value = ai_elite_market_up_invested_value + ai_elite_market_up_cash
         ai_elite_market_up_portfolio_history.append(ai_elite_market_up_portfolio_value)
 
+        # Update AI CHAMPION portfolio value daily
+        ai_champion_invested_value = 0.0
+        if config.ENABLE_AI_CHAMPION:
+            for ticker in list(ai_champion_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = ai_champion_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            ai_champion_positions[ticker]['value'] = position_value
+                            ai_champion_invested_value += position_value
+                        else:
+                            ai_champion_invested_value += ai_champion_positions[ticker].get('value', 0.0)
+                    else:
+                        ai_champion_invested_value += ai_champion_positions[ticker].get('value', 0.0)
+                except Exception:
+                    ai_champion_invested_value += ai_champion_positions[ticker].get('value', 0.0)
+        ai_champion_portfolio_value = ai_champion_invested_value + ai_champion_cash
+        ai_champion_portfolio_history.append(ai_champion_portfolio_value)
+
         # Update AI REGIME portfolio value daily
         ai_regime_invested_value = 0.0
         if config.ENABLE_AI_REGIME:
@@ -8903,6 +9123,28 @@ def _run_portfolio_backtest_walk_forward(
                     ai_regime_invested_value += ai_regime_positions[ticker].get('value', 0.0)
         ai_regime_portfolio_value = ai_regime_invested_value + ai_regime_cash
         ai_regime_portfolio_history.append(ai_regime_portfolio_value)
+
+        # Update SAVGOL TREND portfolio value daily
+        savgol_trend_invested_value = 0.0
+        if config.ENABLE_SAVGOL_TREND:
+            for ticker in list(savgol_trend_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = savgol_trend_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            savgol_trend_positions[ticker]['value'] = position_value
+                            savgol_trend_invested_value += position_value
+                        else:
+                            savgol_trend_invested_value += savgol_trend_positions[ticker].get('value', 0.0)
+                    else:
+                        savgol_trend_invested_value += savgol_trend_positions[ticker].get('value', 0.0)
+                except Exception:
+                    savgol_trend_invested_value += savgol_trend_positions[ticker].get('value', 0.0)
+        savgol_trend_portfolio_value = savgol_trend_invested_value + savgol_trend_cash
+        savgol_trend_portfolio_history.append(savgol_trend_portfolio_value)
 
         # Update AI REGIME MONTHLY portfolio value daily
         ai_regime_monthly_invested_value = 0.0
@@ -10153,9 +10395,11 @@ def _run_portfolio_backtest_walk_forward(
             'ai_elite_monthly':         _strat(ai_elite_monthly_portfolio_value, ai_elite_monthly_portfolio_history, ai_elite_monthly_transaction_costs, ai_elite_monthly_cash) if config.ENABLE_AI_ELITE_MONTHLY else _strat(0, [], 0, 0),
             'ai_elite_filtered':        _strat(ai_elite_filtered_portfolio_value, ai_elite_filtered_portfolio_history, ai_elite_filtered_transaction_costs, ai_elite_filtered_cash) if config.ENABLE_AI_ELITE_FILTERED else _strat(0, [], 0, 0),
             'ai_elite_market_up':       _strat(ai_elite_market_up_portfolio_value, ai_elite_market_up_portfolio_history, ai_elite_market_up_transaction_costs, ai_elite_market_up_cash) if config.ENABLE_AI_ELITE_MARKET_UP else _strat(0, [], 0, 0),
+            'ai_champion':              _strat(ai_champion_portfolio_value, ai_champion_portfolio_history, ai_champion_transaction_costs, ai_champion_cash) if config.ENABLE_AI_CHAMPION else _strat(0, [], 0, 0),
             'ai_regime':                _strat(ai_regime_portfolio_value, ai_regime_portfolio_history, ai_regime_transaction_costs, ai_regime_cash),
             'ai_regime_monthly':        _strat(ai_regime_monthly_portfolio_value, ai_regime_monthly_portfolio_history, ai_regime_monthly_transaction_costs, ai_regime_monthly_cash),
             'universal_model':          _strat(universal_model_portfolio_value, universal_model_portfolio_history, universal_model_transaction_costs, universal_model_cash),
+            'savgol_trend':             _strat(savgol_trend_portfolio_value, savgol_trend_portfolio_history, savgol_trend_transaction_costs, savgol_trend_cash) if config.ENABLE_SAVGOL_TREND else _strat(0, [], 0, 0),
             'inverse_etf_hedge':        _strat(inverse_etf_hedge_portfolio_value, inverse_etf_hedge_portfolio_history, inverse_etf_hedge_transaction_costs, inverse_etf_hedge_cash),
             'analyst_rec':              _strat(analyst_rec_portfolio_value, analyst_rec_portfolio_history, analyst_rec_transaction_costs, analyst_rec_cash),
             'risk_adj_mom_sentiment':   _strat(risk_adj_mom_sentiment_portfolio_value, risk_adj_mom_sentiment_portfolio_history, risk_adj_mom_sentiment_transaction_costs, risk_adj_mom_sentiment_cash),
@@ -10330,8 +10574,10 @@ def _run_portfolio_backtest_walk_forward(
             'risk_adj_mom_6m_monthly': {'tickers': list(current_risk_adj_mom_6m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_6m_monthly_positions.items()}},
             'risk_adj_mom_sentiment': {'tickers': list(current_risk_adj_mom_sentiment_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_sentiment_positions.items()}},
             'universal_model': {'tickers': list(current_universal_model_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in universal_model_positions.items()}},
+            'savgol_trend': {'tickers': list(current_savgol_trend_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in savgol_trend_positions.items()}},
             'vol_sweet_mom': {'tickers': list(current_vol_sweet_mom_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in vol_sweet_mom_positions.items()}},
             'voting_ensemble': {'tickers': list(current_voting_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in voting_ensemble_positions.items()}},
+            'ai_champion': {'tickers': list(ai_champion_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_champion_positions.items()}},
             'ai_regime': {'tickers': list(ai_regime_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_regime_positions.items()}},
             'ai_regime_monthly': {'tickers': list(ai_regime_monthly_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_regime_monthly_positions.items()}},
             'ai_volatility_ensemble': {'tickers': list(current_ai_volatility_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_volatility_ensemble_positions.items()}},
@@ -10391,9 +10637,11 @@ def _run_portfolio_backtest_walk_forward(
         'ai_elite_monthly': config.ENABLE_AI_ELITE_MONTHLY,
         'ai_elite_filtered': config.ENABLE_AI_ELITE_FILTERED,
         'ai_elite_market_up': config.ENABLE_AI_ELITE_MARKET_UP,
+        'ai_champion': config.ENABLE_AI_CHAMPION,
         'ai_regime': config.ENABLE_AI_REGIME,
         'ai_regime_monthly': config.ENABLE_AI_REGIME_MONTHLY,
         'universal_model': config.ENABLE_UNIVERSAL_MODEL,
+        'savgol_trend': config.ENABLE_SAVGOL_TREND,
         # Core strategies
         'sector_rotation': config.ENABLE_SECTOR_ROTATION,
         'quality_momentum': config.ENABLE_QUALITY_MOM,
@@ -10470,6 +10718,35 @@ def _run_portfolio_backtest_walk_forward(
                 live_trading_selections['strategies'][strategy_name] = []
 
         print(f"   ✅ Generated selections for {len(live_trading_selections['strategies'])} strategies")
+
+        if config.ENABLE_AI_CHAMPION and 'ai_champion' in results['strategies']:
+            try:
+                from ai_champion_strategy import AIChampionAllocator, select_ai_champion_stocks
+
+                ai_champion_allocator = AIChampionAllocator(
+                    retrain_days=config.AI_CHAMPION_RETRAIN_DAYS,
+                    forward_days=config.AI_CHAMPION_FORWARD_DAYS,
+                    confidence_threshold=config.AI_CHAMPION_CONFIDENCE_THRESHOLD,
+                    hold_margin=config.AI_CHAMPION_HOLD_MARGIN,
+                )
+                ai_champion_allocator.load_model()
+                ai_champion_current_strategy = ai_champion_allocator.predict_best_strategy(ticker_data_grouped, live_current_date)
+                if ai_champion_current_strategy is not None:
+                    ai_champion_stocks = select_ai_champion_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        live_current_date,
+                        LIVE_TRADING_TOP_N,
+                        ai_champion_current_strategy,
+                    )
+                    live_trading_selections['strategies']['ai_champion'] = ai_champion_stocks
+                    print(f"   ✅ AI Champion: Selected {len(ai_champion_stocks)} stocks using {str(ai_champion_current_strategy)}")
+                else:
+                    live_trading_selections['strategies']['ai_champion'] = []
+                    print(f"   ⚠️ AI Champion: No prediction available")
+            except Exception as e:
+                print(f"   ⚠️ AI Champion live selection error: {e}")
+                live_trading_selections['strategies']['ai_champion'] = []
 
         # Special handling for AI Regime (needs model loading)
         if config.ENABLE_AI_REGIME and 'ai_regime' in results['strategies']:

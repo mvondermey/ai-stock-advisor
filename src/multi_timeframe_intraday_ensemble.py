@@ -73,34 +73,48 @@ def _resample_hourly_to_4h(hourly_data: pd.DataFrame) -> pd.DataFrame:
     return resampled.dropna(subset=["Close"])
 
 
+def _clean_close_series(data: pd.DataFrame) -> pd.Series:
+    """Return a NaN-free close series for safe window calculations."""
+    if "Close" not in data.columns:
+        return pd.Series(dtype=float)
+    return data["Close"].dropna()
+
+
 def calculate_daily_momentum(data: pd.DataFrame, current_date: datetime = None) -> float:
     """Calculate long-term daily momentum signal using calendar days."""
-    if len(data) < 50:
+    close = _clean_close_series(data)
+    if len(close) < 50:
         return 0.0
 
     if current_date is None:
-        current_date = data.index.max()
+        current_date = close.index.max()
 
     data = data[data.index <= current_date]
+    close = _clean_close_series(data)
+    if len(close) < 2:
+        return 0.0
 
     start_1y = current_date - timedelta(days=365)
     data_1y = data[data.index >= start_1y]
-    if len(data_1y) >= 50:
-        momentum_1y = (data_1y["Close"].iloc[-1] / data_1y["Close"].iloc[0] - 1) * 100
+    close_1y = _clean_close_series(data_1y)
+    if len(close_1y) >= 50:
+        momentum_1y = (close_1y.iloc[-1] / close_1y.iloc[0] - 1) * 100
     else:
-        momentum_1y = (data["Close"].iloc[-1] / data["Close"].iloc[0] - 1) * 100
+        momentum_1y = (close.iloc[-1] / close.iloc[0] - 1) * 100
 
     start_6m = current_date - timedelta(days=180)
     data_6m = data[data.index >= start_6m]
-    if len(data_6m) >= 25:
-        momentum_6m = (data_6m["Close"].iloc[-1] / data_6m["Close"].iloc[0] - 1) * 100
+    close_6m = _clean_close_series(data_6m)
+    if len(close_6m) >= 25:
+        momentum_6m = (close_6m.iloc[-1] / close_6m.iloc[0] - 1) * 100
     else:
         momentum_6m = momentum_1y
 
     start_3m = current_date - timedelta(days=90)
     data_3m = data[data.index >= start_3m]
-    if len(data_3m) >= 10:
-        momentum_3m = (data_3m["Close"].iloc[-1] / data_3m["Close"].iloc[0] - 1) * 100
+    close_3m = _clean_close_series(data_3m)
+    if len(close_3m) >= 10:
+        momentum_3m = (close_3m.iloc[-1] / close_3m.iloc[0] - 1) * 100
     else:
         momentum_3m = momentum_1y
 
@@ -109,17 +123,22 @@ def calculate_daily_momentum(data: pd.DataFrame, current_date: datetime = None) 
 
 def calculate_medium_term_daily_fallback(data: pd.DataFrame) -> float:
     """Match the existing daily-derived medium-term signal when hourly data is unavailable."""
-    if len(data) < 20:
+    close = _clean_close_series(data)
+    if len(close) < 20:
         return 0.0
 
-    momentum_30d = (data["Close"].iloc[-1] / data["Close"].iloc[0] - 1) * 100
-    recent_10d = data["Close"].iloc[-10:]
-    prev_10d = data["Close"].iloc[-20:-10]
+    momentum_30d = (close.iloc[-1] / close.iloc[0] - 1) * 100
+    recent_10d = close.tail(10)
+    prev_10d = close.tail(20).head(10)
+    if len(prev_10d) == 0:
+        return 0.0
     recent_avg = recent_10d.mean()
     prev_avg = prev_10d.mean()
+    if pd.isna(prev_avg) or prev_avg == 0:
+        return 0.0
     trend_signal = ((recent_avg / prev_avg) - 1) * 100
 
-    returns = data["Close"].pct_change().dropna()
+    returns = close.pct_change().dropna()
     volatility = returns.std() * np.sqrt(252) * 100
     vol_adjusted = momentum_30d / (volatility + 1)
     return vol_adjusted * 0.7 + trend_signal * 0.3
@@ -127,11 +146,12 @@ def calculate_medium_term_daily_fallback(data: pd.DataFrame) -> float:
 
 def calculate_short_term_daily_fallback(data: pd.DataFrame) -> float:
     """Match the existing daily-derived short-term signal when hourly data is unavailable."""
-    if len(data) < 5:
+    close = _clean_close_series(data)
+    if len(close) < 5:
         return 0.0
 
-    momentum_7d = (data["Close"].iloc[-1] / data["Close"].iloc[0] - 1) * 100
-    recent_3d = data["Close"].iloc[-3:]
+    momentum_7d = (close.iloc[-1] / close.iloc[0] - 1) * 100
+    recent_3d = close.tail(3)
     price_change = (recent_3d.iloc[-1] / recent_3d.iloc[0] - 1) * 100
 
     if "Volume" in data.columns and len(data) >= 5:
@@ -146,21 +166,22 @@ def calculate_short_term_daily_fallback(data: pd.DataFrame) -> float:
 
 def calculate_medium_term_intraday_momentum(data: pd.DataFrame) -> float:
     """Calculate medium-term momentum on 4-hour bars."""
-    if len(data) < 20:
+    close = _clean_close_series(data)
+    if len(close) < 20:
         return 0.0
 
-    momentum = (data["Close"].iloc[-1] / data["Close"].iloc[0] - 1) * 100
+    momentum = (close.iloc[-1] / close.iloc[0] - 1) * 100
 
-    if len(data) >= 20:
-        recent_bars = data["Close"].iloc[-10:]
-        prev_bars = data["Close"].iloc[-20:-10]
+    if len(close) >= 20:
+        recent_bars = close.tail(10)
+        prev_bars = close.tail(20).head(10)
         recent_avg = recent_bars.mean()
         prev_avg = prev_bars.mean()
         trend_signal = ((recent_avg / prev_avg) - 1) * 100 if prev_avg else 0.0
     else:
         trend_signal = momentum
 
-    returns = data["Close"].pct_change().dropna()
+    returns = close.pct_change().dropna()
     volatility = returns.std() * np.sqrt(max(len(data), 1)) * 100
     vol_adjusted = momentum / (volatility + 1)
     return vol_adjusted * 0.7 + trend_signal * 0.3
@@ -168,14 +189,19 @@ def calculate_medium_term_intraday_momentum(data: pd.DataFrame) -> float:
 
 def calculate_short_term_intraday_momentum(data: pd.DataFrame) -> float:
     """Calculate short-term momentum on 1-hour bars."""
-    if len(data) < 12:
+    close = _clean_close_series(data)
+    if len(close) < 12:
         return 0.0
 
-    lookback_bars = min(len(data), 35)  # Roughly 5 trading days of hourly bars
-    momentum = (data["Close"].iloc[-1] / data["Close"].iloc[-lookback_bars] - 1) * 100
+    lookback_window = close.tail(min(len(close), 35))  # Roughly 5 trading days of hourly bars
+    if len(lookback_window) < 2:
+        return 0.0
+    momentum = (lookback_window.iloc[-1] / lookback_window.iloc[0] - 1) * 100
 
-    recent_bars = min(len(data), 6)
-    recent_change = (data["Close"].iloc[-1] / data["Close"].iloc[-recent_bars] - 1) * 100
+    recent_window = close.tail(min(len(close), 6))
+    if len(recent_window) < 2:
+        return 0.0
+    recent_change = (recent_window.iloc[-1] / recent_window.iloc[0] - 1) * 100
 
     if "Volume" in data.columns and len(data) >= 12:
         recent_vol = data["Volume"].iloc[-12:].mean()
@@ -265,22 +291,31 @@ def select_multi_timeframe_intraday_stocks(
     """Select stocks using intraday-enhanced multi-timeframe ensemble signals."""
     tickers_to_use = [ticker for ticker in initial_tickers if ticker not in INVERSE_ETFS]
     stock_scores = []
+    error_count = 0
 
     for ticker in tickers_to_use:
         ticker_data = ticker_data_grouped.get(ticker)
         if ticker_data is None or ticker_data.empty:
             continue
 
-        signals = calculate_multi_timeframe_intraday_signals(ticker, ticker_data, current_date)
-        ensemble_score, has_consensus = calculate_ensemble_score(signals)
-        if has_consensus:
-            stock_scores.append((ticker, ensemble_score, signals))
+        try:
+            signals = calculate_multi_timeframe_intraday_signals(ticker, ticker_data, current_date)
+            ensemble_score, has_consensus = calculate_ensemble_score(signals)
+            if has_consensus:
+                stock_scores.append((ticker, ensemble_score, signals))
+        except Exception as exc:
+            error_count += 1
+            if verbose and error_count <= 5:
+                print(f"   ⚠️ Multi-Horizon Intraday ticker error for {ticker}: {exc}")
+            continue
 
     stock_scores.sort(key=lambda item: item[1], reverse=True)
     selected_stocks = [ticker for ticker, _, _ in stock_scores[:top_n]]
 
     if verbose:
         print(f"   📊 Multi-Horizon Intraday: {len(stock_scores)} candidates with consensus")
+        if error_count:
+            print(f"   ⚠️ Multi-Horizon Intraday skipped {error_count} ticker(s) due to data errors")
         if len(selected_stocks) > 5:
             print(f"   🎯 Selected: {selected_stocks[:5]}...")
         else:

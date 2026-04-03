@@ -24,6 +24,64 @@ FEATURE_COLS = [
 ]
 
 
+def _fresh_ensemble_model(name: str, device: str):
+    """Create a fresh ensemble member with stable defaults."""
+    import xgboost as xgb
+    import lightgbm as lgb
+    from config import AI_ELITE_CATBOOST_GPU_RAM_PART, AI_ELITE_CATBOOST_USED_RAM_LIMIT
+
+    if name == 'XGBoost':
+        return xgb.XGBRegressor(
+            n_estimators=100, max_depth=4, learning_rate=0.1,
+            subsample=0.8, random_state=42,
+            reg_alpha=0.1, reg_lambda=1.0,
+            tree_method='hist', device=device, verbosity=0, n_jobs=-1
+        )
+    if name == 'LightGBM':
+        return lgb.LGBMRegressor(
+            n_estimators=100, max_depth=4, learning_rate=0.1,
+            subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
+        )
+    if name == 'CatBoost':
+        import catboost as cb
+
+        task_type = 'GPU' if device == 'cuda' else 'CPU'
+        catboost_params = dict(
+            iterations=100, depth=4, learning_rate=0.1,
+            task_type=task_type, random_seed=42, verbose=0,
+            allow_writing_files=False, thread_count=1
+        )
+        if AI_ELITE_CATBOOST_USED_RAM_LIMIT:
+            catboost_params['used_ram_limit'] = AI_ELITE_CATBOOST_USED_RAM_LIMIT
+        if task_type == 'GPU':
+            catboost_params['gpu_ram_part'] = AI_ELITE_CATBOOST_GPU_RAM_PART
+        return cb.CatBoostRegressor(**catboost_params)
+    raise ValueError(f"Unknown model: {name}")
+
+
+def _predictions_are_unstable(predictions) -> bool:
+    """Detect obviously broken model output after incremental continuation."""
+    preds = np.asarray(predictions, dtype=float)
+    if preds.size == 0:
+        return True
+    if np.any(np.isnan(preds)) or np.any(np.isinf(preds)):
+        return True
+    return np.max(np.abs(preds)) > 1e10
+
+
+def _configure_catboost_continuation(model):
+    """Apply safer runtime settings before CatBoost continuation training."""
+    from config import AI_ELITE_CATBOOST_USED_RAM_LIMIT
+
+    if not hasattr(model, '_init_params'):
+        return
+    model._init_params['task_type'] = 'CPU'
+    model._init_params['thread_count'] = 1
+    model._init_params['allow_writing_files'] = False
+    if AI_ELITE_CATBOOST_USED_RAM_LIMIT:
+        model._init_params['used_ram_limit'] = AI_ELITE_CATBOOST_USED_RAM_LIMIT
+
+
 def collect_ticker_training_data(
     ticker: str,
     ticker_data: pd.DataFrame,
@@ -184,37 +242,19 @@ def train_shared_base_model(
         # Add CatBoost if missing from loaded model
         if 'CatBoost' not in models:
             try:
-                import catboost as cb
-                task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
-                models['CatBoost'] = cb.CatBoostRegressor(
-                    iterations=100, depth=4, learning_rate=0.1,
-                    task_type=task_type, random_seed=42, verbose=0
-                )
+                models['CatBoost'] = _fresh_ensemble_model('CatBoost', device)
             except ImportError:
                 pass
         print(f"   🚀 Incremental training: {len(models)} models on {device}")
     else:
         # Fresh training - create new models
         models = {
-            'XGBoost': xgb.XGBRegressor(
-                n_estimators=100, max_depth=4, learning_rate=0.1,
-                subsample=0.8, random_state=42,
-                reg_alpha=0.1, reg_lambda=1.0,  # L1/L2 regularization to prevent exploding
-                tree_method='hist', device=device, verbosity=0, n_jobs=-1
-            ),
-            'LightGBM': lgb.LGBMRegressor(
-                n_estimators=100, max_depth=4, learning_rate=0.1,
-                subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
-            )
+            'XGBoost': _fresh_ensemble_model('XGBoost', device),
+            'LightGBM': _fresh_ensemble_model('LightGBM', device),
         }
         # Add CatBoost if available (GPU-accelerated, good with tabular data)
         try:
-            import catboost as cb
-            task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
-            models['CatBoost'] = cb.CatBoostRegressor(
-                iterations=100, depth=4, learning_rate=0.1,
-                task_type=task_type, random_seed=42, verbose=0
-            )
+            models['CatBoost'] = _fresh_ensemble_model('CatBoost', device)
         except ImportError:
             pass
         print(f"   🚀 Fresh training: {list(models.keys())} ({device})")
@@ -247,51 +287,33 @@ def train_shared_base_model(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 incremental_failed = False
+                used_incremental = False
                 if has_existing:
                     # True incremental training for supported models
                     try:
+                        used_incremental = True
                         if name == 'XGBoost':
                             m.fit(X_train, y_train, xgb_model=m.get_booster())
                         elif name == 'LightGBM':
                             m.fit(X_train, y_train, init_model=m.booster_)
                         elif name == 'CatBoost':
-                            # CatBoost GPU doesn't support continuation - switch to CPU
-                            m._init_params['task_type'] = 'CPU'
+                            _configure_catboost_continuation(m)
                             m.fit(X_train, y_train, init_model=m)
                         else:
                             m.fit(X_train, y_train)
 
                         # Quick sanity check for incremental training - detect numerical instability
                         quick_pred = m.predict(X_val[:100])
-                        if np.any(np.isnan(quick_pred)) or np.any(np.isinf(quick_pred)) or np.max(np.abs(quick_pred)) > 1e10:
+                        if _predictions_are_unstable(quick_pred):
                             print(f"(incremental unstable, retraining fresh)...", end=" ", flush=True)
                             incremental_failed = True
                     except Exception as e:
                         print(f"(incremental failed: {e}, retraining fresh)...", end=" ", flush=True)
                         incremental_failed = True
 
-                if not has_existing or incremental_failed:
+                if not used_incremental or incremental_failed:
                     # Fresh training - create new model instance if incremental failed
-                    if incremental_failed:
-                        if name == 'XGBoost':
-                            m = xgb.XGBRegressor(
-                                n_estimators=100, max_depth=4, learning_rate=0.1,
-                                subsample=0.8, random_state=42,
-                                reg_alpha=0.1, reg_lambda=1.0,
-                                tree_method='hist', device=device, verbosity=0, n_jobs=-1
-                            )
-                        elif name == 'LightGBM':
-                            m = lgb.LGBMRegressor(
-                                n_estimators=100, max_depth=4, learning_rate=0.1,
-                                subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
-                            )
-                        elif name == 'CatBoost':
-                            import catboost as cb
-                            task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
-                            m = cb.CatBoostRegressor(
-                                iterations=100, depth=4, learning_rate=0.1,
-                                task_type=task_type, random_seed=42, verbose=0
-                            )
+                    m = _fresh_ensemble_model(name, device)
                     m.fit(X_train, y_train)
 
                 # Validate model was trained (has trees/estimators)
@@ -308,7 +330,7 @@ def train_shared_base_model(
                 y_pred = m.predict(X_val)
 
                 # Check for numerical instability
-                if np.any(np.isnan(y_pred)) or np.any(np.isinf(y_pred)):
+                if _predictions_are_unstable(y_pred):
                     print(f"      ⚠️ {name}: Predictions contain NaN/Inf, skipping")
                     continue
 
@@ -318,13 +340,23 @@ def train_shared_base_model(
 
                 score = r2_score(y_val, y_pred)
 
-                # Clip to reasonable bounds - extreme values indicate numerical overflow
+                # If an incremental model validates as numerically broken, retry once from scratch.
+                if (used_incremental and (score < -10 or score > 1 or np.isnan(score) or np.isinf(score))):
+                    print(f"      ⚠️ {name}: R² = {score:.3f} after incremental fit, retraining fresh...", end=" ", flush=True)
+                    m = _fresh_ensemble_model(name, device)
+                    m.fit(X_train, y_train)
+                    y_pred = m.predict(X_val)
+                    if _predictions_are_unstable(y_pred):
+                        print("failed: unstable after fresh retrain")
+                        continue
+                    score = r2_score(y_val, y_pred)
+
                 if score < -10 or score > 1 or np.isnan(score) or np.isinf(score):
-                    print(f"      ⚠️ {name}: R² = {score:.3f} (invalid, clipping to -10)")
-                    score = -10.0
+                    print(f"failed: invalid validation score {score:.3f}")
+                    continue
 
             elapsed = time.time() - start_time
-            status = "incremental" if has_existing else "fresh"
+            status = "incremental" if used_incremental and not incremental_failed else "fresh"
             print(f"R² = {score:.3f} ({status}, {elapsed:.1f}s)")
             trained_models.append(m)
             model_scores.append(score)

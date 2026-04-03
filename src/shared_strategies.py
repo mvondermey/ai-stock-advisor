@@ -6778,6 +6778,8 @@ def _get_strategy_registry():
 
         'ai_elite_market_up': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
 
+        'ai_champion': lambda t, d, dt, n: _select_ai_champion_stocks(t, d, dt, n),
+
 
 
         # AI Regime strategies
@@ -6791,6 +6793,8 @@ def _get_strategy_registry():
         # Universal Model
 
         'universal_model': lambda t, d, dt, n: _select_universal_model_stocks(t, d, dt, n),
+
+        'savgol_trend': lambda t, d, dt, n: _select_savgol_trend_stocks(t, d, dt, n),
 
 
 
@@ -6963,6 +6967,30 @@ def _select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top
 
 
 
+def _select_ai_champion_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for AI Champion strategy."""
+    try:
+        from ai_champion_strategy import AIChampionAllocator, select_ai_champion_stocks
+
+        champion = AIChampionAllocator()
+        champion.load_model()
+        predicted_strategy = champion.predict_best_strategy(ticker_data_grouped, current_date)
+        if predicted_strategy is None:
+            return []
+        return select_ai_champion_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date,
+            top_n,
+            predicted_strategy,
+        )
+    except ImportError:
+        return []
+    except Exception as e:
+        print(f"  ⚠️ AI Champion fallback to AI Elite: {e}")
+        return select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0]
+
+
 def _select_universal_model_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
     """Wrapper for Universal Model strategy.
 
@@ -6997,6 +7025,45 @@ def _select_universal_model_stocks(all_tickers, ticker_data_grouped, current_dat
         return []
     except Exception as e:
         print(f"  ⚠️ Universal Model fallback to momentum: {e}")
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
+
+
+def _select_savgol_trend_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for SavGol Trend strategy."""
+    try:
+        from savgol_trend_strategy import SavgolTrendStrategy, select_savgol_trend_stocks
+
+        sample_ticker = next(iter(ticker_data_grouped.keys()), None)
+        if sample_ticker is None:
+            return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
+
+        sample_df = ticker_data_grouped[sample_ticker]
+        business_days = sorted(sample_df.index.tolist())
+        current_day_idx = len([d for d in business_days if d <= current_date]) - 1
+        if current_day_idx < 0:
+            current_day_idx = 0
+
+        model = SavgolTrendStrategy(
+            retrain_days=config.SAVGOL_TREND_RETRAIN_DAYS,
+            min_samples=config.SAVGOL_TREND_MIN_SAMPLES,
+            lookback_days=config.SAVGOL_TREND_LOOKBACK_DAYS,
+            forward_days=config.SAVGOL_TREND_FORWARD_DAYS,
+        )
+        model.load_model()
+
+        return select_savgol_trend_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date,
+            top_n,
+            model,
+            business_days,
+            current_day_idx,
+        )
+    except ImportError:
+        return []
+    except Exception as e:
+        print(f"  ⚠️ SavGol Trend fallback to momentum: {e}")
         return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
 
 

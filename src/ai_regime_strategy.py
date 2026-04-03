@@ -192,8 +192,19 @@ class AIRegimeAllocator:
                     continue  # Skip invalid types
         self.day_count += 1
 
-    def extract_regime_features(self, ticker_data_grouped: Dict[str, pd.DataFrame],
-                                 current_date: datetime) -> Optional[Dict[str, float]]:
+    def _history_as_of(self, strategy_name: str, day_idx: Optional[int] = None) -> List[float]:
+        """Return strategy history truncated to the requested training day."""
+        history = self.strategy_histories.get(strategy_name, [])
+        if day_idx is None:
+            return history
+        return history[: day_idx + 1]
+
+    def extract_regime_features(
+        self,
+        ticker_data_grouped: Dict[str, pd.DataFrame],
+        current_date: datetime,
+        day_idx: Optional[int] = None,
+    ) -> Optional[Dict[str, float]]:
         """
         Extract rich market regime features from price data.
 
@@ -305,7 +316,7 @@ class AIRegimeAllocator:
 
             # --- Strategy momentum and Sharpe features (multi-timeframe) ---
             for strat_name in SUB_STRATEGIES:
-                hist = self.strategy_histories.get(strat_name, [])
+                hist = self._history_as_of(strat_name, day_idx)
 
                 # 10-day momentum
                 if len(hist) >= 10 and hist[-10] > 0:
@@ -389,7 +400,11 @@ class AIRegimeAllocator:
                 continue
             current_date = business_days[day_idx]
 
-            features = self.extract_regime_features(ticker_data_grouped, current_date)
+            features = self.extract_regime_features(
+                ticker_data_grouped,
+                current_date,
+                day_idx=day_idx,
+            )
             if features is None:
                 continue
 

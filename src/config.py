@@ -721,12 +721,15 @@ ENABLE_AI_ELITE_MONTHLY = True   # NEW - AI Elite Monthly (same ML scoring, retr
 ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre-filter + AI Elite re-rank)
 
 ENABLE_AI_ELITE_MARKET_UP = True   # NEW - AI Elite Market-Up (only rebalances when market is up)
+ENABLE_AI_CHAMPION = True   # NEW - AI Champion (ML selector across the top AI/ensemble strategies)
 
 ENABLE_AI_REGIME = True   # NEW - AI Regime (ML predicts which strategy to use based on market conditions)
 
 ENABLE_AI_REGIME_MONTHLY = True   # NEW - AI Regime Monthly (same as AI Regime but rebalance start of month only)
 
 ENABLE_UNIVERSAL_MODEL = True   # NEW - Universal Model (single ML model for all tickers)
+
+ENABLE_SAVGOL_TREND = True   # NEW - SavGol Trend (local polynomial trend features + pooled ML)
 
 ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (not implemented)
 
@@ -759,6 +762,20 @@ AI_ELITE_TRAINING_LOOKBACK = 90  # Days of history to use for training
 AI_ELITE_FORWARD_DAYS = 5  # Predict performance over next N days
 
 AI_ELITE_FORCE_FRESH_TRAIN = False  # False = load existing model and do incremental training; True = always fresh train
+AI_ELITE_CATBOOST_USED_RAM_LIMIT = "24gb"  # Raise CatBoost CPU RAM budget to avoid continuation crashes
+AI_ELITE_CATBOOST_GPU_RAM_PART = 0.95  # Let CatBoost use most of GPU memory when training fresh on GPU
+
+# AI Champion Parameters
+AI_CHAMPION_RETRAIN_DAYS = 1  # Retrain/continue training every day
+AI_CHAMPION_FORWARD_DAYS = 1  # Predict the next trading day's winner
+AI_CHAMPION_CONFIDENCE_THRESHOLD = 0.55  # Require moderate confidence before switching
+AI_CHAMPION_HOLD_MARGIN = 0.08  # Keep current strategy unless the edge is meaningful
+
+# SavGol Trend Parameters
+SAVGOL_TREND_RETRAIN_DAYS = 1  # Retrain every day like AI Elite
+SAVGOL_TREND_LOOKBACK_DAYS = 60  # History window used for local trend features
+SAVGOL_TREND_FORWARD_DAYS = 5  # Predict 5-day forward returns
+SAVGOL_TREND_MIN_SAMPLES = 300  # Minimum pooled samples before fitting the model
 
 
 
@@ -932,15 +949,17 @@ ENABLE_PROFIT_GUARD     = False      # Sell stocks when not in top 10 (no profit
 
 # --- Inverse ETF Hedge Strategy ---
 
-# Instead of stop losses, add inverse ETFs during market downturns
+# Instead of stop losses, add inverse ETFs when the shared trailing market regime turns down
 
-# NEW: Hybrid approach - gradual scaling based on market stress
+# Hybrid approach: activate on trailing 5-day market weakness, then scale by decline size
 
 ENABLE_INVERSE_ETF_HEDGE = True     # Add inverse ETFs when market crashes
 
-# Gradual scaling thresholds (market decline % -> hedge allocation %)
+# Gradual scaling thresholds after trailing 5-day market return turns non-positive
+# Thresholds are stored as decimals in config but applied as percentage declines in code
 
-# Example: market down 5% -> 20% hedge, down 10% -> 50% hedge, down 15% -> 80% hedge
+# Example: trailing 5d return <= 0 starts hedge mode; -5% -> 20% hedge,
+# -10% -> 50% hedge, -15% -> 80% hedge
 
 INVERSE_ETF_HEDGE_THRESHOLD_LOW = 0.05    # 5% decline = 20% hedge
 

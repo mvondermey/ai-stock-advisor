@@ -32,7 +32,7 @@ def _simulate_strategy_vectorized(
 
     Args:
         price_matrix: 2D array of prices [dates x tickers]
-        dates: Array of dates
+        dates: Array of normalized daily dates
         tickers: List of ticker names
         strategy_type: '1Y', '6M', '3M', or '1M'
         rebalance_days: Days between rebalances
@@ -43,6 +43,7 @@ def _simulate_strategy_vectorized(
         Tuple of (final_value, total_txn_cost)
     """
     n_dates, n_tickers = price_matrix.shape
+    dates = np.asarray(dates, dtype='datetime64[D]')
 
     if n_dates < 20:
         return initial_capital, 0.0
@@ -64,8 +65,9 @@ def _simulate_strategy_vectorized(
         if days_since_rebalance >= rebalance_days:
             current_prices = price_matrix[day_idx]
 
-            # Find lookback start index (approximate by days)
-            lookback_idx = max(0, day_idx - lookback_days)
+            # Find lookback start index using actual calendar dates.
+            target_date = dates[day_idx] - np.timedelta64(lookback_days, 'D')
+            lookback_idx = int(np.searchsorted(dates, target_date, side='left'))
 
             # Skip if not enough history
             if day_idx - lookback_idx < 20:
@@ -107,13 +109,13 @@ def _simulate_strategy_vectorized(
             # Buy new positions (equal weight)
             stocks_to_buy = [i for i in top_indices if holdings[i] == 0]
             if stocks_to_buy and cash > 100:  # Min cash threshold
-                capital_per_stock = cash / len(stocks_to_buy)
+                capital_per_stock = cash / (len(stocks_to_buy) * (1 + TRANSACTION_COST))
                 for i in stocks_to_buy:
                     if current_prices[i] > 0:
                         shares = capital_per_stock / current_prices[i]
                         txn_cost = capital_per_stock * TRANSACTION_COST
                         holdings[i] = shares
-                        cash -= capital_per_stock
+                        cash -= capital_per_stock + txn_cost
                         total_txn_cost += txn_cost
 
             days_since_rebalance = 0
@@ -166,8 +168,28 @@ def optimize_rebalance_horizons(
 
     # Filter data to optimization period
     if 'date' in all_tickers_data.columns:
-        mask = (all_tickers_data['date'] >= optimization_start) & (all_tickers_data['date'] <= backtest_end)
-        filtered_data = all_tickers_data[mask].copy()
+        filtered_data = all_tickers_data.copy()
+        filtered_data['date'] = pd.to_datetime(filtered_data['date'], utc=True).dt.normalize()
+
+        optimization_start_ts = pd.Timestamp(optimization_start)
+        backtest_end_ts = pd.Timestamp(backtest_end)
+        if optimization_start_ts.tzinfo is None:
+            optimization_start_ts = optimization_start_ts.tz_localize('UTC')
+        else:
+            optimization_start_ts = optimization_start_ts.tz_convert('UTC')
+        if backtest_end_ts.tzinfo is None:
+            backtest_end_ts = backtest_end_ts.tz_localize('UTC')
+        else:
+            backtest_end_ts = backtest_end_ts.tz_convert('UTC')
+
+        optimization_start_ts = optimization_start_ts.normalize()
+        backtest_end_ts = backtest_end_ts.normalize()
+
+        mask = (
+            (filtered_data['date'] >= optimization_start_ts) &
+            (filtered_data['date'] <= backtest_end_ts)
+        )
+        filtered_data = filtered_data[mask].copy()
     else:
         filtered_data = all_tickers_data.copy()
 
