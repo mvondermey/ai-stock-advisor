@@ -110,7 +110,6 @@ from config import (
     RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION, RISK_ADJ_MOM_CONFIRM_SHORT, RISK_ADJ_MOM_CONFIRM_MEDIUM, RISK_ADJ_MOM_CONFIRM_LONG, RISK_ADJ_MOM_MIN_CONFIRMATIONS,
     RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION, RISK_ADJ_MOM_VOLUME_WINDOW, RISK_ADJ_MOM_VOLUME_MULTIPLIER,
     OPTIMIZE_REBALANCE_HORIZON,
-    TRAINING_NUM_PROCESSES,
     AI_ELITE_FORCE_FRESH_TRAIN,
     ANALYST_LOOKBACK_DAYS, ANALYST_MIN_ACTIONS, ANALYST_REBALANCE_DAYS,
     STATIC_BH_1Y_VOLUME_MIN_DAILY, STATIC_BH_1Y_SECTOR_MAX_PER_SECTOR,
@@ -214,6 +213,7 @@ STRATEGY_DISPLAY_NAMES = {
     'ai_regime_monthly': 'AI Regime Mth',
     'universal_model': 'Universal Model',
     'savgol_trend': 'SavGol Trend',
+    'top5_consistency_blend': 'Top5 Cons Blend',
     'inverse_etf_hedge': '🛡️ Inv ETF Hedge',
     'analyst_rec': 'Analyst Rec',
     'bh_1y_monthly': 'BH 1Y Monthly',
@@ -305,6 +305,7 @@ adaptive_ensemble_transaction_costs = 0
 ai_volatility_ensemble_transaction_costs = 0
 multi_tf_ensemble_transaction_costs = 0
 multi_tf_intraday_ensemble_transaction_costs = 0
+top5_consistency_blend_transaction_costs = 0
 
 
 def _build_daily_strategy_data(locals_dict):
@@ -386,6 +387,7 @@ def _build_daily_strategy_data(locals_dict):
         'ai_regime_monthly': config.ENABLE_AI_REGIME_MONTHLY,
         'universal_model': config.ENABLE_UNIVERSAL_MODEL,
         'savgol_trend': config.ENABLE_SAVGOL_TREND,
+        'top5_consistency_blend': config.ENABLE_TOP5_CONSISTENCY_BLEND,
         'inverse_etf_hedge': config.ENABLE_INVERSE_ETF_HEDGE,
         'analyst_rec': config.ENABLE_ANALYST_RECOMMENDATION,
         'risk_adj_mom_sentiment': config.ENABLE_RISK_ADJ_MOM_SENTIMENT,
@@ -493,6 +495,7 @@ def _build_daily_strategy_data(locals_dict):
         ('ai_regime_monthly', 'ai_regime_monthly_portfolio_value', 'ai_regime_monthly_portfolio_history', 'ai_regime_monthly_cash', 'ai_regime_monthly_positions'),
         ('universal_model', 'universal_model_portfolio_value', 'universal_model_portfolio_history', 'universal_model_cash', 'universal_model_positions'),
         ('savgol_trend', 'savgol_trend_portfolio_value', 'savgol_trend_portfolio_history', 'savgol_trend_cash', 'savgol_trend_positions'),
+        ('top5_consistency_blend', 'top5_consistency_blend_portfolio_value', 'top5_consistency_blend_portfolio_history', 'top5_consistency_blend_cash', 'top5_consistency_blend_positions'),
         ('inverse_etf_hedge', 'inverse_etf_hedge_portfolio_value', 'inverse_etf_hedge_portfolio_history', 'inverse_etf_hedge_cash', 'inverse_etf_hedge_positions'),
         ('analyst_rec', 'analyst_rec_portfolio_value', 'analyst_rec_portfolio_history', 'analyst_rec_cash', 'analyst_rec_positions'),
         ('bh_1y_monthly', 'static_bh_1y_monthly_portfolio_value', 'static_bh_1y_monthly_portfolio_history', 'static_bh_1y_monthly_cash', 'static_bh_1y_monthly_positions'),
@@ -570,14 +573,23 @@ def _build_daily_strategy_data(locals_dict):
                 num_positions = len(positions)
             elif isinstance(positions, (list, tuple)):
                 num_positions = len(positions)
+                tickers = list(positions)
+            elif positions is None:
+                num_positions = 0
+                tickers = []
             else:
                 num_positions = 0
+                tickers = []
+
+            if isinstance(positions, dict):
+                tickers = list(positions.keys())
 
             data[key] = {
                 'value': value,
                 'history': history,
                 'cash': cash,
                 'positions': num_positions,
+                'tickers': tickers,
                 'display_name': STRATEGY_DISPLAY_NAMES.get(key, key)
             }
 
@@ -605,6 +617,125 @@ def _fine_tune_worker(args):
         base_model=base_model, save_path=save_path
     )
     return ticker, model
+
+
+def _select_top5_consistency_blend_stocks(
+    source_strategy_data: Dict[str, Dict],
+    top5_consistency_counts: Dict[str, int],
+    total_days: int,
+    top_n: int = 10,
+    max_source_strategies: int = 5,
+) -> Tuple[List[str], Dict[str, float], List[str]]:
+    """
+    Blend current source strategy holdings using lagged top-5 consistency weights.
+
+    The weights are based on completed backtest days only, so Day N+1 uses the
+    consistency results accumulated through Day N.
+    """
+    if total_days <= 0 or not top5_consistency_counts:
+        return [], {}, []
+
+    eligible_sources = []
+    for strategy_key, strategy_data in source_strategy_data.items():
+        if strategy_key == 'top5_consistency_blend':
+            continue
+
+        display_name = strategy_data.get('display_name', strategy_key)
+        tickers = list(strategy_data.get('tickers') or [])
+        consistency_count = top5_consistency_counts.get(display_name, 0)
+        if consistency_count > 0 and tickers:
+            eligible_sources.append((display_name, consistency_count, tickers[:top_n]))
+
+    if not eligible_sources:
+        return [], {}, []
+
+    eligible_sources.sort(key=lambda item: (-item[1], item[0]))
+    selected_sources = eligible_sources[:max_source_strategies]
+
+    raw_weights = {
+        display_name: consistency_count / total_days
+        for display_name, consistency_count, _ in selected_sources
+    }
+    total_weight = sum(raw_weights.values())
+    if total_weight <= 0:
+        return [], {}, []
+
+    normalized_weights = {
+        display_name: weight / total_weight
+        for display_name, weight in raw_weights.items()
+    }
+
+    ticker_scores: Dict[str, float] = {}
+    for display_name, _, tickers in selected_sources:
+        num_tickers = max(1, len(tickers))
+        strategy_weight = normalized_weights[display_name]
+        for rank, ticker in enumerate(tickers):
+            rank_multiplier = (num_tickers - rank) / num_tickers
+            ticker_scores[ticker] = ticker_scores.get(ticker, 0.0) + strategy_weight * rank_multiplier
+
+    ranked_tickers = sorted(ticker_scores.items(), key=lambda item: (-item[1], item[0]))
+    selected_tickers = [ticker for ticker, _ in ranked_tickers[:top_n]]
+    source_names = [display_name for display_name, _, _ in selected_sources]
+    return selected_tickers, normalized_weights, source_names
+
+
+def _select_voting_ensemble_stocks_from_strategy_data(
+    source_strategy_data: Dict[str, Dict],
+    top_n: int = 10,
+    max_source_strategies: int = 3,
+    excluded_strategy_keys: Optional[List[str]] = None,
+) -> Tuple[List[str], List[Tuple[str, str, float, List[str]]], List[Tuple[str, int]], Dict[str, List[str]]]:
+    """
+    Build voting picks from the best-performing in-memory strategies for the day.
+
+    This uses each strategy's current day-end portfolio value as the ranking metric
+    and votes on the tickers that strategy is actually holding/selected in memory.
+    """
+    excluded = set(excluded_strategy_keys or [])
+    eligible_sources: List[Tuple[str, str, float, List[str]]] = []
+
+    for strategy_key, strategy_data in source_strategy_data.items():
+        if strategy_key in excluded:
+            continue
+
+        display_name = strategy_data.get('display_name', strategy_key)
+        value = float(strategy_data.get('value') or 0.0)
+        raw_tickers = list(strategy_data.get('tickers') or [])
+        deduped_tickers: List[str] = []
+        seen = set()
+        for ticker in raw_tickers:
+            if ticker and ticker not in seen:
+                deduped_tickers.append(ticker)
+                seen.add(ticker)
+
+        if deduped_tickers:
+            eligible_sources.append((strategy_key, display_name, value, deduped_tickers[:top_n]))
+
+    if not eligible_sources:
+        return [], [], [], {}
+
+    eligible_sources.sort(key=lambda item: (-item[2], item[1]))
+    selected_sources = eligible_sources[:max_source_strategies]
+
+    vote_counts: Dict[str, int] = {}
+    vote_details: Dict[str, List[str]] = {}
+    tie_break_scores: Dict[str, float] = {}
+
+    for source_rank, (_, display_name, _, tickers) in enumerate(selected_sources, 1):
+        source_bonus = max_source_strategies - source_rank + 1
+        num_tickers = max(1, len(tickers))
+        for ticker_rank, ticker in enumerate(tickers):
+            vote_counts[ticker] = vote_counts.get(ticker, 0) + 1
+            vote_details.setdefault(ticker, []).append(display_name)
+            rank_multiplier = (num_tickers - ticker_rank) / num_tickers
+            tie_break_scores[ticker] = tie_break_scores.get(ticker, 0.0) + (source_bonus * rank_multiplier)
+
+    ranked_tickers = sorted(
+        vote_counts.items(),
+        key=lambda item: (-item[1], -tie_break_scores.get(item[0], 0.0), item[0])
+    )
+    selected_tickers = [ticker for ticker, _ in ranked_tickers[:top_n]]
+    return selected_tickers, selected_sources, ranked_tickers, vote_details
 
 
 def _last_valid_close_up_to(ticker_df: pd.DataFrame, current_date: datetime) -> Optional[float]:
@@ -2498,6 +2629,7 @@ def _run_portfolio_backtest_walk_forward(
 
     # TOP 5 CONSISTENCY TRACKER: Count how many days each strategy is in top 5
     top5_consistency_counts = {}  # strategy_name -> count of days in top 5
+    recent_top5_history = []  # rolling list of daily top-5 display names
 
     # AI CLASSIFICATION: Removed - stub variables for compatibility
     ai_classification_portfolio_value = 0
@@ -2756,6 +2888,16 @@ def _run_portfolio_backtest_walk_forward(
     savgol_trend_transaction_costs = 0.0
     savgol_trend_initialized = False
     savgol_trend_strategy = None
+
+    # TOP5 CONSISTENCY BLEND: Weight current holdings by prior-day top-5 consistency.
+    top5_consistency_blend_portfolio_value = initial_capital_needed
+    top5_consistency_blend_portfolio_history = [top5_consistency_blend_portfolio_value] if config.ENABLE_TOP5_CONSISTENCY_BLEND else []
+    top5_consistency_blend_positions = {}
+    top5_consistency_blend_cash = initial_capital_needed
+    current_top5_consistency_blend_stocks = []
+    top5_consistency_blend_transaction_costs = 0.0
+    top5_consistency_blend_initialized = False
+    top5_consistency_blend_last_weights = {}
 
     # MEAN REVERSION: Initialize portfolio tracking
     mean_reversion_portfolio_value = initial_capital_needed
@@ -5448,42 +5590,6 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Risk-Adj Mom Sentiment strategy error: {e}")
 
-        # VOTING ENSEMBLE: Rebalance using consensus voting strategy DAILY
-        if config.ENABLE_VOTING_ENSEMBLE:
-            try:
-                from shared_strategies import select_voting_ensemble_stocks
-
-                print(f"   🗳️  Voting Ensemble Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
-
-                new_voting_ensemble_stocks = select_voting_ensemble_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
-                )
-
-                if new_voting_ensemble_stocks:
-                    print(f"   📊 Voting Ensemble Day {day_count}: {new_voting_ensemble_stocks}")
-                    # Use universal smart rebalancing function
-                    voting_ensemble_positions, voting_ensemble_cash, current_voting_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name="Voting Ensemble",
-                        current_stocks=current_voting_ensemble_stocks,
-                        new_stocks=new_voting_ensemble_stocks,
-                        positions=voting_ensemble_positions,
-                        cash=voting_ensemble_cash,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        transaction_cost=TRANSACTION_COST,
-                        portfolio_size=PORTFOLIO_SIZE,
-                        force_rebalance=not current_voting_ensemble_stocks  # Force initial allocation
-                    )
-                    strategies_rebalanced_today['Voting Ensemble'] = rebalanced_flag
-                    voting_ensemble_transaction_costs += rebalance_costs
-                    voting_ensemble_last_rebalance_value = voting_ensemble_portfolio_value
-
-            except Exception as e:
-                print(f"   ⚠️ Voting Ensemble strategy error: {e}")
-
         # MULTI-HORIZON ENSEMBLE: Rebalance using multi-horizon signals from daily data
         if config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE:
             try:
@@ -7423,6 +7529,7 @@ def _run_portfolio_backtest_walk_forward(
                     savgol_trend_strategy,
                     business_days,
                     day_count,
+                    current_savgol_trend_stocks,
                 )
 
                 if new_savgol_trend_stocks:
@@ -8546,29 +8653,7 @@ def _run_portfolio_backtest_walk_forward(
             dynamic_pool_portfolio_value = dynamic_pool_invested_value + dynamic_pool_cash
             dynamic_pool_portfolio_history.append(dynamic_pool_portfolio_value)
 
-        # Update VOTING ENSEMBLE portfolio value daily (skip if disabled)
-        if config.ENABLE_VOTING_ENSEMBLE:
-            voting_ensemble_invested_value = 0.0
-            for ticker in list(voting_ensemble_positions.keys()):
-                try:
-                    ticker_df = ticker_data_grouped.get(ticker)
-                    if ticker_df is not None:
-                        current_price = _last_valid_close_up_to(ticker_df, current_date)
-                        if current_price is not None:
-                            shares = voting_ensemble_positions[ticker]['shares']
-                            position_value = shares * current_price
-                            voting_ensemble_positions[ticker]['value'] = position_value
-                            voting_ensemble_invested_value += position_value
-                        else:
-                            voting_ensemble_invested_value += voting_ensemble_positions[ticker].get('value', 0.0)
-                    else:
-                        voting_ensemble_invested_value += voting_ensemble_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating voting ensemble position for {ticker}: {e}")
-                    voting_ensemble_invested_value += voting_ensemble_positions[ticker].get('value', 0.0)
-
-            voting_ensemble_portfolio_value = voting_ensemble_invested_value + voting_ensemble_cash
-            voting_ensemble_portfolio_history.append(voting_ensemble_portfolio_value)
+        # Voting Ensemble is updated after all other day-end strategy values are known.
 
         # Update MOMENTUM ACCELERATION portfolio value daily
         mom_accel_invested_value = 0.0
@@ -9036,6 +9121,50 @@ def _run_portfolio_backtest_walk_forward(
         ai_elite_monthly_portfolio_value = ai_elite_monthly_invested_value + ai_elite_monthly_cash
         ai_elite_monthly_portfolio_history.append(ai_elite_monthly_portfolio_value)
 
+        # TOP5 CONSISTENCY BLEND: use prior-day top-5 consistency to weight current source holdings.
+        if config.ENABLE_TOP5_CONSISTENCY_BLEND:
+            try:
+                source_strategy_data = _build_daily_strategy_data(locals())
+                lagged_days = day_count - 1
+                new_top5_consistency_blend_stocks, top5_consistency_blend_last_weights, top5_consistency_sources = _select_top5_consistency_blend_stocks(
+                    source_strategy_data=source_strategy_data,
+                    top5_consistency_counts=top5_consistency_counts,
+                    total_days=lagged_days,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                )
+
+                if new_top5_consistency_blend_stocks:
+                    weight_summary = ", ".join(
+                        f"{name}={weight:.1%}"
+                        for name, weight in sorted(
+                            top5_consistency_blend_last_weights.items(),
+                            key=lambda item: (-item[1], item[0])
+                        )
+                    )
+                    print(f"   📊 Top5 Cons Blend Day {day_count}: {new_top5_consistency_blend_stocks}")
+                    print(f"   ⚖️ Top5 Cons Blend weights from {lagged_days} prior day(s): {weight_summary}")
+
+                    top5_consistency_blend_positions, top5_consistency_blend_cash, current_top5_consistency_blend_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Top5 Cons Blend",
+                        current_stocks=current_top5_consistency_blend_stocks,
+                        new_stocks=new_top5_consistency_blend_stocks,
+                        positions=top5_consistency_blend_positions,
+                        cash=top5_consistency_blend_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        force_rebalance=not top5_consistency_blend_initialized
+                    )
+                    strategies_rebalanced_today['Top5 Cons Blend'] = rebalanced_flag
+                    top5_consistency_blend_transaction_costs += rc
+                    top5_consistency_blend_initialized = True
+                elif lagged_days <= 0:
+                    print("   📊 Top5 Cons Blend: Waiting for prior-day consistency data")
+            except Exception as e:
+                print(f"   ⚠️ Top5 Consistency Blend error: {e}")
+
         # Update AI ELITE FILTERED portfolio value daily
         ai_elite_filtered_invested_value = 0.0
         if config.ENABLE_AI_ELITE_FILTERED:
@@ -9189,6 +9318,29 @@ def _run_portfolio_backtest_walk_forward(
                     universal_model_invested_value += universal_model_positions[ticker].get('value', 0.0)
         universal_model_portfolio_value = universal_model_invested_value + universal_model_cash
         universal_model_portfolio_history.append(universal_model_portfolio_value)
+
+        # Update TOP5 CONSISTENCY BLEND portfolio value daily
+        top5_consistency_blend_invested_value = 0.0
+        if config.ENABLE_TOP5_CONSISTENCY_BLEND:
+            for ticker in list(top5_consistency_blend_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = top5_consistency_blend_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            top5_consistency_blend_positions[ticker]['value'] = position_value
+                            top5_consistency_blend_invested_value += position_value
+                        else:
+                            top5_consistency_blend_invested_value += top5_consistency_blend_positions[ticker].get('value', 0.0)
+                    else:
+                        top5_consistency_blend_invested_value += top5_consistency_blend_positions[ticker].get('value', 0.0)
+                except Exception:
+                    top5_consistency_blend_invested_value += top5_consistency_blend_positions[ticker].get('value', 0.0)
+        top5_consistency_blend_portfolio_value = top5_consistency_blend_invested_value + top5_consistency_blend_cash
+        if config.ENABLE_TOP5_CONSISTENCY_BLEND:
+            top5_consistency_blend_portfolio_history.append(top5_consistency_blend_portfolio_value)
 
         # Update META STRATEGIES portfolio values daily
         def _update_meta_portfolio(positions, cash):
@@ -10079,6 +10231,85 @@ def _run_portfolio_backtest_walk_forward(
         # Update portfolio value history
         portfolio_values_history.append(total_portfolio_value)
 
+        # VOTING ENSEMBLE: at day end, vote using the 3 best-performing strategies
+        # based on in-memory portfolio values and their current selected/held tickers.
+        if config.ENABLE_VOTING_ENSEMBLE:
+            try:
+                voting_source_strategy_data = _build_daily_strategy_data(locals())
+                new_voting_ensemble_stocks, voting_sources, ranked_votes, vote_details = _select_voting_ensemble_stocks_from_strategy_data(
+                    source_strategy_data=voting_source_strategy_data,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    max_source_strategies=3,
+                    excluded_strategy_keys=['voting_ensemble'],
+                )
+
+                if voting_sources:
+                    print(f"\n   🗳️  Voting Ensemble Strategy: Using top {len(voting_sources)} daily performers on {current_date.strftime('%Y-%m-%d')}")
+                    for source_rank, (_, display_name, value, tickers) in enumerate(voting_sources, 1):
+                        source_return_pct = ((value - initial_capital_needed) / initial_capital_needed) * 100
+                        print(
+                            f"      {source_rank}. {display_name:<20} "
+                            f"${value:>11,.0f} ({source_return_pct:+6.1f}%) {len(tickers)} ticker(s)"
+                        )
+
+                    print(f"\n   📊 {len(voting_sources)} strategies contributed votes")
+                    print(f"\n   📊 VOTING RESULTS (Top {len(new_voting_ensemble_stocks)} stocks):")
+                    print(f"   {'Rank':<5} {'Ticker':<8} {'Votes':<8} {'Strategies':<50}")
+                    print(f"   {'-'*5} {'-'*8} {'-'*8} {'-'*50}")
+
+                    for rank, (stock, votes) in enumerate(ranked_votes[:PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE], 1):
+                        voting_strategies = vote_details.get(stock, [])
+                        strategies_str = ', '.join(voting_strategies[:3])
+                        if len(voting_strategies) > 3:
+                            strategies_str += f" (+{len(voting_strategies)-3} more)"
+                        vote_bar = "█" * votes + "░" * (len(voting_sources) - votes)
+                        print(f"   {rank:<5} {stock:<8} {votes}/{len(voting_sources)} {vote_bar} {strategies_str}")
+
+                    print(f"\n   🗳️  Voting Ensemble selected {len(new_voting_ensemble_stocks)} tickers:")
+                    print(f"   ✅ {new_voting_ensemble_stocks}")
+
+                    voting_ensemble_positions, voting_ensemble_cash, current_voting_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Voting Ensemble",
+                        current_stocks=current_voting_ensemble_stocks,
+                        new_stocks=new_voting_ensemble_stocks,
+                        positions=voting_ensemble_positions,
+                        cash=voting_ensemble_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_voting_ensemble_stocks
+                    )
+                    strategies_rebalanced_today['Voting Ensemble'] = rebalanced_flag
+                    voting_ensemble_transaction_costs += rebalance_costs
+                    voting_ensemble_last_rebalance_value = voting_ensemble_portfolio_value
+                else:
+                    print(f"   ⚠️ Voting Ensemble: No eligible source strategies with tickers on {current_date.strftime('%Y-%m-%d')}")
+            except Exception as e:
+                print(f"   ⚠️ Voting Ensemble strategy error: {e}")
+
+            voting_ensemble_invested_value = 0.0
+            for ticker in list(voting_ensemble_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = voting_ensemble_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            voting_ensemble_positions[ticker]['value'] = position_value
+                            voting_ensemble_invested_value += position_value
+                        else:
+                            voting_ensemble_invested_value += voting_ensemble_positions[ticker].get('value', 0.0)
+                    else:
+                        voting_ensemble_invested_value += voting_ensemble_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating voting ensemble position for {ticker}: {e}")
+                    voting_ensemble_invested_value += voting_ensemble_positions[ticker].get('value', 0.0)
+
+            voting_ensemble_portfolio_value = voting_ensemble_invested_value + voting_ensemble_cash
+            voting_ensemble_portfolio_history.append(voting_ensemble_portfolio_value)
+
         # Periodic progress update
         if day_count % 50 == 0:
             print(f"   📈 Processed {day_count}/{len(business_days)} days, portfolio: {current_portfolio_stocks}")
@@ -10095,11 +10326,17 @@ def _run_portfolio_backtest_walk_forward(
             sorted_strategies = sorted(daily_strat_data.items(), key=lambda x: x[1]['value'], reverse=True)
 
             # Track Top 5 consistency
+            today_top5_names = []
             for rank, (key, sdata) in enumerate(sorted_strategies[:5], 1):
                 dname = sdata['display_name']
+                today_top5_names.append(dname)
                 if dname not in top5_consistency_counts:
                     top5_consistency_counts[dname] = 0
                 top5_consistency_counts[dname] += 1
+
+            recent_top5_history.append(today_top5_names)
+            if len(recent_top5_history) > 5:
+                recent_top5_history = recent_top5_history[-5:]
 
             # Show ALL strategies with cash and allocation info
             print(f"{'Rank':<5} {'Strategy':<20} {'Value':>12} {'Return':>9} {'StdDev':>8} {'Ann.Ret':>10} {'Cash':>12} {'Pos':>5}")
@@ -10145,6 +10382,20 @@ def _run_portfolio_backtest_walk_forward(
                     pct = (count / day_count) * 100
                     bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
                     print(f"   {rank:<3} {strat_name:<20} {count:>3}/{day_count} days ({pct:>5.1f}%) {bar}")
+
+                recent_window = min(day_count, 5)
+                if recent_window > 0 and recent_top5_history:
+                    recent_counts = {}
+                    for top5_names in recent_top5_history[-recent_window:]:
+                        for strat_name in top5_names:
+                            recent_counts[strat_name] = recent_counts.get(strat_name, 0) + 1
+
+                    sorted_recent_consistency = sorted(recent_counts.items(), key=lambda x: x[1], reverse=True)
+                    print(f"\n🏆 TOP 5 CONSISTENCY - LAST {recent_window} DAYS:")
+                    for rank, (strat_name, count) in enumerate(sorted_recent_consistency[:10], 1):
+                        pct = (count / recent_window) * 100
+                        bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
+                        print(f"   {rank:<3} {strat_name:<20} {count:>3}/{recent_window} days ({pct:>5.1f}%) {bar}")
 
             # Statistical Significance Testing
             if day_count >= 10 and len(strategy_details) >= 2:
@@ -10239,6 +10490,7 @@ def _run_portfolio_backtest_walk_forward(
             ("Risk-Adj Mom 1M",     risk_adj_mom_1m_portfolio_history     if config.ENABLE_RISK_ADJ_MOM_1M else None),
             ("RiskAdj 1M Mth",     risk_adj_mom_1m_monthly_portfolio_history if config.ENABLE_RISK_ADJ_MOM_1M_MONTHLY else None),
             ("AI Elite",            ai_elite_portfolio_history            if config.ENABLE_AI_ELITE else None),
+            ("Top5 Cons Blend",    top5_consistency_blend_portfolio_history if config.ENABLE_TOP5_CONSISTENCY_BLEND else None),
             ("BH 1Y Monthly",       static_bh_1y_monthly_portfolio_history if config.ENABLE_STATIC_BH_1Y_MONTHLY else None),
             ("BH 6M Monthly",       static_bh_6m_monthly_portfolio_history if config.ENABLE_STATIC_BH_6M_MONTHLY else None),
             ("BH 3M Monthly",       static_bh_3m_monthly_portfolio_history if config.ENABLE_STATIC_BH_3M_MONTHLY else None),
@@ -10320,6 +10572,32 @@ def _run_portfolio_backtest_walk_forward(
             print(f"🔻 Worst strategy each day marked with 🔻 symbol")
 
         print("="*120)
+
+        # Release heavy AI Elite model objects between backtest days.
+        # They are checkpointed to disk and reloaded when needed.
+        if config.ENABLE_AI_ELITE and ai_elite_models:
+            ai_elite_models = {}
+        if config.ENABLE_AI_ELITE_MONTHLY and ai_elite_monthly_models:
+            ai_elite_monthly_models = {}
+        if config.ENABLE_AI_CHAMPION and ai_champion_allocator is not None and getattr(ai_champion_allocator, 'retrain_days', None) == 1:
+            ai_champion_allocator.release_model_artifacts()
+        if config.ENABLE_AI_REGIME and ai_regime_allocator is not None and getattr(ai_regime_allocator, 'retrain_days', None) == 1:
+            ai_regime_allocator.release_model_artifacts()
+        if config.ENABLE_UNIVERSAL_MODEL and universal_model_strategy is not None and getattr(universal_model_strategy, 'retrain_days', None) == 1:
+            universal_model_strategy.release_model_artifacts()
+        if config.ENABLE_SAVGOL_TREND and savgol_trend_strategy is not None and getattr(savgol_trend_strategy, 'retrain_days', None) == 1:
+            savgol_trend_strategy.release_model_artifacts()
+        try:
+            import gc
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     # Build results dictionary - replaces the fragile 149-value return tuple
     # Each strategy has: value, history, costs, cash_deployed
@@ -10575,6 +10853,7 @@ def _run_portfolio_backtest_walk_forward(
             'risk_adj_mom_sentiment': {'tickers': list(current_risk_adj_mom_sentiment_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in risk_adj_mom_sentiment_positions.items()}},
             'universal_model': {'tickers': list(current_universal_model_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in universal_model_positions.items()}},
             'savgol_trend': {'tickers': list(current_savgol_trend_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in savgol_trend_positions.items()}},
+            'top5_consistency_blend': {'tickers': list(current_top5_consistency_blend_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in top5_consistency_blend_positions.items()}},
             'vol_sweet_mom': {'tickers': list(current_vol_sweet_mom_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in vol_sweet_mom_positions.items()}},
             'voting_ensemble': {'tickers': list(current_voting_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in voting_ensemble_positions.items()}},
             'ai_champion': {'tickers': list(ai_champion_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_champion_positions.items()}},
@@ -10642,6 +10921,7 @@ def _run_portfolio_backtest_walk_forward(
         'ai_regime_monthly': config.ENABLE_AI_REGIME_MONTHLY,
         'universal_model': config.ENABLE_UNIVERSAL_MODEL,
         'savgol_trend': config.ENABLE_SAVGOL_TREND,
+        'top5_consistency_blend': config.ENABLE_TOP5_CONSISTENCY_BLEND,
         # Core strategies
         'sector_rotation': config.ENABLE_SECTOR_ROTATION,
         'quality_momentum': config.ENABLE_QUALITY_MOM,
@@ -10698,7 +10978,7 @@ def _run_portfolio_backtest_walk_forward(
         for strategy_name in results['strategies'].keys():
             try:
                 # Skip strategies that don't have selection functions (e.g., meta strategies)
-                if strategy_name in ['meta_strategy_ml', 'meta_strategy_mom']:
+                if strategy_name in ['meta_strategy_ml', 'meta_strategy_mom', 'top5_consistency_blend', 'voting_ensemble']:
                     continue
 
                 # Skip disabled strategies (especially AI strategies that are slow to run)
@@ -10718,6 +10998,67 @@ def _run_portfolio_backtest_walk_forward(
                 live_trading_selections['strategies'][strategy_name] = []
 
         print(f"   ✅ Generated selections for {len(live_trading_selections['strategies'])} strategies")
+
+        if config.ENABLE_TOP5_CONSISTENCY_BLEND and 'top5_consistency_blend' in results['strategies']:
+            try:
+                live_source_strategy_data = {}
+                for strategy_key, tickers in live_trading_selections['strategies'].items():
+                    if isinstance(tickers, list):
+                        live_source_strategy_data[strategy_key] = {
+                            'display_name': STRATEGY_DISPLAY_NAMES.get(strategy_key, strategy_key),
+                            'tickers': tickers,
+                        }
+
+                top5_live_stocks, live_weights, _ = _select_top5_consistency_blend_stocks(
+                    source_strategy_data=live_source_strategy_data,
+                    top5_consistency_counts=top5_consistency_counts,
+                    total_days=day_count,
+                    top_n=LIVE_TRADING_TOP_N,
+                )
+                live_trading_selections['strategies']['top5_consistency_blend'] = top5_live_stocks
+                if live_weights:
+                    live_weight_summary = ", ".join(
+                        f"{name}={weight:.1%}"
+                        for name, weight in sorted(live_weights.items(), key=lambda item: (-item[1], item[0]))
+                    )
+                    print(
+                        f"   ✅ Top5 Consistency Blend: Selected {len(top5_live_stocks)} stocks "
+                        f"using {live_weight_summary}"
+                    )
+            except Exception as e:
+                print(f"   ⚠️ Top5 Consistency Blend live selection error: {e}")
+                live_trading_selections['strategies']['top5_consistency_blend'] = []
+
+        if config.ENABLE_VOTING_ENSEMBLE and 'voting_ensemble' in results['strategies']:
+            try:
+                live_voting_source_strategy_data = {}
+                for strategy_key, strategy_result in results['strategies'].items():
+                    if strategy_key == 'voting_ensemble':
+                        continue
+                    tickers = live_trading_selections['strategies'].get(strategy_key, [])
+                    if isinstance(tickers, list):
+                        live_voting_source_strategy_data[strategy_key] = {
+                            'display_name': STRATEGY_DISPLAY_NAMES.get(strategy_key, strategy_key),
+                            'tickers': tickers,
+                            'value': strategy_result.get('value', 0.0),
+                        }
+
+                voting_live_stocks, voting_live_sources, _, _ = _select_voting_ensemble_stocks_from_strategy_data(
+                    source_strategy_data=live_voting_source_strategy_data,
+                    top_n=LIVE_TRADING_TOP_N,
+                    max_source_strategies=3,
+                    excluded_strategy_keys=['voting_ensemble'],
+                )
+                live_trading_selections['strategies']['voting_ensemble'] = voting_live_stocks
+                if voting_live_sources:
+                    voting_source_summary = ", ".join(display_name for _, display_name, _, _ in voting_live_sources)
+                    print(
+                        f"   ✅ Voting Ensemble: Selected {len(voting_live_stocks)} stocks "
+                        f"from top {len(voting_live_sources)} strategies ({voting_source_summary})"
+                    )
+            except Exception as e:
+                print(f"   ⚠️ Voting Ensemble live selection error: {e}")
+                live_trading_selections['strategies']['voting_ensemble'] = []
 
         if config.ENABLE_AI_CHAMPION and 'ai_champion' in results['strategies']:
             try:

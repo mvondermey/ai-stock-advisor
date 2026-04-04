@@ -13,6 +13,11 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Tuple
 
+from model_training_safety import (
+    restore_native_model_artifacts,
+    save_native_model_artifacts,
+)
+
 FEATURE_COLS = [
     'perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
     'overnight_gap', 'intraday_range', 'last_hour_momentum',
@@ -28,7 +33,7 @@ def _fresh_ensemble_model(name: str, device: str):
     """Create a fresh ensemble member with stable defaults."""
     import xgboost as xgb
     import lightgbm as lgb
-    from config import AI_ELITE_CATBOOST_GPU_RAM_PART, AI_ELITE_CATBOOST_USED_RAM_LIMIT
+    from config import AI_ELITE_CATBOOST_USED_RAM_LIMIT
 
     if name == 'XGBoost':
         return xgb.XGBRegressor(
@@ -45,16 +50,13 @@ def _fresh_ensemble_model(name: str, device: str):
     if name == 'CatBoost':
         import catboost as cb
 
-        task_type = 'GPU' if device == 'cuda' else 'CPU'
         catboost_params = dict(
             iterations=100, depth=4, learning_rate=0.1,
-            task_type=task_type, random_seed=42, verbose=0,
+            task_type='CPU', random_seed=42, verbose=0,
             allow_writing_files=False, thread_count=1
         )
         if AI_ELITE_CATBOOST_USED_RAM_LIMIT:
             catboost_params['used_ram_limit'] = AI_ELITE_CATBOOST_USED_RAM_LIMIT
-        if task_type == 'GPU':
-            catboost_params['gpu_ram_part'] = AI_ELITE_CATBOOST_GPU_RAM_PART
         return cb.CatBoostRegressor(**catboost_params)
     raise ValueError(f"Unknown model: {name}")
 
@@ -80,6 +82,38 @@ def _configure_catboost_continuation(model):
     model._init_params['allow_writing_files'] = False
     if AI_ELITE_CATBOOST_USED_RAM_LIMIT:
         model._init_params['used_ram_limit'] = AI_ELITE_CATBOOST_USED_RAM_LIMIT
+
+
+def _catboost_has_trained_trees(model) -> bool:
+    """Continuation requires an already-trained CatBoost model."""
+    try:
+        # CatBoost >= 1.2 uses tree_count_ property
+        if hasattr(model, 'tree_count_'):
+            return model.tree_count_ > 0
+        # Older CatBoost versions use get_tree_count() method
+        if hasattr(model, 'get_tree_count'):
+            return model.get_tree_count() > 0
+        # Fallback: check is_fitted()
+        if hasattr(model, 'is_fitted'):
+            return model.is_fitted()
+        return False
+    except Exception:
+        return False
+
+
+def restore_catboost_sidecar(model, path: str):
+    """Reload any native model sidecars saved beside the shared-base checkpoint."""
+    return restore_native_model_artifacts(model, path)
+
+
+def _order_models_for_training(models: Dict[str, object]) -> Dict[str, object]:
+    """Train CatBoost first so crashes are easier to attribute."""
+    preferred_order = ("CatBoost", "XGBoost", "LightGBM")
+    ordered = {name: models[name] for name in preferred_order if name in models}
+    for name, model in models.items():
+        if name not in ordered:
+            ordered[name] = model
+    return ordered
 
 
 def collect_ticker_training_data(
@@ -227,7 +261,8 @@ def train_shared_base_model(
     status_msg = "Continuing" if has_existing else "Training NEW"
     print(f"   📊 AI Elite: {status_msg} training on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
 
-    # Use XGBoost + LightGBM + CatBoost (all support GPU + incremental training)
+    # Use XGBoost + LightGBM + CatBoost.
+    # CatBoost stays on CPU because continuation from init_model is not supported on GPU.
     import xgboost as xgb
     import lightgbm as lgb
     import warnings
@@ -245,19 +280,20 @@ def train_shared_base_model(
                 models['CatBoost'] = _fresh_ensemble_model('CatBoost', device)
             except ImportError:
                 pass
-        print(f"   🚀 Incremental training: {len(models)} models on {device}")
+        models = _order_models_for_training(models)
+        print(f"   🚀 Incremental training: {len(models)} models (XGBoost={device}, LightGBM=cpu, CatBoost=cpu)")
     else:
         # Fresh training - create new models
-        models = {
-            'XGBoost': _fresh_ensemble_model('XGBoost', device),
-            'LightGBM': _fresh_ensemble_model('LightGBM', device),
-        }
         # Add CatBoost if available (GPU-accelerated, good with tabular data)
+        models = {}
         try:
             models['CatBoost'] = _fresh_ensemble_model('CatBoost', device)
         except ImportError:
             pass
-        print(f"   🚀 Fresh training: {list(models.keys())} ({device})")
+        models['XGBoost'] = _fresh_ensemble_model('XGBoost', device)
+        models['LightGBM'] = _fresh_ensemble_model('LightGBM', device)
+        models = _order_models_for_training(models)
+        print(f"   🚀 Fresh training: {list(models.keys())} (XGBoost={device}, LightGBM=cpu, CatBoost=cpu)")
 
     # Train with incremental learning (no CV for speed - just train/val split)
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -297,8 +333,12 @@ def train_shared_base_model(
                         elif name == 'LightGBM':
                             m.fit(X_train, y_train, init_model=m.booster_)
                         elif name == 'CatBoost':
-                            _configure_catboost_continuation(m)
-                            m.fit(X_train, y_train, init_model=m)
+                            if _catboost_has_trained_trees(m):
+                                _configure_catboost_continuation(m)
+                                m.fit(X_train, y_train, init_model=m)
+                            else:
+                                print("(no saved trees yet, training fresh)...", end=" ", flush=True)
+                                incremental_failed = True
                         else:
                             m.fit(X_train, y_train)
 
@@ -390,7 +430,8 @@ def train_shared_base_model(
             'trained': datetime.now(timezone.utc).isoformat(),
             'best_model': best_name,
             'best_r2': best_score,
-            'all_scores': dict(zip(model_names, model_scores))
+            'all_scores': dict(zip(model_names, model_scores)),
+            'catboost_backend': 'cpu'
         }
         if train_start and train_end:
             metadata['train_start'] = train_start.isoformat()
@@ -479,5 +520,6 @@ def _save_model(model, path: str, metadata: dict = None):
         }
         with open(path, 'wb') as f:
             pickle.dump(model_data, f)
+        save_native_model_artifacts(model, path)
     except Exception as e:
         print(f"   ⚠️ AI Elite: Failed to save model to {path}: {e}")

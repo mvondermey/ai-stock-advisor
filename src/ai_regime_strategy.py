@@ -18,6 +18,16 @@ from collections import defaultdict
 import joblib
 from pathlib import Path
 
+from model_training_safety import (
+    catboost_has_trained_trees,
+    cleanup_training_memory,
+    configure_catboost_cpu_continuation,
+    ensure_catboost_cpu_metadata,
+    reset_legacy_catboost_member,
+    restore_native_model_artifacts,
+    save_native_model_artifacts,
+)
+
 # Model save paths
 MODEL_SAVE_DIR = Path("logs/models")
 AI_REGIME_MODEL_PATH = MODEL_SAVE_DIR / "ai_regime_model.joblib"
@@ -370,6 +380,7 @@ class AIRegimeAllocator:
 
         return best_strategy
 
+    @cleanup_training_memory
     def train_model(self, ticker_data_grouped: Dict[str, pd.DataFrame],
                     business_days: List[datetime]):
         """
@@ -389,7 +400,7 @@ class AIRegimeAllocator:
         max_day = self.day_count - self.forward_days  # Last day we can get a forward label for
 
         if max_day <= min_day or self.day_count < 2:
-            print(f"   ⚠️ AI Regime: Need at least 2 days of data (have {self.day_count}), using fallback")
+            print(f"   ⚠️ AI Regime: Need at least 2 days of data (have {self.day_count}), skipping training")
             return False
 
         # Sample every day (or every 2 days if we have lots of data)
@@ -454,8 +465,22 @@ class AIRegimeAllocator:
 
         # Build models (XGBoost + LightGBM - both support incremental training)
         if has_existing:
-            models = self.all_models
-            print(f"   📊 AI Regime: Continuing training on {len(training_samples)} samples ({device})...")
+            models = dict(self.all_models)
+            if 'CatBoost' not in models:
+                try:
+                    import catboost as cb
+
+                    models['CatBoost'] = cb.CatBoostClassifier(
+                        iterations=100, depth=4, learning_rate=0.1,
+                        task_type='CPU', random_seed=42, verbose=0,
+                        allow_writing_files=False, thread_count=1
+                    )
+                except ImportError:
+                    pass
+            print(
+                f"   📊 AI Regime: Continuing training on {len(training_samples)} samples "
+                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
+            )
         else:
             models = {
                 'XGBoost': xgb.XGBClassifier(
@@ -472,14 +497,17 @@ class AIRegimeAllocator:
             # Add CatBoost if available
             try:
                 import catboost as cb
-                task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
                 models['CatBoost'] = cb.CatBoostClassifier(
                     iterations=100, depth=4, learning_rate=0.1,
-                    task_type=task_type, random_seed=42, verbose=0
+                    task_type='CPU', random_seed=42, verbose=0,
+                    allow_writing_files=False, thread_count=1
                 )
             except ImportError:
                 pass
-            print(f"   📊 AI Regime: Training NEW {list(models.keys())} on {len(training_samples)} samples ({device})...")
+            print(
+                f"   📊 AI Regime: Training NEW {list(models.keys())} on {len(training_samples)} samples "
+                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
+            )
 
         # Train/val split (faster than CV)
         # Use smaller test size for small datasets
@@ -543,10 +571,10 @@ class AIRegimeAllocator:
                                 )
                             elif name == 'CatBoost':
                                 import catboost as cb
-                                task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
                                 m = cb.CatBoostClassifier(
                                     iterations=100, depth=4, learning_rate=0.1,
-                                    task_type=task_type, random_seed=42, verbose=0
+                                    task_type='CPU', random_seed=42, verbose=0,
+                                    allow_writing_files=False, thread_count=1
                                 )
                             can_increment = False
 
@@ -558,12 +586,15 @@ class AIRegimeAllocator:
                         elif name == 'LightGBM':
                             m.fit(X_train, y_train, init_model=m.booster_)
                         elif name == 'CatBoost':
-                            # CatBoost GPU doesn't support continuation - switch to CPU for this
-                            m._init_params['task_type'] = 'CPU'
-                            m.fit(X_train, y_train, init_model=m)
+                            if catboost_has_trained_trees(m):
+                                configure_catboost_cpu_continuation(m)
+                                m.fit(X_train, y_train, init_model=m)
+                            else:
+                                print("(no saved trees yet, training fresh)...", end=" ", flush=True)
+                                can_increment = False
                         else:
                             m.fit(X_train, y_train)
-                    else:
+                    if not can_increment:
                         # Fresh training - use mapped labels (consecutive: 0, 1, 2, ...)
                         m.fit(X_train, y_train_mapped)
 
@@ -576,7 +607,7 @@ class AIRegimeAllocator:
                         score = accuracy_score(y_val_mapped, y_pred)
 
                     elapsed = time.time() - start_time
-                    status = "incremental" if has_existing else "fresh"
+                    status = "incremental" if can_increment else "fresh"
                     print(f"Accuracy = {score:.3f} ({status}, {elapsed:.1f}s)")
                     trained_models[name] = m
                     model_scores[name] = score
@@ -622,7 +653,7 @@ class AIRegimeAllocator:
                 shutil.copy2(AI_REGIME_MODEL_PATH, backup_path)
                 print(f"   📦 AI Regime: Backed up previous model to {backup_path}")
 
-            joblib.dump({
+            payload = ensure_catboost_cpu_metadata({
                 'all_models': self.all_models,
                 'all_scores': self.all_scores,
                 'best_name': self.best_name,
@@ -634,7 +665,9 @@ class AIRegimeAllocator:
                 'day_count': self.day_count,
                 'last_train_day': self.last_train_day,
                 'strategy_histories': dict(self.strategy_histories)
-            }, AI_REGIME_MODEL_PATH)
+            })
+            joblib.dump(payload, AI_REGIME_MODEL_PATH)
+            save_native_model_artifacts(payload, AI_REGIME_MODEL_PATH)
             print(f"   💾 AI Regime: Saved {len(self.all_models)} models + {len(self.training_data)} training samples to {AI_REGIME_MODEL_PATH}")
         except Exception as e:
             print(f"   ⚠️ AI Regime: Failed to save: {e}")
@@ -644,6 +677,10 @@ class AIRegimeAllocator:
         try:
             if AI_REGIME_MODEL_PATH.exists():
                 data = joblib.load(AI_REGIME_MODEL_PATH)
+                data = restore_native_model_artifacts(data, AI_REGIME_MODEL_PATH, is_classifier=True)
+                data, reset_catboost = reset_legacy_catboost_member(data)
+                if reset_catboost:
+                    print("   ♻️ AI Regime: Resetting saved CatBoost member for a clean CPU incremental restart")
                 self.model = data['model']
                 self.label_encoder = data['label_encoder']
                 self.feature_cols = data['feature_cols']
@@ -665,6 +702,11 @@ class AIRegimeAllocator:
             print(f"   ⚠️ AI Regime: Failed to load: {e}")
         return False
 
+    def release_model_artifacts(self):
+        """Drop heavy fitted models while preserving training state."""
+        self.model = None
+        self.all_models = None
+
     def predict_best_strategy(self, ticker_data_grouped: Dict[str, pd.DataFrame],
                                current_date: datetime) -> Optional[str]:
         """
@@ -677,11 +719,13 @@ class AIRegimeAllocator:
         if self.model is None or not hasattr(self.model, 'predict'):
             if self.model is not None:
                 print(f"   ⚠️ AI Regime: Model corrupted (type: {type(self.model)})")
+            print("   ⚠️ AI Regime: No selection (model unavailable)")
             return None  # No fallback - let strategy handle it
 
         # Extract current features
         features = self.extract_regime_features(ticker_data_grouped, current_date)
         if features is None or not isinstance(features, dict):
+            print("   ⚠️ AI Regime: No selection (feature extraction failed)")
             return None  # No fallback - let strategy handle it
 
         # Predict
@@ -692,6 +736,7 @@ class AIRegimeAllocator:
             if not hasattr(self.model, 'n_features_in_') or self.model.n_features_in_ != X.shape[1]:
                 print(f"   ⚠️ AI Regime: Model feature mismatch, resetting model")
                 self.model = None
+                print("   ⚠️ AI Regime: No selection (model feature mismatch)")
                 return None
 
             pred_idx = self.model.predict(X)[0]
@@ -709,6 +754,7 @@ class AIRegimeAllocator:
 
         except Exception as e:
             print(f"   ⚠️ AI Regime: Prediction failed: {e}")
+            print("   ⚠️ AI Regime: No selection (prediction failed)")
             return None  # No fallback - let strategy handle it
 
     def should_retrain(self) -> bool:
@@ -879,8 +925,10 @@ def select_ai_regime_stocks(
             return strategy_func()
         except Exception as e:
             print(f"   ❌ AI Regime error: {predicted_strategy} failed: {e}")
+            print("   ⚠️ AI Regime: No selection (strategy execution failed)")
             return []  # Return empty list, no fallback
     else:
         # Strategy not in map
         print(f"   ❌ AI Regime error: Unknown strategy {predicted_strategy}")
+        print("   ⚠️ AI Regime: No selection (unknown strategy)")
         return []  # Return empty list, no fallback

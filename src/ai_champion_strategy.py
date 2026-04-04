@@ -18,6 +18,15 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from model_training_safety import (
+    catboost_has_trained_trees,
+    cleanup_training_memory,
+    configure_catboost_cpu_continuation,
+    ensure_catboost_cpu_metadata,
+    reset_legacy_catboost_member,
+    restore_native_model_artifacts,
+    save_native_model_artifacts,
+)
 from config import (
     AI_CHAMPION_CONFIDENCE_THRESHOLD,
     AI_CHAMPION_FORWARD_DAYS,
@@ -78,14 +87,15 @@ def _clone_model(name: str, device: str):
     if name == "CatBoost":
         import catboost as cb
 
-        task_type = "GPU" if XGBOOST_USE_GPU else "CPU"
         return cb.CatBoostClassifier(
             iterations=100,
             depth=4,
             learning_rate=0.1,
-            task_type=task_type,
+            task_type="CPU",
             random_seed=42,
             verbose=0,
+            allow_writing_files=False,
+            thread_count=1,
         )
     raise ValueError(f"Unknown model: {name}")
 
@@ -310,6 +320,7 @@ class AIChampionAllocator:
 
         return best_strategy
 
+    @cleanup_training_memory
     def train_model(self, ticker_data_grouped: Dict[str, pd.DataFrame], business_days: List[datetime]) -> bool:
         """Train or continue training the champion selector."""
         from sklearn.metrics import accuracy_score
@@ -360,8 +371,16 @@ class AIChampionAllocator:
         device = "cuda" if XGBOOST_USE_GPU else "cpu"
         has_existing = self.all_models is not None
         if has_existing:
-            models = self.all_models
-            print(f"   📊 AI Champion: Continuing training on {len(training_samples)} samples ({device})...")
+            models = dict(self.all_models)
+            if "CatBoost" not in models:
+                try:
+                    models["CatBoost"] = _clone_model("CatBoost", device)
+                except Exception:
+                    pass
+            print(
+                f"   📊 AI Champion: Continuing training on {len(training_samples)} samples "
+                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
+            )
         else:
             models = {
                 "XGBoost": _clone_model("XGBoost", device),
@@ -371,7 +390,10 @@ class AIChampionAllocator:
                 models["CatBoost"] = _clone_model("CatBoost", device)
             except Exception:
                 pass
-            print(f"   📊 AI Champion: Training NEW {list(models.keys())} on {len(training_samples)} samples ({device})...")
+            print(
+                f"   📊 AI Champion: Training NEW {list(models.keys())} on {len(training_samples)} samples "
+                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
+            )
 
         test_size = min(0.2, max(0.1, len(X) // 3))
         unique, counts = np.unique(y, return_counts=True)
@@ -419,15 +441,20 @@ class AIChampionAllocator:
                             elif name == "LightGBM":
                                 model.fit(X_train, y_train, init_model=model.booster_)
                             elif name == "CatBoost":
-                                model._init_params["task_type"] = "CPU"
-                                model.fit(X_train, y_train, init_model=model)
+                                if catboost_has_trained_trees(model):
+                                    configure_catboost_cpu_continuation(model)
+                                    model.fit(X_train, y_train, init_model=model)
+                                else:
+                                    print("(no saved trees yet, training fresh)...", end=" ", flush=True)
+                                    incremental_failed = True
                             else:
                                 model.fit(X_train, y_train)
                             y_pred = model.predict(X_val)
                             score = accuracy_score(y_val, y_pred)
                             model_label_values[name] = []
                             model_use_mapped[name] = False
-                        except Exception:
+                        except Exception as exc:
+                            print(f"(incremental failed: {exc}, retraining fresh)...", end=" ", flush=True)
                             incremental_failed = True
 
                     if not can_increment or incremental_failed:
@@ -482,7 +509,7 @@ class AIChampionAllocator:
 
                 shutil.copy2(AI_CHAMPION_MODEL_PATH, backup_path)
 
-            joblib.dump(
+            payload = ensure_catboost_cpu_metadata(
                 {
                     "all_models": self.all_models,
                     "all_scores": self.all_scores,
@@ -500,9 +527,10 @@ class AIChampionAllocator:
                     "strategy_histories": dict(self.strategy_histories),
                     "active_candidates": sorted(self.active_candidates),
                     "current_strategy": self.current_strategy,
-                },
-                AI_CHAMPION_MODEL_PATH,
+                }
             )
+            joblib.dump(payload, AI_CHAMPION_MODEL_PATH)
+            save_native_model_artifacts(payload, AI_CHAMPION_MODEL_PATH)
             print(f"   💾 AI Champion: Saved model state to {AI_CHAMPION_MODEL_PATH}")
         except Exception as exc:
             print(f"   ⚠️ AI Champion: Failed to save: {exc}")
@@ -513,6 +541,10 @@ class AIChampionAllocator:
             if not AI_CHAMPION_MODEL_PATH.exists():
                 return False
             data = joblib.load(AI_CHAMPION_MODEL_PATH)
+            data = restore_native_model_artifacts(data, AI_CHAMPION_MODEL_PATH, is_classifier=True)
+            data, reset_catboost = reset_legacy_catboost_member(data)
+            if reset_catboost:
+                print("   ♻️ AI Champion: Resetting saved CatBoost member for a clean CPU incremental restart")
             self.model = data.get("model")
             self.all_models = data.get("all_models")
             self.all_scores = data.get("all_scores")
@@ -538,6 +570,11 @@ class AIChampionAllocator:
         except Exception as exc:
             print(f"   ⚠️ AI Champion: Failed to load: {exc}")
             return False
+
+    def release_model_artifacts(self):
+        """Drop heavy fitted models while preserving lightweight strategy state."""
+        self.model = None
+        self.all_models = None
 
     def _decode_prediction_label(self, raw_label: int) -> Optional[str]:
         if self.label_encoder is None:
@@ -681,13 +718,6 @@ def select_ai_champion_stocks(
             top_n=top_n,
         )
 
-    print(f"   ⚠️ AI Champion: Unknown predicted strategy '{predicted_strategy}', falling back")
-    fallback_strategy = "ai_elite_market_up" if "ai_elite_market_up" in CANDIDATE_STRATEGIES else "ai_elite"
-    return select_ai_champion_stocks(
-        all_tickers,
-        ticker_data_grouped,
-        current_date,
-        top_n,
-        fallback_strategy,
-        ai_elite_models=ai_elite_models,
-    )
+    print(f"   ⚠️ AI Champion: Unknown predicted strategy '{predicted_strategy}', returning no selection")
+    print("   ⚠️ AI Champion: No selection (unknown strategy)")
+    return []

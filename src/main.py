@@ -1837,17 +1837,33 @@ if __name__ == "__main__":
                     print(f"   Total investment: ${INVESTMENT_PER_STOCK * len(selected):,.2f}")
                     print("=" * 80)
 
-                    # Show all strategies from JSON
-                    print(f"\n📊 ALL STRATEGY SELECTIONS (from backtest {all_selections.get('backtest_end_date', 'unknown') if isinstance(all_selections, dict) else 'N/A'}):")
+                    # Show non-empty live candidate lists from live_trading_selections.json.
+                    print(
+                        f"\n📊 NON-EMPTY LIVE CANDIDATE LISTS "
+                        f"(from backtest {all_selections.get('backtest_end_date', 'unknown') if isinstance(all_selections, dict) else 'N/A'}):"
+                    )
                     print("-" * 80)
                     if isinstance(all_selections, dict):
+                        non_empty = []
                         for strat_name, strat_data in all_selections.get('strategies', {}).items():
-                            tickers = strat_data.get('tickers', []) if isinstance(strat_data, dict) else []
-                            perf = all_selections.get('performance', {}).get(strat_name, {}) if isinstance(all_selections, dict) else {}
-                            ret_pct = perf.get('return_pct', 0) if isinstance(perf, dict) else 0
-                            print(f"   {strat_name:<30} {len(tickers):>2} stocks  {ret_pct:>+7.1f}%  {tickers[:5]}{'...' if len(tickers) > 5 else ''}")
+                            if isinstance(strat_data, list):
+                                tickers = strat_data
+                            elif isinstance(strat_data, dict):
+                                tickers = strat_data.get('tickers', [])
+                            else:
+                                tickers = []
+                            if tickers:
+                                non_empty.append((strat_name, tickers))
+
+                        for strat_name, tickers in non_empty:
+                            preview = ", ".join(tickers[:10])
+                            suffix = " ..." if len(tickers) > 10 else ""
+                            print(f"   {strat_name:<30} {len(tickers):>2} candidates  {preview}{suffix}")
+
+                        if not non_empty:
+                            print("   [WARN] No non-empty live candidate lists found")
                     else:
-                        print(f"   [WARN] Cannot display strategy selections - invalid data format")
+                        print("   [WARN] Cannot display live candidate lists - invalid data format")
                     print("-" * 80)
 
                     print("\n✅ LIVE TRADING RECOMMENDATIONS COMPLETE")

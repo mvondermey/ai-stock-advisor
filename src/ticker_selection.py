@@ -792,8 +792,7 @@ def find_top_performers(
                 pass
 
         # Parallelize actual data preparation (finding Close column, cleaning data)
-        # Limit workers to avoid WSL multiprocessing issues
-        num_prep_workers = min(NUM_PROCESSES, len(prep_args), 8) if prep_args else 1
+        num_prep_workers = min(NUM_PROCESSES, len(prep_args)) if prep_args else 1
         prep_chunksize = max(1, len(prep_args) // (num_prep_workers * 2))
 
         print(f"   🚀 Processing {len(prep_args)} tickers with {num_prep_workers} workers (chunksize={prep_chunksize})", flush=True)
@@ -880,8 +879,8 @@ def find_top_performers(
     print(f"   📊 Prepared {len(params)} tickers for performance calculation", flush=True)
 
     all_tickers_performance_with_df = []
-    # Use configured number of processes for optimal performance - limit to 8 for WSL stability
-    num_workers = min(NUM_PROCESSES, len(params), 8) if params else 1
+    # Use configured number of processes for optimal performance
+    num_workers = min(NUM_PROCESSES, len(params)) if params else 1
     chunksize = max(1, len(params) // (num_workers * 4)) if params else 1  # Optimal chunking
 
     print(f"   🚀 Starting parallel calculation with {num_workers} workers (chunksize={chunksize})", flush=True)
@@ -1015,17 +1014,22 @@ def find_top_performers(
     # ✅ ALWAYS display comparison table (even when return_tickers=True)
     print(f"\n\n🏆 Top Performers with Yahoo Finance Comparison 🏆")
     print("-" * 110)
-    print(f"{'Rank':<5} | {'Ticker':<10} | {'Cached 1Y':>12} | {'Yahoo 1Y':>12} | {'Difference':>12} | {'Status':>15}")
+    print(f"{'Rank':<5} | {'Ticker':<10} | {'Cached 1Y':>12} | {'Yahoo 1Y':>12} | {'Diff %':>12} | {'Status':>15}")
     print("-" * 110)
 
     # Show top 25 for comparison
     for i, (ticker, perf) in enumerate(final_performers[:25], 1):
         yahoo_perf = yahoo_returns.get(ticker)
         if yahoo_perf is not None:
-            diff = perf - yahoo_perf
-            # Flag suspicious discrepancies > 50%
-            status = "⚠️ LARGE DIFF" if abs(diff) > 50 else "✅ Match"
-            print(f"{i:<5} | {ticker:<10} | {perf:11.2f}% | {yahoo_perf:11.2f}% | {diff:+11.2f}% | {status:>15}")
+            if abs(yahoo_perf) > 1e-9:
+                diff_pct = ((perf - yahoo_perf) / abs(yahoo_perf)) * 100.0
+            else:
+                diff_pct = 0.0 if abs(perf) <= 1e-9 else float('inf')
+
+            # Flag suspicious discrepancies when cached result differs materially from Yahoo.
+            status = "⚠️ LARGE DIFF" if abs(diff_pct) > 10 else "✅ Match"
+            diff_display = f"{diff_pct:+11.2f}%" if np.isfinite(diff_pct) else f"{'inf':>11}%"
+            print(f"{i:<5} | {ticker:<10} | {perf:11.2f}% | {yahoo_perf:11.2f}% | {diff_display} | {status:>15}")
         else:
             print(f"{i:<5} | {ticker:<10} | {perf:11.2f}% | {'N/A':>12} | {'N/A':>12} | {'No Yahoo data':>15}")
 
@@ -1040,13 +1044,28 @@ def find_top_performers(
         if matched_tickers:
             avg_cached = np.mean([perf for ticker, perf in final_performers if ticker in matched_tickers])
             avg_yahoo = np.mean([yahoo_returns[t] for t in matched_tickers])
-            print(f"\n📊 Summary ({len(matched_tickers)} tickers): Avg Cached = {avg_cached:.1f}%, Avg Yahoo = {avg_yahoo:.1f}%, Avg Difference = {avg_cached - avg_yahoo:+.1f}%")
+            avg_diff_pct = (
+                ((avg_cached - avg_yahoo) / abs(avg_yahoo)) * 100.0
+                if abs(avg_yahoo) > 1e-9
+                else 0.0 if abs(avg_cached) <= 1e-9 else float('inf')
+            )
+            avg_diff_display = f"{avg_diff_pct:+.1f}%" if np.isfinite(avg_diff_pct) else "inf%"
+            print(f"\n📊 Summary ({len(matched_tickers)} tickers): Avg Cached = {avg_cached:.1f}%, Avg Yahoo = {avg_yahoo:.1f}%, Avg Diff = {avg_diff_display}")
 
-            # Count large discrepancies
+            # Count large relative discrepancies
             perf_dict = {ticker: perf for ticker, perf in final_performers}
-            large_diffs = sum(1 for t in matched_tickers if abs(perf_dict.get(t, 0) - yahoo_returns[t]) > 50)
+            large_diffs = 0
+            for t in matched_tickers:
+                yahoo_perf = yahoo_returns[t]
+                cached_perf = perf_dict.get(t, 0)
+                if abs(yahoo_perf) > 1e-9:
+                    rel_diff_pct = ((cached_perf - yahoo_perf) / abs(yahoo_perf)) * 100.0
+                else:
+                    rel_diff_pct = 0.0 if abs(cached_perf) <= 1e-9 else float('inf')
+                if abs(rel_diff_pct) > 10:
+                    large_diffs += 1
             if large_diffs > 0:
-                print(f"⚠️  WARNING: {large_diffs} tickers have >50% discrepancy - consider clearing cache and re-downloading!")
+                print(f"⚠️  WARNING: {large_diffs} tickers have >10% relative discrepancy - consider clearing cache and re-downloading!")
 
     if return_tickers:
         return final_performers

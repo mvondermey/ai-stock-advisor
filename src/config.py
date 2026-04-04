@@ -263,48 +263,23 @@ PAUSE_BETWEEN_YF_CALLS  = 0.5        # Pause between individual yfinance calls f
 
 from multiprocessing import cpu_count
 
-def _auto_detect_process_counts():
-    """
-    Automatically detect safe process counts based on available RAM.
-    - Training processes: ~5GB RAM each (ML models are memory-heavy)
-    - Data processes: ~2GB RAM each (lighter data processing tasks)
-    """
+def _auto_detect_num_processes():
+    """Automatically detect a safe general-purpose worker count based on available RAM."""
     try:
         import psutil
         available_ram_gb = psutil.virtual_memory().available / (1024**3)
         total_ram_gb = psutil.virtual_memory().total / (1024**3)
 
-        # Use available RAM with some headroom (leave 30% free for OS/other apps)
-        usable_ram_gb = available_ram_gb * 0.7
-
-        # Calculate safe process counts
-        # Training: ~5GB per process (XGBoost, PyTorch models - increased for safety)
-        safe_training = max(1, int(usable_ram_gb / 5))
-        # Data processing: ~2GB per process (increased for safety)
-        safe_data = max(1, int(usable_ram_gb / 2))
-
-        # Cap at CPU count (no point having more processes than cores)
-        cores = cpu_count()
-        safe_training = min(safe_training, cores)
-        safe_data = min(safe_data, cores)
-
         print(f"   💾 Auto-detected: {total_ram_gb:.1f}GB total RAM, {available_ram_gb:.1f}GB available")
-        print(f"   🔧 Safe processes: {safe_data} (data), {safe_training} (training)")
-
-        return safe_data, safe_training
+        print("   🔧 Safe processes: 15")
+        return 15
     except ImportError:
-        # psutil not available, fall back to CPU-based calculation
-        cores = cpu_count()
-        return max(1, cores // 2), max(1, cores // 4)
+        return 15
     except Exception:
-        # Any other error, use conservative defaults
-        return 4, 2
+        return 15
 
-# Auto-detect safe process counts based on RAM
-_safe_data_processes, _safe_training_processes = _auto_detect_process_counts()
-
-NUM_PROCESSES = _safe_data_processes  # For data validation, ticker selection, performance calculations
-TRAINING_NUM_PROCESSES = _safe_training_processes  # For ML model training (heavier memory usage)
+# Auto-detect a safe multiprocessing worker count based on RAM
+NUM_PROCESSES = _auto_detect_num_processes()  # For data validation, ticker selection, and backtest data collection
 
 
 
@@ -330,112 +305,6 @@ TRAINING_BATCH_SIZE     = 100       # Smaller batches for better progress tracki
 
 
 
-# --- Dynamic GPU Slot Allocation ---
-
-# Estimated VRAM requirements per model (in GB)
-
-GPU_MEMORY_PER_MODEL = {
-
-    'LSTM': 1.5,   # GB per LSTM/TCN/GRU model
-
-    'XGBoost': 0.5 # GB per XGBoost model
-
-}
-
-
-
-def auto_configure_gpu_slots():
-
-    try:
-
-        import torch
-
-        if torch.cuda.is_available():
-
-            total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # in GB
-
-            # Only print in main process, not in spawned workers
-
-            import multiprocessing as _mp
-
-            if _mp.current_process().name == 'MainProcess':
-
-                print(f" Detected {total_vram:.1f}GB VRAM - configuring slots dynamically")
-
-
-
-            # Calculate max slots for each model type (leave 20% VRAM headroom)
-
-            lstm_slots = max(1, int(total_vram * 0.8 / GPU_MEMORY_PER_MODEL['LSTM']))
-
-            xgb_slots = max(1, int(total_vram * 0.8 / GPU_MEMORY_PER_MODEL['XGBoost']))
-
-            return {'LSTM': lstm_slots, 'XGBoost': xgb_slots}
-
-    except ImportError:
-
-        pass
-
-    return {'LSTM': 0, 'XGBoost': 0}  # Fallback to CPU
-
-
-
-GPU_MODEL_SLOTS = auto_configure_gpu_slots()
-
-
-
-# Limit GPU memory per training worker process (PyTorch)
-
-GPU_PER_PROCESS_MEMORY_FRACTION = 1  # Auto: 0.95/4 = 23.75% per worker with 4 concurrent
-
-
-
-# --- GPU memory cache behavior (PyTorch) ---
-
-GPU_CLEAR_CACHE_ON_WORKER_INIT = False
-
-GPU_CLEAR_CACHE_AFTER_EACH_TICKER = False
-
-
-
-# --- GPU Concurrency Control for PyTorch ---
-
-# When using multiprocessing with PyTorch on GPU, too many concurrent trainers can cause OOM.
-
-# This limits how many worker processes can run PyTorch models on GPU simultaneously.
-
-# Only applies when PYTORCH_USE_GPU = True (PyTorch uses GPU)
-
-# Does NOT apply to XGBoost GPU (XGBoost manages its own GPU memory)
-
-GPU_MAX_CONCURRENT_TRAINING_WORKERS = max(4, GPU_MODEL_SLOTS['LSTM'])  # Dynamic: ~5 for 8GB VRAM RTX 5060
-
-
-
-# Multiprocessing stability: recycle worker processes periodically to avoid RAM creep / leaked semaphores
-
-# when training many tickers under WSL + spawn.
-
-# - Set to 1 for max stability (one ticker per worker process).
-
-# - Set to None to disable recycling (faster, but may accumulate memory/semaphores).
-
-TRAINING_POOL_MAXTASKSPERCHILD = 5  # Moderate recycling for better memory utilization
-
-
-
-# Per-ticker training timeout (seconds). If a ticker takes longer, it will be skipped.
-
-# - Set to 600 (10 min) for normal use (handles slow XGBoost GridSearchCV)
-
-# - Set to 1800 (30 min) for very large datasets or complex models
-
-# - Set to None to disable timeout (not recommended - can hang forever)
-
-PER_TICKER_TIMEOUT = 60  # 60 seconds per ticker training task
-
-
-
 # Per-ticker prediction timeout (seconds). If a prediction takes longer, it will be skipped.
 
 # - Set to 30 for normal use (predictions should be fast)
@@ -443,28 +312,6 @@ PER_TICKER_TIMEOUT = 60  # 60 seconds per ticker training task
 # - Set to None to disable timeout (not recommended - can hang forever)
 
 PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
-
-
-
-# Training worker process count (separate from global NUM_PROCESSES).
-
-# For 5000 tickers, use parallel training. Models are saved to disk and loaded back (no pickling overhead).
-
-#
-
-# Worker count strategy:
-
-# - CPU only: Use half of CPU cores (conservative to prevent memory exhaustion)
-
-# - PyTorch CPU + XGBoost GPU: Use half CPU cores (GPU handles XGBoost, CPU handles PyTorch)
-
-# - PyTorch GPU + XGBoost GPU: Very limited (GPU bottleneck)
-
-# - PyTorch GPU + XGBoost CPU: Use quarter CPU for XGBoost while GPU handles PyTorch
-
-#
-
-# Note: TRAINING_NUM_PROCESSES is now auto-detected based on RAM (see above)
 
 
 # --- Backtest windows
@@ -731,6 +578,8 @@ ENABLE_UNIVERSAL_MODEL = True   # NEW - Universal Model (single ML model for all
 
 ENABLE_SAVGOL_TREND = True   # NEW - SavGol Trend (local polynomial trend features + pooled ML)
 
+ENABLE_TOP5_CONSISTENCY_BLEND = True   # NEW - Blend current top strategies using prior-day top-5 consistency weights
+
 ENABLE_LLM_STRATEGY = False   # DISABLED - LLM Strategy (not implemented)
 
 # --- Meta-Strategy Selectors (10 proposals for combining strategies) ---
@@ -776,6 +625,11 @@ SAVGOL_TREND_RETRAIN_DAYS = 1  # Retrain every day like AI Elite
 SAVGOL_TREND_LOOKBACK_DAYS = 60  # History window used for local trend features
 SAVGOL_TREND_FORWARD_DAYS = 5  # Predict 5-day forward returns
 SAVGOL_TREND_MIN_SAMPLES = 300  # Minimum pooled samples before fitting the model
+SAVGOL_TREND_MIN_MODEL_SPEARMAN = 0.02  # Skip model-driven rotation when validation rank skill is negligible
+SAVGOL_TREND_MIN_PREDICTED_EDGE = 0.0  # Require the top predicted excess score to be positive
+SAVGOL_TREND_MIN_SCORE_SPREAD = 0.10  # Require a visible edge between the top and cutoff names
+SAVGOL_TREND_HOLD_MARGIN = 0.05  # Keep current names unless challengers beat them by a small buffer
+SAVGOL_TREND_FALLBACK_TO_MOMENTUM = True  # On low-confidence initial entry, use a simpler momentum fallback
 
 
 

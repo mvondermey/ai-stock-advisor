@@ -16,6 +16,16 @@ from collections import defaultdict
 from pathlib import Path
 import joblib
 
+from model_training_safety import (
+    catboost_has_trained_trees,
+    cleanup_training_memory,
+    configure_catboost_cpu_continuation,
+    ensure_catboost_cpu_metadata,
+    reset_legacy_catboost_member,
+    restore_native_model_artifacts,
+    save_native_model_artifacts,
+)
+
 # Model save path
 MODEL_SAVE_DIR = Path("logs/models")
 UNIVERSAL_MODEL_PATH = MODEL_SAVE_DIR / "universal_model.joblib"
@@ -176,6 +186,7 @@ class UniversalModelStrategy:
             return True
         return (self.day_count - self.last_train_day) >= self.retrain_days
 
+    @cleanup_training_memory
     def train_model(self, ticker_data_grouped: Dict[str, pd.DataFrame],
                     business_days: List[datetime], current_day_idx: int):
         """
@@ -245,19 +256,22 @@ class UniversalModelStrategy:
 
         # Build models (XGBoost + LightGBM + CatBoost - all support GPU/incremental)
         if has_existing:
-            models = self.all_models
+            models = dict(self.all_models)
             # Add CatBoost if missing from loaded model
             if 'CatBoost' not in models:
                 try:
                     import catboost as cb
-                    # Note: CatBoost GPU continuation not supported, always use CPU for incremental
                     models['CatBoost'] = cb.CatBoostRegressor(
                         iterations=100, depth=4, learning_rate=0.1,
-                        task_type='CPU', random_seed=42, verbose=0
+                        task_type='CPU', random_seed=42, verbose=0,
+                        allow_writing_files=False, thread_count=1
                     )
                 except ImportError:
                     pass
-            print(f"   📊 Universal Model: Continuing training on {len(X_list)} samples ({device})...")
+            print(
+                f"   📊 Universal Model: Continuing training on {len(X_list)} samples "
+                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
+            )
         else:
             models = {
                 'XGBoost': xgb.XGBRegressor(
@@ -273,14 +287,17 @@ class UniversalModelStrategy:
             # Add CatBoost if available
             try:
                 import catboost as cb
-                task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
                 models['CatBoost'] = cb.CatBoostRegressor(
                     iterations=100, depth=4, learning_rate=0.1,
-                    task_type=task_type, random_seed=42, verbose=0
+                    task_type='CPU', random_seed=42, verbose=0,
+                    allow_writing_files=False, thread_count=1
                 )
             except ImportError:
                 pass
-            print(f"   📊 Universal Model: Training NEW {list(models.keys())} on {len(X_list)} samples ({device})...")
+            print(
+                f"   📊 Universal Model: Training NEW {list(models.keys())} on {len(X_list)} samples "
+                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
+            )
 
         # Train/val split (faster than CV)
         X_train, X_val, y_train, y_val = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
@@ -317,10 +334,10 @@ class UniversalModelStrategy:
                                 )
                             elif name == 'CatBoost':
                                 import catboost as cb
-                                task_type = 'GPU' if XGBOOST_USE_GPU else 'CPU'
                                 m = cb.CatBoostRegressor(
                                     iterations=100, depth=5, learning_rate=0.1,
-                                    task_type=task_type, random_seed=42, verbose=0
+                                    task_type='CPU', random_seed=42, verbose=0,
+                                    allow_writing_files=False, thread_count=1
                                 )
                             can_increment = False
 
@@ -331,12 +348,15 @@ class UniversalModelStrategy:
                         elif name == 'LightGBM':
                             m.fit(X_train, y_train, init_model=m.booster_)
                         elif name == 'CatBoost':
-                            # CatBoost GPU doesn't support continuation - switch to CPU
-                            m._init_params['task_type'] = 'CPU'
-                            m.fit(X_train, y_train, init_model=m)
+                            if catboost_has_trained_trees(m):
+                                configure_catboost_cpu_continuation(m)
+                                m.fit(X_train, y_train, init_model=m)
+                            else:
+                                print("(no saved trees yet, training fresh)...", end=" ", flush=True)
+                                can_increment = False
                         else:
                             m.fit(X_train, y_train)
-                    else:
+                    if not can_increment:
                         m.fit(X_train, y_train)
 
                     # Validate on held-out set
@@ -344,7 +364,7 @@ class UniversalModelStrategy:
                     score = r2_score(y_val, y_pred)
 
                     elapsed = time.time() - start_time
-                    status = "incremental" if has_existing else "fresh"
+                    status = "incremental" if can_increment else "fresh"
                     print(f"R² = {score:.3f} ({status}, {elapsed:.1f}s)")
                     trained_models[name] = m
                     model_scores[name] = score
@@ -383,7 +403,7 @@ class UniversalModelStrategy:
                 shutil.copy2(UNIVERSAL_MODEL_PATH, backup_path)
                 print(f"   📦 Universal Model: Backed up previous model to {backup_path}")
 
-            joblib.dump({
+            payload = ensure_catboost_cpu_metadata({
                 'all_models': self.all_models,
                 'all_scores': self.all_scores,
                 'best_name': self.best_name,
@@ -393,7 +413,9 @@ class UniversalModelStrategy:
                 # Persist training state for continuous learning
                 'day_count': self.day_count,
                 'last_train_day': self.last_train_day
-            }, UNIVERSAL_MODEL_PATH)
+            })
+            joblib.dump(payload, UNIVERSAL_MODEL_PATH)
+            save_native_model_artifacts(payload, UNIVERSAL_MODEL_PATH)
             print(f"   💾 Universal Model: Saved {len(self.all_models)} models, day_count={self.day_count} to {UNIVERSAL_MODEL_PATH}")
         except Exception as e:
             print(f"   ⚠️ Universal Model: Failed to save: {e}")
@@ -403,6 +425,11 @@ class UniversalModelStrategy:
         try:
             if UNIVERSAL_MODEL_PATH.exists():
                 data = joblib.load(UNIVERSAL_MODEL_PATH)
+                data = restore_native_model_artifacts(data, UNIVERSAL_MODEL_PATH)
+                if isinstance(data, dict):
+                    data, reset_catboost = reset_legacy_catboost_member(data)
+                    if reset_catboost:
+                        print("   ♻️ Universal Model: Resetting saved CatBoost member for a clean CPU incremental restart")
                 # Handle new format (dict with all_models)
                 if isinstance(data, dict) and 'all_models' in data:
                     self.all_models = data['all_models']
@@ -429,6 +456,11 @@ class UniversalModelStrategy:
         except Exception as e:
             print(f"   ⚠️ Universal Model: Failed to load: {e}")
         return False
+
+    def release_model_artifacts(self):
+        """Drop heavy fitted models while preserving lightweight state."""
+        self.model = None
+        self.all_models = None
 
     def predict_returns(self, tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame],
                         current_date: datetime) -> List[Tuple[str, float]]:

@@ -5630,11 +5630,11 @@ def select_ai_elite_with_training(
 
     """
 
-    from ai_elite_strategy_per_ticker import train_shared_base_model, collect_ticker_training_data
+    from ai_elite_strategy_per_ticker import train_shared_base_model, collect_ticker_training_data, restore_catboost_sidecar
 
     from ai_elite_strategy import select_ai_elite_stocks
 
-    from config import AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS
+    from config import AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, NUM_PROCESSES
 
     import os
 
@@ -5648,6 +5648,106 @@ def select_ai_elite_with_training(
 
         ai_elite_models = {}
 
+    strategy_label = "AI Elite Monthly" if model_path_suffix == "_monthly" else "AI Elite"
+
+
+
+    def _release_ai_elite_runtime_memory():
+
+        """Free temporary Python/GPU memory even if training exits early."""
+
+        try:
+
+            import gc
+
+            gc.collect()
+
+            try:
+
+                import torch
+
+                if torch.cuda.is_available():
+
+                    torch.cuda.empty_cache()
+
+            except Exception:
+
+                pass
+
+        except Exception:
+
+            pass
+
+
+
+    def _reset_saved_catboost_member(loaded_model, metadata):
+
+        """Drop only the legacy CatBoost member so it restarts on CPU once."""
+
+        if not isinstance(loaded_model, dict) or 'all_models' not in loaded_model:
+
+            return loaded_model
+
+        if metadata.get('catboost_backend') == 'cpu':
+
+            return loaded_model
+
+        all_models = loaded_model.get('all_models')
+
+        if not isinstance(all_models, dict) or 'CatBoost' not in all_models:
+
+            return loaded_model
+
+        sanitized_model = dict(loaded_model)
+
+        sanitized_all_models = dict(all_models)
+
+        sanitized_all_models.pop('CatBoost', None)
+
+        sanitized_model['all_models'] = sanitized_all_models
+
+        all_scores = sanitized_model.get('all_scores')
+
+        if isinstance(all_scores, dict):
+
+            sanitized_all_scores = dict(all_scores)
+
+            sanitized_all_scores.pop('CatBoost', None)
+
+            sanitized_model['all_scores'] = sanitized_all_scores
+
+        if sanitized_model.get('best_name') == 'CatBoost':
+
+            remaining_scores = sanitized_model.get('all_scores', {})
+
+            if remaining_scores:
+
+                best_name = max(remaining_scores, key=remaining_scores.get)
+
+                sanitized_model['best_name'] = best_name
+
+                sanitized_model['best_score'] = remaining_scores[best_name]
+
+                sanitized_model['best_model'] = sanitized_all_models.get(best_name)
+
+            else:
+
+                sanitized_model['best_name'] = None
+
+                sanitized_model['best_score'] = 0.0
+
+                sanitized_model['best_model'] = None
+
+        sanitized_metadata = dict(metadata)
+
+        sanitized_metadata['catboost_backend'] = 'reset_pending_cpu'
+
+        sanitized_model['metadata'] = sanitized_metadata
+
+        print(f"   ♻️ {strategy_label}: Resetting saved CatBoost member for a clean CPU incremental restart")
+
+        return sanitized_model
+
 
 
     models_dir = "logs/models"
@@ -5660,13 +5760,13 @@ def select_ai_elite_with_training(
 
     if ai_elite_models.get('_shared_base') is None and not force_train:
 
-        print(f"   🔍 AI Elite: Looking for model at {base_model_path}")
+        print(f"   🔍 {strategy_label}: Looking for model at {base_model_path}")
 
         if os.path.exists(base_model_path):
 
             try:
 
-                print(f"   📁 AI Elite: Found model file, loading...")
+                print(f"   📁 {strategy_label}: Found model file, loading...")
 
                 with open(base_model_path, 'rb') as f:
 
@@ -5692,7 +5792,7 @@ def select_ai_elite_with_training(
 
                         trained_date = metadata['trained'][:10]  # YYYY-MM-DD format
 
-                        msg = f"   ✅ AI Elite: Loaded model from {base_model_path} (trained {trained_date}"
+                        msg = f"   ✅ {strategy_label}: Loaded model from {base_model_path} (trained {trained_date}"
 
                         if 'train_start' in metadata and 'train_end' in metadata:
 
@@ -5710,7 +5810,7 @@ def select_ai_elite_with_training(
 
                         updated_date = metadata['updated'][:10]
 
-                        msg = f"   ✅ AI Elite: Loaded model from {base_model_path} (updated {updated_date}"
+                        msg = f"   ✅ {strategy_label}: Loaded model from {base_model_path} (updated {updated_date}"
 
                         if 'train_start' in metadata and 'train_end' in metadata:
 
@@ -5726,7 +5826,7 @@ def select_ai_elite_with_training(
 
                     else:
 
-                        print(f"   ✅ AI Elite: Loaded model from {base_model_path}")
+                        print(f"   ✅ {strategy_label}: Loaded model from {base_model_path}")
 
                 elif isinstance(model_data, dict) and 'model' in model_data:
 
@@ -5736,7 +5836,7 @@ def select_ai_elite_with_training(
 
                     metadata = model_data.get('metadata', {})
 
-                    print(f"   ✅ AI Elite: Loaded model from {base_model_path} (wrapped format)")
+                    print(f"   ✅ {strategy_label}: Loaded model from {base_model_path} (wrapped format)")
 
                 else:
 
@@ -5744,9 +5844,14 @@ def select_ai_elite_with_training(
 
                     loaded_model = model_data
 
-                    print(f"   ✅ AI Elite: Loaded model from {base_model_path} (legacy format)")
+                    metadata = {}
+
+                    print(f"   ✅ {strategy_label}: Loaded model from {base_model_path} (legacy format)")
 
 
+
+                loaded_model = restore_catboost_sidecar(loaded_model, base_model_path)
+                loaded_model = _reset_saved_catboost_member(loaded_model, metadata)
 
                 ai_elite_models['_shared_base'] = loaded_model
 
@@ -5756,161 +5861,167 @@ def select_ai_elite_with_training(
 
             except Exception as e:
 
-                print(f"   ⚠️ AI Elite: Failed to load model: {e}")
+                print(f"   ⚠️ {strategy_label}: Failed to load model: {e}")
 
 
 
-    # Step 2: Always train (incrementally if model exists, fresh if not)
+    try:
 
-    # This ensures model adapts to recent market conditions
+        # Step 2: Always train (incrementally if model exists, fresh if not)
 
-    print(f"   🎓 AI Elite: Training shared base model...")
+        # This ensures model adapts to recent market conditions
 
+        print(f"   🎓 {strategy_label}: Training shared base model...")
 
 
-    # Determine training window
 
-    if current_date is None:
+        # Determine training window
 
-        import pandas as pd
+        if current_date is None:
 
-        from datetime import datetime
+            import pandas as pd
 
-        current_date = datetime.now(tz_utc.utc)
+            from datetime import datetime
 
+            current_date = datetime.now(tz_utc.utc)
 
 
-    train_end = current_date
 
-    train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
+        train_end = current_date
 
+        train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
 
 
-    # Pre-compute market returns (same as backtesting)
 
-    market_returns = {}
+        # Pre-compute market returns (same as backtesting)
 
-    sample_date_iter = train_start
+        market_returns = {}
 
-    while sample_date_iter <= train_end:
+        sample_date_iter = train_start
 
-        mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
+        while sample_date_iter <= train_end:
 
-        utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
+            mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
 
-        market_returns[utc_key] = mr if mr is not None else 0.0
+            utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
 
-        sample_date_iter += timedelta(days=2)
+            market_returns[utc_key] = mr if mr is not None else 0.0
 
+            sample_date_iter += timedelta(days=2)
 
 
-    # Collect training data from all tickers (PARALLEL with multiprocessing.Pool)
 
-    from multiprocessing import Pool, cpu_count
+        # Collect training data from all tickers (PARALLEL with multiprocessing.Pool)
 
-    import time
+        from multiprocessing import Pool
 
+        import time
 
 
-    n_workers = max(1, cpu_count() - 2)
 
-    print(f"   📊 AI Elite: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
+        n_workers = max(1, NUM_PROCESSES)
 
-    start_time = time.time()
+        print(f"   📊 {strategy_label}: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
 
+        start_time = time.time()
 
 
-    all_training_data = []
 
-    ticker_samples_map = {}
+        all_training_data = []
 
+        ticker_samples_map = {}
 
 
-    # Prepare args for parallel workers
 
-    collect_args = [
+        # Prepare args for parallel workers
 
-        (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS, market_returns)
+        collect_args = [
 
-        for t in all_tickers
+            (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS, market_returns)
 
-    ]
+            for t in all_tickers
 
+        ]
 
 
-    with Pool(processes=n_workers) as pool:
 
-        from backtesting import _collect_data_worker
+        with Pool(processes=n_workers) as pool:
 
-        results = pool.map(_collect_data_worker, collect_args)
+            from backtesting import _collect_data_worker
 
+            results = pool.map(_collect_data_worker, collect_args)
 
 
-    for ticker, samples in results:
 
-        if samples:
+        for ticker, samples in results:
 
-            all_training_data.extend(samples)
+            if samples:
 
-            ticker_samples_map[ticker] = samples
+                all_training_data.extend(samples)
 
+                ticker_samples_map[ticker] = samples
 
 
-    elapsed = time.time() - start_time
 
-    print(f"   📊 AI Elite: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers ({elapsed:.1f}s)")
+        elapsed = time.time() - start_time
 
+        print(f"   📊 {strategy_label}: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers ({elapsed:.1f}s)")
 
 
-    # Train shared base model
 
-    os.makedirs(models_dir, exist_ok=True)
+        # Train shared base model
 
-    existing_base = ai_elite_models.get('_shared_base')
+        os.makedirs(models_dir, exist_ok=True)
 
-    base_model, base_r2 = train_shared_base_model(
+        existing_base = ai_elite_models.get('_shared_base')
 
-        all_training_data, save_path=base_model_path,
+        base_model, base_r2 = train_shared_base_model(
 
-        existing_model=existing_base, train_start=train_start, train_end=train_end
+            all_training_data, save_path=base_model_path,
 
-    )
+            existing_model=existing_base, train_start=train_start, train_end=train_end
 
+        )
 
 
-    if base_model:
 
-        ai_elite_models['_shared_base'] = base_model
+        if base_model:
 
-        for ticker in all_tickers:
+            ai_elite_models['_shared_base'] = base_model
 
-            ai_elite_models[ticker] = base_model
+            for ticker in all_tickers:
 
-        print(f"   ✅ AI Elite: Model trained (R² {base_r2:.3f})")
+                ai_elite_models[ticker] = base_model
 
-    else:
+            print(f"   ✅ {strategy_label}: Model trained (R² {base_r2:.3f})")
 
-        print(f"   ⚠️ AI Elite: Training failed, no model produced")
+        else:
 
+            print(f"   ⚠️ {strategy_label}: Training failed, no model produced")
 
 
-    # Step 3: Select stocks using trained model
 
-    selected = select_ai_elite_stocks(
+        # Step 3: Select stocks using trained model
 
-        all_tickers, ticker_data_grouped,
+        selected = select_ai_elite_stocks(
 
-        current_date=current_date,
+            all_tickers, ticker_data_grouped,
 
-        top_n=top_n,
+            current_date=current_date,
 
-        per_ticker_models=ai_elite_models
+            top_n=top_n,
 
-    )
+            per_ticker_models=ai_elite_models
 
+        )
 
 
-    return selected, ai_elite_models
+
+        return selected, ai_elite_models
+
+    finally:
+
+        _release_ai_elite_runtime_memory()
 
 
 
@@ -6776,7 +6887,10 @@ def _get_strategy_registry():
 
         'ai_elite_filtered': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
 
-        'ai_elite_market_up': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
+        'ai_elite_market_up': lambda t, d, dt, n: __import__(
+            'ai_elite_market_up_strategy',
+            fromlist=['select_ai_elite_market_up_stocks']
+        ).select_ai_elite_market_up_stocks(t, d, dt, n),
 
         'ai_champion': lambda t, d, dt, n: _select_ai_champion_stocks(t, d, dt, n),
 
