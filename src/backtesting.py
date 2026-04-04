@@ -32,6 +32,11 @@ from config import (
 )
 import signal
 from contextlib import contextmanager
+from strategy_universes import (
+    AI_CHAMPION_STRATEGY_SOURCES,
+    AI_REGIME_STRATEGY_SOURCES,
+    build_strategy_values_from_locals,
+)
 
 class PredictionTimeoutError(Exception):
     """Raised when a prediction takes too long."""
@@ -146,128 +151,170 @@ def _get_enable_flag(flag_name: str, default: bool = False) -> bool:
 from scipy.stats import uniform, beta
 
 # =============================================================================
-# STRATEGY DISPLAY NAMES - Single source of truth for strategy name mapping
-# Maps internal strategy key to display name for daily summary and results
+# DAILY STRATEGY REGISTRY
+# Single source of truth for day-level strategy aggregation metadata used by:
+# - `_build_daily_strategy_data()`
+# - daily summary ranking
+# - `top5_consistency_blend`
+# - `voting_ensemble`
 # =============================================================================
-STRATEGY_DISPLAY_NAMES = {
-    'static_bh_1y': 'Static BH 1Y',
-    'static_bh_6m': 'Static BH 6M',
-    'static_bh_3m': 'Static BH 3M',
-    'static_bh_1m': 'Static BH 1M',
-    'dynamic_bh_1y': 'Dynamic BH 1Y',
-    'dynamic_bh_6m': 'Dynamic BH 6M',
-    'dynamic_bh_3m': 'Dynamic BH 3M',
-    'dynamic_bh_1m': 'Dynamic BH 1M',
-    'dynamic_bh_1y_vol_filter': 'Dynamic BH 1Y+Vol',
-    'dynamic_bh_1y_trailing_stop': 'Dynamic BH 1Y+TS',
-    'risk_adj_mom': 'Risk-Adj Mom',
-    'mean_reversion': 'Mean Reversion',
-    'quality_momentum': 'Quality+Mom',
-    'momentum_ai_hybrid': 'Momentum+AI',
-    'volatility_adj_mom': 'Vol-Adj Mom',
-    'sector_rotation': 'Sector Rotation',
-    'ratio_3m_1y': '3M/1Y Ratio',
-    'ratio_1y_3m': '1Y/3M Ratio',
-    'ratio_1m_3m': '1M/3M Ratio',
-    'momentum_volatility_hybrid': 'Mom-Vol Hybrid',
-    'momentum_volatility_hybrid_6m': 'Mom-Vol Hybrid 6M',
-    'momentum_volatility_hybrid_1y': 'Mom-Vol Hybrid 1Y',
-    'momentum_volatility_hybrid_1y3m': 'Mom-Vol Hybrid 1Y/3M',
-    'price_acceleration': 'Price Acceleration',
-    'turnaround': 'Turnaround',
-    'adaptive_ensemble': 'Adaptive Ensemble',
-    'volatility_ensemble': 'Volatility Ensemble',
-    'enhanced_volatility': 'Enhanced Volatility',
-    'ai_volatility_ensemble': 'AI Volatility Ensemble',
-    'multi_tf_ensemble': 'Multi-Horizon Ensemble',
-    'multi_tf_intraday_ensemble': 'Multi-Horizon Intraday',
-    'correlation_ensemble': 'Correlation Ensemble',
-    'dynamic_pool': 'Dynamic Pool',
-    'risk_adj_mom_sentiment': 'RiskAdj Sent',
-    'voting_ensemble': 'Voting Ensemble',
-    'mom_accel': 'Mom Acceleration',
-    'concentrated_3m': 'Concentrated 3M',
-    'dual_momentum': 'Dual Momentum',
-    'trend_atr': 'Trend ATR',
-    'elite_hybrid': 'Elite Hybrid',
-    'elite_risk': 'Elite Risk',
-    'risk_adj_mom_6m': 'Risk-Adj Mom 6M',
-    'risk_adj_mom_6m_monthly': 'RiskAdj 6M Mth',
-    'risk_adj_mom_3m': 'Risk-Adj Mom 3M',
-    'risk_adj_mom_3m_monthly': 'RiskAdj 3M Mth',
-    'risk_adj_mom_3m_sentiment': 'RiskAdj 3M Sent',
-    'risk_adj_mom_3m_market_up': 'RiskAdj 3M Up',
-    'risk_adj_mom_3m_with_stops': 'RiskAdj 3M Stop',
-    'vol_sweet_mom': 'VolSweet Mom',
-    'risk_adj_mom_1m_vol_sweet': '1M VolSweet',
-    'bh_1y_volsweet_accel': 'BH 1Y VolSweet Accel',
-    'bh_1y_dynamic_accel': 'BH 1Y Dynamic Accel',
-    'risk_adj_mom_1m': 'Risk-Adj Mom 1M',
-    'risk_adj_mom_1m_monthly': 'RiskAdj 1M Mth',
-    'ai_elite': 'AI Elite',
-    'ai_elite_monthly': 'AI Elite Mth',
-    'ai_elite_filtered': 'AI Elite Flt',
-    'ai_elite_market_up': 'AI Elite Mkt-Up',
-    'ai_champion': 'AI Champion',
-    'ai_regime': 'AI Regime',
-    'ai_regime_monthly': 'AI Regime Mth',
-    'universal_model': 'Universal Model',
-    'savgol_trend': 'SavGol Trend',
-    'top5_consistency_blend': 'Top5 Cons Blend',
-    'inverse_etf_hedge': '🛡️ Inv ETF Hedge',
-    'analyst_rec': 'Analyst Rec',
-    'bh_1y_monthly': 'BH 1Y Monthly',
-    'bh_6m_monthly': 'BH 6M Monthly',
-    'bh_3m_monthly': 'BH 3M Monthly',
-    'bh_1m_monthly': 'BH 1M Monthly',
-    'meta_weighted_composite': 'Meta Weighted',
-    'meta_tiered_selection': 'Meta Tiered',
-    'meta_ensemble_alloc': 'Meta Ensemble',
-    'meta_regime_based': 'Meta Regime',
-    'meta_recency_weighted': 'Meta Recency',
-    'meta_efficiency_ratio': 'Meta Efficiency',
-    'meta_min_variance': 'Meta MinVar',
-    'meta_bayesian': 'Meta Bayesian',
-    'meta_adaptive_convex': 'Meta Adaptive',
-    'meta_consensus': 'Meta Consensus',
-    'bb_mean_reversion': 'BB Mean Rev',
-    'bb_breakout': 'BB Breakout',
-    'bb_squeeze_breakout': 'BB Squeeze',
-    'bb_rsi_combo': 'BB RSI Combo',
-    'trend_breakout': 'Trend Breakout',
-    'static_bh_1y_vol': 'BH 1Y Vol Trig',
-    'static_bh_1y_perf': 'BH 1Y Perf Trig',
-    'static_bh_1y_mom': 'BH 1Y Mom Trig',
-    'static_bh_1y_atr': 'BH 1Y ATR Trig',
-    'static_bh_1y_hybrid': 'BH 1Y Hybrid Trig',
-    'static_bh_1y_volume': 'BH 1Y Volume',
-    'static_bh_1y_sector': 'BH 1Y Sector',
-    'static_bh_1y_perf_threshold': 'BH 1Y Perf Thresh',
-    'static_bh_1y_market_regime': 'BH 1Y Market Regime',
-    'static_bh_1y_mom_persist': 'BH 1Y Mom Persist',
-    'static_bh_1y_overlap': 'BH 1Y Overlap',
-    'static_bh_1y_rank_drift': 'BH 1Y Rank Drift',
-    'static_bh_1y_drawdown': 'BH 1Y Drawdown',
-    'static_bh_1y_smart_monthly': 'BH 1Y Smart Mth',
-    'bh_1y_mom_sell': 'BH 1Y Mom Sell',
-    'bh_1y_rank_sell': 'BH 1Y Rank Sell',
-    'bh_1y_trailing_mom': 'BH 1Y Trail Mom',
-    'bh_1y_volume_confirm': 'BH 1Y Vol Conf',
-    'bh_1y_sector_aware': 'BH 1Y Sect Aware',
-    'bh_1y_accel_buy': 'BH 1Y Accel',
-    'static_bh_3m_accel': 'Static BH 3M Accel',
-    'bh_1y_vol_adj_rebal': 'Rebal 1Y VolAdj',
-    'ratio_1m3m_vol_adj_rebal': 'Rebal 1M3M VolAdj',
-    'bh_1y_corr_filter': 'Rebal 1Y CorrFilt',
-    'bh_1y_regime_aware': 'Rebal 1Y Regime',
-    'bh_1y_risk_parity': 'Rebal 1Y RiskPar',
-    'bh_1y_drift_thresh': 'Rebal 1Y Drift',
-    'bh_1y_mom_quality': 'Rebal 1Y MomQual',
-    'bh_1y_liquidity': 'Rebal 1Y Liquid',
-    'bh_1y_earnings_avoid': 'Rebal 1Y EarnAvd',
-    'bh_1y_multi_factor': 'Rebal 1Y MultiFact',
-    'bh_1y_time_decay': 'Rebal 1Y TimeDec',
+def _strategy_registry_entry(
+    display_name: str,
+    enable_flag_name: str,
+    value_var: str,
+    history_var: str,
+    cash_var: str,
+    positions_var: str,
+) -> Dict[str, str]:
+    return {
+        'display_name': display_name,
+        'enable_flag_name': enable_flag_name,
+        'value_var': value_var,
+        'history_var': history_var,
+        'cash_var': cash_var,
+        'positions_var': positions_var,
+    }
+
+
+STRATEGY_REGISTRY = {
+    'static_bh_1y': _strategy_registry_entry('Static BH 1Y', 'ENABLE_STATIC_BH', 'static_bh_1y_portfolio_value', 'static_bh_1y_portfolio_history', 'static_bh_1y_cash', 'current_static_bh_1y_stocks'),
+    'static_bh_6m': _strategy_registry_entry('Static BH 6M', 'ENABLE_STATIC_BH', 'static_bh_6m_portfolio_value', 'static_bh_6m_portfolio_history', 'static_bh_6m_cash', 'current_static_bh_6m_stocks'),
+    'static_bh_3m': _strategy_registry_entry('Static BH 3M', 'ENABLE_STATIC_BH', 'static_bh_3m_portfolio_value', 'static_bh_3m_portfolio_history', 'static_bh_3m_cash', 'current_static_bh_3m_stocks'),
+    'static_bh_1m': _strategy_registry_entry('Static BH 1M', 'ENABLE_STATIC_BH', 'static_bh_1m_portfolio_value', 'static_bh_1m_portfolio_history', 'static_bh_1m_cash', 'current_static_bh_1m_stocks'),
+    'dynamic_bh_1y': _strategy_registry_entry('Dynamic BH 1Y', 'ENABLE_DYNAMIC_BH_1Y', 'dynamic_bh_portfolio_value', 'dynamic_bh_portfolio_history', 'dynamic_bh_cash', 'current_dynamic_bh_stocks'),
+    'dynamic_bh_6m': _strategy_registry_entry('Dynamic BH 6M', 'ENABLE_DYNAMIC_BH_6M', 'dynamic_bh_6m_portfolio_value', 'dynamic_bh_6m_portfolio_history', 'dynamic_bh_6m_cash', 'current_dynamic_bh_6m_stocks'),
+    'dynamic_bh_3m': _strategy_registry_entry('Dynamic BH 3M', 'ENABLE_DYNAMIC_BH_3M', 'dynamic_bh_3m_portfolio_value', 'dynamic_bh_3m_portfolio_history', 'dynamic_bh_3m_cash', 'current_dynamic_bh_3m_stocks'),
+    'dynamic_bh_1m': _strategy_registry_entry('Dynamic BH 1M', 'ENABLE_DYNAMIC_BH_1M', 'dynamic_bh_1m_portfolio_value', 'dynamic_bh_1m_portfolio_history', 'dynamic_bh_1m_cash', 'current_dynamic_bh_1m_stocks'),
+    'dynamic_bh_1y_vol_filter': _strategy_registry_entry('Dynamic BH 1Y+Vol', 'ENABLE_DYNAMIC_BH_1Y_VOL_FILTER', 'dynamic_bh_1y_vol_filter_portfolio_value', 'dynamic_bh_1y_vol_filter_portfolio_history', 'dynamic_bh_1y_vol_filter_cash', 'current_dynamic_bh_1y_vol_filter_stocks'),
+    'dynamic_bh_1y_trailing_stop': _strategy_registry_entry('Dynamic BH 1Y+TS', 'ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP', 'dynamic_bh_1y_trailing_stop_portfolio_value', 'dynamic_bh_1y_trailing_stop_portfolio_history', 'dynamic_bh_1y_trailing_stop_cash', 'current_dynamic_bh_1y_trailing_stop_stocks'),
+    'risk_adj_mom': _strategy_registry_entry('Risk-Adj Mom', 'ENABLE_RISK_ADJ_MOM', 'risk_adj_mom_portfolio_value', 'risk_adj_mom_portfolio_history', 'risk_adj_mom_cash', 'current_risk_adj_mom_stocks'),
+    'mean_reversion': _strategy_registry_entry('Mean Reversion', 'ENABLE_MEAN_REVERSION', 'mean_reversion_portfolio_value', 'mean_reversion_portfolio_history', 'mean_reversion_cash', 'current_mean_reversion_stocks'),
+    'quality_momentum': _strategy_registry_entry('Quality+Mom', 'ENABLE_QUALITY_MOM', 'quality_momentum_portfolio_value', 'quality_momentum_portfolio_history', 'quality_momentum_cash', 'current_quality_momentum_stocks'),
+    'momentum_ai_hybrid': _strategy_registry_entry('Momentum+AI', 'ENABLE_MOMENTUM_AI_HYBRID', 'momentum_ai_hybrid_portfolio_value', 'momentum_ai_hybrid_portfolio_history', 'momentum_ai_hybrid_cash', 'momentum_ai_hybrid_positions'),
+    'volatility_adj_mom': _strategy_registry_entry('Vol-Adj Mom', 'ENABLE_VOLATILITY_ADJ_MOM', 'volatility_adj_mom_portfolio_value', 'volatility_adj_mom_portfolio_history', 'volatility_adj_mom_cash', 'current_volatility_adj_mom_stocks'),
+    'sector_rotation': _strategy_registry_entry('Sector Rotation', 'ENABLE_SECTOR_ROTATION', 'sector_rotation_portfolio_value', 'sector_rotation_portfolio_history', 'sector_rotation_cash', 'current_sector_rotation_etfs'),
+    'ratio_3m_1y': _strategy_registry_entry('3M/1Y Ratio', 'ENABLE_3M_1Y_RATIO', 'ratio_3m_1y_portfolio_value', 'ratio_3m_1y_portfolio_history', 'ratio_3m_1y_cash', 'ratio_3m_1y_positions'),
+    'ratio_1y_3m': _strategy_registry_entry('1Y/3M Ratio', 'ENABLE_3M_1Y_RATIO', 'ratio_1y_3m_portfolio_value', 'ratio_1y_3m_portfolio_history', 'ratio_1y_3m_cash', 'ratio_1y_3m_positions'),
+    'ratio_1m_3m': _strategy_registry_entry('1M/3M Ratio', 'ENABLE_1M_3M_RATIO', 'ratio_1m_3m_portfolio_value', 'ratio_1m_3m_portfolio_history', 'ratio_1m_3m_cash', 'ratio_1m_3m_positions'),
+    'momentum_volatility_hybrid': _strategy_registry_entry('Mom-Vol Hybrid', 'ENABLE_MOMENTUM_VOLATILITY_HYBRID', 'momentum_volatility_hybrid_portfolio_value', 'momentum_volatility_hybrid_portfolio_history', 'momentum_volatility_hybrid_cash', 'momentum_volatility_hybrid_positions'),
+    'momentum_volatility_hybrid_6m': _strategy_registry_entry('Mom-Vol Hybrid 6M', 'ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M', 'momentum_volatility_hybrid_6m_portfolio_value', 'momentum_volatility_hybrid_6m_portfolio_history', 'momentum_volatility_hybrid_6m_cash', 'momentum_volatility_hybrid_6m_positions'),
+    'momentum_volatility_hybrid_1y': _strategy_registry_entry('Mom-Vol Hybrid 1Y', 'ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y', 'momentum_volatility_hybrid_1y_portfolio_value', 'momentum_volatility_hybrid_1y_portfolio_history', 'momentum_volatility_hybrid_1y_cash', 'momentum_volatility_hybrid_1y_positions'),
+    'momentum_volatility_hybrid_1y3m': _strategy_registry_entry('Mom-Vol Hybrid 1Y/3M', 'ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M', 'momentum_volatility_hybrid_1y3m_portfolio_value', 'momentum_volatility_hybrid_1y3m_portfolio_history', 'momentum_volatility_hybrid_1y3m_cash', 'momentum_volatility_hybrid_1y3m_positions'),
+    'price_acceleration': _strategy_registry_entry('Price Acceleration', 'ENABLE_PRICE_ACCELERATION', 'price_acceleration_portfolio_value', 'price_acceleration_portfolio_history', 'price_acceleration_cash', 'current_price_acceleration_stocks'),
+    'turnaround': _strategy_registry_entry('Turnaround', 'ENABLE_TURNAROUND', 'turnaround_portfolio_value', 'turnaround_portfolio_history', 'turnaround_cash', 'current_turnaround_stocks'),
+    'adaptive_ensemble': _strategy_registry_entry('Adaptive Ensemble', 'ENABLE_ADAPTIVE_STRATEGY', 'adaptive_ensemble_portfolio_value', 'adaptive_ensemble_portfolio_history', 'adaptive_ensemble_cash', 'adaptive_ensemble_positions'),
+    'volatility_ensemble': _strategy_registry_entry('Volatility Ensemble', 'ENABLE_VOLATILITY_ENSEMBLE', 'volatility_ensemble_portfolio_value', 'volatility_ensemble_portfolio_history', 'volatility_ensemble_cash', 'volatility_ensemble_positions'),
+    'enhanced_volatility': _strategy_registry_entry('Enhanced Volatility', 'ENABLE_ENHANCED_VOLATILITY', 'enhanced_volatility_portfolio_value', 'enhanced_volatility_portfolio_history', 'enhanced_volatility_cash', 'enhanced_volatility_positions'),
+    'ai_volatility_ensemble': _strategy_registry_entry('AI Volatility Ensemble', 'ENABLE_AI_VOLATILITY_ENSEMBLE', 'ai_volatility_ensemble_portfolio_value', 'ai_volatility_ensemble_portfolio_history', 'ai_volatility_ensemble_cash', 'ai_volatility_ensemble_positions'),
+    'multi_tf_ensemble': _strategy_registry_entry('Multi-Horizon Ensemble', 'ENABLE_MULTI_TIMEFRAME_ENSEMBLE', 'multi_tf_ensemble_portfolio_value', 'multi_tf_ensemble_portfolio_history', 'multi_tf_ensemble_cash', 'multi_tf_ensemble_positions'),
+    'multi_tf_intraday_ensemble': _strategy_registry_entry('Multi-Horizon Intraday', 'ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE', 'multi_tf_intraday_ensemble_portfolio_value', 'multi_tf_intraday_ensemble_portfolio_history', 'multi_tf_intraday_ensemble_cash', 'multi_tf_intraday_ensemble_positions'),
+    'correlation_ensemble': _strategy_registry_entry('Correlation Ensemble', 'ENABLE_CORRELATION_ENSEMBLE', 'correlation_ensemble_portfolio_value', 'correlation_ensemble_portfolio_history', 'correlation_ensemble_cash', 'correlation_ensemble_positions'),
+    'dynamic_pool': _strategy_registry_entry('Dynamic Pool', 'ENABLE_DYNAMIC_POOL', 'dynamic_pool_portfolio_value', 'dynamic_pool_portfolio_history', 'dynamic_pool_cash', 'dynamic_pool_positions'),
+    'risk_adj_mom_sentiment': _strategy_registry_entry('RiskAdj Sent', 'ENABLE_RISK_ADJ_MOM_SENTIMENT', 'risk_adj_mom_sentiment_portfolio_value', 'risk_adj_mom_sentiment_portfolio_history', 'risk_adj_mom_sentiment_cash', 'risk_adj_mom_sentiment_positions'),
+    'voting_ensemble': _strategy_registry_entry('Voting Ensemble', 'ENABLE_VOTING_ENSEMBLE', 'voting_ensemble_portfolio_value', 'voting_ensemble_portfolio_history', 'voting_ensemble_cash', 'voting_ensemble_positions'),
+    'mom_accel': _strategy_registry_entry('Mom Acceleration', 'ENABLE_MOMENTUM_ACCELERATION', 'mom_accel_portfolio_value', 'mom_accel_portfolio_history', 'mom_accel_cash', 'mom_accel_positions'),
+    'concentrated_3m': _strategy_registry_entry('Concentrated 3M', 'ENABLE_CONCENTRATED_3M', 'concentrated_3m_portfolio_value', 'concentrated_3m_portfolio_history', 'concentrated_3m_cash', 'concentrated_3m_positions'),
+    'dual_momentum': _strategy_registry_entry('Dual Momentum', 'ENABLE_DUAL_MOMENTUM', 'dual_mom_portfolio_value', 'dual_mom_portfolio_history', 'dual_mom_cash', 'dual_mom_positions'),
+    'trend_atr': _strategy_registry_entry('Trend ATR', 'ENABLE_TREND_FOLLOWING_ATR', 'trend_atr_portfolio_value', 'trend_atr_portfolio_history', 'trend_atr_cash', 'trend_atr_positions'),
+    'elite_hybrid': _strategy_registry_entry('Elite Hybrid', 'ENABLE_ELITE_HYBRID', 'elite_hybrid_portfolio_value', 'elite_hybrid_portfolio_history', 'elite_hybrid_cash', 'elite_hybrid_positions'),
+    'elite_risk': _strategy_registry_entry('Elite Risk', 'ENABLE_ELITE_RISK', 'elite_risk_portfolio_value', 'elite_risk_portfolio_history', 'elite_risk_cash', 'elite_risk_positions'),
+    'risk_adj_mom_6m': _strategy_registry_entry('Risk-Adj Mom 6M', 'ENABLE_RISK_ADJ_MOM_6M', 'risk_adj_mom_6m_portfolio_value', 'risk_adj_mom_6m_portfolio_history', 'risk_adj_mom_6m_cash', 'current_risk_adj_mom_6m_stocks'),
+    'risk_adj_mom_6m_monthly': _strategy_registry_entry('RiskAdj 6M Mth', 'ENABLE_RISK_ADJ_MOM_6M_MONTHLY', 'risk_adj_mom_6m_monthly_portfolio_value', 'risk_adj_mom_6m_monthly_portfolio_history', 'risk_adj_mom_6m_monthly_cash', 'risk_adj_mom_6m_monthly_positions'),
+    'risk_adj_mom_3m': _strategy_registry_entry('Risk-Adj Mom 3M', 'ENABLE_RISK_ADJ_MOM_3M', 'risk_adj_mom_3m_portfolio_value', 'risk_adj_mom_3m_portfolio_history', 'risk_adj_mom_3m_cash', 'current_risk_adj_mom_3m_stocks'),
+    'risk_adj_mom_3m_monthly': _strategy_registry_entry('RiskAdj 3M Mth', 'ENABLE_RISK_ADJ_MOM_3M_MONTHLY', 'risk_adj_mom_3m_monthly_portfolio_value', 'risk_adj_mom_3m_monthly_portfolio_history', 'risk_adj_mom_3m_monthly_cash', 'risk_adj_mom_3m_monthly_positions'),
+    'risk_adj_mom_3m_sentiment': _strategy_registry_entry('RiskAdj 3M Sent', 'ENABLE_RISK_ADJ_MOM_3M_SENTIMENT', 'risk_adj_mom_3m_sentiment_portfolio_value', 'risk_adj_mom_3m_sentiment_portfolio_history', 'risk_adj_mom_3m_sentiment_cash', 'risk_adj_mom_3m_sentiment_positions'),
+    'risk_adj_mom_3m_market_up': _strategy_registry_entry('RiskAdj 3M Up', 'ENABLE_RISK_ADJ_MOM_3M_MARKET_UP', 'risk_adj_mom_3m_market_up_portfolio_value', 'risk_adj_mom_3m_market_up_portfolio_history', 'risk_adj_mom_3m_market_up_cash', 'risk_adj_mom_3m_market_up_positions'),
+    'risk_adj_mom_3m_with_stops': _strategy_registry_entry('RiskAdj 3M Stop', 'ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS', 'risk_adj_mom_3m_with_stops_portfolio_value', 'risk_adj_mom_3m_with_stops_portfolio_history', 'risk_adj_mom_3m_with_stops_cash', 'risk_adj_mom_3m_with_stops_positions'),
+    'vol_sweet_mom': _strategy_registry_entry('VolSweet Mom', 'ENABLE_VOL_SWEET_MOM', 'vol_sweet_mom_portfolio_value', 'vol_sweet_mom_portfolio_history', 'vol_sweet_mom_cash', 'vol_sweet_mom_positions'),
+    'risk_adj_mom_1m_vol_sweet': _strategy_registry_entry('1M VolSweet', 'ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET', 'risk_adj_mom_1m_vol_sweet_portfolio_value', 'risk_adj_mom_1m_vol_sweet_portfolio_history', 'risk_adj_mom_1m_vol_sweet_cash', 'current_risk_adj_mom_1m_vol_sweet_stocks'),
+    'bh_1y_volsweet_accel': _strategy_registry_entry('BH 1Y VolSweet Accel', 'ENABLE_BH_1Y_VOL_SWEET_ACCEL', 'bh_1y_volsweet_accel_portfolio_value', 'bh_1y_volsweet_accel_portfolio_history', 'bh_1y_volsweet_accel_cash', 'current_bh_1y_volsweet_accel_stocks'),
+    'bh_1y_dynamic_accel': _strategy_registry_entry('BH 1Y Dynamic Accel', 'ENABLE_BH_1Y_DYNAMIC_ACCEL', 'bh_1y_dynamic_accel_portfolio_value', 'bh_1y_dynamic_accel_portfolio_history', 'bh_1y_dynamic_accel_cash', 'bh_1y_dynamic_accel_positions'),
+    'risk_adj_mom_1m': _strategy_registry_entry('Risk-Adj Mom 1M', 'ENABLE_RISK_ADJ_MOM_1M', 'risk_adj_mom_1m_portfolio_value', 'risk_adj_mom_1m_portfolio_history', 'risk_adj_mom_1m_cash', 'current_risk_adj_mom_1m_stocks'),
+    'risk_adj_mom_1m_monthly': _strategy_registry_entry('RiskAdj 1M Mth', 'ENABLE_RISK_ADJ_MOM_1M_MONTHLY', 'risk_adj_mom_1m_monthly_portfolio_value', 'risk_adj_mom_1m_monthly_portfolio_history', 'risk_adj_mom_1m_monthly_cash', 'risk_adj_mom_1m_monthly_positions'),
+    'ai_elite': _strategy_registry_entry('AI Elite', 'ENABLE_AI_ELITE', 'ai_elite_portfolio_value', 'ai_elite_portfolio_history', 'ai_elite_cash', 'ai_elite_positions'),
+    'ai_elite_monthly': _strategy_registry_entry('AI Elite Mth', 'ENABLE_AI_ELITE_MONTHLY', 'ai_elite_monthly_portfolio_value', 'ai_elite_monthly_portfolio_history', 'ai_elite_monthly_cash', 'ai_elite_monthly_positions'),
+    'ai_elite_filtered': _strategy_registry_entry('AI Elite Flt', 'ENABLE_AI_ELITE_FILTERED', 'ai_elite_filtered_portfolio_value', 'ai_elite_filtered_portfolio_history', 'ai_elite_filtered_cash', 'ai_elite_filtered_positions'),
+    'ai_elite_market_up': _strategy_registry_entry('AI Elite Mkt-Up', 'ENABLE_AI_ELITE_MARKET_UP', 'ai_elite_market_up_portfolio_value', 'ai_elite_market_up_portfolio_history', 'ai_elite_market_up_cash', 'ai_elite_market_up_positions'),
+    'ai_champion': _strategy_registry_entry('AI Champion', 'ENABLE_AI_CHAMPION', 'ai_champion_portfolio_value', 'ai_champion_portfolio_history', 'ai_champion_cash', 'ai_champion_positions'),
+    'ai_regime': _strategy_registry_entry('AI Regime', 'ENABLE_AI_REGIME', 'ai_regime_portfolio_value', 'ai_regime_portfolio_history', 'ai_regime_cash', 'ai_regime_positions'),
+    'ai_regime_monthly': _strategy_registry_entry('AI Regime Mth', 'ENABLE_AI_REGIME_MONTHLY', 'ai_regime_monthly_portfolio_value', 'ai_regime_monthly_portfolio_history', 'ai_regime_monthly_cash', 'ai_regime_monthly_positions'),
+    'universal_model': _strategy_registry_entry('Universal Model', 'ENABLE_UNIVERSAL_MODEL', 'universal_model_portfolio_value', 'universal_model_portfolio_history', 'universal_model_cash', 'universal_model_positions'),
+    'savgol_trend': _strategy_registry_entry('SavGol Trend', 'ENABLE_SAVGOL_TREND', 'savgol_trend_portfolio_value', 'savgol_trend_portfolio_history', 'savgol_trend_cash', 'savgol_trend_positions'),
+    'top5_consistency_blend': _strategy_registry_entry('Top5 Cons Blend', 'ENABLE_TOP5_CONSISTENCY_BLEND', 'top5_consistency_blend_portfolio_value', 'top5_consistency_blend_portfolio_history', 'top5_consistency_blend_cash', 'top5_consistency_blend_positions'),
+    'inverse_etf_hedge': _strategy_registry_entry('🛡️ Inv ETF Hedge', 'ENABLE_INVERSE_ETF_HEDGE', 'inverse_etf_hedge_portfolio_value', 'inverse_etf_hedge_portfolio_history', 'inverse_etf_hedge_cash', 'inverse_etf_hedge_positions'),
+    'analyst_rec': _strategy_registry_entry('Analyst Rec', 'ENABLE_ANALYST_RECOMMENDATION', 'analyst_rec_portfolio_value', 'analyst_rec_portfolio_history', 'analyst_rec_cash', 'analyst_rec_positions'),
+    'bh_1y_monthly': _strategy_registry_entry('BH 1Y Monthly', 'ENABLE_STATIC_BH_1Y_MONTHLY', 'static_bh_1y_monthly_portfolio_value', 'static_bh_1y_monthly_portfolio_history', 'static_bh_1y_monthly_cash', 'static_bh_1y_monthly_positions'),
+    'bh_6m_monthly': _strategy_registry_entry('BH 6M Monthly', 'ENABLE_STATIC_BH_6M_MONTHLY', 'static_bh_6m_monthly_portfolio_value', 'static_bh_6m_monthly_portfolio_history', 'static_bh_6m_monthly_cash', 'static_bh_6m_monthly_positions'),
+    'bh_3m_monthly': _strategy_registry_entry('BH 3M Monthly', 'ENABLE_STATIC_BH_3M_MONTHLY', 'static_bh_3m_monthly_portfolio_value', 'static_bh_3m_monthly_portfolio_history', 'static_bh_3m_monthly_cash', 'static_bh_3m_monthly_positions'),
+    'bh_1m_monthly': _strategy_registry_entry('BH 1M Monthly', 'ENABLE_STATIC_BH_1M_MONTHLY', 'static_bh_1m_monthly_portfolio_value', 'static_bh_1m_monthly_portfolio_history', 'static_bh_1m_monthly_cash', 'static_bh_1m_monthly_positions'),
+    'meta_weighted_composite': _strategy_registry_entry('Meta Weighted', 'ENABLE_META_WEIGHTED_COMPOSITE', 'meta_weighted_composite_value', 'meta_weighted_composite_history', 'meta_weighted_composite_cash', 'meta_weighted_composite_positions'),
+    'meta_tiered_selection': _strategy_registry_entry('Meta Tiered', 'ENABLE_META_TIERED_SELECTION', 'meta_tiered_selection_value', 'meta_tiered_selection_history', 'meta_tiered_selection_cash', 'meta_tiered_selection_positions'),
+    'meta_ensemble_alloc': _strategy_registry_entry('Meta Ensemble', 'ENABLE_META_ENSEMBLE_ALLOC', 'meta_ensemble_alloc_value', 'meta_ensemble_alloc_history', 'meta_ensemble_alloc_cash', 'meta_ensemble_alloc_positions'),
+    'meta_regime_based': _strategy_registry_entry('Meta Regime', 'ENABLE_META_REGIME_BASED', 'meta_regime_based_value', 'meta_regime_based_history', 'meta_regime_based_cash', 'meta_regime_based_positions'),
+    'meta_recency_weighted': _strategy_registry_entry('Meta Recency', 'ENABLE_META_RECENCY_WEIGHTED', 'meta_recency_weighted_value', 'meta_recency_weighted_history', 'meta_recency_weighted_cash', 'meta_recency_weighted_positions'),
+    'meta_efficiency_ratio': _strategy_registry_entry('Meta Efficiency', 'ENABLE_META_EFFICIENCY_RATIO', 'meta_efficiency_ratio_value', 'meta_efficiency_ratio_history', 'meta_efficiency_ratio_cash', 'meta_efficiency_ratio_positions'),
+    'meta_min_variance': _strategy_registry_entry('Meta MinVar', 'ENABLE_META_MIN_VARIANCE', 'meta_min_variance_value', 'meta_min_variance_history', 'meta_min_variance_cash', 'meta_min_variance_positions'),
+    'meta_bayesian': _strategy_registry_entry('Meta Bayesian', 'ENABLE_META_BAYESIAN', 'meta_bayesian_value', 'meta_bayesian_history', 'meta_bayesian_cash', 'meta_bayesian_positions'),
+    'meta_adaptive_convex': _strategy_registry_entry('Meta Adaptive', 'ENABLE_META_ADAPTIVE_CONVEX', 'meta_adaptive_convex_value', 'meta_adaptive_convex_history', 'meta_adaptive_convex_cash', 'meta_adaptive_convex_positions'),
+    'meta_consensus': _strategy_registry_entry('Meta Consensus', 'ENABLE_META_CONSENSUS', 'meta_consensus_value', 'meta_consensus_history', 'meta_consensus_cash', 'meta_consensus_positions'),
+    'bb_mean_reversion': _strategy_registry_entry('BB Mean Rev', 'ENABLE_BB_MEAN_REVERSION', 'bb_mean_reversion_value', 'bb_mean_reversion_history', 'bb_mean_reversion_cash', 'bb_mean_reversion_positions'),
+    'bb_breakout': _strategy_registry_entry('BB Breakout', 'ENABLE_BB_BREAKOUT', 'bb_breakout_value', 'bb_breakout_history', 'bb_breakout_cash', 'bb_breakout_positions'),
+    'bb_squeeze_breakout': _strategy_registry_entry('BB Squeeze', 'ENABLE_BB_SQUEEZE_BREAKOUT', 'bb_squeeze_breakout_value', 'bb_squeeze_breakout_history', 'bb_squeeze_breakout_cash', 'bb_squeeze_breakout_positions'),
+    'bb_rsi_combo': _strategy_registry_entry('BB RSI Combo', 'ENABLE_BB_RSI_COMBO', 'bb_rsi_combo_value', 'bb_rsi_combo_history', 'bb_rsi_combo_cash', 'bb_rsi_combo_positions'),
+    'trend_breakout': _strategy_registry_entry('Trend Breakout', 'ENABLE_TREND_BREAKOUT', 'trend_breakout_value', 'trend_breakout_history', 'trend_breakout_cash', 'trend_breakout_positions'),
+    'static_bh_1y_vol': _strategy_registry_entry('BH 1Y Vol Trig', 'ENABLE_STATIC_BH_1Y_VOLATILITY', 'static_bh_1y_vol_portfolio_value', 'static_bh_1y_vol_portfolio_history', 'static_bh_1y_vol_cash', 'static_bh_1y_vol_positions'),
+    'static_bh_1y_perf': _strategy_registry_entry('BH 1Y Perf Trig', 'ENABLE_STATIC_BH_1Y_PERFORMANCE', 'static_bh_1y_perf_portfolio_value', 'static_bh_1y_perf_portfolio_history', 'static_bh_1y_perf_cash', 'static_bh_1y_perf_positions'),
+    'static_bh_1y_mom': _strategy_registry_entry('BH 1Y Mom Trig', 'ENABLE_STATIC_BH_1Y_MOMENTUM', 'static_bh_1y_mom_portfolio_value', 'static_bh_1y_mom_portfolio_history', 'static_bh_1y_mom_cash', 'static_bh_1y_mom_positions'),
+    'static_bh_1y_atr': _strategy_registry_entry('BH 1Y ATR Trig', 'ENABLE_STATIC_BH_1Y_ATR', 'static_bh_1y_atr_portfolio_value', 'static_bh_1y_atr_portfolio_history', 'static_bh_1y_atr_cash', 'static_bh_1y_atr_positions'),
+    'static_bh_1y_hybrid': _strategy_registry_entry('BH 1Y Hybrid Trig', 'ENABLE_STATIC_BH_1Y_HYBRID', 'static_bh_1y_hybrid_portfolio_value', 'static_bh_1y_hybrid_portfolio_history', 'static_bh_1y_hybrid_cash', 'static_bh_1y_hybrid_positions'),
+    'static_bh_1y_volume': _strategy_registry_entry('BH 1Y Volume', 'ENABLE_STATIC_BH_1Y_VOLUME_FILTER', 'static_bh_1y_volume_portfolio_value', 'static_bh_1y_volume_portfolio_history', 'static_bh_1y_volume_cash', 'static_bh_1y_volume_positions'),
+    'static_bh_1y_sector': _strategy_registry_entry('BH 1Y Sector', 'ENABLE_STATIC_BH_1Y_SECTOR_ROTATION', 'static_bh_1y_sector_portfolio_value', 'static_bh_1y_sector_portfolio_history', 'static_bh_1y_sector_cash', 'static_bh_1y_sector_positions'),
+    'static_bh_1y_perf_threshold': _strategy_registry_entry('BH 1Y Perf Thresh', 'ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD', 'static_bh_1y_perf_threshold_portfolio_value', 'static_bh_1y_perf_threshold_portfolio_history', 'static_bh_1y_perf_threshold_cash', 'static_bh_1y_perf_threshold_positions'),
+    'static_bh_1y_market_regime': _strategy_registry_entry('BH 1Y Market Regime', 'ENABLE_STATIC_BH_1Y_MARKET_REGIME', 'static_bh_1y_market_regime_portfolio_value', 'static_bh_1y_market_regime_portfolio_history', 'static_bh_1y_market_regime_cash', 'static_bh_1y_market_regime_positions'),
+    'static_bh_1y_mom_persist': _strategy_registry_entry('BH 1Y Mom Persist', 'ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST', 'static_bh_1y_mom_persist_portfolio_value', 'static_bh_1y_mom_persist_portfolio_history', 'static_bh_1y_mom_persist_cash', 'static_bh_1y_mom_persist_positions'),
+    'static_bh_1y_overlap': _strategy_registry_entry('BH 1Y Overlap', 'ENABLE_STATIC_BH_1Y_OVERLAP', 'static_bh_1y_overlap_portfolio_value', 'static_bh_1y_overlap_portfolio_history', 'static_bh_1y_overlap_cash', 'static_bh_1y_overlap_positions'),
+    'static_bh_1y_rank_drift': _strategy_registry_entry('BH 1Y Rank Drift', 'ENABLE_STATIC_BH_1Y_RANK_DRIFT', 'static_bh_1y_rank_drift_portfolio_value', 'static_bh_1y_rank_drift_portfolio_history', 'static_bh_1y_rank_drift_cash', 'static_bh_1y_rank_drift_positions'),
+    'static_bh_1y_drawdown': _strategy_registry_entry('BH 1Y Drawdown', 'ENABLE_STATIC_BH_1Y_DRAWDOWN', 'static_bh_1y_drawdown_portfolio_value', 'static_bh_1y_drawdown_portfolio_history', 'static_bh_1y_drawdown_cash', 'static_bh_1y_drawdown_positions'),
+    'static_bh_1y_smart_monthly': _strategy_registry_entry('BH 1Y Smart Mth', 'ENABLE_STATIC_BH_1Y_SMART_MONTHLY', 'static_bh_1y_smart_monthly_portfolio_value', 'static_bh_1y_smart_monthly_portfolio_history', 'static_bh_1y_smart_monthly_cash', 'static_bh_1y_smart_monthly_positions'),
+    'bh_1y_mom_sell': _strategy_registry_entry('BH 1Y Mom Sell', 'ENABLE_BH_1Y_MOM_SELL', 'bh_1y_mom_sell_portfolio_value', 'bh_1y_mom_sell_portfolio_history', 'bh_1y_mom_sell_cash', 'bh_1y_mom_sell_positions'),
+    'bh_1y_rank_sell': _strategy_registry_entry('BH 1Y Rank Sell', 'ENABLE_BH_1Y_RANK_SELL', 'bh_1y_rank_sell_portfolio_value', 'bh_1y_rank_sell_portfolio_history', 'bh_1y_rank_sell_cash', 'bh_1y_rank_sell_positions'),
+    'bh_1y_trailing_mom': _strategy_registry_entry('BH 1Y Trail Mom', 'ENABLE_BH_1Y_TRAILING_MOM', 'bh_1y_trailing_mom_portfolio_value', 'bh_1y_trailing_mom_portfolio_history', 'bh_1y_trailing_mom_cash', 'bh_1y_trailing_mom_positions'),
+    'bh_1y_volume_confirm': _strategy_registry_entry('BH 1Y Vol Conf', 'ENABLE_BH_1Y_VOLUME_CONFIRM', 'bh_1y_volume_confirm_portfolio_value', 'bh_1y_volume_confirm_portfolio_history', 'bh_1y_volume_confirm_cash', 'bh_1y_volume_confirm_positions'),
+    'bh_1y_sector_aware': _strategy_registry_entry('BH 1Y Sect Aware', 'ENABLE_BH_1Y_SECTOR_AWARE', 'bh_1y_sector_aware_portfolio_value', 'bh_1y_sector_aware_portfolio_history', 'bh_1y_sector_aware_cash', 'bh_1y_sector_aware_positions'),
+    'bh_1y_accel_buy': _strategy_registry_entry('BH 1Y Accel', 'ENABLE_BH_1Y_ACCEL_BUY', 'bh_1y_accel_buy_portfolio_value', 'bh_1y_accel_buy_portfolio_history', 'bh_1y_accel_buy_cash', 'bh_1y_accel_buy_positions'),
+    'static_bh_3m_accel': _strategy_registry_entry('Static BH 3M Accel', 'ENABLE_STATIC_BH_3M_ACCEL', 'static_bh_3m_accel_portfolio_value', 'static_bh_3m_accel_portfolio_history', 'static_bh_3m_accel_cash', 'static_bh_3m_accel_positions'),
+    'bh_1y_vol_adj_rebal': _strategy_registry_entry('Rebal 1Y VolAdj', 'ENABLE_BH_1Y_VOL_ADJ_REBAL', 'bh_1y_vol_adj_rebal_portfolio_value', 'bh_1y_vol_adj_rebal_portfolio_history', 'bh_1y_vol_adj_rebal_cash', 'bh_1y_vol_adj_rebal_positions'),
+    'ratio_1m3m_vol_adj_rebal': _strategy_registry_entry('Rebal 1M3M VolAdj', 'ENABLE_RATIO_1M3M_VOL_ADJ_REBAL', 'ratio_1m3m_vol_adj_rebal_portfolio_value', 'ratio_1m3m_vol_adj_rebal_portfolio_history', 'ratio_1m3m_vol_adj_rebal_cash', 'ratio_1m3m_vol_adj_rebal_positions'),
+    'bh_1y_corr_filter': _strategy_registry_entry('Rebal 1Y CorrFilt', 'ENABLE_BH_1Y_CORR_FILTER', 'bh_1y_corr_filter_portfolio_value', 'bh_1y_corr_filter_portfolio_history', 'bh_1y_corr_filter_cash', 'bh_1y_corr_filter_positions'),
+    'bh_1y_regime_aware': _strategy_registry_entry('Rebal 1Y Regime', 'ENABLE_BH_1Y_REGIME_AWARE', 'bh_1y_regime_aware_portfolio_value', 'bh_1y_regime_aware_portfolio_history', 'bh_1y_regime_aware_cash', 'bh_1y_regime_aware_positions'),
+    'bh_1y_risk_parity': _strategy_registry_entry('Rebal 1Y RiskPar', 'ENABLE_BH_1Y_RISK_PARITY', 'bh_1y_risk_parity_portfolio_value', 'bh_1y_risk_parity_portfolio_history', 'bh_1y_risk_parity_cash', 'bh_1y_risk_parity_positions'),
+    'bh_1y_drift_thresh': _strategy_registry_entry('Rebal 1Y Drift', 'ENABLE_BH_1Y_DRIFT_THRESH', 'bh_1y_drift_thresh_portfolio_value', 'bh_1y_drift_thresh_portfolio_history', 'bh_1y_drift_thresh_cash', 'bh_1y_drift_thresh_positions'),
+    'bh_1y_mom_quality': _strategy_registry_entry('Rebal 1Y MomQual', 'ENABLE_BH_1Y_MOM_QUALITY', 'bh_1y_mom_quality_portfolio_value', 'bh_1y_mom_quality_portfolio_history', 'bh_1y_mom_quality_cash', 'bh_1y_mom_quality_positions'),
+    'bh_1y_liquidity': _strategy_registry_entry('Rebal 1Y Liquid', 'ENABLE_BH_1Y_LIQUIDITY', 'bh_1y_liquidity_portfolio_value', 'bh_1y_liquidity_portfolio_history', 'bh_1y_liquidity_cash', 'bh_1y_liquidity_positions'),
+    'bh_1y_earnings_avoid': _strategy_registry_entry('Rebal 1Y EarnAvd', 'ENABLE_BH_1Y_EARNINGS_AVOID', 'bh_1y_earnings_avoid_portfolio_value', 'bh_1y_earnings_avoid_portfolio_history', 'bh_1y_earnings_avoid_cash', 'bh_1y_earnings_avoid_positions'),
+    'bh_1y_multi_factor': _strategy_registry_entry('Rebal 1Y MultiFact', 'ENABLE_BH_1Y_MULTI_FACTOR', 'bh_1y_multi_factor_portfolio_value', 'bh_1y_multi_factor_portfolio_history', 'bh_1y_multi_factor_cash', 'bh_1y_multi_factor_positions'),
+    'bh_1y_time_decay': _strategy_registry_entry('Rebal 1Y TimeDec', 'ENABLE_BH_1Y_TIME_DECAY', 'bh_1y_time_decay_portfolio_value', 'bh_1y_time_decay_portfolio_history', 'bh_1y_time_decay_cash', 'bh_1y_time_decay_positions'),
 }
+
+STRATEGY_DISPLAY_NAMES = {
+    key: meta['display_name']
+    for key, meta in STRATEGY_REGISTRY.items()
+}
+
+
+def _get_strategy_display_name(strategy_key: str) -> str:
+    meta = STRATEGY_REGISTRY.get(strategy_key)
+    return meta['display_name'] if meta else strategy_key
+
+
+def _is_strategy_enabled(strategy_key: str, config_module=None) -> Optional[bool]:
+    if config_module is None:
+        import config as config_module
+
+    meta = STRATEGY_REGISTRY.get(strategy_key)
+    if meta is None:
+        return None
+    return bool(getattr(config_module, meta['enable_flag_name'], False))
 
 # Global transaction cost tracking variables (initialized in main function)
 static_bh_transaction_costs = 0
@@ -312,265 +359,27 @@ def _build_daily_strategy_data(locals_dict):
     """
     Build strategy data for daily summary from local variables.
     Returns dict mapping strategy_key -> {'value': float, 'history': list, 'cash': float, 'positions': int}
-    Uses STRATEGY_DISPLAY_NAMES for display name lookup.
-    Only includes strategies that are enabled via config flags.
+    Uses `STRATEGY_REGISTRY` as the single source of truth for strategy metadata.
     """
-    # Import config to access enable flags
     import config
 
-    # Helper to safely get value from locals
     def _get(name, default=None):
         return locals_dict.get(name, default)
 
-    # Map strategy keys to their config enable flags
-    STRATEGY_ENABLE_FLAGS = {
-        'static_bh_1y': config.ENABLE_STATIC_BH,
-        'static_bh_6m': config.ENABLE_STATIC_BH,
-        'static_bh_3m': config.ENABLE_STATIC_BH,
-        'static_bh_1m': config.ENABLE_STATIC_BH,
-        'dynamic_bh_1y': config.ENABLE_DYNAMIC_BH_1Y,
-        'dynamic_bh_6m': config.ENABLE_DYNAMIC_BH_6M,
-        'dynamic_bh_3m': config.ENABLE_DYNAMIC_BH_3M,
-        'dynamic_bh_1m': config.ENABLE_DYNAMIC_BH_1M,
-        'dynamic_bh_1y_vol_filter': config.ENABLE_DYNAMIC_BH_1Y_VOL_FILTER,
-        'dynamic_bh_1y_trailing_stop': config.ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP,
-        'risk_adj_mom': config.ENABLE_RISK_ADJ_MOM,
-        'mean_reversion': config.ENABLE_MEAN_REVERSION,
-        'quality_momentum': config.ENABLE_QUALITY_MOM,
-        'momentum_ai_hybrid': config.ENABLE_MOMENTUM_AI_HYBRID,
-        'volatility_adj_mom': config.ENABLE_VOLATILITY_ADJ_MOM,
-        'sector_rotation': config.ENABLE_SECTOR_ROTATION,
-        'ratio_3m_1y': config.ENABLE_3M_1Y_RATIO,
-        'ratio_1y_3m': config.ENABLE_3M_1Y_RATIO,
-        'ratio_1m_3m': config.ENABLE_1M_3M_RATIO,
-        'momentum_volatility_hybrid': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID,
-        'momentum_volatility_hybrid_6m': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M,
-        'momentum_volatility_hybrid_1y': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y,
-        'momentum_volatility_hybrid_1y3m': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M,
-        'price_acceleration': config.ENABLE_PRICE_ACCELERATION,
-        'turnaround': config.ENABLE_TURNAROUND,
-        'adaptive_ensemble': config.ENABLE_ADAPTIVE_STRATEGY,
-        'volatility_ensemble': config.ENABLE_VOLATILITY_ENSEMBLE,
-        'enhanced_volatility': config.ENABLE_ENHANCED_VOLATILITY,
-        'ai_volatility_ensemble': config.ENABLE_AI_VOLATILITY_ENSEMBLE,
-        'multi_tf_ensemble': config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
-        'multi_tf_intraday_ensemble': config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE,
-        'correlation_ensemble': config.ENABLE_CORRELATION_ENSEMBLE,
-        'dynamic_pool': config.ENABLE_DYNAMIC_POOL,
-        'sentiment_ensemble': config.ENABLE_SENTIMENT_ENSEMBLE,
-        'voting_ensemble': config.ENABLE_VOTING_ENSEMBLE,
-        'mom_accel': config.ENABLE_MOMENTUM_ACCELERATION,
-        'concentrated_3m': config.ENABLE_CONCENTRATED_3M,
-        'dual_momentum': config.ENABLE_DUAL_MOMENTUM,
-        'trend_atr': config.ENABLE_TREND_FOLLOWING_ATR,
-        'elite_hybrid': config.ENABLE_ELITE_HYBRID,
-        'elite_risk': config.ENABLE_ELITE_RISK,
-        'risk_adj_mom_6m': config.ENABLE_RISK_ADJ_MOM_6M,
-        'risk_adj_mom_6m_monthly': config.ENABLE_RISK_ADJ_MOM_6M_MONTHLY,
-        'risk_adj_mom_3m': config.ENABLE_RISK_ADJ_MOM_3M,
-        'risk_adj_mom_3m_monthly': config.ENABLE_RISK_ADJ_MOM_3M_MONTHLY,
-        'risk_adj_mom_3m_sentiment': config.ENABLE_RISK_ADJ_MOM_3M_SENTIMENT,
-        'risk_adj_mom_3m_market_up': config.ENABLE_RISK_ADJ_MOM_3M_MARKET_UP,
-        'risk_adj_mom_3m_with_stops': config.ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS,
-        'vol_sweet_mom': config.ENABLE_VOL_SWEET_MOM,
-        'risk_adj_mom_1m_vol_sweet': config.ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET,
-        'bh_1y_volsweet_accel': config.ENABLE_BH_1Y_VOL_SWEET_ACCEL,
-        'bh_1y_dynamic_accel': config.ENABLE_BH_1Y_DYNAMIC_ACCEL,
-        'risk_adj_mom_1m': config.ENABLE_RISK_ADJ_MOM_1M,
-        'risk_adj_mom_1m_monthly': config.ENABLE_RISK_ADJ_MOM_1M_MONTHLY,
-        'ai_elite': config.ENABLE_AI_ELITE,
-        'ai_elite_monthly': config.ENABLE_AI_ELITE_MONTHLY,
-        'ai_elite_filtered': config.ENABLE_AI_ELITE_FILTERED,
-        'ai_elite_market_up': config.ENABLE_AI_ELITE_MARKET_UP,
-        'ai_champion': config.ENABLE_AI_CHAMPION,
-        'ai_regime': config.ENABLE_AI_REGIME,
-        'ai_regime_monthly': config.ENABLE_AI_REGIME_MONTHLY,
-        'universal_model': config.ENABLE_UNIVERSAL_MODEL,
-        'savgol_trend': config.ENABLE_SAVGOL_TREND,
-        'top5_consistency_blend': config.ENABLE_TOP5_CONSISTENCY_BLEND,
-        'inverse_etf_hedge': config.ENABLE_INVERSE_ETF_HEDGE,
-        'analyst_rec': config.ENABLE_ANALYST_RECOMMENDATION,
-        'risk_adj_mom_sentiment': config.ENABLE_RISK_ADJ_MOM_SENTIMENT,
-        'bh_1y_monthly': config.ENABLE_STATIC_BH_1Y_MONTHLY,
-        'bh_6m_monthly': config.ENABLE_STATIC_BH_6M_MONTHLY,
-        'bh_3m_monthly': config.ENABLE_STATIC_BH_3M_MONTHLY,
-        'bh_1m_monthly': config.ENABLE_STATIC_BH_1M_MONTHLY,
-        # Meta-Strategy Selectors
-        'meta_weighted_composite': config.ENABLE_META_WEIGHTED_COMPOSITE,
-        'meta_tiered_selection': config.ENABLE_META_TIERED_SELECTION,
-        'meta_ensemble_alloc': config.ENABLE_META_ENSEMBLE_ALLOC,
-        'meta_regime_based': config.ENABLE_META_REGIME_BASED,
-        'meta_recency_weighted': config.ENABLE_META_RECENCY_WEIGHTED,
-        'meta_efficiency_ratio': config.ENABLE_META_EFFICIENCY_RATIO,
-        'meta_min_variance': config.ENABLE_META_MIN_VARIANCE,
-        'meta_bayesian': config.ENABLE_META_BAYESIAN,
-        'meta_adaptive_convex': config.ENABLE_META_ADAPTIVE_CONVEX,
-        'meta_consensus': config.ENABLE_META_CONSENSUS,
-        # Bollinger Bands Strategies
-        'bb_mean_reversion': config.ENABLE_BB_MEAN_REVERSION,
-        'bb_breakout': config.ENABLE_BB_BREAKOUT,
-        'bb_squeeze_breakout': config.ENABLE_BB_SQUEEZE_BREAKOUT,
-        'bb_rsi_combo': config.ENABLE_BB_RSI_COMBO,
-        'trend_breakout': config.ENABLE_TREND_BREAKOUT,
-        # Adaptive Rebalancing Strategies
-        'static_bh_1y_vol': config.ENABLE_STATIC_BH_1Y_VOLATILITY,
-        'static_bh_1y_perf': config.ENABLE_STATIC_BH_1Y_PERFORMANCE,
-        'static_bh_1y_mom': config.ENABLE_STATIC_BH_1Y_MOMENTUM,
-        'static_bh_1y_atr': config.ENABLE_STATIC_BH_1Y_ATR,
-        'static_bh_1y_hybrid': config.ENABLE_STATIC_BH_1Y_HYBRID,
-        'static_bh_1y_volume': config.ENABLE_STATIC_BH_1Y_VOLUME_FILTER,
-        'static_bh_1y_sector': config.ENABLE_STATIC_BH_1Y_SECTOR_ROTATION,
-        'static_bh_1y_perf_threshold': config.ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD,
-        'static_bh_1y_market_regime': config.ENABLE_STATIC_BH_1Y_MARKET_REGIME,
-        'static_bh_1y_mom_persist': config.ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST,
-        'static_bh_1y_overlap': config.ENABLE_STATIC_BH_1Y_OVERLAP,
-    }
-
-    # Build strategy data - each entry has value, history, cash, num_positions
-    # Only include strategies that are enabled via config flags
     data = {}
-
-    # Define strategy mappings: (key, value_var, history_var, cash_var, positions_var_or_count)
-    strategy_mappings = [
-        ('static_bh_1y', 'static_bh_1y_portfolio_value', 'static_bh_1y_portfolio_history', 'static_bh_1y_cash', 'current_static_bh_1y_stocks'),
-        ('static_bh_6m', 'static_bh_6m_portfolio_value', 'static_bh_6m_portfolio_history', 'static_bh_6m_cash', 'current_static_bh_6m_stocks'),
-        ('static_bh_3m', 'static_bh_3m_portfolio_value', 'static_bh_3m_portfolio_history', 'static_bh_3m_cash', 'current_static_bh_3m_stocks'),
-        ('static_bh_1m', 'static_bh_1m_portfolio_value', 'static_bh_1m_portfolio_history', 'static_bh_1m_cash', 'current_static_bh_1m_stocks'),
-        ('dynamic_bh_1y', 'dynamic_bh_portfolio_value', 'dynamic_bh_portfolio_history', 'dynamic_bh_cash', 'current_dynamic_bh_stocks'),
-        ('dynamic_bh_6m', 'dynamic_bh_6m_portfolio_value', 'dynamic_bh_6m_portfolio_history', 'dynamic_bh_6m_cash', 'current_dynamic_bh_6m_stocks'),
-        ('dynamic_bh_3m', 'dynamic_bh_3m_portfolio_value', 'dynamic_bh_3m_portfolio_history', 'dynamic_bh_3m_cash', 'current_dynamic_bh_3m_stocks'),
-        ('dynamic_bh_1m', 'dynamic_bh_1m_portfolio_value', 'dynamic_bh_1m_portfolio_history', 'dynamic_bh_1m_cash', 'current_dynamic_bh_1m_stocks'),
-        ('dynamic_bh_1y_vol_filter', 'dynamic_bh_1y_vol_filter_portfolio_value', 'dynamic_bh_1y_vol_filter_portfolio_history', 'dynamic_bh_1y_vol_filter_cash', 'current_dynamic_bh_1y_vol_filter_stocks'),
-        ('dynamic_bh_1y_trailing_stop', 'dynamic_bh_1y_trailing_stop_portfolio_value', 'dynamic_bh_1y_trailing_stop_portfolio_history', 'dynamic_bh_1y_trailing_stop_cash', 'current_dynamic_bh_1y_trailing_stop_stocks'),
-        ('risk_adj_mom', 'risk_adj_mom_portfolio_value', 'risk_adj_mom_portfolio_history', 'risk_adj_mom_cash', 'current_risk_adj_mom_stocks'),
-        ('mean_reversion', 'mean_reversion_portfolio_value', 'mean_reversion_portfolio_history', 'mean_reversion_cash', 'current_mean_reversion_stocks'),
-        ('quality_momentum', 'quality_momentum_portfolio_value', 'quality_momentum_portfolio_history', 'quality_momentum_cash', 'current_quality_momentum_stocks'),
-        ('momentum_ai_hybrid', 'momentum_ai_hybrid_portfolio_value', 'momentum_ai_hybrid_portfolio_history', 'momentum_ai_hybrid_cash', 'momentum_ai_hybrid_positions'),
-        ('volatility_adj_mom', 'volatility_adj_mom_portfolio_value', 'volatility_adj_mom_portfolio_history', 'volatility_adj_mom_cash', 'current_volatility_adj_mom_stocks'),
-        ('sector_rotation', 'sector_rotation_portfolio_value', 'sector_rotation_portfolio_history', 'sector_rotation_cash', 'current_sector_rotation_etfs'),
-        ('ratio_3m_1y', 'ratio_3m_1y_portfolio_value', 'ratio_3m_1y_portfolio_history', 'ratio_3m_1y_cash', 'ratio_3m_1y_positions'),
-        ('ratio_1y_3m', 'ratio_1y_3m_portfolio_value', 'ratio_1y_3m_portfolio_history', 'ratio_1y_3m_cash', 'ratio_1y_3m_positions'),
-        ('ratio_1m_3m', 'ratio_1m_3m_portfolio_value', 'ratio_1m_3m_portfolio_history', 'ratio_1m_3m_cash', 'ratio_1m_3m_positions'),
-        ('momentum_volatility_hybrid', 'momentum_volatility_hybrid_portfolio_value', 'momentum_volatility_hybrid_portfolio_history', 'momentum_volatility_hybrid_cash', 'momentum_volatility_hybrid_positions'),
-        ('momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_6m_portfolio_value', 'momentum_volatility_hybrid_6m_portfolio_history', 'momentum_volatility_hybrid_6m_cash', 'momentum_volatility_hybrid_6m_positions'),
-        ('momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y_portfolio_value', 'momentum_volatility_hybrid_1y_portfolio_history', 'momentum_volatility_hybrid_1y_cash', 'momentum_volatility_hybrid_1y_positions'),
-        ('momentum_volatility_hybrid_1y3m', 'momentum_volatility_hybrid_1y3m_portfolio_value', 'momentum_volatility_hybrid_1y3m_portfolio_history', 'momentum_volatility_hybrid_1y3m_cash', 'momentum_volatility_hybrid_1y3m_positions'),
-        ('price_acceleration', 'price_acceleration_portfolio_value', 'price_acceleration_portfolio_history', 'price_acceleration_cash', 'current_price_acceleration_stocks'),
-        ('turnaround', 'turnaround_portfolio_value', 'turnaround_portfolio_history', 'turnaround_cash', 'current_turnaround_stocks'),
-        ('adaptive_ensemble', 'adaptive_ensemble_portfolio_value', 'adaptive_ensemble_portfolio_history', 'adaptive_ensemble_cash', 'adaptive_ensemble_positions'),
-        ('volatility_ensemble', 'volatility_ensemble_portfolio_value', 'volatility_ensemble_portfolio_history', 'volatility_ensemble_cash', 'volatility_ensemble_positions'),
-        ('enhanced_volatility', 'enhanced_volatility_portfolio_value', 'enhanced_volatility_portfolio_history', 'enhanced_volatility_cash', 'enhanced_volatility_positions'),
-        ('ai_volatility_ensemble', 'ai_volatility_ensemble_portfolio_value', 'ai_volatility_ensemble_portfolio_history', 'ai_volatility_ensemble_cash', 'ai_volatility_ensemble_positions'),
-        ('multi_tf_ensemble', 'multi_tf_ensemble_portfolio_value', 'multi_tf_ensemble_portfolio_history', 'multi_tf_ensemble_cash', 'multi_tf_ensemble_positions'),
-        ('multi_tf_intraday_ensemble', 'multi_tf_intraday_ensemble_portfolio_value', 'multi_tf_intraday_ensemble_portfolio_history', 'multi_tf_intraday_ensemble_cash', 'multi_tf_intraday_ensemble_positions'),
-        ('correlation_ensemble', 'correlation_ensemble_portfolio_value', 'correlation_ensemble_portfolio_history', 'correlation_ensemble_cash', 'correlation_ensemble_positions'),
-        ('dynamic_pool', 'dynamic_pool_portfolio_value', 'dynamic_pool_portfolio_history', 'dynamic_pool_cash', 'dynamic_pool_positions'),
-        ('risk_adj_mom_sentiment', 'risk_adj_mom_sentiment_portfolio_value', 'risk_adj_mom_sentiment_portfolio_history', 'risk_adj_mom_sentiment_cash', 'risk_adj_mom_sentiment_positions'),
-        ('voting_ensemble', 'voting_ensemble_portfolio_value', 'voting_ensemble_portfolio_history', 'voting_ensemble_cash', 'voting_ensemble_positions'),
-        ('mom_accel', 'mom_accel_portfolio_value', 'mom_accel_portfolio_history', 'mom_accel_cash', 'mom_accel_positions'),
-        ('concentrated_3m', 'concentrated_3m_portfolio_value', 'concentrated_3m_portfolio_history', 'concentrated_3m_cash', 'concentrated_3m_positions'),
-        ('dual_momentum', 'dual_mom_portfolio_value', 'dual_mom_portfolio_history', 'dual_mom_cash', 'dual_mom_positions'),
-        ('trend_atr', 'trend_atr_portfolio_value', 'trend_atr_portfolio_history', 'trend_atr_cash', 'trend_atr_positions'),
-        ('elite_hybrid', 'elite_hybrid_portfolio_value', 'elite_hybrid_portfolio_history', 'elite_hybrid_cash', 'elite_hybrid_positions'),
-        ('elite_risk', 'elite_risk_portfolio_value', 'elite_risk_portfolio_history', 'elite_risk_cash', 'elite_risk_positions'),
-        ('risk_adj_mom_6m', 'risk_adj_mom_6m_portfolio_value', 'risk_adj_mom_6m_portfolio_history', 'risk_adj_mom_6m_cash', 'current_risk_adj_mom_6m_stocks'),
-        ('risk_adj_mom_6m_monthly', 'risk_adj_mom_6m_monthly_portfolio_value', 'risk_adj_mom_6m_monthly_portfolio_history', 'risk_adj_mom_6m_monthly_cash', 'risk_adj_mom_6m_monthly_positions'),
-        ('risk_adj_mom_3m', 'risk_adj_mom_3m_portfolio_value', 'risk_adj_mom_3m_portfolio_history', 'risk_adj_mom_3m_cash', 'current_risk_adj_mom_3m_stocks'),
-        ('risk_adj_mom_3m_monthly', 'risk_adj_mom_3m_monthly_portfolio_value', 'risk_adj_mom_3m_monthly_portfolio_history', 'risk_adj_mom_3m_monthly_cash', 'risk_adj_mom_3m_monthly_positions'),
-        ('risk_adj_mom_3m_sentiment', 'risk_adj_mom_3m_sentiment_portfolio_value', 'risk_adj_mom_3m_sentiment_portfolio_history', 'risk_adj_mom_3m_sentiment_cash', 'risk_adj_mom_3m_sentiment_positions'),
-        ('risk_adj_mom_3m_market_up', 'risk_adj_mom_3m_market_up_portfolio_value', 'risk_adj_mom_3m_market_up_portfolio_history', 'risk_adj_mom_3m_market_up_cash', 'risk_adj_mom_3m_market_up_positions'),
-        ('risk_adj_mom_3m_with_stops', 'risk_adj_mom_3m_with_stops_portfolio_value', 'risk_adj_mom_3m_with_stops_portfolio_history', 'risk_adj_mom_3m_with_stops_cash', 'risk_adj_mom_3m_with_stops_positions'),
-        ('vol_sweet_mom', 'vol_sweet_mom_portfolio_value', 'vol_sweet_mom_portfolio_history', 'vol_sweet_mom_cash', 'vol_sweet_mom_positions'),
-        ('risk_adj_mom_1m_vol_sweet', 'risk_adj_mom_1m_vol_sweet_portfolio_value', 'risk_adj_mom_1m_vol_sweet_portfolio_history', 'risk_adj_mom_1m_vol_sweet_cash', 'current_risk_adj_mom_1m_vol_sweet_stocks'),
-        ('bh_1y_volsweet_accel', 'bh_1y_volsweet_accel_portfolio_value', 'bh_1y_volsweet_accel_portfolio_history', 'bh_1y_volsweet_accel_cash', 'current_bh_1y_volsweet_accel_stocks'),
-        ('bh_1y_dynamic_accel', 'bh_1y_dynamic_accel_portfolio_value', 'bh_1y_dynamic_accel_portfolio_history', 'bh_1y_dynamic_accel_cash', 'bh_1y_dynamic_accel_positions'),
-        ('risk_adj_mom_1m', 'risk_adj_mom_1m_portfolio_value', 'risk_adj_mom_1m_portfolio_history', 'risk_adj_mom_1m_cash', 'current_risk_adj_mom_1m_stocks'),
-        ('risk_adj_mom_1m_monthly', 'risk_adj_mom_1m_monthly_portfolio_value', 'risk_adj_mom_1m_monthly_portfolio_history', 'risk_adj_mom_1m_monthly_cash', 'risk_adj_mom_1m_monthly_positions'),
-        ('ai_elite', 'ai_elite_portfolio_value', 'ai_elite_portfolio_history', 'ai_elite_cash', 'ai_elite_positions'),
-        ('ai_elite_monthly', 'ai_elite_monthly_portfolio_value', 'ai_elite_monthly_portfolio_history', 'ai_elite_monthly_cash', 'ai_elite_monthly_positions'),
-        ('ai_elite_filtered', 'ai_elite_filtered_portfolio_value', 'ai_elite_filtered_portfolio_history', 'ai_elite_filtered_cash', 'ai_elite_filtered_positions'),
-        ('ai_elite_market_up', 'ai_elite_market_up_portfolio_value', 'ai_elite_market_up_portfolio_history', 'ai_elite_market_up_cash', 'ai_elite_market_up_positions'),
-        ('ai_champion', 'ai_champion_portfolio_value', 'ai_champion_portfolio_history', 'ai_champion_cash', 'ai_champion_positions'),
-        ('ai_regime', 'ai_regime_portfolio_value', 'ai_regime_portfolio_history', 'ai_regime_cash', 'ai_regime_positions'),
-        ('ai_regime_monthly', 'ai_regime_monthly_portfolio_value', 'ai_regime_monthly_portfolio_history', 'ai_regime_monthly_cash', 'ai_regime_monthly_positions'),
-        ('universal_model', 'universal_model_portfolio_value', 'universal_model_portfolio_history', 'universal_model_cash', 'universal_model_positions'),
-        ('savgol_trend', 'savgol_trend_portfolio_value', 'savgol_trend_portfolio_history', 'savgol_trend_cash', 'savgol_trend_positions'),
-        ('top5_consistency_blend', 'top5_consistency_blend_portfolio_value', 'top5_consistency_blend_portfolio_history', 'top5_consistency_blend_cash', 'top5_consistency_blend_positions'),
-        ('inverse_etf_hedge', 'inverse_etf_hedge_portfolio_value', 'inverse_etf_hedge_portfolio_history', 'inverse_etf_hedge_cash', 'inverse_etf_hedge_positions'),
-        ('analyst_rec', 'analyst_rec_portfolio_value', 'analyst_rec_portfolio_history', 'analyst_rec_cash', 'analyst_rec_positions'),
-        ('bh_1y_monthly', 'static_bh_1y_monthly_portfolio_value', 'static_bh_1y_monthly_portfolio_history', 'static_bh_1y_monthly_cash', 'static_bh_1y_monthly_positions'),
-        ('bh_6m_monthly', 'static_bh_6m_monthly_portfolio_value', 'static_bh_6m_monthly_portfolio_history', 'static_bh_6m_monthly_cash', 'static_bh_6m_monthly_positions'),
-        ('bh_3m_monthly', 'static_bh_3m_monthly_portfolio_value', 'static_bh_3m_monthly_portfolio_history', 'static_bh_3m_monthly_cash', 'static_bh_3m_monthly_positions'),
-        ('bh_1m_monthly', 'static_bh_1m_monthly_portfolio_value', 'static_bh_1m_monthly_portfolio_history', 'static_bh_1m_monthly_cash', 'static_bh_1m_monthly_positions'),
-        # Meta-Strategy Selectors
-        ('meta_weighted_composite', 'meta_weighted_composite_value', 'meta_weighted_composite_history', 'meta_weighted_composite_cash', 'meta_weighted_composite_positions'),
-        ('meta_tiered_selection', 'meta_tiered_selection_value', 'meta_tiered_selection_history', 'meta_tiered_selection_cash', 'meta_tiered_selection_positions'),
-        ('meta_ensemble_alloc', 'meta_ensemble_alloc_value', 'meta_ensemble_alloc_history', 'meta_ensemble_alloc_cash', 'meta_ensemble_alloc_positions'),
-        ('meta_regime_based', 'meta_regime_based_value', 'meta_regime_based_history', 'meta_regime_based_cash', 'meta_regime_based_positions'),
-        ('meta_recency_weighted', 'meta_recency_weighted_value', 'meta_recency_weighted_history', 'meta_recency_weighted_cash', 'meta_recency_weighted_positions'),
-        ('meta_efficiency_ratio', 'meta_efficiency_ratio_value', 'meta_efficiency_ratio_history', 'meta_efficiency_ratio_cash', 'meta_efficiency_ratio_positions'),
-        ('meta_min_variance', 'meta_min_variance_value', 'meta_min_variance_history', 'meta_min_variance_cash', 'meta_min_variance_positions'),
-        ('meta_bayesian', 'meta_bayesian_value', 'meta_bayesian_history', 'meta_bayesian_cash', 'meta_bayesian_positions'),
-        ('meta_adaptive_convex', 'meta_adaptive_convex_value', 'meta_adaptive_convex_history', 'meta_adaptive_convex_cash', 'meta_adaptive_convex_positions'),
-        ('meta_consensus', 'meta_consensus_value', 'meta_consensus_history', 'meta_consensus_cash', 'meta_consensus_positions'),
-        # Bollinger Bands Strategies
-        ('bb_mean_reversion', 'bb_mean_reversion_value', 'bb_mean_reversion_history', 'bb_mean_reversion_cash', 'bb_mean_reversion_positions'),
-        ('bb_breakout', 'bb_breakout_value', 'bb_breakout_history', 'bb_breakout_cash', 'bb_breakout_positions'),
-        ('bb_squeeze_breakout', 'bb_squeeze_breakout_value', 'bb_squeeze_breakout_history', 'bb_squeeze_breakout_cash', 'bb_squeeze_breakout_positions'),
-        ('bb_rsi_combo', 'bb_rsi_combo_value', 'bb_rsi_combo_history', 'bb_rsi_combo_cash', 'bb_rsi_combo_positions'),
-        ('trend_breakout', 'trend_breakout_value', 'trend_breakout_history', 'trend_breakout_cash', 'trend_breakout_positions'),
-        # Adaptive Rebalancing Strategies
-        ('static_bh_1y_vol', 'static_bh_1y_vol_portfolio_value', 'static_bh_1y_vol_portfolio_history', 'static_bh_1y_vol_cash', 'static_bh_1y_vol_positions'),
-        ('static_bh_1y_perf', 'static_bh_1y_perf_portfolio_value', 'static_bh_1y_perf_portfolio_history', 'static_bh_1y_perf_cash', 'static_bh_1y_perf_positions'),
-        ('static_bh_1y_mom', 'static_bh_1y_mom_portfolio_value', 'static_bh_1y_mom_portfolio_history', 'static_bh_1y_mom_cash', 'static_bh_1y_mom_positions'),
-        ('static_bh_1y_atr', 'static_bh_1y_atr_portfolio_value', 'static_bh_1y_atr_portfolio_history', 'static_bh_1y_atr_cash', 'static_bh_1y_atr_positions'),
-        ('static_bh_1y_hybrid', 'static_bh_1y_hybrid_portfolio_value', 'static_bh_1y_hybrid_portfolio_history', 'static_bh_1y_hybrid_cash', 'static_bh_1y_hybrid_positions'),
-        # Enhanced Static BH 1Y Strategies
-        ('static_bh_1y_volume', 'static_bh_1y_volume_portfolio_value', 'static_bh_1y_volume_portfolio_history', 'static_bh_1y_volume_cash', 'static_bh_1y_volume_positions'),
-        ('static_bh_1y_sector', 'static_bh_1y_sector_portfolio_value', 'static_bh_1y_sector_portfolio_history', 'static_bh_1y_sector_cash', 'static_bh_1y_sector_positions'),
-        ('static_bh_1y_perf_threshold', 'static_bh_1y_perf_threshold_portfolio_value', 'static_bh_1y_perf_threshold_portfolio_history', 'static_bh_1y_perf_threshold_cash', 'static_bh_1y_perf_threshold_positions'),
-        ('static_bh_1y_market_regime', 'static_bh_1y_market_regime_portfolio_value', 'static_bh_1y_market_regime_portfolio_history', 'static_bh_1y_market_regime_cash', 'static_bh_1y_market_regime_positions'),
-        ('static_bh_1y_mom_persist', 'static_bh_1y_mom_persist_portfolio_value', 'static_bh_1y_mom_persist_portfolio_history', 'static_bh_1y_mom_persist_cash', 'static_bh_1y_mom_persist_positions'),
-        ('static_bh_1y_overlap', 'static_bh_1y_overlap_portfolio_value', 'static_bh_1y_overlap_portfolio_history', 'static_bh_1y_overlap_cash', 'static_bh_1y_overlap_positions'),
-        ('static_bh_1y_rank_drift', 'static_bh_1y_rank_drift_portfolio_value', 'static_bh_1y_rank_drift_portfolio_history', 'static_bh_1y_rank_drift_cash', 'static_bh_1y_rank_drift_positions'),
-        ('static_bh_1y_drawdown', 'static_bh_1y_drawdown_portfolio_value', 'static_bh_1y_drawdown_portfolio_history', 'static_bh_1y_drawdown_cash', 'static_bh_1y_drawdown_positions'),
-        ('static_bh_1y_smart_monthly', 'static_bh_1y_smart_monthly_portfolio_value', 'static_bh_1y_smart_monthly_portfolio_history', 'static_bh_1y_smart_monthly_cash', 'static_bh_1y_smart_monthly_positions'),
-        # Smart Rebalancing Strategies
-        ('bh_1y_mom_sell', 'bh_1y_mom_sell_portfolio_value', 'bh_1y_mom_sell_portfolio_history', 'bh_1y_mom_sell_cash', 'bh_1y_mom_sell_positions'),
-        ('bh_1y_rank_sell', 'bh_1y_rank_sell_portfolio_value', 'bh_1y_rank_sell_portfolio_history', 'bh_1y_rank_sell_cash', 'bh_1y_rank_sell_positions'),
-        ('bh_1y_trailing_mom', 'bh_1y_trailing_mom_portfolio_value', 'bh_1y_trailing_mom_portfolio_history', 'bh_1y_trailing_mom_cash', 'bh_1y_trailing_mom_positions'),
-        ('bh_1y_volume_confirm', 'bh_1y_volume_confirm_portfolio_value', 'bh_1y_volume_confirm_portfolio_history', 'bh_1y_volume_confirm_cash', 'bh_1y_volume_confirm_positions'),
-        ('bh_1y_sector_aware', 'bh_1y_sector_aware_portfolio_value', 'bh_1y_sector_aware_portfolio_history', 'bh_1y_sector_aware_cash', 'bh_1y_sector_aware_positions'),
-        ('bh_1y_accel_buy', 'bh_1y_accel_buy_portfolio_value', 'bh_1y_accel_buy_portfolio_history', 'bh_1y_accel_buy_cash', 'bh_1y_accel_buy_positions'),
-        ('static_bh_3m_accel', 'static_bh_3m_accel_portfolio_value', 'static_bh_3m_accel_portfolio_history', 'static_bh_3m_accel_cash', 'static_bh_3m_accel_positions'),
-        # 10 New Rebalancing Strategies
-        ('bh_1y_vol_adj_rebal', 'bh_1y_vol_adj_rebal_portfolio_value', 'bh_1y_vol_adj_rebal_portfolio_history', 'bh_1y_vol_adj_rebal_cash', 'bh_1y_vol_adj_rebal_positions'),
-        ('ratio_1m3m_vol_adj_rebal', 'ratio_1m3m_vol_adj_rebal_portfolio_value', 'ratio_1m3m_vol_adj_rebal_portfolio_history', 'ratio_1m3m_vol_adj_rebal_cash', 'ratio_1m3m_vol_adj_rebal_positions'),
-        ('bh_1y_corr_filter', 'bh_1y_corr_filter_portfolio_value', 'bh_1y_corr_filter_portfolio_history', 'bh_1y_corr_filter_cash', 'bh_1y_corr_filter_positions'),
-        ('bh_1y_regime_aware', 'bh_1y_regime_aware_portfolio_value', 'bh_1y_regime_aware_portfolio_history', 'bh_1y_regime_aware_cash', 'bh_1y_regime_aware_positions'),
-        ('bh_1y_risk_parity', 'bh_1y_risk_parity_portfolio_value', 'bh_1y_risk_parity_portfolio_history', 'bh_1y_risk_parity_cash', 'bh_1y_risk_parity_positions'),
-        ('bh_1y_drift_thresh', 'bh_1y_drift_thresh_portfolio_value', 'bh_1y_drift_thresh_portfolio_history', 'bh_1y_drift_thresh_cash', 'bh_1y_drift_thresh_positions'),
-        ('bh_1y_mom_quality', 'bh_1y_mom_quality_portfolio_value', 'bh_1y_mom_quality_portfolio_history', 'bh_1y_mom_quality_cash', 'bh_1y_mom_quality_positions'),
-        ('bh_1y_liquidity', 'bh_1y_liquidity_portfolio_value', 'bh_1y_liquidity_portfolio_history', 'bh_1y_liquidity_cash', 'bh_1y_liquidity_positions'),
-        ('bh_1y_earnings_avoid', 'bh_1y_earnings_avoid_portfolio_value', 'bh_1y_earnings_avoid_portfolio_history', 'bh_1y_earnings_avoid_cash', 'bh_1y_earnings_avoid_positions'),
-        ('bh_1y_multi_factor', 'bh_1y_multi_factor_portfolio_value', 'bh_1y_multi_factor_portfolio_history', 'bh_1y_multi_factor_cash', 'bh_1y_multi_factor_positions'),
-        ('bh_1y_time_decay', 'bh_1y_time_decay_portfolio_value', 'bh_1y_time_decay_portfolio_history', 'bh_1y_time_decay_cash', 'bh_1y_time_decay_positions'),
-    ]
-
-    for key, value_var, history_var, cash_var, positions_var in strategy_mappings:
-        # Skip strategies that are disabled via config flags
-        # Only include strategies that are explicitly enabled in STRATEGY_ENABLE_FLAGS
-        # If a strategy is not in the mapping, skip it (assume disabled)
-        if key not in STRATEGY_ENABLE_FLAGS or not STRATEGY_ENABLE_FLAGS[key]:
+    for key, meta in STRATEGY_REGISTRY.items():
+        if not getattr(config, meta['enable_flag_name'], False):
             continue
-        value = _get(value_var)
+
+        value = _get(meta['value_var'])
         if value is not None and value > 0:
-            history = _get(history_var, [])
-            cash = _get(cash_var, 0)
-            positions = _get(positions_var)
-            # Handle both list and dict for positions
+            history = _get(meta['history_var'], [])
+            cash = _get(meta['cash_var'], 0)
+            positions = _get(meta['positions_var'])
+
             if isinstance(positions, dict):
                 num_positions = len(positions)
+                tickers = list(positions.keys())
             elif isinstance(positions, (list, tuple)):
                 num_positions = len(positions)
                 tickers = list(positions)
@@ -581,16 +390,13 @@ def _build_daily_strategy_data(locals_dict):
                 num_positions = 0
                 tickers = []
 
-            if isinstance(positions, dict):
-                tickers = list(positions.keys())
-
             data[key] = {
                 'value': value,
                 'history': history,
                 'cash': cash,
                 'positions': num_positions,
                 'tickers': tickers,
-                'display_name': STRATEGY_DISPLAY_NAMES.get(key, key)
+                'display_name': meta['display_name'],
             }
 
     return data
@@ -2954,7 +2760,7 @@ def _run_portfolio_backtest_walk_forward(
 
     # META-STRATEGY SELECTORS: Initialize with actual portfolio tracking
     # Meta-strategy flags now read dynamically from config
-    from meta_strategy_selector import MetaStrategyManager, calculate_meta_portfolio_value, select_meta_strategy_stocks
+    from meta_strategy_selector import META_SUB_STRATEGIES, MetaStrategyManager, calculate_meta_portfolio_value, select_meta_strategy_stocks
 
     meta_strategy_manager = MetaStrategyManager(initial_capital_needed)
 
@@ -7237,227 +7043,8 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ AI Elite Market-Up error: {e}")
 
-        # AI CHAMPION STRATEGY (ML selector across top-performing AI/ensemble variants)
-        if config.ENABLE_AI_CHAMPION:
-            try:
-                from ai_champion_strategy import AIChampionAllocator, select_ai_champion_stocks
-
-                if ai_champion_allocator is None:
-                    ai_champion_allocator = AIChampionAllocator(
-                        retrain_days=config.AI_CHAMPION_RETRAIN_DAYS,
-                        forward_days=config.AI_CHAMPION_FORWARD_DAYS,
-                        confidence_threshold=config.AI_CHAMPION_CONFIDENCE_THRESHOLD,
-                        hold_margin=config.AI_CHAMPION_HOLD_MARGIN,
-                    )
-                    ai_champion_allocator.load_model()
-
-                strategy_values_for_champion = {
-                    'ai_elite': ai_elite_portfolio_value if config.ENABLE_AI_ELITE else None,
-                    'ai_elite_market_up': ai_elite_market_up_portfolio_value if config.ENABLE_AI_ELITE_MARKET_UP else None,
-                    'ai_elite_filtered': ai_elite_filtered_portfolio_value if config.ENABLE_AI_ELITE_FILTERED else None,
-                    'multi_tf_ensemble': multi_tf_ensemble_portfolio_value if config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE else None,
-                }
-                ai_champion_allocator.record_daily_values(strategy_values_for_champion)
-
-                if ai_champion_allocator.should_retrain():
-                    print(f"   🧠 AI Champion: Training model (day {day_count})...")
-                    ai_champion_allocator.train_model(ticker_data_grouped, business_days[:day_count])
-
-                ai_champion_current_strategy = ai_champion_allocator.predict_best_strategy(ticker_data_grouped, current_date)
-
-                if ai_champion_current_strategy is not None:
-                    new_ai_champion_stocks = select_ai_champion_stocks(
-                        initial_top_tickers,
-                        ticker_data_grouped,
-                        current_date,
-                        PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                        ai_champion_current_strategy,
-                        ai_elite_models=ai_elite_models,
-                    )
-                else:
-                    new_ai_champion_stocks = []
-
-                if new_ai_champion_stocks:
-                    print(f"   📊 AI Champion Day {day_count}: {new_ai_champion_stocks}")
-                    ai_champion_positions, ai_champion_cash, current_ai_champion_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name=f"AI Champion ({str(ai_champion_current_strategy)[:10]})",
-                        current_stocks=current_ai_champion_stocks,
-                        new_stocks=new_ai_champion_stocks,
-                        positions=ai_champion_positions,
-                        cash=ai_champion_cash,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        transaction_cost=TRANSACTION_COST,
-                        portfolio_size=PORTFOLIO_SIZE,
-                        buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                        force_rebalance=not ai_champion_initialized
-                    )
-                    strategies_rebalanced_today['AI Champion'] = rebalanced_flag
-                    ai_champion_transaction_costs += rc
-                    ai_champion_initialized = True
-
-            except Exception as e:
-                print(f"   ⚠️ AI Champion error: {e}")
-
-        # AI REGIME STRATEGY (ML predicts which strategy to use based on market conditions)
-        if config.ENABLE_AI_REGIME:
-            try:
-                from ai_regime_strategy import AIRegimeAllocator, select_ai_regime_stocks, SUB_STRATEGIES
-
-                # Initialize allocator on first use
-                if ai_regime_allocator is None:
-                    ai_regime_allocator = AIRegimeAllocator(retrain_days=1, forward_days=1)
-                    # Try to load existing model from disk
-                    ai_regime_allocator.load_model()
-
-                # Record daily values for ALL sub-strategies (needed for training)
-                strategy_values_for_regime = {
-                    'risk_adj_mom_3m': risk_adj_mom_3m_portfolio_value if config.ENABLE_RISK_ADJ_MOM_3M else None,
-                    'risk_adj_mom_3m_monthly': risk_adj_mom_3m_monthly_portfolio_value if config.ENABLE_RISK_ADJ_MOM_3M else None,
-                    'risk_adj_mom_6m': risk_adj_mom_6m_portfolio_value if config.ENABLE_RISK_ADJ_MOM_6M else None,
-                    'risk_adj_mom_6m_monthly': risk_adj_mom_6m_monthly_portfolio_value if config.ENABLE_RISK_ADJ_MOM_6M else None,
-                    'risk_adj_mom': risk_adj_mom_portfolio_value if config.ENABLE_RISK_ADJ_MOM else None,
-                    'risk_adj_mom_1m': risk_adj_mom_1m_portfolio_value if config.ENABLE_RISK_ADJ_MOM_1M else None,
-                    'risk_adj_mom_1m_monthly': risk_adj_mom_1m_monthly_portfolio_value if config.ENABLE_RISK_ADJ_MOM_1M else None,
-                    'elite_hybrid': elite_hybrid_portfolio_value if config.ENABLE_ELITE_HYBRID else None,
-                    'elite_risk': elite_risk_portfolio_value if config.ENABLE_ELITE_RISK else None,
-                    'ai_elite': ai_elite_portfolio_value if config.ENABLE_AI_ELITE else None,
-                    'momentum_volatility_hybrid_6m': momentum_volatility_hybrid_6m_portfolio_value if config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M else None,
-                    'momentum_volatility_hybrid': momentum_volatility_hybrid_portfolio_value if config.ENABLE_MOMENTUM_VOLATILITY_HYBRID else None,
-                    'concentrated_3m': concentrated_3m_portfolio_value if config.ENABLE_CONCENTRATED_3M else None,
-                    'trend_atr': trend_atr_portfolio_value if config.ENABLE_TREND_FOLLOWING_ATR else None,
-                    'dual_momentum': dual_mom_portfolio_value if config.ENABLE_DUAL_MOMENTUM else None,
-                    'static_bh_1y': static_bh_1y_portfolio_value if config.ENABLE_STATIC_BH else None,
-                    'static_bh_3m': static_bh_3m_portfolio_value if config.ENABLE_STATIC_BH else None,
-                    'adaptive_ensemble': adaptive_ensemble_portfolio_value if config.ENABLE_ADAPTIVE_STRATEGY else None,
-                    'dynamic_pool': dynamic_pool_portfolio_value if config.ENABLE_DYNAMIC_POOL else None,
-                    'volatility_ensemble': ai_volatility_ensemble_portfolio_value if config.ENABLE_AI_VOLATILITY_ENSEMBLE else None,
-                }
-                ai_regime_allocator.record_daily_values(strategy_values_for_regime)
-
-                # Check if we should retrain
-                if ai_regime_allocator.should_retrain():
-                    print(f"   🧠 AI Regime: Training model (day {day_count})...")
-                    ai_regime_allocator.train_model(ticker_data_grouped, business_days[:day_count])
-
-                # Predict best strategy
-                ai_regime_current_strategy = ai_regime_allocator.predict_best_strategy(ticker_data_grouped, current_date)
-
-                # Select stocks using predicted strategy
-                if ai_regime_current_strategy is not None:
-                    new_ai_regime_stocks = select_ai_regime_stocks(
-                        initial_top_tickers,
-                        ticker_data_grouped,
-                        current_date,
-                        PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,  # Get 12 candidates for buffer
-                        ai_regime_current_strategy,
-                        ai_elite_models=ai_elite_models  # Pass AI Elite models
-                    )
-                else:
-                    new_ai_regime_stocks = []
-
-                if new_ai_regime_stocks:
-                    print(f"   📊 AI Regime Day {day_count}: {new_ai_regime_stocks}")
-                    ai_regime_positions, ai_regime_cash, current_ai_regime_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name=f"AI Regime ({str(ai_regime_current_strategy)[:10]})",
-                        current_stocks=current_ai_regime_stocks,
-                        new_stocks=new_ai_regime_stocks,
-                        positions=ai_regime_positions,
-                        cash=ai_regime_cash,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        transaction_cost=TRANSACTION_COST,
-                        portfolio_size=PORTFOLIO_SIZE,
-                        buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,  # Keep if in top 12
-                        force_rebalance=not current_ai_regime_stocks
-                    )
-                    strategies_rebalanced_today['AI Regime'] = rebalanced_flag
-                    ai_regime_transaction_costs += rc
-                    ai_regime_initialized = True
-
-            except Exception as e:
-                print(f"   ⚠️ AI Regime error: {e}")
-
-        # AI REGIME MONTHLY STRATEGY (same as AI Regime but monthly rebalance)
-        if config.ENABLE_AI_REGIME_MONTHLY:
-            try:
-                from ai_regime_strategy import AIRegimeMonthlyAllocator, select_ai_regime_stocks
-
-                # Initialize allocator on first use
-                if ai_regime_monthly_allocator is None:
-                    ai_regime_monthly_allocator = AIRegimeMonthlyAllocator(forward_days=1)
-                    # Try to load existing model from disk (same as daily AI Regime)
-                    ai_regime_monthly_allocator.load_model()
-
-                # Record daily values for ALL sub-strategies (same as daily AI Regime)
-                strategy_values_for_regime = {
-                    'risk_adj_mom_3m': risk_adj_mom_3m_portfolio_value if config.ENABLE_RISK_ADJ_MOM_3M else None,
-                    'risk_adj_mom_3m_monthly': risk_adj_mom_3m_monthly_portfolio_value if config.ENABLE_RISK_ADJ_MOM_3M else None,
-                    'risk_adj_mom_6m': risk_adj_mom_6m_portfolio_value if config.ENABLE_RISK_ADJ_MOM_6M else None,
-                    'risk_adj_mom_6m_monthly': risk_adj_mom_6m_monthly_portfolio_value if config.ENABLE_RISK_ADJ_MOM_6M else None,
-                    'risk_adj_mom': risk_adj_mom_portfolio_value if config.ENABLE_RISK_ADJ_MOM else None,
-                    'risk_adj_mom_1m': risk_adj_mom_1m_portfolio_value if config.ENABLE_RISK_ADJ_MOM_1M else None,
-                    'risk_adj_mom_1m_monthly': risk_adj_mom_1m_monthly_portfolio_value if config.ENABLE_RISK_ADJ_MOM_1M else None,
-                    'elite_hybrid': elite_hybrid_portfolio_value if config.ENABLE_ELITE_HYBRID else None,
-                    'elite_risk': elite_risk_portfolio_value if config.ENABLE_ELITE_RISK else None,
-                    'ai_elite': ai_elite_portfolio_value if config.ENABLE_AI_ELITE else None,
-                    'momentum_volatility_hybrid_6m': momentum_volatility_hybrid_6m_portfolio_value if config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M else None,
-                    'momentum_volatility_hybrid': momentum_volatility_hybrid_portfolio_value if config.ENABLE_MOMENTUM_VOLATILITY_HYBRID else None,
-                    'concentrated_3m': concentrated_3m_portfolio_value if config.ENABLE_CONCENTRATED_3M else None,
-                    'trend_atr': trend_atr_portfolio_value if config.ENABLE_TREND_FOLLOWING_ATR else None,
-                    'dual_momentum': dual_mom_portfolio_value if config.ENABLE_DUAL_MOMENTUM else None,
-                    'static_bh_1y': static_bh_1y_portfolio_value if config.ENABLE_STATIC_BH else None,
-                    'static_bh_3m': static_bh_3m_portfolio_value if config.ENABLE_STATIC_BH else None,
-                    'adaptive_ensemble': adaptive_ensemble_portfolio_value if config.ENABLE_ADAPTIVE_STRATEGY else None,
-                    'dynamic_pool': dynamic_pool_portfolio_value if config.ENABLE_DYNAMIC_POOL else None,
-                    'volatility_ensemble': ai_volatility_ensemble_portfolio_value if config.ENABLE_AI_VOLATILITY_ENSEMBLE else None,
-                }
-                ai_regime_monthly_allocator.record_daily_values(strategy_values_for_regime)
-
-                # Check if we should retrain (monthly)
-                if ai_regime_monthly_allocator.should_retrain():
-                    print(f"   🧠 AI Regime Monthly: Training model (day {day_count})...")
-                    ai_regime_monthly_allocator.train_model(ticker_data_grouped, business_days[:day_count])
-
-                # Predict best strategy every day (but only rebalance at month start)
-                ai_regime_monthly_current_strategy = ai_regime_monthly_allocator.predict_best_strategy(ticker_data_grouped, current_date)
-
-                # Only rebalance at start of month
-                if ai_regime_monthly_allocator.should_rebalance(current_date):
-                    # Select stocks using predicted strategy
-                    if ai_regime_monthly_current_strategy is not None:
-                        new_ai_regime_monthly_stocks = select_ai_regime_stocks(
-                            initial_top_tickers,
-                            ticker_data_grouped,
-                            current_date,
-                            PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,  # Get 12 candidates for buffer
-                            ai_regime_monthly_current_strategy,
-                            ai_elite_models=ai_elite_models
-                        )
-                    else:
-                        new_ai_regime_monthly_stocks = []
-
-                    if new_ai_regime_monthly_stocks:
-                        print(f"   📊 AI Regime Monthly Day {day_count}: {new_ai_regime_monthly_stocks}")
-                        ai_regime_monthly_positions, ai_regime_monthly_cash, current_ai_regime_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
-                            strategy_name=f"AI Regime Mth ({str(ai_regime_monthly_current_strategy)[:10]})",
-                            current_stocks=current_ai_regime_monthly_stocks,
-                            new_stocks=new_ai_regime_monthly_stocks,
-                            positions=ai_regime_monthly_positions,
-                            cash=ai_regime_monthly_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,  # Keep if in top 12
-                            force_rebalance=not ai_regime_monthly_initialized
-                        )
-                        strategies_rebalanced_today['AI Regime Mth'] = rebalanced_flag
-                        ai_regime_monthly_transaction_costs += rc
-                        ai_regime_monthly_initialized = True
-
-            except Exception as e:
-                print(f"   ⚠️ AI Regime Monthly error: {e}")
+        # AI CHAMPION / AI REGIME selectors are evaluated later in the day after
+        # the full day-end strategy snapshot is available.
 
         # UNIVERSAL MODEL STRATEGY (single ML model for all tickers)
         if config.ENABLE_UNIVERSAL_MODEL:
@@ -7554,287 +7141,9 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ SavGol Trend error: {e}")
 
-        # META-STRATEGY SELECTORS: Update daily values and calculate portfolio values
-        # Build strategy values dict for meta-strategy manager
-        meta_strategy_values = {
-            'static_bh_1y': static_bh_1y_portfolio_value if config.ENABLE_STATIC_BH else None,
-            'static_bh_3m': static_bh_3m_portfolio_value if config.ENABLE_STATIC_BH else None,
-            'static_bh_6m': static_bh_6m_portfolio_value if config.ENABLE_STATIC_BH_6M else None,
-            'dynamic_bh_1y': dynamic_bh_portfolio_value if config.ENABLE_DYNAMIC_BH_1Y else None,
-            'dynamic_bh_3m': dynamic_bh_3m_portfolio_value if config.ENABLE_DYNAMIC_BH_3M else None,
-            'dynamic_bh_6m': dynamic_bh_6m_portfolio_value if config.ENABLE_DYNAMIC_BH_6M else None,
-            'risk_adj_mom': risk_adj_mom_portfolio_value if config.ENABLE_RISK_ADJ_MOM else None,
-            'risk_adj_mom_3m': risk_adj_mom_3m_portfolio_value if config.ENABLE_RISK_ADJ_MOM_3M else None,
-            'risk_adj_mom_6m': risk_adj_mom_6m_portfolio_value if config.ENABLE_RISK_ADJ_MOM_6M else None,
-            'trend_atr': trend_atr_portfolio_value if config.ENABLE_TREND_FOLLOWING_ATR else None,
-            'dual_momentum': dual_mom_portfolio_value if config.ENABLE_DUAL_MOMENTUM else None,
-            'elite_hybrid': elite_hybrid_portfolio_value if config.ENABLE_ELITE_HYBRID else None,
-            'elite_risk': elite_risk_portfolio_value if config.ENABLE_ELITE_RISK else None,
-            'momentum_volatility_hybrid': momentum_volatility_hybrid_portfolio_value if config.ENABLE_MOMENTUM_VOLATILITY_HYBRID else None,
-            'momentum_volatility_hybrid_6m': momentum_volatility_hybrid_6m_portfolio_value if config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M else None,
-            'enhanced_volatility': enhanced_volatility_portfolio_value if config.ENABLE_ENHANCED_VOLATILITY else None,
-            'mean_reversion': mean_reversion_portfolio_value if config.ENABLE_MEAN_REVERSION else None,
-            'quality_momentum': quality_momentum_portfolio_value if config.ENABLE_QUALITY_MOM else None,
-            'bh_1y_monthly': static_bh_1y_monthly_portfolio_value if config.ENABLE_STATIC_BH_1Y_MONTHLY else None,
-            'bh_3m_monthly': static_bh_3m_monthly_portfolio_value if config.ENABLE_STATIC_BH_3M_MONTHLY else None,
-            'bh_6m_monthly': static_bh_6m_monthly_portfolio_value if config.ENABLE_STATIC_BH_6M_MONTHLY else None,
-        }
-
-        # Record daily values
-        meta_strategy_manager.record_daily_values(meta_strategy_values)
-
-        # Get selections from all 10 meta-strategies
-        meta_selections = meta_strategy_manager.get_all_selections()
-
-        # META WEIGHTED COMPOSITE: Select actual stocks based on chosen sub-strategy
-        if config.ENABLE_META_WEIGHTED_COMPOSITE:
-            try:
-                selected_strategy, _ = meta_selections['meta_weighted_composite']
-                if selected_strategy:
-                    meta_weighted_composite_selected_strategy = selected_strategy
-                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
-                    if new_stocks and set(new_stocks) != set(current_meta_weighted_composite_stocks):
-                        meta_weighted_composite_positions, meta_weighted_composite_cash, current_meta_weighted_composite_stocks, rc, _ = _smart_rebalance_portfolio(
-                            strategy_name=f"Meta Weighted ({selected_strategy[:8]})",
-                            current_stocks=current_meta_weighted_composite_stocks,
-                            new_stocks=new_stocks,
-                            positions=meta_weighted_composite_positions,
-                            cash=meta_weighted_composite_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not meta_weighted_composite_initialized
-                        )
-                        meta_weighted_composite_transaction_costs += rc
-                        meta_weighted_composite_initialized = True
-            except Exception as e:
-                print(f"   ⚠️ Meta Weighted error: {e}")
-
-        # META TIERED SELECTION: Select actual stocks
-        if config.ENABLE_META_TIERED_SELECTION:
-            try:
-                selected_strategy, _ = meta_selections['meta_tiered_selection']
-                if selected_strategy:
-                    meta_tiered_selection_selected_strategy = selected_strategy
-                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
-                    if new_stocks and set(new_stocks) != set(current_meta_tiered_selection_stocks):
-                        meta_tiered_selection_positions, meta_tiered_selection_cash, current_meta_tiered_selection_stocks, rc, _ = _smart_rebalance_portfolio(
-                            strategy_name=f"Meta Tiered ({selected_strategy[:8]})",
-                            current_stocks=current_meta_tiered_selection_stocks,
-                            new_stocks=new_stocks,
-                            positions=meta_tiered_selection_positions,
-                            cash=meta_tiered_selection_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not meta_tiered_selection_initialized
-                        )
-                        meta_tiered_selection_transaction_costs += rc
-                        meta_tiered_selection_initialized = True
-            except Exception as e:
-                print(f"   ⚠️ Meta Tiered error: {e}")
-
-        # META ENSEMBLE ALLOC: Select actual stocks
-        if config.ENABLE_META_ENSEMBLE_ALLOC:
-            try:
-                selected_strategy, _ = meta_selections['meta_ensemble_alloc']
-                if selected_strategy:
-                    meta_ensemble_alloc_selected_strategy = selected_strategy
-                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
-                    if new_stocks and set(new_stocks) != set(current_meta_ensemble_alloc_stocks):
-                        meta_ensemble_alloc_positions, meta_ensemble_alloc_cash, current_meta_ensemble_alloc_stocks, rc, _ = _smart_rebalance_portfolio(
-                            strategy_name=f"Meta Ensemble ({selected_strategy[:8]})",
-                            current_stocks=current_meta_ensemble_alloc_stocks,
-                            new_stocks=new_stocks,
-                            positions=meta_ensemble_alloc_positions,
-                            cash=meta_ensemble_alloc_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not meta_ensemble_alloc_initialized
-                        )
-                        meta_ensemble_alloc_transaction_costs += rc
-                        meta_ensemble_alloc_initialized = True
-            except Exception as e:
-                print(f"   ⚠️ Meta Ensemble error: {e}")
-
-        # META REGIME BASED: Select actual stocks
-        if config.ENABLE_META_REGIME_BASED:
-            try:
-                selected_strategy, _ = meta_selections['meta_regime_based']
-                if selected_strategy:
-                    meta_regime_based_selected_strategy = selected_strategy
-                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
-                    if new_stocks and set(new_stocks) != set(current_meta_regime_based_stocks):
-                        meta_regime_based_positions, meta_regime_based_cash, current_meta_regime_based_stocks, rc, _ = _smart_rebalance_portfolio(
-                            strategy_name=f"Meta Regime ({selected_strategy[:8]})",
-                            current_stocks=current_meta_regime_based_stocks,
-                            new_stocks=new_stocks,
-                            positions=meta_regime_based_positions,
-                            cash=meta_regime_based_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not meta_regime_based_initialized
-                        )
-                        meta_regime_based_transaction_costs += rc
-                        meta_regime_based_initialized = True
-            except Exception as e:
-                print(f"   ⚠️ Meta Regime error: {e}")
-
-        # META RECENCY WEIGHTED: Select actual stocks
-        if config.ENABLE_META_RECENCY_WEIGHTED:
-            try:
-                selected_strategy, _ = meta_selections['meta_recency_weighted']
-                if selected_strategy:
-                    meta_recency_weighted_selected_strategy = selected_strategy
-                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
-                    if new_stocks and set(new_stocks) != set(current_meta_recency_weighted_stocks):
-                        meta_recency_weighted_positions, meta_recency_weighted_cash, current_meta_recency_weighted_stocks, rc, _ = _smart_rebalance_portfolio(
-                            strategy_name=f"Meta Recency ({selected_strategy[:8]})",
-                            current_stocks=current_meta_recency_weighted_stocks,
-                            new_stocks=new_stocks,
-                            positions=meta_recency_weighted_positions,
-                            cash=meta_recency_weighted_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not meta_recency_weighted_initialized
-                        )
-                        meta_recency_weighted_transaction_costs += rc
-                        meta_recency_weighted_initialized = True
-            except Exception as e:
-                print(f"   ⚠️ Meta Recency error: {e}")
-
-        # META EFFICIENCY RATIO: Select actual stocks
-        if config.ENABLE_META_EFFICIENCY_RATIO:
-            try:
-                selected_strategy, _ = meta_selections['meta_efficiency_ratio']
-                if selected_strategy:
-                    meta_efficiency_ratio_selected_strategy = selected_strategy
-                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
-                    if new_stocks and set(new_stocks) != set(current_meta_efficiency_ratio_stocks):
-                        meta_efficiency_ratio_positions, meta_efficiency_ratio_cash, current_meta_efficiency_ratio_stocks, rc, _ = _smart_rebalance_portfolio(
-                            strategy_name=f"Meta Efficiency ({selected_strategy[:8]})",
-                            current_stocks=current_meta_efficiency_ratio_stocks,
-                            new_stocks=new_stocks,
-                            positions=meta_efficiency_ratio_positions,
-                            cash=meta_efficiency_ratio_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not meta_efficiency_ratio_initialized
-                        )
-                        meta_efficiency_ratio_transaction_costs += rc
-                        meta_efficiency_ratio_initialized = True
-            except Exception as e:
-                print(f"   ⚠️ Meta Efficiency error: {e}")
-
-        # META MIN VARIANCE: Select actual stocks
-        if config.ENABLE_META_MIN_VARIANCE:
-            try:
-                selected_strategy, _ = meta_selections['meta_min_variance']
-                if selected_strategy:
-                    meta_min_variance_selected_strategy = selected_strategy
-                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
-                    if new_stocks and set(new_stocks) != set(current_meta_min_variance_stocks):
-                        meta_min_variance_positions, meta_min_variance_cash, current_meta_min_variance_stocks, rc, _ = _smart_rebalance_portfolio(
-                            strategy_name=f"Meta MinVar ({selected_strategy[:8]})",
-                            current_stocks=current_meta_min_variance_stocks,
-                            new_stocks=new_stocks,
-                            positions=meta_min_variance_positions,
-                            cash=meta_min_variance_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not meta_min_variance_initialized
-                        )
-                        meta_min_variance_transaction_costs += rc
-                        meta_min_variance_initialized = True
-            except Exception as e:
-                print(f"   ⚠️ Meta MinVar error: {e}")
-
-        # META BAYESIAN: Select actual stocks
-        if config.ENABLE_META_BAYESIAN:
-            try:
-                selected_strategy, _ = meta_selections['meta_bayesian']
-                if selected_strategy:
-                    meta_bayesian_selected_strategy = selected_strategy
-                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
-                    if new_stocks and set(new_stocks) != set(current_meta_bayesian_stocks):
-                        meta_bayesian_positions, meta_bayesian_cash, current_meta_bayesian_stocks, rc, _ = _smart_rebalance_portfolio(
-                            strategy_name=f"Meta Bayesian ({selected_strategy[:8]})",
-                            current_stocks=current_meta_bayesian_stocks,
-                            new_stocks=new_stocks,
-                            positions=meta_bayesian_positions,
-                            cash=meta_bayesian_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not meta_bayesian_initialized
-                        )
-                        meta_bayesian_transaction_costs += rc
-                        meta_bayesian_initialized = True
-            except Exception as e:
-                print(f"   ⚠️ Meta Bayesian error: {e}")
-
-        # META ADAPTIVE CONVEX: Select actual stocks
-        if config.ENABLE_META_ADAPTIVE_CONVEX:
-            try:
-                selected_strategy, _ = meta_selections['meta_adaptive_convex']
-                if selected_strategy:
-                    meta_adaptive_convex_selected_strategy = selected_strategy
-                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
-                    if new_stocks and set(new_stocks) != set(current_meta_adaptive_convex_stocks):
-                        meta_adaptive_convex_positions, meta_adaptive_convex_cash, current_meta_adaptive_convex_stocks, rc, _ = _smart_rebalance_portfolio(
-                            strategy_name=f"Meta Adaptive ({selected_strategy[:8]})",
-                            current_stocks=current_meta_adaptive_convex_stocks,
-                            new_stocks=new_stocks,
-                            positions=meta_adaptive_convex_positions,
-                            cash=meta_adaptive_convex_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not meta_adaptive_convex_initialized
-                        )
-                        meta_adaptive_convex_transaction_costs += rc
-                        meta_adaptive_convex_initialized = True
-            except Exception as e:
-                print(f"   ⚠️ Meta Adaptive error: {e}")
-
-        # META CONSENSUS: Select actual stocks
-        if config.ENABLE_META_CONSENSUS:
-            try:
-                selected_strategy, _ = meta_selections['meta_consensus']
-                if selected_strategy:
-                    meta_consensus_selected_strategy = selected_strategy
-                    new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
-                    if new_stocks and set(new_stocks) != set(current_meta_consensus_stocks):
-                        meta_consensus_positions, meta_consensus_cash, current_meta_consensus_stocks, rc, _ = _smart_rebalance_portfolio(
-                            strategy_name=f"Meta Consensus ({selected_strategy[:8]})",
-                            current_stocks=current_meta_consensus_stocks,
-                            new_stocks=new_stocks,
-                            positions=meta_consensus_positions,
-                            cash=meta_consensus_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not meta_consensus_initialized
-                        )
-                        meta_consensus_transaction_costs += rc
-                        meta_consensus_initialized = True
-            except Exception as e:
-                print(f"   ⚠️ Meta Consensus error: {e}")
+        # META-STRATEGY SELECTORS are evaluated later in the day after the shared
+        # day-end strategy snapshot is fully populated. This keeps them aligned
+        # with the same completed source universe used by Voting Ensemble.
 
         # BOLLINGER BANDS STRATEGIES
         # BB Mean Reversion
@@ -9209,50 +8518,6 @@ def _run_portfolio_backtest_walk_forward(
         ai_elite_market_up_portfolio_value = ai_elite_market_up_invested_value + ai_elite_market_up_cash
         ai_elite_market_up_portfolio_history.append(ai_elite_market_up_portfolio_value)
 
-        # Update AI CHAMPION portfolio value daily
-        ai_champion_invested_value = 0.0
-        if config.ENABLE_AI_CHAMPION:
-            for ticker in list(ai_champion_positions.keys()):
-                try:
-                    ticker_df = ticker_data_grouped.get(ticker)
-                    if ticker_df is not None:
-                        current_price = _last_valid_close_up_to(ticker_df, current_date)
-                        if current_price is not None:
-                            shares = ai_champion_positions[ticker]['shares']
-                            position_value = shares * current_price
-                            ai_champion_positions[ticker]['value'] = position_value
-                            ai_champion_invested_value += position_value
-                        else:
-                            ai_champion_invested_value += ai_champion_positions[ticker].get('value', 0.0)
-                    else:
-                        ai_champion_invested_value += ai_champion_positions[ticker].get('value', 0.0)
-                except Exception:
-                    ai_champion_invested_value += ai_champion_positions[ticker].get('value', 0.0)
-        ai_champion_portfolio_value = ai_champion_invested_value + ai_champion_cash
-        ai_champion_portfolio_history.append(ai_champion_portfolio_value)
-
-        # Update AI REGIME portfolio value daily
-        ai_regime_invested_value = 0.0
-        if config.ENABLE_AI_REGIME:
-            for ticker in list(ai_regime_positions.keys()):
-                try:
-                    ticker_df = ticker_data_grouped.get(ticker)
-                    if ticker_df is not None:
-                        current_price = _last_valid_close_up_to(ticker_df, current_date)
-                        if current_price is not None:
-                            shares = ai_regime_positions[ticker]['shares']
-                            position_value = shares * current_price
-                            ai_regime_positions[ticker]['value'] = position_value
-                            ai_regime_invested_value += position_value
-                        else:
-                            ai_regime_invested_value += ai_regime_positions[ticker].get('value', 0.0)
-                    else:
-                        ai_regime_invested_value += ai_regime_positions[ticker].get('value', 0.0)
-                except Exception:
-                    ai_regime_invested_value += ai_regime_positions[ticker].get('value', 0.0)
-        ai_regime_portfolio_value = ai_regime_invested_value + ai_regime_cash
-        ai_regime_portfolio_history.append(ai_regime_portfolio_value)
-
         # Update SAVGOL TREND portfolio value daily
         savgol_trend_invested_value = 0.0
         if config.ENABLE_SAVGOL_TREND:
@@ -9274,28 +8539,6 @@ def _run_portfolio_backtest_walk_forward(
                     savgol_trend_invested_value += savgol_trend_positions[ticker].get('value', 0.0)
         savgol_trend_portfolio_value = savgol_trend_invested_value + savgol_trend_cash
         savgol_trend_portfolio_history.append(savgol_trend_portfolio_value)
-
-        # Update AI REGIME MONTHLY portfolio value daily
-        ai_regime_monthly_invested_value = 0.0
-        if config.ENABLE_AI_REGIME_MONTHLY:
-            for ticker in list(ai_regime_monthly_positions.keys()):
-                try:
-                    ticker_df = ticker_data_grouped.get(ticker)
-                    if ticker_df is not None:
-                        current_price = _last_valid_close_up_to(ticker_df, current_date)
-                        if current_price is not None:
-                            shares = ai_regime_monthly_positions[ticker]['shares']
-                            position_value = shares * current_price
-                            ai_regime_monthly_positions[ticker]['value'] = position_value
-                            ai_regime_monthly_invested_value += position_value
-                        else:
-                            ai_regime_monthly_invested_value += ai_regime_monthly_positions[ticker].get('value', 0.0)
-                    else:
-                        ai_regime_monthly_invested_value += ai_regime_monthly_positions[ticker].get('value', 0.0)
-                except Exception:
-                    ai_regime_monthly_invested_value += ai_regime_monthly_positions[ticker].get('value', 0.0)
-        ai_regime_monthly_portfolio_value = ai_regime_monthly_invested_value + ai_regime_monthly_cash
-        ai_regime_monthly_portfolio_history.append(ai_regime_monthly_portfolio_value)
 
         # Update UNIVERSAL MODEL portfolio value daily
         universal_model_invested_value = 0.0
@@ -9364,45 +8607,8 @@ def _run_portfolio_backtest_walk_forward(
                     invested += positions[ticker].get('value', 0.0)
             return invested + cash
 
-        if config.ENABLE_META_WEIGHTED_COMPOSITE:
-            meta_weighted_composite_value = _update_meta_portfolio(meta_weighted_composite_positions, meta_weighted_composite_cash)
-            meta_weighted_composite_history.append(meta_weighted_composite_value)
-
-        if config.ENABLE_META_TIERED_SELECTION:
-            meta_tiered_selection_value = _update_meta_portfolio(meta_tiered_selection_positions, meta_tiered_selection_cash)
-            meta_tiered_selection_history.append(meta_tiered_selection_value)
-
-        if config.ENABLE_META_ENSEMBLE_ALLOC:
-            meta_ensemble_alloc_value = _update_meta_portfolio(meta_ensemble_alloc_positions, meta_ensemble_alloc_cash)
-            meta_ensemble_alloc_history.append(meta_ensemble_alloc_value)
-
-        if config.ENABLE_META_REGIME_BASED:
-            meta_regime_based_value = _update_meta_portfolio(meta_regime_based_positions, meta_regime_based_cash)
-            meta_regime_based_history.append(meta_regime_based_value)
-
-        if config.ENABLE_META_RECENCY_WEIGHTED:
-            meta_recency_weighted_value = _update_meta_portfolio(meta_recency_weighted_positions, meta_recency_weighted_cash)
-            meta_recency_weighted_history.append(meta_recency_weighted_value)
-
-        if config.ENABLE_META_EFFICIENCY_RATIO:
-            meta_efficiency_ratio_value = _update_meta_portfolio(meta_efficiency_ratio_positions, meta_efficiency_ratio_cash)
-            meta_efficiency_ratio_history.append(meta_efficiency_ratio_value)
-
-        if config.ENABLE_META_MIN_VARIANCE:
-            meta_min_variance_value = _update_meta_portfolio(meta_min_variance_positions, meta_min_variance_cash)
-            meta_min_variance_history.append(meta_min_variance_value)
-
-        if config.ENABLE_META_BAYESIAN:
-            meta_bayesian_value = _update_meta_portfolio(meta_bayesian_positions, meta_bayesian_cash)
-            meta_bayesian_history.append(meta_bayesian_value)
-
-        if config.ENABLE_META_ADAPTIVE_CONVEX:
-            meta_adaptive_convex_value = _update_meta_portfolio(meta_adaptive_convex_positions, meta_adaptive_convex_cash)
-            meta_adaptive_convex_history.append(meta_adaptive_convex_value)
-
-        if config.ENABLE_META_CONSENSUS:
-            meta_consensus_value = _update_meta_portfolio(meta_consensus_positions, meta_consensus_cash)
-            meta_consensus_history.append(meta_consensus_value)
+        # Meta strategy portfolio values are updated later in the day after the
+        # meta selectors rebalance from the completed shared strategy snapshot.
 
         # Update BOLLINGER BANDS strategy portfolio values daily
         if config.ENABLE_BB_MEAN_REVERSION:
@@ -10231,8 +9437,498 @@ def _run_portfolio_backtest_walk_forward(
         # Update portfolio value history
         portfolio_values_history.append(total_portfolio_value)
 
+        # AI CHAMPION / AI REGIME: at day end, use the completed shared source
+        # snapshot before meta and voting consume the same information.
+        try:
+            def _update_ai_selector_portfolio(positions, cash):
+                invested = 0.0
+                for ticker in list(positions.keys()):
+                    try:
+                        ticker_df = ticker_data_grouped.get(ticker)
+                        if ticker_df is not None:
+                            current_price = _last_valid_close_up_to(ticker_df, current_date)
+                            if current_price is not None:
+                                positions[ticker]['value'] = positions[ticker]['shares'] * current_price
+                                invested += positions[ticker]['value']
+                                continue
+                        invested += positions[ticker].get('value', 0.0)
+                    except Exception:
+                        invested += positions[ticker].get('value', 0.0)
+                return invested + cash
+
+            if config.ENABLE_AI_CHAMPION:
+                try:
+                    from ai_champion_strategy import AIChampionAllocator, select_ai_champion_stocks
+
+                    if ai_champion_allocator is None:
+                        ai_champion_allocator = AIChampionAllocator(
+                            retrain_days=config.AI_CHAMPION_RETRAIN_DAYS,
+                            forward_days=config.AI_CHAMPION_FORWARD_DAYS,
+                            confidence_threshold=config.AI_CHAMPION_CONFIDENCE_THRESHOLD,
+                            hold_margin=config.AI_CHAMPION_HOLD_MARGIN,
+                        )
+                        ai_champion_allocator.load_model()
+
+                    strategy_values_for_champion = build_strategy_values_from_locals(
+                        locals(),
+                        AI_CHAMPION_STRATEGY_SOURCES,
+                    )
+                    ai_champion_allocator.record_daily_values(strategy_values_for_champion)
+
+                    if ai_champion_allocator.should_retrain():
+                        print(f"   🧠 AI Champion: Training model (day {day_count})...")
+                        ai_champion_allocator.train_model(ticker_data_grouped, business_days[:day_count])
+
+                    ai_champion_current_strategy = ai_champion_allocator.predict_best_strategy(ticker_data_grouped, current_date)
+
+                    if ai_champion_current_strategy is not None:
+                        new_ai_champion_stocks = select_ai_champion_stocks(
+                            initial_top_tickers,
+                            ticker_data_grouped,
+                            current_date,
+                            PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            ai_champion_current_strategy,
+                            ai_elite_models=ai_elite_models,
+                        )
+                    else:
+                        new_ai_champion_stocks = []
+
+                    if new_ai_champion_stocks:
+                        print(f"   📊 AI Champion Day {day_count}: {new_ai_champion_stocks}")
+                        ai_champion_positions, ai_champion_cash, current_ai_champion_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                            strategy_name=f"AI Champion ({str(ai_champion_current_strategy)[:10]})",
+                            current_stocks=current_ai_champion_stocks,
+                            new_stocks=new_ai_champion_stocks,
+                            positions=ai_champion_positions,
+                            cash=ai_champion_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            force_rebalance=not ai_champion_initialized
+                        )
+                        strategies_rebalanced_today['AI Champion'] = rebalanced_flag
+                        ai_champion_transaction_costs += rc
+                        ai_champion_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ AI Champion error: {e}")
+
+                ai_champion_portfolio_value = _update_ai_selector_portfolio(ai_champion_positions, ai_champion_cash)
+                ai_champion_portfolio_history.append(ai_champion_portfolio_value)
+
+            if config.ENABLE_AI_REGIME:
+                try:
+                    from ai_regime_strategy import AIRegimeAllocator, select_ai_regime_stocks
+
+                    if ai_regime_allocator is None:
+                        ai_regime_allocator = AIRegimeAllocator(retrain_days=1, forward_days=1)
+                        ai_regime_allocator.load_model()
+
+                    strategy_values_for_regime = build_strategy_values_from_locals(
+                        locals(),
+                        AI_REGIME_STRATEGY_SOURCES,
+                    )
+                    ai_regime_allocator.record_daily_values(strategy_values_for_regime)
+
+                    if ai_regime_allocator.should_retrain():
+                        print(f"   🧠 AI Regime: Training model (day {day_count})...")
+                        ai_regime_allocator.train_model(ticker_data_grouped, business_days[:day_count])
+
+                    ai_regime_current_strategy = ai_regime_allocator.predict_best_strategy(ticker_data_grouped, current_date)
+
+                    if ai_regime_current_strategy is not None:
+                        new_ai_regime_stocks = select_ai_regime_stocks(
+                            initial_top_tickers,
+                            ticker_data_grouped,
+                            current_date,
+                            PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            ai_regime_current_strategy,
+                            ai_elite_models=ai_elite_models
+                        )
+                    else:
+                        new_ai_regime_stocks = []
+
+                    if new_ai_regime_stocks:
+                        print(f"   📊 AI Regime Day {day_count}: {new_ai_regime_stocks}")
+                        ai_regime_positions, ai_regime_cash, current_ai_regime_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                            strategy_name=f"AI Regime ({str(ai_regime_current_strategy)[:10]})",
+                            current_stocks=current_ai_regime_stocks,
+                            new_stocks=new_ai_regime_stocks,
+                            positions=ai_regime_positions,
+                            cash=ai_regime_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            force_rebalance=not current_ai_regime_stocks
+                        )
+                        strategies_rebalanced_today['AI Regime'] = rebalanced_flag
+                        ai_regime_transaction_costs += rc
+                        ai_regime_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ AI Regime error: {e}")
+
+                ai_regime_portfolio_value = _update_ai_selector_portfolio(ai_regime_positions, ai_regime_cash)
+                ai_regime_portfolio_history.append(ai_regime_portfolio_value)
+
+            if config.ENABLE_AI_REGIME_MONTHLY:
+                try:
+                    from ai_regime_strategy import AIRegimeMonthlyAllocator, select_ai_regime_stocks
+
+                    if ai_regime_monthly_allocator is None:
+                        ai_regime_monthly_allocator = AIRegimeMonthlyAllocator(forward_days=1)
+                        ai_regime_monthly_allocator.load_model()
+
+                    strategy_values_for_regime = build_strategy_values_from_locals(
+                        locals(),
+                        AI_REGIME_STRATEGY_SOURCES,
+                    )
+                    ai_regime_monthly_allocator.record_daily_values(strategy_values_for_regime)
+
+                    if ai_regime_monthly_allocator.should_retrain():
+                        print(f"   🧠 AI Regime Monthly: Training model (day {day_count})...")
+                        ai_regime_monthly_allocator.train_model(ticker_data_grouped, business_days[:day_count])
+
+                    ai_regime_monthly_current_strategy = ai_regime_monthly_allocator.predict_best_strategy(ticker_data_grouped, current_date)
+
+                    if ai_regime_monthly_allocator.should_rebalance(current_date):
+                        if ai_regime_monthly_current_strategy is not None:
+                            new_ai_regime_monthly_stocks = select_ai_regime_stocks(
+                                initial_top_tickers,
+                                ticker_data_grouped,
+                                current_date,
+                                PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                                ai_regime_monthly_current_strategy,
+                                ai_elite_models=ai_elite_models
+                            )
+                        else:
+                            new_ai_regime_monthly_stocks = []
+
+                        if new_ai_regime_monthly_stocks:
+                            print(f"   📊 AI Regime Monthly Day {day_count}: {new_ai_regime_monthly_stocks}")
+                            ai_regime_monthly_positions, ai_regime_monthly_cash, current_ai_regime_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                                strategy_name=f"AI Regime Mth ({str(ai_regime_monthly_current_strategy)[:10]})",
+                                current_stocks=current_ai_regime_monthly_stocks,
+                                new_stocks=new_ai_regime_monthly_stocks,
+                                positions=ai_regime_monthly_positions,
+                                cash=ai_regime_monthly_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                                force_rebalance=not ai_regime_monthly_initialized
+                            )
+                            strategies_rebalanced_today['AI Regime Mth'] = rebalanced_flag
+                            ai_regime_monthly_transaction_costs += rc
+                            ai_regime_monthly_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ AI Regime Monthly error: {e}")
+
+                ai_regime_monthly_portfolio_value = _update_ai_selector_portfolio(ai_regime_monthly_positions, ai_regime_monthly_cash)
+                ai_regime_monthly_portfolio_history.append(ai_regime_monthly_portfolio_value)
+        except Exception as e:
+            print(f"   ⚠️ AI selector snapshot error: {e}")
+
+        # META-STRATEGY SELECTORS: at day end, score the same completed shared
+        # source snapshot used by Voting Ensemble before rebalancing meta books.
+        try:
+            meta_source_strategy_data = _build_daily_strategy_data(locals())
+            meta_strategy_values = {
+                strategy_key: strategy_data['value']
+                for strategy_key, strategy_data in meta_source_strategy_data.items()
+                if strategy_key in META_SUB_STRATEGIES
+            }
+
+            meta_strategy_manager.record_daily_values(meta_strategy_values)
+            meta_selections = meta_strategy_manager.get_all_selections()
+
+            if config.ENABLE_META_WEIGHTED_COMPOSITE:
+                try:
+                    selected_strategy, _ = meta_selections['meta_weighted_composite']
+                    if selected_strategy:
+                        meta_weighted_composite_selected_strategy = selected_strategy
+                        new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
+                        if new_stocks and set(new_stocks) != set(current_meta_weighted_composite_stocks):
+                            meta_weighted_composite_positions, meta_weighted_composite_cash, current_meta_weighted_composite_stocks, rc, _ = _smart_rebalance_portfolio(
+                                strategy_name=f"Meta Weighted ({selected_strategy[:8]})",
+                                current_stocks=current_meta_weighted_composite_stocks,
+                                new_stocks=new_stocks,
+                                positions=meta_weighted_composite_positions,
+                                cash=meta_weighted_composite_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                force_rebalance=not meta_weighted_composite_initialized
+                            )
+                            meta_weighted_composite_transaction_costs += rc
+                            meta_weighted_composite_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ Meta Weighted error: {e}")
+
+            if config.ENABLE_META_TIERED_SELECTION:
+                try:
+                    selected_strategy, _ = meta_selections['meta_tiered_selection']
+                    if selected_strategy:
+                        meta_tiered_selection_selected_strategy = selected_strategy
+                        new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
+                        if new_stocks and set(new_stocks) != set(current_meta_tiered_selection_stocks):
+                            meta_tiered_selection_positions, meta_tiered_selection_cash, current_meta_tiered_selection_stocks, rc, _ = _smart_rebalance_portfolio(
+                                strategy_name=f"Meta Tiered ({selected_strategy[:8]})",
+                                current_stocks=current_meta_tiered_selection_stocks,
+                                new_stocks=new_stocks,
+                                positions=meta_tiered_selection_positions,
+                                cash=meta_tiered_selection_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                force_rebalance=not meta_tiered_selection_initialized
+                            )
+                            meta_tiered_selection_transaction_costs += rc
+                            meta_tiered_selection_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ Meta Tiered error: {e}")
+
+            if config.ENABLE_META_ENSEMBLE_ALLOC:
+                try:
+                    selected_strategy, _ = meta_selections['meta_ensemble_alloc']
+                    if selected_strategy:
+                        meta_ensemble_alloc_selected_strategy = selected_strategy
+                        new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
+                        if new_stocks and set(new_stocks) != set(current_meta_ensemble_alloc_stocks):
+                            meta_ensemble_alloc_positions, meta_ensemble_alloc_cash, current_meta_ensemble_alloc_stocks, rc, _ = _smart_rebalance_portfolio(
+                                strategy_name=f"Meta Ensemble ({selected_strategy[:8]})",
+                                current_stocks=current_meta_ensemble_alloc_stocks,
+                                new_stocks=new_stocks,
+                                positions=meta_ensemble_alloc_positions,
+                                cash=meta_ensemble_alloc_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                force_rebalance=not meta_ensemble_alloc_initialized
+                            )
+                            meta_ensemble_alloc_transaction_costs += rc
+                            meta_ensemble_alloc_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ Meta Ensemble error: {e}")
+
+            if config.ENABLE_META_REGIME_BASED:
+                try:
+                    selected_strategy, _ = meta_selections['meta_regime_based']
+                    if selected_strategy:
+                        meta_regime_based_selected_strategy = selected_strategy
+                        new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
+                        if new_stocks and set(new_stocks) != set(current_meta_regime_based_stocks):
+                            meta_regime_based_positions, meta_regime_based_cash, current_meta_regime_based_stocks, rc, _ = _smart_rebalance_portfolio(
+                                strategy_name=f"Meta Regime ({selected_strategy[:8]})",
+                                current_stocks=current_meta_regime_based_stocks,
+                                new_stocks=new_stocks,
+                                positions=meta_regime_based_positions,
+                                cash=meta_regime_based_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                force_rebalance=not meta_regime_based_initialized
+                            )
+                            meta_regime_based_transaction_costs += rc
+                            meta_regime_based_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ Meta Regime error: {e}")
+
+            if config.ENABLE_META_RECENCY_WEIGHTED:
+                try:
+                    selected_strategy, _ = meta_selections['meta_recency_weighted']
+                    if selected_strategy:
+                        meta_recency_weighted_selected_strategy = selected_strategy
+                        new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
+                        if new_stocks and set(new_stocks) != set(current_meta_recency_weighted_stocks):
+                            meta_recency_weighted_positions, meta_recency_weighted_cash, current_meta_recency_weighted_stocks, rc, _ = _smart_rebalance_portfolio(
+                                strategy_name=f"Meta Recency ({selected_strategy[:8]})",
+                                current_stocks=current_meta_recency_weighted_stocks,
+                                new_stocks=new_stocks,
+                                positions=meta_recency_weighted_positions,
+                                cash=meta_recency_weighted_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                force_rebalance=not meta_recency_weighted_initialized
+                            )
+                            meta_recency_weighted_transaction_costs += rc
+                            meta_recency_weighted_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ Meta Recency error: {e}")
+
+            if config.ENABLE_META_EFFICIENCY_RATIO:
+                try:
+                    selected_strategy, _ = meta_selections['meta_efficiency_ratio']
+                    if selected_strategy:
+                        meta_efficiency_ratio_selected_strategy = selected_strategy
+                        new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
+                        if new_stocks and set(new_stocks) != set(current_meta_efficiency_ratio_stocks):
+                            meta_efficiency_ratio_positions, meta_efficiency_ratio_cash, current_meta_efficiency_ratio_stocks, rc, _ = _smart_rebalance_portfolio(
+                                strategy_name=f"Meta Efficiency ({selected_strategy[:8]})",
+                                current_stocks=current_meta_efficiency_ratio_stocks,
+                                new_stocks=new_stocks,
+                                positions=meta_efficiency_ratio_positions,
+                                cash=meta_efficiency_ratio_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                force_rebalance=not meta_efficiency_ratio_initialized
+                            )
+                            meta_efficiency_ratio_transaction_costs += rc
+                            meta_efficiency_ratio_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ Meta Efficiency error: {e}")
+
+            if config.ENABLE_META_MIN_VARIANCE:
+                try:
+                    selected_strategy, _ = meta_selections['meta_min_variance']
+                    if selected_strategy:
+                        meta_min_variance_selected_strategy = selected_strategy
+                        new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
+                        if new_stocks and set(new_stocks) != set(current_meta_min_variance_stocks):
+                            meta_min_variance_positions, meta_min_variance_cash, current_meta_min_variance_stocks, rc, _ = _smart_rebalance_portfolio(
+                                strategy_name=f"Meta MinVar ({selected_strategy[:8]})",
+                                current_stocks=current_meta_min_variance_stocks,
+                                new_stocks=new_stocks,
+                                positions=meta_min_variance_positions,
+                                cash=meta_min_variance_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                force_rebalance=not meta_min_variance_initialized
+                            )
+                            meta_min_variance_transaction_costs += rc
+                            meta_min_variance_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ Meta MinVar error: {e}")
+
+            if config.ENABLE_META_BAYESIAN:
+                try:
+                    selected_strategy, _ = meta_selections['meta_bayesian']
+                    if selected_strategy:
+                        meta_bayesian_selected_strategy = selected_strategy
+                        new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
+                        if new_stocks and set(new_stocks) != set(current_meta_bayesian_stocks):
+                            meta_bayesian_positions, meta_bayesian_cash, current_meta_bayesian_stocks, rc, _ = _smart_rebalance_portfolio(
+                                strategy_name=f"Meta Bayesian ({selected_strategy[:8]})",
+                                current_stocks=current_meta_bayesian_stocks,
+                                new_stocks=new_stocks,
+                                positions=meta_bayesian_positions,
+                                cash=meta_bayesian_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                force_rebalance=not meta_bayesian_initialized
+                            )
+                            meta_bayesian_transaction_costs += rc
+                            meta_bayesian_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ Meta Bayesian error: {e}")
+
+            if config.ENABLE_META_ADAPTIVE_CONVEX:
+                try:
+                    selected_strategy, _ = meta_selections['meta_adaptive_convex']
+                    if selected_strategy:
+                        meta_adaptive_convex_selected_strategy = selected_strategy
+                        new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
+                        if new_stocks and set(new_stocks) != set(current_meta_adaptive_convex_stocks):
+                            meta_adaptive_convex_positions, meta_adaptive_convex_cash, current_meta_adaptive_convex_stocks, rc, _ = _smart_rebalance_portfolio(
+                                strategy_name=f"Meta Adaptive ({selected_strategy[:8]})",
+                                current_stocks=current_meta_adaptive_convex_stocks,
+                                new_stocks=new_stocks,
+                                positions=meta_adaptive_convex_positions,
+                                cash=meta_adaptive_convex_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                force_rebalance=not meta_adaptive_convex_initialized
+                            )
+                            meta_adaptive_convex_transaction_costs += rc
+                            meta_adaptive_convex_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ Meta Adaptive error: {e}")
+
+            if config.ENABLE_META_CONSENSUS:
+                try:
+                    selected_strategy, _ = meta_selections['meta_consensus']
+                    if selected_strategy:
+                        meta_consensus_selected_strategy = selected_strategy
+                        new_stocks = select_meta_strategy_stocks(selected_strategy, initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE)
+                        if new_stocks and set(new_stocks) != set(current_meta_consensus_stocks):
+                            meta_consensus_positions, meta_consensus_cash, current_meta_consensus_stocks, rc, _ = _smart_rebalance_portfolio(
+                                strategy_name=f"Meta Consensus ({selected_strategy[:8]})",
+                                current_stocks=current_meta_consensus_stocks,
+                                new_stocks=new_stocks,
+                                positions=meta_consensus_positions,
+                                cash=meta_consensus_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                force_rebalance=not meta_consensus_initialized
+                            )
+                            meta_consensus_transaction_costs += rc
+                            meta_consensus_initialized = True
+                except Exception as e:
+                    print(f"   ⚠️ Meta Consensus error: {e}")
+
+            if config.ENABLE_META_WEIGHTED_COMPOSITE:
+                meta_weighted_composite_value = _update_meta_portfolio(meta_weighted_composite_positions, meta_weighted_composite_cash)
+                meta_weighted_composite_history.append(meta_weighted_composite_value)
+
+            if config.ENABLE_META_TIERED_SELECTION:
+                meta_tiered_selection_value = _update_meta_portfolio(meta_tiered_selection_positions, meta_tiered_selection_cash)
+                meta_tiered_selection_history.append(meta_tiered_selection_value)
+
+            if config.ENABLE_META_ENSEMBLE_ALLOC:
+                meta_ensemble_alloc_value = _update_meta_portfolio(meta_ensemble_alloc_positions, meta_ensemble_alloc_cash)
+                meta_ensemble_alloc_history.append(meta_ensemble_alloc_value)
+
+            if config.ENABLE_META_REGIME_BASED:
+                meta_regime_based_value = _update_meta_portfolio(meta_regime_based_positions, meta_regime_based_cash)
+                meta_regime_based_history.append(meta_regime_based_value)
+
+            if config.ENABLE_META_RECENCY_WEIGHTED:
+                meta_recency_weighted_value = _update_meta_portfolio(meta_recency_weighted_positions, meta_recency_weighted_cash)
+                meta_recency_weighted_history.append(meta_recency_weighted_value)
+
+            if config.ENABLE_META_EFFICIENCY_RATIO:
+                meta_efficiency_ratio_value = _update_meta_portfolio(meta_efficiency_ratio_positions, meta_efficiency_ratio_cash)
+                meta_efficiency_ratio_history.append(meta_efficiency_ratio_value)
+
+            if config.ENABLE_META_MIN_VARIANCE:
+                meta_min_variance_value = _update_meta_portfolio(meta_min_variance_positions, meta_min_variance_cash)
+                meta_min_variance_history.append(meta_min_variance_value)
+
+            if config.ENABLE_META_BAYESIAN:
+                meta_bayesian_value = _update_meta_portfolio(meta_bayesian_positions, meta_bayesian_cash)
+                meta_bayesian_history.append(meta_bayesian_value)
+
+            if config.ENABLE_META_ADAPTIVE_CONVEX:
+                meta_adaptive_convex_value = _update_meta_portfolio(meta_adaptive_convex_positions, meta_adaptive_convex_cash)
+                meta_adaptive_convex_history.append(meta_adaptive_convex_value)
+
+            if config.ENABLE_META_CONSENSUS:
+                meta_consensus_value = _update_meta_portfolio(meta_consensus_positions, meta_consensus_cash)
+                meta_consensus_history.append(meta_consensus_value)
+        except Exception as e:
+            print(f"   ⚠️ Meta strategy snapshot error: {e}")
+
         # VOTING ENSEMBLE: at day end, vote using the 3 best-performing strategies
-        # based on in-memory portfolio values and their current selected/held tickers.
+        # based on the same in-memory day-end source snapshot family.
         if config.ENABLE_VOTING_ENSEMBLE:
             try:
                 voting_source_strategy_data = _build_daily_strategy_data(locals())
@@ -10908,70 +10604,6 @@ def _run_portfolio_backtest_walk_forward(
         'strategies': {}
     }
 
-    # Map strategy names to their enable flags
-    # This prevents disabled strategies from running during live trading selection
-    strategy_enable_flags = {
-        # AI strategies
-        'ai_elite': config.ENABLE_AI_ELITE,
-        'ai_elite_monthly': config.ENABLE_AI_ELITE_MONTHLY,
-        'ai_elite_filtered': config.ENABLE_AI_ELITE_FILTERED,
-        'ai_elite_market_up': config.ENABLE_AI_ELITE_MARKET_UP,
-        'ai_champion': config.ENABLE_AI_CHAMPION,
-        'ai_regime': config.ENABLE_AI_REGIME,
-        'ai_regime_monthly': config.ENABLE_AI_REGIME_MONTHLY,
-        'universal_model': config.ENABLE_UNIVERSAL_MODEL,
-        'savgol_trend': config.ENABLE_SAVGOL_TREND,
-        'top5_consistency_blend': config.ENABLE_TOP5_CONSISTENCY_BLEND,
-        # Core strategies
-        'sector_rotation': config.ENABLE_SECTOR_ROTATION,
-        'quality_momentum': config.ENABLE_QUALITY_MOM,
-        'mean_reversion': config.ENABLE_MEAN_REVERSION,
-        'volatility_adj_mom': config.ENABLE_VOLATILITY_ADJ_MOM,
-        'price_acceleration': config.ENABLE_PRICE_ACCELERATION,
-        'momentum_ai_hybrid': config.ENABLE_MOMENTUM_AI_HYBRID,
-        'enhanced_volatility': config.ENABLE_ENHANCED_VOLATILITY,
-        'ai_volatility_ensemble': config.ENABLE_AI_VOLATILITY_ENSEMBLE,
-        'momentum_volatility_hybrid': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID,
-        'momentum_volatility_hybrid_6m': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M,
-        'momentum_volatility_hybrid_1y': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y,
-        'momentum_volatility_hybrid_1y3m': config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M,
-        'turnaround': config.ENABLE_TURNAROUND,
-        'risk_adj_mom': config.ENABLE_RISK_ADJ_MOM,
-        'risk_adj_mom_3m': config.ENABLE_RISK_ADJ_MOM_3M,
-        'risk_adj_mom_6m': config.ENABLE_RISK_ADJ_MOM_6M,
-        'risk_adj_mom_1m': config.ENABLE_RISK_ADJ_MOM_1M,
-        'vol_sweet_mom': config.ENABLE_VOL_SWEET_MOM,
-        'dual_momentum': config.ENABLE_DUAL_MOMENTUM,
-        'trend_following_atr': config.ENABLE_TREND_FOLLOWING_ATR,
-        'momentum_acceleration': config.ENABLE_MOMENTUM_ACCELERATION,
-        'concentrated_3m': config.ENABLE_CONCENTRATED_3M,
-        # Ratio strategies
-        'ratio_3m_1y': config.ENABLE_3M_1Y_RATIO,
-        '3m_1y_ratio': config.ENABLE_3M_1Y_RATIO,
-        'ratio_1m_3m': config.ENABLE_1M_3M_RATIO,
-        '1m_3m_ratio': config.ENABLE_1M_3M_RATIO,
-        # Static BH strategies
-        'static_bh_1y': config.ENABLE_STATIC_BH,
-        'static_bh_3m': config.ENABLE_STATIC_BH,
-        'static_bh_6m': config.ENABLE_STATIC_BH_6M,
-        'static_bh_1m': config.ENABLE_STATIC_BH,
-        # Dynamic BH strategies
-        'dynamic_bh_1y': config.ENABLE_DYNAMIC_BH_1Y,
-        'dynamic_bh_6m': config.ENABLE_DYNAMIC_BH_6M,
-        'dynamic_bh_3m': config.ENABLE_DYNAMIC_BH_3M,
-        'dynamic_bh_1m': config.ENABLE_DYNAMIC_BH_1M,
-        'dynamic_bh_1y_vol_filter': config.ENABLE_DYNAMIC_BH_1Y_VOL_FILTER,
-        'dynamic_bh_1y_trailing_stop': config.ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP,
-        # Monthly strategies
-        'bh_1y_monthly': config.ENABLE_STATIC_BH_1Y_MONTHLY,
-        'bh_6m_monthly': config.ENABLE_STATIC_BH_6M_MONTHLY,
-        'bh_3m_monthly': config.ENABLE_STATIC_BH_3M_MONTHLY,
-        'bh_1m_monthly': config.ENABLE_STATIC_BH_1M_MONTHLY,
-        # Multi-timeframe
-        'multi_tf_ensemble': config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE,
-        'multi_tf_intraday_ensemble': config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE,
-    }
-
     try:
         # Auto-generate selections for ALL strategies using the centralized registry
         # This ensures live trading always has all strategies without manual updates
@@ -10982,7 +10614,8 @@ def _run_portfolio_backtest_walk_forward(
                     continue
 
                 # Skip disabled strategies (especially AI strategies that are slow to run)
-                if strategy_name in strategy_enable_flags and not strategy_enable_flags[strategy_name]:
+                is_enabled = _is_strategy_enabled(strategy_name, config)
+                if is_enabled is False:
                     live_trading_selections['strategies'][strategy_name] = []
                     continue
 
@@ -11005,7 +10638,7 @@ def _run_portfolio_backtest_walk_forward(
                 for strategy_key, tickers in live_trading_selections['strategies'].items():
                     if isinstance(tickers, list):
                         live_source_strategy_data[strategy_key] = {
-                            'display_name': STRATEGY_DISPLAY_NAMES.get(strategy_key, strategy_key),
+                            'display_name': _get_strategy_display_name(strategy_key),
                             'tickers': tickers,
                         }
 
@@ -11038,7 +10671,7 @@ def _run_portfolio_backtest_walk_forward(
                     tickers = live_trading_selections['strategies'].get(strategy_key, [])
                     if isinstance(tickers, list):
                         live_voting_source_strategy_data[strategy_key] = {
-                            'display_name': STRATEGY_DISPLAY_NAMES.get(strategy_key, strategy_key),
+                            'display_name': _get_strategy_display_name(strategy_key),
                             'tickers': tickers,
                             'value': strategy_result.get('value', 0.0),
                         }

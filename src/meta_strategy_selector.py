@@ -21,156 +21,38 @@ import pandas as pd
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 
+from strategy_universes import (
+    META_ADAPTIVE_REBALANCING_STRATEGIES,
+    META_ADAPTIVE_CONVEX_BALANCED,
+    META_ADAPTIVE_CONVEX_DEFENSIVE,
+    META_ADAPTIVE_CONVEX_MOMENTUM,
+    META_AI_STRATEGIES,
+    META_AI_REGIME_STRATEGIES,
+    META_BB_STRATEGIES,
+    META_DYNAMIC_BH_STRATEGIES,
+    META_ENHANCED_VOLATILITY_STRATEGIES,
+    META_ENSEMBLE_STRATEGIES,
+    META_MONTHLY_BH_STRATEGIES,
+    META_MOMENTUM_VOLATILITY_HYBRID_STRATEGIES,
+    META_RATIO_STRATEGIES,
+    META_REGIME_HIGH_VOL_CANDIDATES,
+    META_REGIME_LOW_VOL_CANDIDATES,
+    META_REGIME_MEDIUM_VOL_CANDIDATES,
+    META_RISK_ADJ_MOM_MONTHLY_STRATEGIES,
+    META_RISK_ADJ_MOM_STRATEGIES,
+    META_RISK_ADJ_MOM_VARIANT_STRATEGIES,
+    META_STATIC_BH_STRATEGIES,
+    META_STRATEGY_SOURCES,
+    get_enabled_strategy_aliases,
+)
+
 
 def get_all_enabled_strategies():
     """
     Dynamically generate list of all enabled strategies from config.
     Returns mapping of strategy key -> display name.
     """
-    from config import (
-        ENABLE_STATIC_BH, ENABLE_STATIC_BH_6M,
-        ENABLE_DYNAMIC_BH_1Y, ENABLE_DYNAMIC_BH_6M, ENABLE_DYNAMIC_BH_3M, ENABLE_DYNAMIC_BH_1M,
-        ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP,
-        ENABLE_RISK_ADJ_MOM, ENABLE_RISK_ADJ_MOM_3M, ENABLE_RISK_ADJ_MOM_6M, ENABLE_RISK_ADJ_MOM_1M,
-        ENABLE_MEAN_REVERSION, ENABLE_QUALITY_MOM, ENABLE_MOMENTUM_AI_HYBRID,
-        ENABLE_VOLATILITY_ADJ_MOM, ENABLE_ENHANCED_VOLATILITY,
-        ENABLE_TREND_FOLLOWING_ATR, ENABLE_DUAL_MOMENTUM,
-        ENABLE_ELITE_HYBRID, ENABLE_ELITE_RISK,
-        ENABLE_MOMENTUM_VOLATILITY_HYBRID, ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y, ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M,
-        ENABLE_PRICE_ACCELERATION, ENABLE_TURNAROUND,
-        ENABLE_ADAPTIVE_STRATEGY, ENABLE_VOLATILITY_ENSEMBLE, ENABLE_AI_VOLATILITY_ENSEMBLE,
-        ENABLE_CORRELATION_ENSEMBLE, ENABLE_DYNAMIC_POOL,
-        ENABLE_VOTING_ENSEMBLE,
-        ENABLE_MOMENTUM_ACCELERATION, ENABLE_CONCENTRATED_3M,
-        ENABLE_3M_1Y_RATIO,
-        ENABLE_AI_ELITE, ENABLE_AI_ELITE_MONTHLY, ENABLE_AI_ELITE_FILTERED, ENABLE_AI_ELITE_MARKET_UP,
-        ENABLE_AI_REGIME, ENABLE_AI_REGIME_MONTHLY,
-        ENABLE_UNIVERSAL_MODEL,
-        ENABLE_INVERSE_ETF_HEDGE, ENABLE_ANALYST_RECOMMENDATION,
-        ENABLE_STATIC_BH_1Y_MONTHLY, ENABLE_STATIC_BH_6M_MONTHLY, ENABLE_STATIC_BH_3M_MONTHLY, ENABLE_STATIC_BH_1M_MONTHLY,
-        ENABLE_META_WEIGHTED_COMPOSITE, ENABLE_META_TIERED_SELECTION, ENABLE_META_ENSEMBLE_ALLOC,
-        ENABLE_META_REGIME_BASED, ENABLE_META_RECENCY_WEIGHTED, ENABLE_META_EFFICIENCY_RATIO,
-        ENABLE_META_MIN_VARIANCE, ENABLE_META_BAYESIAN, ENABLE_META_ADAPTIVE_CONVEX, ENABLE_META_CONSENSUS,
-        ENABLE_BB_MEAN_REVERSION, ENABLE_BB_BREAKOUT, ENABLE_BB_SQUEEZE_BREAKOUT, ENABLE_BB_RSI_COMBO,
-        ENABLE_TREND_BREAKOUT,
-        ENABLE_STATIC_BH_1Y_VOLATILITY, ENABLE_STATIC_BH_1Y_PERFORMANCE, ENABLE_STATIC_BH_1Y_MOMENTUM,
-        ENABLE_STATIC_BH_1Y_ATR, ENABLE_STATIC_BH_1Y_HYBRID,
-    )
-
-    strategies = {
-        # Static BH strategies
-        'static_bh_1y': ENABLE_STATIC_BH,
-        'static_bh_3m': ENABLE_STATIC_BH,
-        'static_bh_6m': ENABLE_STATIC_BH_6M,
-        'static_bh_1m': ENABLE_STATIC_BH,
-
-        # Monthly rebalance variants
-        'bh_1y_monthly': ENABLE_STATIC_BH_1Y_MONTHLY,
-        'bh_6m_monthly': ENABLE_STATIC_BH_6M_MONTHLY,
-        'bh_3m_monthly': ENABLE_STATIC_BH_3M_MONTHLY,
-        'bh_1m_monthly': ENABLE_STATIC_BH_1M_MONTHLY,
-
-        # Dynamic BH strategies
-        'dynamic_bh_1y': ENABLE_DYNAMIC_BH_1Y,
-        'dynamic_bh_6m': ENABLE_DYNAMIC_BH_6M,
-        'dynamic_bh_3m': ENABLE_DYNAMIC_BH_3M,
-        'dynamic_bh_1m': ENABLE_DYNAMIC_BH_1M,
-
-        # Risk-Adjusted Momentum strategies
-        'risk_adj_mom': ENABLE_RISK_ADJ_MOM,
-        'risk_adj_mom_3m': ENABLE_RISK_ADJ_MOM_3M,
-        'risk_adj_mom_6m': ENABLE_RISK_ADJ_MOM_6M,
-        'risk_adj_mom_1m': ENABLE_RISK_ADJ_MOM_1M,
-
-        # Risk-Adj Mom variants
-        'risk_adj_mom_3m_monthly': False,  # Not implemented as separate flag
-        'risk_adj_mom_6m_monthly': False,  # Not implemented as separate flag
-        'risk_adj_mom_1m_monthly': False,  # Not implemented as separate flag
-        'risk_adj_mom_3m_sentiment': False,  # Not implemented as separate flag
-        'risk_adj_mom_3m_market_up': False,  # Not implemented as separate flag
-        'risk_adj_mom_3m_with_stops': False,  # Not implemented as separate flag
-        'risk_adj_mom_1m_vol_sweet': False,  # Not implemented as separate flag
-        'vol_sweet_mom': False,  # Not implemented as separate flag
-
-        # Other core strategies
-        'mean_reversion': ENABLE_MEAN_REVERSION,
-        'quality_momentum': ENABLE_QUALITY_MOM,
-        'momentum_ai_hybrid': ENABLE_MOMENTUM_AI_HYBRID,
-        'volatility_adj_mom': ENABLE_VOLATILITY_ADJ_MOM,
-
-        # Enhanced Volatility strategies
-        'enhanced_volatility': ENABLE_ENHANCED_VOLATILITY,
-        'enhanced_volatility_6m': False,  # Not implemented as separate flag
-        'enhanced_volatility_3m': False,  # Not implemented as separate flag
-
-        # Trend and Momentum strategies
-        'trend_atr': ENABLE_TREND_FOLLOWING_ATR,
-        'dual_momentum': ENABLE_DUAL_MOMENTUM,
-        'momentum_acceleration': ENABLE_MOMENTUM_ACCELERATION,
-        'concentrated_3m': ENABLE_CONCENTRATED_3M,
-        'price_acceleration': ENABLE_PRICE_ACCELERATION,
-        'turnaround': ENABLE_TURNAROUND,
-
-        # Elite strategies
-        'elite_hybrid': ENABLE_ELITE_HYBRID,
-        'elite_risk': ENABLE_ELITE_RISK,
-
-        # Momentum-Volatility Hybrids
-        'momentum_volatility_hybrid': ENABLE_MOMENTUM_VOLATILITY_HYBRID,
-        'momentum_volatility_hybrid_6m': ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M,
-        'momentum_volatility_hybrid_1y': ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y,
-        'momentum_volatility_hybrid_1y3m': ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M,
-
-        # Ratio strategies
-        'ratio_3m_1y': ENABLE_3M_1Y_RATIO,
-        'ratio_1y_3m': False,  # Not implemented as separate flag
-
-        # Ensemble strategies
-        'adaptive_ensemble': ENABLE_ADAPTIVE_STRATEGY,
-        'volatility_ensemble': ENABLE_VOLATILITY_ENSEMBLE,
-        'ai_volatility_ensemble': ENABLE_AI_VOLATILITY_ENSEMBLE,
-        'correlation_ensemble': ENABLE_CORRELATION_ENSEMBLE,
-        'dynamic_pool': ENABLE_DYNAMIC_POOL,
-        'voting_ensemble': ENABLE_VOTING_ENSEMBLE,
-
-        # AI Strategies
-        'ai_elite': ENABLE_AI_ELITE,
-        'ai_elite_monthly': ENABLE_AI_ELITE_MONTHLY,
-        'ai_elite_filtered': ENABLE_AI_ELITE_FILTERED,
-        'ai_elite_market_up': ENABLE_AI_ELITE_MARKET_UP,
-        'ai_regime': ENABLE_AI_REGIME,
-        'ai_regime_monthly': ENABLE_AI_REGIME_MONTHLY,
-        'universal_model': ENABLE_UNIVERSAL_MODEL,
-
-        # Special strategies
-        'inverse_etf_hedge': ENABLE_INVERSE_ETF_HEDGE,
-        'analyst_recommendation': ENABLE_ANALYST_RECOMMENDATION,
-
-        # Adaptive Rebalancing Strategies (based on Static BH 1Y)
-        'static_bh_1y_volatility': ENABLE_STATIC_BH_1Y_VOLATILITY,
-        'static_bh_1y_performance': ENABLE_STATIC_BH_1Y_PERFORMANCE,
-        'static_bh_1y_momentum': ENABLE_STATIC_BH_1Y_MOMENTUM,
-        'static_bh_1y_atr': ENABLE_STATIC_BH_1Y_ATR,
-        'static_bh_1y_hybrid': ENABLE_STATIC_BH_1Y_HYBRID,
-
-        # Bollinger Bands Strategies
-        'bb_mean_reversion': ENABLE_BB_MEAN_REVERSION,
-        'bb_breakout': ENABLE_BB_BREAKOUT,
-        'bb_squeeze_breakout': ENABLE_BB_SQUEEZE_BREAKOUT,
-        'bb_rsi_combo': ENABLE_BB_RSI_COMBO,
-
-        # Trend Strategies
-        'trend_breakout': ENABLE_TREND_BREAKOUT,
-
-        # Dynamic BH variants
-        'dynamic_bh_1y_vol_filter': ENABLE_DYNAMIC_BH_1Y_VOL_FILTER,
-        'dynamic_bh_1y_trailing_stop': ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP,
-    }
-
-    # Filter to only enabled strategies
-    enabled_strategies = [key for key, enabled in strategies.items() if enabled]
-
-    return enabled_strategies
+    return get_enabled_strategy_aliases(META_STRATEGY_SOURCES)
 
 
 # Get dynamic list of enabled strategies
@@ -449,11 +331,11 @@ class MetaStrategyManager:
         returns = self._get_total_returns()
 
         if market_vol > 0.25:  # High volatility
-            candidates = ['mean_reversion', 'risk_adj_mom', 'risk_adj_mom_3m', 'elite_risk']
+            candidates = list(META_REGIME_HIGH_VOL_CANDIDATES)
         elif market_vol < 0.15:  # Low volatility
-            candidates = ['static_bh_1y', 'dynamic_bh_1y', 'momentum_volatility_hybrid']
+            candidates = list(META_REGIME_LOW_VOL_CANDIDATES)
         else:  # Medium volatility
-            candidates = ['trend_atr', 'dual_momentum', 'elite_hybrid']
+            candidates = list(META_REGIME_MEDIUM_VOL_CANDIDATES)
 
         # Filter to available strategies
         available = [c for c in candidates if c in returns and returns[c] != 0]
@@ -607,9 +489,9 @@ class MetaStrategyManager:
         returns = self._get_total_returns()
 
         # Categorize strategies
-        defensive = ['mean_reversion', 'risk_adj_mom', 'risk_adj_mom_3m', 'elite_risk']
-        momentum = ['static_bh_1y', 'dynamic_bh_1y', 'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m']
-        balanced = ['trend_atr', 'dual_momentum', 'elite_hybrid', 'enhanced_volatility']
+        defensive = list(META_ADAPTIVE_CONVEX_DEFENSIVE)
+        momentum = list(META_ADAPTIVE_CONVEX_MOMENTUM)
+        balanced = list(META_ADAPTIVE_CONVEX_BALANCED)
 
         # Get best from each category
         def best_in_category(cat):
@@ -788,7 +670,7 @@ def select_meta_strategy_stocks(
         from shared_strategies import select_top_performers
 
         # === STATIC BH STRATEGIES ===
-        if selected_strategy in ['static_bh_1y', 'static_bh_3m']:
+        if selected_strategy in META_STATIC_BH_STRATEGIES:
             lookback = 365 if '1y' in selected_strategy else 90
             return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=lookback, top_n=top_n)
 
@@ -799,13 +681,13 @@ def select_meta_strategy_stocks(
             return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=30, top_n=top_n)
 
         # === MONTHLY REBALANCE VARIANTS ===
-        elif selected_strategy in ['bh_1y_monthly', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly']:
+        elif selected_strategy in META_MONTHLY_BH_STRATEGIES:
             lookback_map = {'1y': 365, '6m': 180, '3m': 90, '1m': 30}
             lookback = lookback_map[selected_strategy.split('_')[1]]
             return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=lookback, top_n=top_n)
 
         # === DYNAMIC BH STRATEGIES ===
-        elif selected_strategy in ['dynamic_bh_1y', 'dynamic_bh_3m']:
+        elif selected_strategy in META_DYNAMIC_BH_STRATEGIES:
             lookback = 365 if '1y' in selected_strategy else 90
             return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=lookback, top_n=top_n, apply_performance_filter=True)
 
@@ -824,16 +706,16 @@ def select_meta_strategy_stocks(
             return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=top_n)
 
         # === RISK-ADJ MOMENTUM STRATEGIES ===
-        elif selected_strategy in ['risk_adj_mom', 'risk_adj_mom_3m', 'risk_adj_mom_6m', 'risk_adj_mom_1m']:
+        elif selected_strategy in META_RISK_ADJ_MOM_STRATEGIES:
             from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
             return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
         # === RISK-ADJ MOM VARIANTS ===
-        elif selected_strategy in ['risk_adj_mom_3m_monthly', 'risk_adj_mom_6m_monthly', 'risk_adj_mom_1m_monthly']:
+        elif selected_strategy in META_RISK_ADJ_MOM_MONTHLY_STRATEGIES:
             from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
             return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
-        elif selected_strategy in ['risk_adj_mom_3m_sentiment', 'risk_adj_mom_3m_market_up', 'risk_adj_mom_3m_with_stops']:
+        elif selected_strategy in META_RISK_ADJ_MOM_VARIANT_STRATEGIES:
             from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
             return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
@@ -863,7 +745,7 @@ def select_meta_strategy_stocks(
             return select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
         # === ENHANCED VOLATILITY STRATEGIES ===
-        elif selected_strategy in ['enhanced_volatility', 'enhanced_volatility_6m', 'enhanced_volatility_3m']:
+        elif selected_strategy in META_ENHANCED_VOLATILITY_STRATEGIES:
             from enhanced_volatility_trader import select_enhanced_volatility_stocks
             return select_enhanced_volatility_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
@@ -876,8 +758,8 @@ def select_meta_strategy_stocks(
             return result
 
         elif selected_strategy == 'dual_momentum':
-            from dual_momentum_strategy import select_dual_momentum_stocks
-            return select_dual_momentum_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            from new_strategies import select_dual_momentum_stocks
+            return select_dual_momentum_stocks(all_tickers, ticker_data_grouped, current_date, top_n)[0]
 
         elif selected_strategy == 'momentum_acceleration':
             from momentum_acceleration_strategy import select_momentum_acceleration_stocks
@@ -905,26 +787,38 @@ def select_meta_strategy_stocks(
             return select_elite_risk_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
         # === MOMENTUM-VOLATILITY HYBRIDS ===
-        elif selected_strategy in ['momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m']:
-            from momentum_volatility_hybrid_strategy import select_momentum_volatility_hybrid_stocks
-            return select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+        elif selected_strategy in META_MOMENTUM_VOLATILITY_HYBRID_STRATEGIES:
+            from shared_strategies import (
+                select_momentum_volatility_hybrid_1y3m_stocks,
+                select_momentum_volatility_hybrid_1y_stocks,
+                select_momentum_volatility_hybrid_6m_stocks,
+                select_momentum_volatility_hybrid_stocks,
+            )
+
+            strategy_selectors = {
+                'momentum_volatility_hybrid': select_momentum_volatility_hybrid_stocks,
+                'momentum_volatility_hybrid_6m': select_momentum_volatility_hybrid_6m_stocks,
+                'momentum_volatility_hybrid_1y': select_momentum_volatility_hybrid_1y_stocks,
+                'momentum_volatility_hybrid_1y3m': select_momentum_volatility_hybrid_1y3m_stocks,
+            }
+            return strategy_selectors[selected_strategy](all_tickers, ticker_data_grouped, current_date, top_n)
 
         # === RATIO STRATEGIES ===
-        elif selected_strategy in ['ratio_3m_1y', 'ratio_1y_3m']:
+        elif selected_strategy in META_RATIO_STRATEGIES:
             from ratio_strategies import select_ratio_stocks
             return select_ratio_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
         # === ENSEMBLE STRATEGIES ===
-        elif selected_strategy in ['adaptive_ensemble', 'volatility_ensemble', 'ai_volatility_ensemble', 'correlation_ensemble', 'dynamic_pool', 'voting_ensemble']:
+        elif selected_strategy in META_ENSEMBLE_STRATEGIES:
             from ensemble_strategies import select_ensemble_stocks
             return select_ensemble_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
         # === AI STRATEGIES ===
-        elif selected_strategy in ['ai_elite', 'ai_elite_monthly', 'ai_elite_filtered', 'ai_elite_market_up']:
+        elif selected_strategy in META_AI_STRATEGIES:
             from shared_strategies import select_ai_elite_with_training
             return select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)
 
-        elif selected_strategy in ['ai_regime', 'ai_regime_monthly']:
+        elif selected_strategy in META_AI_REGIME_STRATEGIES:
             from ai_regime_strategy import select_ai_regime_stocks
             return select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
@@ -942,12 +836,12 @@ def select_meta_strategy_stocks(
             return select_analyst_recommendation_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
         # === ADAPTIVE REBALANCING STRATEGIES ===
-        elif selected_strategy in ['static_bh_1y_volatility', 'static_bh_1y_performance', 'static_bh_1y_momentum', 'static_bh_1y_atr', 'static_bh_1y_hybrid']:
+        elif selected_strategy in META_ADAPTIVE_REBALANCING_STRATEGIES:
             # These use the same base selection as Static BH 1Y
             return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=top_n)
 
         # === BOLLINGER BANDS STRATEGIES ===
-        elif selected_strategy in ['bb_mean_reversion', 'bb_breakout', 'bb_squeeze_breakout', 'bb_rsi_combo']:
+        elif selected_strategy in META_BB_STRATEGIES:
             from bollinger_bands_strategies import select_bb_stocks
             return select_bb_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 

@@ -563,6 +563,9 @@ class SavgolTrendStrategy:
         )
         y_val = np.array([row[2] for row in val_samples], dtype=float)
 
+        import time
+        import warnings
+
         models, device = _build_model_set()
         has_existing = self.all_models is not None and len(self.all_models) > 0
         if has_existing:
@@ -573,26 +576,19 @@ class SavgolTrendStrategy:
                         models[name] = _fresh_model(name, device)
                     except Exception:
                         continue
-            print(
-                f"   📊 SavGol Trend: Continuing training on {len(X_train)} samples "
-                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
-            )
-        else:
-            print(
-                f"   📊 SavGol Trend: Training NEW {list(models.keys())} on {len(X_train)} samples "
-                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
-            )
+
+        print(f"   📊 Train/Val split: {len(X_train)} train, {len(X_val)} val samples")
 
         trained_models: Dict[str, object] = {}
         model_scores: Dict[str, float] = {}
 
-        import warnings
-
         for name, model in models.items():
+            print(f"      🔄 {name}: Training started...", end=" ", flush=True)
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     incremental_failed = False
+                    train_start = time.perf_counter()
 
                     if has_existing:
                         try:
@@ -605,7 +601,6 @@ class SavgolTrendStrategy:
                                     configure_catboost_cpu_continuation(model)
                                     model.fit(X_train, y_train, init_model=model)
                                 else:
-                                    print("(no saved trees yet, training fresh)...", end=" ", flush=True)
                                     incremental_failed = True
                             else:
                                 model.fit(X_train, y_train)
@@ -624,6 +619,8 @@ class SavgolTrendStrategy:
                         model = _fresh_model(name, device)
                         model.fit(X_train, y_train)
 
+                train_elapsed = time.perf_counter() - train_start
+
                 val_pred = np.asarray(model.predict(X_val), dtype=float)
                 if np.any(np.isnan(val_pred)) or np.any(np.isinf(val_pred)):
                     continue
@@ -635,9 +632,9 @@ class SavgolTrendStrategy:
                 trained_models[name] = model
                 model_scores[name] = float(score)
                 mode = "incremental" if has_existing and not incremental_failed else "fresh"
-                print(f"      ✅ SavGol Trend {name}: spearman={score:.3f} ({mode})")
+                print(f"spearman = {score:.3f} ({mode}, {train_elapsed:.1f}s)")
             except Exception as exc:
-                print(f"      ⚠️ SavGol Trend {name} failed: {exc}")
+                print(f"failed: {exc}")
 
         if not trained_models:
             print("   ⚠️ SavGol Trend: No models trained successfully")
@@ -648,15 +645,21 @@ class SavgolTrendStrategy:
         self.all_models = trained_models
         self.all_scores = model_scores
         self.last_train_day = self.day_count
-        print(
-            f"   ✅ SavGol Trend: Trained {len(trained_models)} models. Best = {self.best_name} "
-            f"(val spearman={model_scores[self.best_name]:.3f})"
-        )
-        self.save_model(
+        save_succeeded = self.save_model(
             current_date=current_date,
             train_start=train_samples[0][0],
             train_end=train_samples[-1][0],
         )
+        if save_succeeded:
+            print(
+                f"   ✅ SavGol Trend: Saved {len(trained_models)} models. Best = {self.best_name} "
+                f"(spearman {model_scores[self.best_name]:.3f})"
+            )
+        else:
+            print(
+                f"   ⚠️ SavGol Trend: Trained {len(trained_models)} models, but save failed. "
+                f"Best = {self.best_name} (spearman {model_scores[self.best_name]:.3f})"
+            )
         return True
 
     def save_model(
@@ -664,7 +667,7 @@ class SavgolTrendStrategy:
         current_date: Optional[datetime] = None,
         train_start: Optional[pd.Timestamp] = None,
         train_end: Optional[pd.Timestamp] = None,
-    ):
+    ) -> bool:
         """Persist model and training state for later reuse."""
         try:
             MODEL_SAVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -698,8 +701,10 @@ class SavgolTrendStrategy:
             joblib.dump(payload, SAVGOL_TREND_MODEL_PATH)
             save_native_model_artifacts(payload, SAVGOL_TREND_MODEL_PATH)
             print(f"   💾 SavGol Trend: Saved model to {SAVGOL_TREND_MODEL_PATH}")
+            return True
         except Exception as exc:
             print(f"   ⚠️ SavGol Trend: Failed to save model: {exc}")
+            return False
 
     def load_model(self) -> bool:
         """Load a previously trained model if available."""

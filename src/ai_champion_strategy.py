@@ -34,26 +34,18 @@ from config import (
     AI_CHAMPION_RETRAIN_DAYS,
     XGBOOST_USE_GPU,
 )
+from strategy_universes import (
+    AI_CHAMPION_STRATEGY_SOURCES,
+    build_pairwise_feature_names,
+    get_enabled_strategy_aliases,
+)
 
 
 MODEL_SAVE_DIR = Path("logs/models")
 AI_CHAMPION_MODEL_PATH = MODEL_SAVE_DIR / "ai_champion_model.joblib"
 
-CANDIDATE_STRATEGIES = [
-    "ai_elite",
-    "ai_elite_market_up",
-    "ai_elite_filtered",
-    "multi_tf_ensemble",
-]
-
-PAIRWISE_FEATURES = [
-    ("ai_elite", "ai_elite_market_up"),
-    ("ai_elite", "ai_elite_filtered"),
-    ("ai_elite", "multi_tf_ensemble"),
-    ("ai_elite_market_up", "ai_elite_filtered"),
-    ("ai_elite_market_up", "multi_tf_ensemble"),
-    ("ai_elite_filtered", "multi_tf_ensemble"),
-]
+CANDIDATE_STRATEGIES = tuple(get_enabled_strategy_aliases(AI_CHAMPION_STRATEGY_SOURCES))
+PAIRWISE_FEATURES = build_pairwise_feature_names(CANDIDATE_STRATEGIES)
 
 
 def _clone_model(name: str, device: str):

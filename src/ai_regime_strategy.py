@@ -27,6 +27,7 @@ from model_training_safety import (
     restore_native_model_artifacts,
     save_native_model_artifacts,
 )
+from strategy_universes import AI_REGIME_STRATEGY_SOURCES, get_enabled_strategy_aliases
 
 # Model save paths
 MODEL_SAVE_DIR = Path("logs/models")
@@ -34,113 +35,7 @@ AI_REGIME_MODEL_PATH = MODEL_SAVE_DIR / "ai_regime_model.joblib"
 AI_REGIME_ENCODER_PATH = MODEL_SAVE_DIR / "ai_regime_encoder.joblib"
 
 
-# Sub-strategies to choose from - ALL major strategies from backtest
-SUB_STRATEGIES = [
-    # Risk-Adjusted Momentum strategies
-    'risk_adj_mom_3m',           # Risk-Adj Mom 3M
-    'risk_adj_mom_3m_monthly',   # Risk-Adj Mom 3M Monthly
-    'risk_adj_mom_3m_up',        # Risk-Adj Mom 3M Market Up
-    'risk_adj_mom_3m_stop',      # Risk-Adj Mom 3M with Stops
-    'risk_adj_mom_6m',           # Risk-Adj Mom 6M
-    'risk_adj_mom_6m_monthly',   # Risk-Adj Mom 6M Monthly
-    'risk_adj_mom',              # Risk-Adj Mom 1Y
-    'risk_adj_mom_1m',           # Risk-Adj Mom 1M
-    'risk_adj_mom_1m_monthly',   # Risk-Adj Mom 1M Monthly
-    'risk_adj_mom_3m_sent',      # Risk-Adj Mom 3M Sentiment
-
-    # AI/ML Strategies
-    'elite_hybrid',              # Elite Hybrid
-    'elite_risk',                # Elite Risk
-    'ai_elite',                  # AI Elite
-    'ai_elite_monthly',          # AI Elite Monthly
-    'ai_elite_market_up',        # AI Elite Market Up
-    'ai_elite_filtered',         # AI Elite Filtered
-    'momentum_ai_hybrid',        # Momentum+AI
-
-    # Momentum Strategies
-    'momentum_volatility_hybrid_6m',  # Mom-Vol Hybrid 6M
-    'momentum_volatility_hybrid',     # Mom-Vol Hybrid
-    'momentum_volatility_hybrid_1y_3m', # Mom-Vol Hybrid 1Y/3M
-    'vol_adj_mom',               # Vol-Adj Mom
-    'vol_sweet_mom',             # VolSweet Mom
-    '1m_vol_sweet',              # 1M VolSweet
-    'price_acceleration',       # Price Acceleration
-
-    # Buy & Hold Strategies
-    'static_bh_1y',              # Static BH 1Y
-    'static_bh_6m',             # Static BH 6M
-    'static_bh_3m',             # Static BH 3M
-    'static_bh_1m',             # Static BH 1M
-    'bh_1y_monthly',             # BH 1Y Monthly
-    'bh_6m_monthly',             # BH 6M Monthly
-    'bh_3m_monthly',             # BH 3M Monthly
-    'bh_1m_monthly',             # BH 1M Monthly
-
-    # Dynamic Buy & Hold Strategies
-    'dynamic_bh_1y',            # Dynamic BH 1Y
-    'dynamic_bh_6m',            # Dynamic BH 6M
-    'dynamic_bh_3m',            # Dynamic BH 3M
-    'dynamic_bh_1m',            # Dynamic BH 1M
-    'dynamic_bh_1y_vol',        # Dynamic BH 1Y+Vol Filter
-    'dynamic_bh_1y_ts',         # Dynamic BH 1Y+Trailing Stop
-
-    # Enhanced BH Strategies
-    'bh_1y_vol_trigger',         # BH 1Y Vol Trigger
-    'bh_1y_perf_trigger',       # BH 1Y Perf Trigger
-    'bh_1y_mom_trigger',        # BH 1Y Mom Trigger
-    'bh_1y_atr_trigger',        # BH 1Y ATR Trigger
-    'bh_1y_hybrid_trigger',     # BH 1Y Hybrid Trigger
-    'bh_1y_volume',             # BH 1Y Volume
-    'bh_1y_sector',             # BH 1Y Sector
-    'bh_1y_perf_thresh',        # BH 1Y Perf Threshold
-    'bh_1y_market_regime',      # BH 1Y Market Regime
-    'bh_1y_mom_persist',        # BH 1Y Mom Persistence
-    'bh_1y_overlap',            # BH 1Y Overlap
-    'bh_1y_rank_drift',         # BH 1Y Rank Drift
-    'bh_1y_drawdown',           # BH 1Y Drawdown
-    'bh_1y_smart_monthly',      # BH 1Y Smart Monthly
-
-    # Technical Analysis Strategies
-    'concentrated_3m',          # Concentrated 3M
-    'dual_momentum',            # Dual Momentum
-    'trend_atr',                # Trend ATR
-    'bb_squeeze',               # BB Squeeze
-    'bb_rsi_combo',             # BB RSI Combo
-    'bb_breakout',              # BB Breakout
-    'bb_mean_rev',              # BB Mean Reversion
-    'trend_breakout',           # Trend Breakout
-
-    # Ensemble Strategies
-    'adaptive_ensemble',        # Adaptive Ensemble
-    'volatility_ensemble',      # Volatility Ensemble
-    'correlation_ensemble',     # Correlation Ensemble
-    'dynamic_pool',             # Dynamic Pool
-    '3m_1y_ratio',              # 3M/1Y Ratio
-    '1y_3m_ratio',              # 1Y/3M Ratio
-
-    # Quality Strategies
-    'quality_momentum',         # Quality+Mom
-
-    # Sentiment Strategies
-    'risk_adj_sent',            # RiskAdj Sent
-    'analyst_rec',              # Analyst Recommendation
-
-    # Special Strategies
-    'turnaround',               # Turnaround
-    'inverse_etf_hedge',        # Inverse ETF Hedge
-
-    # Meta Strategies (if enabled)
-    'meta_weighted',            # Meta Weighted
-    'meta_tiered',              # Meta Tiered
-    'meta_ensemble',            # Meta Ensemble
-    'meta_regime',              # Meta Regime
-    'meta_recency',             # Meta Recency
-    'meta_efficiency',          # Meta Efficiency
-    'meta_minvar',              # Meta MinVar
-    'meta_bayesian',            # Meta Bayesian
-    'meta_adaptive',            # Meta Adaptive
-    'meta_consensus',           # Meta Consensus
-]
+SUB_STRATEGIES = get_enabled_strategy_aliases(AI_REGIME_STRATEGY_SOURCES)
 
 # Regime features to extract
 REGIME_LOOKBACK = 20  # Days to look back for regime features
@@ -452,6 +347,14 @@ class AIRegimeAllocator:
         feature_cols = [c for c in train_df.columns if c != 'label']
         X = train_df[feature_cols].values
 
+        min_training_samples = 10
+        if len(X) < min_training_samples:
+            print(
+                f"   ℹ️ AI Regime: Only {len(X)} usable samples; need at least "
+                f"{min_training_samples} before training"
+            )
+            return True
+
         # Train classifiers (XGBoost + LightGBM for GPU + incremental support)
         from sklearn.model_selection import train_test_split
         from sklearn.metrics import accuracy_score
@@ -460,21 +363,67 @@ class AIRegimeAllocator:
         import lightgbm as lgb
         import time
 
+        def _fresh_classifier(name: str, device: str):
+            if name == 'XGBoost':
+                return xgb.XGBClassifier(
+                    n_estimators=100, max_depth=4, learning_rate=0.1,
+                    subsample=0.8, random_state=42,
+                    tree_method='hist', device=device, verbosity=0, n_jobs=-1,
+                    use_label_encoder=False, eval_metric='mlogloss'
+                )
+            if name == 'LightGBM':
+                return lgb.LGBMClassifier(
+                    n_estimators=100, max_depth=4, learning_rate=0.1,
+                    subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
+                )
+            if name == 'CatBoost':
+                import catboost as cb
+                return cb.CatBoostClassifier(
+                    iterations=100, depth=4, learning_rate=0.1,
+                    task_type='CPU', random_seed=42, verbose=0,
+                    allow_writing_files=False, thread_count=1
+                )
+            raise ValueError(f"Unknown model name: {name}")
+
         device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
-        has_existing = self.all_models is not None
+        has_existing = self.all_models is not None and len(self.all_models) > 0
+
+        # Require a stratified split with every class present in both train and val.
+        unique, counts = np.unique(y, return_counts=True)
+        min_class_count = int(counts.min()) if len(counts) > 0 else 0
+        if min_class_count < 2:
+            print(
+                f"   ℹ️ AI Regime: Need at least 2 samples per class before training "
+                f"(current min class count={min_class_count})"
+            )
+            return True
+
+        test_size = max(len(unique), int(round(len(X) * 0.2)))
+        test_size = min(test_size, len(X) - len(unique))
+        if test_size < len(unique) or (len(X) - test_size) < len(unique):
+            print(
+                f"   ℹ️ AI Regime: Not enough samples for a stratified train/val split "
+                f"across {len(unique)} classes"
+            )
+            return True
+
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=test_size, random_state=42, stratify=y
+        )
+
+        if len(X_train) < len(unique):
+            print(
+                f"   ℹ️ AI Regime: Need at least one training sample per class "
+                f"(train={len(X_train)}, classes={len(unique)})"
+            )
+            return True
 
         # Build models (XGBoost + LightGBM - both support incremental training)
         if has_existing:
             models = dict(self.all_models)
             if 'CatBoost' not in models:
                 try:
-                    import catboost as cb
-
-                    models['CatBoost'] = cb.CatBoostClassifier(
-                        iterations=100, depth=4, learning_rate=0.1,
-                        task_type='CPU', random_seed=42, verbose=0,
-                        allow_writing_files=False, thread_count=1
-                    )
+                    models['CatBoost'] = _fresh_classifier('CatBoost', device)
                 except ImportError:
                     pass
             print(
@@ -483,25 +432,11 @@ class AIRegimeAllocator:
             )
         else:
             models = {
-                'XGBoost': xgb.XGBClassifier(
-                    n_estimators=100, max_depth=4, learning_rate=0.1,
-                    subsample=0.8, random_state=42,
-                    tree_method='hist', device=device, verbosity=0, n_jobs=-1,
-                    use_label_encoder=False, eval_metric='mlogloss'
-                ),
-                'LightGBM': lgb.LGBMClassifier(
-                    n_estimators=100, max_depth=4, learning_rate=0.1,
-                    subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
-                )
+                'XGBoost': _fresh_classifier('XGBoost', device),
+                'LightGBM': _fresh_classifier('LightGBM', device),
             }
-            # Add CatBoost if available
             try:
-                import catboost as cb
-                models['CatBoost'] = cb.CatBoostClassifier(
-                    iterations=100, depth=4, learning_rate=0.1,
-                    task_type='CPU', random_seed=42, verbose=0,
-                    allow_writing_files=False, thread_count=1
-                )
+                models['CatBoost'] = _fresh_classifier('CatBoost', device)
             except ImportError:
                 pass
             print(
@@ -509,30 +444,9 @@ class AIRegimeAllocator:
                 f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
             )
 
-        # Train/val split (faster than CV)
-        # Use smaller test size for small datasets
-        test_size = min(0.2, max(0.1, len(X) // 3))
-
-        # Check if stratification is possible (need at least 2 samples per class)
-        unique, counts = np.unique(y, return_counts=True)
-        can_stratify = all(c >= 2 for c in counts) and len(unique) >= 2
-
-        if can_stratify:
-            X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=test_size, random_state=42, stratify=y)
-        else:
-            # Not enough samples per class - use simple split without stratification
-            X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=test_size, random_state=42)
-
         # Train all models and evaluate
         trained_models = {}
         model_scores = {}
-
-        # Remap ALL labels to be consecutive BEFORE training (XGBoost requires this)
-        # e.g., [0, 1, 3, 6] -> [0, 1, 2, 3]
-        unique_labels_all = np.unique(y_train)
-        label_map_all = {old: new for new, old in enumerate(unique_labels_all)}
-        y_train_mapped = np.array([label_map_all[l] for l in y_train])
-        y_val_mapped = np.array([label_map_all.get(l, 0) for l in y_val])
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -541,73 +455,54 @@ class AIRegimeAllocator:
                     print(f"      🔄 {name}: Training...", end=" ", flush=True)
                     start_time = time.time()
 
+                    incremental_failed = False
+                    used_incremental = False
+
                     # Check if incremental training is safe (classes and features must match)
-                    can_increment = has_existing
-                    if can_increment:
-                        old_classes = set(m.classes_)
-                        new_classes = set(np.unique(y_train))
-                        old_n_features = m.n_features_in_ if hasattr(m, 'n_features_in_') else 0
-                        new_n_features = X_train.shape[1]
+                    if has_existing:
+                        try:
+                            old_classes = set(getattr(m, 'classes_', []))
+                            new_classes = set(np.unique(y_train))
+                            old_n_features = m.n_features_in_ if hasattr(m, 'n_features_in_') else 0
+                            new_n_features = X_train.shape[1]
 
-                        if old_classes != new_classes or old_n_features != new_n_features:
-                            reason = []
-                            if old_classes != new_classes:
-                                reason.append(f"classes {len(old_classes)}→{len(new_classes)}")
-                            if old_n_features != new_n_features:
-                                reason.append(f"features {old_n_features}→{new_n_features}")
-                            print(f"{', '.join(reason)}, retraining from scratch...", end=" ", flush=True)
-                            # Recreate model from scratch
-                            if name == 'XGBoost':
-                                m = xgb.XGBClassifier(
-                                    n_estimators=100, max_depth=4, learning_rate=0.1,
-                                    subsample=0.8, random_state=42,
-                                    tree_method='hist', device=device, verbosity=0, n_jobs=-1,
-                                    use_label_encoder=False, eval_metric='mlogloss'
-                                )
-                            elif name == 'LightGBM':
-                                m = lgb.LGBMClassifier(
-                                    n_estimators=100, max_depth=4, learning_rate=0.1,
-                                    subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
-                                )
-                            elif name == 'CatBoost':
-                                import catboost as cb
-                                m = cb.CatBoostClassifier(
-                                    iterations=100, depth=4, learning_rate=0.1,
-                                    task_type='CPU', random_seed=42, verbose=0,
-                                    allow_writing_files=False, thread_count=1
-                                )
-                            can_increment = False
-
-                    # True incremental training for supported models
-                    if can_increment:
-                        # Use original labels for incremental training (model already knows the classes)
-                        if name == 'XGBoost':
-                            m.fit(X_train, y_train, xgb_model=m.get_booster())
-                        elif name == 'LightGBM':
-                            m.fit(X_train, y_train, init_model=m.booster_)
-                        elif name == 'CatBoost':
-                            if catboost_has_trained_trees(m):
-                                configure_catboost_cpu_continuation(m)
-                                m.fit(X_train, y_train, init_model=m)
+                            if old_classes != new_classes or old_n_features != new_n_features:
+                                reason = []
+                                if old_classes != new_classes:
+                                    reason.append(f"classes {len(old_classes)}→{len(new_classes)}")
+                                if old_n_features != new_n_features:
+                                    reason.append(f"features {old_n_features}→{new_n_features}")
+                                print(f"{', '.join(reason)}, retraining from scratch...", end=" ", flush=True)
+                                incremental_failed = True
                             else:
-                                print("(no saved trees yet, training fresh)...", end=" ", flush=True)
-                                can_increment = False
-                        else:
-                            m.fit(X_train, y_train)
-                    if not can_increment:
-                        # Fresh training - use mapped labels (consecutive: 0, 1, 2, ...)
-                        m.fit(X_train, y_train_mapped)
+                                used_incremental = True
+                                if name == 'XGBoost':
+                                    m.fit(X_train, y_train, xgb_model=m.get_booster())
+                                elif name == 'LightGBM':
+                                    m.fit(X_train, y_train, init_model=m.booster_)
+                                elif name == 'CatBoost':
+                                    if catboost_has_trained_trees(m):
+                                        configure_catboost_cpu_continuation(m)
+                                        m.fit(X_train, y_train, init_model=m)
+                                    else:
+                                        print("(no saved trees yet, training fresh)...", end=" ", flush=True)
+                                        incremental_failed = True
+                                else:
+                                    m.fit(X_train, y_train)
+                        except Exception as e:
+                            print(f"(incremental failed: {e}, retraining fresh)...", end=" ", flush=True)
+                            incremental_failed = True
 
-                    # Validate on held-out set (use mapped labels for fresh, original for incremental)
-                    if can_increment:
-                        y_pred = m.predict(X_val)
-                        score = accuracy_score(y_val, y_pred)
-                    else:
-                        y_pred = m.predict(X_val)
-                        score = accuracy_score(y_val_mapped, y_pred)
+                    if not used_incremental or incremental_failed:
+                        m = _fresh_classifier(name, device)
+                        m.fit(X_train, y_train)
+
+                    # Validate on held-out set
+                    y_pred = m.predict(X_val)
+                    score = accuracy_score(y_val, y_pred)
 
                     elapsed = time.time() - start_time
-                    status = "incremental" if can_increment else "fresh"
+                    status = "incremental" if used_incremental and not incremental_failed else "fresh"
                     print(f"Accuracy = {score:.3f} ({status}, {elapsed:.1f}s)")
                     trained_models[name] = m
                     model_scores[name] = score
@@ -818,7 +713,9 @@ def select_ai_regime_stocks(
         select_volatility_adj_mom_stocks, select_momentum_ai_hybrid_stocks,
         select_ai_elite_with_training, select_risk_adj_mom_stocks,
         select_quality_momentum_stocks, select_3m_1y_ratio_stocks, select_1y_3m_ratio_stocks,
-        select_momentum_volatility_hybrid_stocks
+        select_momentum_volatility_hybrid_1y3m_stocks,
+        select_momentum_volatility_hybrid_6m_stocks,
+        select_momentum_volatility_hybrid_stocks,
     )
     from new_strategies import select_concentrated_3m_stocks, select_dual_momentum_stocks, select_trend_following_atr_stocks
     from bollinger_bands_strategy import (
@@ -853,9 +750,9 @@ def select_ai_regime_stocks(
         'momentum_ai_hybrid': lambda: select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
 
         # Momentum Strategies
-        'momentum_volatility_hybrid_6m': lambda: select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=126),
+        'momentum_volatility_hybrid_6m': lambda: select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'momentum_volatility_hybrid': lambda: select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'momentum_volatility_hybrid_1y_3m': lambda: select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
+        'momentum_volatility_hybrid_1y_3m': lambda: select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'vol_adj_mom': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'vol_sweet_mom': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         '1m_vol_sweet': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
@@ -897,8 +794,8 @@ def select_ai_regime_stocks(
 
         # Technical Strategies
         'concentrated_3m': lambda: select_concentrated_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'dual_momentum': lambda: select_dual_momentum_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'trend_atr': lambda: select_trend_following_atr_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
+        'dual_momentum': lambda: select_dual_momentum_stocks(all_tickers, ticker_data_grouped, current_date, top_n)[0],
+        'trend_atr': lambda: select_trend_following_atr_stocks(all_tickers, ticker_data_grouped, current_date, top_n)[0],
         'bb_squeeze': lambda: select_bb_squeeze_breakout_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'bb_rsi_combo': lambda: select_bb_rsi_combo_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'bb_breakout': lambda: select_bb_breakout_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
