@@ -1802,6 +1802,15 @@ def _run_portfolio_backtest_walk_forward(
     initial_capital_needed = PORTFOLIO_SIZE * capital_per_stock
     cash_balance = initial_capital_needed  # Start with cash available for initial purchases
 
+    # Fixed benchmark: top PORTFOLIO_SIZE performers selected once at backtest start.
+    benchmark_top_start_name = f"Start Top {PORTFOLIO_SIZE}"
+    benchmark_top_start_portfolio_value = initial_capital_needed
+    benchmark_top_start_portfolio_history = []
+    benchmark_top_start_positions = {}
+    benchmark_top_start_cash = initial_capital_needed
+    benchmark_top_start_stocks = []
+    benchmark_top_start_transaction_costs = 0.0
+
 
     # Track STATIC BH 1Y PORTFOLIO (with optional periodic rebalancing)
     static_bh_1y_portfolio_value = initial_capital_needed
@@ -3065,6 +3074,47 @@ def _run_portfolio_backtest_walk_forward(
         print(f"   ⚠️ {len(missing_tickers)} tickers NOT found in data: {missing_tickers[:10]}{'...' if len(missing_tickers) > 10 else ''}")
         print(f"   🔍 DEBUG: initial_top_tickers sample: {initial_top_tickers[:5]}")
         print(f"   🔍 DEBUG: available_tickers_in_data sample: {list(available_tickers_in_data)[:5]}")
+
+    # Build a fixed benchmark portfolio from the highest performers at the backtest start.
+    benchmark_start_date = business_days[0] if business_days else backtest_start_date
+    benchmark_top_start_stocks = select_top_performers(
+        initial_top_tickers,
+        ticker_data_grouped,
+        benchmark_start_date,
+        lookback_days=365,
+        top_n=PORTFOLIO_SIZE,
+    )
+    if benchmark_top_start_stocks:
+        (
+            benchmark_top_start_positions,
+            benchmark_top_start_cash,
+            benchmark_top_start_stocks,
+            benchmark_top_start_transaction_costs,
+            _,
+        ) = _smart_rebalance_portfolio(
+            strategy_name=benchmark_top_start_name,
+            current_stocks=[],
+            new_stocks=benchmark_top_start_stocks,
+            positions=benchmark_top_start_positions,
+            cash=benchmark_top_start_cash,
+            ticker_data_grouped=ticker_data_grouped,
+            current_date=benchmark_start_date,
+            transaction_cost=TRANSACTION_COST,
+            portfolio_size=PORTFOLIO_SIZE,
+            force_rebalance=True,
+        )
+        benchmark_top_start_portfolio_value = _mark_to_market_value(
+            benchmark_top_start_positions,
+            benchmark_top_start_cash,
+            ticker_data_grouped,
+            benchmark_start_date,
+        )
+        print(
+            f"   📌 {benchmark_top_start_name}: Fixed benchmark holdings at start = "
+            f"{benchmark_top_start_stocks}"
+        )
+    else:
+        print(f"   ⚠️ {benchmark_top_start_name}: Could not build start-of-backtest benchmark holdings")
 
     day_count = 0
     retrain_count = 0
@@ -10010,9 +10060,25 @@ def _run_portfolio_backtest_walk_forward(
         if day_count % 50 == 0:
             print(f"   📈 Processed {day_count}/{len(business_days)} days, portfolio: {current_portfolio_stocks}")
 
+        benchmark_top_start_portfolio_value = _mark_to_market_value(
+            benchmark_top_start_positions,
+            benchmark_top_start_cash,
+            ticker_data_grouped,
+            current_date,
+        )
+        benchmark_top_start_portfolio_history.append(benchmark_top_start_portfolio_value)
+
         # === DAILY SUMMARY ===
         # Build strategy data dynamically from local variables using centralized helper
         daily_strat_data = _build_daily_strategy_data(locals())
+        daily_strat_data['benchmark_top_start'] = {
+            'value': benchmark_top_start_portfolio_value,
+            'history': benchmark_top_start_portfolio_history,
+            'cash': benchmark_top_start_cash,
+            'positions': len(benchmark_top_start_positions),
+            'tickers': list(benchmark_top_start_positions.keys()),
+            'display_name': benchmark_top_start_name,
+        }
 
         if daily_strat_data:
             print(f"\n📊 DAILY SUMMARY - Day {day_count} ({current_date.strftime('%Y-%m-%d')})")
@@ -10147,6 +10213,7 @@ def _run_portfolio_backtest_walk_forward(
 
         # Build (name, history) list for the summary table
         strategy_histories = [
+            (benchmark_top_start_name, benchmark_top_start_portfolio_history),
             ("Static BH 1Y",        static_bh_1y_portfolio_history        if config.ENABLE_STATIC_BH else None),
             ("Static BH 6M",        static_bh_6m_portfolio_history        if config.ENABLE_STATIC_BH_6M else None),
             ("Static BH 3M",        static_bh_3m_portfolio_history        if config.ENABLE_STATIC_BH else None),
@@ -10311,6 +10378,7 @@ def _run_portfolio_backtest_walk_forward(
             'day_count': day_count,
         },
         'strategies': {
+            'benchmark_top_start':      _strat(benchmark_top_start_portfolio_value, benchmark_top_start_portfolio_history, benchmark_top_start_transaction_costs, benchmark_top_start_cash),
             'static_bh_1y':             _strat(static_bh_1y_portfolio_value, static_bh_1y_portfolio_history, static_bh_transaction_costs, static_bh_1y_cash),
             'static_bh_6m':             _strat(static_bh_6m_portfolio_value, static_bh_6m_portfolio_history, static_bh_6m_transaction_costs, static_bh_6m_cash),
             'static_bh_3m':             _strat(static_bh_3m_portfolio_value, static_bh_3m_portfolio_history, static_bh_3m_transaction_costs, static_bh_3m_cash),
