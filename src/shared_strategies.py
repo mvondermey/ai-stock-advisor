@@ -13,6 +13,7 @@ from typing import List, Dict, Optional, Tuple
 import pandas as pd
 
 import numpy as np
+from tqdm import tqdm
 
 from datetime import datetime, timedelta, timezone
 
@@ -956,7 +957,9 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
 
                                current_date: datetime = None, top_n: int = 20, lookback_days: int = 365,
 
-                               strategy_name: str = "Risk-Adj Mom") -> List[str]:
+                               strategy_name: str = "Risk-Adj Mom",
+
+                               price_history_cache=None) -> List[str]:
 
     """
 
@@ -992,21 +995,37 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
 
     # Always use parallel processing
 
-    from parallel_backtest import calculate_parallel_risk_adjusted_scores
+    if price_history_cache is not None:
 
+        from parallel_backtest import calculate_cached_risk_adjusted_scores
 
+        scores_data = calculate_cached_risk_adjusted_scores(
 
-    scores_data = calculate_parallel_risk_adjusted_scores(
+            filtered_tickers,
 
-        filtered_tickers,
+            price_history_cache,
 
-        ticker_data_grouped,
+            current_date,
 
-        current_date,
+            lookback_days=lookback_days
 
-        lookback_days=lookback_days
+        )
 
-    )
+    else:
+
+        from parallel_backtest import calculate_parallel_risk_adjusted_scores
+
+        scores_data = calculate_parallel_risk_adjusted_scores(
+
+            filtered_tickers,
+
+            ticker_data_grouped,
+
+            current_date,
+
+            lookback_days=lookback_days
+
+        )
 
 
 
@@ -1328,7 +1347,9 @@ def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Di
 
 def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame],
 
-                                   current_date: datetime = None, top_n: int = 20) -> List[str]:
+                                   current_date: datetime = None, top_n: int = 20,
+
+                                   price_history_cache=None, exclude_inverse_etfs: bool = True) -> List[str]:
 
     """
 
@@ -1340,9 +1361,9 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
 
 
 
-    # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
+    # Most callers should exclude inverse ETFs, but backtesting historically did not.
 
-    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS] if exclude_inverse_etfs else list(all_tickers)
 
 
 
@@ -1392,211 +1413,165 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
 
 
 
-            if len(ticker_data) < MIN_DATA_DAYS_GENERAL:  # Need enough data for quality assessment
+            if len(ticker_data) < MIN_DATA_DAYS_GENERAL:
 
                 continue
 
 
 
-            # ✅ BETTER FIX: Use data's max date and convert current_date to pandas Timestamp
+            if price_history_cache is not None:
+
+                from parallel_backtest import _window_slice
+
+                date_ns = price_history_cache.date_ns_by_ticker.get(ticker)
+
+                close_values = price_history_cache.close_by_ticker.get(ticker)
+
+                if date_ns is None or close_values is None:
+
+                    continue
+
+
+
+                recent_close_window = _window_slice(date_ns, close_values, current_date, 90)
+
+                if recent_close_window is None or recent_close_window.size < 30:
+
+                    continue
+
+
+
+                recent_close_window = recent_close_window[-63:] if recent_close_window.size >= 63 else recent_close_window
+
+                if recent_close_window.size < 10:
+
+                    continue
+
+
+
+                start_price = float(recent_close_window[0])
+
+                end_price = float(recent_close_window[-1])
+
+                if start_price <= 0 or np.isnan(start_price) or np.isnan(end_price):
+
+                    continue
+
+
+
+                momentum_score = ((end_price - start_price) / start_price) * 100.0
+
+                daily_returns = np.diff(recent_close_window) / recent_close_window[:-1]
+
+                if daily_returns.size <= 5:
+
+                    continue
+
+
+
+                volatility = float(np.std(daily_returns, ddof=1) * np.sqrt(252))
+
+                quality_volatility = max(0.0, 50.0 - volatility * 100.0)
+
+                combined_score = (momentum_score * 0.7) + (quality_volatility * 0.3)
+
+                quality_momentum_candidates.append((ticker, combined_score, momentum_score, quality_volatility))
+
+                continue
+
+
 
             current_date_tz = ticker_data.index.max()
-
-
-
-            # If current_date is provided, try to use it (must convert to pandas Timestamp first)
 
             if current_date is not None:
 
                 try:
 
-                    # Convert to pandas Timestamp (handles both datetime and Timestamp)
-
                     current_ts = pd.Timestamp(current_date)
-
-
-
-                    # If data has timezone, ensure current_ts matches
 
                     if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
 
                         if current_ts.tz is None:
 
-                            # current_ts is naive, localize to data's timezone
-
                             current_ts = current_ts.tz_localize(ticker_data.index.tz)
 
                         else:
-
-                            # current_ts has timezone, convert to data's timezone
 
                             current_ts = current_ts.tz_convert(ticker_data.index.tz)
 
 
 
-                    # Check data freshness - warn if data is older than configured limit
-
                     data_age_days = (current_ts - current_date_tz).total_seconds() / 86400
 
                     if data_age_days > DATA_FRESHNESS_MAX_DAYS:
-
-                        # Data is stale - raise error
 
                         raise ValueError(f"Data too old: {data_age_days:.1f} days (max {DATA_FRESHNESS_MAX_DAYS} days)")
 
 
 
-                    # Use the minimum of current_ts and data's max (can't use future data)
-
                     current_date_tz = min(current_ts, current_date_tz)
 
                 except ValueError:
-
-                    # Re-raise ValueError (stale data error) so it gets caught in outer exception handler
 
                     raise
 
                 except Exception as e:
 
-                    # For other errors (timezone conversion, etc), stick with data's max date
-
                     print(f"Error processing {ticker}: {e}")
 
-                    pass
 
 
+            perf_start_date_qm = current_date_tz - timedelta(days=90)
 
-            # Momentum calculation (1-year) using date filtering
+            data_slice = ticker_data.loc[perf_start_date_qm:current_date_tz]
 
-            momentum_start = current_date_tz - timedelta(days=365)  # 1 year for better performance measurement
-
-            momentum_data = ticker_data[(ticker_data.index >= momentum_start) & (ticker_data.index <= current_date_tz)]
-
-
-
-            if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
-
-                print(f"   🔍 DEBUG: {ticker} data range: {ticker_data.index.min()} to {ticker_data.index.max()}")
-
-                print(f"   🔍 DEBUG: {ticker} momentum range: {momentum_start} to {current_date_tz}")
-
-                print(f"   🔍 DEBUG: {ticker} momentum_data points: {len(momentum_data)}")
-
-            if len(momentum_data) >= 2:
-
-                # Drop NaN values from Close prices
-
-                valid_prices = momentum_data['Close'].dropna()
-
-                if len(valid_prices) < 2:
-
-                    momentum_return = 0.0
-
-                else:
-
-                    start_price = valid_prices.iloc[0]
-
-                    end_price = valid_prices.iloc[-1]
-
-                    if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
-
-                        momentum_calc = (end_price / start_price - 1) * 100
-
-                        print(f"   🔍 DEBUG: {ticker} start_price={start_price}, end_price={end_price}")
-
-                        print(f"   🔍 DEBUG: {ticker} momentum={momentum_calc:.1f}%")
-
-                    if start_price <= 0 or pd.isna(start_price) or pd.isna(end_price):
-
-                        momentum_return = 0.0
-
-                    else:
-
-                        momentum_return = (end_price / start_price - 1) * 100
-
-            else:
-
-                momentum_return = 0.0
-
-
-
-            # Check for NaN values
-
-            if pd.isna(momentum_return):
-
-                if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
-
-                    print(f"   🔍 DEBUG: {ticker} momentum=nan% (NaN value, filtered)")
+            if len(data_slice) < 30:
 
                 continue
 
 
 
-            # Only include stocks with positive momentum
+            recent_data = data_slice.tail(63) if len(data_slice) >= 63 else data_slice
 
-            if momentum_return <= 0:
-
-                if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
-
-                    print(f"   🔍 DEBUG: {ticker} momentum={momentum_return:.1f}% (<=0, filtered)")
+            if len(recent_data) < 10:
 
                 continue
 
 
 
-            # Quality indicators (simplified)
+            start_price = recent_data['Close'].iloc[0]
 
-            # 1. Price stability (lower volatility is better)
+            end_price = recent_data['Close'].iloc[-1]
 
-            daily_returns = ticker_data['Close'].pct_change().dropna()
+            if start_price <= 0 or pd.isna(start_price) or pd.isna(end_price):
 
-            volatility = daily_returns.std() * 100
-
-
-
-            # 2. Trend consistency (positive recent performance) using date filtering
-
-            short_start = current_date_tz - timedelta(days=30)
-
-            short_data = ticker_data[(ticker_data.index >= short_start) & (ticker_data.index <= current_date_tz)]
-
-            if len(short_data) >= 2:
-
-                short_trend = (short_data['Close'].iloc[-1] / short_data['Close'].iloc[0] - 1) * 100
-
-            else:
-
-                short_trend = 0.0
+                continue
 
 
 
-            # Quality score: momentum with stability bonus
+            momentum_score = ((end_price - start_price) / start_price) * 100
 
-            stability_bonus = max(0, 50 - volatility) / 50  # Higher bonus for lower volatility
+            daily_returns = recent_data['Close'].pct_change(fill_method=None).dropna()
 
-            trend_bonus = max(0, short_trend) / 100  # Bonus for positive short trend
+            if len(daily_returns) <= 5:
 
-
-
-            quality_score = momentum_return * (1 + stability_bonus + trend_bonus)
+                continue
 
 
 
-            if momentum_return > 0:  # Only consider positive momentum (lowered from 5%)
+            volatility = daily_returns.std() * np.sqrt(252)
 
-                quality_momentum_candidates.append((ticker, quality_score, momentum_return, volatility))
+            quality_volatility = max(0, 50 - volatility * 100)
 
-            else:
+            combined_score = (momentum_score * 0.7) + (quality_volatility * 0.3)
 
-                if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
-
-                    print(f"   🔍 DEBUG: {ticker} momentum={momentum_return:.1f}% (<=0%, filtered)")
+            quality_momentum_candidates.append((ticker, combined_score, momentum_score, quality_volatility))
 
 
 
         except Exception as e:
 
-            if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:  # Debug first few
+            if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:
 
                 print(f"   🔍 DEBUG: {ticker} exception: {type(e).__name__}: {e}")
 
@@ -1616,9 +1591,9 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
 
         print(f"   📊 Top {top_n} quality + momentum: {selected_tickers}")
 
-        for ticker, score, mom, vol in quality_momentum_candidates[:top_n]:
+        for ticker, score, mom, qual in quality_momentum_candidates[:top_n]:
 
-            print(f"      {ticker}: score={score:.1f}, momentum={mom:.1f}%, vol={vol:.1f}%")
+            print(f"      {ticker}: score={score:.1f}, momentum={mom:.1f}%, quality={qual:.1f}")
 
 
 
@@ -5200,7 +5175,7 @@ def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookba
 
                           apply_performance_filter=False, filter_label="Strategy",
 
-                          exclude_inverse_etfs=True):
+                          exclude_inverse_etfs=True, price_history_cache=None):
 
     """
 
@@ -5240,8 +5215,6 @@ def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookba
 
     """
 
-    from parallel_backtest import calculate_parallel_performance
-
     from config import INVERSE_ETFS
 
 
@@ -5268,11 +5241,25 @@ def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookba
 
 
 
-    performances = calculate_parallel_performance(
+    if price_history_cache is not None:
 
-        tickers_to_rank, ticker_data_grouped, current_date, period_days=lookback_days
+        from parallel_backtest import calculate_cached_performance
 
-    )
+        performances = calculate_cached_performance(
+
+            tickers_to_rank, price_history_cache, current_date, period_days=lookback_days
+
+        )
+
+    else:
+
+        from parallel_backtest import calculate_parallel_performance
+
+        performances = calculate_parallel_performance(
+
+            tickers_to_rank, ticker_data_grouped, current_date, period_days=lookback_days
+
+        )
 
 
 
@@ -5294,7 +5281,9 @@ def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookba
 
 def select_top_performers_with_scores(all_tickers, ticker_data_grouped, current_date, lookback_days, top_n=10,
 
-                                       apply_performance_filter=False, filter_label="Strategy"):
+                                       apply_performance_filter=False, filter_label="Strategy",
+
+                                       price_history_cache=None):
 
     """
 
@@ -5307,10 +5296,6 @@ def select_top_performers_with_scores(all_tickers, ticker_data_grouped, current_
         List of (ticker, performance_pct) tuples, sorted descending
 
     """
-
-    from parallel_backtest import calculate_parallel_performance
-
-
 
     tickers_to_rank = all_tickers
 
@@ -5326,11 +5311,25 @@ def select_top_performers_with_scores(all_tickers, ticker_data_grouped, current_
 
 
 
-    performances = calculate_parallel_performance(
+    if price_history_cache is not None:
 
-        tickers_to_rank, ticker_data_grouped, current_date, period_days=lookback_days
+        from parallel_backtest import calculate_cached_performance
 
-    )
+        performances = calculate_cached_performance(
+
+            tickers_to_rank, price_history_cache, current_date, period_days=lookback_days
+
+        )
+
+    else:
+
+        from parallel_backtest import calculate_parallel_performance
+
+        performances = calculate_parallel_performance(
+
+            tickers_to_rank, ticker_data_grouped, current_date, period_days=lookback_days
+
+        )
 
 
 
@@ -5350,7 +5349,7 @@ def select_top_performers_with_scores(all_tickers, ticker_data_grouped, current_
 
 def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current_date, lookback_days,
 
-                                        max_volatility, top_n=10):
+                                        max_volatility, top_n=10, price_history_cache=None):
 
     """
 
@@ -5384,17 +5383,33 @@ def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current
 
     import pandas as pd
 
-    from parallel_backtest import calculate_parallel_performance
-
     from datetime import timedelta
 
+    if price_history_cache is not None:
 
+        from parallel_backtest import calculate_cached_performance, calculate_cached_volatility
 
-    performances = calculate_parallel_performance(
+        performances = calculate_cached_performance(
 
-        all_tickers, ticker_data_grouped, current_date, period_days=lookback_days
+            all_tickers, price_history_cache, current_date, period_days=lookback_days
 
-    )
+        )
+        cached_volatility = calculate_cached_volatility(
+
+            [ticker for ticker, _ in performances], price_history_cache, current_date, period_days=lookback_days
+
+        )
+
+    else:
+
+        from parallel_backtest import calculate_parallel_performance
+
+        performances = calculate_parallel_performance(
+
+            all_tickers, ticker_data_grouped, current_date, period_days=lookback_days
+
+        )
+        cached_volatility = None
 
 
 
@@ -5410,33 +5425,49 @@ def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current
 
         try:
 
-            ticker_data = ticker_data_grouped[ticker]
+            if cached_volatility is not None:
 
-            perf_start_date = current_date - timedelta(days=lookback_days)
+                annualized_volatility = cached_volatility.get(ticker)
 
-            perf_data = ticker_data.loc[perf_start_date:current_date]
-
-
-
-            if len(perf_data) >= 50:
-
-                valid_close = perf_data['Close'].dropna()
-
-                if len(valid_close) >= 2:
+                if annualized_volatility is not None:
 
                     stocks_evaluated += 1
 
-                    daily_returns = valid_close.pct_change(fill_method=None).dropna()
+                    if annualized_volatility <= max_volatility:
 
-                    if len(daily_returns) > 10:
+                        filtered.append((ticker, perf_pct, annualized_volatility))
 
-                        annualized_volatility = daily_returns.std() * (252 ** 0.5) * 100
+                        stocks_passed += 1
 
-                        if annualized_volatility <= max_volatility:
+            else:
 
-                            filtered.append((ticker, perf_pct, annualized_volatility))
+                ticker_data = ticker_data_grouped[ticker]
 
-                            stocks_passed += 1
+                perf_start_date = current_date - timedelta(days=lookback_days)
+
+                perf_data = ticker_data.loc[perf_start_date:current_date]
+
+
+
+                if len(perf_data) >= 50:
+
+                    valid_close = perf_data['Close'].dropna()
+
+                    if len(valid_close) >= 2:
+
+                        stocks_evaluated += 1
+
+                        daily_returns = valid_close.pct_change(fill_method=None).dropna()
+
+                        if len(daily_returns) > 10:
+
+                            annualized_volatility = daily_returns.std() * (252 ** 0.5) * 100
+
+                            if annualized_volatility <= max_volatility:
+
+                                filtered.append((ticker, perf_pct, annualized_volatility))
+
+                                stocks_passed += 1
 
         except Exception as e:
 
@@ -5630,15 +5661,14 @@ def select_ai_elite_with_training(
 
     """
 
-    from ai_elite_strategy_per_ticker import train_shared_base_model, collect_ticker_training_data, restore_catboost_sidecar
+    from ai_elite_strategy_per_ticker import train_shared_base_model, collect_ticker_training_data
 
     from ai_elite_strategy import select_ai_elite_stocks
+    from model_training_safety import restore_native_model_artifacts
 
     from config import AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, NUM_PROCESSES
 
     import os
-
-    import pickle
 
     from datetime import timedelta, timezone as tz_utc
 
@@ -5768,9 +5798,19 @@ def select_ai_elite_with_training(
 
                 print(f"   📁 {strategy_label}: Found model file, loading...")
 
-                with open(base_model_path, 'rb') as f:
+                import joblib
 
-                    model_data = pickle.load(f)
+                try:
+
+                    model_data = joblib.load(base_model_path)
+
+                except Exception:
+
+                    import pickle
+
+                    with open(base_model_path, 'rb') as f:
+
+                        model_data = pickle.load(f)
 
 
 
@@ -5836,7 +5876,47 @@ def select_ai_elite_with_training(
 
                     metadata = model_data.get('metadata', {})
 
-                    print(f"   ✅ {strategy_label}: Loaded model from {base_model_path} (wrapped format)")
+                    # Display training/update info for wrapped format
+
+                    if 'trained' in metadata:
+
+                        trained_date = metadata['trained'][:10]
+
+                        msg = f"   ✅ {strategy_label}: Loaded model from {base_model_path} (trained {trained_date}"
+
+                        if 'train_start' in metadata and 'train_end' in metadata:
+
+                            start_date = metadata['train_start'][:10]
+
+                            end_date = metadata['train_end'][:10]
+
+                            msg += f", data {start_date} to {end_date}"
+
+                        msg += ")"
+
+                        print(msg)
+
+                    elif 'updated' in metadata:
+
+                        updated_date = metadata['updated'][:10]
+
+                        msg = f"   ✅ {strategy_label}: Loaded model from {base_model_path} (updated {updated_date}"
+
+                        if 'train_start' in metadata and 'train_end' in metadata:
+
+                            start_date = metadata['train_start'][:10]
+
+                            end_date = metadata['train_end'][:10]
+
+                            msg += f", data {start_date} to {end_date}"
+
+                        msg += ")"
+
+                        print(msg)
+
+                    else:
+
+                        print(f"   ✅ {strategy_label}: Loaded model from {base_model_path}")
 
                 else:
 
@@ -5850,7 +5930,7 @@ def select_ai_elite_with_training(
 
 
 
-                loaded_model = restore_catboost_sidecar(loaded_model, base_model_path)
+                loaded_model = restore_native_model_artifacts(loaded_model, base_model_path)
                 loaded_model = _reset_saved_catboost_member(loaded_model, metadata)
 
                 ai_elite_models['_shared_base'] = loaded_model
@@ -5898,16 +5978,23 @@ def select_ai_elite_with_training(
         market_returns = {}
 
         sample_date_iter = train_start
+        market_cache_steps = max(0, ((train_end - train_start).days // 2) + 1)
+        with tqdm(
+            total=market_cache_steps,
+            desc=f"   {strategy_label} cache build",
+            ncols=100,
+            unit="day",
+        ) as pbar:
+            while sample_date_iter <= train_end:
 
-        while sample_date_iter <= train_end:
+                mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
 
-            mr = _calculate_market_return(ticker_data_grouped, sample_date_iter, AI_ELITE_FORWARD_DAYS)
+                utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
 
-            utc_key = sample_date_iter.replace(tzinfo=tz_utc.utc) if sample_date_iter.tzinfo is None else sample_date_iter
+                market_returns[utc_key] = mr if mr is not None else 0.0
 
-            market_returns[utc_key] = mr if mr is not None else 0.0
-
-            sample_date_iter += timedelta(days=2)
+                sample_date_iter += timedelta(days=2)
+                pbar.update(1)
 
 
 
@@ -5949,7 +6036,13 @@ def select_ai_elite_with_training(
 
             from backtesting import _collect_data_worker
 
-            results = pool.map(_collect_data_worker, collect_args)
+            results = list(tqdm(
+                pool.imap_unordered(_collect_data_worker, collect_args),
+                total=len(collect_args),
+                desc=f"   {strategy_label} collection",
+                ncols=100,
+                unit="ticker",
+            ))
 
 
 

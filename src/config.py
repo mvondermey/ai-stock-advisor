@@ -265,21 +265,31 @@ from multiprocessing import cpu_count
 
 def _auto_detect_num_processes():
     """Automatically detect a safe general-purpose worker count based on available RAM."""
+    cpu_safe_processes = max(1, cpu_count() - 2)
     try:
         import psutil
         available_ram_gb = psutil.virtual_memory().available / (1024**3)
         total_ram_gb = psutil.virtual_memory().total / (1024**3)
+        reserve_ram_gb = 4.0 if total_ram_gb >= 16 else 2.0
+        ram_per_worker_gb = 3.0 if total_ram_gb >= 32 else 2.0
+        usable_ram_gb = max(ram_per_worker_gb, available_ram_gb - reserve_ram_gb)
+        ram_safe_processes = max(1, int(usable_ram_gb // ram_per_worker_gb))
+        safe_processes = max(1, min(cpu_safe_processes, ram_safe_processes))
 
         print(f"   💾 Auto-detected: {total_ram_gb:.1f}GB total RAM, {available_ram_gb:.1f}GB available")
-        print("   🔧 Safe processes: 15")
-        return 15
+        print(
+            f"   🔧 Safe processes: {safe_processes} "
+            f"(cpu limit={cpu_safe_processes}, ram limit={ram_safe_processes})"
+        )
+        return safe_processes
     except ImportError:
-        return 15
+        return cpu_safe_processes
     except Exception:
-        return 15
+        return cpu_safe_processes
 
 # Auto-detect a safe multiprocessing worker count based on RAM
 NUM_PROCESSES = _auto_detect_num_processes()  # For data validation, ticker selection, and backtest data collection
+NUM_PROCESSES = max(1, cpu_count() - 2)  # For data validation, ticker selection, and backtest data collection
 
 
 
@@ -316,7 +326,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 # --- Backtest windows
 
-BACKTEST_DAYS           =   90   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   40   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 
@@ -514,6 +524,7 @@ ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 ENABLE_PRICE_ACCELERATION = True   # ENABLED - Price Acceleration Strategy (physics-based velocity/acceleration)
 
 ENABLE_VOTING_ENSEMBLE = True   # ENABLED - Voting Ensemble Strategy
+ENABLE_VOTING_ENSEMBLE_AI_REBALANCE = True   # NEW - Voting Ensemble selection + AI rebalance decisions
 
 
 
@@ -564,10 +575,13 @@ ENABLE_BH_1Y_DYNAMIC_ACCEL = True          # NEW - BH 1Y Dynamic Accel (dynamic 
 ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip opportunities)
 
 ENABLE_AI_ELITE_MONTHLY = True   # NEW - AI Elite Monthly (same ML scoring, retrain + rebalance start of month only)
+ENABLE_AI_ELITE_MONTHLY_SHARED = True   # NEW - AI Elite Monthly Shared (monthly rebalance using daily AI Elite shared model)
 
 ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre-filter + AI Elite re-rank)
 
 ENABLE_AI_ELITE_MARKET_UP = True   # NEW - AI Elite Market-Up (only rebalances when market is up)
+ENABLE_AI_ELITE_ENSEMBLE = True   # NEW - AI Elite Ensemble (weighted avg of top 3 positive-R² models)
+ENABLE_AI_ELITE_RANK_ENSEMBLE = True   # NEW - AI Elite Rank Ensemble (weighted rank avg of top 3 positive-R² models)
 ENABLE_AI_CHAMPION = True   # NEW - AI Champion (ML selector across the top AI/ensemble strategies)
 
 ENABLE_AI_REGIME = True   # NEW - AI Regime (ML predicts which strategy to use based on market conditions)
@@ -610,12 +624,21 @@ AI_ELITE_TRAINING_LOOKBACK = 90  # Days of history to use for training
 
 AI_ELITE_FORWARD_DAYS = 5  # Predict performance over next N days
 
+AI_VOTING_REBALANCE_RETRAIN_DAYS = 1  # Retrain/continue training every day
+AI_VOTING_REBALANCE_TRAINING_LOOKBACK = AI_ELITE_TRAINING_LOOKBACK  # Use same lookback as AI Elite
+AI_VOTING_REBALANCE_FORWARD_DAYS = 5  # Evaluate replace-vs-keep over the next N trading days
+AI_VOTING_REBALANCE_MIN_SAMPLES = 80  # Minimum hold-vs-replace samples before fitting
+AI_VOTING_REBALANCE_MIN_PREDICTED_EDGE = 0.0  # Require positive predicted net switch advantage
+AI_VOTING_REBALANCE_FORCE_FRESH_TRAIN = False  # False = load existing model and continue where possible
+
 AI_ELITE_FORCE_FRESH_TRAIN = False  # False = load existing model and do incremental training; True = always fresh train
 AI_ELITE_CATBOOST_USED_RAM_LIMIT = "24gb"  # Raise CatBoost CPU RAM budget to avoid continuation crashes
 AI_ELITE_CATBOOST_GPU_RAM_PART = 0.95  # Let CatBoost use most of GPU memory when training fresh on GPU
 
 # AI Champion Parameters
 AI_CHAMPION_RETRAIN_DAYS = 1  # Retrain/continue training every day
+AI_REGIME_RETRAIN_DAYS = 1  # Retrain/continue training every day
+UNIVERSAL_MODEL_RETRAIN_DAYS = 1  # Retrain/continue training every day
 AI_CHAMPION_FORWARD_DAYS = 1  # Predict the next trading day's winner
 AI_CHAMPION_CONFIDENCE_THRESHOLD = 0.55  # Require moderate confidence before switching
 AI_CHAMPION_HOLD_MARGIN = 0.08  # Keep current strategy unless the edge is meaningful

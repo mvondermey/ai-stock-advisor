@@ -15,7 +15,7 @@ from typing import Dict, List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
-from config import N_TOP_TICKERS
+from config import N_TOP_TICKERS, NUM_PROCESSES
 
 
 def calculate_momentum(prices: pd.Series, days: int) -> Optional[float]:
@@ -181,8 +181,6 @@ def run_selection_strategy_comparison(
     # Calculate metrics for all tickers at selection_date
     print(f"\n📈 Calculating selection metrics for {len(all_available_tickers)} tickers (parallel)...")
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     def calculate_ticker_metrics(ticker):
         """Calculate all strategy metrics for a single ticker"""
         metrics = {}
@@ -223,7 +221,8 @@ def run_selection_strategy_comparison(
         return ticker, metrics
 
     ticker_metrics = {}
-    with ThreadPoolExecutor(max_workers=16) as executor:
+    max_workers = max(1, min(NUM_PROCESSES, len(all_available_tickers)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(calculate_ticker_metrics, ticker): ticker for ticker in all_available_tickers}
         for future in tqdm(as_completed(futures), total=len(all_available_tickers), desc="Calculating metrics", ncols=100):
             ticker, metrics = future.result()

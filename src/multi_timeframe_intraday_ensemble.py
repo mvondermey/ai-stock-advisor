@@ -8,11 +8,13 @@ data when available.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from multiprocessing import Pool
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from config import (
     INVERSE_ETFS,
@@ -20,10 +22,12 @@ from config import (
     MULTI_TIMEFRAME_LOOKBACK,
     MULTI_TIMEFRAME_MIN_CONSENSUS,
     MULTI_TIMEFRAME_WEIGHTS,
+    NUM_PROCESSES,
     PORTFOLIO_SIZE,
 )
 
 _HOURLY_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
+_INTRADAY_SELECTION_CONTEXT: Dict[str, object] = {}
 
 
 def _load_hourly_data_cached(ticker: str) -> Optional[pd.DataFrame]:
@@ -281,6 +285,39 @@ def calculate_ensemble_score(signals: Dict[str, float]) -> Tuple[float, bool]:
     return ensemble_score, has_consensus
 
 
+def _init_multi_timeframe_intraday_worker(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+) -> None:
+    """Expose shared read-only selection context to worker processes."""
+    global _INTRADAY_SELECTION_CONTEXT
+    _INTRADAY_SELECTION_CONTEXT = {
+        "ticker_data_grouped": ticker_data_grouped,
+        "current_date": current_date,
+    }
+
+
+def _score_multi_timeframe_intraday_ticker_worker(
+    ticker: str,
+) -> Tuple[str, Optional[Tuple[str, float, Dict[str, float]]], Optional[str]]:
+    """Score one ticker for the intraday ensemble in a worker process."""
+    context = _INTRADAY_SELECTION_CONTEXT
+    ticker_data_grouped = context.get("ticker_data_grouped") or {}
+    current_date = context.get("current_date")
+    ticker_data = ticker_data_grouped.get(ticker)
+    if ticker_data is None or ticker_data.empty or current_date is None:
+        return ticker, None, None
+
+    try:
+        signals = calculate_multi_timeframe_intraday_signals(ticker, ticker_data, current_date)
+        ensemble_score, has_consensus = calculate_ensemble_score(signals)
+        if has_consensus:
+            return ticker, (ticker, ensemble_score, signals), None
+        return ticker, None, None
+    except Exception as exc:
+        return ticker, None, str(exc)
+
+
 def select_multi_timeframe_intraday_stocks(
     initial_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -292,22 +329,46 @@ def select_multi_timeframe_intraday_stocks(
     tickers_to_use = [ticker for ticker in initial_tickers if ticker not in INVERSE_ETFS]
     stock_scores = []
     error_count = 0
+    n_workers = max(1, min(NUM_PROCESSES, len(tickers_to_use))) if tickers_to_use else 1
 
-    for ticker in tickers_to_use:
-        ticker_data = ticker_data_grouped.get(ticker)
-        if ticker_data is None or ticker_data.empty:
-            continue
+    if n_workers > 1 and len(tickers_to_use) >= max(32, n_workers * 2):
+        if verbose:
+            print(f"   🚀 Multi-Horizon Intraday: Scoring {len(tickers_to_use)} tickers with {n_workers} processes")
+        with Pool(
+            processes=n_workers,
+            initializer=_init_multi_timeframe_intraday_worker,
+            initargs=(ticker_data_grouped, current_date),
+        ) as pool:
+            results = list(tqdm(
+                pool.imap_unordered(_score_multi_timeframe_intraday_ticker_worker, tickers_to_use),
+                total=len(tickers_to_use),
+                desc="   Multi-Horizon Intraday scoring",
+                ncols=100,
+                unit="ticker",
+            ))
+        for ticker, scored_item, error_msg in results:
+            if scored_item is not None:
+                stock_scores.append(scored_item)
+            elif error_msg:
+                error_count += 1
+                if verbose and error_count <= 5:
+                    print(f"   ⚠️ Multi-Horizon Intraday ticker error for {ticker}: {error_msg}")
+    else:
+        for ticker in tickers_to_use:
+            ticker_data = ticker_data_grouped.get(ticker)
+            if ticker_data is None or ticker_data.empty:
+                continue
 
-        try:
-            signals = calculate_multi_timeframe_intraday_signals(ticker, ticker_data, current_date)
-            ensemble_score, has_consensus = calculate_ensemble_score(signals)
-            if has_consensus:
-                stock_scores.append((ticker, ensemble_score, signals))
-        except Exception as exc:
-            error_count += 1
-            if verbose and error_count <= 5:
-                print(f"   ⚠️ Multi-Horizon Intraday ticker error for {ticker}: {exc}")
-            continue
+            try:
+                signals = calculate_multi_timeframe_intraday_signals(ticker, ticker_data, current_date)
+                ensemble_score, has_consensus = calculate_ensemble_score(signals)
+                if has_consensus:
+                    stock_scores.append((ticker, ensemble_score, signals))
+            except Exception as exc:
+                error_count += 1
+                if verbose and error_count <= 5:
+                    print(f"   ⚠️ Multi-Horizon Intraday ticker error for {ticker}: {exc}")
+                continue
 
     stock_scores.sort(key=lambda item: item[1], reverse=True)
     selected_stocks = [ticker for ticker, _, _ in stock_scores[:top_n]]

@@ -12,6 +12,7 @@ This is a "meta-strategy" that learns WHEN to use each strategy, not WHAT stocks
 
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -27,6 +28,7 @@ from model_training_safety import (
     restore_native_model_artifacts,
     save_native_model_artifacts,
 )
+from config import AI_REGIME_RETRAIN_DAYS
 from strategy_universes import AI_REGIME_STRATEGY_SOURCES, get_enabled_strategy_aliases
 
 # Model save paths
@@ -48,7 +50,7 @@ class AIRegimeAllocator:
     Learns which strategy performs best under different market conditions.
     """
 
-    def __init__(self, retrain_days: int = 1, forward_days: int = 1):
+    def __init__(self, retrain_days: int = AI_REGIME_RETRAIN_DAYS, forward_days: int = 1):
         """
         Args:
             retrain_days: Retrain model every N days (1 = daily)
@@ -298,9 +300,13 @@ class AIRegimeAllocator:
             print(f"   ⚠️ AI Regime: Need at least 2 days of data (have {self.day_count}), skipping training")
             return False
 
-        # Sample every day (or every 2 days if we have lots of data)
-        step = 2 if (max_day - min_day) > 20 else 1
-        for day_idx in range(min_day, max_day, step):
+        for day_idx in tqdm(
+            range(min_day, max_day),
+            total=max(0, max_day - min_day),
+            desc="   AI Regime sample build",
+            ncols=100,
+            unit="day",
+        ):
             # Get features for this day
             if day_idx >= len(business_days):
                 continue
@@ -669,18 +675,23 @@ class AIRegimeMonthlyAllocator(AIRegimeAllocator):
     """
 
     def __init__(self, forward_days: int = 1):
-        """Initialize with monthly rebalance (retrain_days set to 30)."""
-        super().__init__(retrain_days=30, forward_days=forward_days)
+        """Initialize with monthly rebalance semantics."""
+        super().__init__(retrain_days=AI_REGIME_RETRAIN_DAYS, forward_days=forward_days)
         self.last_rebalance_month = None
+
+    def is_rebalance_month(self, current_date: datetime) -> bool:
+        """Check if current_date is the first trading day we should act on this month."""
+        current_month = (current_date.year, current_date.month)
+        return self.last_rebalance_month is None or current_month != self.last_rebalance_month
+
+    def mark_rebalanced(self, current_date: datetime) -> None:
+        """Remember that this month's training/rebalance window has been processed."""
+        self.last_rebalance_month = (current_date.year, current_date.month)
 
     def should_rebalance(self, current_date: datetime) -> bool:
         """Check if we're at the start of a new month."""
-        current_month = (current_date.year, current_date.month)
-        if self.last_rebalance_month is None:
-            self.last_rebalance_month = current_month
-            return True
-        if current_month != self.last_rebalance_month:
-            self.last_rebalance_month = current_month
+        if self.is_rebalance_month(current_date):
+            self.mark_rebalanced(current_date)
             return True
         return False
 

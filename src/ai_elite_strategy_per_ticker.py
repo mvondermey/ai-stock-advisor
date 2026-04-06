@@ -7,7 +7,6 @@ Hybrid AI Elite model training:
 
 import pandas as pd
 import numpy as np
-import pickle
 import copy
 import os
 from datetime import datetime, timedelta, timezone
@@ -29,10 +28,68 @@ FEATURE_COLS = [
 ]
 
 
+class IncrementalScaledSGDRegressor:
+    """Standardized SGD regressor with true partial_fit continuation."""
+
+    def __init__(
+        self,
+        *,
+        penalty: str,
+        alpha: float,
+        l1_ratio: float = 0.15,
+        random_state: int = 42,
+    ):
+        from sklearn.linear_model import SGDRegressor
+        from sklearn.preprocessing import StandardScaler
+
+        self.scaler = StandardScaler()
+        self.model = SGDRegressor(
+            loss='squared_error',
+            penalty=penalty,
+            alpha=alpha,
+            l1_ratio=l1_ratio,
+            random_state=random_state,
+            max_iter=1,
+            tol=None,
+            learning_rate='invscaling',
+            eta0=0.01,
+        )
+        self._is_fitted = False
+
+    @staticmethod
+    def _to_numpy(X):
+        if hasattr(X, 'to_numpy'):
+            return X.to_numpy(dtype=float)
+        return np.asarray(X, dtype=float)
+
+    def partial_fit(self, X, y):
+        X_np = self._to_numpy(X)
+        y_np = np.asarray(y, dtype=float)
+        self.scaler.partial_fit(X_np)
+        X_scaled = self.scaler.transform(X_np)
+        self.model.partial_fit(X_scaled, y_np)
+        self._is_fitted = True
+        return self
+
+    def fit(self, X, y):
+        return self.partial_fit(X, y)
+
+    def predict(self, X):
+        if not self._is_fitted:
+            raise ValueError("IncrementalScaledSGDRegressor is not fitted")
+        X_np = self._to_numpy(X)
+        X_scaled = self.scaler.transform(X_np)
+        return self.model.predict(X_scaled)
+
+
 def _fresh_ensemble_model(name: str, device: str):
     """Create a fresh ensemble member with stable defaults."""
     import xgboost as xgb
     import lightgbm as lgb
+    from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
+    from sklearn.linear_model import ElasticNet, Ridge
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
     from config import AI_ELITE_CATBOOST_USED_RAM_LIMIT
 
     if name == 'XGBoost':
@@ -58,6 +115,45 @@ def _fresh_ensemble_model(name: str, device: str):
         if AI_ELITE_CATBOOST_USED_RAM_LIMIT:
             catboost_params['used_ram_limit'] = AI_ELITE_CATBOOST_USED_RAM_LIMIT
         return cb.CatBoostRegressor(**catboost_params)
+    if name == 'RandomForest':
+        return RandomForestRegressor(
+            n_estimators=100,
+            max_depth=10,
+            min_samples_leaf=5,
+            random_state=42,
+            n_jobs=-1,
+        )
+    if name == 'ExtraTrees':
+        return ExtraTreesRegressor(
+            n_estimators=100,
+            max_depth=10,
+            min_samples_leaf=5,
+            random_state=42,
+            n_jobs=-1,
+        )
+    if name == 'Ridge':
+        return make_pipeline(
+            StandardScaler(),
+            Ridge(alpha=1.0),
+        )
+    if name == 'ElasticNet':
+        return make_pipeline(
+            StandardScaler(),
+            ElasticNet(alpha=0.01, l1_ratio=0.5, random_state=42, max_iter=5000),
+        )
+    if name == 'SGDRegressor-L2':
+        return IncrementalScaledSGDRegressor(
+            penalty='l2',
+            alpha=0.0001,
+            random_state=42,
+        )
+    if name == 'SGDRegressor-ElasticNet':
+        return IncrementalScaledSGDRegressor(
+            penalty='elasticnet',
+            alpha=0.0001,
+            l1_ratio=0.15,
+            random_state=42,
+        )
     raise ValueError(f"Unknown model: {name}")
 
 
@@ -108,7 +204,17 @@ def restore_catboost_sidecar(model, path: str):
 
 def _order_models_for_training(models: Dict[str, object]) -> Dict[str, object]:
     """Train CatBoost first so crashes are easier to attribute."""
-    preferred_order = ("CatBoost", "XGBoost", "LightGBM")
+    preferred_order = (
+        "CatBoost",
+        "XGBoost",
+        "LightGBM",
+        "ExtraTrees",
+        "RandomForest",
+        "Ridge",
+        "ElasticNet",
+        "SGDRegressor-L2",
+        "SGDRegressor-ElasticNet",
+    )
     ordered = {name: models[name] for name in preferred_order if name in models}
     for name, model in models.items():
         if name not in ordered:
@@ -261,7 +367,7 @@ def train_shared_base_model(
     status_msg = "Continuing" if has_existing else "Training NEW"
     print(f"   📊 AI Elite: {status_msg} training on {len(X)} samples from {train_df['ticker'].nunique()} tickers...")
 
-    # Use XGBoost + LightGBM + CatBoost.
+    # Use a mixed ensemble: native boosters, tree ensembles, and linear baselines.
     # CatBoost stays on CPU because continuation from init_model is not supported on GPU.
     import xgboost as xgb
     import lightgbm as lgb
@@ -274,14 +380,25 @@ def train_shared_base_model(
     if has_existing:
         # Load existing models for incremental training
         models = existing_model['all_models']
-        # Add CatBoost if missing from loaded model
-        if 'CatBoost' not in models:
-            try:
-                models['CatBoost'] = _fresh_ensemble_model('CatBoost', device)
-            except ImportError:
-                pass
+        for model_name in (
+            'CatBoost',
+            'RandomForest',
+            'ExtraTrees',
+            'Ridge',
+            'ElasticNet',
+            'SGDRegressor-L2',
+            'SGDRegressor-ElasticNet',
+        ):
+            if model_name not in models:
+                try:
+                    models[model_name] = _fresh_ensemble_model(model_name, device)
+                except ImportError:
+                    pass
         models = _order_models_for_training(models)
-        print(f"   🚀 Incremental training: {len(models)} models (XGBoost={device}, LightGBM=cpu, CatBoost=cpu)")
+        print(
+            f"   🚀 Incremental training: {len(models)} models "
+            f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu, SGD=cpu)"
+        )
     else:
         # Fresh training - create new models
         # Add CatBoost if available (GPU-accelerated, good with tabular data)
@@ -292,8 +409,17 @@ def train_shared_base_model(
             pass
         models['XGBoost'] = _fresh_ensemble_model('XGBoost', device)
         models['LightGBM'] = _fresh_ensemble_model('LightGBM', device)
+        models['RandomForest'] = _fresh_ensemble_model('RandomForest', device)
+        models['ExtraTrees'] = _fresh_ensemble_model('ExtraTrees', device)
+        models['Ridge'] = _fresh_ensemble_model('Ridge', device)
+        models['ElasticNet'] = _fresh_ensemble_model('ElasticNet', device)
+        models['SGDRegressor-L2'] = _fresh_ensemble_model('SGDRegressor-L2', device)
+        models['SGDRegressor-ElasticNet'] = _fresh_ensemble_model('SGDRegressor-ElasticNet', device)
         models = _order_models_for_training(models)
-        print(f"   🚀 Fresh training: {list(models.keys())} (XGBoost={device}, LightGBM=cpu, CatBoost=cpu)")
+        print(
+            f"   🚀 Fresh training: {list(models.keys())} "
+            f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu, SGD=cpu)"
+        )
 
     # Train with incremental learning (no CV for speed - just train/val split)
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -307,7 +433,7 @@ def train_shared_base_model(
 
     for name, m in models.items():
         try:
-            print(f"      🔄 {name}: Training started...", end=" ", flush=True)
+            print(f"      🔄 {name}: Training...", end=" ", flush=True)
             start_time = time.time()
 
             # Validate training data
@@ -327,26 +453,29 @@ def train_shared_base_model(
                 if has_existing:
                     # True incremental training for supported models
                     try:
-                        used_incremental = True
                         if name == 'XGBoost':
+                            used_incremental = True
                             m.fit(X_train, y_train, xgb_model=m.get_booster())
                         elif name == 'LightGBM':
+                            used_incremental = True
                             m.fit(X_train, y_train, init_model=m.booster_)
                         elif name == 'CatBoost':
+                            used_incremental = True
                             if _catboost_has_trained_trees(m):
                                 _configure_catboost_continuation(m)
                                 m.fit(X_train, y_train, init_model=m)
                             else:
                                 print("(no saved trees yet, training fresh)...", end=" ", flush=True)
                                 incremental_failed = True
-                        else:
-                            m.fit(X_train, y_train)
-
-                        # Quick sanity check for incremental training - detect numerical instability
-                        quick_pred = m.predict(X_val[:100])
-                        if _predictions_are_unstable(quick_pred):
-                            print(f"(incremental unstable, retraining fresh)...", end=" ", flush=True)
-                            incremental_failed = True
+                        elif name in ('SGDRegressor-L2', 'SGDRegressor-ElasticNet'):
+                            used_incremental = True
+                            m.partial_fit(X_train, y_train)
+                        if used_incremental:
+                            # Quick sanity check for incremental training - detect numerical instability
+                            quick_pred = m.predict(X_val[:100])
+                            if _predictions_are_unstable(quick_pred):
+                                print(f"(incremental unstable, retraining fresh)...", end=" ", flush=True)
+                                incremental_failed = True
                     except Exception as e:
                         print(f"(incremental failed: {e}, retraining fresh)...", end=" ", flush=True)
                         incremental_failed = True
@@ -504,6 +633,8 @@ def fine_tune_per_ticker(
 def _save_model(model, path: str, metadata: dict = None):
     """Save model to disk with optional metadata."""
     try:
+        import joblib
+
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
         # Create backup before overwriting
@@ -518,8 +649,7 @@ def _save_model(model, path: str, metadata: dict = None):
             'model': model,
             'metadata': metadata or {}
         }
-        with open(path, 'wb') as f:
-            pickle.dump(model_data, f)
+        joblib.dump(model_data, path)
         save_native_model_artifacts(model, path)
     except Exception as e:
         print(f"   ⚠️ AI Elite: Failed to save model to {path}: {e}")

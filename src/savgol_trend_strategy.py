@@ -17,17 +17,21 @@ import numpy as np
 import pandas as pd
 from scipy.signal import savgol_filter
 from scipy.stats import spearmanr
+from tqdm import tqdm
 
 from model_training_safety import (
     catboost_has_trained_trees,
-    cleanup_training_memory,
     configure_catboost_cpu_continuation,
     ensure_catboost_cpu_metadata,
+    release_runtime_memory,
     reset_legacy_catboost_member,
     restore_native_model_artifacts,
     save_native_model_artifacts,
 )
 from config import (
+    AI_ELITE_FORWARD_DAYS,
+    AI_ELITE_TRAINING_LOOKBACK,
+    MIN_TRAINING_SAMPLES_AI_ELITE,
     SAVGOL_TREND_FALLBACK_TO_MOMENTUM,
     SAVGOL_TREND_FORWARD_DAYS,
     SAVGOL_TREND_HOLD_MARGIN,
@@ -168,6 +172,43 @@ def _calculate_market_forward_return(
         if len(fallback_returns) >= 50:
             break
     return float(np.mean(fallback_returns)) if fallback_returns else 0.0
+
+
+def _market_context_key(current_date: datetime) -> pd.Timestamp:
+    """Normalize dates to a timezone-agnostic daily key for cached lookups."""
+    return pd.Timestamp(current_date).tz_localize(None).normalize()
+
+
+def _precompute_market_context_maps(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    train_start_date: datetime,
+    train_end_date: datetime,
+    forward_days: int,
+) -> Tuple[Dict[pd.Timestamp, Dict[str, float]], Dict[pd.Timestamp, float]]:
+    """Build compact daily market context caches once, then reuse across workers."""
+    market_context_map: Dict[pd.Timestamp, Dict[str, float]] = {}
+    market_forward_map: Dict[pd.Timestamp, float] = {}
+    total_days = max(0, (train_end_date - train_start_date).days + 1)
+
+    with tqdm(
+        total=total_days,
+        desc="   SavGol Trend cache build",
+        ncols=100,
+        unit="day",
+    ) as pbar:
+        current_date = train_start_date
+        while current_date <= train_end_date:
+            cache_key = _market_context_key(current_date)
+            market_context_map[cache_key] = _calculate_market_context(ticker_data_grouped, current_date)
+            market_forward_map[cache_key] = _calculate_market_forward_return(
+                ticker_data_grouped,
+                current_date,
+                forward_days,
+            )
+            current_date += timedelta(days=1)
+            pbar.update(1)
+
+    return market_context_map, market_forward_map
 
 
 def _prepare_label(raw_label: float) -> float:
@@ -376,6 +417,92 @@ def calculate_forward_return(
         return None
 
 
+def collect_savgol_ticker_training_data(
+    ticker: str,
+    ticker_data: pd.DataFrame,
+    train_start_date: datetime,
+    train_end_date: datetime,
+    lookback_days: int,
+    forward_days: int,
+    market_context_map: Dict[pd.Timestamp, Dict[str, float]],
+    market_forward_map: Dict[pd.Timestamp, float],
+) -> List[Tuple[pd.Timestamp, Dict[str, float], float]]:
+    """Collect training samples for a single ticker. Same approach as AI Elite."""
+    if ticker_data is None or len(ticker_data) == 0:
+        return []
+
+    if train_start_date.tzinfo is None:
+        train_start_date = train_start_date.replace(tzinfo=ticker_data.index.tz or None)
+    if train_end_date.tzinfo is None:
+        train_end_date = train_end_date.replace(tzinfo=ticker_data.index.tz or None)
+
+    samples = []
+    current_date = train_start_date
+    while current_date <= train_end_date:
+        try:
+            sample_key = pd.Timestamp(current_date)
+            cache_key = _market_context_key(current_date)
+            market_context = market_context_map.get(cache_key, {})
+
+            features = calculate_savgol_features(
+                ticker,
+                ticker_data,
+                current_date,
+                lookback_days=lookback_days,
+                market_context=market_context,
+            )
+            if features is None:
+                current_date += timedelta(days=1)
+                continue
+
+            forward_ret = calculate_forward_return(
+                ticker_data,
+                current_date,
+                forward_days=forward_days,
+            )
+            if forward_ret is None:
+                current_date += timedelta(days=1)
+                continue
+
+            market_forward = float(market_forward_map.get(cache_key, 0.0))
+
+            excess_return = float(forward_ret) - float(market_forward)
+            risk_floor = np.sqrt(max(features.get("volatility_20d", 0.0), 5.0))
+            target = _prepare_label(excess_return / risk_floor)
+            samples.append((sample_key, features, target))
+        except Exception:
+            pass
+
+        current_date += timedelta(days=1)
+
+    return samples
+
+
+def _collect_savgol_data_worker(args):
+    """Top-level worker for multiprocessing Pool - collects SavGol training data for one ticker."""
+    (
+        ticker,
+        ticker_data,
+        train_start_date,
+        train_end_date,
+        lookback_days,
+        forward_days,
+        market_context_map,
+        market_forward_map,
+    ) = args
+    samples = collect_savgol_ticker_training_data(
+        ticker=ticker,
+        ticker_data=ticker_data,
+        train_start_date=train_start_date,
+        train_end_date=train_end_date,
+        lookback_days=lookback_days,
+        forward_days=forward_days,
+        market_context_map=market_context_map,
+        market_forward_map=market_forward_map,
+    )
+    return ticker, samples
+
+
 def _fresh_model(name: str, device: str):
     """Create a new model instance for the requested backend."""
     import xgboost as xgb
@@ -441,9 +568,9 @@ class SavgolTrendStrategy:
     def __init__(
         self,
         retrain_days: int = SAVGOL_TREND_RETRAIN_DAYS,
-        min_samples: int = SAVGOL_TREND_MIN_SAMPLES,
-        lookback_days: int = SAVGOL_TREND_LOOKBACK_DAYS,
-        forward_days: int = SAVGOL_TREND_FORWARD_DAYS,
+        min_samples: int = MIN_TRAINING_SAMPLES_AI_ELITE,
+        lookback_days: int = AI_ELITE_TRAINING_LOOKBACK,
+        forward_days: int = AI_ELITE_FORWARD_DAYS,
     ):
         self.retrain_days = retrain_days
         self.min_samples = min_samples
@@ -465,7 +592,6 @@ class SavgolTrendStrategy:
     def increment_day(self):
         self.day_count += 1
 
-    @cleanup_training_memory
     def train_model(
         self,
         ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -476,191 +602,186 @@ class SavgolTrendStrategy:
         if not business_days:
             return False
 
-        if current_day_idx >= len(business_days):
-            current_day_idx = len(business_days) - 1
-        current_date = business_days[current_day_idx] if current_day_idx >= 0 else business_days[0]
+        try:
+            if current_day_idx >= len(business_days):
+                current_day_idx = len(business_days) - 1
+            current_date = business_days[current_day_idx] if current_day_idx >= 0 else business_days[0]
+            train_start = current_date - timedelta(days=self.lookback_days)
 
-        print("   🧠 SavGol Trend: Training pooled model...")
+            from multiprocessing import Pool
+            from config import NUM_PROCESSES
+            import time as _time
 
-        samples: List[Tuple[pd.Timestamp, Dict[str, float], float]] = []
-        market_context_cache: Dict[pd.Timestamp, Dict[str, float]] = {}
-        market_forward_cache: Dict[pd.Timestamp, float] = {}
+            all_tickers = list(ticker_data_grouped.keys())
+            n_workers = max(1, NUM_PROCESSES)
+            print(f"   📊 SavGol Trend: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {self.lookback_days}d lookback)...")
+            _start_time = _time.time()
+            market_context_map, market_forward_map = _precompute_market_context_maps(
+                ticker_data_grouped=ticker_data_grouped,
+                train_start_date=train_start,
+                train_end_date=current_date,
+                forward_days=self.forward_days,
+            )
 
-        for ticker, data in ticker_data_grouped.items():
-            if data is None or len(data) < self.lookback_days + self.forward_days + 10:
-                continue
-
-            cutoff = current_date - timedelta(days=self.forward_days + 7)
-            available_dates = data.index[data.index < cutoff]
-            if len(available_dates) < self.lookback_days:
-                continue
-
-            sample_dates = available_dates[self.lookback_days::5]
-            for sample_date in sample_dates[-120:]:
-                sample_key = pd.Timestamp(sample_date)
-                market_context = market_context_cache.get(sample_key)
-                if market_context is None:
-                    market_context = _calculate_market_context(ticker_data_grouped, sample_date)
-                    market_context_cache[sample_key] = market_context
-
-                features = calculate_savgol_features(
-                    ticker,
-                    data,
-                    sample_date,
-                    lookback_days=self.lookback_days,
-                    market_context=market_context,
+            collect_args = [
+                (
+                    t,
+                    ticker_data_grouped.get(t),
+                    train_start,
+                    current_date,
+                    self.lookback_days,
+                    self.forward_days,
+                    market_context_map,
+                    market_forward_map,
                 )
-                if features is None:
-                    continue
+                for t in all_tickers
+            ]
 
-                forward_ret = calculate_forward_return(
-                    data,
-                    sample_date,
-                    forward_days=self.forward_days,
-                )
-                if forward_ret is None:
-                    continue
+            samples: List[Tuple[pd.Timestamp, Dict[str, float], float]] = []
+            ticker_samples_map = {}
 
-                market_forward = market_forward_cache.get(sample_key)
-                if market_forward is None:
-                    market_forward = _calculate_market_forward_return(
-                        ticker_data_grouped,
-                        sample_date,
-                        self.forward_days,
-                    )
-                    market_forward_cache[sample_key] = market_forward
+            with Pool(processes=n_workers) as pool:
+                results = list(tqdm(
+                    pool.imap_unordered(_collect_savgol_data_worker, collect_args),
+                    total=len(collect_args),
+                    desc="   SavGol Trend collection",
+                    ncols=100,
+                    unit="ticker",
+                ))
 
-                excess_return = float(forward_ret) - float(market_forward)
-                risk_floor = np.sqrt(max(features.get("volatility_20d", 0.0), 5.0))
-                target = _prepare_label(excess_return / risk_floor)
-                samples.append((sample_key, features, target))
+            for ticker, ticker_samples in results:
+                if ticker_samples:
+                    samples.extend(ticker_samples)
+                    ticker_samples_map[ticker] = ticker_samples
 
-            if len(samples) >= 12000:
-                break
+            _elapsed = _time.time() - _start_time
+            print(f"   📊 SavGol Trend: Collected {len(samples)} samples from {len(ticker_samples_map)} tickers ({_elapsed:.1f}s)")
 
-        if len(samples) < self.min_samples:
-            print(f"   ⚠️ SavGol Trend: Not enough samples ({len(samples)} < {self.min_samples})")
-            return False
+            if len(samples) < self.min_samples:
+                print(f"   ⚠️ SavGol Trend: Not enough samples ({len(samples)} < {self.min_samples})")
+                return False
 
-        samples.sort(key=lambda row: row[0])
-        split_idx = max(int(len(samples) * 0.8), 1)
-        split_idx = min(split_idx, len(samples) - 1)
-        train_samples = samples[:split_idx]
-        val_samples = samples[split_idx:]
+            samples.sort(key=lambda row: row[0])
+            split_idx = max(int(len(samples) * 0.8), 1)
+            split_idx = min(split_idx, len(samples) - 1)
+            train_samples = samples[:split_idx]
+            val_samples = samples[split_idx:]
 
-        self.feature_cols = list(train_samples[0][1].keys())
+            self.feature_cols = list(train_samples[0][1].keys())
 
-        X_train = (
-            pd.DataFrame([row[1] for row in train_samples], columns=self.feature_cols)
-            .replace([np.inf, -np.inf], np.nan)
-            .fillna(0.0)
-        )
-        y_train = np.array([row[2] for row in train_samples], dtype=float)
-        X_val = (
-            pd.DataFrame([row[1] for row in val_samples], columns=self.feature_cols)
-            .replace([np.inf, -np.inf], np.nan)
-            .fillna(0.0)
-        )
-        y_val = np.array([row[2] for row in val_samples], dtype=float)
+            X_train = (
+                pd.DataFrame([row[1] for row in train_samples], columns=self.feature_cols)
+                .replace([np.inf, -np.inf], np.nan)
+                .fillna(0.0)
+            )
+            y_train = np.array([row[2] for row in train_samples], dtype=float)
+            X_val = (
+                pd.DataFrame([row[1] for row in val_samples], columns=self.feature_cols)
+                .replace([np.inf, -np.inf], np.nan)
+                .fillna(0.0)
+            )
+            y_val = np.array([row[2] for row in val_samples], dtype=float)
 
-        import time
-        import warnings
+            import time
+            import warnings
 
-        models, device = _build_model_set()
-        has_existing = self.all_models is not None and len(self.all_models) > 0
-        if has_existing:
-            models = dict(self.all_models)
-            for name in ("XGBoost", "LightGBM", "CatBoost"):
-                if name not in models:
-                    try:
-                        models[name] = _fresh_model(name, device)
-                    except Exception:
+            models, device = _build_model_set()
+            has_existing = self.all_models is not None and len(self.all_models) > 0
+            if has_existing:
+                models = dict(self.all_models)
+                for name in ("XGBoost", "LightGBM", "CatBoost"):
+                    if name not in models:
+                        try:
+                            models[name] = _fresh_model(name, device)
+                        except Exception:
+                            continue
+
+            print(f"   📊 Train/Val split: {len(X_train)} train, {len(X_val)} val samples")
+
+            trained_models: Dict[str, object] = {}
+            model_scores: Dict[str, float] = {}
+
+            for name, model in models.items():
+                print(f"      🔄 {name}: Training started...", end=" ", flush=True)
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        incremental_failed = False
+                        train_start = time.perf_counter()
+
+                        if has_existing:
+                            try:
+                                if name == "XGBoost":
+                                    model.fit(X_train, y_train, xgb_model=model.get_booster())
+                                elif name == "LightGBM":
+                                    model.fit(X_train, y_train, init_model=model.booster_)
+                                elif name == "CatBoost":
+                                    if catboost_has_trained_trees(model):
+                                        configure_catboost_cpu_continuation(model)
+                                        model.fit(X_train, y_train, init_model=model)
+                                    else:
+                                        incremental_failed = True
+                                else:
+                                    model.fit(X_train, y_train)
+
+                                quick_pred = np.asarray(model.predict(X_val.iloc[:min(len(X_val), 100)]), dtype=float)
+                                if (
+                                    np.any(np.isnan(quick_pred))
+                                    or np.any(np.isinf(quick_pred))
+                                    or (len(quick_pred) > 0 and np.max(np.abs(quick_pred)) > 1e10)
+                                ):
+                                    incremental_failed = True
+                            except Exception:
+                                incremental_failed = True
+
+                        if not has_existing or incremental_failed:
+                            model = _fresh_model(name, device)
+                            model.fit(X_train, y_train)
+
+                    train_elapsed = time.perf_counter() - train_start
+
+                    val_pred = np.asarray(model.predict(X_val), dtype=float)
+                    if np.any(np.isnan(val_pred)) or np.any(np.isinf(val_pred)):
                         continue
 
-        print(f"   📊 Train/Val split: {len(X_train)} train, {len(X_val)} val samples")
+                    score = spearmanr(y_val, val_pred).correlation if len(y_val) > 1 else 0.0
+                    if score is None or np.isnan(score):
+                        score = 0.0
 
-        trained_models: Dict[str, object] = {}
-        model_scores: Dict[str, float] = {}
+                    trained_models[name] = model
+                    model_scores[name] = float(score)
+                    mode = "incremental" if has_existing and not incremental_failed else "fresh"
+                    print(f"spearman = {score:.3f} ({mode}, {train_elapsed:.1f}s)")
+                except Exception as exc:
+                    print(f"failed: {exc}")
 
-        for name, model in models.items():
-            print(f"      🔄 {name}: Training started...", end=" ", flush=True)
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    incremental_failed = False
-                    train_start = time.perf_counter()
+            if not trained_models:
+                print("   ⚠️ SavGol Trend: No models trained successfully")
+                return False
 
-                    if has_existing:
-                        try:
-                            if name == "XGBoost":
-                                model.fit(X_train, y_train, xgb_model=model.get_booster())
-                            elif name == "LightGBM":
-                                model.fit(X_train, y_train, init_model=model.booster_)
-                            elif name == "CatBoost":
-                                if catboost_has_trained_trees(model):
-                                    configure_catboost_cpu_continuation(model)
-                                    model.fit(X_train, y_train, init_model=model)
-                                else:
-                                    incremental_failed = True
-                            else:
-                                model.fit(X_train, y_train)
-
-                            quick_pred = np.asarray(model.predict(X_val.iloc[:min(len(X_val), 100)]), dtype=float)
-                            if (
-                                np.any(np.isnan(quick_pred))
-                                or np.any(np.isinf(quick_pred))
-                                or (len(quick_pred) > 0 and np.max(np.abs(quick_pred)) > 1e10)
-                            ):
-                                incremental_failed = True
-                        except Exception:
-                            incremental_failed = True
-
-                    if not has_existing or incremental_failed:
-                        model = _fresh_model(name, device)
-                        model.fit(X_train, y_train)
-
-                train_elapsed = time.perf_counter() - train_start
-
-                val_pred = np.asarray(model.predict(X_val), dtype=float)
-                if np.any(np.isnan(val_pred)) or np.any(np.isinf(val_pred)):
-                    continue
-
-                score = spearmanr(y_val, val_pred).correlation if len(y_val) > 1 else 0.0
-                if score is None or np.isnan(score):
-                    score = 0.0
-
-                trained_models[name] = model
-                model_scores[name] = float(score)
-                mode = "incremental" if has_existing and not incremental_failed else "fresh"
-                print(f"spearman = {score:.3f} ({mode}, {train_elapsed:.1f}s)")
-            except Exception as exc:
-                print(f"failed: {exc}")
-
-        if not trained_models:
-            print("   ⚠️ SavGol Trend: No models trained successfully")
-            return False
-
-        self.best_name = max(model_scores, key=model_scores.get)
-        self.model = trained_models[self.best_name]
-        self.all_models = trained_models
-        self.all_scores = model_scores
-        self.last_train_day = self.day_count
-        save_succeeded = self.save_model(
-            current_date=current_date,
-            train_start=train_samples[0][0],
-            train_end=train_samples[-1][0],
-        )
-        if save_succeeded:
-            print(
-                f"   ✅ SavGol Trend: Saved {len(trained_models)} models. Best = {self.best_name} "
-                f"(spearman {model_scores[self.best_name]:.3f})"
+            self.best_name = max(model_scores, key=model_scores.get)
+            self.model = trained_models[self.best_name]
+            self.all_models = trained_models
+            self.all_scores = model_scores
+            self.last_train_day = self.day_count
+            save_succeeded = self.save_model(
+                current_date=current_date,
+                train_start=train_samples[0][0],
+                train_end=train_samples[-1][0],
             )
-        else:
-            print(
-                f"   ⚠️ SavGol Trend: Trained {len(trained_models)} models, but save failed. "
-                f"Best = {self.best_name} (spearman {model_scores[self.best_name]:.3f})"
-            )
-        return True
+            if save_succeeded:
+                print(
+                    f"   ✅ SavGol Trend: Saved {len(trained_models)} models. Best = {self.best_name} "
+                    f"(spearman {model_scores[self.best_name]:.3f})"
+                )
+            else:
+                print(
+                    f"   ⚠️ SavGol Trend: Trained {len(trained_models)} models, but save failed. "
+                    f"Best = {self.best_name} (spearman {model_scores[self.best_name]:.3f})"
+                )
+            return True
+        finally:
+            release_runtime_memory()
 
     def save_model(
         self,

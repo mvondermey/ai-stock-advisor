@@ -823,8 +823,8 @@ def select_meta_strategy_stocks(
             return select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
         elif selected_strategy == 'universal_model':
-            from universal_model_strategy import select_universal_model_stocks
-            return select_universal_model_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            from shared_strategies import _select_universal_model_stocks
+            return _select_universal_model_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
 
         # === SPECIAL STRATEGIES ===
         elif selected_strategy == 'inverse_etf_hedge':

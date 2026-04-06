@@ -28,7 +28,8 @@ from config import (
     MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M, MIN_DATA_DAYS_GENERAL,
     CALENDAR_DAYS_PER_YEAR,
     CONCENTRATED_3M_REBALANCE_DAYS,
-    AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, AI_ELITE_INTRADAY_LOOKBACK
+    AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, AI_ELITE_INTRADAY_LOOKBACK,
+    AI_REGIME_RETRAIN_DAYS, UNIVERSAL_MODEL_RETRAIN_DAYS,
 )
 import signal
 from contextlib import contextmanager
@@ -212,6 +213,7 @@ STRATEGY_REGISTRY = {
     'dynamic_pool': _strategy_registry_entry('Dynamic Pool', 'ENABLE_DYNAMIC_POOL', 'dynamic_pool_portfolio_value', 'dynamic_pool_portfolio_history', 'dynamic_pool_cash', 'dynamic_pool_positions'),
     'risk_adj_mom_sentiment': _strategy_registry_entry('RiskAdj Sent', 'ENABLE_RISK_ADJ_MOM_SENTIMENT', 'risk_adj_mom_sentiment_portfolio_value', 'risk_adj_mom_sentiment_portfolio_history', 'risk_adj_mom_sentiment_cash', 'risk_adj_mom_sentiment_positions'),
     'voting_ensemble': _strategy_registry_entry('Voting Ensemble', 'ENABLE_VOTING_ENSEMBLE', 'voting_ensemble_portfolio_value', 'voting_ensemble_portfolio_history', 'voting_ensemble_cash', 'voting_ensemble_positions'),
+    'voting_ensemble_ai_rebalance': _strategy_registry_entry('Voting Ens AI Reb', 'ENABLE_VOTING_ENSEMBLE_AI_REBALANCE', 'voting_ensemble_ai_rebalance_portfolio_value', 'voting_ensemble_ai_rebalance_portfolio_history', 'voting_ensemble_ai_rebalance_cash', 'voting_ensemble_ai_rebalance_positions'),
     'mom_accel': _strategy_registry_entry('Mom Acceleration', 'ENABLE_MOMENTUM_ACCELERATION', 'mom_accel_portfolio_value', 'mom_accel_portfolio_history', 'mom_accel_cash', 'mom_accel_positions'),
     'concentrated_3m': _strategy_registry_entry('Concentrated 3M', 'ENABLE_CONCENTRATED_3M', 'concentrated_3m_portfolio_value', 'concentrated_3m_portfolio_history', 'concentrated_3m_cash', 'concentrated_3m_positions'),
     'dual_momentum': _strategy_registry_entry('Dual Momentum', 'ENABLE_DUAL_MOMENTUM', 'dual_mom_portfolio_value', 'dual_mom_portfolio_history', 'dual_mom_cash', 'dual_mom_positions'),
@@ -233,8 +235,11 @@ STRATEGY_REGISTRY = {
     'risk_adj_mom_1m_monthly': _strategy_registry_entry('RiskAdj 1M Mth', 'ENABLE_RISK_ADJ_MOM_1M_MONTHLY', 'risk_adj_mom_1m_monthly_portfolio_value', 'risk_adj_mom_1m_monthly_portfolio_history', 'risk_adj_mom_1m_monthly_cash', 'risk_adj_mom_1m_monthly_positions'),
     'ai_elite': _strategy_registry_entry('AI Elite', 'ENABLE_AI_ELITE', 'ai_elite_portfolio_value', 'ai_elite_portfolio_history', 'ai_elite_cash', 'ai_elite_positions'),
     'ai_elite_monthly': _strategy_registry_entry('AI Elite Mth', 'ENABLE_AI_ELITE_MONTHLY', 'ai_elite_monthly_portfolio_value', 'ai_elite_monthly_portfolio_history', 'ai_elite_monthly_cash', 'ai_elite_monthly_positions'),
+    'ai_elite_monthly_shared': _strategy_registry_entry('AI Elite Mth Sh', 'ENABLE_AI_ELITE_MONTHLY_SHARED', 'ai_elite_monthly_shared_portfolio_value', 'ai_elite_monthly_shared_portfolio_history', 'ai_elite_monthly_shared_cash', 'ai_elite_monthly_shared_positions'),
     'ai_elite_filtered': _strategy_registry_entry('AI Elite Flt', 'ENABLE_AI_ELITE_FILTERED', 'ai_elite_filtered_portfolio_value', 'ai_elite_filtered_portfolio_history', 'ai_elite_filtered_cash', 'ai_elite_filtered_positions'),
-    'ai_elite_market_up': _strategy_registry_entry('AI Elite Mkt-Up', 'ENABLE_AI_ELITE_MARKET_UP', 'ai_elite_market_up_portfolio_value', 'ai_elite_market_up_portfolio_history', 'ai_elite_market_up_cash', 'ai_elite_market_up_positions'),
+    'ai_elite_market_up': _strategy_registry_entry('AI Elite Up Sh', 'ENABLE_AI_ELITE_MARKET_UP', 'ai_elite_market_up_portfolio_value', 'ai_elite_market_up_portfolio_history', 'ai_elite_market_up_cash', 'ai_elite_market_up_positions'),
+    'ai_elite_ensemble': _strategy_registry_entry('AI Elite Ens', 'ENABLE_AI_ELITE_ENSEMBLE', 'ai_elite_ensemble_portfolio_value', 'ai_elite_ensemble_portfolio_history', 'ai_elite_ensemble_cash', 'ai_elite_ensemble_positions'),
+    'ai_elite_rank_ensemble': _strategy_registry_entry('AI Elite Rank', 'ENABLE_AI_ELITE_RANK_ENSEMBLE', 'ai_elite_rank_ensemble_portfolio_value', 'ai_elite_rank_ensemble_portfolio_history', 'ai_elite_rank_ensemble_cash', 'ai_elite_rank_ensemble_positions'),
     'ai_champion': _strategy_registry_entry('AI Champion', 'ENABLE_AI_CHAMPION', 'ai_champion_portfolio_value', 'ai_champion_portfolio_history', 'ai_champion_cash', 'ai_champion_positions'),
     'ai_regime': _strategy_registry_entry('AI Regime', 'ENABLE_AI_REGIME', 'ai_regime_portfolio_value', 'ai_regime_portfolio_history', 'ai_regime_cash', 'ai_regime_positions'),
     'ai_regime_monthly': _strategy_registry_entry('AI Regime Mth', 'ENABLE_AI_REGIME_MONTHLY', 'ai_regime_monthly_portfolio_value', 'ai_regime_monthly_portfolio_history', 'ai_regime_monthly_cash', 'ai_regime_monthly_positions'),
@@ -343,6 +348,7 @@ correlation_ensemble_transaction_costs = 0
 dynamic_pool_transaction_costs = 0
 sentiment_ensemble_transaction_costs = 0
 voting_ensemble_transaction_costs = 0
+voting_ensemble_ai_rebalance_transaction_costs = 0
 momentum_volatility_hybrid_transaction_costs = 0
 momentum_volatility_hybrid_6m_transaction_costs = 0
 price_acceleration_transaction_costs = 0
@@ -555,6 +561,19 @@ def _last_valid_close_up_to(ticker_df: pd.DataFrame, current_date: datetime) -> 
         return None
 
 
+def _build_daily_close_price_cache(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+) -> Dict[str, float]:
+    """Precompute the latest valid close for each ticker once per backtest day."""
+    close_price_cache: Dict[str, float] = {}
+    for ticker, ticker_df in ticker_data_grouped.items():
+        close_price = _last_valid_close_up_to(ticker_df, current_date)
+        if close_price is not None:
+            close_price_cache[ticker] = close_price
+    return close_price_cache
+
+
 def _return_over_lookback(
     ticker_df: pd.DataFrame,
     current_date: datetime,
@@ -578,18 +597,56 @@ def _return_over_lookback(
         return None
 
 
+def _return_between_dates(
+    ticker_df: pd.DataFrame,
+    start_date: datetime,
+    end_date: datetime,
+) -> Optional[float]:
+    """Return over an exact date window using first/last valid closes inside it."""
+    try:
+        window = ticker_df.loc[start_date:end_date, "Close"].dropna()
+        if len(window) < 2:
+            return None
+        start_price = float(window.iloc[0])
+        end_price = float(window.iloc[-1])
+        if start_price <= 0 or pd.isna(start_price) or pd.isna(end_price):
+            return None
+        return (end_price / start_price) - 1.0
+    except Exception:
+        return None
+
+
+def _select_top_performers_over_window(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    start_date: datetime,
+    end_date: datetime,
+    top_n: int,
+) -> List[str]:
+    """Select hindsight top performers over the exact backtest window."""
+    scored_tickers = []
+    for ticker in all_tickers:
+        ticker_df = ticker_data_grouped.get(ticker)
+        if ticker_df is None:
+            continue
+        total_return = _return_between_dates(ticker_df, start_date, end_date)
+        if total_return is not None:
+            scored_tickers.append((ticker, total_return))
+    scored_tickers.sort(key=lambda item: item[1], reverse=True)
+    return [ticker for ticker, _ in scored_tickers[:top_n]]
+
+
 def _mark_to_market_value(
     positions: Dict[str, Dict],
     cash: float,
     ticker_data_grouped: Dict[str, pd.DataFrame],
-    current_date: datetime
+    current_date: datetime,
+    close_price_cache: Dict[str, float],
 ) -> float:
     total = float(cash or 0.0)
     for t, pos in (positions or {}).items():
         try:
-            if t not in ticker_data_grouped:
-                continue
-            px = _last_valid_close_up_to(ticker_data_grouped[t], current_date)
+            px = close_price_cache.get(t)
             if px is None:
                 continue
             shares = float(pos.get("shares", 0.0) or 0.0)
@@ -607,7 +664,8 @@ def _should_rebalance_by_profit_since_last_rebalance(
     positions: Dict[str, Dict],
     cash: float,
     transaction_cost: float,
-    last_rebalance_value: float
+    last_rebalance_value: float,
+    close_price_cache: Dict[str, float],
 ) -> Tuple[bool, str]:
     """
     Transaction cost guard: Only rebalance if the portfolio has grown enough
@@ -638,7 +696,13 @@ def _should_rebalance_by_profit_since_last_rebalance(
         return False, "no change"
 
     # Calculate current portfolio value
-    portfolio_value_now = _mark_to_market_value(positions, cash, ticker_data_grouped, current_date)
+    portfolio_value_now = _mark_to_market_value(
+        positions,
+        cash,
+        ticker_data_grouped,
+        current_date,
+        close_price_cache=close_price_cache,
+    )
 
     # Calculate actual transaction costs for the specific trades
     total_sell_value = 0.0
@@ -646,11 +710,9 @@ def _should_rebalance_by_profit_since_last_rebalance(
         if ticker in positions:
             pos = positions[ticker]
             shares = pos.get('shares', 0)
-            if ticker in ticker_data_grouped:
-                price_data = ticker_data_grouped[ticker].loc[:current_date]
-                if not price_data.empty:
-                    current_price = price_data['Close'].dropna().iloc[-1]
-                    total_sell_value += shares * current_price
+            current_price = close_price_cache.get(ticker)
+            if current_price is not None:
+                total_sell_value += shares * current_price
 
     total_buy_value = 0.0
     # Estimate buy value based on equal allocation of freed capital
@@ -697,7 +759,9 @@ def _smart_rebalance_portfolio(
     strategy_stop_loss: float = None,
     use_atr_trailing_stop: bool = False,
     atr_multiplier: float = 2.0,
-    custom_weights: Dict[str, float] = None
+    custom_weights: Dict[str, float] = None,
+    *,
+    close_price_cache: Dict[str, float],
 ) -> Tuple[Dict[str, Dict], float, List[str], float, bool]:
     """
     Universal smart rebalancing function for all strategies.
@@ -811,18 +875,11 @@ def _smart_rebalance_portfolio(
         if ticker not in updated_positions:
             continue
 
-        if ticker not in ticker_data_grouped:
+        current_price = close_price_cache.get(ticker)
+        if current_price is None:
             print(f"   ⚠️ {strategy_name} Cannot sell {ticker}: no price data, keeping position")
             failed_sells.append(ticker)
             continue
-
-        price_data = ticker_data_grouped[ticker].loc[:current_date]
-        if price_data.empty or price_data['Close'].dropna().empty:
-            print(f"   ⚠️ {strategy_name} Cannot sell {ticker}: no valid close price, keeping position")
-            failed_sells.append(ticker)
-            continue
-
-        current_price = price_data['Close'].dropna().iloc[-1]
         shares = updated_positions[ticker]['shares']
         gross_sale = shares * current_price
         sell_cost = gross_sale * transaction_cost
@@ -851,11 +908,9 @@ def _smart_rebalance_portfolio(
 
     if positions_to_actually_buy:
         held_positions_value = sum(
-            updated_positions[ticker]['shares'] * ticker_data_grouped[ticker].loc[:current_date]['Close'].dropna().iloc[-1]
+            updated_positions[ticker]['shares'] * close_price_cache[ticker]
             for ticker in updated_positions
-            if ticker in ticker_data_grouped
-            and not ticker_data_grouped[ticker].loc[:current_date].empty
-            and not ticker_data_grouped[ticker].loc[:current_date]['Close'].dropna().empty
+            if ticker in close_price_cache
         )
         total_portfolio_value = updated_cash + held_positions_value
         capital_per_stock = total_portfolio_value / portfolio_size if portfolio_size > 0 else 0
@@ -868,55 +923,49 @@ def _smart_rebalance_portfolio(
     for ticker in positions_to_actually_buy:
         if len(updated_positions) >= portfolio_size:
             break
-        if ticker in ticker_data_grouped:
-            price_data = ticker_data_grouped[ticker].loc[:current_date]
-            if not price_data.empty and not price_data['Close'].dropna().empty:
-                current_price = price_data['Close'].dropna().iloc[-1]
-                if current_price > 0:
-                    if custom_weights and ticker in custom_weights:
-                        ticker_capital = total_portfolio_value * custom_weights[ticker]
-                        available_for_stock = min(ticker_capital, updated_cash)
-                    else:
-                        available_for_stock = min(capital_per_stock, updated_cash)
-                    shares = int(available_for_stock / (current_price * (1 + transaction_cost)))
-                    if shares > 0:
-                        buy_value = shares * current_price
-                        buy_cost = buy_value * transaction_cost
-                        total_cost = buy_value + buy_cost
+        current_price = close_price_cache.get(ticker)
+        if current_price and current_price > 0:
+            if custom_weights and ticker in custom_weights:
+                ticker_capital = total_portfolio_value * custom_weights[ticker]
+                available_for_stock = min(ticker_capital, updated_cash)
+            else:
+                available_for_stock = min(capital_per_stock, updated_cash)
+            shares = int(available_for_stock / (current_price * (1 + transaction_cost)))
+            if shares > 0:
+                buy_value = shares * current_price
+                buy_cost = buy_value * transaction_cost
+                total_cost = buy_value + buy_cost
 
-                        if total_cost <= updated_cash:
-                            print(f"   🛒 {strategy_name} Buying {ticker}: {shares} shares @ ${current_price:.2f}")
-                            total_transaction_costs += buy_cost
-                            updated_cash -= total_cost
-                            updated_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
-                            final_stocks.append(ticker)
-                            newly_bought.append(ticker)
-                            positions_changed = True
-                        else:
-                            print(f"   ❌ {strategy_name} Insufficient cash for {ticker}: need ${total_cost:,.0f}, have ${updated_cash:,.0f}")
+                if total_cost <= updated_cash:
+                    print(f"   🛒 {strategy_name} Buying {ticker}: {shares} shares @ ${current_price:.2f}")
+                    total_transaction_costs += buy_cost
+                    updated_cash -= total_cost
+                    updated_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
+                    final_stocks.append(ticker)
+                    newly_bought.append(ticker)
+                    positions_changed = True
+                else:
+                    print(f"   ❌ {strategy_name} Insufficient cash for {ticker}: need ${total_cost:,.0f}, have ${updated_cash:,.0f}")
 
     skipped_tickers = [ticker for ticker in positions_to_actually_buy if ticker not in newly_bought]
     for ticker in skipped_tickers:
         if updated_cash <= 0 or len(updated_positions) >= portfolio_size:
             break
-        if ticker in ticker_data_grouped:
-            price_data = ticker_data_grouped[ticker].loc[:current_date]
-            if not price_data.empty and not price_data['Close'].dropna().empty:
-                current_price = price_data['Close'].dropna().iloc[-1]
-                if current_price > 0:
-                    shares = int(updated_cash / (current_price * (1 + transaction_cost)))
-                    if shares > 0:
-                        buy_value = shares * current_price
-                        buy_cost = buy_value * transaction_cost
-                        total_cost = buy_value + buy_cost
-                        if total_cost <= updated_cash:
-                            print(f"   {strategy_name} Buying {ticker} (2nd pass): {shares} shares @ ${current_price:.2f}")
-                            total_transaction_costs += buy_cost
-                            updated_cash -= total_cost
-                            updated_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
-                            final_stocks.append(ticker)
-                            newly_bought.append(ticker)
-                            positions_changed = True
+        current_price = close_price_cache.get(ticker)
+        if current_price and current_price > 0:
+            shares = int(updated_cash / (current_price * (1 + transaction_cost)))
+            if shares > 0:
+                buy_value = shares * current_price
+                buy_cost = buy_value * transaction_cost
+                total_cost = buy_value + buy_cost
+                if total_cost <= updated_cash:
+                    print(f"   {strategy_name} Buying {ticker} (2nd pass): {shares} shares @ ${current_price:.2f}")
+                    total_transaction_costs += buy_cost
+                    updated_cash -= total_cost
+                    updated_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
+                    final_stocks.append(ticker)
+                    newly_bought.append(ticker)
+                    positions_changed = True
 
     held_set = set(updated_positions)
     ordered_existing = [ticker for ticker in held_after_sells if ticker in held_set]
@@ -947,6 +996,7 @@ def _run_ai_elite_step(
     ai_elite_transaction_costs: float,
     ai_elite_portfolio_value: float,
     ai_elite_last_rebalance_value: float,
+    close_price_cache: Dict[str, float],
 ) -> Tuple[Dict, Dict[str, int], Dict[str, Dict], float, List[str], float, float, bool]:
     """Run one AI Elite backtest step and return updated state."""
     from shared_strategies import select_ai_elite_with_training
@@ -1001,6 +1051,7 @@ def _run_ai_elite_step(
             portfolio_size=PORTFOLIO_SIZE,
             buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
             force_rebalance=not current_ai_elite_stocks,
+            close_price_cache=close_price_cache,
         )
         ai_elite_transaction_costs += rebalance_costs
         ai_elite_last_rebalance_value = ai_elite_portfolio_value
@@ -1780,7 +1831,15 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   💰 Running all enabled strategies")
 
     # Clear inverse ETF hedge log at start of backtest
-    from shared_strategies import clear_inverse_etf_hedge_log, get_strategy_tickers, select_top_performers, select_top_performers_vol_filtered
+    from parallel_backtest import build_price_history_cache
+    from shared_strategies import (
+        clear_inverse_etf_hedge_log,
+        get_strategy_tickers,
+        select_quality_momentum_stocks as _select_quality_momentum_stocks_impl,
+        select_risk_adj_mom_stocks as _select_risk_adj_mom_stocks_impl,
+        select_top_performers as _select_top_performers_impl,
+        select_top_performers_vol_filtered as _select_top_performers_vol_filtered_impl,
+    )
     clear_inverse_etf_hedge_log()
 
     # Centralized rebalancing tracking for all strategies (strategy_name -> bool)
@@ -1801,11 +1860,13 @@ def _run_portfolio_backtest_walk_forward(
     from config import PORTFOLIO_SIZE
     initial_capital_needed = PORTFOLIO_SIZE * capital_per_stock
     cash_balance = initial_capital_needed  # Start with cash available for initial purchases
+    benchmark_top_hold_last_rebalance_value = initial_capital_needed
 
-    # Fixed benchmark: top PORTFOLIO_SIZE performers selected once at backtest start.
-    benchmark_top_start_name = f"Start Top {PORTFOLIO_SIZE}"
+    # Hindsight benchmark: choose the best performers over the backtest window,
+    # buy them at the start, and hold without rebalancing.
+    benchmark_top_start_name = f"Perfect Foresight Top {PORTFOLIO_SIZE}"
     benchmark_top_start_portfolio_value = initial_capital_needed
-    benchmark_top_start_portfolio_history = []
+    benchmark_top_start_portfolio_history = [benchmark_top_start_portfolio_value]
     benchmark_top_start_positions = {}
     benchmark_top_start_cash = initial_capital_needed
     benchmark_top_start_stocks = []
@@ -2442,6 +2503,17 @@ def _run_portfolio_backtest_walk_forward(
     current_voting_ensemble_stocks = []  # Current top stocks held by voting ensemble
     voting_ensemble_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
+    # VOTING ENSEMBLE + AI REBALANCE: same selection, separate AI-driven replace decisions
+    voting_ensemble_ai_rebalance_portfolio_value = initial_capital_needed
+    voting_ensemble_ai_rebalance_portfolio_history = [voting_ensemble_ai_rebalance_portfolio_value] if config.ENABLE_VOTING_ENSEMBLE_AI_REBALANCE else []
+    voting_ensemble_ai_rebalance_positions = {}
+    voting_ensemble_ai_rebalance_cash = initial_capital_needed
+    current_voting_ensemble_ai_rebalance_stocks = []
+    voting_ensemble_ai_rebalance_transaction_costs = 0.0
+    voting_ensemble_ai_rebalance_model = None
+    voting_ensemble_ai_rebalance_last_train_day = 0
+    voting_ensemble_ai_rebalance_cache_context = None
+
     # TOP 5 CONSISTENCY TRACKER: Count how many days each strategy is in top 5
     top5_consistency_counts = {}  # strategy_name -> count of days in top 5
     recent_top5_history = []  # rolling list of daily top-5 display names
@@ -2634,6 +2706,16 @@ def _run_portfolio_backtest_walk_forward(
     ai_elite_monthly_models = {}  # Separate model dict for monthly variant
     ai_elite_monthly_last_train_days = {}
 
+    # AI ELITE MONTHLY SHARED: Initialize portfolio tracking (monthly rebalance using daily AI Elite shared model)
+    ai_elite_monthly_shared_portfolio_value = initial_capital_needed
+    ai_elite_monthly_shared_portfolio_history = [ai_elite_monthly_shared_portfolio_value] if config.ENABLE_AI_ELITE_MONTHLY_SHARED else []
+    ai_elite_monthly_shared_positions = {}
+    ai_elite_monthly_shared_cash = initial_capital_needed
+    current_ai_elite_monthly_shared_stocks = []
+    ai_elite_monthly_shared_transaction_costs = 0.0
+    ai_elite_monthly_shared_initialized = False
+    ai_elite_monthly_shared_last_month = None
+
     # AI ELITE FILTERED: Initialize portfolio tracking (Risk-Adj Mom 3M pre-filter + AI Elite re-rank)
     ai_elite_filtered_portfolio_value = initial_capital_needed
     ai_elite_filtered_portfolio_history = [ai_elite_filtered_portfolio_value] if config.ENABLE_AI_ELITE_FILTERED else []
@@ -2653,6 +2735,24 @@ def _run_portfolio_backtest_walk_forward(
     ai_elite_market_up_rebalanced_today = False
     ai_elite_market_up_transaction_costs = 0.0
     ai_elite_market_up_initialized = False
+
+    # AI ELITE ENSEMBLE: Initialize portfolio tracking (weighted avg of top 3 positive-R² models)
+    ai_elite_ensemble_portfolio_value = initial_capital_needed
+    ai_elite_ensemble_portfolio_history = [ai_elite_ensemble_portfolio_value] if config.ENABLE_AI_ELITE_ENSEMBLE else []
+    ai_elite_ensemble_positions = {}
+    ai_elite_ensemble_cash = initial_capital_needed
+    current_ai_elite_ensemble_stocks = []
+    ai_elite_ensemble_transaction_costs = 0.0
+    ai_elite_ensemble_initialized = False
+
+    # AI ELITE RANK ENSEMBLE: Initialize portfolio tracking (weighted rank avg of top 3 positive-R² models)
+    ai_elite_rank_ensemble_portfolio_value = initial_capital_needed
+    ai_elite_rank_ensemble_portfolio_history = [ai_elite_rank_ensemble_portfolio_value] if config.ENABLE_AI_ELITE_RANK_ENSEMBLE else []
+    ai_elite_rank_ensemble_positions = {}
+    ai_elite_rank_ensemble_cash = initial_capital_needed
+    current_ai_elite_rank_ensemble_stocks = []
+    ai_elite_rank_ensemble_transaction_costs = 0.0
+    ai_elite_rank_ensemble_initialized = False
 
     # AI CHAMPION: Initialize portfolio tracking (ML selector across top candidates)
     ai_champion_portfolio_value = initial_capital_needed
@@ -3075,13 +3175,243 @@ def _run_portfolio_backtest_walk_forward(
         print(f"   🔍 DEBUG: initial_top_tickers sample: {initial_top_tickers[:5]}")
         print(f"   🔍 DEBUG: available_tickers_in_data sample: {list(available_tickers_in_data)[:5]}")
 
+    price_history_cache = build_price_history_cache(ticker_data_grouped)
+
     # Build a fixed benchmark portfolio from the highest performers at the backtest start.
     benchmark_start_date = business_days[0] if business_days else backtest_start_date
-    benchmark_top_start_stocks = select_top_performers(
+    active_close_price_cache = _build_daily_close_price_cache(ticker_data_grouped, benchmark_start_date)
+    close_cache_ticker_by_df_id = {id(ticker_df): ticker for ticker, ticker_df in ticker_data_grouped.items()}
+
+    _mark_to_market_value_impl = globals()['_mark_to_market_value']
+    _smart_rebalance_portfolio_impl = globals()['_smart_rebalance_portfolio']
+    _should_rebalance_by_profit_since_last_rebalance_impl = globals()['_should_rebalance_by_profit_since_last_rebalance']
+
+    def _last_valid_close_up_to(ticker_df: pd.DataFrame, current_date: datetime) -> Optional[float]:
+        ticker = close_cache_ticker_by_df_id.get(id(ticker_df))
+        if ticker is None:
+            return None
+        return active_close_price_cache.get(ticker)
+
+    def _mark_to_market_value(
+        positions: Dict[str, Dict],
+        cash: float,
+        ticker_data_grouped: Dict[str, pd.DataFrame],
+        current_date: datetime,
+    ) -> float:
+        return _mark_to_market_value_impl(
+            positions,
+            cash,
+            ticker_data_grouped,
+            current_date,
+            close_price_cache=active_close_price_cache,
+        )
+
+    def _smart_rebalance_portfolio(
+        strategy_name: str,
+        current_stocks: List[str],
+        new_stocks: List[str],
+        positions: Dict[str, Dict],
+        cash: float,
+        ticker_data_grouped: Dict[str, pd.DataFrame],
+        current_date: datetime,
+        transaction_cost: float,
+        portfolio_size: int = 10,
+        force_rebalance: bool = False,
+        buffer_size: int = None,
+        strategy_stop_loss: float = None,
+        use_atr_trailing_stop: bool = False,
+        atr_multiplier: float = 2.0,
+        custom_weights: Dict[str, float] = None,
+    ) -> Tuple[Dict[str, Dict], float, List[str], float, bool]:
+        return _smart_rebalance_portfolio_impl(
+            strategy_name=strategy_name,
+            current_stocks=current_stocks,
+            new_stocks=new_stocks,
+            positions=positions,
+            cash=cash,
+            ticker_data_grouped=ticker_data_grouped,
+            current_date=current_date,
+            transaction_cost=transaction_cost,
+            portfolio_size=portfolio_size,
+            force_rebalance=force_rebalance,
+            buffer_size=buffer_size,
+            strategy_stop_loss=strategy_stop_loss,
+            use_atr_trailing_stop=use_atr_trailing_stop,
+            atr_multiplier=atr_multiplier,
+            custom_weights=custom_weights,
+            close_price_cache=active_close_price_cache,
+        )
+
+    def _ai_rebalance_portfolio(
+        strategy_name: str,
+        current_stocks: List[str],
+        ranked_candidates: List[str],
+        positions: Dict[str, Dict],
+        cash: float,
+        ticker_data_grouped: Dict[str, pd.DataFrame],
+        current_date: datetime,
+        transaction_cost: float,
+        model_bundle,
+        portfolio_size: int = 10,
+        force_rebalance: bool = False,
+        buffer_size: int = None,
+        min_predicted_edge: float = 0.0,
+    ) -> Tuple[Dict[str, Dict], float, List[str], float, bool, List[Tuple[str, str, float, str]], List[str]]:
+        from ai_rebalance_strategy import choose_ai_rebalance_ranked_candidates
+
+        effective_buffer_size = buffer_size if buffer_size is not None else (portfolio_size + PORTFOLIO_BUFFER_SIZE)
+        ai_ranked_candidates, decision_logs = choose_ai_rebalance_ranked_candidates(
+            current_holdings=current_stocks,
+            ranked_candidates=ranked_candidates,
+            ticker_data_grouped=ticker_data_grouped,
+            current_date=current_date,
+            model_bundle=model_bundle,
+            transaction_cost=transaction_cost,
+            portfolio_size=portfolio_size,
+            buffer_size=effective_buffer_size,
+            min_predicted_edge=min_predicted_edge,
+        )
+        positions, cash, final_stocks, costs, rebalanced = _smart_rebalance_portfolio(
+            strategy_name=strategy_name,
+            current_stocks=current_stocks,
+            new_stocks=ai_ranked_candidates,
+            positions=positions,
+            cash=cash,
+            ticker_data_grouped=ticker_data_grouped,
+            current_date=current_date,
+            transaction_cost=transaction_cost,
+            portfolio_size=portfolio_size,
+            force_rebalance=force_rebalance,
+            buffer_size=effective_buffer_size,
+        )
+        return positions, cash, final_stocks, costs, rebalanced, decision_logs, ai_ranked_candidates
+
+    def _should_rebalance_by_profit_since_last_rebalance(
+        current_stocks: List[str],
+        new_stocks: List[str],
+        ticker_data_grouped: Dict[str, pd.DataFrame],
+        current_date: datetime,
+        positions: Dict[str, Dict],
+        cash: float,
+        transaction_cost: float,
+        last_rebalance_value: float,
+    ) -> Tuple[bool, str]:
+        return _should_rebalance_by_profit_since_last_rebalance_impl(
+            current_stocks=current_stocks,
+            new_stocks=new_stocks,
+            ticker_data_grouped=ticker_data_grouped,
+            current_date=current_date,
+            positions=positions,
+            cash=cash,
+            transaction_cost=transaction_cost,
+            last_rebalance_value=last_rebalance_value,
+            close_price_cache=active_close_price_cache,
+        )
+
+    def select_top_performers(
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        lookback_days,
+        top_n=10,
+        apply_performance_filter=False,
+        filter_label="Strategy",
+        exclude_inverse_etfs=True,
+    ):
+        return _select_top_performers_impl(
+            all_tickers,
+            ticker_data_grouped,
+            current_date,
+            lookback_days,
+            top_n=top_n,
+            apply_performance_filter=apply_performance_filter,
+            filter_label=filter_label,
+            exclude_inverse_etfs=exclude_inverse_etfs,
+            price_history_cache=price_history_cache,
+        )
+
+    def select_top_performers_vol_filtered(
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        lookback_days,
+        max_volatility,
+        top_n=10,
+    ):
+        return _select_top_performers_vol_filtered_impl(
+            all_tickers,
+            ticker_data_grouped,
+            current_date,
+            lookback_days,
+            max_volatility,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+
+    def select_risk_adj_mom_stocks(
+        all_tickers,
+        ticker_data_grouped,
+        current_date=None,
+        top_n=20,
+        lookback_days=365,
+        strategy_name="Risk-Adj Mom",
+    ):
+        return _select_risk_adj_mom_stocks_impl(
+            all_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            lookback_days=lookback_days,
+            strategy_name=strategy_name,
+            price_history_cache=price_history_cache,
+        )
+
+    def select_quality_momentum_stocks(
+        all_tickers,
+        ticker_data_grouped,
+        current_date=None,
+        top_n=20,
+    ):
+        return _select_quality_momentum_stocks_impl(
+            all_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+
+    def _update_portfolio_value_from_cache(
+        positions: Dict[str, Dict],
+        cash: float,
+        error_prefix: Optional[str] = None,
+        debug_message: Optional[str] = None,
+    ) -> float:
+        invested = 0.0
+        if debug_message:
+            print(debug_message)
+        for ticker in list((positions or {}).keys()):
+            pos = positions[ticker]
+            try:
+                ticker_df = ticker_data_grouped.get(ticker)
+                if ticker_df is not None:
+                    current_price = _last_valid_close_up_to(ticker_df, current_date)
+                    if current_price is not None and not pd.isna(current_price) and current_price > 0:
+                        position_value = pos['shares'] * current_price
+                        positions[ticker]['value'] = position_value
+                        invested += position_value
+                        continue
+                invested += pos.get('value', 0.0)
+            except Exception as e:
+                if error_prefix:
+                    print(f"   ⚠️ {error_prefix} for {ticker}: {e}")
+                invested += pos.get('value', 0.0)
+        return invested + cash
+
+    benchmark_top_start_stocks = _select_top_performers_over_window(
         initial_top_tickers,
         ticker_data_grouped,
         benchmark_start_date,
-        lookback_days=365,
+        backtest_end_date,
         top_n=PORTFOLIO_SIZE,
     )
     if benchmark_top_start_stocks:
@@ -3110,7 +3440,8 @@ def _run_portfolio_backtest_walk_forward(
             benchmark_start_date,
         )
         print(
-            f"   📌 {benchmark_top_start_name}: Fixed benchmark holdings at start = "
+            f"   📌 {benchmark_top_start_name}: Hindsight-selected holdings over "
+            f"{benchmark_start_date.strftime('%Y-%m-%d')} to {backtest_end_date.strftime('%Y-%m-%d')} = "
             f"{benchmark_top_start_stocks}"
         )
     else:
@@ -3133,6 +3464,150 @@ def _run_portfolio_backtest_walk_forward(
 
     for current_date in business_days:
         day_count += 1
+        active_close_price_cache = _build_daily_close_price_cache(ticker_data_grouped, current_date)
+
+        # VOTING ENSEMBLE AI REBALANCE TRAINING
+        # Run the heavy cache collection/training early so crashes show up immediately.
+        if config.ENABLE_VOTING_ENSEMBLE_AI_REBALANCE:
+            try:
+                from ai_rebalance_strategy import (
+                    _collect_rebalance_data_worker,
+                    init_rebalance_collection_worker,
+                    load_voting_ai_rebalance_model,
+                    precompute_rebalance_training_context,
+                    train_voting_ai_rebalance_model,
+                )
+                from multiprocessing import Pool
+
+                if (
+                    voting_ensemble_ai_rebalance_model is None
+                    and not config.AI_VOTING_REBALANCE_FORCE_FRESH_TRAIN
+                ):
+                    voting_ensemble_ai_rebalance_model = load_voting_ai_rebalance_model()
+
+                should_train_voting_ai_rebalance = (
+                    voting_ensemble_ai_rebalance_model is None
+                    or (day_count - voting_ensemble_ai_rebalance_last_train_day) >= config.AI_VOTING_REBALANCE_RETRAIN_DAYS
+                )
+                if should_train_voting_ai_rebalance:
+                    import time as _time
+                    train_start = current_date - timedelta(days=config.AI_VOTING_REBALANCE_TRAINING_LOOKBACK)
+                    all_tickers = list(ticker_data_grouped.keys())
+
+                    n_workers = max(1, NUM_PROCESSES)
+                    print(f"   📊 Voting Ens AI Reb: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {config.AI_VOTING_REBALANCE_TRAINING_LOOKBACK}d lookback)...")
+                    _start_time = _time.time()
+                    rebalance_context = precompute_rebalance_training_context(
+                        ticker_data_grouped=ticker_data_grouped,
+                        all_tickers=all_tickers,
+                        train_start_date=train_start,
+                        train_end_date=current_date,
+                        forward_days=config.AI_VOTING_REBALANCE_FORWARD_DAYS,
+                        existing_context=voting_ensemble_ai_rebalance_cache_context,
+                    )
+                    voting_ensemble_ai_rebalance_cache_context = rebalance_context
+                    rebalance_context_tickers = list(rebalance_context.get("all_tickers") or [])
+
+                    collect_args = [
+                        (
+                            t,
+                            rebalance_context_tickers,
+                            train_start,
+                            current_date,
+                            config.AI_VOTING_REBALANCE_FORWARD_DAYS,
+                            TRANSACTION_COST,
+                            PORTFOLIO_SIZE,
+                            PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        )
+                        for t in rebalance_context_tickers
+                    ]
+
+                    rebalance_training_samples = []
+                    ticker_samples_map = {}
+
+                    with Pool(
+                        processes=n_workers,
+                        initializer=init_rebalance_collection_worker,
+                        initargs=(rebalance_context,),
+                    ) as pool:
+                        results = list(tqdm(
+                            pool.imap_unordered(_collect_rebalance_data_worker, collect_args),
+                            total=len(collect_args),
+                            desc="   Voting AI Reb collection",
+                            ncols=100,
+                            unit="ticker",
+                        ))
+
+                    for ticker, samples in results:
+                        if samples:
+                            rebalance_training_samples.extend(samples)
+                            ticker_samples_map[ticker] = samples
+
+                    _elapsed = _time.time() - _start_time
+                    print(f"   📊 Voting Ens AI Reb: Collected {len(rebalance_training_samples)} samples from {len(ticker_samples_map)} tickers ({_elapsed:.1f}s)")
+
+                    voting_ensemble_ai_rebalance_model, _ = train_voting_ai_rebalance_model(
+                        all_training_data=rebalance_training_samples,
+                        existing_model=(
+                            None if config.AI_VOTING_REBALANCE_FORCE_FRESH_TRAIN
+                            else voting_ensemble_ai_rebalance_model
+                        ),
+                        train_start=train_start,
+                        train_end=current_date,
+                    )
+                    if voting_ensemble_ai_rebalance_model is not None:
+                        voting_ensemble_ai_rebalance_last_train_day = day_count
+            except Exception as e:
+                print(f"   ⚠️ Voting Ens AI Reb training error: {e}")
+
+        # SAVGOL TREND STRATEGY (pooled ML using local polynomial trend features)
+        if config.ENABLE_SAVGOL_TREND:
+            try:
+                from savgol_trend_strategy import SavgolTrendStrategy, select_savgol_trend_stocks
+
+                if savgol_trend_strategy is None:
+                    savgol_trend_strategy = SavgolTrendStrategy(
+                        retrain_days=config.SAVGOL_TREND_RETRAIN_DAYS,
+                        min_samples=config.MIN_TRAINING_SAMPLES_AI_ELITE,
+                        lookback_days=config.AI_ELITE_TRAINING_LOOKBACK,
+                        forward_days=config.AI_ELITE_FORWARD_DAYS,
+                    )
+                    savgol_trend_strategy.load_model()
+
+                savgol_trend_strategy.increment_day()
+
+                new_savgol_trend_stocks = select_savgol_trend_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date,
+                    PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    savgol_trend_strategy,
+                    business_days,
+                    day_count,
+                    current_savgol_trend_stocks,
+                )
+
+                if new_savgol_trend_stocks:
+                    print(f"   📊 SavGol Trend Day {day_count}: {new_savgol_trend_stocks}")
+                    savgol_trend_positions, savgol_trend_cash, current_savgol_trend_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="SavGol Trend",
+                        current_stocks=current_savgol_trend_stocks,
+                        new_stocks=new_savgol_trend_stocks,
+                        positions=savgol_trend_positions,
+                        cash=savgol_trend_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        force_rebalance=not savgol_trend_initialized
+                    )
+                    strategies_rebalanced_today['SavGol Trend'] = rebalanced_flag
+                    savgol_trend_transaction_costs += rc
+                    savgol_trend_initialized = True
+
+            except Exception as e:
+                print(f"   ⚠️ SavGol Trend error: {e}")
 
         # AI ELITE STRATEGY (ML-powered scoring) - PER-TICKER MODELS
         if config.ENABLE_AI_ELITE:
@@ -3159,6 +3634,7 @@ def _run_portfolio_backtest_walk_forward(
                     ai_elite_transaction_costs=ai_elite_transaction_costs,
                     ai_elite_portfolio_value=ai_elite_portfolio_value,
                     ai_elite_last_rebalance_value=ai_elite_last_rebalance_value,
+                    close_price_cache=active_close_price_cache,
                 )
                 strategies_rebalanced_today['AI Elite'] = rebalanced_flag
             except Exception as e:
@@ -3677,9 +4153,8 @@ def _run_portfolio_backtest_walk_forward(
             # Update peak prices daily
             for ticker in bh_1y_trailing_mom_positions:
                 if ticker in ticker_data_grouped:
-                    data = ticker_data_grouped[ticker].loc[:current_date]
-                    if not data.empty:
-                        current_price = data['Close'].dropna().iloc[-1]
+                    current_price = _last_valid_close_up_to(ticker_data_grouped[ticker], current_date)
+                    if current_price is not None:
                         if ticker not in bh_1y_trailing_mom_peaks:
                             bh_1y_trailing_mom_peaks[ticker] = current_price
                         elif current_price > bh_1y_trailing_mom_peaks[ticker]:
@@ -4802,8 +5277,6 @@ def _run_portfolio_backtest_walk_forward(
 
         # RISK-ADJUSTED MOMENTUM: Rebalance to current top N using shared strategy
         if config.ENABLE_RISK_ADJ_MOM:
-            from shared_strategies import select_risk_adj_mom_stocks
-
             # Use shared strategy for consistent selection
             new_risk_adj_mom_stocks = select_risk_adj_mom_stocks(
                 initial_top_tickers,
@@ -5591,77 +6064,36 @@ def _run_portfolio_backtest_walk_forward(
         # QUALITY + MOMENTUM: Rebalance to top performers by combined quality+momentum score DAILY
         if config.ENABLE_QUALITY_MOM:
             try:
-                # Calculate combined quality + momentum scores
-                quality_momentum_scores = []
-
                 print(f"   🔍 Quality+Mom: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                # ✅ OPTIMIZED: Use pre-grouped data
-                for ticker in initial_top_tickers:
-                    try:
-                        if ticker not in ticker_data_grouped:
-                            continue
-                        ticker_data = ticker_data_grouped[ticker]
+                new_quality_momentum_stocks = select_quality_momentum_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE,
+                )
 
-                        # Use 3-month period for both quality and momentum assessment
-                        # ✅ FIX: Use explicit date range like other working strategies
-                        perf_start_date_qm = current_date - timedelta(days=90)
-                        data_slice = ticker_data.loc[perf_start_date_qm:current_date]
-                        if len(data_slice) >= 30:  # Relaxed: at least 30 days of data
-                            recent_data = data_slice.tail(63) if len(data_slice) >= 63 else data_slice
-
-                            if len(recent_data) >= 10:
-                                # MOMENTUM SCORE: 3-month return
-                                start_price = recent_data['Close'].iloc[0]
-                                end_price = recent_data['Close'].iloc[-1]
-                                momentum_score = ((end_price - start_price) / start_price) * 100 if start_price > 0 else -100
-
-                                # QUALITY SCORE: Consistency (low volatility) + trend strength
-                                returns = recent_data['Close'].pct_change(fill_method=None).dropna()
-                                if len(returns) > 5:
-                                    # Volatility (lower = higher quality)
-                                    volatility = returns.std() * np.sqrt(252)  # Annualized
-                                    quality_volatility = max(0, 50 - volatility * 100)  # Higher score for lower volatility
-
-                                    # Trend consistency (higher = higher quality)
-                                    trend_strength = abs(momentum_score) * (1 - volatility)  # Strong trend with low volatility
-
-                                    # Combined score: 70% momentum, 30% quality
-                                    combined_score = (momentum_score * 0.7) + (quality_volatility * 0.3)
-
-                                    quality_momentum_scores.append((ticker, combined_score, momentum_score, quality_volatility))
-
-                    except Exception as e:
-                        continue
-
-                print(f"   📊 Quality+Mom: Found {len(quality_momentum_scores)} tickers with valid data")
-
-                if quality_momentum_scores:
-                    # Sort by combined score (descending)
-                    quality_momentum_scores.sort(key=lambda x: x[1], reverse=True)
-                    new_quality_momentum_stocks = [ticker for ticker, score, mom, qual in quality_momentum_scores[:PORTFOLIO_SIZE]]
+                if new_quality_momentum_stocks:
+                    print(f"   📦 Quality+Mom portfolio before rebalance: {current_quality_momentum_stocks}")
                     print(f"   🎯 Quality+Mom: Selected {new_quality_momentum_stocks}")
-
-                    if new_quality_momentum_stocks:
-                        print(f"   📊 Quality+Mom Day {day_count}: {new_quality_momentum_stocks}")
-                        # Use universal smart rebalancing function
-                        quality_momentum_positions, quality_momentum_cash, current_quality_momentum_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
-                            strategy_name="Quality+Mom",
-                            current_stocks=current_quality_momentum_stocks,
-                            new_stocks=new_quality_momentum_stocks,
-                            positions=quality_momentum_positions,
-                            cash=quality_momentum_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not current_quality_momentum_stocks  # Force initial allocation
-                        )
-                        strategies_rebalanced_today['Quality+Mom'] = rebalanced_flag
-                        quality_momentum_transaction_costs += rebalance_costs
-                        quality_momentum_last_rebalance_value = _mark_to_market_value(
-                            quality_momentum_positions, quality_momentum_cash, ticker_data_grouped, current_date
-                        )
+                    quality_momentum_positions, quality_momentum_cash, current_quality_momentum_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Quality+Mom",
+                        current_stocks=current_quality_momentum_stocks,
+                        new_stocks=new_quality_momentum_stocks,
+                        positions=quality_momentum_positions,
+                        cash=quality_momentum_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_quality_momentum_stocks  # Force initial allocation
+                    )
+                    print(f"   📦 Quality+Mom portfolio after rebalance: {current_quality_momentum_stocks}")
+                    strategies_rebalanced_today['Quality+Mom'] = rebalanced_flag
+                    quality_momentum_transaction_costs += rebalance_costs
+                    quality_momentum_last_rebalance_value = _mark_to_market_value(
+                        quality_momentum_positions, quality_momentum_cash, ticker_data_grouped, current_date
+                    )
                 else:
                     print(f"   ⚠️ Quality+Mom: No valid tickers found on {current_date.strftime('%Y-%m-%d')}")
 
@@ -5968,10 +6400,8 @@ def _run_portfolio_backtest_walk_forward(
                         for ticker in list(enhanced_volatility_positions.keys()):
                             if ticker not in [t for t, _, _, _ in top_enhanced_vol_stocks]:
                                 try:
-                                    ticker_data = ticker_data_grouped[ticker]
-                                    price_data = ticker_data.loc[:current_date]
-                                    if not price_data.empty:
-                                        current_price = price_data['Close'].dropna().iloc[-1]
+                                    current_price = _last_valid_close_up_to(ticker_data_grouped[ticker], current_date)
+                                    if current_price is not None:
                                         shares = enhanced_volatility_positions[ticker]['shares']
                                         gross_sale = shares * current_price
                                         sell_cost = gross_sale * TRANSACTION_COST
@@ -5984,32 +6414,29 @@ def _run_portfolio_backtest_walk_forward(
                         for ticker, score, volatility, atr in top_enhanced_vol_stocks:
                             if ticker not in enhanced_volatility_positions and capital_per_stock > 0:
                                 try:
-                                    ticker_data = ticker_data_grouped[ticker]
-                                    price_data = ticker_data.loc[:current_date]
-                                    if not price_data.empty:
-                                        current_price = price_data['Close'].dropna().iloc[-1]
-                                        if current_price > 0:
-                                            # Use target allocation or remaining cash, whichever is smaller
-                                            max_buy = min(capital_per_stock, enhanced_volatility_cash / (1 + TRANSACTION_COST))
-                                            shares = int(max_buy / current_price)
-                                            if shares > 0:
-                                                buy_value = shares * current_price
-                                                buy_cost = buy_value * TRANSACTION_COST
-                                                if enhanced_volatility_cash >= buy_value + buy_cost:
-                                                    enhanced_volatility_cash -= (buy_value + buy_cost)
+                                    current_price = _last_valid_close_up_to(ticker_data_grouped[ticker], current_date)
+                                    if current_price is not None and current_price > 0:
+                                        # Use target allocation or remaining cash, whichever is smaller
+                                        max_buy = min(capital_per_stock, enhanced_volatility_cash / (1 + TRANSACTION_COST))
+                                        shares = int(max_buy / current_price)
+                                        if shares > 0:
+                                            buy_value = shares * current_price
+                                            buy_cost = buy_value * TRANSACTION_COST
+                                            if enhanced_volatility_cash >= buy_value + buy_cost:
+                                                enhanced_volatility_cash -= (buy_value + buy_cost)
 
-                                                    # Set ATR-based stop loss (2x ATR) and take profit (3x ATR)
-                                                    stop_loss = current_price - (2 * atr)
-                                                    take_profit = current_price + (3 * atr)
+                                                # Set ATR-based stop loss (2x ATR) and take profit (3x ATR)
+                                                stop_loss = current_price - (2 * atr)
+                                                take_profit = current_price + (3 * atr)
 
-                                                    enhanced_volatility_positions[ticker] = {
-                                                        'shares': shares,
-                                                        'entry_price': current_price,
-                                                        'value': buy_value,
-                                                        'stop_loss': stop_loss,
-                                                        'take_profit': take_profit,
-                                                        'atr': atr
-                                                    }
+                                                enhanced_volatility_positions[ticker] = {
+                                                    'shares': shares,
+                                                    'entry_price': current_price,
+                                                    'value': buy_value,
+                                                    'stop_loss': stop_loss,
+                                                    'take_profit': take_profit,
+                                                    'atr': atr
+                                                }
                                 except Exception:
                                     continue
 
@@ -6021,10 +6448,8 @@ def _run_portfolio_backtest_walk_forward(
                 positions_to_close = []
                 for ticker, pos in enhanced_volatility_positions.items():
                     try:
-                        ticker_data = ticker_data_grouped[ticker]
-                        price_data = ticker_data.loc[:current_date]
-                        if not price_data.empty:
-                            current_price = price_data['Close'].dropna().iloc[-1]
+                        current_price = _last_valid_close_up_to(ticker_data_grouped[ticker], current_date)
+                        if current_price is not None:
 
                             # Check stop loss
                             if current_price <= pos['stop_loss']:
@@ -6139,10 +6564,8 @@ def _run_portfolio_backtest_walk_forward(
                         for ticker in list(ai_volatility_ensemble_positions.keys()):
                             if ticker not in [t for t, _, _, _, _ in top_ai_vol_stocks]:
                                 try:
-                                    ticker_data = ticker_data_grouped[ticker]
-                                    price_data = ticker_data.loc[:current_date]
-                                    if not price_data.empty:
-                                        current_price = price_data['Close'].dropna().iloc[-1]
+                                    current_price = _last_valid_close_up_to(ticker_data_grouped[ticker], current_date)
+                                    if current_price is not None:
                                         shares = ai_volatility_ensemble_positions[ticker]['shares']
                                         gross_sale = shares * current_price
                                         sell_cost = gross_sale * TRANSACTION_COST
@@ -6155,28 +6578,25 @@ def _run_portfolio_backtest_walk_forward(
                         for ticker, ai_score, vol, momentum, vol_trend in top_ai_vol_stocks:
                             if ticker not in ai_volatility_ensemble_positions and capital_per_stock > 0:
                                 try:
-                                    ticker_data = ticker_data_grouped[ticker]
-                                    price_data = ticker_data.loc[:current_date]
-                                    if not price_data.empty:
-                                        current_price = price_data['Close'].dropna().iloc[-1]
-                                        if current_price > 0:
-                                            # Apply volatility cap and use remaining cash
-                                            position_value = min(capital_per_stock, max_position_value, ai_volatility_ensemble_cash / (1 + TRANSACTION_COST))
-                                            shares = int(position_value / current_price)
-                                            if shares > 0:
-                                                buy_value = shares * current_price
-                                                buy_cost = buy_value * TRANSACTION_COST
-                                                if ai_volatility_ensemble_cash >= buy_value + buy_cost:
-                                                    ai_volatility_ensemble_cash -= (buy_value + buy_cost)
+                                    current_price = _last_valid_close_up_to(ticker_data_grouped[ticker], current_date)
+                                    if current_price is not None and current_price > 0:
+                                        # Apply volatility cap and use remaining cash
+                                        position_value = min(capital_per_stock, max_position_value, ai_volatility_ensemble_cash / (1 + TRANSACTION_COST))
+                                        shares = int(position_value / current_price)
+                                        if shares > 0:
+                                            buy_value = shares * current_price
+                                            buy_cost = buy_value * TRANSACTION_COST
+                                            if ai_volatility_ensemble_cash >= buy_value + buy_cost:
+                                                ai_volatility_ensemble_cash -= (buy_value + buy_cost)
 
-                                                    ai_volatility_ensemble_positions[ticker] = {
-                                                        'shares': shares,
-                                                        'entry_price': current_price,
-                                                        'value': buy_value,
-                                                        'ai_score': ai_score,
-                                                        'volatility': vol,
-                                                        'momentum': momentum
-                                                    }
+                                                ai_volatility_ensemble_positions[ticker] = {
+                                                    'shares': shares,
+                                                    'entry_price': current_price,
+                                                    'value': buy_value,
+                                                    'ai_score': ai_score,
+                                                    'volatility': vol,
+                                                    'momentum': momentum
+                                                }
                                 except Exception:
                                     continue
 
@@ -6244,9 +6664,8 @@ def _run_portfolio_backtest_walk_forward(
                     for ticker in list(mom_accel_positions.keys()):
                         if ticker not in new_mom_accel_stocks:
                             if ticker in ticker_data_grouped:
-                                price_data = ticker_data_grouped[ticker].loc[:current_date]
-                                if not price_data.empty:
-                                    current_price = price_data['Close'].dropna().iloc[-1]
+                                current_price = _last_valid_close_up_to(ticker_data_grouped[ticker], current_date)
+                                if current_price is not None:
                                     shares = mom_accel_positions[ticker]['shares']
                                     gross_sale = shares * current_price
                                     sell_cost = gross_sale * TRANSACTION_COST
@@ -6258,20 +6677,18 @@ def _run_portfolio_backtest_walk_forward(
                     for ticker in new_mom_accel_stocks:
                         if ticker not in mom_accel_positions:
                             if ticker in ticker_data_grouped:
-                                price_data = ticker_data_grouped[ticker].loc[:current_date]
-                                if not price_data.empty:
-                                    current_price = price_data['Close'].dropna().iloc[-1]
-                                    if current_price > 0:
-                                        # Use target allocation or remaining cash, whichever is smaller
-                                        max_buy = min(capital_per_stock, mom_accel_cash / (1 + TRANSACTION_COST))
-                                        shares = int(max_buy / current_price)
-                                        if shares > 0:
-                                            buy_value = shares * current_price
-                                            buy_cost = buy_value * TRANSACTION_COST
-                                            if mom_accel_cash >= buy_value + buy_cost:
-                                                mom_accel_transaction_costs += buy_cost
-                                                mom_accel_cash -= (buy_value + buy_cost)
-                                                mom_accel_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
+                                current_price = _last_valid_close_up_to(ticker_data_grouped[ticker], current_date)
+                                if current_price is not None and current_price > 0:
+                                    # Use target allocation or remaining cash, whichever is smaller
+                                    max_buy = min(capital_per_stock, mom_accel_cash / (1 + TRANSACTION_COST))
+                                    shares = int(max_buy / current_price)
+                                    if shares > 0:
+                                        buy_value = shares * current_price
+                                        buy_cost = buy_value * TRANSACTION_COST
+                                        if mom_accel_cash >= buy_value + buy_cost:
+                                            mom_accel_transaction_costs += buy_cost
+                                            mom_accel_cash -= (buy_value + buy_cost)
+                                            mom_accel_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
 
                     old_stocks = current_mom_accel_stocks.copy()
                     current_mom_accel_stocks = new_mom_accel_stocks
@@ -6335,9 +6752,8 @@ def _run_portfolio_backtest_walk_forward(
                 if not is_risk_on:
                     for ticker in list(dual_mom_positions.keys()):
                         if ticker in ticker_data_grouped:
-                            price_data = ticker_data_grouped[ticker].loc[:current_date]
-                            if not price_data.empty:
-                                current_price = price_data['Close'].dropna().iloc[-1]
+                            current_price = _last_valid_close_up_to(ticker_data_grouped[ticker], current_date)
+                            if current_price is not None:
                                 shares = dual_mom_positions[ticker]['shares']
                                 gross_sale = shares * current_price
                                 sell_cost = gross_sale * TRANSACTION_COST
@@ -6386,9 +6802,8 @@ def _run_portfolio_backtest_walk_forward(
                 for ticker in stocks_to_sell:
                     if ticker in trend_atr_positions:
                         if ticker in ticker_data_grouped:
-                            price_data = ticker_data_grouped[ticker].loc[:current_date]
-                            if not price_data.empty:
-                                current_price = price_data['Close'].dropna().iloc[-1]
+                            current_price = _last_valid_close_up_to(ticker_data_grouped[ticker], current_date)
+                            if current_price is not None:
                                 shares = trend_atr_positions[ticker]['shares']
                                 gross_sale = shares * current_price
                                 sell_cost = gross_sale * TRANSACTION_COST
@@ -6406,20 +6821,18 @@ def _run_portfolio_backtest_walk_forward(
                         for ticker in stocks_to_buy[:available_slots]:
                             if ticker not in trend_atr_positions:
                                 if ticker in ticker_data_grouped:
-                                    price_data = ticker_data_grouped[ticker].loc[:current_date]
-                                    if not price_data.empty:
-                                        current_price = price_data['Close'].dropna().iloc[-1]
-                                        if current_price > 0:
-                                            # Use target allocation or remaining cash, whichever is smaller
-                                            max_buy = min(capital_per_stock, trend_atr_cash / (1 + TRANSACTION_COST))
-                                            shares = int(max_buy / current_price)
-                                            if shares > 0:
-                                                buy_value = shares * current_price
-                                                buy_cost = buy_value * TRANSACTION_COST
-                                                if trend_atr_cash >= buy_value + buy_cost:
-                                                    trend_atr_transaction_costs += buy_cost
-                                                    trend_atr_cash -= (buy_value + buy_cost)
-                                                    trend_atr_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
+                                    current_price = _last_valid_close_up_to(ticker_data_grouped[ticker], current_date)
+                                    if current_price is not None and current_price > 0:
+                                        # Use target allocation or remaining cash, whichever is smaller
+                                        max_buy = min(capital_per_stock, trend_atr_cash / (1 + TRANSACTION_COST))
+                                        shares = int(max_buy / current_price)
+                                        if shares > 0:
+                                            buy_value = shares * current_price
+                                            buy_cost = buy_value * TRANSACTION_COST
+                                            if trend_atr_cash >= buy_value + buy_cost:
+                                                trend_atr_transaction_costs += buy_cost
+                                                trend_atr_cash -= (buy_value + buy_cost)
+                                                trend_atr_positions[ticker] = {'shares': shares, 'entry_price': current_price, 'value': buy_value}
 
                 old_stocks = current_trend_atr_stocks.copy()
                 current_trend_atr_stocks = list(trend_atr_positions.keys())
@@ -7011,6 +7424,48 @@ def _run_portfolio_backtest_walk_forward(
                 except Exception as e:
                     print(f"   ⚠️ AI Elite Monthly error: {e}")
 
+        # AI ELITE MONTHLY SHARED STRATEGY (monthly rebalance using daily AI Elite shared model)
+        if config.ENABLE_AI_ELITE_MONTHLY_SHARED:
+            should_act_ai_elite_monthly_shared = (not ai_elite_monthly_shared_initialized) or is_first_trading_day_of_month
+            if should_act_ai_elite_monthly_shared:
+                try:
+                    from ai_elite_strategy import select_ai_elite_stocks
+
+                    print(f"   📊 AI Elite Monthly Shared: {'Initializing' if not ai_elite_monthly_shared_initialized else 'Start-of-month'} ({current_date.strftime('%b %Y')})")
+
+                    if ai_elite_models.get('_shared_base') is None:
+                        print("   ⚠️ AI Elite Monthly Shared: No daily AI Elite shared model available, skipping")
+                    else:
+                        new_stocks = select_ai_elite_stocks(
+                            initial_top_tickers,
+                            ticker_data_grouped,
+                            current_date=current_date,
+                            top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            per_ticker_models=ai_elite_models,
+                        )
+
+                        if new_stocks:
+                            print(f"   📊 AI Elite Monthly Shared Day {day_count}: {new_stocks}")
+                            ai_elite_monthly_shared_positions, ai_elite_monthly_shared_cash, current_ai_elite_monthly_shared_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                                strategy_name="AI Elite Mth Sh",
+                                current_stocks=current_ai_elite_monthly_shared_stocks,
+                                new_stocks=new_stocks,
+                                positions=ai_elite_monthly_shared_positions,
+                                cash=ai_elite_monthly_shared_cash,
+                                ticker_data_grouped=ticker_data_grouped,
+                                current_date=current_date,
+                                transaction_cost=TRANSACTION_COST,
+                                portfolio_size=PORTFOLIO_SIZE,
+                                buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                                force_rebalance=not ai_elite_monthly_shared_initialized)
+                            strategies_rebalanced_today['AI Elite Mth Sh'] = rebalanced_flag
+                            ai_elite_monthly_shared_transaction_costs += rc
+                            ai_elite_monthly_shared_initialized = True
+                            ai_elite_monthly_shared_last_month = current_date.month
+
+                except Exception as e:
+                    print(f"   ⚠️ AI Elite Monthly Shared error: {e}")
+
         # AI ELITE FILTERED STRATEGY (Risk-Adj Mom 3M pre-filter + AI Elite re-rank)
         if config.ENABLE_AI_ELITE_FILTERED:
             try:
@@ -7048,7 +7503,7 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ AI Elite Filtered error: {e}")
 
-        # AI ELITE MARKET-UP STRATEGY (AI Elite only when market is up)
+        # AI ELITE MARKET-UP SHARED STRATEGY (daily AI Elite shared model, only when market is up)
         if config.ENABLE_AI_ELITE_MARKET_UP:
             try:
                 from ai_elite_market_up_strategy import select_ai_elite_market_up_stocks
@@ -7063,14 +7518,14 @@ def _run_portfolio_backtest_walk_forward(
 
                 if new_ai_elite_market_up_stocks:
                     # Show portfolio before rebalancing
-                    print(f"   📊 AI Elite Market-Up Day {day_count} - Before: {current_ai_elite_market_up_stocks}")
+                    print(f"   📊 AI Elite Market-Up Shared Day {day_count} - Before: {current_ai_elite_market_up_stocks}")
                     # Show candidates for rebalancing
-                    print(f"   📊 AI Elite Market-Up Day {day_count} - Candidates: {new_ai_elite_market_up_stocks}")
+                    print(f"   📊 AI Elite Market-Up Shared Day {day_count} - Candidates: {new_ai_elite_market_up_stocks}")
 
                     # Store previous positions before rebalancing for tracking
                     prev_ai_elite_market_up_stocks = current_ai_elite_market_up_stocks.copy()
                     ai_elite_market_up_positions, ai_elite_market_up_cash, current_ai_elite_market_up_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name="AI Elite Mkt-Up",
+                        strategy_name="AI Elite Up Sh",
                         current_stocks=current_ai_elite_market_up_stocks,
                         new_stocks=new_ai_elite_market_up_stocks,
                         positions=ai_elite_market_up_positions,
@@ -7083,15 +7538,87 @@ def _run_portfolio_backtest_walk_forward(
                         force_rebalance=not ai_elite_market_up_initialized
                     )
                     # Show final portfolio after rebalancing
-                    print(f"   📊 AI Elite Market-Up Day {day_count} - After: {current_ai_elite_market_up_stocks}")
-                    strategies_rebalanced_today['AI Elite Mkt-Up'] = rebalanced_flag
+                    print(f"   📊 AI Elite Market-Up Shared Day {day_count} - After: {current_ai_elite_market_up_stocks}")
+                    strategies_rebalanced_today['AI Elite Up Sh'] = rebalanced_flag
                     ai_elite_market_up_transaction_costs += rc
                     ai_elite_market_up_initialized = True
                     # Check if rebalancing actually changed positions
                     ai_elite_market_up_rebalanced_today = set(current_ai_elite_market_up_stocks) != set(prev_ai_elite_market_up_stocks)
 
             except Exception as e:
-                print(f"   ⚠️ AI Elite Market-Up error: {e}")
+                print(f"   ⚠️ AI Elite Market-Up Shared error: {e}")
+
+        # AI ELITE ENSEMBLE STRATEGY (weighted avg of top 3 positive-R² models)
+        if config.ENABLE_AI_ELITE_ENSEMBLE:
+            try:
+                from ai_elite_strategy import select_ai_elite_ensemble_stocks
+
+                new_ai_elite_ensemble_stocks = select_ai_elite_ensemble_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    per_ticker_models=ai_elite_models,  # Reuse AI Elite models
+                )
+
+                if new_ai_elite_ensemble_stocks:
+                    print(f"   📊 AI Elite Ensemble Day {day_count}: {new_ai_elite_ensemble_stocks[:PORTFOLIO_SIZE]}")
+
+                    ai_elite_ensemble_positions, ai_elite_ensemble_cash, current_ai_elite_ensemble_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="AI Elite Ens",
+                        current_stocks=current_ai_elite_ensemble_stocks,
+                        new_stocks=new_ai_elite_ensemble_stocks,
+                        positions=ai_elite_ensemble_positions,
+                        cash=ai_elite_ensemble_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        force_rebalance=not ai_elite_ensemble_initialized
+                    )
+                    strategies_rebalanced_today['AI Elite Ens'] = rebalanced_flag
+                    ai_elite_ensemble_transaction_costs += rc
+                    ai_elite_ensemble_initialized = True
+
+            except Exception as e:
+                print(f"   ⚠️ AI Elite Ensemble error: {e}")
+
+        # AI ELITE RANK ENSEMBLE STRATEGY (weighted rank avg of top 3 positive-R² models)
+        if config.ENABLE_AI_ELITE_RANK_ENSEMBLE:
+            try:
+                from ai_elite_strategy import select_ai_elite_rank_ensemble_stocks
+
+                new_ai_elite_rank_ensemble_stocks = select_ai_elite_rank_ensemble_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    per_ticker_models=ai_elite_models,  # Reuse AI Elite models
+                )
+
+                if new_ai_elite_rank_ensemble_stocks:
+                    print(f"   📊 AI Elite Rank Ensemble Day {day_count}: {new_ai_elite_rank_ensemble_stocks[:PORTFOLIO_SIZE]}")
+
+                    ai_elite_rank_ensemble_positions, ai_elite_rank_ensemble_cash, current_ai_elite_rank_ensemble_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="AI Elite Rank",
+                        current_stocks=current_ai_elite_rank_ensemble_stocks,
+                        new_stocks=new_ai_elite_rank_ensemble_stocks,
+                        positions=ai_elite_rank_ensemble_positions,
+                        cash=ai_elite_rank_ensemble_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        force_rebalance=not ai_elite_rank_ensemble_initialized
+                    )
+                    strategies_rebalanced_today['AI Elite Rank'] = rebalanced_flag
+                    ai_elite_rank_ensemble_transaction_costs += rc
+                    ai_elite_rank_ensemble_initialized = True
+
+            except Exception as e:
+                print(f"   ⚠️ AI Elite Rank Ensemble error: {e}")
 
         # AI CHAMPION / AI REGIME selectors are evaluated later in the day after
         # the full day-end strategy snapshot is available.
@@ -7103,7 +7630,10 @@ def _run_portfolio_backtest_walk_forward(
 
                 # Initialize strategy on first use
                 if universal_model_strategy is None:
-                    universal_model_strategy = UniversalModelStrategy(retrain_days=1, min_samples=200)
+                    universal_model_strategy = UniversalModelStrategy(
+                        retrain_days=UNIVERSAL_MODEL_RETRAIN_DAYS,
+                        min_samples=config.MIN_TRAINING_SAMPLES_AI_ELITE,
+                    )
                     # Try to load existing model from disk (for faster startup)
                     universal_model_strategy.load_model()
 
@@ -7141,55 +7671,6 @@ def _run_portfolio_backtest_walk_forward(
 
             except Exception as e:
                 print(f"   ⚠️ Universal Model error: {e}")
-
-        # SAVGOL TREND STRATEGY (pooled ML using local polynomial trend features)
-        if config.ENABLE_SAVGOL_TREND:
-            try:
-                from savgol_trend_strategy import SavgolTrendStrategy, select_savgol_trend_stocks
-
-                if savgol_trend_strategy is None:
-                    savgol_trend_strategy = SavgolTrendStrategy(
-                        retrain_days=config.SAVGOL_TREND_RETRAIN_DAYS,
-                        min_samples=config.SAVGOL_TREND_MIN_SAMPLES,
-                        lookback_days=config.SAVGOL_TREND_LOOKBACK_DAYS,
-                        forward_days=config.SAVGOL_TREND_FORWARD_DAYS,
-                    )
-                    savgol_trend_strategy.load_model()
-
-                savgol_trend_strategy.increment_day()
-
-                new_savgol_trend_stocks = select_savgol_trend_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date,
-                    PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    savgol_trend_strategy,
-                    business_days,
-                    day_count,
-                    current_savgol_trend_stocks,
-                )
-
-                if new_savgol_trend_stocks:
-                    print(f"   📊 SavGol Trend Day {day_count}: {new_savgol_trend_stocks}")
-                    savgol_trend_positions, savgol_trend_cash, current_savgol_trend_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name="SavGol Trend",
-                        current_stocks=current_savgol_trend_stocks,
-                        new_stocks=new_savgol_trend_stocks,
-                        positions=savgol_trend_positions,
-                        cash=savgol_trend_cash,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        transaction_cost=TRANSACTION_COST,
-                        portfolio_size=PORTFOLIO_SIZE,
-                        buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                        force_rebalance=not savgol_trend_initialized
-                    )
-                    strategies_rebalanced_today['SavGol Trend'] = rebalanced_flag
-                    savgol_trend_transaction_costs += rc
-                    savgol_trend_initialized = True
-
-            except Exception as e:
-                print(f"   ⚠️ SavGol Trend error: {e}")
 
         # META-STRATEGY SELECTORS are evaluated later in the day after the shared
         # day-end strategy snapshot is fully populated. This keeps them aligned
@@ -7329,90 +7810,37 @@ def _run_portfolio_backtest_walk_forward(
                 print(f"   ⚠️ Trend Breakout error: {e}")
 
         # Update DYNAMIC BH 1Y portfolio value daily (skip if disabled)
-        dynamic_bh_invested_value = 0.0
         if config.ENABLE_DYNAMIC_BH_1Y:
-          # Iterate over actual positions, not just current_dynamic_bh_stocks list
-          print(f"   🔧 DEBUG: Dyn BH 1Y - iterating over {len(dynamic_bh_positions)} positions")
-          for ticker in list(dynamic_bh_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            # Drop NaN values to avoid NaN propagation
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = dynamic_bh_positions[ticker]['shares'] * current_price
-                                    dynamic_bh_positions[ticker]['value'] = position_value
-                                    dynamic_bh_invested_value += position_value
-                                else:
-                                    dynamic_bh_invested_value += dynamic_bh_positions[ticker].get('value', 0.0)
-                            else:
-                                dynamic_bh_invested_value += dynamic_bh_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating dynamic BH position for {ticker}: {e}")
-
-        dynamic_bh_portfolio_value = dynamic_bh_invested_value + dynamic_bh_cash
+            dynamic_bh_portfolio_value = _update_portfolio_value_from_cache(
+                dynamic_bh_positions,
+                dynamic_bh_cash,
+                error_prefix="Error updating dynamic BH position",
+                debug_message=f"   🔧 DEBUG: Dyn BH 1Y - iterating over {len(dynamic_bh_positions)} positions",
+            )
+        else:
+            dynamic_bh_portfolio_value = dynamic_bh_cash
         dynamic_bh_portfolio_history.append(dynamic_bh_portfolio_value)
 
         # Update DYNAMIC BH 1Y + VOLATILITY FILTER portfolio value daily (skip if disabled)
-        dynamic_bh_1y_vol_filter_invested_value = 0.0
         if config.ENABLE_DYNAMIC_BH_1Y_VOL_FILTER:
-          # Iterate over actual positions, not just current stocks list
-          for ticker in list(dynamic_bh_1y_vol_filter_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            # Drop NaN values to avoid NaN propagation
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = dynamic_bh_1y_vol_filter_positions[ticker]['shares'] * current_price
-                                    dynamic_bh_1y_vol_filter_positions[ticker]['value'] = position_value
-                                    dynamic_bh_1y_vol_filter_invested_value += position_value
-                                else:
-                                    dynamic_bh_1y_vol_filter_invested_value += dynamic_bh_1y_vol_filter_positions[ticker].get('value', 0.0)
-                            else:
-                                dynamic_bh_1y_vol_filter_invested_value += dynamic_bh_1y_vol_filter_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating dynamic BH 1Y+Vol position for {ticker}: {e}")
-
-        dynamic_bh_1y_vol_filter_portfolio_value = dynamic_bh_1y_vol_filter_invested_value + dynamic_bh_1y_vol_filter_cash
+            dynamic_bh_1y_vol_filter_portfolio_value = _update_portfolio_value_from_cache(
+                dynamic_bh_1y_vol_filter_positions,
+                dynamic_bh_1y_vol_filter_cash,
+                error_prefix="Error updating dynamic BH 1Y+Vol position",
+            )
+        else:
+            dynamic_bh_1y_vol_filter_portfolio_value = dynamic_bh_1y_vol_filter_cash
         dynamic_bh_1y_vol_filter_portfolio_history.append(dynamic_bh_1y_vol_filter_portfolio_value)
 
         # Update DYNAMIC BH 1Y + TRAILING STOP portfolio value daily (skip if disabled)
-        dynamic_bh_1y_trailing_stop_invested_value = 0.0
         if config.ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP:
-          # Iterate over actual positions, not just current stocks list
-          for ticker in list(dynamic_bh_1y_trailing_stop_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = dynamic_bh_1y_trailing_stop_positions[ticker]['shares'] * current_price
-                                    dynamic_bh_1y_trailing_stop_positions[ticker]['value'] = position_value
-                                    dynamic_bh_1y_trailing_stop_invested_value += position_value
-                                else:
-                                    dynamic_bh_1y_trailing_stop_invested_value += dynamic_bh_1y_trailing_stop_positions[ticker].get('value', 0.0)
-                            else:
-                                dynamic_bh_1y_trailing_stop_invested_value += dynamic_bh_1y_trailing_stop_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating dynamic BH 1Y+TS position for {ticker}: {e}")
-
-        dynamic_bh_1y_trailing_stop_portfolio_value = dynamic_bh_1y_trailing_stop_invested_value + dynamic_bh_1y_trailing_stop_cash
+            dynamic_bh_1y_trailing_stop_portfolio_value = _update_portfolio_value_from_cache(
+                dynamic_bh_1y_trailing_stop_positions,
+                dynamic_bh_1y_trailing_stop_cash,
+                error_prefix="Error updating dynamic BH 1Y+TS position",
+            )
+        else:
+            dynamic_bh_1y_trailing_stop_portfolio_value = dynamic_bh_1y_trailing_stop_cash
         dynamic_bh_1y_trailing_stop_portfolio_history.append(dynamic_bh_1y_trailing_stop_portfolio_value)
 
         # Update SECTOR ROTATION portfolio value daily (skip if disabled)
@@ -7445,145 +7873,56 @@ def _run_portfolio_backtest_walk_forward(
             sector_rotation_portfolio_history.append(sector_rotation_portfolio_value)
 
         # Update DYNAMIC BH 6-MONTH portfolio value daily (skip if disabled)
-        dynamic_bh_6m_invested_value = 0.0
         if config.ENABLE_DYNAMIC_BH_6M:
-          # Iterate over actual positions, not just current stocks list
-          for ticker in list(dynamic_bh_6m_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = dynamic_bh_6m_positions[ticker]['shares'] * current_price
-                                    dynamic_bh_6m_positions[ticker]['value'] = position_value
-                                    dynamic_bh_6m_invested_value += position_value
-                                else:
-                                    dynamic_bh_6m_invested_value += dynamic_bh_6m_positions[ticker].get('value', 0.0)
-                            else:
-                                dynamic_bh_6m_invested_value += dynamic_bh_6m_positions[ticker].get('value', 0.0)
-                except Exception:
-                    dynamic_bh_6m_invested_value += dynamic_bh_6m_positions[ticker].get('value', 0.0)
+            dynamic_bh_6m_portfolio_value = _update_portfolio_value_from_cache(
+                dynamic_bh_6m_positions,
+                dynamic_bh_6m_cash,
+            )
+        else:
+            dynamic_bh_6m_portfolio_value = dynamic_bh_6m_cash
 
         # Update DYNAMIC BH 3-MONTH portfolio value daily (skip if disabled)
-        dynamic_bh_3m_invested_value = 0.0
         if config.ENABLE_DYNAMIC_BH_3M:
-          # Iterate over actual positions, not just current stocks list
-          for ticker in list(dynamic_bh_3m_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            # Drop NaN values to avoid NaN propagation
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = dynamic_bh_3m_positions[ticker]['shares'] * current_price
-                                    dynamic_bh_3m_positions[ticker]['value'] = position_value
-                                    dynamic_bh_3m_invested_value += position_value
-                                else:
-                                    dynamic_bh_3m_invested_value += dynamic_bh_3m_positions[ticker].get('value', 0.0)
-                            else:
-                                dynamic_bh_3m_invested_value += dynamic_bh_3m_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating dynamic BH 3M position for {ticker}: {e}")
+            dynamic_bh_3m_portfolio_value = _update_portfolio_value_from_cache(
+                dynamic_bh_3m_positions,
+                dynamic_bh_3m_cash,
+                error_prefix="Error updating dynamic BH 3M position",
+            )
+        else:
+            dynamic_bh_3m_portfolio_value = dynamic_bh_3m_cash
 
-        dynamic_bh_6m_portfolio_value = dynamic_bh_6m_invested_value + dynamic_bh_6m_cash
         dynamic_bh_6m_portfolio_history.append(dynamic_bh_6m_portfolio_value)
-
-        dynamic_bh_3m_portfolio_value = dynamic_bh_3m_invested_value + dynamic_bh_3m_cash
         dynamic_bh_3m_portfolio_history.append(dynamic_bh_3m_portfolio_value)
 
         # Update dynamic BH 1-month portfolio value (skip if disabled)
-        dynamic_bh_1m_invested_value = 0.0
         if config.ENABLE_DYNAMIC_BH_1M:
-          # Iterate over actual positions, not just current stocks list
-          for ticker in list(dynamic_bh_1m_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            # Drop NaN values to avoid NaN propagation
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = dynamic_bh_1m_positions[ticker]['shares'] * current_price
-                                    dynamic_bh_1m_positions[ticker]['value'] = position_value
-                                    dynamic_bh_1m_invested_value += position_value
-                                else:
-                                    dynamic_bh_1m_invested_value += dynamic_bh_1m_positions[ticker].get('value', 0.0)
-                            else:
-                                dynamic_bh_1m_invested_value += dynamic_bh_1m_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating dynamic BH 1M position for {ticker}: {e}")
-
-        dynamic_bh_1m_portfolio_value = dynamic_bh_1m_invested_value + dynamic_bh_1m_cash
+            dynamic_bh_1m_portfolio_value = _update_portfolio_value_from_cache(
+                dynamic_bh_1m_positions,
+                dynamic_bh_1m_cash,
+                error_prefix="Error updating dynamic BH 1M position",
+            )
+        else:
+            dynamic_bh_1m_portfolio_value = dynamic_bh_1m_cash
         dynamic_bh_1m_portfolio_history.append(dynamic_bh_1m_portfolio_value)
 
         # Update RISK-ADJUSTED MOMENTUM portfolio value daily (skip if disabled)
-        risk_adj_mom_invested_value = 0.0
         if config.ENABLE_RISK_ADJ_MOM:
-          # Iterate over actual positions, not just current stocks list
-          for ticker in list(risk_adj_mom_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            # Drop NaN values to avoid NaN propagation
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = risk_adj_mom_positions[ticker]['shares'] * current_price
-                                    risk_adj_mom_positions[ticker]['value'] = position_value
-                                    risk_adj_mom_invested_value += position_value
-                                else:
-                                    risk_adj_mom_invested_value += risk_adj_mom_positions[ticker].get('value', 0.0)
-                            else:
-                                risk_adj_mom_invested_value += risk_adj_mom_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating risk-adjusted momentum position for {ticker}: {e}")
-
-        risk_adj_mom_portfolio_value = risk_adj_mom_invested_value + risk_adj_mom_cash
+            risk_adj_mom_portfolio_value = _update_portfolio_value_from_cache(
+                risk_adj_mom_positions,
+                risk_adj_mom_cash,
+                error_prefix="Error updating risk-adjusted momentum position",
+            )
+        else:
+            risk_adj_mom_portfolio_value = risk_adj_mom_cash
         risk_adj_mom_portfolio_history.append(risk_adj_mom_portfolio_value)
 
         # Update RISK-ADJ MOMENTUM SENTIMENT portfolio value daily (skip if disabled)
         if config.ENABLE_RISK_ADJ_MOM_SENTIMENT:
-            risk_adj_mom_sentiment_invested_value = 0.0
-            for ticker in list(risk_adj_mom_sentiment_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = risk_adj_mom_sentiment_positions[ticker]['shares'] * current_price
-                                    risk_adj_mom_sentiment_positions[ticker]['value'] = position_value
-                                    risk_adj_mom_sentiment_invested_value += position_value
-                                else:
-                                    risk_adj_mom_sentiment_invested_value += risk_adj_mom_sentiment_positions[ticker].get('value', 0.0)
-                            else:
-                                risk_adj_mom_sentiment_invested_value += risk_adj_mom_sentiment_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating risk adj mom sentiment position for {ticker}: {e}")
-
-            risk_adj_mom_sentiment_portfolio_value = risk_adj_mom_sentiment_invested_value + risk_adj_mom_sentiment_cash
+            risk_adj_mom_sentiment_portfolio_value = _update_portfolio_value_from_cache(
+                risk_adj_mom_sentiment_positions,
+                risk_adj_mom_sentiment_cash,
+                error_prefix="Error updating risk adj mom sentiment position",
+            )
             risk_adj_mom_sentiment_portfolio_history.append(risk_adj_mom_sentiment_portfolio_value)
 
         # Update 3M/1Y RATIO portfolio value daily (skip if disabled)
@@ -7908,60 +8247,25 @@ def _run_portfolio_backtest_walk_forward(
         ai_volatility_ensemble_portfolio_history.append(ai_volatility_ensemble_portfolio_value)
 
         # Update MULTI-HORIZON ENSEMBLE portfolio value daily (skip if disabled)
-        multi_tf_ensemble_invested_value = 0.0
         if config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE:
-            # Iterate over actual positions, not just current stocks list
-            for ticker in list(multi_tf_ensemble_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            # Drop NaN values to avoid NaN propagation
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = multi_tf_ensemble_positions[ticker]['shares'] * current_price
-                                    multi_tf_ensemble_positions[ticker]['value'] = position_value
-                                    multi_tf_ensemble_invested_value += position_value
-                                else:
-                                    multi_tf_ensemble_invested_value += multi_tf_ensemble_positions[ticker].get('value', 0.0)
-                            else:
-                                multi_tf_ensemble_invested_value += multi_tf_ensemble_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating multi-timeframe ensemble position for {ticker}: {e}")
-                    multi_tf_ensemble_invested_value += multi_tf_ensemble_positions[ticker].get('value', 0.0)
-
-        multi_tf_ensemble_portfolio_value = multi_tf_ensemble_invested_value + multi_tf_ensemble_cash
+            multi_tf_ensemble_portfolio_value = _update_portfolio_value_from_cache(
+                multi_tf_ensemble_positions,
+                multi_tf_ensemble_cash,
+                error_prefix="Error updating multi-timeframe ensemble position",
+            )
+        else:
+            multi_tf_ensemble_portfolio_value = multi_tf_ensemble_cash
         multi_tf_ensemble_portfolio_history.append(multi_tf_ensemble_portfolio_value)
 
         # Update MULTI-HORIZON INTRADAY portfolio value daily (skip if disabled)
-        multi_tf_intraday_ensemble_invested_value = 0.0
         if config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE:
-            for ticker in list(multi_tf_intraday_ensemble_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = multi_tf_intraday_ensemble_positions[ticker]['shares'] * current_price
-                                    multi_tf_intraday_ensemble_positions[ticker]['value'] = position_value
-                                    multi_tf_intraday_ensemble_invested_value += position_value
-                                else:
-                                    multi_tf_intraday_ensemble_invested_value += multi_tf_intraday_ensemble_positions[ticker].get('value', 0.0)
-                            else:
-                                multi_tf_intraday_ensemble_invested_value += multi_tf_intraday_ensemble_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating multi-timeframe intraday ensemble position for {ticker}: {e}")
-                    multi_tf_intraday_ensemble_invested_value += multi_tf_intraday_ensemble_positions[ticker].get('value', 0.0)
-
-        multi_tf_intraday_ensemble_portfolio_value = multi_tf_intraday_ensemble_invested_value + multi_tf_intraday_ensemble_cash
+            multi_tf_intraday_ensemble_portfolio_value = _update_portfolio_value_from_cache(
+                multi_tf_intraday_ensemble_positions,
+                multi_tf_intraday_ensemble_cash,
+                error_prefix="Error updating multi-timeframe intraday ensemble position",
+            )
+        else:
+            multi_tf_intraday_ensemble_portfolio_value = multi_tf_intraday_ensemble_cash
         multi_tf_intraday_ensemble_portfolio_history.append(multi_tf_intraday_ensemble_portfolio_value)
 
         # Update CORRELATION ENSEMBLE portfolio value daily (skip if disabled)
@@ -8480,6 +8784,28 @@ def _run_portfolio_backtest_walk_forward(
         ai_elite_monthly_portfolio_value = ai_elite_monthly_invested_value + ai_elite_monthly_cash
         ai_elite_monthly_portfolio_history.append(ai_elite_monthly_portfolio_value)
 
+        # Update AI ELITE MONTHLY SHARED portfolio value daily
+        ai_elite_monthly_shared_invested_value = 0.0
+        if config.ENABLE_AI_ELITE_MONTHLY_SHARED:
+            for ticker in list(ai_elite_monthly_shared_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = ai_elite_monthly_shared_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            ai_elite_monthly_shared_positions[ticker]['value'] = position_value
+                            ai_elite_monthly_shared_invested_value += position_value
+                        else:
+                            ai_elite_monthly_shared_invested_value += ai_elite_monthly_shared_positions[ticker].get('value', 0.0)
+                    else:
+                        ai_elite_monthly_shared_invested_value += ai_elite_monthly_shared_positions[ticker].get('value', 0.0)
+                except Exception:
+                    ai_elite_monthly_shared_invested_value += ai_elite_monthly_shared_positions[ticker].get('value', 0.0)
+        ai_elite_monthly_shared_portfolio_value = ai_elite_monthly_shared_invested_value + ai_elite_monthly_shared_cash
+        ai_elite_monthly_shared_portfolio_history.append(ai_elite_monthly_shared_portfolio_value)
+
         # TOP5 CONSISTENCY BLEND: use prior-day top-5 consistency to weight current source holdings.
         if config.ENABLE_TOP5_CONSISTENCY_BLEND:
             try:
@@ -8568,6 +8894,50 @@ def _run_portfolio_backtest_walk_forward(
         ai_elite_market_up_portfolio_value = ai_elite_market_up_invested_value + ai_elite_market_up_cash
         ai_elite_market_up_portfolio_history.append(ai_elite_market_up_portfolio_value)
 
+        # Update AI ELITE ENSEMBLE portfolio value daily
+        ai_elite_ensemble_invested_value = 0.0
+        if config.ENABLE_AI_ELITE_ENSEMBLE:
+            for ticker in list(ai_elite_ensemble_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = ai_elite_ensemble_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            ai_elite_ensemble_positions[ticker]['value'] = position_value
+                            ai_elite_ensemble_invested_value += position_value
+                        else:
+                            ai_elite_ensemble_invested_value += ai_elite_ensemble_positions[ticker].get('value', 0.0)
+                    else:
+                        ai_elite_ensemble_invested_value += ai_elite_ensemble_positions[ticker].get('value', 0.0)
+                except Exception:
+                    ai_elite_ensemble_invested_value += ai_elite_ensemble_positions[ticker].get('value', 0.0)
+        ai_elite_ensemble_portfolio_value = ai_elite_ensemble_invested_value + ai_elite_ensemble_cash
+        ai_elite_ensemble_portfolio_history.append(ai_elite_ensemble_portfolio_value)
+
+        # Update AI ELITE RANK ENSEMBLE portfolio value daily
+        ai_elite_rank_ensemble_invested_value = 0.0
+        if config.ENABLE_AI_ELITE_RANK_ENSEMBLE:
+            for ticker in list(ai_elite_rank_ensemble_positions.keys()):
+                try:
+                    ticker_df = ticker_data_grouped.get(ticker)
+                    if ticker_df is not None:
+                        current_price = _last_valid_close_up_to(ticker_df, current_date)
+                        if current_price is not None:
+                            shares = ai_elite_rank_ensemble_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            ai_elite_rank_ensemble_positions[ticker]['value'] = position_value
+                            ai_elite_rank_ensemble_invested_value += position_value
+                        else:
+                            ai_elite_rank_ensemble_invested_value += ai_elite_rank_ensemble_positions[ticker].get('value', 0.0)
+                    else:
+                        ai_elite_rank_ensemble_invested_value += ai_elite_rank_ensemble_positions[ticker].get('value', 0.0)
+                except Exception:
+                    ai_elite_rank_ensemble_invested_value += ai_elite_rank_ensemble_positions[ticker].get('value', 0.0)
+        ai_elite_rank_ensemble_portfolio_value = ai_elite_rank_ensemble_invested_value + ai_elite_rank_ensemble_cash
+        ai_elite_rank_ensemble_portfolio_history.append(ai_elite_rank_ensemble_portfolio_value)
+
         # Update SAVGOL TREND portfolio value daily
         savgol_trend_invested_value = 0.0
         if config.ENABLE_SAVGOL_TREND:
@@ -8638,24 +9008,7 @@ def _run_portfolio_backtest_walk_forward(
         # Update META STRATEGIES portfolio values daily
         def _update_meta_portfolio(positions, cash):
             """Helper to update meta strategy portfolio value."""
-            invested = 0.0
-            for ticker in list(positions.keys()):
-                try:
-                    td = ticker_data_grouped.get(ticker)
-                    if td is not None and not td.empty:
-                        price_data = td.loc[:current_date]
-                        if not price_data.empty:
-                            valid_prices = price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if current_price > 0:
-                                    positions[ticker]['value'] = positions[ticker]['shares'] * current_price
-                                    invested += positions[ticker]['value']
-                                    continue
-                    invested += positions[ticker].get('value', 0.0)
-                except Exception:
-                    invested += positions[ticker].get('value', 0.0)
-            return invested + cash
+            return _update_portfolio_value_from_cache(positions, cash)
 
         # Meta strategy portfolio values are updated later in the day after the
         # meta selectors rebalance from the completed shared strategy snapshot.
@@ -8683,446 +9036,116 @@ def _run_portfolio_backtest_walk_forward(
             trend_breakout_history.append(trend_breakout_value)
 
         # Update MEAN REVERSION portfolio value daily (skip if disabled)
-        mean_reversion_invested_value = 0.0
         if config.ENABLE_MEAN_REVERSION:
-            # Iterate over actual positions, not just current stocks list
-            for ticker in list(mean_reversion_positions.keys()):
-                    try:
-                        ticker_data = ticker_data_grouped.get(ticker)
-                        if ticker_data is not None and not ticker_data.empty:
-                            current_price_data = ticker_data.loc[ticker_data.index == current_date]
-                            if not current_price_data.empty:
-                                current_price = current_price_data['Close'].iloc[0]
-                            else:
-                                current_price = None
-                        else:
-                            current_price = None
-
-                        if current_price is not None and current_price > 0:
-                            shares = mean_reversion_positions[ticker]['shares']
-                            value = shares * current_price
-                            mean_reversion_positions[ticker]['value'] = value
-                            mean_reversion_invested_value += value
-                        else:
-                            # Use previous value if current price is unavailable (e.g., non-US stocks on US holidays)
-                            mean_reversion_invested_value += mean_reversion_positions[ticker].get('value', 0.0)
-                    except Exception as e:
-                        # Keep previous value on error
-                        mean_reversion_invested_value += mean_reversion_positions.get(ticker, {}).get('value', 0.0)
-
-        mean_reversion_portfolio_value = mean_reversion_invested_value + mean_reversion_cash
+            mean_reversion_portfolio_value = _update_portfolio_value_from_cache(mean_reversion_positions, mean_reversion_cash)
+        else:
+            mean_reversion_portfolio_value = mean_reversion_cash
         mean_reversion_portfolio_history.append(mean_reversion_portfolio_value)
 
         # Update QUALITY + MOMENTUM portfolio value daily (skip if disabled)
-        quality_momentum_invested_value = 0.0
         if config.ENABLE_QUALITY_MOM:
-            # Iterate over actual positions, not just current stocks list
-            for ticker in list(quality_momentum_positions.keys()):
-                    try:
-                        ticker_data = ticker_data_grouped.get(ticker)
-                        if ticker_data is not None and not ticker_data.empty:
-                            current_price_data = ticker_data.loc[ticker_data.index == current_date]
-                            if not current_price_data.empty:
-                                current_price = current_price_data['Close'].iloc[0]
-                            else:
-                                current_price = None
-                        else:
-                            current_price = None
-
-                        if current_price is not None and current_price > 0:
-                            shares = quality_momentum_positions[ticker]['shares']
-                            value = shares * current_price
-                            quality_momentum_positions[ticker]['value'] = value
-                            quality_momentum_invested_value += value
-                        else:
-                            # Use previous value if current price is unavailable (e.g., non-US stocks on US holidays)
-                            quality_momentum_invested_value += quality_momentum_positions[ticker].get('value', 0.0)
-                    except Exception as e:
-                        # Keep previous value on error
-                        quality_momentum_invested_value += quality_momentum_positions.get(ticker, {}).get('value', 0.0)
-
-        quality_momentum_portfolio_value = quality_momentum_invested_value + quality_momentum_cash
+            quality_momentum_portfolio_value = _update_portfolio_value_from_cache(quality_momentum_positions, quality_momentum_cash)
+        else:
+            quality_momentum_portfolio_value = quality_momentum_cash
         quality_momentum_portfolio_history.append(quality_momentum_portfolio_value)
 
         # Update VOLATILITY-ADJUSTED MOMENTUM portfolio value daily (skip if disabled)
-        volatility_adj_mom_invested_value = 0.0
         if config.ENABLE_VOLATILITY_ADJ_MOM:
-            for ticker, pos in volatility_adj_mom_positions.items():
-                try:
-                    # Get current price
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        current_price_data = ticker_data.loc[ticker_data.index == current_date]
-                        if not current_price_data.empty:
-                            price_data = current_price_data['Close']
-                        else:
-                            price_data = pd.Series()
-                    else:
-                        price_data = pd.Series()
-
-                    if not price_data.empty:
-                        current_price = price_data.iloc[0]
-                        position_value = pos['shares'] * current_price
-                        volatility_adj_mom_invested_value += position_value
-
-                        # Update stored position value
-                        pos['value'] = position_value
-                    else:
-                        # Use previous value if current price is invalid
-                        volatility_adj_mom_invested_value += pos.get('value', 0.0)
-                except Exception:
-                    # Keep previous value if price lookup fails
-                    volatility_adj_mom_invested_value += pos.get('value', 0.0)
-
-        volatility_adj_mom_portfolio_value = volatility_adj_mom_invested_value + volatility_adj_mom_cash
+            volatility_adj_mom_portfolio_value = _update_portfolio_value_from_cache(volatility_adj_mom_positions, volatility_adj_mom_cash)
+        else:
+            volatility_adj_mom_portfolio_value = volatility_adj_mom_cash
         volatility_adj_mom_portfolio_history.append(volatility_adj_mom_portfolio_value)
 
         # Update INVERSE ETF HEDGE portfolio value daily
         if config.ENABLE_INVERSE_ETF_HEDGE:
-            inverse_etf_hedge_invested_value = 0.0
-            for ticker, pos in inverse_etf_hedge_positions.items():
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        current_price_data = ticker_data.loc[ticker_data.index == current_date]
-                        if not current_price_data.empty:
-                            current_price = current_price_data['Close'].iloc[0]
-                            position_value = pos['shares'] * current_price
-                            inverse_etf_hedge_invested_value += position_value
-                            pos['value'] = position_value
-                        else:
-                            inverse_etf_hedge_invested_value += pos.get('value', 0.0)
-                    else:
-                        inverse_etf_hedge_invested_value += pos.get('value', 0.0)
-                except Exception:
-                    inverse_etf_hedge_invested_value += pos.get('value', 0.0)
-
-            inverse_etf_hedge_portfolio_value = inverse_etf_hedge_invested_value + inverse_etf_hedge_cash
+            inverse_etf_hedge_portfolio_value = _update_portfolio_value_from_cache(inverse_etf_hedge_positions, inverse_etf_hedge_cash)
             inverse_etf_hedge_portfolio_history.append(inverse_etf_hedge_portfolio_value)
 
         # Update ANALYST RECOMMENDATION portfolio value daily
         if config.ENABLE_ANALYST_RECOMMENDATION:
-            analyst_rec_invested_value = 0.0
-            for ticker, pos in analyst_rec_positions.items():
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        valid_prices = ticker_data[ticker_data.index <= current_date]['Close'].dropna()
-                        if len(valid_prices) > 0:
-                            current_price = valid_prices.iloc[-1]
-                            if not pd.isna(current_price) and current_price > 0:
-                                position_value = pos['shares'] * current_price
-                                analyst_rec_positions[ticker]['value'] = position_value
-                                analyst_rec_invested_value += position_value
-                            else:
-                                analyst_rec_invested_value += pos.get('value', 0.0)
-                        else:
-                            analyst_rec_invested_value += pos.get('value', 0.0)
-                except Exception:
-                    analyst_rec_invested_value += pos.get('value', 0.0)
-
-            analyst_rec_portfolio_value = analyst_rec_invested_value + analyst_rec_cash
+            analyst_rec_portfolio_value = _update_portfolio_value_from_cache(analyst_rec_positions, analyst_rec_cash)
             analyst_rec_portfolio_history.append(analyst_rec_portfolio_value)
 
         # === MOMENTUM + AI HYBRID: Update portfolio value ===
         if config.ENABLE_MOMENTUM_AI_HYBRID:
-            momentum_ai_hybrid_invested_value = 0.0
-            for ticker in list(momentum_ai_hybrid_positions.keys()):
-                try:
-                    ticker_df = ticker_data_grouped.get(ticker)
-                    if ticker_df is not None:
-                        current_price = _last_valid_close_up_to(ticker_df, current_date)
-                        if current_price is not None:
-                            shares = momentum_ai_hybrid_positions[ticker]['shares']
-                            position_value = shares * current_price
-                            momentum_ai_hybrid_positions[ticker]['value'] = position_value
-                            momentum_ai_hybrid_invested_value += position_value
-                        else:
-                            momentum_ai_hybrid_invested_value += momentum_ai_hybrid_positions[ticker].get('value', 0.0)
-                    else:
-                        momentum_ai_hybrid_invested_value += momentum_ai_hybrid_positions[ticker].get('value', 0.0)
-                except Exception:
-                    momentum_ai_hybrid_invested_value += momentum_ai_hybrid_positions[ticker].get('value', 0.0)
-
-            momentum_ai_hybrid_portfolio_value = momentum_ai_hybrid_invested_value + momentum_ai_hybrid_cash
+            momentum_ai_hybrid_portfolio_value = _update_portfolio_value_from_cache(momentum_ai_hybrid_positions, momentum_ai_hybrid_cash)
             momentum_ai_hybrid_portfolio_history.append(momentum_ai_hybrid_portfolio_value)
 
         # Update STATIC BH 1Y portfolio value daily (skip if disabled)
-        static_bh_1y_invested_value = 0.0
         if config.ENABLE_STATIC_BH:
-            # Iterate over actual positions, not just current stocks list
-            for ticker in list(static_bh_1y_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = static_bh_1y_positions[ticker]['shares'] * current_price
-                                    static_bh_1y_positions[ticker]['value'] = position_value
-                                    static_bh_1y_invested_value += position_value
-                                else:
-                                    static_bh_1y_invested_value += static_bh_1y_positions[ticker].get('value', 0.0)
-                            else:
-                                static_bh_1y_invested_value += static_bh_1y_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating Static BH 1Y position for {ticker}: {e}")
-
-        static_bh_1y_portfolio_value = static_bh_1y_invested_value + static_bh_1y_cash
+            static_bh_1y_portfolio_value = _update_portfolio_value_from_cache(
+                static_bh_1y_positions,
+                static_bh_1y_cash,
+                error_prefix="Error updating Static BH 1Y position",
+            )
+        else:
+            static_bh_1y_portfolio_value = static_bh_1y_cash
         static_bh_1y_portfolio_history.append(static_bh_1y_portfolio_value)
 
         # Update ADAPTIVE REBALANCING STRATEGIES portfolio values
         # 1. Volatility-triggered
         if config.ENABLE_STATIC_BH_1Y_VOLATILITY:
-            static_bh_1y_vol_invested_value = 0.0
-            for ticker in list(static_bh_1y_vol_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = static_bh_1y_vol_positions[ticker]['shares'] * current_price
-                                    static_bh_1y_vol_positions[ticker]['value'] = position_value
-                                    static_bh_1y_vol_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_vol_portfolio_value = static_bh_1y_vol_invested_value + static_bh_1y_vol_cash
+            static_bh_1y_vol_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_vol_positions, static_bh_1y_vol_cash)
             static_bh_1y_vol_portfolio_history.append(static_bh_1y_vol_portfolio_value)
 
         # 2. Performance-triggered
         if config.ENABLE_STATIC_BH_1Y_PERFORMANCE:
-            static_bh_1y_perf_invested_value = 0.0
-            for ticker in list(static_bh_1y_perf_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = static_bh_1y_perf_positions[ticker]['shares'] * current_price
-                                    static_bh_1y_perf_positions[ticker]['value'] = position_value
-                                    static_bh_1y_perf_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_perf_portfolio_value = static_bh_1y_perf_invested_value + static_bh_1y_perf_cash
+            static_bh_1y_perf_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_perf_positions, static_bh_1y_perf_cash)
             static_bh_1y_perf_portfolio_history.append(static_bh_1y_perf_portfolio_value)
 
         # 3. Momentum-triggered
         if config.ENABLE_STATIC_BH_1Y_MOMENTUM:
-            static_bh_1y_mom_invested_value = 0.0
-            for ticker in list(static_bh_1y_mom_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = static_bh_1y_mom_positions[ticker]['shares'] * current_price
-                                    static_bh_1y_mom_positions[ticker]['value'] = position_value
-                                    static_bh_1y_mom_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_mom_portfolio_value = static_bh_1y_mom_invested_value + static_bh_1y_mom_cash
+            static_bh_1y_mom_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_mom_positions, static_bh_1y_mom_cash)
             static_bh_1y_mom_portfolio_history.append(static_bh_1y_mom_portfolio_value)
 
         # 4. ATR-triggered
         if config.ENABLE_STATIC_BH_1Y_ATR:
-            static_bh_1y_atr_invested_value = 0.0
-            for ticker in list(static_bh_1y_atr_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = static_bh_1y_atr_positions[ticker]['shares'] * current_price
-                                    static_bh_1y_atr_positions[ticker]['value'] = position_value
-                                    static_bh_1y_atr_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_atr_portfolio_value = static_bh_1y_atr_invested_value + static_bh_1y_atr_cash
+            static_bh_1y_atr_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_atr_positions, static_bh_1y_atr_cash)
             static_bh_1y_atr_portfolio_history.append(static_bh_1y_atr_portfolio_value)
 
         # 5. Hybrid
         if config.ENABLE_STATIC_BH_1Y_HYBRID:
-            static_bh_1y_hybrid_invested_value = 0.0
-            for ticker in list(static_bh_1y_hybrid_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = static_bh_1y_hybrid_positions[ticker]['shares'] * current_price
-                                    static_bh_1y_hybrid_positions[ticker]['value'] = position_value
-                                    static_bh_1y_hybrid_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_hybrid_portfolio_value = static_bh_1y_hybrid_invested_value + static_bh_1y_hybrid_cash
+            static_bh_1y_hybrid_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_hybrid_positions, static_bh_1y_hybrid_cash)
             static_bh_1y_hybrid_portfolio_history.append(static_bh_1y_hybrid_portfolio_value)
 
         # 6. Volume Filter
         if config.ENABLE_STATIC_BH_1Y_VOLUME_FILTER:
-            static_bh_1y_volume_invested_value = 0.0
-            for ticker in list(static_bh_1y_volume_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
-                        if not ticker_data.empty:
-                            current_price = ticker_data['Close'].iloc[-1]
-                            if not pd.isna(current_price) and current_price > 0:
-                                position_value = static_bh_1y_volume_positions[ticker]['shares'] * current_price
-                                static_bh_1y_volume_positions[ticker]['value'] = position_value
-                                static_bh_1y_volume_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_volume_portfolio_value = static_bh_1y_volume_invested_value + static_bh_1y_volume_cash
+            static_bh_1y_volume_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_volume_positions, static_bh_1y_volume_cash)
             static_bh_1y_volume_portfolio_history.append(static_bh_1y_volume_portfolio_value)
 
         # 7. Sector Rotation
         if config.ENABLE_STATIC_BH_1Y_SECTOR_ROTATION:
-            static_bh_1y_sector_invested_value = 0.0
-            for ticker in list(static_bh_1y_sector_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
-                        if not ticker_data.empty:
-                            current_price = ticker_data['Close'].iloc[-1]
-                            if not pd.isna(current_price) and current_price > 0:
-                                position_value = static_bh_1y_sector_positions[ticker]['shares'] * current_price
-                                static_bh_1y_sector_positions[ticker]['value'] = position_value
-                                static_bh_1y_sector_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_sector_portfolio_value = static_bh_1y_sector_invested_value + static_bh_1y_sector_cash
+            static_bh_1y_sector_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_sector_positions, static_bh_1y_sector_cash)
             static_bh_1y_sector_portfolio_history.append(static_bh_1y_sector_portfolio_value)
 
         # 8. Performance Threshold
         if config.ENABLE_STATIC_BH_1Y_PERFORMANCE_THRESHOLD:
-            static_bh_1y_perf_threshold_invested_value = 0.0
-            for ticker in list(static_bh_1y_perf_threshold_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
-                        if not ticker_data.empty:
-                            current_price = ticker_data['Close'].iloc[-1]
-                            if not pd.isna(current_price) and current_price > 0:
-                                position_value = static_bh_1y_perf_threshold_positions[ticker]['shares'] * current_price
-                                static_bh_1y_perf_threshold_positions[ticker]['value'] = position_value
-                                static_bh_1y_perf_threshold_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_perf_threshold_portfolio_value = static_bh_1y_perf_threshold_invested_value + static_bh_1y_perf_threshold_cash
+            static_bh_1y_perf_threshold_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_perf_threshold_positions, static_bh_1y_perf_threshold_cash)
             static_bh_1y_perf_threshold_portfolio_history.append(static_bh_1y_perf_threshold_portfolio_value)
 
         # 9. Market Regime
         if config.ENABLE_STATIC_BH_1Y_MARKET_REGIME:
-            static_bh_1y_market_regime_invested_value = 0.0
-            for ticker in list(static_bh_1y_market_regime_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
-                        if not ticker_data.empty:
-                            current_price = ticker_data['Close'].iloc[-1]
-                            if not pd.isna(current_price) and current_price > 0:
-                                position_value = static_bh_1y_market_regime_positions[ticker]['shares'] * current_price
-                                static_bh_1y_market_regime_positions[ticker]['value'] = position_value
-                                static_bh_1y_market_regime_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_market_regime_portfolio_value = static_bh_1y_market_regime_invested_value + static_bh_1y_market_regime_cash
+            static_bh_1y_market_regime_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_market_regime_positions, static_bh_1y_market_regime_cash)
             static_bh_1y_market_regime_portfolio_history.append(static_bh_1y_market_regime_portfolio_value)
 
         # 10. Momentum Persistence
         if config.ENABLE_STATIC_BH_1Y_MOMENTUM_PERSIST:
-            static_bh_1y_mom_persist_invested_value = 0.0
-            for ticker in list(static_bh_1y_mom_persist_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
-                        if not ticker_data.empty:
-                            current_price = ticker_data['Close'].iloc[-1]
-                            if not pd.isna(current_price) and current_price > 0:
-                                position_value = static_bh_1y_mom_persist_positions[ticker]['shares'] * current_price
-                                static_bh_1y_mom_persist_positions[ticker]['value'] = position_value
-                                static_bh_1y_mom_persist_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_mom_persist_portfolio_value = static_bh_1y_mom_persist_invested_value + static_bh_1y_mom_persist_cash
+            static_bh_1y_mom_persist_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_mom_persist_positions, static_bh_1y_mom_persist_cash)
             static_bh_1y_mom_persist_portfolio_history.append(static_bh_1y_mom_persist_portfolio_value)
 
         # 11. Overlap-Based
         if config.ENABLE_STATIC_BH_1Y_OVERLAP:
-            static_bh_1y_overlap_invested_value = 0.0
-            for ticker in list(static_bh_1y_overlap_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
-                        if not ticker_data.empty:
-                            current_price = ticker_data['Close'].iloc[-1]
-                            if not pd.isna(current_price) and current_price > 0:
-                                position_value = static_bh_1y_overlap_positions[ticker]['shares'] * current_price
-                                static_bh_1y_overlap_positions[ticker]['value'] = position_value
-                                static_bh_1y_overlap_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_overlap_portfolio_value = static_bh_1y_overlap_invested_value + static_bh_1y_overlap_cash
+            static_bh_1y_overlap_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_overlap_positions, static_bh_1y_overlap_cash)
             static_bh_1y_overlap_portfolio_history.append(static_bh_1y_overlap_portfolio_value)
 
         # 12. Rank Drift
         if config.ENABLE_STATIC_BH_1Y_RANK_DRIFT:
-            static_bh_1y_rank_drift_invested_value = 0.0
-            for ticker in list(static_bh_1y_rank_drift_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
-                        if not ticker_data.empty:
-                            current_price = ticker_data['Close'].iloc[-1]
-                            if not pd.isna(current_price) and current_price > 0:
-                                position_value = static_bh_1y_rank_drift_positions[ticker]['shares'] * current_price
-                                static_bh_1y_rank_drift_positions[ticker]['value'] = position_value
-                                static_bh_1y_rank_drift_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_rank_drift_portfolio_value = static_bh_1y_rank_drift_invested_value + static_bh_1y_rank_drift_cash
+            static_bh_1y_rank_drift_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_rank_drift_positions, static_bh_1y_rank_drift_cash)
             static_bh_1y_rank_drift_portfolio_history.append(static_bh_1y_rank_drift_portfolio_value)
 
         # 13. Drawdown Trigger
         if config.ENABLE_STATIC_BH_1Y_DRAWDOWN:
-            static_bh_1y_drawdown_invested_value = 0.0
-            for ticker in list(static_bh_1y_drawdown_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
-                        if not ticker_data.empty:
-                            current_price = ticker_data['Close'].iloc[-1]
-                            if not pd.isna(current_price) and current_price > 0:
-                                position_value = static_bh_1y_drawdown_positions[ticker]['shares'] * current_price
-                                static_bh_1y_drawdown_positions[ticker]['value'] = position_value
-                                static_bh_1y_drawdown_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_drawdown_portfolio_value = static_bh_1y_drawdown_invested_value + static_bh_1y_drawdown_cash
+            static_bh_1y_drawdown_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_drawdown_positions, static_bh_1y_drawdown_cash)
             static_bh_1y_drawdown_portfolio_history.append(static_bh_1y_drawdown_portfolio_value)
             # Update peak
             if static_bh_1y_drawdown_portfolio_value > static_bh_1y_drawdown_peak:
@@ -9130,20 +9153,7 @@ def _run_portfolio_backtest_walk_forward(
 
         # 14. Smart Monthly
         if config.ENABLE_STATIC_BH_1Y_SMART_MONTHLY:
-            static_bh_1y_smart_monthly_invested_value = 0.0
-            for ticker in list(static_bh_1y_smart_monthly_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker].loc[:current_date]
-                        if not ticker_data.empty:
-                            current_price = ticker_data['Close'].iloc[-1]
-                            if not pd.isna(current_price) and current_price > 0:
-                                position_value = static_bh_1y_smart_monthly_positions[ticker]['shares'] * current_price
-                                static_bh_1y_smart_monthly_positions[ticker]['value'] = position_value
-                                static_bh_1y_smart_monthly_invested_value += position_value
-                except Exception:
-                    pass
-            static_bh_1y_smart_monthly_portfolio_value = static_bh_1y_smart_monthly_invested_value + static_bh_1y_smart_monthly_cash
+            static_bh_1y_smart_monthly_portfolio_value = _update_portfolio_value_from_cache(static_bh_1y_smart_monthly_positions, static_bh_1y_smart_monthly_cash)
             static_bh_1y_smart_monthly_portfolio_history.append(static_bh_1y_smart_monthly_portfolio_value)
             # Update peak
             if static_bh_1y_smart_monthly_portfolio_value > static_bh_1y_smart_monthly_peak:
@@ -9155,19 +9165,7 @@ def _run_portfolio_backtest_walk_forward(
 
         # Helper function to update portfolio value
         def _update_smart_strategy_value(positions, cash, ticker_data_grouped, current_date):
-            invested = 0.0
-            for ticker in list(positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        data = ticker_data_grouped[ticker].loc[:current_date]
-                        if not data.empty:
-                            price = data['Close'].dropna().iloc[-1]
-                            if not pd.isna(price) and price > 0:
-                                positions[ticker]['value'] = positions[ticker]['shares'] * price
-                                invested += positions[ticker]['value']
-                except Exception:
-                    pass
-            return invested + cash
+            return _update_portfolio_value_from_cache(positions, cash)
 
         # 1. BH 1Y Mom Sell
         if config.ENABLE_BH_1Y_MOM_SELL:
@@ -9300,86 +9298,36 @@ def _run_portfolio_backtest_walk_forward(
             bh_1y_time_decay_portfolio_history.append(bh_1y_time_decay_portfolio_value)
 
         # Update STATIC BH 6M portfolio value daily (skip if disabled)
-        static_bh_6m_invested_value = 0.0
         if config.ENABLE_STATIC_BH_6M:
-            for ticker in list(static_bh_6m_positions.keys()):
-                try:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = static_bh_6m_positions[ticker]['shares'] * current_price
-                                    static_bh_6m_positions[ticker]['value'] = position_value
-                                    static_bh_6m_invested_value += position_value
-                                else:
-                                    static_bh_6m_invested_value += static_bh_6m_positions[ticker].get('value', 0.0)
-                            else:
-                                static_bh_6m_invested_value += static_bh_6m_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating Static BH 6M position for {ticker}: {e}")
-
-        static_bh_6m_portfolio_value = static_bh_6m_invested_value + static_bh_6m_cash
+            static_bh_6m_portfolio_value = _update_portfolio_value_from_cache(
+                static_bh_6m_positions,
+                static_bh_6m_cash,
+                error_prefix="Error updating Static BH 6M position",
+            )
+        else:
+            static_bh_6m_portfolio_value = static_bh_6m_cash
         static_bh_6m_portfolio_history.append(static_bh_6m_portfolio_value)
 
         # Update STATIC BH 3M portfolio value daily (skip if disabled)
-        static_bh_3m_invested_value = 0.0
         if config.ENABLE_STATIC_BH:
-            # Iterate over actual positions, not just current stocks list
-            for ticker in list(static_bh_3m_positions.keys()):
-                try:
-                    ticker_data = ticker_data_grouped.get(ticker)
-                    if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = static_bh_3m_positions[ticker]['shares'] * current_price
-                                    static_bh_3m_positions[ticker]['value'] = position_value
-                                    static_bh_3m_invested_value += position_value
-                                else:
-                                    static_bh_3m_invested_value += static_bh_3m_positions[ticker].get('value', 0.0)
-                            else:
-                                static_bh_3m_invested_value += static_bh_3m_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating Static BH 3M position for {ticker}: {e}")
-
-        static_bh_3m_portfolio_value = static_bh_3m_invested_value + static_bh_3m_cash
+            static_bh_3m_portfolio_value = _update_portfolio_value_from_cache(
+                static_bh_3m_positions,
+                static_bh_3m_cash,
+                error_prefix="Error updating Static BH 3M position",
+            )
+        else:
+            static_bh_3m_portfolio_value = static_bh_3m_cash
         static_bh_3m_portfolio_history.append(static_bh_3m_portfolio_value)
 
         # Update STATIC BH 1M portfolio value daily (skip if disabled)
-        static_bh_1m_invested_value = 0.0
         if config.ENABLE_STATIC_BH:
-            # Iterate over actual positions, not just current stocks list
-            for ticker in list(static_bh_1m_positions.keys()):
-                    try:
-                        ticker_data = ticker_data_grouped.get(ticker)
-                        if ticker_data is not None and not ticker_data.empty:
-                            # ticker_data already has date as index
-                            current_price_data = ticker_data.loc[:current_date]
-                            if not current_price_data.empty:
-                                # Drop NaN values to avoid NaN propagation
-                                valid_prices = current_price_data['Close'].dropna()
-                                if len(valid_prices) > 0:
-                                    current_price = valid_prices.iloc[-1]
-                                    if not pd.isna(current_price) and current_price > 0:
-                                        position_value = static_bh_1m_positions[ticker]['shares'] * current_price
-                                        static_bh_1m_positions[ticker]['value'] = position_value
-                                        static_bh_1m_invested_value += position_value
-                                    else:
-                                        static_bh_1m_invested_value += static_bh_1m_positions[ticker].get('value', 0.0)
-                                else:
-                                    static_bh_1m_invested_value += static_bh_1m_positions[ticker].get('value', 0.0)
-                    except Exception as e:
-                        print(f"   ⚠️ Error updating Static BH 1M position for {ticker}: {e}")
-
-        static_bh_1m_portfolio_value = static_bh_1m_invested_value + static_bh_1m_cash
+            static_bh_1m_portfolio_value = _update_portfolio_value_from_cache(
+                static_bh_1m_positions,
+                static_bh_1m_cash,
+                error_prefix="Error updating Static BH 1M position",
+            )
+        else:
+            static_bh_1m_portfolio_value = static_bh_1m_cash
         static_bh_1m_portfolio_history.append(static_bh_1m_portfolio_value)
 
         # Update STATIC BH MONTHLY variants portfolio values daily
@@ -9391,24 +9339,7 @@ def _run_portfolio_backtest_walk_forward(
         ]:
             label, enabled, positions_dict, var_prefix = monthly_var
             if enabled:
-                invested = 0.0
-                for ticker in list(positions_dict.keys()):
-                    try:
-                        if ticker in ticker_data_grouped:
-                            td = ticker_data_grouped[ticker]
-                            price_data = td.loc[:current_date]
-                            if not price_data.empty:
-                                valid_close = price_data['Close'].dropna()
-                                if len(valid_close) > 0:
-                                    cp = valid_close.iloc[-1]
-                                    positions_dict[ticker]['value'] = positions_dict[ticker]['shares'] * cp
-                                    invested += positions_dict[ticker]['value']
-                                else:
-                                    invested += positions_dict[ticker].get('value', 0.0)
-                            else:
-                                invested += positions_dict[ticker].get('value', 0.0)
-                    except Exception:
-                        invested += positions_dict[ticker].get('value', 0.0)
+                invested = _update_portfolio_value_from_cache(positions_dict, 0.0)
                 if var_prefix == 'static_bh_1y_monthly':
                     static_bh_1y_monthly_portfolio_value = invested + static_bh_1y_monthly_cash
                     static_bh_1y_monthly_portfolio_history.append(static_bh_1y_monthly_portfolio_value)
@@ -9430,44 +9361,36 @@ def _run_portfolio_backtest_walk_forward(
                 try:
                     ticker_data = ticker_data_grouped.get(ticker)
                     if ticker_data is not None and not ticker_data.empty:
-                        # ticker_data already has date as index
-                        current_price_data = ticker_data.loc[:current_date]
-                        if not current_price_data.empty:
-                            # Drop NaN values to avoid NaN propagation
-                            valid_prices = current_price_data['Close'].dropna()
-                            if len(valid_prices) > 0:
-                                current_price = valid_prices.iloc[-1]
-                                if not pd.isna(current_price) and current_price > 0:
-                                    position_value = positions[ticker]['shares'] * current_price
-                                    invested_value += position_value
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None and not pd.isna(current_price) and current_price > 0:
+                            position_value = positions[ticker]['shares'] * current_price
+                            invested_value += position_value
 
-                                    # ✅ NEW: Track daily contribution for this stock
-                                    old_value = positions[ticker].get('value', position_value)
-                                    daily_change = position_value - old_value
+                            # ✅ NEW: Track daily contribution for this stock
+                            old_value = positions[ticker].get('value', position_value)
+                            daily_change = position_value - old_value
 
-                                    if ticker not in stock_performance_tracking:
-                                        stock_performance_tracking[ticker] = {
-                                            'days_held': 0,
-                                            'contribution': 0.0,
-                                            'max_shares': 0.0,
-                                            'entry_value': position_value,
-                                            'total_invested': 0.0
-                                        }
+                            if ticker not in stock_performance_tracking:
+                                stock_performance_tracking[ticker] = {
+                                    'days_held': 0,
+                                    'contribution': 0.0,
+                                    'max_shares': 0.0,
+                                    'entry_value': position_value,
+                                    'total_invested': 0.0
+                                }
 
-                                    stock_performance_tracking[ticker]['days_held'] += 1
-                                    stock_performance_tracking[ticker]['contribution'] += daily_change
-                                    stock_performance_tracking[ticker]['max_shares'] = max(
-                                        stock_performance_tracking[ticker]['max_shares'],
-                                        positions[ticker]['shares']
-                                    )
+                            stock_performance_tracking[ticker]['days_held'] += 1
+                            stock_performance_tracking[ticker]['contribution'] += daily_change
+                            stock_performance_tracking[ticker]['max_shares'] = max(
+                                stock_performance_tracking[ticker]['max_shares'],
+                                positions[ticker]['shares']
+                            )
 
-                                    # Update stored position value
-                                    positions[ticker]['value'] = position_value
-                                else:
-                                    # Use previous value if current price is invalid
-                                    invested_value += positions[ticker].get('value', 0.0)
-                            else:
-                                invested_value += positions[ticker].get('value', 0.0)
+                            # Update stored position value
+                            positions[ticker]['value'] = position_value
+                        else:
+                            # Use previous value if current price is invalid
+                            invested_value += positions[ticker].get('value', 0.0)
                 except Exception:
                     # Keep previous value if price lookup fails
                     invested_value += positions[ticker].get('value', 0.0)
@@ -9572,7 +9495,10 @@ def _run_portfolio_backtest_walk_forward(
                     from ai_regime_strategy import AIRegimeAllocator, select_ai_regime_stocks
 
                     if ai_regime_allocator is None:
-                        ai_regime_allocator = AIRegimeAllocator(retrain_days=1, forward_days=1)
+                        ai_regime_allocator = AIRegimeAllocator(
+                            retrain_days=AI_REGIME_RETRAIN_DAYS,
+                            forward_days=1,
+                        )
                         ai_regime_allocator.load_model()
 
                     strategy_values_for_regime = build_strategy_values_from_locals(
@@ -9637,13 +9563,18 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     ai_regime_monthly_allocator.record_daily_values(strategy_values_for_regime)
 
-                    if ai_regime_monthly_allocator.should_retrain():
+                    monthly_rebalance_due = ai_regime_monthly_allocator.is_rebalance_month(current_date)
+                    if monthly_rebalance_due:
+                        ai_regime_monthly_allocator.mark_rebalanced(current_date)
+                    if monthly_rebalance_due and (
+                        ai_regime_monthly_allocator.model is None or ai_regime_monthly_allocator.should_retrain()
+                    ):
                         print(f"   🧠 AI Regime Monthly: Training model (day {day_count})...")
                         ai_regime_monthly_allocator.train_model(ticker_data_grouped, business_days[:day_count])
 
                     ai_regime_monthly_current_strategy = ai_regime_monthly_allocator.predict_best_strategy(ticker_data_grouped, current_date)
 
-                    if ai_regime_monthly_allocator.should_rebalance(current_date):
+                    if monthly_rebalance_due:
                         if ai_regime_monthly_current_strategy is not None:
                             new_ai_regime_monthly_stocks = select_ai_regime_stocks(
                                 initial_top_tickers,
@@ -9977,16 +9908,16 @@ def _run_portfolio_backtest_walk_forward(
         except Exception as e:
             print(f"   ⚠️ Meta strategy snapshot error: {e}")
 
-        # VOTING ENSEMBLE: at day end, vote using the 3 best-performing strategies
-        # based on the same in-memory day-end source snapshot family.
-        if config.ENABLE_VOTING_ENSEMBLE:
+        # VOTING ENSEMBLE FAMILY: share the same ranked ticker list, but keep
+        # the original smart rebalance path and the new AI rebalance path separate.
+        if config.ENABLE_VOTING_ENSEMBLE or config.ENABLE_VOTING_ENSEMBLE_AI_REBALANCE:
             try:
                 voting_source_strategy_data = _build_daily_strategy_data(locals())
                 new_voting_ensemble_stocks, voting_sources, ranked_votes, vote_details = _select_voting_ensemble_stocks_from_strategy_data(
                     source_strategy_data=voting_source_strategy_data,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
                     max_source_strategies=3,
-                    excluded_strategy_keys=['voting_ensemble'],
+                    excluded_strategy_keys=['voting_ensemble', 'voting_ensemble_ai_rebalance'],
                 )
 
                 if voting_sources:
@@ -10014,47 +9945,121 @@ def _run_portfolio_backtest_walk_forward(
                     print(f"\n   🗳️  Voting Ensemble selected {len(new_voting_ensemble_stocks)} tickers:")
                     print(f"   ✅ {new_voting_ensemble_stocks}")
 
-                    voting_ensemble_positions, voting_ensemble_cash, current_voting_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name="Voting Ensemble",
-                        current_stocks=current_voting_ensemble_stocks,
-                        new_stocks=new_voting_ensemble_stocks,
-                        positions=voting_ensemble_positions,
-                        cash=voting_ensemble_cash,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        transaction_cost=TRANSACTION_COST,
-                        portfolio_size=PORTFOLIO_SIZE,
-                        force_rebalance=not current_voting_ensemble_stocks
-                    )
-                    strategies_rebalanced_today['Voting Ensemble'] = rebalanced_flag
-                    voting_ensemble_transaction_costs += rebalance_costs
-                    voting_ensemble_last_rebalance_value = voting_ensemble_portfolio_value
+                    if config.ENABLE_VOTING_ENSEMBLE:
+                        voting_ensemble_positions, voting_ensemble_cash, current_voting_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                            strategy_name="Voting Ensemble",
+                            current_stocks=current_voting_ensemble_stocks,
+                            new_stocks=new_voting_ensemble_stocks,
+                            positions=voting_ensemble_positions,
+                            cash=voting_ensemble_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not current_voting_ensemble_stocks
+                        )
+                        strategies_rebalanced_today['Voting Ensemble'] = rebalanced_flag
+                        voting_ensemble_transaction_costs += rebalance_costs
+                        voting_ensemble_last_rebalance_value = voting_ensemble_portfolio_value
+
+                    if config.ENABLE_VOTING_ENSEMBLE_AI_REBALANCE:
+                        (
+                            voting_ensemble_ai_rebalance_positions,
+                            voting_ensemble_ai_rebalance_cash,
+                            current_voting_ensemble_ai_rebalance_stocks,
+                            rebalance_costs,
+                            rebalanced_flag,
+                            ai_rebalance_decision_logs,
+                            ai_rebalance_ranked_candidates,
+                        ) = _ai_rebalance_portfolio(
+                            strategy_name="Voting Ens AI Reb",
+                            current_stocks=current_voting_ensemble_ai_rebalance_stocks,
+                            ranked_candidates=new_voting_ensemble_stocks,
+                            positions=voting_ensemble_ai_rebalance_positions,
+                            cash=voting_ensemble_ai_rebalance_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            model_bundle=voting_ensemble_ai_rebalance_model,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=not current_voting_ensemble_ai_rebalance_stocks,
+                            buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            min_predicted_edge=config.AI_VOTING_REBALANCE_MIN_PREDICTED_EDGE,
+                        )
+                        strategies_rebalanced_today['Voting Ens AI Reb'] = rebalanced_flag
+                        voting_ensemble_ai_rebalance_transaction_costs += rebalance_costs
+
+                        if ai_rebalance_decision_logs:
+                            print("   🤖 Voting Ens AI Reb decisions:")
+                            for held_ticker, candidate_ticker, predicted_edge, action in ai_rebalance_decision_logs[:10]:
+                                print(
+                                    f"      {held_ticker} vs {candidate_ticker}: "
+                                    f"{action} (predicted edge {predicted_edge:+.3f})"
+                                )
+                        if ai_rebalance_ranked_candidates and ai_rebalance_ranked_candidates != new_voting_ensemble_stocks:
+                            print(f"   🤖 Voting Ens AI Reb reordered candidates: {ai_rebalance_ranked_candidates[:PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE]}")
                 else:
                     print(f"   ⚠️ Voting Ensemble: No eligible source strategies with tickers on {current_date.strftime('%Y-%m-%d')}")
             except Exception as e:
                 print(f"   ⚠️ Voting Ensemble strategy error: {e}")
 
-            voting_ensemble_invested_value = 0.0
-            for ticker in list(voting_ensemble_positions.keys()):
-                try:
-                    ticker_df = ticker_data_grouped.get(ticker)
-                    if ticker_df is not None:
-                        current_price = _last_valid_close_up_to(ticker_df, current_date)
-                        if current_price is not None:
-                            shares = voting_ensemble_positions[ticker]['shares']
-                            position_value = shares * current_price
-                            voting_ensemble_positions[ticker]['value'] = position_value
-                            voting_ensemble_invested_value += position_value
+            if config.ENABLE_VOTING_ENSEMBLE:
+                voting_ensemble_invested_value = 0.0
+                for ticker in list(voting_ensemble_positions.keys()):
+                    try:
+                        ticker_df = ticker_data_grouped.get(ticker)
+                        if ticker_df is not None:
+                            current_price = _last_valid_close_up_to(ticker_df, current_date)
+                            if current_price is not None:
+                                shares = voting_ensemble_positions[ticker]['shares']
+                                position_value = shares * current_price
+                                voting_ensemble_positions[ticker]['value'] = position_value
+                                voting_ensemble_invested_value += position_value
+                            else:
+                                voting_ensemble_invested_value += voting_ensemble_positions[ticker].get('value', 0.0)
                         else:
                             voting_ensemble_invested_value += voting_ensemble_positions[ticker].get('value', 0.0)
-                    else:
+                    except Exception as e:
+                        print(f"   ⚠️ Error updating voting ensemble position for {ticker}: {e}")
                         voting_ensemble_invested_value += voting_ensemble_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating voting ensemble position for {ticker}: {e}")
-                    voting_ensemble_invested_value += voting_ensemble_positions[ticker].get('value', 0.0)
 
-            voting_ensemble_portfolio_value = voting_ensemble_invested_value + voting_ensemble_cash
-            voting_ensemble_portfolio_history.append(voting_ensemble_portfolio_value)
+                voting_ensemble_portfolio_value = voting_ensemble_invested_value + voting_ensemble_cash
+                voting_ensemble_portfolio_history.append(voting_ensemble_portfolio_value)
+
+            if config.ENABLE_VOTING_ENSEMBLE_AI_REBALANCE:
+                voting_ensemble_ai_rebalance_invested_value = 0.0
+                for ticker in list(voting_ensemble_ai_rebalance_positions.keys()):
+                    try:
+                        ticker_df = ticker_data_grouped.get(ticker)
+                        if ticker_df is not None:
+                            current_price = _last_valid_close_up_to(ticker_df, current_date)
+                            if current_price is not None:
+                                shares = voting_ensemble_ai_rebalance_positions[ticker]['shares']
+                                position_value = shares * current_price
+                                voting_ensemble_ai_rebalance_positions[ticker]['value'] = position_value
+                                voting_ensemble_ai_rebalance_invested_value += position_value
+                            else:
+                                voting_ensemble_ai_rebalance_invested_value += voting_ensemble_ai_rebalance_positions[ticker].get('value', 0.0)
+                        else:
+                            voting_ensemble_ai_rebalance_invested_value += voting_ensemble_ai_rebalance_positions[ticker].get('value', 0.0)
+                    except Exception as e:
+                        print(f"   ⚠️ Error updating voting AI rebalance position for {ticker}: {e}")
+                        voting_ensemble_ai_rebalance_invested_value += voting_ensemble_ai_rebalance_positions[ticker].get('value', 0.0)
+
+                voting_ensemble_ai_rebalance_portfolio_value = (
+                    voting_ensemble_ai_rebalance_invested_value + voting_ensemble_ai_rebalance_cash
+                )
+                voting_ensemble_ai_rebalance_portfolio_history.append(voting_ensemble_ai_rebalance_portfolio_value)
+
+            if config.ENABLE_VOTING_ENSEMBLE and config.ENABLE_VOTING_ENSEMBLE_AI_REBALANCE:
+                value_diff = voting_ensemble_ai_rebalance_portfolio_value - voting_ensemble_portfolio_value
+                cost_diff = voting_ensemble_ai_rebalance_transaction_costs - voting_ensemble_transaction_costs
+                print(
+                    f"   📈 Voting comparison: AI Reb "
+                    f"${voting_ensemble_ai_rebalance_portfolio_value:,.0f} vs "
+                    f"Base ${voting_ensemble_portfolio_value:,.0f} "
+                    f"(diff {value_diff:+,.0f}, costs diff {cost_diff:+,.0f})"
+                )
 
         # Periodic progress update
         if day_count % 50 == 0:
@@ -10082,7 +10087,36 @@ def _run_portfolio_backtest_walk_forward(
 
         if daily_strat_data:
             print(f"\n📊 DAILY SUMMARY - Day {day_count} ({current_date.strftime('%Y-%m-%d')})")
-            print("=" * 80)
+            summary_rank_width = 5
+            summary_name_width = 32
+            summary_value_width = 13
+            summary_return_width = 9
+            summary_stddev_width = 8
+            summary_annret_width = 10
+            summary_cash_width = 13
+            summary_pos_width = 5
+            summary_row_fmt = (
+                f"{{rank:<{summary_rank_width}}} "
+                f"{{name:<{summary_name_width}}} "
+                f"{{value:>{summary_value_width}}} "
+                f"{{ret:>{summary_return_width}}} "
+                f"{{std:>{summary_stddev_width}}} "
+                f"{{ann:>{summary_annret_width}}} "
+                f"{{cash:>{summary_cash_width}}} "
+                f"{{pos:>{summary_pos_width}}}"
+            )
+            summary_line_width = (
+                summary_rank_width
+                + summary_name_width
+                + summary_value_width
+                + summary_return_width
+                + summary_stddev_width
+                + summary_annret_width
+                + summary_cash_width
+                + summary_pos_width
+                + 7
+            )
+            print("=" * summary_line_width)
 
             # Sort by value descending
             sorted_strategies = sorted(daily_strat_data.items(), key=lambda x: x[1]['value'], reverse=True)
@@ -10101,8 +10135,17 @@ def _run_portfolio_backtest_walk_forward(
                 recent_top5_history = recent_top5_history[-5:]
 
             # Show ALL strategies with cash and allocation info
-            print(f"{'Rank':<5} {'Strategy':<20} {'Value':>12} {'Return':>9} {'StdDev':>8} {'Ann.Ret':>10} {'Cash':>12} {'Pos':>5}")
-            print("-" * 95)
+            print(summary_row_fmt.format(
+                rank="Rank",
+                name="Strategy",
+                value="Value",
+                ret="Return",
+                std="StdDev",
+                ann="Ann.Ret",
+                cash="Cash",
+                pos="Pos",
+            ))
+            print("-" * summary_line_width)
 
             # Build strategy_details and strategy_to_history from the centralized data
             strategy_details = []
@@ -10134,7 +10177,16 @@ def _run_portfolio_backtest_walk_forward(
                 display_name = name
                 if strategies_rebalanced_today.get(name, False):
                     display_name = f"🔄 {name}"
-                print(f"{i:<5} {display_name:<20} ${value:>11,.0f} {return_pct:>+8.1f}% {std_dev:>7.1f}% {annualized_return:>+9.1f}% ${strat_cash:>11,.0f} {num_pos:>5}")
+                print(summary_row_fmt.format(
+                    rank=i,
+                    name=display_name,
+                    value=f"$ {value:>11,.0f}",
+                    ret=f"{return_pct:+8.1f}%",
+                    std=f"{std_dev:7.1f}%",
+                    ann=f"{annualized_return:+9.1f}%",
+                    cash=f"$ {strat_cash:>11,.0f}",
+                    pos=num_pos,
+                ))
 
             # Show Top 5 Consistency Score
             if day_count >= 3 and top5_consistency_counts:
@@ -10180,7 +10232,7 @@ def _run_portfolio_backtest_walk_forward(
 
                     print(f"   {top_strategy_name[:15]:<15} vs {other_name[:15]:<15}: p={p_value:.3f} {significance}")
 
-            print("=" * 80)
+            print("=" * summary_line_width)
         else:
             print(f"\n📊 DAILY SUMMARY - Day {day_count} ({current_date.strftime('%Y-%m-%d')})")
             print("=" * 80)
@@ -10414,6 +10466,7 @@ def _run_portfolio_backtest_walk_forward(
             'dynamic_pool':             _strat(dynamic_pool_portfolio_value, dynamic_pool_portfolio_history, dynamic_pool_transaction_costs, dynamic_pool_cash),
             'sentiment_ensemble':       _strat(sentiment_ensemble_portfolio_value, sentiment_ensemble_portfolio_history, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash),
             'voting_ensemble':          _strat(voting_ensemble_portfolio_value, voting_ensemble_portfolio_history, voting_ensemble_transaction_costs, voting_ensemble_cash),
+            'voting_ensemble_ai_rebalance': _strat(voting_ensemble_ai_rebalance_portfolio_value, voting_ensemble_ai_rebalance_portfolio_history, voting_ensemble_ai_rebalance_transaction_costs, voting_ensemble_ai_rebalance_cash) if config.ENABLE_VOTING_ENSEMBLE_AI_REBALANCE else _strat(0, [], 0, 0),
             'mom_accel':                _strat(mom_accel_portfolio_value, mom_accel_portfolio_history, mom_accel_transaction_costs, mom_accel_cash),
             'concentrated_3m':          _strat(concentrated_3m_portfolio_value, concentrated_3m_portfolio_history, concentrated_3m_transaction_costs, concentrated_3m_cash),
             'dual_momentum':            _strat(dual_mom_portfolio_value, dual_mom_portfolio_history, dual_mom_transaction_costs, dual_mom_cash),
@@ -10435,8 +10488,11 @@ def _run_portfolio_backtest_walk_forward(
             'risk_adj_mom_1m_monthly':  _strat(risk_adj_mom_1m_monthly_portfolio_value, risk_adj_mom_1m_monthly_portfolio_history, risk_adj_mom_1m_monthly_transaction_costs, risk_adj_mom_1m_monthly_cash),
             'ai_elite':                 _strat(ai_elite_portfolio_value, ai_elite_portfolio_history, ai_elite_transaction_costs, ai_elite_cash) if config.ENABLE_AI_ELITE else _strat(0, [], 0, 0),
             'ai_elite_monthly':         _strat(ai_elite_monthly_portfolio_value, ai_elite_monthly_portfolio_history, ai_elite_monthly_transaction_costs, ai_elite_monthly_cash) if config.ENABLE_AI_ELITE_MONTHLY else _strat(0, [], 0, 0),
+            'ai_elite_monthly_shared':  _strat(ai_elite_monthly_shared_portfolio_value, ai_elite_monthly_shared_portfolio_history, ai_elite_monthly_shared_transaction_costs, ai_elite_monthly_shared_cash) if config.ENABLE_AI_ELITE_MONTHLY_SHARED else _strat(0, [], 0, 0),
             'ai_elite_filtered':        _strat(ai_elite_filtered_portfolio_value, ai_elite_filtered_portfolio_history, ai_elite_filtered_transaction_costs, ai_elite_filtered_cash) if config.ENABLE_AI_ELITE_FILTERED else _strat(0, [], 0, 0),
             'ai_elite_market_up':       _strat(ai_elite_market_up_portfolio_value, ai_elite_market_up_portfolio_history, ai_elite_market_up_transaction_costs, ai_elite_market_up_cash) if config.ENABLE_AI_ELITE_MARKET_UP else _strat(0, [], 0, 0),
+            'ai_elite_ensemble':        _strat(ai_elite_ensemble_portfolio_value, ai_elite_ensemble_portfolio_history, ai_elite_ensemble_transaction_costs, ai_elite_ensemble_cash) if config.ENABLE_AI_ELITE_ENSEMBLE else _strat(0, [], 0, 0),
+            'ai_elite_rank_ensemble':   _strat(ai_elite_rank_ensemble_portfolio_value, ai_elite_rank_ensemble_portfolio_history, ai_elite_rank_ensemble_transaction_costs, ai_elite_rank_ensemble_cash) if config.ENABLE_AI_ELITE_RANK_ENSEMBLE else _strat(0, [], 0, 0),
             'ai_champion':              _strat(ai_champion_portfolio_value, ai_champion_portfolio_history, ai_champion_transaction_costs, ai_champion_cash) if config.ENABLE_AI_CHAMPION else _strat(0, [], 0, 0),
             'ai_regime':                _strat(ai_regime_portfolio_value, ai_regime_portfolio_history, ai_regime_transaction_costs, ai_regime_cash),
             'ai_regime_monthly':        _strat(ai_regime_monthly_portfolio_value, ai_regime_monthly_portfolio_history, ai_regime_monthly_transaction_costs, ai_regime_monthly_cash),
@@ -10595,7 +10651,10 @@ def _run_portfolio_backtest_walk_forward(
             # Additional strategies
             'ai_elite_filtered': {'tickers': list(ai_elite_filtered_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_elite_filtered_positions.items()}},
             'ai_elite_market_up': {'tickers': list(ai_elite_market_up_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_elite_market_up_positions.items()}},
+            'ai_elite_ensemble': {'tickers': list(ai_elite_ensemble_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_elite_ensemble_positions.items()}},
+            'ai_elite_rank_ensemble': {'tickers': list(ai_elite_rank_ensemble_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_elite_rank_ensemble_positions.items()}},
             'ai_elite_monthly': {'tickers': list(ai_elite_monthly_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_elite_monthly_positions.items()}},
+            'ai_elite_monthly_shared': {'tickers': list(ai_elite_monthly_shared_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_elite_monthly_shared_positions.items()}},
             'adaptive_ensemble': {'tickers': list(current_adaptive_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in adaptive_ensemble_positions.items()}},
             'bb_breakout': {'tickers': list(current_bb_breakout_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bb_breakout_positions.items()}},
             'bb_mean_reversion': {'tickers': list(current_bb_mean_reversion_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bb_mean_reversion_positions.items()}},
@@ -10620,6 +10679,7 @@ def _run_portfolio_backtest_walk_forward(
             'top5_consistency_blend': {'tickers': list(current_top5_consistency_blend_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in top5_consistency_blend_positions.items()}},
             'vol_sweet_mom': {'tickers': list(current_vol_sweet_mom_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in vol_sweet_mom_positions.items()}},
             'voting_ensemble': {'tickers': list(current_voting_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in voting_ensemble_positions.items()}},
+            'voting_ensemble_ai_rebalance': {'tickers': list(current_voting_ensemble_ai_rebalance_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in voting_ensemble_ai_rebalance_positions.items()}},
             'ai_champion': {'tickers': list(ai_champion_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_champion_positions.items()}},
             'ai_regime': {'tickers': list(ai_regime_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_regime_positions.items()}},
             'ai_regime_monthly': {'tickers': list(ai_regime_monthly_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ai_regime_monthly_positions.items()}},
@@ -10678,7 +10738,7 @@ def _run_portfolio_backtest_walk_forward(
         for strategy_name in results['strategies'].keys():
             try:
                 # Skip strategies that don't have selection functions (e.g., meta strategies)
-                if strategy_name in ['meta_strategy_ml', 'meta_strategy_mom', 'top5_consistency_blend', 'voting_ensemble']:
+                if strategy_name in ['meta_strategy_ml', 'meta_strategy_mom', 'top5_consistency_blend', 'voting_ensemble', 'voting_ensemble_ai_rebalance']:
                     continue
 
                 # Skip disabled strategies (especially AI strategies that are slow to run)
@@ -10730,11 +10790,11 @@ def _run_portfolio_backtest_walk_forward(
                 print(f"   ⚠️ Top5 Consistency Blend live selection error: {e}")
                 live_trading_selections['strategies']['top5_consistency_blend'] = []
 
-        if config.ENABLE_VOTING_ENSEMBLE and 'voting_ensemble' in results['strategies']:
+        if (config.ENABLE_VOTING_ENSEMBLE or config.ENABLE_VOTING_ENSEMBLE_AI_REBALANCE) and 'voting_ensemble' in results['strategies']:
             try:
                 live_voting_source_strategy_data = {}
                 for strategy_key, strategy_result in results['strategies'].items():
-                    if strategy_key == 'voting_ensemble':
+                    if strategy_key in {'voting_ensemble', 'voting_ensemble_ai_rebalance'}:
                         continue
                     tickers = live_trading_selections['strategies'].get(strategy_key, [])
                     if isinstance(tickers, list):
@@ -10748,9 +10808,11 @@ def _run_portfolio_backtest_walk_forward(
                     source_strategy_data=live_voting_source_strategy_data,
                     top_n=LIVE_TRADING_TOP_N,
                     max_source_strategies=3,
-                    excluded_strategy_keys=['voting_ensemble'],
+                    excluded_strategy_keys=['voting_ensemble', 'voting_ensemble_ai_rebalance'],
                 )
                 live_trading_selections['strategies']['voting_ensemble'] = voting_live_stocks
+                if config.ENABLE_VOTING_ENSEMBLE_AI_REBALANCE:
+                    live_trading_selections['strategies']['voting_ensemble_ai_rebalance'] = list(voting_live_stocks)
                 if voting_live_sources:
                     voting_source_summary = ", ".join(display_name for _, display_name, _, _ in voting_live_sources)
                     print(
@@ -10760,6 +10822,7 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Voting Ensemble live selection error: {e}")
                 live_trading_selections['strategies']['voting_ensemble'] = []
+                live_trading_selections['strategies']['voting_ensemble_ai_rebalance'] = []
 
         if config.ENABLE_AI_CHAMPION and 'ai_champion' in results['strategies']:
             try:
@@ -10794,7 +10857,10 @@ def _run_portfolio_backtest_walk_forward(
         if config.ENABLE_AI_REGIME and 'ai_regime' in results['strategies']:
             try:
                 from ai_regime_strategy import AIRegimeAllocator, select_ai_regime_stocks
-                ai_regime_allocator = AIRegimeAllocator(retrain_days=1, forward_days=1)
+                ai_regime_allocator = AIRegimeAllocator(
+                    retrain_days=AI_REGIME_RETRAIN_DAYS,
+                    forward_days=1,
+                )
                 ai_regime_allocator.load_model()
                 ai_regime_current_strategy = ai_regime_allocator.predict_best_strategy(ticker_data_grouped, live_current_date)
                 if ai_regime_current_strategy is not None:
@@ -10839,6 +10905,14 @@ def _run_portfolio_backtest_walk_forward(
     with open(live_selections_file, 'w') as f:
         json.dump(live_trading_selections, f, indent=2, default=str)
     print(f"📁 Live trading selections saved to {live_selections_file}")
+
+    if voting_ensemble_ai_rebalance_cache_context:
+        try:
+            from ai_rebalance_strategy import cleanup_rebalance_training_context as _cleanup_voting_ai_rebalance_training_context
+
+            _cleanup_voting_ai_rebalance_training_context(voting_ensemble_ai_rebalance_cache_context)
+        except Exception:
+            pass
 
     return results
 

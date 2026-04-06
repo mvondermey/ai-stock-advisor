@@ -7,12 +7,16 @@ for better entry/exit timing.
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+from multiprocessing import Pool
 from typing import List, Dict, Tuple, Optional
+from tqdm import tqdm
 from config import (
     MULTI_TIMEFRAMES, MULTI_TIMEFRAME_LOOKBACK,
     MULTI_TIMEFRAME_WEIGHTS, MULTI_TIMEFRAME_MIN_CONSENSUS,
-    PORTFOLIO_SIZE, N_TOP_TICKERS
+    PORTFOLIO_SIZE, N_TOP_TICKERS, NUM_PROCESSES
 )
+
+_MULTI_TIMEFRAME_SELECTION_CONTEXT: Dict[str, object] = {}
 
 def calculate_multi_timeframe_signals(
     ticker: str,
@@ -201,6 +205,36 @@ def calculate_ensemble_score(signals: Dict[str, float]) -> Tuple[float, bool]:
 
     return ensemble_score, has_consensus
 
+
+def _init_multi_timeframe_worker(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+) -> None:
+    """Expose shared read-only selection context to worker processes."""
+    global _MULTI_TIMEFRAME_SELECTION_CONTEXT
+    _MULTI_TIMEFRAME_SELECTION_CONTEXT = {
+        "ticker_data_grouped": ticker_data_grouped,
+        "current_date": current_date,
+    }
+
+
+def _score_multi_timeframe_ticker_worker(
+    ticker: str,
+) -> Optional[Tuple[str, float, Dict[str, float]]]:
+    """Score one ticker for the daily multi-timeframe ensemble."""
+    context = _MULTI_TIMEFRAME_SELECTION_CONTEXT
+    ticker_data_grouped = context.get("ticker_data_grouped") or {}
+    current_date = context.get("current_date")
+    ticker_data = ticker_data_grouped.get(ticker)
+    if ticker_data is None or current_date is None:
+        return None
+
+    signals = calculate_multi_timeframe_signals(ticker, ticker_data, current_date)
+    ensemble_score, has_consensus = calculate_ensemble_score(signals)
+    if has_consensus:
+        return (ticker, ensemble_score, signals)
+    return None
+
 def select_multi_timeframe_stocks(
     initial_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -226,22 +260,40 @@ def select_multi_timeframe_stocks(
     tickers_to_use = [t for t in initial_tickers if t not in INVERSE_ETFS]
 
     stock_scores = []
+    n_workers = max(1, min(NUM_PROCESSES, len(tickers_to_use))) if tickers_to_use else 1
 
-    for ticker in tickers_to_use:
-        if ticker not in ticker_data_grouped:
-            continue
+    if n_workers > 1 and len(tickers_to_use) >= max(32, n_workers * 2):
+        if verbose:
+            print(f"   🚀 Multi-Horizon Ensemble: Scoring {len(tickers_to_use)} tickers with {n_workers} processes")
+        with Pool(
+            processes=n_workers,
+            initializer=_init_multi_timeframe_worker,
+            initargs=(ticker_data_grouped, current_date),
+        ) as pool:
+            results = list(tqdm(
+                pool.imap_unordered(_score_multi_timeframe_ticker_worker, tickers_to_use),
+                total=len(tickers_to_use),
+                desc="   Multi-Horizon Ensemble scoring",
+                ncols=100,
+                unit="ticker",
+            ))
+        stock_scores = [result for result in results if result is not None]
+    else:
+        for ticker in tickers_to_use:
+            if ticker not in ticker_data_grouped:
+                continue
 
-        ticker_data = ticker_data_grouped[ticker]
+            ticker_data = ticker_data_grouped[ticker]
 
-        # Calculate multi-timeframe signals
-        signals = calculate_multi_timeframe_signals(ticker, ticker_data, current_date)
+            # Calculate multi-timeframe signals
+            signals = calculate_multi_timeframe_signals(ticker, ticker_data, current_date)
 
-        # Calculate ensemble score and consensus
-        ensemble_score, has_consensus = calculate_ensemble_score(signals)
+            # Calculate ensemble score and consensus
+            ensemble_score, has_consensus = calculate_ensemble_score(signals)
 
-        # Only consider stocks with consensus
-        if has_consensus:
-            stock_scores.append((ticker, ensemble_score, signals))
+            # Only consider stocks with consensus
+            if has_consensus:
+                stock_scores.append((ticker, ensemble_score, signals))
 
     # Sort by ensemble score
     stock_scores.sort(key=lambda x: x[1], reverse=True)

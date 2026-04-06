@@ -3,13 +3,175 @@ Parallel performance calculations for backtesting optimization.
 This module provides parallelized versions of performance calculation functions.
 """
 
+from dataclasses import dataclass, field
 from multiprocessing import Pool, cpu_count
 from functools import partial
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import pandas as pd
+import numpy as np
 import time
 import gc
 from datetime import datetime, timedelta
+
+
+@dataclass
+class PriceHistoryCache:
+    """Precomputed valid close arrays plus rolling window caches for ranking."""
+    date_ns_by_ticker: Dict[str, np.ndarray]
+    close_by_ticker: Dict[str, np.ndarray]
+    performance_cache: Dict[Tuple[int, int], Dict[str, float]] = field(default_factory=dict)
+    risk_adjusted_cache: Dict[Tuple[int, int], Dict[str, Tuple[float, float, float]]] = field(default_factory=dict)
+    volatility_cache: Dict[Tuple[int, int], Dict[str, float]] = field(default_factory=dict)
+
+
+def _timestamp_ns(value: datetime) -> int:
+    return int(pd.Timestamp(value).value)
+
+
+def _min_rows_for_period(period_days: int) -> int:
+    if period_days <= 30:
+        return 10
+    if period_days <= 100:
+        return 20
+    if period_days <= 200:
+        return 30
+    return 50
+
+
+def _window_slice(
+    date_ns: np.ndarray,
+    closes: np.ndarray,
+    current_date: datetime,
+    period_days: int,
+) -> Optional[np.ndarray]:
+    end_ns = _timestamp_ns(current_date)
+    start_ns = _timestamp_ns(current_date - timedelta(days=period_days))
+    start_idx = int(np.searchsorted(date_ns, start_ns, side='left'))
+    end_idx = int(np.searchsorted(date_ns, end_ns, side='right'))
+    if end_idx - start_idx < _min_rows_for_period(period_days):
+        return None
+    window = closes[start_idx:end_idx]
+    if window.size < 2:
+        return None
+    return window
+
+
+def build_price_history_cache(ticker_data_grouped: Dict[str, pd.DataFrame]) -> PriceHistoryCache:
+    """Precompute valid close arrays for fast window lookups."""
+    date_ns_by_ticker: Dict[str, np.ndarray] = {}
+    close_by_ticker: Dict[str, np.ndarray] = {}
+
+    for ticker, ticker_data in ticker_data_grouped.items():
+        if ticker_data is None or ticker_data.empty or 'Close' not in ticker_data.columns:
+            continue
+        valid_close = pd.to_numeric(ticker_data['Close'], errors='coerce').dropna()
+        if len(valid_close) < 2:
+            continue
+        date_index = pd.DatetimeIndex(valid_close.index)
+        if date_index.tz is not None:
+            date_index = date_index.tz_convert("UTC").tz_localize(None)
+        date_ns_by_ticker[ticker] = date_index.to_numpy(dtype="datetime64[ns]").astype(np.int64, copy=True)
+        close_by_ticker[ticker] = valid_close.to_numpy(dtype=float, copy=True)
+
+    return PriceHistoryCache(
+        date_ns_by_ticker=date_ns_by_ticker,
+        close_by_ticker=close_by_ticker,
+    )
+
+
+def calculate_cached_performance(
+    tickers: List[str],
+    price_history_cache: PriceHistoryCache,
+    current_date: datetime,
+    period_days: int = 365,
+) -> List[Tuple[str, float]]:
+    """Return cached lookback performance using precomputed close arrays."""
+    cache_key = (_timestamp_ns(current_date), int(period_days))
+    if cache_key not in price_history_cache.performance_cache:
+        start_time = time.time()
+        performance_map: Dict[str, float] = {}
+        for ticker, closes in price_history_cache.close_by_ticker.items():
+            date_ns = price_history_cache.date_ns_by_ticker[ticker]
+            window = _window_slice(date_ns, closes, current_date, period_days)
+            if window is None:
+                continue
+            start_price = float(window[0])
+            end_price = float(window[-1])
+            if start_price > 0 and not np.isnan(start_price) and not np.isnan(end_price):
+                performance_map[ticker] = ((end_price - start_price) / start_price) * 100.0
+        elapsed = time.time() - start_time
+        print(f"   ⏱️ Cached performance: {len(price_history_cache.close_by_ticker)} tickers in {elapsed:.2f}s (window={period_days}d)")
+        price_history_cache.performance_cache[cache_key] = performance_map
+
+    performance_map = price_history_cache.performance_cache[cache_key]
+    return [(ticker, performance_map[ticker]) for ticker in tickers if ticker in performance_map]
+
+
+def calculate_cached_volatility(
+    tickers: List[str],
+    price_history_cache: PriceHistoryCache,
+    current_date: datetime,
+    period_days: int = 365,
+) -> Dict[str, float]:
+    """Return cached annualized volatility using the same lookback window arrays."""
+    cache_key = (_timestamp_ns(current_date), int(period_days))
+    if cache_key not in price_history_cache.volatility_cache:
+        start_time = time.time()
+        volatility_map: Dict[str, float] = {}
+        for ticker, closes in price_history_cache.close_by_ticker.items():
+            date_ns = price_history_cache.date_ns_by_ticker[ticker]
+            window = _window_slice(date_ns, closes, current_date, period_days)
+            if window is None or window.size < 3:
+                continue
+            daily_returns = np.diff(window) / window[:-1]
+            if daily_returns.size > 10:
+                volatility_map[ticker] = float(np.std(daily_returns, ddof=1) * np.sqrt(252) * 100.0)
+        elapsed = time.time() - start_time
+        print(f"   ⏱️ Cached volatility: {len(price_history_cache.close_by_ticker)} tickers in {elapsed:.2f}s (window={period_days}d)")
+        price_history_cache.volatility_cache[cache_key] = volatility_map
+
+    volatility_map = price_history_cache.volatility_cache[cache_key]
+    return {ticker: volatility_map[ticker] for ticker in tickers if ticker in volatility_map}
+
+
+def calculate_cached_risk_adjusted_scores(
+    tickers: List[str],
+    price_history_cache: PriceHistoryCache,
+    current_date: datetime,
+    lookback_days: int = 365,
+) -> List[Tuple[str, float, float, float]]:
+    """Return cached risk-adjusted momentum scores from precomputed arrays."""
+    cache_key = (_timestamp_ns(current_date), int(lookback_days))
+    if cache_key not in price_history_cache.risk_adjusted_cache:
+        start_time = time.time()
+        risk_adjusted_map: Dict[str, Tuple[float, float, float]] = {}
+        min_perf_days = max(10, lookback_days // 5)
+        for ticker, closes in price_history_cache.close_by_ticker.items():
+            date_ns = price_history_cache.date_ns_by_ticker[ticker]
+            window = _window_slice(date_ns, closes, current_date, lookback_days)
+            if window is None or window.size < min_perf_days:
+                continue
+            start_price = float(window[0])
+            end_price = float(window[-1])
+            if start_price <= 0 or np.isnan(start_price) or np.isnan(end_price):
+                continue
+            daily_returns = np.diff(window) / window[:-1]
+            if daily_returns.size <= 5:
+                continue
+            basic_return = ((end_price - start_price) / start_price) * 100.0
+            volatility = float(np.std(daily_returns, ddof=1) * 100.0)
+            risk_adjusted_score = float(basic_return / (volatility**0.5 + 0.001))
+            risk_adjusted_map[ticker] = (risk_adjusted_score, basic_return, volatility)
+        elapsed = time.time() - start_time
+        print(f"   ⏱️ Cached risk-adjusted: {len(price_history_cache.close_by_ticker)} tickers in {elapsed:.2f}s (window={lookback_days}d)")
+        price_history_cache.risk_adjusted_cache[cache_key] = risk_adjusted_map
+
+    risk_adjusted_map = price_history_cache.risk_adjusted_cache[cache_key]
+    return [
+        (ticker, *risk_adjusted_map[ticker])
+        for ticker in tickers
+        if ticker in risk_adjusted_map
+    ]
 
 
 def calculate_single_ticker_performance(args):

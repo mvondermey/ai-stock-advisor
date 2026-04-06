@@ -1,6 +1,7 @@
 """
-AI Elite Market-Up Only Strategy
-Same as AI Elite but only rebalances when the trailing market regime is up.
+AI Elite Market-Up Shared Strategy
+Same as AI Elite but only rebalances when the trailing market regime is up,
+reusing the daily AI Elite shared model.
 """
 
 from typing import List, Dict
@@ -15,7 +16,7 @@ def select_ai_elite_market_up_stocks(
     top_n: int = 10,
     per_ticker_models: Dict[str, any] = None
 ) -> List[str]:
-    """Select stocks using AI Elite scoring, but only when market is up."""
+    """Select stocks using the daily AI Elite shared model, but only when market is up."""
     from ai_elite_strategy import select_ai_elite_stocks
     from market_regime import get_trailing_market_regime
 
@@ -27,15 +28,15 @@ def select_ai_elite_market_up_stocks(
 
     if market_return is None:
         # On first day or when market data unavailable, assume market is up to allow initial investment
-        print(f"   📊 AI Elite Market-Up: Market data unavailable, allowing initial investment")
+        print(f"   📊 AI Elite Market-Up Shared: Market data unavailable, allowing initial investment")
         market_return = 0.0
         is_market_up = True
 
     if not is_market_up:
-        print(f"   📊 AI Elite Market-Up: Market is down ({market_return:+.1f}% over trailing 5d via {proxy}), skipping rebalance")
+        print(f"   📊 AI Elite Market-Up Shared: Market is down ({market_return:+.1f}% over trailing 5d via {proxy}), skipping rebalance")
         return []  # Don't rebalance when market is down
 
-    print(f"   📊 AI Elite Market-Up: Market is up ({market_return:+.1f}% over trailing 5d via {proxy}), proceeding with selection")
+    print(f"   📊 AI Elite Market-Up Shared: Market is up ({market_return:+.1f}% over trailing 5d via {proxy}), proceeding with shared-model selection")
 
     # Delegate to AI Elite stock selection
     return select_ai_elite_stocks(

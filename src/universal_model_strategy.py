@@ -15,15 +15,22 @@ from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 from pathlib import Path
 import joblib
+from tqdm import tqdm
 
 from model_training_safety import (
     catboost_has_trained_trees,
-    cleanup_training_memory,
     configure_catboost_cpu_continuation,
     ensure_catboost_cpu_metadata,
+    release_runtime_memory,
     reset_legacy_catboost_member,
     restore_native_model_artifacts,
     save_native_model_artifacts,
+)
+from config import (
+    AI_ELITE_FORWARD_DAYS,
+    AI_ELITE_TRAINING_LOOKBACK,
+    MIN_TRAINING_SAMPLES_AI_ELITE,
+    UNIVERSAL_MODEL_RETRAIN_DAYS,
 )
 
 # Model save path
@@ -32,8 +39,9 @@ UNIVERSAL_MODEL_PATH = MODEL_SAVE_DIR / "universal_model.joblib"
 UNIVERSAL_SCALER_PATH = MODEL_SAVE_DIR / "universal_scaler.joblib"
 
 # Feature engineering constants
-LOOKBACK_DAYS = 60  # Days of history for feature calculation
-FORWARD_DAYS = 5    # Prediction horizon (5 days like AI Elite)
+LOOKBACK_DAYS = 60  # Days of history required for universal features
+FORWARD_DAYS = AI_ELITE_FORWARD_DAYS
+TRAINING_LOOKBACK_DAYS = AI_ELITE_TRAINING_LOOKBACK
 
 
 def calculate_universal_features(ticker: str, data: pd.DataFrame, current_date: datetime) -> Optional[Dict[str, float]]:
@@ -168,7 +176,7 @@ class UniversalModelStrategy:
     Single ML model trained on pooled data from all tickers.
     """
 
-    def __init__(self, retrain_days: int = 1, min_samples: int = 200):
+    def __init__(self, retrain_days: int = UNIVERSAL_MODEL_RETRAIN_DAYS, min_samples: int = MIN_TRAINING_SAMPLES_AI_ELITE):
         self.retrain_days = retrain_days
         self.min_samples = min_samples
         self.model = None
@@ -186,79 +194,109 @@ class UniversalModelStrategy:
             return True
         return (self.day_count - self.last_train_day) >= self.retrain_days
 
-    @cleanup_training_memory
     def train_model(self, ticker_data_grouped: Dict[str, pd.DataFrame],
                     business_days: List[datetime], current_day_idx: int):
         """
         Train universal model on pooled data from all tickers.
         """
-        from sklearn.ensemble import GradientBoostingRegressor
-        from sklearn.preprocessing import StandardScaler
-        import warnings
+        try:
+            from sklearn.ensemble import GradientBoostingRegressor
+            from sklearn.preprocessing import StandardScaler
+            import warnings
 
-        print(f"   🧠 Universal Model: Training on pooled data...")
+            print(f"   🧠 Universal Model: Training on pooled data...")
 
-        # Collect training samples from ALL tickers
-        X_list = []
-        y_list = []
+            # Collect training samples from ALL tickers
+            X_list = []
+            y_list = []
 
-        # Get current date from business_days
-        if current_day_idx >= len(business_days):
-            current_day_idx = len(business_days) - 1
-        current_date = business_days[current_day_idx] if current_day_idx >= 0 else business_days[0]
+            # Get current date from business_days
+            if current_day_idx >= len(business_days):
+                current_day_idx = len(business_days) - 1
+            current_date = business_days[current_day_idx] if current_day_idx >= 0 else business_days[0]
 
-        # Sample from HISTORICAL data (sequential - GIL blocks threading)
-        for ticker, data in ticker_data_grouped.items():
-            if data is None or len(data) < LOOKBACK_DAYS + FORWARD_DAYS + 10:
-                continue
-            available_dates = data.index[data.index < current_date - timedelta(days=FORWARD_DAYS + 5)]
-            if len(available_dates) < LOOKBACK_DAYS:
-                continue
-            sample_dates = available_dates[LOOKBACK_DAYS::5]
-            for sample_date in sample_dates[-100:]:
-                features = calculate_universal_features(ticker, data, sample_date)
-                if features is None:
+            train_start = current_date - timedelta(days=TRAINING_LOOKBACK_DAYS)
+
+            # Sample from historical data across the full training window.
+            for ticker, data in tqdm(
+                ticker_data_grouped.items(),
+                total=len(ticker_data_grouped),
+                desc="   Universal Model sample build",
+                ncols=100,
+                unit="ticker",
+            ):
+                if data is None or len(data) == 0:
                     continue
-                forward_ret = calculate_forward_return(data, sample_date, FORWARD_DAYS)
-                if forward_ret is None:
-                    continue
-                X_list.append(list(features.values()))
-                y_list.append(forward_ret)
-            if len(X_list) >= 10000:
-                break
+                sample_date = train_start
+                while sample_date <= current_date:
+                    features = calculate_universal_features(ticker, data, sample_date)
+                    if features is None:
+                        sample_date += timedelta(days=1)
+                        continue
+                    forward_ret = calculate_forward_return(data, sample_date, FORWARD_DAYS)
+                    if forward_ret is None:
+                        sample_date += timedelta(days=1)
+                        continue
+                    X_list.append(list(features.values()))
+                    y_list.append(forward_ret)
+                    sample_date += timedelta(days=1)
 
-        if len(X_list) < self.min_samples:
-            print(f"   ⚠️ Universal Model: Not enough samples ({len(X_list)} < {self.min_samples})")
-            return False
+            if len(X_list) < self.min_samples:
+                print(f"   ⚠️ Universal Model: Not enough samples ({len(X_list)} < {self.min_samples})")
+                return False
 
-        X = np.array(X_list)
-        y = np.array(y_list)
+            X = np.array(X_list)
+            y = np.array(y_list)
 
-        # Store feature column names from first successful sample
-        self.feature_cols = ['mom_5d', 'mom_10d', 'mom_20d', 'mom_60d', 'volatility_20d',
-                             'volatility_60d', 'price_vs_sma20', 'price_vs_sma50', 'sma_trend',
-                             'vol_ratio', 'atr_pct', 'mom_accel', 'risk_adj_mom', 'drawdown', 'rsi']
+            # Store feature column names from first successful sample
+            self.feature_cols = ['mom_5d', 'mom_10d', 'mom_20d', 'mom_60d', 'volatility_20d',
+                                 'volatility_60d', 'price_vs_sma20', 'price_vs_sma50', 'sma_trend',
+                                 'vol_ratio', 'atr_pct', 'mom_accel', 'risk_adj_mom', 'drawdown', 'rsi']
 
-        # Scale features
-        self.scaler = StandardScaler()
-        X_scaled = self.scaler.fit_transform(X)
+            # Scale features
+            self.scaler = StandardScaler()
+            X_scaled = self.scaler.fit_transform(X)
 
-        # Train ALL models and pick the best one
-        from sklearn.metrics import r2_score
-        from sklearn.model_selection import train_test_split
-        from config import XGBOOST_USE_GPU
-        import xgboost as xgb
-        import lightgbm as lgb
-        import time
+            # Train ALL models and pick the best one
+            from sklearn.metrics import r2_score
+            from sklearn.model_selection import train_test_split
+            from config import XGBOOST_USE_GPU
+            import xgboost as xgb
+            import lightgbm as lgb
+            import time
 
-        device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
-        has_existing = self.all_models is not None
+            device = 'cuda' if XGBOOST_USE_GPU else 'cpu'
+            has_existing = self.all_models is not None
 
-        # Build models (XGBoost + LightGBM + CatBoost - all support GPU/incremental)
-        if has_existing:
-            models = dict(self.all_models)
-            # Add CatBoost if missing from loaded model
-            if 'CatBoost' not in models:
+            # Build models (XGBoost + LightGBM + CatBoost - all support GPU/incremental)
+            if has_existing:
+                models = dict(self.all_models)
+                if 'CatBoost' not in models:
+                    try:
+                        import catboost as cb
+                        models['CatBoost'] = cb.CatBoostRegressor(
+                            iterations=100, depth=4, learning_rate=0.1,
+                            task_type='CPU', random_seed=42, verbose=0,
+                            allow_writing_files=False, thread_count=1
+                        )
+                    except ImportError:
+                        pass
+                print(
+                    f"   📊 Universal Model: Continuing training on {len(X_list)} samples "
+                    f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
+                )
+            else:
+                models = {
+                    'XGBoost': xgb.XGBRegressor(
+                        n_estimators=100, max_depth=4, learning_rate=0.1,
+                        subsample=0.8, random_state=42,
+                        tree_method='hist', device=device, verbosity=0, n_jobs=-1
+                    ),
+                    'LightGBM': lgb.LGBMRegressor(
+                        n_estimators=100, max_depth=4, learning_rate=0.1,
+                        subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
+                    )
+                }
                 try:
                     import catboost as cb
                     models['CatBoost'] = cb.CatBoostRegressor(
@@ -268,128 +306,95 @@ class UniversalModelStrategy:
                     )
                 except ImportError:
                     pass
-            print(
-                f"   📊 Universal Model: Continuing training on {len(X_list)} samples "
-                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
-            )
-        else:
-            models = {
-                'XGBoost': xgb.XGBRegressor(
-                    n_estimators=100, max_depth=4, learning_rate=0.1,
-                    subsample=0.8, random_state=42,
-                    tree_method='hist', device=device, verbosity=0, n_jobs=-1
-                ),
-                'LightGBM': lgb.LGBMRegressor(
-                    n_estimators=100, max_depth=4, learning_rate=0.1,
-                    subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
+                print(
+                    f"   📊 Universal Model: Training NEW {list(models.keys())} on {len(X_list)} samples "
+                    f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
                 )
-            }
-            # Add CatBoost if available
-            try:
-                import catboost as cb
-                models['CatBoost'] = cb.CatBoostRegressor(
-                    iterations=100, depth=4, learning_rate=0.1,
-                    task_type='CPU', random_seed=42, verbose=0,
-                    allow_writing_files=False, thread_count=1
-                )
-            except ImportError:
-                pass
-            print(
-                f"   📊 Universal Model: Training NEW {list(models.keys())} on {len(X_list)} samples "
-                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
-            )
 
-        # Train/val split (faster than CV)
-        X_train, X_val, y_train, y_val = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+            X_train, X_val, y_train, y_val = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
-        # Train all models and evaluate
-        trained_models = {}
-        model_scores = {}
+            trained_models = {}
+            model_scores = {}
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            for name, m in models.items():
-                try:
-                    print(f"      🔄 {name}: Training...", end=" ", flush=True)
-                    start_time = time.time()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                for name, m in models.items():
+                    try:
+                        print(f"      🔄 {name}: Training...", end=" ", flush=True)
+                        start_time = time.time()
 
-                    # Check if incremental training is safe (features must match)
-                    can_increment = has_existing
-                    if can_increment:
-                        old_n_features = m.n_features_in_ if hasattr(m, 'n_features_in_') else 0
-                        new_n_features = X_train.shape[1]
-                        if old_n_features != new_n_features:
-                            print(f"features {old_n_features}→{new_n_features}, retraining from scratch...", end=" ", flush=True)
-                            # Recreate model from scratch
-                            if name == 'XGBoost':
-                                m = xgb.XGBRegressor(
-                                    n_estimators=100, max_depth=5, learning_rate=0.1,
-                                    subsample=0.8, random_state=42,
-                                    tree_method='hist', device=device, verbosity=0, n_jobs=-1
-                                )
-                            elif name == 'LightGBM':
-                                m = lgb.LGBMRegressor(
-                                    n_estimators=100, max_depth=5, learning_rate=0.1,
-                                    subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
-                                )
-                            elif name == 'CatBoost':
-                                import catboost as cb
-                                m = cb.CatBoostRegressor(
-                                    iterations=100, depth=5, learning_rate=0.1,
-                                    task_type='CPU', random_seed=42, verbose=0,
-                                    allow_writing_files=False, thread_count=1
-                                )
-                            can_increment = False
-
-                    # True incremental training for supported models
-                    if can_increment:
-                        if name == 'XGBoost':
-                            m.fit(X_train, y_train, xgb_model=m.get_booster())
-                        elif name == 'LightGBM':
-                            m.fit(X_train, y_train, init_model=m.booster_)
-                        elif name == 'CatBoost':
-                            if catboost_has_trained_trees(m):
-                                configure_catboost_cpu_continuation(m)
-                                m.fit(X_train, y_train, init_model=m)
-                            else:
-                                print("(no saved trees yet, training fresh)...", end=" ", flush=True)
+                        can_increment = has_existing
+                        if can_increment:
+                            old_n_features = m.n_features_in_ if hasattr(m, 'n_features_in_') else 0
+                            new_n_features = X_train.shape[1]
+                            if old_n_features != new_n_features:
+                                print(f"features {old_n_features}→{new_n_features}, retraining from scratch...", end=" ", flush=True)
+                                if name == 'XGBoost':
+                                    m = xgb.XGBRegressor(
+                                        n_estimators=100, max_depth=5, learning_rate=0.1,
+                                        subsample=0.8, random_state=42,
+                                        tree_method='hist', device=device, verbosity=0, n_jobs=-1
+                                    )
+                                elif name == 'LightGBM':
+                                    m = lgb.LGBMRegressor(
+                                        n_estimators=100, max_depth=5, learning_rate=0.1,
+                                        subsample=0.8, random_state=42, verbose=-1, n_jobs=-1
+                                    )
+                                elif name == 'CatBoost':
+                                    import catboost as cb
+                                    m = cb.CatBoostRegressor(
+                                        iterations=100, depth=5, learning_rate=0.1,
+                                        task_type='CPU', random_seed=42, verbose=0,
+                                        allow_writing_files=False, thread_count=1
+                                    )
                                 can_increment = False
-                        else:
+
+                        if can_increment:
+                            if name == 'XGBoost':
+                                m.fit(X_train, y_train, xgb_model=m.get_booster())
+                            elif name == 'LightGBM':
+                                m.fit(X_train, y_train, init_model=m.booster_)
+                            elif name == 'CatBoost':
+                                if catboost_has_trained_trees(m):
+                                    configure_catboost_cpu_continuation(m)
+                                    m.fit(X_train, y_train, init_model=m)
+                                else:
+                                    print("(no saved trees yet, training fresh)...", end=" ", flush=True)
+                                    can_increment = False
+                            else:
+                                m.fit(X_train, y_train)
+                        if not can_increment:
                             m.fit(X_train, y_train)
-                    if not can_increment:
-                        m.fit(X_train, y_train)
 
-                    # Validate on held-out set
-                    y_pred = m.predict(X_val)
-                    score = r2_score(y_val, y_pred)
+                        y_pred = m.predict(X_val)
+                        score = r2_score(y_val, y_pred)
 
-                    elapsed = time.time() - start_time
-                    status = "incremental" if can_increment else "fresh"
-                    print(f"R² = {score:.3f} ({status}, {elapsed:.1f}s)")
-                    trained_models[name] = m
-                    model_scores[name] = score
-                except Exception as e:
-                    print(f"failed: {e}")
+                        elapsed = time.time() - start_time
+                        status = "incremental" if can_increment else "fresh"
+                        print(f"R² = {score:.3f} ({status}, {elapsed:.1f}s)")
+                        trained_models[name] = m
+                        model_scores[name] = score
+                    except Exception as e:
+                        print(f"failed: {e}")
 
-        if not trained_models:
-            print(f"   ⚠️ Universal Model: No models trained successfully")
-            return False
+            if not trained_models:
+                print(f"   ⚠️ Universal Model: No models trained successfully")
+                return False
 
-        # Pick best model
-        best_name = max(model_scores, key=model_scores.get)
-        best_score = model_scores[best_name]
+            best_name = max(model_scores, key=model_scores.get)
+            best_score = model_scores[best_name]
 
-        self.all_models = trained_models
-        self.all_scores = model_scores
-        self.model = trained_models[best_name]
-        self.best_name = best_name
-        self.last_train_day = self.day_count
-        print(f"   ✅ Universal Model: Saved {len(trained_models)} models. Best = {best_name} (R² {best_score:.3f})")
+            self.all_models = trained_models
+            self.all_scores = model_scores
+            self.model = trained_models[best_name]
+            self.best_name = best_name
+            self.last_train_day = self.day_count
+            print(f"   ✅ Universal Model: Saved {len(trained_models)} models. Best = {best_name} (R² {best_score:.3f})")
 
-        # Save model to disk
-        self.save_model()
-
-        return True
+            self.save_model()
+            return True
+        finally:
+            release_runtime_memory()
 
     def save_model(self):
         """Save all models, scaler, and training state to disk."""

@@ -17,6 +17,7 @@ from typing import Dict, List, Optional
 import joblib
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from model_training_safety import (
     catboost_has_trained_trees,
@@ -330,9 +331,13 @@ class AIChampionAllocator:
             return False
 
         training_samples = []
-        step = 2 if (max_day - min_day) > 40 else 1
-
-        for day_idx in range(min_day, max_day, step):
+        for day_idx in tqdm(
+            range(min_day, max_day),
+            total=max(0, max_day - min_day),
+            desc="   AI Champion sample build",
+            ncols=100,
+            unit="day",
+        ):
             if day_idx >= len(business_days):
                 continue
 
