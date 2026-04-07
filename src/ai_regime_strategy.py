@@ -753,7 +753,6 @@ def select_ai_regime_stocks(
 
         # AI/ML Strategies (select_ai_elite_with_training returns tuple, extract first element)
         'ai_elite': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
-        'ai_elite_monthly': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
         'ai_elite_market_up': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
         'ai_elite_filtered': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
         'elite_hybrid': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],

@@ -289,7 +289,7 @@ def _auto_detect_num_processes():
 
 # Auto-detect a safe multiprocessing worker count based on RAM
 NUM_PROCESSES = _auto_detect_num_processes()  # For data validation, ticker selection, and backtest data collection
-NUM_PROCESSES = max(1, cpu_count() - 2)  # For data validation, ticker selection, and backtest data collection
+NUM_PROCESSES = max(1, cpu_count() - 4)  # For data validation, ticker selection, and backtest data collection
 
 
 
@@ -326,7 +326,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 # --- Backtest windows
 
-BACKTEST_DAYS           =   40   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   90   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 
@@ -574,7 +574,6 @@ ENABLE_BH_1Y_DYNAMIC_ACCEL = True          # NEW - BH 1Y Dynamic Accel (dynamic 
 
 ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip opportunities)
 
-ENABLE_AI_ELITE_MONTHLY = True   # NEW - AI Elite Monthly (same ML scoring, retrain + rebalance start of month only)
 ENABLE_AI_ELITE_MONTHLY_SHARED = True   # NEW - AI Elite Monthly Shared (monthly rebalance using daily AI Elite shared model)
 
 ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre-filter + AI Elite re-rank)

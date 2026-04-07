@@ -234,7 +234,6 @@ STRATEGY_REGISTRY = {
     'risk_adj_mom_1m': _strategy_registry_entry('Risk-Adj Mom 1M', 'ENABLE_RISK_ADJ_MOM_1M', 'risk_adj_mom_1m_portfolio_value', 'risk_adj_mom_1m_portfolio_history', 'risk_adj_mom_1m_cash', 'current_risk_adj_mom_1m_stocks'),
     'risk_adj_mom_1m_monthly': _strategy_registry_entry('RiskAdj 1M Mth', 'ENABLE_RISK_ADJ_MOM_1M_MONTHLY', 'risk_adj_mom_1m_monthly_portfolio_value', 'risk_adj_mom_1m_monthly_portfolio_history', 'risk_adj_mom_1m_monthly_cash', 'risk_adj_mom_1m_monthly_positions'),
     'ai_elite': _strategy_registry_entry('AI Elite', 'ENABLE_AI_ELITE', 'ai_elite_portfolio_value', 'ai_elite_portfolio_history', 'ai_elite_cash', 'ai_elite_positions'),
-    'ai_elite_monthly': _strategy_registry_entry('AI Elite Mth', 'ENABLE_AI_ELITE_MONTHLY', 'ai_elite_monthly_portfolio_value', 'ai_elite_monthly_portfolio_history', 'ai_elite_monthly_cash', 'ai_elite_monthly_positions'),
     'ai_elite_monthly_shared': _strategy_registry_entry('AI Elite Mth Sh', 'ENABLE_AI_ELITE_MONTHLY_SHARED', 'ai_elite_monthly_shared_portfolio_value', 'ai_elite_monthly_shared_portfolio_history', 'ai_elite_monthly_shared_cash', 'ai_elite_monthly_shared_positions'),
     'ai_elite_filtered': _strategy_registry_entry('AI Elite Flt', 'ENABLE_AI_ELITE_FILTERED', 'ai_elite_filtered_portfolio_value', 'ai_elite_filtered_portfolio_history', 'ai_elite_filtered_cash', 'ai_elite_filtered_positions'),
     'ai_elite_market_up': _strategy_registry_entry('AI Elite Up Sh', 'ENABLE_AI_ELITE_MARKET_UP', 'ai_elite_market_up_portfolio_value', 'ai_elite_market_up_portfolio_history', 'ai_elite_market_up_cash', 'ai_elite_market_up_positions'),
@@ -2694,18 +2693,6 @@ def _run_portfolio_backtest_walk_forward(
     ai_elite_models = {}  # Per-ticker models: ticker -> model
     ai_elite_last_train_days = {}  # Per-ticker training tracking: ticker -> last_train_day
 
-    # AI ELITE MONTHLY: Initialize portfolio tracking (same ML, monthly retrain + rebalance)
-    ai_elite_monthly_portfolio_value = initial_capital_needed
-    ai_elite_monthly_portfolio_history = [ai_elite_monthly_portfolio_value] if config.ENABLE_AI_ELITE_MONTHLY else []
-    ai_elite_monthly_positions = {}
-    ai_elite_monthly_cash = initial_capital_needed
-    current_ai_elite_monthly_stocks = []
-    ai_elite_monthly_transaction_costs = 0.0
-    ai_elite_monthly_initialized = False
-    ai_elite_monthly_last_month = None
-    ai_elite_monthly_models = {}  # Separate model dict for monthly variant
-    ai_elite_monthly_last_train_days = {}
-
     # AI ELITE MONTHLY SHARED: Initialize portfolio tracking (monthly rebalance using daily AI Elite shared model)
     ai_elite_monthly_shared_portfolio_value = initial_capital_needed
     ai_elite_monthly_shared_portfolio_history = [ai_elite_monthly_shared_portfolio_value] if config.ENABLE_AI_ELITE_MONTHLY_SHARED else []
@@ -3176,6 +3163,14 @@ def _run_portfolio_backtest_walk_forward(
         print(f"   🔍 DEBUG: available_tickers_in_data sample: {list(available_tickers_in_data)[:5]}")
 
     price_history_cache = build_price_history_cache(ticker_data_grouped)
+    multi_tf_ensemble_selection_cache = None
+    multi_tf_intraday_daily_cache = None
+    if config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE:
+        from multi_timeframe_ensemble import build_multi_timeframe_cache
+        multi_tf_ensemble_selection_cache = build_multi_timeframe_cache(ticker_data_grouped, initial_top_tickers)
+    if config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE:
+        from multi_timeframe_intraday_ensemble import build_multi_timeframe_intraday_daily_cache
+        multi_tf_intraday_daily_cache = build_multi_timeframe_intraday_daily_cache(ticker_data_grouped, initial_top_tickers)
 
     # Build a fixed benchmark portfolio from the highest performers at the backtest start.
     benchmark_start_date = business_days[0] if business_days else backtest_start_date
@@ -3640,6 +3635,41 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ AI Elite error: {e}")
 
+        # MULTI-HORIZON INTRADAY: Rebalance using hourly data for medium/short horizons
+        if config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE:
+            try:
+                from multi_timeframe_intraday_ensemble import select_multi_timeframe_intraday_stocks
+
+                new_multi_tf_intraday_ensemble_stocks = select_multi_timeframe_intraday_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    daily_cache=multi_tf_intraday_daily_cache,
+                )
+
+                if new_multi_tf_intraday_ensemble_stocks:
+                    print(f"   📊 Multi-Horizon Intraday Day {day_count}: {new_multi_tf_intraday_ensemble_stocks}")
+                    multi_tf_intraday_ensemble_positions, multi_tf_intraday_ensemble_cash, current_multi_tf_intraday_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Multi-Horizon Intraday",
+                        current_stocks=current_multi_tf_intraday_ensemble_stocks,
+                        new_stocks=new_multi_tf_intraday_ensemble_stocks,
+                        positions=multi_tf_intraday_ensemble_positions,
+                        cash=multi_tf_intraday_ensemble_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_multi_tf_intraday_ensemble_stocks
+                    )
+                    strategies_rebalanced_today['Multi-Horizon Intraday'] = rebalanced_flag
+                    multi_tf_intraday_ensemble_transaction_costs += rebalance_costs
+                    multi_tf_intraday_ensemble_last_rebalance_value = multi_tf_intraday_ensemble_portfolio_value
+                else:
+                    print(f"   ⚠️ Multi-Horizon Intraday: No stocks selected (no consensus)")
+
+            except Exception as e:
+                print(f"   ⚠️ Multi-Horizon Intraday strategy error: {e}")
 
         # STATIC BH PORTFOLIOS: Initialize on day 1 and optional periodic rebalancing
         # Static BH 1Y, 3M, and 1M are always initialized, then rebalance every N days if configured
@@ -5928,7 +5958,8 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers,
                     ticker_data_grouped,
                     current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    selection_cache=multi_tf_ensemble_selection_cache,
                 )
 
                 if new_multi_tf_ensemble_stocks:
@@ -5954,41 +5985,6 @@ def _run_portfolio_backtest_walk_forward(
 
             except Exception as e:
                 print(f"   ⚠️ Multi-Horizon Ensemble strategy error: {e}")
-
-        # MULTI-HORIZON INTRADAY: Rebalance using hourly data for medium/short horizons
-        if config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE:
-            try:
-                from multi_timeframe_intraday_ensemble import select_multi_timeframe_intraday_stocks
-
-                new_multi_tf_intraday_ensemble_stocks = select_multi_timeframe_intraday_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
-                )
-
-                if new_multi_tf_intraday_ensemble_stocks:
-                    print(f"   📊 Multi-Horizon Intraday Day {day_count}: {new_multi_tf_intraday_ensemble_stocks}")
-                    multi_tf_intraday_ensemble_positions, multi_tf_intraday_ensemble_cash, current_multi_tf_intraday_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name="Multi-Horizon Intraday",
-                        current_stocks=current_multi_tf_intraday_ensemble_stocks,
-                        new_stocks=new_multi_tf_intraday_ensemble_stocks,
-                        positions=multi_tf_intraday_ensemble_positions,
-                        cash=multi_tf_intraday_ensemble_cash,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        transaction_cost=TRANSACTION_COST,
-                        portfolio_size=PORTFOLIO_SIZE,
-                        force_rebalance=not current_multi_tf_intraday_ensemble_stocks
-                    )
-                    strategies_rebalanced_today['Multi-Horizon Intraday'] = rebalanced_flag
-                    multi_tf_intraday_ensemble_transaction_costs += rebalance_costs
-                    multi_tf_intraday_ensemble_last_rebalance_value = multi_tf_intraday_ensemble_portfolio_value
-                else:
-                    print(f"   ⚠️ Multi-Horizon Intraday: No stocks selected (no consensus)")
-
-            except Exception as e:
-                print(f"   ⚠️ Multi-Horizon Intraday strategy error: {e}")
 
         # === MEAN REVERSION, QUALITY+MOM, VOL-ADJ MOM STRATEGIES ===
         # These strategies run independently of Dynamic BH performance data
@@ -7381,49 +7377,6 @@ def _run_portfolio_backtest_walk_forward(
                 except Exception as e:
                     print(f"   ⚠️ Risk-Adj Mom 1M Monthly error: {e}")
 
-        # AI ELITE MONTHLY STRATEGY (same ML scoring, retrain + rebalance start of month only)
-        if config.ENABLE_AI_ELITE_MONTHLY:
-            should_act_ai_elite_monthly = (not ai_elite_monthly_initialized) or is_first_trading_day_of_month
-            if should_act_ai_elite_monthly:
-                try:
-                    from shared_strategies import select_ai_elite_with_training
-
-                    print(f"   📊 AI Elite Monthly: {'Initializing' if not ai_elite_monthly_initialized else 'Start-of-month'} ({current_date.strftime('%b %Y')})")
-
-                    # Use shared function (handles load/train/select) with monthly model path
-                    # AI_ELITE_FORCE_FRESH_TRAIN controls whether to load existing model (incremental) or fresh train
-                    new_stocks, ai_elite_monthly_models = select_ai_elite_with_training(
-                        all_tickers=initial_top_tickers,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,  # Get 12 candidates for buffer
-                        ai_elite_models=ai_elite_monthly_models,
-                        force_train=AI_ELITE_FORCE_FRESH_TRAIN,
-                        model_path_suffix="_monthly"
-                    )
-
-                    if new_stocks:
-                        print(f"   📊 AI Elite Monthly Day {day_count}: {new_stocks}")
-                        ai_elite_monthly_positions, ai_elite_monthly_cash, current_ai_elite_monthly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
-                            strategy_name="AI Elite Mth",
-                            current_stocks=current_ai_elite_monthly_stocks,
-                            new_stocks=new_stocks,
-                            positions=ai_elite_monthly_positions,
-                            cash=ai_elite_monthly_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,  # Keep if in top 12
-                            force_rebalance=not ai_elite_monthly_initialized)
-                        strategies_rebalanced_today['AI Elite Mth'] = rebalanced_flag
-                        ai_elite_monthly_transaction_costs += rc
-                        ai_elite_monthly_initialized = True
-                        ai_elite_monthly_last_month = current_date.month
-
-                except Exception as e:
-                    print(f"   ⚠️ AI Elite Monthly error: {e}")
-
         # AI ELITE MONTHLY SHARED STRATEGY (monthly rebalance using daily AI Elite shared model)
         if config.ENABLE_AI_ELITE_MONTHLY_SHARED:
             should_act_ai_elite_monthly_shared = (not ai_elite_monthly_shared_initialized) or is_first_trading_day_of_month
@@ -8761,28 +8714,6 @@ def _run_portfolio_backtest_walk_forward(
                     ai_elite_invested_value += ai_elite_positions[ticker].get('value', 0.0)
         ai_elite_portfolio_value = ai_elite_invested_value + ai_elite_cash
         ai_elite_portfolio_history.append(ai_elite_portfolio_value)
-
-        # Update AI ELITE MONTHLY portfolio value daily
-        ai_elite_monthly_invested_value = 0.0
-        if config.ENABLE_AI_ELITE_MONTHLY:
-            for ticker in list(ai_elite_monthly_positions.keys()):
-                try:
-                    ticker_df = ticker_data_grouped.get(ticker)
-                    if ticker_df is not None:
-                        current_price = _last_valid_close_up_to(ticker_df, current_date)
-                        if current_price is not None:
-                            shares = ai_elite_monthly_positions[ticker]['shares']
-                            position_value = shares * current_price
-                            ai_elite_monthly_positions[ticker]['value'] = position_value
-                            ai_elite_monthly_invested_value += position_value
-                        else:
-                            ai_elite_monthly_invested_value += ai_elite_monthly_positions[ticker].get('value', 0.0)
-                    else:
-                        ai_elite_monthly_invested_value += ai_elite_monthly_positions[ticker].get('value', 0.0)
-                except Exception:
-                    ai_elite_monthly_invested_value += ai_elite_monthly_positions[ticker].get('value', 0.0)
-        ai_elite_monthly_portfolio_value = ai_elite_monthly_invested_value + ai_elite_monthly_cash
-        ai_elite_monthly_portfolio_history.append(ai_elite_monthly_portfolio_value)
 
         # Update AI ELITE MONTHLY SHARED portfolio value daily
         ai_elite_monthly_shared_invested_value = 0.0
@@ -10392,8 +10323,6 @@ def _run_portfolio_backtest_walk_forward(
         # They are checkpointed to disk and reloaded when needed.
         if config.ENABLE_AI_ELITE and ai_elite_models:
             ai_elite_models = {}
-        if config.ENABLE_AI_ELITE_MONTHLY and ai_elite_monthly_models:
-            ai_elite_monthly_models = {}
         if config.ENABLE_AI_CHAMPION and ai_champion_allocator is not None and getattr(ai_champion_allocator, 'retrain_days', None) == 1:
             ai_champion_allocator.release_model_artifacts()
         if config.ENABLE_AI_REGIME and ai_regime_allocator is not None and getattr(ai_regime_allocator, 'retrain_days', None) == 1:
@@ -10487,7 +10416,6 @@ def _run_portfolio_backtest_walk_forward(
             'risk_adj_mom_1m':          _strat(risk_adj_mom_1m_portfolio_value, risk_adj_mom_1m_portfolio_history, risk_adj_mom_1m_transaction_costs, risk_adj_mom_1m_cash),
             'risk_adj_mom_1m_monthly':  _strat(risk_adj_mom_1m_monthly_portfolio_value, risk_adj_mom_1m_monthly_portfolio_history, risk_adj_mom_1m_monthly_transaction_costs, risk_adj_mom_1m_monthly_cash),
             'ai_elite':                 _strat(ai_elite_portfolio_value, ai_elite_portfolio_history, ai_elite_transaction_costs, ai_elite_cash) if config.ENABLE_AI_ELITE else _strat(0, [], 0, 0),
-            'ai_elite_monthly':         _strat(ai_elite_monthly_portfolio_value, ai_elite_monthly_portfolio_history, ai_elite_monthly_transaction_costs, ai_elite_monthly_cash) if config.ENABLE_AI_ELITE_MONTHLY else _strat(0, [], 0, 0),
             'ai_elite_monthly_shared':  _strat(ai_elite_monthly_shared_portfolio_value, ai_elite_monthly_shared_portfolio_history, ai_elite_monthly_shared_transaction_costs, ai_elite_monthly_shared_cash) if config.ENABLE_AI_ELITE_MONTHLY_SHARED else _strat(0, [], 0, 0),
             'ai_elite_filtered':        _strat(ai_elite_filtered_portfolio_value, ai_elite_filtered_portfolio_history, ai_elite_filtered_transaction_costs, ai_elite_filtered_cash) if config.ENABLE_AI_ELITE_FILTERED else _strat(0, [], 0, 0),
             'ai_elite_market_up':       _strat(ai_elite_market_up_portfolio_value, ai_elite_market_up_portfolio_history, ai_elite_market_up_transaction_costs, ai_elite_market_up_cash) if config.ENABLE_AI_ELITE_MARKET_UP else _strat(0, [], 0, 0),

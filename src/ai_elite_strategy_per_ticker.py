@@ -264,11 +264,11 @@ def collect_ticker_training_data(
             hourly_data = hourly_cache.get(ticker)
             features = _extract_features(ticker, hourly_data, current_date, daily_data=ticker_data)
             if features is None:
-                current_date += timedelta(days=2)
+                current_date += timedelta(days=1)
                 continue
             forward_return = _calculate_forward_return(ticker_data, current_date, forward_days)
             if forward_return is None:
-                current_date += timedelta(days=2)
+                current_date += timedelta(days=1)
                 continue
 
             samples.append({
@@ -300,7 +300,7 @@ def collect_ticker_training_data(
             })
         except Exception as e:
             pass  # Skip date on error
-        current_date += timedelta(days=2)
+        current_date += timedelta(days=1)
 
     return samples
 

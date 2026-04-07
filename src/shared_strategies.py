@@ -5610,21 +5610,12 @@ def select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_d
 
 
 def select_ai_elite_with_training(
-
     all_tickers: list,
-
     ticker_data_grouped: dict,
-
     current_date=None,
-
     top_n: int = 10,
-
     ai_elite_models: dict = None,
-
     force_train: bool = False,
-
-    model_path_suffix: str = ""
-
 ) -> tuple:
 
     """
@@ -5651,8 +5642,6 @@ def select_ai_elite_with_training(
 
         force_train: If True, always retrain even if model exists on disk
 
-        model_path_suffix: Suffix for model file (e.g. "_monthly" for AI Elite Monthly)
-
 
 
     Returns:
@@ -5678,7 +5667,7 @@ def select_ai_elite_with_training(
 
         ai_elite_models = {}
 
-    strategy_label = "AI Elite Monthly" if model_path_suffix == "_monthly" else "AI Elite"
+    strategy_label = "AI Elite"
 
 
 
@@ -5782,7 +5771,7 @@ def select_ai_elite_with_training(
 
     models_dir = "logs/models"
 
-    base_model_path = os.path.join(models_dir, f"_shared_base_ai_elite{model_path_suffix}.joblib")
+    base_model_path = os.path.join(models_dir, "_shared_base_ai_elite.joblib")
 
 
 
@@ -5978,7 +5967,7 @@ def select_ai_elite_with_training(
         market_returns = {}
 
         sample_date_iter = train_start
-        market_cache_steps = max(0, ((train_end - train_start).days // 2) + 1)
+        market_cache_steps = max(0, (train_end - train_start).days + 1)
         with tqdm(
             total=market_cache_steps,
             desc=f"   {strategy_label} cache build",
@@ -5993,7 +5982,7 @@ def select_ai_elite_with_training(
 
                 market_returns[utc_key] = mr if mr is not None else 0.0
 
-                sample_date_iter += timedelta(days=2)
+                sample_date_iter += timedelta(days=1)
                 pbar.update(1)
 
 
@@ -6967,19 +6956,12 @@ def _get_strategy_registry():
         'sector_rotation': lambda t, d, dt, n: select_sector_rotation_etfs(t, d, dt, n),
 
         'voting_ensemble': lambda t, d, dt, n: select_voting_ensemble_stocks(t, d, dt, n),
-
         'momentum_ai_hybrid': lambda t, d, dt, n: select_momentum_ai_hybrid_stocks(t, d, dt, n),
 
 
-
         # AI Elite strategies
-
         'ai_elite': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
-
-        'ai_elite_monthly': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
-
         'ai_elite_filtered': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
-
         'ai_elite_market_up': lambda t, d, dt, n: __import__(
             'ai_elite_market_up_strategy',
             fromlist=['select_ai_elite_market_up_stocks']

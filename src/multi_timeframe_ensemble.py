@@ -18,6 +18,207 @@ from config import (
 
 _MULTI_TIMEFRAME_SELECTION_CONTEXT: Dict[str, object] = {}
 
+
+def _timestamp_ns(value: datetime) -> int:
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    return int(ts.value)
+
+
+def build_compact_cache(
+    ticker_data: pd.DataFrame,
+) -> Dict[str, np.ndarray]:
+    close_series = pd.to_numeric(ticker_data["Close"], errors="coerce")
+    valid_mask = close_series.notna()
+    if int(valid_mask.sum()) < 2:
+        return {}
+
+    filtered_close = close_series.loc[valid_mask]
+    date_index = pd.DatetimeIndex(filtered_close.index)
+    if date_index.tz is not None:
+        date_index = date_index.tz_convert("UTC").tz_localize(None)
+
+    volume_values = None
+    if "Volume" in ticker_data.columns:
+        volume_series = pd.to_numeric(ticker_data.loc[valid_mask, "Volume"], errors="coerce").fillna(0.0)
+        volume_values = volume_series.to_numpy(dtype=float, copy=True)
+
+    return {
+        "date_ns": date_index.to_numpy(dtype="datetime64[ns]").astype(np.int64, copy=True),
+        "close": filtered_close.to_numpy(dtype=float, copy=True),
+        "volume": volume_values,
+    }
+
+
+def _build_multi_timeframe_cache(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    tickers: List[str],
+    prebuilt_cache: Dict[str, Dict[str, np.ndarray]] = None,
+) -> Dict[str, Dict[str, np.ndarray]]:
+    cache: Dict[str, Dict[str, np.ndarray]] = prebuilt_cache or {}
+    iterator = tqdm(
+        tickers,
+        total=len(tickers),
+        desc="   Multi-Horizon cache build",
+        ncols=100,
+        unit="ticker",
+    )
+    for ticker in iterator:
+        ticker_data = ticker_data_grouped.get(ticker)
+        if ticker_data is None or ticker_data.empty or "Close" not in ticker_data.columns:
+            continue
+
+        close_series = pd.to_numeric(ticker_data["Close"], errors="coerce")
+        valid_mask = close_series.notna()
+        if int(valid_mask.sum()) < 2:
+            continue
+
+        filtered_close = close_series.loc[valid_mask]
+        date_index = pd.DatetimeIndex(filtered_close.index)
+        if date_index.tz is not None:
+            date_index = date_index.tz_convert("UTC").tz_localize(None)
+
+        volume_values = None
+        if "Volume" in ticker_data.columns:
+            volume_series = pd.to_numeric(ticker_data.loc[valid_mask, "Volume"], errors="coerce").fillna(0.0)
+            volume_values = volume_series.to_numpy(dtype=float, copy=True)
+
+        cache[ticker] = {
+            "date_ns": date_index.to_numpy(dtype="datetime64[ns]").astype(np.int64, copy=True),
+            "close": filtered_close.to_numpy(dtype=float, copy=True),
+            "volume": volume_values,
+        }
+
+    return cache
+
+
+def build_multi_timeframe_cache(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    tickers: List[str],
+) -> Dict[str, Dict[str, np.ndarray]]:
+    return _build_multi_timeframe_cache(ticker_data_grouped, tickers)
+
+
+def _window_from_cache(
+    cache_entry: Dict[str, np.ndarray],
+    current_date: datetime,
+    period_days: int,
+) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    date_ns = cache_entry["date_ns"]
+    end_ns = _timestamp_ns(current_date)
+    start_ns = _timestamp_ns(current_date - timedelta(days=period_days))
+    start_idx = int(np.searchsorted(date_ns, start_ns, side="left"))
+    end_idx = int(np.searchsorted(date_ns, end_ns, side="right"))
+    if end_idx <= start_idx:
+        return np.array([], dtype=float), None
+
+    close_window = cache_entry["close"][start_idx:end_idx]
+    volume_values = cache_entry.get("volume")
+    volume_window = None if volume_values is None else volume_values[start_idx:end_idx]
+    return close_window, volume_window
+
+
+def _calculate_daily_momentum_from_cache(
+    cache_entry: Dict[str, np.ndarray],
+    current_date: datetime,
+) -> float:
+    date_ns = cache_entry["date_ns"]
+    end_ns = _timestamp_ns(current_date)
+    end_idx = int(np.searchsorted(date_ns, end_ns, side="right"))
+    if end_idx < 50:
+        return 0.0
+
+    close_values = cache_entry["close"][:end_idx]
+    if close_values.size < 2:
+        return 0.0
+
+    momentum_1y = (close_values[-1] / close_values[0] - 1) * 100
+    close_1y, _ = _window_from_cache(cache_entry, current_date, 365)
+    if close_1y.size >= 50:
+        momentum_1y = (close_1y[-1] / close_1y[0] - 1) * 100
+
+    momentum_6m = momentum_1y
+    close_6m, _ = _window_from_cache(cache_entry, current_date, 180)
+    if close_6m.size >= 25:
+        momentum_6m = (close_6m[-1] / close_6m[0] - 1) * 100
+
+    momentum_3m = momentum_1y
+    close_3m, _ = _window_from_cache(cache_entry, current_date, 90)
+    if close_3m.size >= 10:
+        momentum_3m = (close_3m[-1] / close_3m[0] - 1) * 100
+
+    return momentum_1y * 0.5 + momentum_6m * 0.3 + momentum_3m * 0.2
+
+
+def _calculate_medium_term_momentum_from_cache(close_values: np.ndarray) -> float:
+    if close_values.size < 20:
+        return 0.0
+
+    momentum_30d = (close_values[-1] / close_values[0] - 1) * 100
+    recent_10d = close_values[-10:]
+    prev_10d = close_values[-20:-10]
+    recent_avg = float(np.mean(recent_10d))
+    prev_avg = float(np.mean(prev_10d))
+    if prev_avg == 0:
+        return 0.0
+
+    trend_signal = ((recent_avg / prev_avg) - 1) * 100
+    returns = np.diff(close_values) / close_values[:-1]
+    if returns.size == 0:
+        return 0.0
+    volatility = float(np.std(returns) * np.sqrt(252) * 100)
+    vol_adjusted = momentum_30d / (volatility + 1)
+    return vol_adjusted * 0.7 + trend_signal * 0.3
+
+
+def _calculate_short_term_momentum_from_cache(
+    close_values: np.ndarray,
+    volume_values: Optional[np.ndarray],
+) -> float:
+    if close_values.size < 5:
+        return 0.0
+
+    momentum_7d = (close_values[-1] / close_values[0] - 1) * 100
+    recent_3d = close_values[-3:]
+    price_change = (recent_3d[-1] / recent_3d[0] - 1) * 100
+
+    volume_factor = 1.0
+    if volume_values is not None and volume_values.size >= 5:
+        recent_vol = float(np.mean(volume_values[-5:]))
+        avg_vol = float(np.mean(volume_values))
+        volume_factor = min(recent_vol / (avg_vol + 1), 2.0)
+
+    return (momentum_7d * 0.5 + price_change * 0.3) * volume_factor
+
+
+def _calculate_multi_timeframe_signals_from_cache(
+    ticker: str,
+    cache_entry: Dict[str, np.ndarray],
+    current_date: datetime,
+    timeframes: List[str] = None,
+) -> Dict[str, float]:
+    if timeframes is None:
+        timeframes = MULTI_TIMEFRAMES
+
+    signals = {}
+    for timeframe in timeframes:
+        if timeframe == "long_term":
+            signals[timeframe] = _calculate_daily_momentum_from_cache(cache_entry, current_date)
+            continue
+
+        lookback_days = MULTI_TIMEFRAME_LOOKBACK[timeframe]
+        close_window, volume_window = _window_from_cache(cache_entry, current_date, lookback_days)
+        if timeframe == "medium_term":
+            signals[timeframe] = _calculate_medium_term_momentum_from_cache(close_window)
+        elif timeframe == "short_term":
+            signals[timeframe] = _calculate_short_term_momentum_from_cache(close_window, volume_window)
+        else:
+            signals[timeframe] = 0.0
+
+    return signals
+
+
 def calculate_multi_timeframe_signals(
     ticker: str,
     ticker_data: pd.DataFrame,
@@ -207,13 +408,12 @@ def calculate_ensemble_score(signals: Dict[str, float]) -> Tuple[float, bool]:
 
 
 def _init_multi_timeframe_worker(
-    ticker_data_grouped: Dict[str, pd.DataFrame],
+    selection_cache: Dict[str, Dict[str, np.ndarray]],
     current_date: datetime,
 ) -> None:
-    """Expose shared read-only selection context to worker processes."""
     global _MULTI_TIMEFRAME_SELECTION_CONTEXT
     _MULTI_TIMEFRAME_SELECTION_CONTEXT = {
-        "ticker_data_grouped": ticker_data_grouped,
+        "selection_cache": selection_cache,
         "current_date": current_date,
     }
 
@@ -221,15 +421,14 @@ def _init_multi_timeframe_worker(
 def _score_multi_timeframe_ticker_worker(
     ticker: str,
 ) -> Optional[Tuple[str, float, Dict[str, float]]]:
-    """Score one ticker for the daily multi-timeframe ensemble."""
     context = _MULTI_TIMEFRAME_SELECTION_CONTEXT
-    ticker_data_grouped = context.get("ticker_data_grouped") or {}
+    selection_cache = context.get("selection_cache") or {}
     current_date = context.get("current_date")
-    ticker_data = ticker_data_grouped.get(ticker)
-    if ticker_data is None or current_date is None:
+    cache_entry = selection_cache.get(ticker)
+    if cache_entry is None or current_date is None:
         return None
 
-    signals = calculate_multi_timeframe_signals(ticker, ticker_data, current_date)
+    signals = _calculate_multi_timeframe_signals_from_cache(ticker, cache_entry, current_date)
     ensemble_score, has_consensus = calculate_ensemble_score(signals)
     if has_consensus:
         return (ticker, ensemble_score, signals)
@@ -240,7 +439,8 @@ def select_multi_timeframe_stocks(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime,
     top_n: int = PORTFOLIO_SIZE,
-    verbose: bool = True
+    verbose: bool = True,
+    selection_cache: Optional[Dict[str, Dict[str, np.ndarray]]] = None,
 ) -> List[str]:
     """
     Select stocks using multi-timeframe ensemble strategy
@@ -258,40 +458,37 @@ def select_multi_timeframe_stocks(
     # Filter out inverse ETFs - they should only be in inverse_etf_hedge strategy
     from config import INVERSE_ETFS
     tickers_to_use = [t for t in initial_tickers if t not in INVERSE_ETFS]
+    if selection_cache is None:
+        selection_cache = _build_multi_timeframe_cache(ticker_data_grouped, tickers_to_use)
+    cached_tickers = [ticker for ticker in tickers_to_use if ticker in selection_cache]
 
     stock_scores = []
-    n_workers = max(1, min(NUM_PROCESSES, len(tickers_to_use))) if tickers_to_use else 1
+    n_workers = max(1, min(NUM_PROCESSES, len(cached_tickers))) if cached_tickers else 1
 
-    if n_workers > 1 and len(tickers_to_use) >= max(32, n_workers * 2):
+    if n_workers > 1 and len(cached_tickers) >= max(32, n_workers * 2):
         if verbose:
-            print(f"   🚀 Multi-Horizon Ensemble: Scoring {len(tickers_to_use)} tickers with {n_workers} processes")
+            print(f"   🚀 Multi-Horizon Ensemble: Scoring {len(cached_tickers)} tickers with {n_workers} processes")
         with Pool(
             processes=n_workers,
             initializer=_init_multi_timeframe_worker,
-            initargs=(ticker_data_grouped, current_date),
+            initargs=(selection_cache, current_date),
         ) as pool:
             results = list(tqdm(
-                pool.imap_unordered(_score_multi_timeframe_ticker_worker, tickers_to_use),
-                total=len(tickers_to_use),
+                pool.imap_unordered(_score_multi_timeframe_ticker_worker, cached_tickers),
+                total=len(cached_tickers),
                 desc="   Multi-Horizon Ensemble scoring",
                 ncols=100,
                 unit="ticker",
             ))
         stock_scores = [result for result in results if result is not None]
     else:
-        for ticker in tickers_to_use:
-            if ticker not in ticker_data_grouped:
+        for ticker in cached_tickers:
+            cache_entry = selection_cache.get(ticker)
+            if cache_entry is None:
                 continue
 
-            ticker_data = ticker_data_grouped[ticker]
-
-            # Calculate multi-timeframe signals
-            signals = calculate_multi_timeframe_signals(ticker, ticker_data, current_date)
-
-            # Calculate ensemble score and consensus
+            signals = _calculate_multi_timeframe_signals_from_cache(ticker, cache_entry, current_date)
             ensemble_score, has_consensus = calculate_ensemble_score(signals)
-
-            # Only consider stocks with consensus
             if has_consensus:
                 stock_scores.append((ticker, ensemble_score, signals))
 

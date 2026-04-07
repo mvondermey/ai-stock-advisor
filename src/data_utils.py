@@ -488,15 +488,24 @@ def _get_last_trading_day_old():
             return today
 
 
-def _is_cache_current(last_cached_date, ticker_symbol=None):
+def _is_cache_current(last_cached_date, ticker_symbol=None, requested_end_date=None):
     """
     Check if cache is current (has data up to the last trading day).
 
     Args:
         last_cached_date: The date of the last cached data
         ticker_symbol: Optional ticker symbol to determine exchange/market
+        requested_end_date: Optional requested end date for the load request
     """
     last_trading_day = _get_last_trading_day(ticker_symbol)
+    target_date = last_trading_day
+
+    if requested_end_date is not None:
+        try:
+            requested_end_date = _to_utc(requested_end_date).date()
+            target_date = min(requested_end_date, last_trading_day)
+        except Exception as e:
+            print(f"  [DEBUG] {ticker_symbol}: Could not normalize requested_end_date {requested_end_date}: {e}")
 
     # Convert cached_date to proper date object
     try:
@@ -518,12 +527,13 @@ def _is_cache_current(last_cached_date, ticker_symbol=None):
         try:
             import pandas as pd
             cached_date = pd.to_datetime(last_cached_date).date()
-        except:
+        except Exception as fallback_error:
+            print(f"  [DEBUG] Fallback cached_date conversion failed for {ticker_symbol}: {fallback_error}")
             return False
 
-    # Check if cache has data up to or after last trading day
-    is_current = cached_date >= last_trading_day
-    print(f"  [DEBUG] {ticker_symbol}: Cache check {cached_date} >= {last_trading_day} = {is_current}")
+    # Check if cache has data up to or after the requested target date
+    is_current = cached_date >= target_date
+    print(f"  [DEBUG] {ticker_symbol}: Cache check {cached_date} >= {target_date} = {is_current}")
     return is_current
 
 # Global lock for yfinance calls - yfinance has threading bugs that cause data corruption
@@ -563,8 +573,11 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     cached_df = pd.DataFrame()
     new_df = pd.DataFrame()
     fetch_start = None
-    fetch_end = datetime.now(timezone.utc)
+    requested_end_utc = _to_utc(end)
+    fetch_end = requested_end_utc
     needs_fetch = True if ENABLE_DATA_DOWNLOAD else False
+    last_cached_date = None
+    cache_is_current = None
 
     # --- Step 1: Check existing cache and determine what to fetch ---
     with ticker_lock:
@@ -602,14 +615,14 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                         print(f"  [INFO] Cache {ticker}: shape={cached_df.shape}, Close[0]={cached_df['Close'].iloc[0]:.2f}, Close[-1]={cached_df['Close'].iloc[-1]:.2f}")
 
                     # [PASS] FIX: Use proper trading day check to avoid fetching on weekends
-                    is_current = _is_cache_current(last_cached_date, ticker)
+                    cache_is_current = _is_cache_current(last_cached_date, ticker, requested_end_utc)
                     # Log cache status (use tqdm.write to avoid progress bar conflicts)
                     try:
                         from tqdm import tqdm
-                        tqdm.write(f"  [DEBUG] {ticker}: cache={last_cached_date.date()}, current={is_current}")
+                        tqdm.write(f"  [DEBUG] {ticker}: cache={last_cached_date.date()}, current={cache_is_current}")
                     except:
-                        print(f"  [DEBUG] {ticker}: cache={last_cached_date.date()}, current={is_current}")
-                    if is_current:
+                        print(f"  [DEBUG] {ticker}: cache={last_cached_date.date()}, current={cache_is_current}")
+                    if cache_is_current:
                         # Cache already has data up to the last trading day
                         needs_fetch = False
                     else:
@@ -699,7 +712,12 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         if new_df.empty:
             print(f"  [WARNING] {ticker}: No {DATA_INTERVAL} data available")
     else:
-        print(f"  [DEBUG] Skipping fetch for {ticker} - cache is current")
+        if cached_df.empty:
+            print(f"  [WARNING] Skipping fetch for {ticker} - downloads disabled and no cache is available")
+        elif cache_is_current is False and last_cached_date is not None:
+            print(f"  [WARNING] Skipping fetch for {ticker} - downloads disabled, using stale cache from {last_cached_date.date()}")
+        else:
+            print(f"  [DEBUG] Skipping fetch for {ticker} - cache is current")
 
     # Clean up new data (only if we fetched anything)
     if not new_df.empty:
@@ -1395,42 +1413,39 @@ def fetch_training_data(ticker: str, data: pd.DataFrame, class_horizon: int = CL
 # See: _fetch_from_alpaca, _fetch_from_twelvedata, _fetch_from_stooq
 
 
-def _fetch_intermarket_data(start: datetime = None, end: datetime = None) -> pd.DataFrame:
-    """Fetch intermarket data for analysis."""
-    try:
-        # Define intermarket symbols
-        intermarket_symbols = {
-            'SPY': 'S&P 500 ETF',
-            'QQQ': 'NASDAQ ETF',
-            'VXX': 'VIX ETF',
-            'UUP': 'US Dollar ETF',
-            'GLD': 'Gold ETF',
-            'USO': 'Oil ETF',
-            'TNX': '10Y Treasury ETF'
-        }
+def _fetch_intermarket_data(start: datetime, end: datetime) -> pd.DataFrame:
+    """Fetch intermarket data for analysis.
 
-        all_data = []
-        today = datetime.now(timezone.utc)
-        start_date = start or (today - timedelta(days=365))
-        end_date = end or today
+    Args:
+        start: Start date for data (required)
+        end: End date for data (required)
 
-        for symbol, name in intermarket_symbols.items():
-            try:
-                df = load_prices(symbol, start_date, end_date)
-                if not df.empty:
-                    df_renamed = df[['Close']].copy()
-                    df_renamed.columns = [f'{symbol}_Close']
-                    all_data.append(df_renamed)
-            except Exception as e:
-                print(f"  [WARN] Failed to fetch {symbol}: {e}")
+    Returns:
+        DataFrame with intermarket close prices, or empty DataFrame if no data
+    """
+    # Define intermarket symbols
+    intermarket_symbols = {
+        'SPY': 'S&P 500 ETF',
+        'QQQ': 'NASDAQ ETF',
+        'VXX': 'VIX ETF',
+        'UUP': 'US Dollar ETF',
+        'GLD': 'Gold ETF',
+        'USO': 'Oil ETF',
+        'TNX': '10Y Treasury ETF'
+    }
 
-        if all_data:
-            return pd.concat(all_data, axis=1)
-        else:
-            return pd.DataFrame()
-    except Exception as e:
-        print(f"  [ERROR] Failed to fetch intermarket data: {e}")
-        return pd.DataFrame()
+    all_data = []
+
+    for symbol, name in intermarket_symbols.items():
+        df = load_prices(symbol, start, end)
+        if not df.empty:
+            df_renamed = df[['Close']].copy()
+            df_renamed.columns = [f'{symbol}_Close']
+            all_data.append(df_renamed)
+
+    if all_data:
+        return pd.concat(all_data, axis=1)
+    return pd.DataFrame()
 
 
 def _load_from_cache_parallel(all_tickers: list, start_date: datetime, end_date: datetime) -> pd.DataFrame:
