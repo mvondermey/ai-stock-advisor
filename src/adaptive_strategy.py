@@ -7,11 +7,11 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from shared_strategies import (
-    get_3m_1y_ratio_tickers,
-    get_volatility_adj_mom_tickers,
-    get_quality_mom_tickers,
-    get_dynamic_bh_3m_tickers,
-    get_risk_adj_mom_tickers
+    select_3m_1y_ratio_stocks,
+    select_volatility_adj_mom_stocks,
+    select_quality_momentum_stocks,
+    select_dynamic_bh_stocks,
+    select_risk_adj_mom_stocks
 )
 from config import TOP_N_STOCKS
 
@@ -100,18 +100,18 @@ class AdaptiveStrategy:
         
         # Get tickers based on current strategy
         strategy_functions = {
-            "3m_1y_ratio": get_3m_1y_ratio_tickers,
-            "volatility_adj_mom": get_volatility_adj_mom_tickers,
-            "quality_mom": get_quality_mom_tickers,
-            "dynamic_bh_3m": get_dynamic_bh_3m_tickers,
-            "risk_adj_mom": get_risk_adj_mom_tickers
+            "3m_1y_ratio": lambda all_tickers: select_3m_1y_ratio_stocks(all_tickers, {}, current_date, TOP_N_STOCKS),
+            "volatility_adj_mom": lambda all_tickers: select_volatility_adj_mom_stocks(all_tickers, {}, current_date, TOP_N_STOCKS),
+            "quality_mom": lambda all_tickers: select_quality_momentum_stocks(all_tickers, {}, current_date, TOP_N_STOCKS),
+            "dynamic_bh_3m": lambda all_tickers: select_dynamic_bh_stocks(all_tickers, {}, current_date, period='3m', top_n=TOP_N_STOCKS),
+            "risk_adj_mom": lambda all_tickers: select_risk_adj_mom_stocks(all_tickers, {}, current_date, TOP_N_STOCKS)
         }
         
         if self.current_strategy in strategy_functions:
             return strategy_functions[self.current_strategy](all_tickers)
         else:
             # Fallback to 3m_1y_ratio
-            return get_3m_1y_ratio_tickers(all_tickers)
+            return select_3m_1y_ratio_stocks(all_tickers, {}, current_date, TOP_N_STOCKS)
     
     def update_strategy_performance(self, strategy: str, performance: float):
         """Update performance tracking for a strategy"""
@@ -141,3 +141,11 @@ def get_adaptive_strategy_tickers(all_tickers: List[str], current_date: datetime
                                 day_count: int = 0) -> List[str]:
     """Main function to get adaptive strategy tickers"""
     return adaptive_strategy.get_adaptive_tickers(all_tickers, current_date, market_data, day_count)
+
+def select_adaptive_ensemble_stocks(all_tickers: List[str], 
+                                   ticker_data_grouped: Dict[str, pd.DataFrame],
+                                   current_date: datetime = None,
+                                   top_n: int = 20) -> List[str]:
+    """Select stocks using adaptive ensemble strategy"""
+    # Use the adaptive strategy to get tickers
+    return get_adaptive_strategy_tickers(all_tickers, current_date or datetime.now(), day_count=0)[:top_n]

@@ -254,5 +254,27 @@ def main():
     print(f"\n🎯 Final ticker list: {final_tickers}")
 
 
+def select_multi_strategy_acceleration_stocks(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime = None,
+    top_n: int = 20,
+) -> List[str]:
+    """Select stocks using multi-strategy acceleration approach"""
+    # Default strategies to combine
+    default_strategies = ["static_bh_1y", "risk_adj_mom_3m", "concentrated_3m"]
+    
+    # Use default strategies if none specified
+    strategies = default_strategies
+    
+    # Combine strategies with acceleration scoring
+    selections = combine_strategies_with_acceleration(
+        strategies, ticker_data_grouped, current_date or datetime.now(timezone.utc), top_n
+    )
+    
+    # Return just the ticker symbols
+    return [ticker for ticker, _, _, _ in selections]
+
+
 if __name__ == "__main__":
     main()

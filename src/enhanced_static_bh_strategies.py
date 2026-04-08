@@ -23,7 +23,8 @@ def select_volume_filtered_bh_1y_stocks(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime,
     top_n: int = 10,
-    min_volume: float = STATIC_BH_1Y_VOLUME_MIN_DAILY  # Minimum $1M daily volume
+    min_volume: float = STATIC_BH_1Y_VOLUME_MIN_DAILY,  # Minimum $1M daily volume
+    price_history_cache=None
 ) -> List[str]:
     """
     Static BH 1Y with volume confirmation filter.
@@ -32,7 +33,8 @@ def select_volume_filtered_bh_1y_stocks(
     # Get top performers first
     candidates = select_top_performers(
         tickers, ticker_data_grouped, current_date,
-        lookback_days=365, top_n=top_n * 2  # Get more to filter
+        lookback_days=365, top_n=top_n * 2,  # Get more to filter
+        price_history_cache=price_history_cache
     )
     
     # Apply volume filter
@@ -58,7 +60,8 @@ def select_sector_rotated_bh_1y_stocks(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime,
     top_n: int = 10,
-    max_per_sector: int = 3
+    max_per_sector: int = 3,
+    price_history_cache=None
 ) -> List[str]:
     """
     Static BH 1Y with sector rotation enhancement.
@@ -87,7 +90,8 @@ def select_sector_rotated_bh_1y_stocks(
     # Get top performers
     candidates = select_top_performers(
         tickers, ticker_data_grouped, current_date,
-        lookback_days=365, top_n=top_n * 3  # Get more to ensure diversity
+        lookback_days=365, top_n=top_n * 3,  # Get more to ensure diversity
+        price_history_cache=price_history_cache
     )
     
     # Apply sector filter
@@ -115,7 +119,8 @@ def select_performance_threshold_bh_1y_stocks(
     current_date: datetime,
     current_stocks: List[str],
     top_n: int = 10,
-    min_improvement: float = 0.02  # 2% minimum improvement
+    min_improvement: float = 0.02,  # 2% minimum improvement
+    price_history_cache=None
 ) -> Tuple[List[str], bool]:
     """
     Static BH 1Y with performance threshold trigger.
@@ -129,7 +134,8 @@ def select_performance_threshold_bh_1y_stocks(
         # No current stocks, always rebalance
         new_stocks = select_top_performers(
             tickers, ticker_data_grouped, current_date,
-            lookback_days=365, top_n=top_n
+            lookback_days=365, top_n=top_n,
+            price_history_cache=price_history_cache
         )
         return new_stocks, True
     
@@ -156,7 +162,8 @@ def select_performance_threshold_bh_1y_stocks(
     # Get new candidates
     new_candidates = select_top_performers(
         tickers, ticker_data_grouped, current_date,
-        lookback_days=365, top_n=top_n
+        lookback_days=365, top_n=top_n,
+        price_history_cache=price_history_cache
     )
     
     # Calculate new portfolio momentum
@@ -194,7 +201,8 @@ def select_market_regime_bh_1y_stocks(
     base_rebalance_days: int = 22,
     high_vol_days: int = 15,
     low_vol_days: int = 30,
-    vol_threshold: float = 0.20  # 20% volatility threshold
+    vol_threshold: float = 0.20,  # 20% volatility threshold
+    price_history_cache=None
 ) -> Tuple[List[str], int]:
     """
     Static BH 1Y with market-regime based rebalancing.
@@ -227,7 +235,8 @@ def select_market_regime_bh_1y_stocks(
     # Get top performers
     selected_stocks = select_top_performers(
         tickers, ticker_data_grouped, current_date,
-        lookback_days=365, top_n=top_n
+        lookback_days=365, top_n=top_n,
+        price_history_cache=price_history_cache
     )
     
     return selected_stocks, rebalance_days
@@ -287,7 +296,8 @@ def select_momentum_persistence_bh_1y_stocks(
     current_stocks: List[str],
     top_n: int = 10,
     min_stable_days: int = 5,
-    min_overlap: float = 0.8
+    min_overlap: float = 0.8,
+    price_history_cache=None
 ) -> Tuple[List[str], bool, List[List[str]]]:
     """
     Static BH 1Y with momentum persistence requirement.
@@ -309,7 +319,8 @@ def select_momentum_persistence_bh_1y_stocks(
     # Get current top performers
     new_top_stocks = select_top_performers(
         tickers, ticker_data_grouped, current_date,
-        lookback_days=365, top_n=top_n
+        lookback_days=365, top_n=top_n,
+        price_history_cache=price_history_cache
     )
     
     # Check momentum persistence
@@ -340,7 +351,8 @@ def select_overlap_based_bh_1y_stocks(
     current_date: datetime,
     current_stocks: List[str],
     top_n: int = 10,
-    overlap_threshold: float = 0.7
+    overlap_threshold: float = 0.7,
+    price_history_cache=None
 ) -> Tuple[List[str], bool]:
     """
     Static BH 1Y with overlap-based rebalancing.
@@ -361,7 +373,8 @@ def select_overlap_based_bh_1y_stocks(
     # Get current top performers
     new_top_stocks = select_top_performers(
         tickers, ticker_data_grouped, current_date,
-        lookback_days=365, top_n=top_n
+        lookback_days=365, top_n=top_n,
+        price_history_cache=price_history_cache
     )
     
     # No current stocks - always rebalance (initialization)
@@ -389,7 +402,8 @@ def select_rank_drift_bh_1y_stocks(
     previous_rankings: Dict[str, int],
     current_stocks: List[str],
     top_n: int = 10,
-    rank_drift_threshold: float = 3.0
+    rank_drift_threshold: float = 3.0,
+    price_history_cache=None
 ) -> Tuple[List[str], bool, Dict[str, int]]:
     """
     Static BH 1Y with rank drift rebalancing.
@@ -408,11 +422,16 @@ def select_rank_drift_bh_1y_stocks(
         (selected_stocks, should_rebalance, updated_rankings)
     """
     # Get current top performers with their performances
-    from parallel_backtest import calculate_parallel_performance
+    from parallel_backtest import calculate_parallel_performance, calculate_cached_performance
     
-    performances = calculate_parallel_performance(
-        tickers, ticker_data_grouped, current_date, period_days=365
-    )
+    if price_history_cache is not None:
+        performances = calculate_cached_performance(
+            tickers, price_history_cache, current_date, period_days=365
+        )
+    else:
+        performances = calculate_parallel_performance(
+            tickers, ticker_data_grouped, current_date, period_days=365
+        )
     
     # Sort by performance (highest first) and create rankings
     # performances is already a list of (ticker, perf) tuples
@@ -481,7 +500,8 @@ def select_drawdown_trigger_bh_1y_stocks(
     portfolio_value: float,
     portfolio_peak: float,
     top_n: int = 10,
-    drawdown_threshold: float = 0.05
+    drawdown_threshold: float = 0.05,
+    price_history_cache=None
 ) -> Tuple[List[str], bool]:
     """
     Static BH 1Y with portfolio drawdown trigger.
@@ -508,7 +528,8 @@ def select_drawdown_trigger_bh_1y_stocks(
     # Get current top performers
     new_top_stocks = select_top_performers(
         tickers, ticker_data_grouped, current_date,
-        lookback_days=365, top_n=top_n
+        lookback_days=365, top_n=top_n,
+        price_history_cache=price_history_cache
     )
     
     # No current stocks - always rebalance (initialization)
@@ -539,7 +560,8 @@ def select_smart_monthly_bh_1y_stocks(
     portfolio_peak: float,
     last_rebalance_month: int,
     top_n: int = 10,
-    early_rebalance_drawdown: float = 0.03
+    early_rebalance_drawdown: float = 0.03,
+    price_history_cache=None
 ) -> Tuple[List[str], bool, int]:
     """
     Static BH 1Y with smart monthly + conditional rebalancing.
@@ -564,7 +586,8 @@ def select_smart_monthly_bh_1y_stocks(
     # Get current top performers
     new_top_stocks = select_top_performers(
         tickers, ticker_data_grouped, current_date,
-        lookback_days=365, top_n=top_n
+        lookback_days=365, top_n=top_n,
+        price_history_cache=price_history_cache
     )
     
     # No current stocks - always rebalance (initialization)

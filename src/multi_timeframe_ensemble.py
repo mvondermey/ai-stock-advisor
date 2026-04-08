@@ -6,10 +6,11 @@ for better entry/exit timing.
 
 import pandas as pd
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from multiprocessing import Pool
 from typing import List, Dict, Tuple, Optional
 from tqdm import tqdm
+from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
 from config import (
     MULTI_TIMEFRAMES, MULTI_TIMEFRAME_LOOKBACK,
     MULTI_TIMEFRAME_WEIGHTS, MULTI_TIMEFRAME_MIN_CONSENSUS,
@@ -93,11 +94,54 @@ def _build_multi_timeframe_cache(
     return cache
 
 
+def _build_multi_timeframe_cache_from_price_history(
+    price_history_cache,
+    tickers: List[str],
+    prebuilt_cache: Dict[str, Dict[str, np.ndarray]] = None,
+) -> Dict[str, Dict[str, np.ndarray]]:
+    cache: Dict[str, Dict[str, np.ndarray]] = prebuilt_cache or {}
+    iterator = tqdm(
+        tickers,
+        total=len(tickers),
+        desc="   Multi-Horizon cache build",
+        ncols=100,
+        unit="ticker",
+    )
+    for ticker in iterator:
+        date_ns = price_history_cache.date_ns_by_ticker.get(ticker)
+        close_values = price_history_cache.close_by_ticker.get(ticker)
+        if date_ns is None or close_values is None or date_ns.size < 2 or close_values.size < 2:
+            continue
+
+        cache[ticker] = {
+            "date_ns": date_ns,
+            "close": close_values,
+            "volume": price_history_cache.volume_by_ticker.get(ticker),
+        }
+
+    return cache
+
+
 def build_multi_timeframe_cache(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     tickers: List[str],
+    price_history_cache=None,
 ) -> Dict[str, Dict[str, np.ndarray]]:
+    if price_history_cache is not None:
+        return _build_multi_timeframe_cache_from_price_history(price_history_cache, tickers)
     return _build_multi_timeframe_cache(ticker_data_grouped, tickers)
+
+
+def _get_cache_entry_from_price_history(price_history_cache, ticker: str) -> Optional[Dict[str, np.ndarray]]:
+    date_ns = price_history_cache.date_ns_by_ticker.get(ticker)
+    close_values = price_history_cache.close_by_ticker.get(ticker)
+    if date_ns is None or close_values is None or date_ns.size < 2 or close_values.size < 2:
+        return None
+    return {
+        "date_ns": date_ns,
+        "close": close_values,
+        "volume": price_history_cache.volume_by_ticker.get(ticker),
+    }
 
 
 def _window_from_cache(
@@ -408,13 +452,15 @@ def calculate_ensemble_score(signals: Dict[str, float]) -> Tuple[float, bool]:
 
 
 def _init_multi_timeframe_worker(
-    selection_cache: Dict[str, Dict[str, np.ndarray]],
+    selection_cache: Optional[Dict[str, Dict[str, np.ndarray]]],
     current_date: datetime,
+    price_history_cache=None,
 ) -> None:
     global _MULTI_TIMEFRAME_SELECTION_CONTEXT
     _MULTI_TIMEFRAME_SELECTION_CONTEXT = {
         "selection_cache": selection_cache,
         "current_date": current_date,
+        "price_history_cache": price_history_cache,
     }
 
 
@@ -424,7 +470,10 @@ def _score_multi_timeframe_ticker_worker(
     context = _MULTI_TIMEFRAME_SELECTION_CONTEXT
     selection_cache = context.get("selection_cache") or {}
     current_date = context.get("current_date")
+    price_history_cache = context.get("price_history_cache")
     cache_entry = selection_cache.get(ticker)
+    if cache_entry is None and price_history_cache is not None:
+        cache_entry = _get_cache_entry_from_price_history(price_history_cache, ticker)
     if cache_entry is None or current_date is None:
         return None
 
@@ -441,6 +490,7 @@ def select_multi_timeframe_stocks(
     top_n: int = PORTFOLIO_SIZE,
     verbose: bool = True,
     selection_cache: Optional[Dict[str, Dict[str, np.ndarray]]] = None,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Select stocks using multi-timeframe ensemble strategy
@@ -458,23 +508,28 @@ def select_multi_timeframe_stocks(
     # Filter out inverse ETFs - they should only be in inverse_etf_hedge strategy
     from config import INVERSE_ETFS
     tickers_to_use = [t for t in initial_tickers if t not in INVERSE_ETFS]
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    current_date = resolve_cache_current_date(price_history_cache, current_date, tickers_to_use)
+    if current_date is None:
+        return []
     if selection_cache is None:
-        selection_cache = _build_multi_timeframe_cache(ticker_data_grouped, tickers_to_use)
-    cached_tickers = [ticker for ticker in tickers_to_use if ticker in selection_cache]
+        cached_tickers = [
+            ticker for ticker in tickers_to_use
+            if _get_cache_entry_from_price_history(price_history_cache, ticker) is not None
+        ]
+    else:
+        cached_tickers = [ticker for ticker in tickers_to_use if ticker in selection_cache]
 
     stock_scores = []
     n_workers = max(1, min(NUM_PROCESSES, len(cached_tickers))) if cached_tickers else 1
 
     if n_workers > 1 and len(cached_tickers) >= max(32, n_workers * 2):
         if verbose:
-            print(f"   🚀 Multi-Horizon Ensemble: Scoring {len(cached_tickers)} tickers with {n_workers} processes")
-        with Pool(
-            processes=n_workers,
-            initializer=_init_multi_timeframe_worker,
-            initargs=(selection_cache, current_date),
-        ) as pool:
+            print(f"   🚀 Multi-Horizon Ensemble: Scoring {len(cached_tickers)} tickers with {n_workers} threads")
+        _init_multi_timeframe_worker(selection_cache, current_date, price_history_cache=price_history_cache)
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
             results = list(tqdm(
-                pool.imap_unordered(_score_multi_timeframe_ticker_worker, cached_tickers),
+                executor.map(_score_multi_timeframe_ticker_worker, cached_tickers),
                 total=len(cached_tickers),
                 desc="   Multi-Horizon Ensemble scoring",
                 ncols=100,
@@ -483,7 +538,11 @@ def select_multi_timeframe_stocks(
         stock_scores = [result for result in results if result is not None]
     else:
         for ticker in cached_tickers:
-            cache_entry = selection_cache.get(ticker)
+            cache_entry = (
+                selection_cache.get(ticker)
+                if selection_cache is not None
+                else _get_cache_entry_from_price_history(price_history_cache, ticker)
+            )
             if cache_entry is None:
                 continue
 

@@ -9,6 +9,7 @@ more conservative selection logic.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -29,13 +30,11 @@ from model_training_safety import (
     save_native_model_artifacts,
 )
 from config import (
-    AI_ELITE_FORWARD_DAYS,
-    AI_ELITE_TRAINING_LOOKBACK,
-    MIN_TRAINING_SAMPLES_AI_ELITE,
     SAVGOL_TREND_FALLBACK_TO_MOMENTUM,
     SAVGOL_TREND_FORWARD_DAYS,
     SAVGOL_TREND_HOLD_MARGIN,
     SAVGOL_TREND_LOOKBACK_DAYS,
+    SAVGOL_TREND_MAX_WORKERS,
     SAVGOL_TREND_MIN_MODEL_SPEARMAN,
     SAVGOL_TREND_MIN_PREDICTED_EDGE,
     SAVGOL_TREND_MIN_SAMPLES,
@@ -54,6 +53,14 @@ def _normalize_current_date(data: pd.DataFrame, current_date: datetime) -> datet
     if hasattr(data.index, "tz") and data.index.tz is not None and current_date.tzinfo is None:
         return current_date.replace(tzinfo=data.index.tz)
     return current_date
+
+
+def _timestamp_ns(value: datetime | pd.Timestamp) -> int:
+    """Convert timestamps to comparable UTC-naive nanoseconds."""
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    return int(ts.value)
 
 
 def _odd_window(length: int, target: int, minimum: int = 5) -> int:
@@ -147,73 +154,222 @@ def _calculate_market_context(
     }
 
 
-def _calculate_market_forward_return(
-    ticker_data_grouped: Dict[str, pd.DataFrame],
-    current_date: datetime,
-    forward_days: int,
-) -> float:
-    """Estimate the market forward return using a broad proxy, else a basket average."""
-    proxy_candidates = ("SPY", "QQQ", "VTI", "DIA")
-    for ticker in proxy_candidates:
-        data = ticker_data_grouped.get(ticker)
-        if data is None:
-            continue
-        market_return = calculate_forward_return(data, current_date, forward_days)
-        if market_return is not None:
-            return float(market_return)
-
-    fallback_returns: List[float] = []
-    for data in ticker_data_grouped.values():
-        if data is None:
-            continue
-        market_return = calculate_forward_return(data, current_date, forward_days)
-        if market_return is not None:
-            fallback_returns.append(float(market_return))
-        if len(fallback_returns) >= 50:
-            break
-    return float(np.mean(fallback_returns)) if fallback_returns else 0.0
-
-
 def _market_context_key(current_date: datetime) -> pd.Timestamp:
     """Normalize dates to a timezone-agnostic daily key for cached lookups."""
     return pd.Timestamp(current_date).tz_localize(None).normalize()
 
 
-def _precompute_market_context_maps(
+def _precompute_market_context_map(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     train_start_date: datetime,
     train_end_date: datetime,
     forward_days: int,
-) -> Tuple[Dict[pd.Timestamp, Dict[str, float]], Dict[pd.Timestamp, float]]:
-    """Build compact daily market context caches once, then reuse across workers."""
+    sample_dates: Optional[List[datetime]] = None,
+) -> Dict[pd.Timestamp, Dict[str, float]]:
+    """Build daily market context once per training run."""
+    del forward_days  # SavGol now trains on raw forward return like AI Elite.
     market_context_map: Dict[pd.Timestamp, Dict[str, float]] = {}
-    market_forward_map: Dict[pd.Timestamp, float] = {}
-    total_days = max(0, (train_end_date - train_start_date).days + 1)
+    missing_dates: List[datetime] = []
+    seen_dates: set[pd.Timestamp] = set()
 
-    with tqdm(
-        total=total_days,
-        desc="   SavGol Trend cache build",
-        ncols=100,
-        unit="day",
-    ) as pbar:
+    if sample_dates is None:
         current_date = train_start_date
         while current_date <= train_end_date:
             cache_key = _market_context_key(current_date)
-            market_context_map[cache_key] = _calculate_market_context(ticker_data_grouped, current_date)
-            market_forward_map[cache_key] = _calculate_market_forward_return(
-                ticker_data_grouped,
-                current_date,
-                forward_days,
-            )
+            if cache_key not in seen_dates:
+                seen_dates.add(cache_key)
+                missing_dates.append(current_date)
             current_date += timedelta(days=1)
-            pbar.update(1)
+    else:
+        for current_date in sample_dates:
+            if current_date < train_start_date or current_date > train_end_date:
+                continue
+            cache_key = _market_context_key(current_date)
+            if cache_key not in seen_dates:
+                seen_dates.add(cache_key)
+                missing_dates.append(current_date)
 
-    return market_context_map, market_forward_map
+    if missing_dates:
+        with tqdm(
+            total=len(missing_dates),
+            desc="   SavGol Trend market context",
+            ncols=100,
+            unit="day",
+        ) as pbar:
+            for current_date in missing_dates:
+                cache_key = _market_context_key(current_date)
+                market_context_map[cache_key] = _calculate_market_context(ticker_data_grouped, current_date)
+                pbar.update(1)
+
+    return market_context_map
 
 
 def _prepare_label(raw_label: float) -> float:
-    """Clip extreme labels so noisy tails do not dominate training."""
-    return float(np.clip(raw_label, -100.0, 100.0))
+    """Clip extreme labels using AI-Elite-style forward-return bounds."""
+    return float(np.clip(raw_label, -100.0, 200.0))
+
+
+def _calculate_savgol_features_from_history(
+    close_history: pd.Series,
+    high_history: np.ndarray,
+    low_history: np.ndarray,
+    volume_history: np.ndarray,
+    lookback_days: int,
+    market_context: Optional[Dict[str, float]] = None,
+) -> Optional[Dict[str, float]]:
+    """Shared SavGol feature logic for both direct and index-based collection."""
+    if len(close_history) < lookback_days:
+        return None
+
+    close = np.asarray(close_history.iloc[-lookback_days:], dtype=float)
+    if len(close) < lookback_days or close[-1] <= 0:
+        return None
+
+    volume = np.asarray(volume_history[-lookback_days:], dtype=float)
+    high = np.asarray(high_history[-lookback_days:], dtype=float)
+    low = np.asarray(low_history[-lookback_days:], dtype=float)
+
+    log_close = np.log(np.clip(close, 1e-12, None))
+    returns = np.diff(close) / np.clip(close[:-1], 1e-12, None)
+
+    short_window = _odd_window(len(log_close), 9)
+    long_window = _odd_window(len(log_close), 21)
+    if short_window == 0 or long_window == 0:
+        return None
+
+    short_poly = 2 if short_window >= 5 else 1
+    long_poly = 3 if long_window >= 7 else 2
+    if short_window <= short_poly or long_window <= long_poly:
+        return None
+
+    sg_short = savgol_filter(log_close, window_length=short_window, polyorder=short_poly, mode="interp")
+    sg_long = savgol_filter(log_close, window_length=long_window, polyorder=long_poly, mode="interp")
+
+    short_slope = (sg_short[-1] - sg_short[-2]) * 100.0 if len(sg_short) >= 2 else 0.0
+    long_slope = (sg_long[-1] - sg_long[-2]) * 100.0 if len(sg_long) >= 2 else 0.0
+    short_curvature = (
+        (sg_short[-1] - 2 * sg_short[-2] + sg_short[-3]) * 10000.0
+        if len(sg_short) >= 3
+        else 0.0
+    )
+    long_curvature = (
+        (sg_long[-1] - 2 * sg_long[-2] + sg_long[-3]) * 10000.0
+        if len(sg_long) >= 3
+        else 0.0
+    )
+
+    short_diffs = np.diff(sg_short[-10:]) if len(sg_short) >= 10 else np.diff(sg_short)
+    long_diffs = np.diff(sg_long[-10:]) if len(sg_long) >= 10 else np.diff(sg_long)
+    sg_trend_stability = float(np.mean(short_diffs > 0)) if len(short_diffs) > 0 else 0.5
+    sg_long_stability = float(np.mean(long_diffs > 0)) if len(long_diffs) > 0 else 0.5
+
+    x = np.arange(min(10, len(sg_long)))
+    sg_regression_slope = (
+        float(np.polyfit(x, sg_long[-len(x):], 1)[0] * 100.0)
+        if len(x) >= 2
+        else 0.0
+    )
+
+    residual = log_close - sg_long
+    residual_vol_20d = float(np.std(residual[-20:]) * 100.0) if len(residual) >= 20 else 0.0
+
+    high_20 = np.max(close[-20:])
+    atr_14 = float(np.mean(high[-14:] - low[-14:])) if len(high) >= 14 and len(low) >= 14 else 0.0
+    avg_vol_20 = float(np.mean(volume[-20:])) if len(volume) >= 20 else float(np.mean(volume))
+    avg_vol_60 = float(np.mean(volume)) if len(volume) > 0 else 1.0
+
+    perf_5d = _series_pct_change(close_history, 5)
+    perf_20d = _series_pct_change(close_history, 20)
+    perf_3m = _series_pct_change(close_history, 63)
+    perf_6m = _series_pct_change(close_history, 126)
+    perf_1y = _series_pct_change(close_history, 252)
+    daily_volatility = _series_volatility_pct(close_history, 20)
+    risk_adj_mom_3m = perf_3m / (np.sqrt(max(daily_volatility, 5.0)) if daily_volatility > 0 else np.sqrt(5.0))
+    dip_score = perf_1y - perf_3m
+    mom_accel = perf_3m - perf_6m
+
+    rsi_14 = 50.0
+    if len(returns) >= 14:
+        gains = np.clip(returns, 0.0, None)
+        losses = np.clip(-returns, 0.0, None)
+        avg_gain = float(np.mean(gains[-14:]))
+        avg_loss = float(np.mean(losses[-14:]))
+        if avg_loss > 0:
+            rs = avg_gain / avg_loss
+            rsi_14 = 100.0 - (100.0 / (1.0 + rs))
+        elif avg_gain > 0:
+            rsi_14 = 100.0
+
+    bollinger_position = 0.5
+    sma20_distance = 0.0
+    sma50_distance = 0.0
+    if len(close_history) >= 20:
+        sma20 = float(close_history.tail(20).mean())
+        std20 = float(close_history.tail(20).std())
+        if sma20 > 0 and std20 > 0:
+            upper_band = sma20 + 2.0 * std20
+            lower_band = sma20 - 2.0 * std20
+            if upper_band > lower_band:
+                bollinger_position = float(np.clip((close[-1] - lower_band) / (upper_band - lower_band), 0.0, 1.0))
+            sma20_distance = _safe_pct_change(close[-1], sma20)
+    if len(close_history) >= 50:
+        sma50 = float(close_history.tail(50).mean())
+        if sma50 > 0:
+            sma50_distance = _safe_pct_change(close[-1], sma50)
+
+    macd = 0.0
+    if len(close_history) >= 35:
+        ema12 = close_history.ewm(span=12, adjust=False).mean()
+        ema26 = close_history.ewm(span=26, adjust=False).mean()
+        macd_line = ema12 - ema26
+        signal_line = macd_line.ewm(span=9, adjust=False).mean()
+        macd = float(macd_line.iloc[-1] - signal_line.iloc[-1])
+
+    context = market_context or {}
+    market_return_20d = float(context.get("market_return_20d", 0.0))
+    market_return_60d = float(context.get("market_return_60d", 0.0))
+
+    return {
+        "mom_5d": perf_5d,
+        "mom_10d": _series_pct_change(close_history, 10),
+        "mom_20d": perf_20d,
+        "mom_40d": _series_pct_change(close_history, 40),
+        "perf_3m": perf_3m,
+        "perf_6m": perf_6m,
+        "perf_1y": perf_1y,
+        "risk_adj_mom_3m": risk_adj_mom_3m,
+        "dip_score": dip_score,
+        "mom_accel": mom_accel,
+        "volatility_10d": float(np.std(returns[-10:]) * np.sqrt(252) * 100.0) if len(returns) >= 10 else 0.0,
+        "volatility_20d": float(np.std(returns[-20:]) * np.sqrt(252) * 100.0) if len(returns) >= 20 else 0.0,
+        "drawdown_20d": _safe_pct_change(close[-1], high_20),
+        "atr_pct_14d": (atr_14 / close[-1]) * 100.0 if close[-1] > 0 else 0.0,
+        "volume_ratio_20_60": avg_vol_20 / avg_vol_60 if avg_vol_60 > 0 else 1.0,
+        "rsi_14": rsi_14,
+        "bollinger_position": bollinger_position,
+        "sma20_distance": sma20_distance,
+        "sma50_distance": sma50_distance,
+        "macd": macd,
+        "price_vs_sg_short": (log_close[-1] - sg_short[-1]) * 100.0,
+        "price_vs_sg_long": (log_close[-1] - sg_long[-1]) * 100.0,
+        "sg_short_slope": short_slope,
+        "sg_long_slope": long_slope,
+        "sg_short_curvature": short_curvature,
+        "sg_long_curvature": long_curvature,
+        "sg_trend_spread": (sg_short[-1] - sg_long[-1]) * 100.0,
+        "sg_trend_stability": sg_trend_stability,
+        "sg_long_stability": sg_long_stability,
+        "sg_regression_slope": sg_regression_slope,
+        "sg_residual_vol_20d": residual_vol_20d,
+        "market_return_5d": float(context.get("market_return_5d", 0.0)),
+        "market_return_20d": market_return_20d,
+        "market_return_60d": market_return_60d,
+        "market_volatility_20d": float(context.get("market_volatility_20d", 0.0)),
+        "market_breadth_20d": float(context.get("market_breadth_20d", 0.5)),
+        "market_breadth_60d": float(context.get("market_breadth_60d", 0.5)),
+        "rel_strength_20d": perf_20d - market_return_20d,
+        "rel_strength_60d": _series_pct_change(close_history, 60) - market_return_60d,
+    }
 
 
 def calculate_savgol_features(
@@ -232,162 +388,57 @@ def calculate_savgol_features(
         if len(hist) < lookback_days:
             return None
 
-        close_series = hist["Close"].dropna()
-        close = close_series.values[-lookback_days:]
-        if len(close) < lookback_days or close[-1] <= 0:
+        close_history = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+        if len(close_history) < lookback_days:
             return None
 
-        volume = (
-            hist["Volume"].fillna(0).values[-lookback_days:]
-            if "Volume" in hist.columns
-            else np.ones(len(close))
+        aligned_hist = hist.reindex(close_history.index)
+        volume_history = (
+            pd.to_numeric(aligned_hist["Volume"], errors="coerce").fillna(0.0).to_numpy(dtype=float, copy=True)
+            if "Volume" in aligned_hist.columns
+            else np.ones(len(close_history), dtype=float)
         )
-        high = hist["High"].ffill().fillna(hist["Close"]).values[-lookback_days:] if "High" in hist.columns else close
-        low = hist["Low"].ffill().fillna(hist["Close"]).values[-lookback_days:] if "Low" in hist.columns else close
-
-        log_close = np.log(np.clip(close.astype(float), 1e-12, None))
-        returns = np.diff(close) / np.clip(close[:-1], 1e-12, None)
-
-        short_window = _odd_window(len(log_close), 9)
-        long_window = _odd_window(len(log_close), 21)
-        if short_window == 0 or long_window == 0:
-            return None
-
-        short_poly = 2 if short_window >= 5 else 1
-        long_poly = 3 if long_window >= 7 else 2
-        if short_window <= short_poly or long_window <= long_poly:
-            return None
-
-        sg_short = savgol_filter(log_close, window_length=short_window, polyorder=short_poly, mode="interp")
-        sg_long = savgol_filter(log_close, window_length=long_window, polyorder=long_poly, mode="interp")
-
-        short_slope = (sg_short[-1] - sg_short[-2]) * 100.0 if len(sg_short) >= 2 else 0.0
-        long_slope = (sg_long[-1] - sg_long[-2]) * 100.0 if len(sg_long) >= 2 else 0.0
-        short_curvature = (
-            (sg_short[-1] - 2 * sg_short[-2] + sg_short[-3]) * 10000.0
-            if len(sg_short) >= 3
-            else 0.0
+        high_history = (
+            pd.to_numeric(aligned_hist["High"], errors="coerce").ffill().fillna(close_history).to_numpy(dtype=float, copy=True)
+            if "High" in aligned_hist.columns
+            else close_history.to_numpy(dtype=float, copy=True)
         )
-        long_curvature = (
-            (sg_long[-1] - 2 * sg_long[-2] + sg_long[-3]) * 10000.0
-            if len(sg_long) >= 3
-            else 0.0
+        low_history = (
+            pd.to_numeric(aligned_hist["Low"], errors="coerce").ffill().fillna(close_history).to_numpy(dtype=float, copy=True)
+            if "Low" in aligned_hist.columns
+            else close_history.to_numpy(dtype=float, copy=True)
         )
 
-        short_diffs = np.diff(sg_short[-10:]) if len(sg_short) >= 10 else np.diff(sg_short)
-        long_diffs = np.diff(sg_long[-10:]) if len(sg_long) >= 10 else np.diff(sg_long)
-        sg_trend_stability = float(np.mean(short_diffs > 0)) if len(short_diffs) > 0 else 0.5
-        sg_long_stability = float(np.mean(long_diffs > 0)) if len(long_diffs) > 0 else 0.5
-
-        x = np.arange(min(10, len(sg_long)))
-        sg_regression_slope = (
-            float(np.polyfit(x, sg_long[-len(x):], 1)[0] * 100.0)
-            if len(x) >= 2
-            else 0.0
+        return _calculate_savgol_features_from_history(
+            close_history=close_history,
+            high_history=high_history,
+            low_history=low_history,
+            volume_history=volume_history,
+            lookback_days=lookback_days,
+            market_context=market_context,
         )
-
-        residual = log_close - sg_long
-        residual_vol_20d = float(np.std(residual[-20:]) * 100.0) if len(residual) >= 20 else 0.0
-
-        high_20 = np.max(close[-20:])
-        atr_14 = float(np.mean(high[-14:] - low[-14:])) if len(high) >= 14 and len(low) >= 14 else 0.0
-        avg_vol_20 = float(np.mean(volume[-20:])) if len(volume) >= 20 else float(np.mean(volume))
-        avg_vol_60 = float(np.mean(volume)) if len(volume) > 0 else 1.0
-
-        perf_5d = _series_pct_change(close_series, 5)
-        perf_20d = _series_pct_change(close_series, 20)
-        perf_3m = _series_pct_change(close_series, 63)
-        perf_6m = _series_pct_change(close_series, 126)
-        perf_1y = _series_pct_change(close_series, 252)
-        daily_volatility = _series_volatility_pct(close_series, 20)
-        risk_adj_mom_3m = perf_3m / (np.sqrt(max(daily_volatility, 5.0)) if daily_volatility > 0 else np.sqrt(5.0))
-        dip_score = perf_1y - perf_3m
-        mom_accel = perf_3m - perf_6m
-
-        rsi_14 = 50.0
-        if len(returns) >= 14:
-            gains = np.clip(returns, 0.0, None)
-            losses = np.clip(-returns, 0.0, None)
-            avg_gain = float(np.mean(gains[-14:]))
-            avg_loss = float(np.mean(losses[-14:]))
-            if avg_loss > 0:
-                rs = avg_gain / avg_loss
-                rsi_14 = 100.0 - (100.0 / (1.0 + rs))
-            elif avg_gain > 0:
-                rsi_14 = 100.0
-
-        bollinger_position = 0.5
-        sma20_distance = 0.0
-        sma50_distance = 0.0
-        if len(close_series) >= 20:
-            sma20 = float(close_series.tail(20).mean())
-            std20 = float(close_series.tail(20).std())
-            if sma20 > 0 and std20 > 0:
-                upper_band = sma20 + 2.0 * std20
-                lower_band = sma20 - 2.0 * std20
-                if upper_band > lower_band:
-                    bollinger_position = float(np.clip((close[-1] - lower_band) / (upper_band - lower_band), 0.0, 1.0))
-                sma20_distance = _safe_pct_change(close[-1], sma20)
-        if len(close_series) >= 50:
-            sma50 = float(close_series.tail(50).mean())
-            if sma50 > 0:
-                sma50_distance = _safe_pct_change(close[-1], sma50)
-
-        macd = 0.0
-        if len(close_series) >= 35:
-            ema12 = close_series.ewm(span=12, adjust=False).mean()
-            ema26 = close_series.ewm(span=26, adjust=False).mean()
-            macd_line = ema12 - ema26
-            signal_line = macd_line.ewm(span=9, adjust=False).mean()
-            macd = float(macd_line.iloc[-1] - signal_line.iloc[-1])
-
-        context = market_context or {}
-        market_return_20d = float(context.get("market_return_20d", 0.0))
-        market_return_60d = float(context.get("market_return_60d", 0.0))
-
-        return {
-            "mom_5d": perf_5d,
-            "mom_10d": _series_pct_change(close_series, 10),
-            "mom_20d": perf_20d,
-            "mom_40d": _series_pct_change(close_series, 40),
-            "perf_3m": perf_3m,
-            "perf_6m": perf_6m,
-            "perf_1y": perf_1y,
-            "risk_adj_mom_3m": risk_adj_mom_3m,
-            "dip_score": dip_score,
-            "mom_accel": mom_accel,
-            "volatility_10d": float(np.std(returns[-10:]) * np.sqrt(252) * 100.0) if len(returns) >= 10 else 0.0,
-            "volatility_20d": float(np.std(returns[-20:]) * np.sqrt(252) * 100.0) if len(returns) >= 20 else 0.0,
-            "drawdown_20d": _safe_pct_change(close[-1], high_20),
-            "atr_pct_14d": (atr_14 / close[-1]) * 100.0 if close[-1] > 0 else 0.0,
-            "volume_ratio_20_60": avg_vol_20 / avg_vol_60 if avg_vol_60 > 0 else 1.0,
-            "rsi_14": rsi_14,
-            "bollinger_position": bollinger_position,
-            "sma20_distance": sma20_distance,
-            "sma50_distance": sma50_distance,
-            "macd": macd,
-            "price_vs_sg_short": (log_close[-1] - sg_short[-1]) * 100.0,
-            "price_vs_sg_long": (log_close[-1] - sg_long[-1]) * 100.0,
-            "sg_short_slope": short_slope,
-            "sg_long_slope": long_slope,
-            "sg_short_curvature": short_curvature,
-            "sg_long_curvature": long_curvature,
-            "sg_trend_spread": (sg_short[-1] - sg_long[-1]) * 100.0,
-            "sg_trend_stability": sg_trend_stability,
-            "sg_long_stability": sg_long_stability,
-            "sg_regression_slope": sg_regression_slope,
-            "sg_residual_vol_20d": residual_vol_20d,
-            "market_return_5d": float(context.get("market_return_5d", 0.0)),
-            "market_return_20d": market_return_20d,
-            "market_return_60d": market_return_60d,
-            "market_volatility_20d": float(context.get("market_volatility_20d", 0.0)),
-            "market_breadth_20d": float(context.get("market_breadth_20d", 0.5)),
-            "market_breadth_60d": float(context.get("market_breadth_60d", 0.5)),
-            "rel_strength_20d": perf_20d - market_return_20d,
-            "rel_strength_60d": _series_pct_change(close_series, 60) - market_return_60d,
-        }
     except Exception:
         return None
+
+
+def _calculate_forward_return_from_close(
+    close_values: np.ndarray,
+    current_idx: int,
+    forward_days: int = SAVGOL_TREND_FORWARD_DAYS,
+) -> Optional[float]:
+    """Calculate forward return directly from aligned close arrays."""
+    min_future_rows = max(2, forward_days // 2)
+    if current_idx < 0 or current_idx >= len(close_values):
+        return None
+    if (len(close_values) - current_idx) < min_future_rows:
+        return None
+
+    current_price = float(close_values[current_idx])
+    future_idx = min(current_idx + forward_days, len(close_values) - 1)
+    future_price = float(close_values[future_idx])
+    if current_price > 0 and future_price > 0:
+        return (future_price / current_price - 1.0) * 100.0
+    return None
 
 
 def calculate_forward_return(
@@ -425,55 +476,85 @@ def collect_savgol_ticker_training_data(
     lookback_days: int,
     forward_days: int,
     market_context_map: Dict[pd.Timestamp, Dict[str, float]],
-    market_forward_map: Dict[pd.Timestamp, float],
 ) -> List[Tuple[pd.Timestamp, Dict[str, float], float]]:
-    """Collect training samples for a single ticker. Same approach as AI Elite."""
+    """Collect training samples for a single ticker."""
     if ticker_data is None or len(ticker_data) == 0:
         return []
 
-    if train_start_date.tzinfo is None:
-        train_start_date = train_start_date.replace(tzinfo=ticker_data.index.tz or None)
-    if train_end_date.tzinfo is None:
-        train_end_date = train_end_date.replace(tzinfo=ticker_data.index.tz or None)
+    try:
+        close_series = pd.to_numeric(ticker_data["Close"], errors="coerce").dropna()
+    except Exception:
+        return []
+    if len(close_series) == 0:
+        return []
 
-    samples = []
-    current_date = train_start_date
-    while current_date <= train_end_date:
+    aligned_frame = ticker_data.reindex(close_series.index)
+    close_values = close_series.to_numpy(dtype=float, copy=True)
+    volume_values = (
+        pd.to_numeric(aligned_frame["Volume"], errors="coerce").fillna(0.0).to_numpy(dtype=float, copy=True)
+        if "Volume" in aligned_frame.columns
+        else np.ones(len(close_series), dtype=float)
+    )
+    high_values = (
+        pd.to_numeric(aligned_frame["High"], errors="coerce").ffill().fillna(close_series).to_numpy(dtype=float, copy=True)
+        if "High" in aligned_frame.columns
+        else close_values.copy()
+    )
+    low_values = (
+        pd.to_numeric(aligned_frame["Low"], errors="coerce").ffill().fillna(close_series).to_numpy(dtype=float, copy=True)
+        if "Low" in aligned_frame.columns
+        else close_values.copy()
+    )
+
+    date_index = pd.DatetimeIndex(close_series.index)
+    if date_index.tz is not None:
+        normalized_index = date_index.tz_convert("UTC").tz_localize(None)
+    else:
+        normalized_index = date_index
+    date_ns = normalized_index.asi8
+    start_ns = _timestamp_ns(train_start_date)
+    end_ns = _timestamp_ns(train_end_date)
+    min_future_rows = max(2, forward_days // 2)
+    start_pos = max(lookback_days - 1, int(np.searchsorted(date_ns, start_ns, side="left")))
+    end_pos = min(
+        int(np.searchsorted(date_ns, end_ns, side="right")) - 1,
+        len(close_series) - min_future_rows,
+    )
+    if start_pos > end_pos:
+        return []
+
+    history_limit = max(lookback_days, 260)
+    samples: List[Tuple[pd.Timestamp, Dict[str, float], float]] = []
+    for pos in range(start_pos, end_pos + 1):
         try:
-            sample_key = pd.Timestamp(current_date)
-            cache_key = _market_context_key(current_date)
+            sample_key = pd.Timestamp(close_series.index[pos])
+            cache_key = _market_context_key(sample_key)
             market_context = market_context_map.get(cache_key, {})
-
-            features = calculate_savgol_features(
-                ticker,
-                ticker_data,
-                current_date,
+            history_start = max(0, pos - history_limit + 1)
+            close_history = close_series.iloc[history_start : pos + 1]
+            features = _calculate_savgol_features_from_history(
+                close_history=close_history,
+                high_history=high_values[history_start : pos + 1],
+                low_history=low_values[history_start : pos + 1],
+                volume_history=volume_values[history_start : pos + 1],
                 lookback_days=lookback_days,
                 market_context=market_context,
             )
             if features is None:
-                current_date += timedelta(days=1)
                 continue
 
-            forward_ret = calculate_forward_return(
-                ticker_data,
-                current_date,
+            forward_ret = _calculate_forward_return_from_close(
+                close_values,
+                pos,
                 forward_days=forward_days,
             )
             if forward_ret is None:
-                current_date += timedelta(days=1)
                 continue
 
-            market_forward = float(market_forward_map.get(cache_key, 0.0))
-
-            excess_return = float(forward_ret) - float(market_forward)
-            risk_floor = np.sqrt(max(features.get("volatility_20d", 0.0), 5.0))
-            target = _prepare_label(excess_return / risk_floor)
+            target = _prepare_label(float(forward_ret))
             samples.append((sample_key, features, target))
         except Exception:
-            pass
-
-        current_date += timedelta(days=1)
+            continue
 
     return samples
 
@@ -488,7 +569,6 @@ def _collect_savgol_data_worker(args):
         lookback_days,
         forward_days,
         market_context_map,
-        market_forward_map,
     ) = args
     samples = collect_savgol_ticker_training_data(
         ticker=ticker,
@@ -498,7 +578,6 @@ def _collect_savgol_data_worker(args):
         lookback_days=lookback_days,
         forward_days=forward_days,
         market_context_map=market_context_map,
-        market_forward_map=market_forward_map,
     )
     return ticker, samples
 
@@ -568,9 +647,9 @@ class SavgolTrendStrategy:
     def __init__(
         self,
         retrain_days: int = SAVGOL_TREND_RETRAIN_DAYS,
-        min_samples: int = MIN_TRAINING_SAMPLES_AI_ELITE,
-        lookback_days: int = AI_ELITE_TRAINING_LOOKBACK,
-        forward_days: int = AI_ELITE_FORWARD_DAYS,
+        min_samples: int = SAVGOL_TREND_MIN_SAMPLES,
+        lookback_days: int = SAVGOL_TREND_LOOKBACK_DAYS,
+        forward_days: int = SAVGOL_TREND_FORWARD_DAYS,
     ):
         self.retrain_days = retrain_days
         self.min_samples = min_samples
@@ -608,20 +687,24 @@ class SavgolTrendStrategy:
             current_date = business_days[current_day_idx] if current_day_idx >= 0 else business_days[0]
             train_start = current_date - timedelta(days=self.lookback_days)
 
-            from multiprocessing import Pool
-            from config import NUM_PROCESSES
             import time as _time
 
             all_tickers = list(ticker_data_grouped.keys())
-            n_workers = max(1, NUM_PROCESSES)
-            print(f"   📊 SavGol Trend: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {self.lookback_days}d lookback)...")
-            _start_time = _time.time()
-            market_context_map, market_forward_map = _precompute_market_context_maps(
+            n_workers = max(1, min(SAVGOL_TREND_MAX_WORKERS, len(all_tickers)))
+
+            cache_start = train_start
+            cache_end = current_date
+            market_context_dates = [day for day in business_days if cache_start <= day <= cache_end]
+            market_context_map = _precompute_market_context_map(
                 ticker_data_grouped=ticker_data_grouped,
-                train_start_date=train_start,
-                train_end_date=current_date,
+                train_start_date=cache_start,
+                train_end_date=cache_end,
                 forward_days=self.forward_days,
+                sample_dates=market_context_dates,
             )
+
+            print(f"   📊 SavGol Trend: Collecting data from {len(all_tickers)} tickers ({n_workers} workers, {self.lookback_days}d lookback)...")
+            _start_time = _time.time()
 
             collect_args = [
                 (
@@ -632,7 +715,6 @@ class SavgolTrendStrategy:
                     self.lookback_days,
                     self.forward_days,
                     market_context_map,
-                    market_forward_map,
                 )
                 for t in all_tickers
             ]
@@ -640,14 +722,21 @@ class SavgolTrendStrategy:
             samples: List[Tuple[pd.Timestamp, Dict[str, float], float]] = []
             ticker_samples_map = {}
 
-            with Pool(processes=n_workers) as pool:
-                results = list(tqdm(
-                    pool.imap_unordered(_collect_savgol_data_worker, collect_args),
-                    total=len(collect_args),
+            results = []
+            # ThreadPoolExecutor avoids the DataFrame pickling overhead of process workers.
+            with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="savgol-collect") as executor:
+                futures = [
+                    executor.submit(_collect_savgol_data_worker, args)
+                    for args in collect_args
+                ]
+                for future in tqdm(
+                    as_completed(futures),
+                    total=len(futures),
                     desc="   SavGol Trend collection",
                     ncols=100,
                     unit="ticker",
-                ))
+                ):
+                    results.append(future.result())
 
             for ticker, ticker_samples in results:
                 if ticker_samples:
@@ -873,16 +962,17 @@ class SavgolTrendStrategy:
         ticker_data_grouped: Dict[str, pd.DataFrame],
         current_date: datetime,
     ) -> List[Tuple[str, float, Dict[str, float]]]:
-        """Predict scores for the current candidate universe."""
+        """Predict scores for the current candidate universe with optimized parallel processing."""
         if self.model is None or not self.feature_cols:
             return []
 
         market_context = _calculate_market_context(ticker_data_grouped, current_date)
-        predictions: List[Tuple[str, float, Dict[str, float]]] = []
-        for ticker in tickers:
+        
+        # Process tickers in parallel batches for much faster performance
+        def process_single_ticker(ticker):
             data = ticker_data_grouped.get(ticker)
             if data is None:
-                continue
+                return None
 
             features = calculate_savgol_features(
                 ticker,
@@ -892,17 +982,62 @@ class SavgolTrendStrategy:
                 market_context=market_context,
             )
             if features is None:
-                continue
+                return None
 
-            row = pd.DataFrame(
-                [[features.get(col, 0.0) for col in self.feature_cols]],
-                columns=self.feature_cols,
-            )
-            try:
-                pred = float(self.model.predict(row)[0])
-                predictions.append((ticker, pred, features))
-            except Exception:
-                continue
+            return ticker, features
+
+        # Use ThreadPoolExecutor for parallel processing
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import os
+        
+        # Limit threads to avoid overwhelming the system
+        max_workers = min(32, (os.cpu_count() or 1) + 4, len(tickers))
+        
+        valid_results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_ticker = {executor.submit(process_single_ticker, ticker): ticker for ticker in tickers}
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_ticker):
+                result = future.result()
+                if result is not None:
+                    valid_results.append(result)
+        
+        # Batch predict all valid results at once for massive speedup
+        if not valid_results:
+            return []
+            
+        # Create batch DataFrame for all valid tickers
+        batch_data = []
+        ticker_map = []
+        for ticker, features in valid_results:
+            row = [features.get(col, 0.0) for col in self.feature_cols]
+            batch_data.append(row)
+            ticker_map.append((ticker, features))
+        
+        if not batch_data:
+            return []
+            
+        batch_df = pd.DataFrame(batch_data, columns=self.feature_cols)
+        
+        # Batch prediction - much faster than individual predictions
+        try:
+            batch_predictions = self.model.predict(batch_df)
+            predictions = [
+                (ticker_map[i][0], float(batch_predictions[i]), ticker_map[i][1])
+                for i in range(len(batch_predictions))
+            ]
+        except Exception:
+            # Fallback to individual predictions if batch fails
+            predictions = []
+            for i, (ticker, features) in enumerate(ticker_map):
+                try:
+                    single_row = pd.DataFrame([batch_data[i]], columns=self.feature_cols)
+                    pred = float(self.model.predict(single_row)[0])
+                    predictions.append((ticker, pred, features))
+                except Exception:
+                    continue
 
         return predictions
 
@@ -930,14 +1065,9 @@ def select_savgol_trend_stocks(
     current_date: datetime,
     top_n: int,
     model: SavgolTrendStrategy,
-    business_days: List[datetime],
-    current_day_idx: int,
     current_holdings: Optional[List[str]] = None,
 ) -> List[str]:
-    """Select tickers with confidence gating and lower-turnover ranking."""
-    if model.should_retrain():
-        model.train_model(ticker_data_grouped, business_days, current_day_idx)
-
+    """Score the current universe with an already-trained SavGol model."""
     predictions = model.predict_returns(all_tickers, ticker_data_grouped, current_date)
     if not predictions:
         return []
@@ -969,10 +1099,6 @@ def select_savgol_trend_stocks(
         )
         if current_holdings:
             return []
-        if SAVGOL_TREND_FALLBACK_TO_MOMENTUM:
-            fallback = model.fallback_selection(predictions, top_n)
-            print(f"   🔄 SavGol Trend: Falling back to momentum-style ranking ({len(fallback)} picks)")
-            return fallback
         return []
 
     selected = [ticker for ticker, _, _, _ in adjusted_predictions[:top_n]]
@@ -981,3 +1107,28 @@ def select_savgol_trend_stocks(
         f"(spearman={best_model_score:.3f}, top={top_score:+.3f}, spread={score_spread:.3f})"
     )
     return selected
+
+
+def select_savgol_trend_stocks_with_training(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    top_n: int,
+    model: SavgolTrendStrategy,
+    business_days: List[datetime],
+    current_day_idx: int,
+    current_holdings: Optional[List[str]] = None,
+    force_train: bool = False,
+) -> List[str]:
+    """AI-Elite-style SavGol wrapper: retrain only when scheduled, then predict."""
+    if force_train or model.should_retrain():
+        model.train_model(ticker_data_grouped, business_days, current_day_idx)
+
+    return select_savgol_trend_stocks(
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        top_n,
+        model,
+        current_holdings=current_holdings,
+    )
