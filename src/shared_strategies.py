@@ -1401,263 +1401,77 @@ def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Di
 
 
 def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame],
-
                                    current_date: datetime = None, top_n: int = 20,
-
                                    price_history_cache=None, exclude_inverse_etfs: bool = True) -> List[str]:
-
     """
-
     Shared Quality + Momentum stock selection logic.
-
+    Uses 1-year (365-day) lookback for momentum calculation.
+    Always uses the cache-backed path for proper date-aware slicing.
     """
-
     from config import INVERSE_ETFS
+    from parallel_backtest import _window_slice
+    from strategy_cache_adapter import ensure_price_history_cache
 
-
-
-    # Most callers should exclude inverse ETFs, but backtesting historically did not.
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS] if exclude_inverse_etfs else list(all_tickers)
 
-
-
-    # Apply performance filters if enabled
-
     from performance_filters import filter_tickers_by_performance
-
     filtered_tickers = filter_tickers_by_performance(
-
-        tickers_to_use, ticker_data_grouped, current_date, "Quality+Mom"
-
+        tickers_to_use, ticker_data_grouped, current_date, "Quality+Mom", price_history_cache=price_history_cache
     )
-
-
 
     quality_momentum_candidates = []
 
-
-
-    # Use current date or last available date
-
-    if current_date is None:
-
-        latest_dates = [ticker_data_grouped[t].index.max() for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-
-        if latest_dates:
-
-            current_date = max(latest_dates)
-
-        else:
-
-            return []
-
-
-
     for ticker in filtered_tickers:
-
         try:
-
             if ticker not in ticker_data_grouped:
-
                 continue
-
-
 
             ticker_data = ticker_data_grouped[ticker]
-
-
-
             if len(ticker_data) < MIN_DATA_DAYS_GENERAL:
-
                 continue
 
-
-
-            if price_history_cache is not None:
-
-                from parallel_backtest import _window_slice
-
-                date_ns = price_history_cache.date_ns_by_ticker.get(ticker)
-
-                close_values = price_history_cache.close_by_ticker.get(ticker)
-
-                if date_ns is None or close_values is None:
-
-                    continue
-
-
-
-                recent_close_window = _window_slice(date_ns, close_values, current_date, 90)
-
-                if recent_close_window is None or recent_close_window.size < 30:
-
-                    continue
-
-
-
-                recent_close_window = recent_close_window[-63:] if recent_close_window.size >= 63 else recent_close_window
-
-                if recent_close_window.size < 10:
-
-                    continue
-
-
-
-                start_price = float(recent_close_window[0])
-
-                end_price = float(recent_close_window[-1])
-
-                if start_price <= 0 or np.isnan(start_price) or np.isnan(end_price):
-
-                    continue
-
-
-
-                momentum_score = ((end_price - start_price) / start_price) * 100.0
-
-                daily_returns = np.diff(recent_close_window) / recent_close_window[:-1]
-
-                if daily_returns.size <= 5:
-
-                    continue
-
-
-
-                volatility = float(np.std(daily_returns, ddof=1) * np.sqrt(252))
-
-                quality_volatility = max(0.0, 50.0 - volatility * 100.0)
-
-                combined_score = (momentum_score * 0.7) + (quality_volatility * 0.3)
-
-                quality_momentum_candidates.append((ticker, combined_score, momentum_score, quality_volatility))
-
+            date_ns = price_history_cache.date_ns_by_ticker.get(ticker)
+            close_values = price_history_cache.close_by_ticker.get(ticker)
+            if date_ns is None or close_values is None:
                 continue
 
-
-
-            current_date_tz = ticker_data.index.max()
-
-            if current_date is not None:
-
-                try:
-
-                    current_ts = pd.Timestamp(current_date)
-
-                    if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-
-                        if current_ts.tz is None:
-
-                            current_ts = current_ts.tz_localize(ticker_data.index.tz)
-
-                        else:
-
-                            current_ts = current_ts.tz_convert(ticker_data.index.tz)
-
-
-
-                    data_age_days = (current_ts - current_date_tz).total_seconds() / 86400
-
-                    if data_age_days > DATA_FRESHNESS_MAX_DAYS:
-
-                        raise ValueError(f"Data too old: {data_age_days:.1f} days (max {DATA_FRESHNESS_MAX_DAYS} days)")
-
-
-
-                    current_date_tz = min(current_ts, current_date_tz)
-
-                except ValueError:
-
-                    raise
-
-                except Exception as e:
-
-                    print(f"Error processing {ticker}: {e}")
-
-
-
-            perf_start_date_qm = current_date_tz - timedelta(days=90)
-
-            data_slice = ticker_data.loc[perf_start_date_qm:current_date_tz]
-
-            if len(data_slice) < 30:
-
+            momentum_window = _window_slice(date_ns, close_values, current_date, 365)
+            if momentum_window is None or momentum_window.size < 100:
                 continue
 
-
-
-            recent_data = data_slice.tail(63) if len(data_slice) >= 63 else data_slice
-
-            if len(recent_data) < 10:
-
+            start_price = float(momentum_window[0])
+            end_price = float(momentum_window[-1])
+            if start_price <= 0 or np.isnan(start_price) or np.isnan(end_price):
                 continue
 
-
-
-            start_price = recent_data['Close'].iloc[0]
-
-            end_price = recent_data['Close'].iloc[-1]
-
-            if start_price <= 0 or pd.isna(start_price) or pd.isna(end_price):
-
+            momentum_score = ((end_price - start_price) / start_price) * 100.0
+            daily_returns = np.diff(momentum_window) / momentum_window[:-1]
+            if daily_returns.size <= 5:
                 continue
 
-
-
-            momentum_score = ((end_price - start_price) / start_price) * 100
-
-            daily_returns = recent_data['Close'].pct_change(fill_method=None).dropna()
-
-            if len(daily_returns) <= 5:
-
-                continue
-
-
-
-            volatility = daily_returns.std() * np.sqrt(252)
-
-            quality_volatility = max(0, 50 - volatility * 100)
-
+            volatility = float(np.std(daily_returns, ddof=1) * np.sqrt(252))
+            quality_volatility = max(0.0, 50.0 - volatility * 100.0)
             combined_score = (momentum_score * 0.7) + (quality_volatility * 0.3)
-
             quality_momentum_candidates.append((ticker, combined_score, momentum_score, quality_volatility))
 
-
-
         except Exception as e:
-
             if ticker in ['SNDK', 'WDC', 'MU', 'SLV', 'STX', 'NEM']:
-
                 print(f"   🔍 DEBUG: {ticker} exception: {type(e).__name__}: {e}")
-
             continue
 
-
-
-    # Sort by quality score and get top N
-
     if quality_momentum_candidates:
-
         quality_momentum_candidates.sort(key=lambda x: x[1], reverse=True)
-
         selected_tickers = [ticker for ticker, score, mom, vol in quality_momentum_candidates[:top_n]]
 
-
-
         print(f"   📊 Top {top_n} quality + momentum: {selected_tickers}")
-
         for ticker, score, mom, qual in quality_momentum_candidates[:top_n]:
-
             print(f"      {ticker}: score={score:.1f}, momentum={mom:.1f}%, quality={qual:.1f}")
 
-
-
         return selected_tickers
-
     else:
-
         print(f"   ❌ No quality + momentum candidates found")
-
         return []
 
 
@@ -5671,6 +5485,7 @@ def select_ai_elite_with_training(
     top_n: int = 10,
     ai_elite_models: dict = None,
     force_train: bool = False,
+    run_selection: bool = True,
 ) -> tuple:
 
     """
@@ -5696,6 +5511,7 @@ def select_ai_elite_with_training(
         ai_elite_models: Dict of models (mutated in-place). Pass {} on first call.
 
         force_train: If True, always retrain even if model exists on disk
+        run_selection: If False, only prepare/load model state and skip stock selection
 
 
 
@@ -6001,6 +5817,9 @@ def select_ai_elite_with_training(
             else:
                 print(f"   ⚠️ {strategy_label}: Walk-forward retraining disabled and no shared model loaded")
 
+            if not run_selection:
+                return [], ai_elite_models
+
             selected = select_ai_elite_stocks(
                 all_tickers,
                 ticker_data_grouped,
@@ -6155,7 +5974,8 @@ def select_ai_elite_with_training(
 
             print(f"   ⚠️ {strategy_label}: Training failed, no model produced")
 
-
+        if not run_selection:
+            return [], ai_elite_models
 
         # Step 3: Select stocks using trained model
 
@@ -7203,7 +7023,7 @@ def _select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top
     """Wrapper for AI Regime strategy.
 
     Note: This strategy requires a predicted_strategy from the AI Regime model.
-    When called from the simple registry without context, it falls back to momentum.
+    When called from the simple registry without context, it returns [].
     For full functionality, use the AI Regime system directly.
     """
     try:
@@ -7214,17 +7034,16 @@ def _select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top
             regime_model = AIRegimeStrategy()
             predicted_strategy = regime_model.predict_best_strategy(ticker_data_grouped, current_date)
             if predicted_strategy is None:
-                predicted_strategy = "momentum"
+                return []
         except Exception:
-            # Default to momentum if prediction fails
-            predicted_strategy = "momentum"
+            return []
 
         return select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top_n, predicted_strategy)
     except ImportError:
         return []
     except Exception as e:
-        print(f"  ⚠️ AI Regime fallback to momentum: {e}")
-        return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
+        print(f"  ⚠️ AI Regime failed: {e}")
+        return []
 
 
 
@@ -7250,15 +7069,15 @@ def _select_ai_champion_stocks(all_tickers, ticker_data_grouped, current_date, t
     except ImportError:
         return []
     except Exception as e:
-        print(f"  ⚠️ AI Champion fallback to AI Elite: {e}")
-        return select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0]
+        print(f"  ⚠️ AI Champion failed: {e}")
+        return []
 
 
 def _select_universal_model_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
     """Wrapper for Universal Model strategy.
 
     Note: This strategy requires a trained model, business_days list, and current_day_idx.
-    When called from the simple registry without context, it falls back to momentum.
+    When called from the simple registry without context, it returns [].
     For full functionality, use the Universal Model system directly.
     """
     try:
@@ -7267,7 +7086,7 @@ def _select_universal_model_stocks(all_tickers, ticker_data_grouped, current_dat
         # Create business days list from ticker data
         sample_ticker = next(iter(ticker_data_grouped.keys()), None)
         if sample_ticker is None:
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
+            return []
 
         sample_df = ticker_data_grouped[sample_ticker]
         business_days = sorted(sample_df.index.tolist())
@@ -7287,8 +7106,8 @@ def _select_universal_model_stocks(all_tickers, ticker_data_grouped, current_dat
     except ImportError:
         return []
     except Exception as e:
-        print(f"  ⚠️ Universal Model fallback to momentum: {e}")
-        return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
+        print(f"  ⚠️ Universal Model failed: {e}")
+        return []
 
 
 def _select_savgol_trend_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
@@ -7298,7 +7117,7 @@ def _select_savgol_trend_stocks(all_tickers, ticker_data_grouped, current_date, 
 
         sample_ticker = next(iter(ticker_data_grouped.keys()), None)
         if sample_ticker is None:
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
+            return []
 
         sample_df = ticker_data_grouped[sample_ticker]
         business_days = sorted(sample_df.index.tolist())
@@ -7326,8 +7145,8 @@ def _select_savgol_trend_stocks(all_tickers, ticker_data_grouped, current_date, 
     except ImportError:
         return []
     except Exception as e:
-        print(f"  ⚠️ SavGol Trend fallback to momentum: {e}")
-        return select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
+        print(f"  ⚠️ SavGol Trend failed: {e}")
+        return []
 
 
 

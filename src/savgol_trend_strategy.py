@@ -1029,35 +1029,9 @@ class SavgolTrendStrategy:
                 for i in range(len(batch_predictions))
             ]
         except Exception:
-            # Fallback to individual predictions if batch fails
-            predictions = []
-            for i, (ticker, features) in enumerate(ticker_map):
-                try:
-                    single_row = pd.DataFrame([batch_data[i]], columns=self.feature_cols)
-                    pred = float(self.model.predict(single_row)[0])
-                    predictions.append((ticker, pred, features))
-                except Exception:
-                    continue
+            return []
 
         return predictions
-
-    def fallback_selection(
-        self,
-        predictions: List[Tuple[str, float, Dict[str, float]]],
-        top_n: int,
-    ) -> List[str]:
-        """Fallback to a simpler momentum/risk-adjusted ranking."""
-        ranked = sorted(
-            predictions,
-            key=lambda item: (
-                item[2].get("risk_adj_mom_3m", 0.0),
-                item[2].get("perf_3m", 0.0),
-                item[2].get("sg_long_slope", 0.0),
-            ),
-            reverse=True,
-        )
-        return [ticker for ticker, _, _ in ranked[:top_n]]
-
 
 def select_savgol_trend_stocks(
     all_tickers: List[str],

@@ -4,7 +4,7 @@ AI Elite Filtered Strategy: Risk-Adj Mom 3M + AI Elite confirmation filter
 Approach:
 1. Get top 20 stocks by Risk-Adj Mom 3M score (proven simple signal)
 2. Use AI Elite model to filter/re-rank down to top 10
-3. Fallback to pure Risk-Adj Mom 3M if no AI model available
+3. Return [] if no AI model is available
 
 This combines the best of both:
 - Risk-Adj Mom 3M: Proven, no overfitting, captures recent momentum
@@ -61,15 +61,15 @@ def select_ai_elite_filtered_stocks(
     
     # Step 2: Check if we have AI Elite models
     if per_ticker_models is None or len(per_ticker_models) == 0:
-        print(f"   ⚠️ AI Elite Filtered: No AI models available, using pure Risk-Adj Mom 3M")
-        return risk_adj_candidates[:top_n]
+        print(f"   ⚠️ AI Elite Filtered: No AI models available, returning empty")
+        return []
     
     # Check how many candidates have models
     candidates_with_models = [t for t in risk_adj_candidates if per_ticker_models.get(t) is not None]
     
     if len(candidates_with_models) < top_n:
-        print(f"   ⚠️ AI Elite Filtered: Only {len(candidates_with_models)} candidates have models, using pure Risk-Adj Mom 3M")
-        return risk_adj_candidates[:top_n]
+        print(f"   ⚠️ AI Elite Filtered: Only {len(candidates_with_models)} candidates have models, returning empty")
+        return []
     
     # Step 3: Use AI Elite to re-rank the pre-filtered candidates
     print(f"   🤖 AI Elite Filtered: Applying AI filter to {len(risk_adj_candidates)} candidates...")
@@ -83,8 +83,8 @@ def select_ai_elite_filtered_stocks(
     )
     
     if not ai_elite_picks:
-        print(f"   ⚠️ AI Elite Filtered: AI Elite returned empty, falling back to Risk-Adj Mom 3M")
-        return risk_adj_candidates[:top_n]
+        print(f"   ⚠️ AI Elite Filtered: AI Elite returned empty, returning empty")
+        return []
     
     # Step 4: Blend - use AI Elite ranking but ensure we don't stray too far from Risk-Adj Mom 3M
     # If AI Elite picks are all from the pre-filtered set, we're good

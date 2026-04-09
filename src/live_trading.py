@@ -659,8 +659,7 @@ def rebalance_portfolio(
 def get_strategy_tickers(strategy: str, all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Get the tickers to hold based on the selected strategy.
 
-    PREFERRED: Load from JSON file saved by backtesting (no recalculation needed).
-    FALLBACK: Recalculate using shared strategy functions (slower, may differ from backtest).
+    Load from JSON file saved by backtesting. If unavailable, return empty.
 
     Args:
         strategy: Strategy name
@@ -685,9 +684,9 @@ def get_strategy_tickers(strategy: str, all_tickers: List[str], ticker_data_grou
 
 
 def get_ai_strategy_tickers(all_tickers: List[str]) -> List[str]:
-    """AI Strategy: REMOVED - returns fallback to top tickers."""
-    print(f"   [WARN] AI Strategy has been removed. Returning top {TOP_N_STOCKS} tickers.")
-    return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
+    """AI Strategy: REMOVED - returns empty."""
+    print(f"   [WARN] AI Strategy has been removed. Returning empty.")
+    return []
 
 
 def get_3m_1y_ratio_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -768,10 +767,8 @@ def get_dynamic_bh_tickers(all_tickers: List[str], period: str, ticker_data_grou
                                     lookback_days=30, top_n=PORTFOLIO_SIZE, apply_performance_filter=True,
                                     filter_label="Dynamic BH 1M")
     else:
-        print(f"   [WARN] Unknown period: {period}, defaulting to 1y")
-        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date,
-                                    lookback_days=365, top_n=PORTFOLIO_SIZE, apply_performance_filter=True,
-                                    filter_label="Dynamic BH 1Y")
+        print(f"   [WARN] Unknown period: {period}, returning empty")
+        return []
 
 
 def get_static_bh_tickers(all_tickers: List[str], period: str, ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -795,9 +792,8 @@ def get_static_bh_tickers(all_tickers: List[str], period: str, ticker_data_group
         return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date,
                                     lookback_days=30, top_n=PORTFOLIO_SIZE)
     else:
-        print(f"   [WARN] Unknown period: {period}, defaulting to 1y")
-        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date,
-                                    lookback_days=365, top_n=PORTFOLIO_SIZE)
+        print(f"   [WARN] Unknown period: {period}, returning empty")
+        return []
 
 
 def get_quality_momentum_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -810,13 +806,9 @@ def get_quality_momentum_tickers(all_tickers: List[str], ticker_data_grouped: Di
 
 
 def get_multitask_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
-    """Multi-Task Learning Strategy: DISABLED - fallback to momentum."""
-    print(f"   [WARN] Multi-Task strategy disabled, falling back to momentum-based selection")
-    try:
-        return get_dynamic_bh_1y_tickers(all_tickers, ticker_data_grouped)
-    except Exception as e:
-        print(f"   [FAIL] Multi-Task failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
-        return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
+    """Multi-Task Learning Strategy: DISABLED - returns empty."""
+    print(f"   [WARN] Multi-Task strategy disabled, returning empty")
+    return []
 
 
 def get_turnaround_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -910,13 +902,9 @@ def get_volatility_ensemble_tickers(all_tickers: List[str], ticker_data_grouped:
 
 
 def get_ai_volatility_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
-    """AI-Enhanced Volatility Ensemble Strategy: DISABLED - fallback to regular volatility ensemble."""
-    print(f"   [WARN] AI Volatility Ensemble disabled, falling back to regular Volatility Ensemble")
-    try:
-        return get_volatility_ensemble_tickers(all_tickers, ticker_data_grouped)
-    except Exception as e:
-        print(f"   [FAIL] AI Volatility Ensemble failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
-        return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
+    """AI-Enhanced Volatility Ensemble Strategy: DISABLED - returns empty."""
+    print(f"   [WARN] AI Volatility Ensemble disabled, returning empty")
+    return []
 
 
 def get_correlation_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -1046,13 +1034,9 @@ def get_options_sentiment_tickers(all_tickers: List[str], ticker_data_grouped: D
 
 
 def get_ml_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
-    """ML Ensemble Strategy: DISABLED - fallback to momentum."""
-    print(f"   [WARN] ML Ensemble disabled, falling back to momentum-based selection")
-    try:
-        return get_dynamic_bh_1y_tickers(all_tickers, ticker_data_grouped)
-    except Exception as e:
-        print(f"   [FAIL] ML Ensemble failed: {e}. Falling back to top {TOP_N_STOCKS} tickers")
-        return all_tickers[:TOP_N_STOCKS] if len(all_tickers) >= TOP_N_STOCKS else all_tickers
+    """ML Ensemble Strategy: DISABLED - returns empty."""
+    print(f"   [WARN] ML Ensemble disabled, returning empty")
+    return []
 
 
 def get_price_acceleration_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -1389,13 +1373,8 @@ def get_inverse_etf_hedge_tickers(all_tickers: List[str], ticker_data_grouped: D
 
 def get_trend_atr_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Trend ATR Strategy: ATR-based trend following."""
-    # Use top performers as fallback
-    from shared_strategies import select_top_performers
-
     print(f"   📊 Trend ATR: Processing {len(all_tickers)} tickers")
-
-    current_date = datetime.now(timezone.utc)
-    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+    return []
 
 
 def get_sector_rotation_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -1420,13 +1399,8 @@ def get_volatility_adj_mom_tickers(all_tickers: List[str], ticker_data_grouped: 
 
 def get_enhanced_volatility_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Enhanced Volatility Strategy: ATR-based stops and take-profits."""
-    # Use top performers as fallback
-    from shared_strategies import select_top_performers
-
     print(f"   📊 Enhanced Volatility: Processing {len(all_tickers)} tickers")
-
-    current_date = datetime.now(timezone.utc)
-    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+    return []
 
 
 def get_concentrated_3m_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -1441,13 +1415,8 @@ def get_concentrated_3m_tickers(all_tickers: List[str], ticker_data_grouped: Dic
 
 def get_analyst_rec_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Analyst Recommendations Strategy: Consensus analyst ratings."""
-    # Use top performers as fallback
-    from shared_strategies import select_top_performers
-
     print(f"   📊 Analyst Recommendations: Processing {len(all_tickers)} tickers")
-
-    current_date = datetime.now(timezone.utc)
-    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+    return []
 
 
 # Monthly rebalance strategies

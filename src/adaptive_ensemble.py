@@ -127,15 +127,14 @@ class AdaptiveMetaEnsemble:
                 break
         
         if market_proxy is None or len(market_proxy) < 30:
-            # Fallback: use average of all tickers
-            return 'neutral'
+            return None
         
         try:
             # Get recent data (last 30 days)
             # Convert current_date to pandas Timestamp with timezone
             close_prices = market_proxy["close"].dropna()
             if len(close_prices) < 10:
-                return 'neutral'
+                return None
             
             # Calculate metrics
             daily_returns = close_prices.pct_change().dropna()
@@ -167,7 +166,7 @@ class AdaptiveMetaEnsemble:
             
         except Exception as e:
             print(f"   ⚠️ Regime detection error: {e}")
-            return 'neutral'
+            return None
     
     def get_strategy_picks(self, strategy_name: str, all_tickers: List[str],
                           ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -332,6 +331,9 @@ class AdaptiveMetaEnsemble:
             current_date,
             price_history_cache=price_history_cache,
         )
+        if self.current_regime is None:
+            print("   ❌ Adaptive Ensemble: Could not determine market regime")
+            return []
         
         # 2. Get picks from each strategy
         strategy_picks = {}
@@ -367,10 +369,8 @@ class AdaptiveMetaEnsemble:
         consensus_picks = self.get_consensus_picks(strategy_picks, weights)
         
         if not consensus_picks:
-            print(f"   ⚠️ No consensus picks found, using top strategy picks")
-            # Fallback: use picks from highest-weighted strategy
-            best_strategy = max(weights.items(), key=lambda x: x[1])[0]
-            return strategy_picks.get(best_strategy, [])[:top_n]
+            print(f"   ⚠️ No consensus picks found, returning empty")
+            return []
         
         # 5. Return top N stocks
         selected_tickers = [ticker for ticker, score in consensus_picks[:top_n]]

@@ -85,12 +85,14 @@ def _init_parallel_strategy_worker(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     initial_top_tickers: List[str],
     price_history_cache=None,
+    ai_elite_model_path: Optional[str] = None,
 ) -> None:
     global _PARALLEL_STRATEGY_WORKER_CONTEXT
     _PARALLEL_STRATEGY_WORKER_CONTEXT = {
         "ticker_data_grouped": ticker_data_grouped,
         "initial_top_tickers": list(initial_top_tickers),
         "price_history_cache": price_history_cache,
+        "ai_elite_model_path": ai_elite_model_path,
     }
 
 
@@ -98,11 +100,13 @@ def _run_parallel_strategy_selection_task(
     strategy_name: str,
     current_date: datetime,
     top_n: int,
+    runtime_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     import os
     import time as _time
 
     started_at = _time.time()
+    runtime_context = runtime_context or {}
     ticker_data_grouped = _PARALLEL_STRATEGY_WORKER_CONTEXT["ticker_data_grouped"]
     initial_top_tickers = _PARALLEL_STRATEGY_WORKER_CONTEXT["initial_top_tickers"]
     price_history_cache = _PARALLEL_STRATEGY_WORKER_CONTEXT.get("price_history_cache")
@@ -266,6 +270,19 @@ def _run_parallel_strategy_selection_task(
             current_date=current_date,
             top_n=top_n,
             price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "ai_elite":
+        from ai_elite_strategy import select_ai_elite_stocks
+
+        model_path = runtime_context.get("ai_elite_model_path") or _PARALLEL_STRATEGY_WORKER_CONTEXT.get("ai_elite_model_path")
+        selected = select_ai_elite_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            shared_model_path=model_path,
+            shared_model_token=runtime_context.get("ai_elite_model_token"),
+            max_prediction_workers=runtime_context.get("ai_elite_max_prediction_workers"),
         )
     else:
         from shared_strategies import get_strategy_tickers
@@ -1222,22 +1239,15 @@ def _smart_rebalance_portfolio(
     return updated_positions, updated_cash, final_stocks, total_transaction_costs, positions_changed
 
 
-def _run_ai_elite_step(
+def _prepare_ai_elite_step(
     initial_top_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime,
     day_count: int,
     ai_elite_models: Dict,
     ai_elite_last_train_days: Dict[str, int],
-    ai_elite_positions: Dict[str, Dict],
-    ai_elite_cash: float,
-    current_ai_elite_stocks: List[str],
-    ai_elite_transaction_costs: float,
-    ai_elite_portfolio_value: float,
-    ai_elite_last_rebalance_value: float,
-    close_price_cache: Dict[str, float],
-) -> Tuple[Dict, Dict[str, int], Dict[str, Dict], float, List[str], float, float, bool, float]:
-    """Run one AI Elite backtest step and return updated state."""
+) -> Tuple[Dict, Dict[str, int], float, Dict[str, Any]]:
+    """Prepare AI Elite model state in main and publish worker runtime metadata."""
     from shared_strategies import select_ai_elite_with_training
 
     should_train_ai_elite = False
@@ -1257,13 +1267,14 @@ def _run_ai_elite_step(
         print(f"   📊 AI Elite: Using existing model (trained {days_ago} days ago)")
 
     selection_started_at = time.perf_counter()
-    new_ai_elite_stocks, ai_elite_models = select_ai_elite_with_training(
+    _, ai_elite_models = select_ai_elite_with_training(
         all_tickers=initial_top_tickers,
         ticker_data_grouped=ticker_data_grouped,
         current_date=current_date,
         top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
         ai_elite_models=ai_elite_models,
         force_train=should_train_ai_elite,
+        run_selection=False,
     )
     selection_elapsed = time.perf_counter() - selection_started_at
 
@@ -1271,6 +1282,34 @@ def _run_ai_elite_step(
         for ticker in initial_top_tickers:
             ai_elite_last_train_days[ticker] = day_count
 
+    model_path = str(Path("logs/models/_shared_base_ai_elite.joblib").resolve())
+    model_token = None
+    if os.path.exists(model_path):
+        stat = os.stat(model_path)
+        model_token = f"{stat.st_mtime_ns}:{stat.st_size}"
+
+    worker_runtime_context = {
+        "ai_elite_model_path": model_path,
+        "ai_elite_model_token": model_token,
+        "ai_elite_max_prediction_workers": 1,
+    }
+    return ai_elite_models, ai_elite_last_train_days, selection_elapsed, worker_runtime_context
+
+
+def _apply_ai_elite_selection(
+    day_count: int,
+    ai_elite_positions: Dict[str, Dict],
+    ai_elite_cash: float,
+    current_ai_elite_stocks: List[str],
+    ai_elite_transaction_costs: float,
+    ai_elite_portfolio_value: float,
+    ai_elite_last_rebalance_value: float,
+    close_price_cache: Dict[str, float],
+    new_ai_elite_stocks: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+) -> Tuple[Dict[str, Dict], float, List[str], float, float, bool]:
+    """Apply an already-computed AI Elite selection to the portfolio state."""
     rebalanced_flag = False
     if new_ai_elite_stocks:
         print(f"   📊 AI Elite Day {day_count}: {new_ai_elite_stocks}")
@@ -1297,6 +1336,64 @@ def _run_ai_elite_step(
         ai_elite_transaction_costs += rebalance_costs
         ai_elite_last_rebalance_value = ai_elite_portfolio_value
 
+    return ai_elite_positions, ai_elite_cash, current_ai_elite_stocks, ai_elite_transaction_costs, ai_elite_last_rebalance_value, rebalanced_flag
+
+
+def _run_ai_elite_step(
+    initial_top_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    day_count: int,
+    ai_elite_models: Dict,
+    ai_elite_last_train_days: Dict[str, int],
+    ai_elite_positions: Dict[str, Dict],
+    ai_elite_cash: float,
+    current_ai_elite_stocks: List[str],
+    ai_elite_transaction_costs: float,
+    ai_elite_portfolio_value: float,
+    ai_elite_last_rebalance_value: float,
+    close_price_cache: Dict[str, float],
+) -> Tuple[Dict, Dict[str, int], Dict[str, Dict], float, List[str], float, float, bool, float]:
+    """Run one AI Elite backtest step entirely in main."""
+    from ai_elite_strategy import select_ai_elite_stocks
+
+    ai_elite_models, ai_elite_last_train_days, prep_elapsed, _ = _prepare_ai_elite_step(
+        initial_top_tickers=initial_top_tickers,
+        ticker_data_grouped=ticker_data_grouped,
+        current_date=current_date,
+        day_count=day_count,
+        ai_elite_models=ai_elite_models,
+        ai_elite_last_train_days=ai_elite_last_train_days,
+    )
+    inference_started_at = time.perf_counter()
+    new_ai_elite_stocks = select_ai_elite_stocks(
+        all_tickers=initial_top_tickers,
+        ticker_data_grouped=ticker_data_grouped,
+        current_date=current_date,
+        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+        per_ticker_models=ai_elite_models,
+    )
+    inference_elapsed = time.perf_counter() - inference_started_at
+    (
+        ai_elite_positions,
+        ai_elite_cash,
+        current_ai_elite_stocks,
+        ai_elite_transaction_costs,
+        ai_elite_last_rebalance_value,
+        rebalanced_flag,
+    ) = _apply_ai_elite_selection(
+        day_count=day_count,
+        ai_elite_positions=ai_elite_positions,
+        ai_elite_cash=ai_elite_cash,
+        current_ai_elite_stocks=current_ai_elite_stocks,
+        ai_elite_transaction_costs=ai_elite_transaction_costs,
+        ai_elite_portfolio_value=ai_elite_portfolio_value,
+        ai_elite_last_rebalance_value=ai_elite_last_rebalance_value,
+        close_price_cache=close_price_cache,
+        new_ai_elite_stocks=new_ai_elite_stocks,
+        ticker_data_grouped=ticker_data_grouped,
+        current_date=current_date,
+    )
     return (
         ai_elite_models,
         ai_elite_last_train_days,
@@ -1306,7 +1403,7 @@ def _run_ai_elite_step(
         ai_elite_transaction_costs,
         ai_elite_last_rebalance_value,
         rebalanced_flag,
-        selection_elapsed,
+        prep_elapsed + inference_elapsed,
     )
 
 
@@ -2112,6 +2209,7 @@ def _run_portfolio_backtest_walk_forward(
         "bb_breakout": "BB Breakout",
         "bb_rsi_combo": "BB RSI Combo",
         "trend_breakout": "Trend Breakout",
+        "ai_elite": "AI Elite",
     }
 
     def _format_elapsed(elapsed_seconds: float) -> str:
@@ -2147,11 +2245,11 @@ def _run_portfolio_backtest_walk_forward(
                 return prefix
         return _STRATEGY_TIMING_NAME_ALIASES.get(strategy_name, strategy_name)
 
-    def _time_strategy_phase_call(strategy_name: str, phase: str, fn, *args, **kwargs):
+    def _time_strategy_phase_call(timing_name: str, phase: str, fn, *args, **kwargs):
         started_at = time.perf_counter()
         result = fn(*args, **kwargs)
         _record_strategy_timing(
-            strategy_name,
+            timing_name,
             time.perf_counter() - started_at,
             phase=phase,
         )
@@ -3549,11 +3647,12 @@ def _run_portfolio_backtest_walk_forward(
     parallel_strategy_executor = None
     if config.ENABLE_PARALLEL_STRATEGIES:
         try:
+            ai_elite_worker_model_path = str(Path("logs/models/_shared_base_ai_elite.joblib").resolve())
             parallel_strategy_executor = ProcessPoolExecutor(
                 max_workers=2,
                 mp_context=get_context("spawn"),
                 initializer=_init_parallel_strategy_worker,
-                    initargs=(ticker_data_grouped, initial_top_tickers, price_history_cache),
+                    initargs=(ticker_data_grouped, initial_top_tickers, price_history_cache, ai_elite_worker_model_path),
             )
             print(
                 "   🚦 Parallel strategy queue enabled: "
@@ -3903,9 +4002,12 @@ def _run_portfolio_backtest_walk_forward(
         }
         active_close_price_cache = _build_daily_close_price_cache(ticker_data_grouped, current_date)
         parallel_strategy_futures: Dict[str, Any] = {}
+        ai_elite_selection_pending = False
 
         if parallel_strategy_executor is not None:
             for strategy_name, strategy_config in getattr(config, "_PARALLEL_STRATEGY_PILOT_CONFIG", {}).items():
+                if strategy_name == "ai_elite":
+                    continue
                 enable_flag_name = str(strategy_config.get("enable_flag", ""))
                 if not enable_flag_name or not bool(getattr(config, enable_flag_name, False)):
                     continue
@@ -3919,13 +4021,16 @@ def _run_portfolio_backtest_walk_forward(
                     strategy_name,
                     current_date,
                     top_n,
+                    None,
                 )
                 daily_queue_stats["tasks_dispatched"] += 1
 
-        def _resolve_parallel_strategy_selection(strategy_name: str, fallback_fn):
+        def _resolve_parallel_strategy_selection(strategy_name: str, fallback_fn=None):
             future = parallel_strategy_futures.pop(strategy_name, None)
             if future is None:
-                return fallback_fn()
+                daily_queue_stats["fallbacks"] += 1
+                print(f"   ⚠️ Strategy queue missing result for {strategy_name}; returning empty selection")
+                return []
             try:
                 task_result = future.result()
                 elapsed = float(task_result.get("elapsed", 0.0))
@@ -3944,8 +4049,8 @@ def _run_portfolio_backtest_walk_forward(
                 return selected
             except Exception as e:
                 daily_queue_stats["fallbacks"] += 1
-                print(f"   ⚠️ Strategy queue fallback for {strategy_name}: {e}")
-                return fallback_fn()
+                print(f"   ⚠️ Strategy queue failed for {strategy_name}: {e}")
+                return []
 
         # VOTING ENSEMBLE AI REBALANCE TRAINING
         # Run the heavy cache collection/training early so crashes show up immediately.
@@ -4099,30 +4204,71 @@ def _run_portfolio_backtest_walk_forward(
                 (
                     ai_elite_models,
                     ai_elite_last_train_days,
-                    ai_elite_positions,
-                    ai_elite_cash,
-                    current_ai_elite_stocks,
-                    ai_elite_transaction_costs,
-                    ai_elite_last_rebalance_value,
-                    rebalanced_flag,
-                    ai_elite_selection_elapsed,
-                ) = _run_ai_elite_step(
+                    ai_elite_prepare_elapsed,
+                    ai_elite_worker_runtime_context,
+                ) = _prepare_ai_elite_step(
                     initial_top_tickers=initial_top_tickers,
                     ticker_data_grouped=ticker_data_grouped,
                     current_date=current_date,
                     day_count=day_count,
                     ai_elite_models=ai_elite_models,
                     ai_elite_last_train_days=ai_elite_last_train_days,
-                    ai_elite_positions=ai_elite_positions,
-                    ai_elite_cash=ai_elite_cash,
-                    current_ai_elite_stocks=current_ai_elite_stocks,
-                    ai_elite_transaction_costs=ai_elite_transaction_costs,
-                    ai_elite_portfolio_value=ai_elite_portfolio_value,
-                    ai_elite_last_rebalance_value=ai_elite_last_rebalance_value,
-                    close_price_cache=active_close_price_cache,
                 )
-                _record_strategy_timing("AI Elite", ai_elite_selection_elapsed, phase="selection")
-                strategies_rebalanced_today['AI Elite'] = rebalanced_flag
+                _record_strategy_timing("AI Elite", ai_elite_prepare_elapsed, phase="selection")
+
+                ai_elite_queue_config = getattr(config, "_PARALLEL_STRATEGY_PILOT_CONFIG", {}).get("ai_elite", {})
+                ai_elite_queue_enabled = (
+                    parallel_strategy_executor is not None
+                    and bool(ai_elite_queue_config)
+                    and bool(getattr(config, str(ai_elite_queue_config.get("enable_flag", "")), False))
+                )
+                if ai_elite_queue_enabled:
+                    parallel_strategy_futures["ai_elite"] = parallel_strategy_executor.submit(
+                        _run_parallel_strategy_selection_task,
+                        "ai_elite",
+                        current_date,
+                        PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        ai_elite_worker_runtime_context,
+                    )
+                    daily_queue_stats["tasks_dispatched"] += 1
+                    ai_elite_selection_pending = True
+                else:
+                    from ai_elite_strategy import select_ai_elite_stocks
+
+                    ai_elite_inference_started_at = time.perf_counter()
+                    new_ai_elite_stocks = select_ai_elite_stocks(
+                        all_tickers=initial_top_tickers,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        per_ticker_models=ai_elite_models,
+                    )
+                    _record_strategy_timing(
+                        "AI Elite",
+                        time.perf_counter() - ai_elite_inference_started_at,
+                        phase="selection",
+                    )
+                    (
+                        ai_elite_positions,
+                        ai_elite_cash,
+                        current_ai_elite_stocks,
+                        ai_elite_transaction_costs,
+                        ai_elite_last_rebalance_value,
+                        rebalanced_flag,
+                    ) = _apply_ai_elite_selection(
+                        day_count=day_count,
+                        ai_elite_positions=ai_elite_positions,
+                        ai_elite_cash=ai_elite_cash,
+                        current_ai_elite_stocks=current_ai_elite_stocks,
+                        ai_elite_transaction_costs=ai_elite_transaction_costs,
+                        ai_elite_portfolio_value=ai_elite_portfolio_value,
+                        ai_elite_last_rebalance_value=ai_elite_last_rebalance_value,
+                        close_price_cache=active_close_price_cache,
+                        new_ai_elite_stocks=new_ai_elite_stocks,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                    )
+                    strategies_rebalanced_today['AI Elite'] = rebalanced_flag
             except Exception as e:
                 print(f"   ⚠️ AI Elite error: {e}")
 
@@ -9450,6 +9596,36 @@ def _run_portfolio_backtest_walk_forward(
                     risk_adj_mom_1m_monthly_invested_value += risk_adj_mom_1m_monthly_positions[ticker].get('value', 0.0)
         risk_adj_mom_1m_monthly_portfolio_value = risk_adj_mom_1m_monthly_invested_value + risk_adj_mom_1m_monthly_cash
         risk_adj_mom_1m_monthly_portfolio_history.append(risk_adj_mom_1m_monthly_portfolio_value)
+
+        if ai_elite_selection_pending:
+            try:
+                new_ai_elite_stocks = _resolve_parallel_strategy_selection("ai_elite")
+                (
+                    ai_elite_positions,
+                    ai_elite_cash,
+                    current_ai_elite_stocks,
+                    ai_elite_transaction_costs,
+                    ai_elite_last_rebalance_value,
+                    rebalanced_flag,
+                ) = _apply_ai_elite_selection(
+                    day_count=day_count,
+                    ai_elite_positions=ai_elite_positions,
+                    ai_elite_cash=ai_elite_cash,
+                    current_ai_elite_stocks=current_ai_elite_stocks,
+                    ai_elite_transaction_costs=ai_elite_transaction_costs,
+                    ai_elite_portfolio_value=ai_elite_portfolio_value,
+                    ai_elite_last_rebalance_value=ai_elite_last_rebalance_value,
+                    close_price_cache=active_close_price_cache,
+                    new_ai_elite_stocks=new_ai_elite_stocks,
+                    ticker_data_grouped=ticker_data_grouped,
+                    current_date=current_date,
+                )
+                strategies_rebalanced_today['AI Elite'] = rebalanced_flag
+            except Exception as e:
+                print(f"   ⚠️ AI Elite queued resolution error: {e}")
+                strategies_rebalanced_today['AI Elite'] = False
+            finally:
+                ai_elite_selection_pending = False
 
         # Update AI ELITE portfolio value daily
         ai_elite_invested_value = 0.0

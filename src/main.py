@@ -59,7 +59,7 @@ if args.no_download:
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
     INITIAL_BALANCE, INVESTMENT_PER_STOCK, TRANSACTION_COST,
-    BACKTEST_DAYS,
+    BACKTEST_DAYS, BACKTEST_END_DATE,
     TOP_CACHE_PATH, N_TOP_TICKERS, NUM_PROCESSES, PARALLEL_THRESHOLD, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES, PAUSE_BETWEEN_YF_CALLS,
     PORTFOLIO_SIZE,
         ENABLE_1YEAR_BACKTEST,
@@ -497,20 +497,37 @@ def main(
         print(f"⚠️ Could not set multiprocessing start method to 'spawn': {e}. This might cause issues with CUDA and multiprocessing.")
 
     # Get accurate time from internet source for consistent backtesting
-    end_date = get_internet_time()
+    internet_now = get_internet_time()
 
     # IMPORTANT: Use last trading day, not today's date (to avoid holiday issues)
     from data_utils import _get_last_trading_day
     last_trading_day = _get_last_trading_day()
-    bt_end = datetime.combine(last_trading_day, datetime.min.time(), tzinfo=timezone.utc)
 
-    # Update end_date to last trading day for consistency
+    configured_backtest_end = BACKTEST_END_DATE
+    if configured_backtest_end:
+        if isinstance(configured_backtest_end, str):
+            configured_backtest_end = datetime.strptime(configured_backtest_end, "%Y-%m-%d")
+        elif isinstance(configured_backtest_end, datetime):
+            configured_backtest_end = configured_backtest_end
+        else:
+            raise ValueError(
+                "BACKTEST_END_DATE must be False or a date string like '2026-04-02'"
+            )
+
+        bt_end = datetime.combine(
+            configured_backtest_end.date(),
+            datetime.min.time(),
+            tzinfo=timezone.utc,
+        )
+        print(f"📅 Today: {internet_now.date()}, Last Trading Day: {last_trading_day}")
+        print(f"📅 Using configured backtest end date: {bt_end.date()}")
+    else:
+        bt_end = datetime.combine(last_trading_day, datetime.min.time(), tzinfo=timezone.utc)
+        print(f"📅 Today: {internet_now.date()}, Last Trading Day: {last_trading_day}")
+        print(f"📅 Using last trading day for backtesting: {bt_end.date()}")
+
+    # Use the configured/debug end date for data fetching too so ticker ranking is reproducible.
     end_date = bt_end
-
-    print(f"📅 Today: {get_internet_time().date()}, Last Trading Day: {last_trading_day}")
-    print(f"📅 Using last trading day for backtesting: {bt_end.date()}")
-
-    # Store TODAY's date for data fetching (always fetch up to current date)
     today_for_data_fetch = end_date
 
 
@@ -849,7 +866,8 @@ def main(
             return_tickers=True,
             n_top=N_TOP_TICKERS,
             fcf_min_threshold=fcf_threshold,
-            ebitda_min_threshold=ebitda_threshold
+            ebitda_min_threshold=ebitda_threshold,
+            performance_end_date=bt_end,
         )
 
 

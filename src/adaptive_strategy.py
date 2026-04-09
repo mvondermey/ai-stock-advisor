@@ -110,8 +110,7 @@ class AdaptiveStrategy:
         if self.current_strategy in strategy_functions:
             return strategy_functions[self.current_strategy](all_tickers)
         else:
-            # Fallback to 3m_1y_ratio
-            return select_3m_1y_ratio_stocks(all_tickers, {}, current_date, TOP_N_STOCKS)
+            return []
     
     def update_strategy_performance(self, strategy: str, performance: float):
         """Update performance tracking for a strategy"""

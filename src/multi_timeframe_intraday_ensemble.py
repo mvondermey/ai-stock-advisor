@@ -174,23 +174,13 @@ def _calculate_multi_timeframe_intraday_signals_from_cache(
             continue
 
         if hourly_data is None or hourly_data.empty:
-            if timeframe == "medium_term":
-                signals[timeframe] = calculate_medium_term_daily_fallback(daily_slice)
-            elif timeframe == "short_term":
-                signals[timeframe] = calculate_short_term_daily_fallback(daily_slice)
-            else:
-                signals[timeframe] = 0.0
+            signals[timeframe] = 0.0
             continue
 
         start_ts = current_ts - timedelta(days=lookback_days)
         hourly_slice = hourly_data[(hourly_data.index >= start_ts) & (hourly_data.index <= current_ts)].copy()
         if hourly_slice.empty:
-            if timeframe == "medium_term":
-                signals[timeframe] = calculate_medium_term_daily_fallback(daily_slice)
-            elif timeframe == "short_term":
-                signals[timeframe] = calculate_short_term_daily_fallback(daily_slice)
-            else:
-                signals[timeframe] = 0.0
+            signals[timeframe] = 0.0
             continue
 
         if timeframe == "medium_term":
@@ -305,49 +295,6 @@ def calculate_daily_momentum(data: pd.DataFrame, current_date: datetime = None) 
     return momentum_1y * 0.5 + momentum_6m * 0.3 + momentum_3m * 0.2
 
 
-def calculate_medium_term_daily_fallback(data: pd.DataFrame) -> float:
-    """Match the existing daily-derived medium-term signal when hourly data is unavailable."""
-    close = _clean_close_series(data)
-    if len(close) < 20:
-        return 0.0
-
-    momentum_30d = (close.iloc[-1] / close.iloc[0] - 1) * 100
-    recent_10d = close.tail(10)
-    prev_10d = close.tail(20).head(10)
-    if len(prev_10d) == 0:
-        return 0.0
-    recent_avg = recent_10d.mean()
-    prev_avg = prev_10d.mean()
-    if pd.isna(prev_avg) or prev_avg == 0:
-        return 0.0
-    trend_signal = ((recent_avg / prev_avg) - 1) * 100
-
-    returns = close.pct_change().dropna()
-    volatility = returns.std() * np.sqrt(252) * 100
-    vol_adjusted = momentum_30d / (volatility + 1)
-    return vol_adjusted * 0.7 + trend_signal * 0.3
-
-
-def calculate_short_term_daily_fallback(data: pd.DataFrame) -> float:
-    """Match the existing daily-derived short-term signal when hourly data is unavailable."""
-    close = _clean_close_series(data)
-    if len(close) < 5:
-        return 0.0
-
-    momentum_7d = (close.iloc[-1] / close.iloc[0] - 1) * 100
-    recent_3d = close.tail(3)
-    price_change = (recent_3d.iloc[-1] / recent_3d.iloc[0] - 1) * 100
-
-    if "Volume" in data.columns and len(data) >= 5:
-        recent_vol = data["Volume"].iloc[-5:].mean()
-        avg_vol = data["Volume"].mean()
-        volume_factor = min(recent_vol / (avg_vol + 1), 2.0)
-    else:
-        volume_factor = 1.0
-
-    return (momentum_7d * 0.5 + price_change * 0.3) * volume_factor
-
-
 def calculate_medium_term_intraday_momentum(data: pd.DataFrame) -> float:
     """Calculate medium-term momentum on 4-hour bars."""
     close = _clean_close_series(data)
@@ -421,23 +368,13 @@ def calculate_multi_timeframe_intraday_signals(
             continue
 
         if hourly_data is None or hourly_data.empty:
-            if timeframe == "medium_term":
-                signals[timeframe] = calculate_medium_term_daily_fallback(daily_slice)
-            elif timeframe == "short_term":
-                signals[timeframe] = calculate_short_term_daily_fallback(daily_slice)
-            else:
-                signals[timeframe] = 0.0
+            signals[timeframe] = 0.0
             continue
 
         start_ts = current_ts - timedelta(days=lookback_days)
         hourly_slice = hourly_data[(hourly_data.index >= start_ts) & (hourly_data.index <= current_ts)].copy()
         if hourly_slice.empty:
-            if timeframe == "medium_term":
-                signals[timeframe] = calculate_medium_term_daily_fallback(daily_slice)
-            elif timeframe == "short_term":
-                signals[timeframe] = calculate_short_term_daily_fallback(daily_slice)
-            else:
-                signals[timeframe] = 0.0
+            signals[timeframe] = 0.0
             continue
 
         if timeframe == "medium_term":

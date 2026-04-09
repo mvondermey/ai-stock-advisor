@@ -23,13 +23,18 @@ from pathlib import Path
 
 from model_training_safety import restore_native_model_artifacts
 
+_AI_ELITE_SHARED_MODEL_CACHE: Dict[Tuple[str, Optional[str]], any] = {}
+
 
 def select_ai_elite_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
     top_n: int = 10,
-    per_ticker_models: Dict[str, any] = None
+    per_ticker_models: Dict[str, any] = None,
+    shared_model_path: Optional[str] = None,
+    shared_model_token: Optional[str] = None,
+    max_prediction_workers: Optional[int] = None,
 ) -> List[str]:
     """
     AI Elite Strategy: ML-based scoring of momentum + dip opportunities
@@ -40,6 +45,9 @@ def select_ai_elite_stocks(
         current_date: Current date for analysis
         top_n: Number of stocks to select
         per_ticker_models: Dict of ticker -> trained model
+        shared_model_path: Optional path to a shared-base model for inference-only execution
+        shared_model_token: Optional cache-busting token for worker-side model reloads
+        max_prediction_workers: Optional override for prediction thread count
 
     Returns:
         List of selected ticker symbols
@@ -55,6 +63,13 @@ def select_ai_elite_stocks(
     # Ensure current_date is timezone-aware
     if current_date.tzinfo is None:
         current_date = current_date.replace(tzinfo=timezone.utc)
+
+    if per_ticker_models is None and shared_model_path:
+        shared_model = _load_shared_ai_elite_model_for_inference(shared_model_path, shared_model_token)
+        if shared_model is None:
+            print(f"   ⚠️ AI Elite: No shared model available for inference at {shared_model_path}")
+            return []
+        per_ticker_models = {"_shared_base": shared_model}
 
     # Filter out inverse ETFs - they should only be in inverse_etf_hedge strategy
     from config import INVERSE_ETFS
@@ -91,12 +106,16 @@ def select_ai_elite_stocks(
             _record_prediction_result(ticker_result, score, status)
 
     predict_args = []
+    shared_base_model = per_ticker_models.get('_shared_base') if isinstance(per_ticker_models, dict) else None
     for ticker in filtered_tickers:
         ticker_data = ticker_data_grouped.get(ticker)
-        ticker_model = per_ticker_models.get(ticker) if per_ticker_models else None
+        ticker_model = None
+        if isinstance(per_ticker_models, dict):
+            ticker_model = per_ticker_models.get(ticker, shared_base_model)
         predict_args.append((ticker, ticker_data, current_date, ticker_model))
 
-    n_workers = min(max(1, NUM_PROCESSES), len(predict_args)) if predict_args else 1
+    configured_workers = max_prediction_workers if max_prediction_workers is not None else NUM_PROCESSES
+    n_workers = min(max(1, configured_workers), len(predict_args)) if predict_args else 1
     use_threaded_prediction = n_workers > 1 and len(predict_args) >= PARALLEL_THRESHOLD
 
     if use_threaded_prediction:
@@ -109,11 +128,7 @@ def select_ai_elite_stocks(
                     _record_prediction_result(ticker_result, score, status)
         except Exception as e:
             print(f"   ⚠️ AI Elite: Threaded prediction failed ({type(e).__name__}: {e})")
-            print("   ↩️ AI Elite: Falling back to sequential prediction for this run")
-            print("   🛠️ AI Elite: If this keeps happening, disable threaded prediction again")
-            ai_scores.clear()
-            fail_reasons = {'not_in_data': 0, 'empty': 0, 'features_none': 0, 'no_model': 0, 'exception': 0}
-            _run_sequential_prediction()
+            return []
     else:
         _run_sequential_prediction()
 
@@ -513,6 +528,27 @@ def _load_or_create_model(model_path: Optional[str] = None):
     return None
 
 
+def _load_shared_ai_elite_model_for_inference(
+    model_path: str,
+    model_token: Optional[str] = None,
+):
+    """Load and cache the shared AI Elite model for inference-only worker execution."""
+    cache_key = (str(model_path), model_token)
+    cached_model = _AI_ELITE_SHARED_MODEL_CACHE.get(cache_key)
+    if cached_model is not None:
+        return cached_model
+
+    model = _load_or_create_model(model_path)
+    if model is None:
+        return None
+
+    _AI_ELITE_SHARED_MODEL_CACHE[cache_key] = model
+    stale_keys = [key for key in _AI_ELITE_SHARED_MODEL_CACHE.keys() if key[0] == str(model_path) and key != cache_key]
+    for stale_key in stale_keys:
+        _AI_ELITE_SHARED_MODEL_CACHE.pop(stale_key, None)
+    return model
+
+
 # NOTE: train_ai_elite_model was removed - training now happens in ai_elite_strategy_per_ticker.py
 # via train_shared_base_model(), called from shared_strategies.select_ai_elite_with_training()
 
@@ -798,10 +834,7 @@ def select_ai_elite_ensemble_stocks(
                     _record_result(ticker_result, score, status)
         except Exception as e:
             print(f"   ⚠️ AI Elite Ensemble: Threaded prediction failed ({type(e).__name__}: {e})")
-            print("   ↩️ AI Elite Ensemble: Falling back to sequential")
-            ai_scores.clear()
-            fail_reasons = {'not_in_data': 0, 'empty': 0, 'features_none': 0, 'no_model': 0, 'exception': 0}
-            _run_sequential()
+            return []
     else:
         _run_sequential()
 
@@ -986,10 +1019,7 @@ def select_ai_elite_rank_ensemble_stocks(
                     _record_result(ticker_result, score_map, status)
         except Exception as e:
             print(f"   ⚠️ AI Elite Rank Ensemble: Threaded prediction failed ({type(e).__name__}: {e})")
-            print("   ↩️ AI Elite Rank Ensemble: Falling back to sequential")
-            per_ticker_predictions.clear()
-            fail_reasons = {'not_in_data': 0, 'empty': 0, 'features_none': 0, 'no_model': 0, 'exception': 0}
-            _run_sequential()
+            return []
     else:
         _run_sequential()
 

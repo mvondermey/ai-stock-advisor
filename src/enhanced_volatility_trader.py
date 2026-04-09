@@ -424,12 +424,8 @@ class EnhancedVolatilityTrader:
             return scored_picks[:top_n]
             
         except Exception as e:
-            # Fallback: return top tickers with default scores
             print(f"   Error with {strategy_name}: {e}")
-            fallback_picks = []
-            for i, ticker in enumerate(all_tickers[:top_n]):
-                fallback_picks.append((ticker, 50.0 - i))  # Decreasing scores
-            return fallback_picks
+            return []
     
     def select_enhanced_stocks(self, all_tickers: List[str], 
                              ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -462,19 +458,9 @@ class EnhancedVolatilityTrader:
         filtered_count = {'no_data': 0, 'volatility': 0, 'momentum': 0, 'volume': 0, 'passed': 0}
         
         for ticker, strategy_scores in all_strategy_picks.items():
-            # Skip if no data available AND this isn't a fallback pick
             if ticker not in ticker_data_grouped:
-                # Check if this is a fallback pick (all scores are similar and around 50.0)
-                scores = [score for strategy, score in strategy_scores]
-                avg_score = sum(scores) / len(scores)
-                is_fallback = (avg_score >= 45.0 and avg_score <= 55.0 and  # Around 50.0
-                              max(scores) - min(scores) <= 5.0)  # All scores similar
-                if not is_fallback:
-                    filtered_count['no_data'] += 1
-                    continue  # Skip real picks with no data
-                # For fallback picks, use dummy data
-                current_price = 100.0  # Default price
-                volatility = 0.3  # Default volatility
+                filtered_count['no_data'] += 1
+                continue
             else:
                 # Calculate risk metrics with real data
                 current_price = ticker_data_grouped[ticker]['Close'].iloc[-1]
@@ -496,13 +482,8 @@ class EnhancedVolatilityTrader:
             
             atr = self.calculate_atr(ticker, ticker_data_grouped, current_date)
             
-            # For fallback picks, use reasonable default values
-            if ticker not in ticker_data_grouped:
-                momentum_score = 20.0  # Default momentum score (above 15.0 threshold)
-                volume_ratio = 1.5    # Default volume ratio (above 1.2 threshold)
-            else:
-                momentum_score = self.calculate_momentum_score(ticker, ticker_data_grouped, current_date)
-                volume_ratio = self.calculate_volume_ratio(ticker, ticker_data_grouped, current_date)
+            momentum_score = self.calculate_momentum_score(ticker, ticker_data_grouped, current_date)
+            volume_ratio = self.calculate_volume_ratio(ticker, ticker_data_grouped, current_date)
             
             # Apply filters
             if volatility > MAX_SINGLE_STOCK_VOLATILITY:
