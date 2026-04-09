@@ -62,6 +62,7 @@ from ai_elite_strategy import _calculate_market_return
 
 _inverse_etf_hedge_log = []  # List of (date, etf, market_decline) tuples
 _selector_result_memory_cache: Dict[str, List[str]] = {}
+_selector_universe_signature_memory_cache: Dict[Tuple[int, Tuple[str, ...]], str] = {}
 
 _CACHEABLE_REGISTRY_STRATEGIES = {
     "volatility_adj_mom",
@@ -95,13 +96,18 @@ def _selector_cache_key(
     current_date: Optional[datetime],
     top_n: int,
 ) -> Dict[str, object]:
-    normalized_tickers = sorted(str(ticker) for ticker in all_tickers)
+    normalized_tickers = tuple(sorted(str(ticker) for ticker in all_tickers))
+    signature_cache_key = (id(ticker_data_grouped), normalized_tickers)
+    universe_signature = _selector_universe_signature_memory_cache.get(signature_cache_key)
+    if universe_signature is None:
+        universe_signature = universe_signature_from_frames(ticker_data_grouped, list(normalized_tickers))
+        _selector_universe_signature_memory_cache[signature_cache_key] = universe_signature
     return {
         "strategy_name": strategy_name,
         "current_date": _normalize_selector_current_date(current_date),
         "top_n": int(top_n),
-        "tickers": normalized_tickers,
-        "universe_signature": universe_signature_from_frames(ticker_data_grouped, normalized_tickers),
+        "tickers": list(normalized_tickers),
+        "universe_signature": universe_signature,
     }
 
 
@@ -882,7 +888,7 @@ def calculate_volatility_adjusted_momentum(ticker_data, current_date=None, lookb
 
 def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame],
 
-                                     current_date: datetime = None, top_n: int = 20) -> List[str]:
+                                     current_date: datetime = None, top_n: int = 20, price_history_cache=None) -> List[str]:
 
     """
 
@@ -912,7 +918,7 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
 
     filtered_tickers = filter_tickers_by_performance(
 
-        tickers_to_use, ticker_data_grouped, current_date, "Vol-Adj Mom"
+        tickers_to_use, ticker_data_grouped, current_date, "Vol-Adj Mom", price_history_cache=price_history_cache
 
     )
 
@@ -1834,7 +1840,7 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
 
 def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame],
 
-                              current_date: datetime = None, top_n: int = 20) -> List[str]:
+                              current_date: datetime = None, top_n: int = 20, price_history_cache=None) -> List[str]:
 
     """
 
@@ -1884,7 +1890,7 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "3M/1Y Ratio"
+        all_tickers, ticker_data_grouped, current_date, "3M/1Y Ratio", price_history_cache=price_history_cache
 
     )
 
@@ -2228,7 +2234,7 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
 
 
 
-def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20, price_history_cache=None):
 
     """
 
@@ -2254,7 +2260,7 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
 
     filtered_tickers = filter_tickers_by_performance(
 
-        tickers_to_use, ticker_data_grouped, current_date, "Turnaround"
+        tickers_to_use, ticker_data_grouped, current_date, "Turnaround", price_history_cache=price_history_cache
 
     )
 
@@ -2500,7 +2506,7 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
 
 
 
-def select_1m_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+def select_1m_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20, price_history_cache=None):
 
     """
 
@@ -2532,7 +2538,7 @@ def select_1m_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
 
     filtered_tickers = filter_tickers_by_performance(
 
-        tickers_to_use, ticker_data_grouped, current_date, "1M/3M Ratio"
+        tickers_to_use, ticker_data_grouped, current_date, "1M/3M Ratio", price_history_cache=price_history_cache
 
     )
 
@@ -3046,7 +3052,7 @@ def select_1y_performers_ranked_by_1m3m_ratio(all_tickers, ticker_data_grouped, 
 
 
 
-def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20, price_history_cache=None):
 
     """
 
@@ -3062,7 +3068,7 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "1Y/3M Ratio"
+        all_tickers, ticker_data_grouped, current_date, "1Y/3M Ratio", price_history_cache=price_history_cache
 
     )
 
@@ -3300,7 +3306,7 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
 
 
 
-def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20, price_history_cache=None):
 
     """
 
@@ -3320,7 +3326,7 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid"
+        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid", price_history_cache=price_history_cache
 
     )
 
@@ -3538,7 +3544,7 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
 
 
 
-def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20, price_history_cache=None):
 
     """
 
@@ -3560,7 +3566,7 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 6M"
+        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 6M", price_history_cache=price_history_cache
 
     )
 
@@ -3776,7 +3782,7 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
 
 
 
-def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20, price_history_cache=None):
 
     """
 
@@ -3802,7 +3808,7 @@ def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_group
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 1Y/3M"
+        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 1Y/3M", price_history_cache=price_history_cache
 
     )
 
@@ -4024,7 +4030,7 @@ def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_group
 
 
 
-def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20, price_history_cache=None):
 
     """
 
@@ -4046,7 +4052,7 @@ def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 1Y"
+        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 1Y", price_history_cache=price_history_cache
 
     )
 
@@ -4266,7 +4272,7 @@ def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped
 
 
 
-def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20, price_history_cache=None):
 
     """
 
@@ -4302,7 +4308,7 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
 
     filtered_tickers = filter_tickers_by_performance(
 
-        tickers_to_use, ticker_data_grouped, current_date, "Price Acceleration"
+        tickers_to_use, ticker_data_grouped, current_date, "Price Acceleration", price_history_cache=price_history_cache
 
     )
 
@@ -5709,6 +5715,7 @@ def select_ai_elite_with_training(
     import os
 
     from datetime import timedelta, timezone as tz_utc
+    import config
 
 
 
@@ -5983,7 +5990,25 @@ def select_ai_elite_with_training(
 
 
 
+    walk_forward_retraining_enabled = bool(getattr(config, "ENABLE_WALK_FORWARD_RETRAINING", True))
+    should_train_model = bool(force_train or walk_forward_retraining_enabled)
+
     try:
+
+        if not should_train_model:
+            if ai_elite_models.get('_shared_base') is not None:
+                print(f"   ⏭️ {strategy_label}: Walk-forward retraining disabled, using loaded shared model")
+            else:
+                print(f"   ⚠️ {strategy_label}: Walk-forward retraining disabled and no shared model loaded")
+
+            selected = select_ai_elite_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date=current_date,
+                top_n=top_n,
+                per_ticker_models=ai_elite_models,
+            )
+            return selected, ai_elite_models
 
         # Step 2: Always train (incrementally if model exists, fresh if not)
 

@@ -16,6 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 import joblib
 from tqdm import tqdm
+import config
 from strategy_disk_cache import load_joblib_cache, save_joblib_cache
 
 from model_training_safety import (
@@ -551,8 +552,18 @@ def select_universal_model_stocks(
     """
     Select top N stocks using universal model predictions.
     """
-    # Train/retrain if needed
-    if model.should_retrain():
+    walk_forward_retraining_enabled = bool(getattr(config, "ENABLE_WALK_FORWARD_RETRAINING", True))
+
+    # Match AI Elite behavior: when walk-forward retraining is disabled,
+    # use a saved model if available and do not retrain during the backtest.
+    if not walk_forward_retraining_enabled:
+        if model.model is None:
+            if model.load_model() and model.model is not None:
+                print("   ⏭️ Universal Model: Walk-forward retraining disabled, using loaded model")
+            else:
+                print("   ⚠️ Universal Model: Walk-forward retraining disabled and no saved model loaded")
+                return []
+    elif model.should_retrain():
         model.train_model(ticker_data_grouped, business_days, current_day_idx)
 
     # Get predictions

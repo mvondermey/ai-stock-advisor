@@ -49,15 +49,48 @@ class PredictionTimeoutError(Exception):
 
 _PARALLEL_STRATEGY_WORKER_CONTEXT: Dict[str, Any] = {}
 
+_STRATEGY_TIMING_NAME_ALIASES = {
+    "Momentum-Vol Hybrid": "Mom-Vol Hybrid",
+    "Static BH 1Y Vol": "BH 1Y Vol Trig",
+    "Static BH 1Y Perf": "BH 1Y Perf Trig",
+    "Static BH 1Y Mom": "BH 1Y Mom Trig",
+    "Static BH 1Y ATR": "BH 1Y ATR Trig",
+    "Static BH 1Y Hybrid": "BH 1Y Hybrid Trig",
+    "Static BH 1Y Volume": "BH 1Y Volume",
+    "Static BH 1Y Sector": "BH 1Y Sector",
+    "Static BH 1Y Perf Thresh": "BH 1Y Perf Thresh",
+    "Static BH 1Y Market Regime": "BH 1Y Market Regime",
+    "Static BH 1Y Mom Persist": "BH 1Y Mom Persist",
+    "Static BH 1Y Overlap": "BH 1Y Overlap",
+    "Static BH 1Y Rank Drift": "BH 1Y Rank Drift",
+    "Static BH 1Y Drawdown": "BH 1Y Drawdown",
+    "Static BH 1Y Smart Monthly": "BH 1Y Smart Mth",
+    "Static BH 1Y Mth": "BH 1Y Monthly",
+    "Static BH 6M Mth": "BH 6M Monthly",
+    "Static BH 3M Mth": "BH 3M Monthly",
+    "Static BH 1M Mth": "BH 1M Monthly",
+    "Momentum+AI Hybrid": "Momentum+AI",
+    "Risk-Adj Mom 3M Market-Up": "RiskAdj 3M Up",
+    "Risk-Adj Mom 3M with Stops": "RiskAdj 3M Stop",
+    "BB Mean Reversion": "BB Mean Rev",
+    "BB Squeeze Breakout": "BB Squeeze",
+    "BH 1Y Trailing Mom": "BH 1Y Trail Mom",
+    "BH 1Y Volume Confirm": "BH 1Y Vol Conf",
+    "BH 1Y Sector Aware": "BH 1Y Sect Aware",
+    "BH 1Y Accel Buy": "BH 1Y Accel",
+}
+
 
 def _init_parallel_strategy_worker(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     initial_top_tickers: List[str],
+    price_history_cache=None,
 ) -> None:
     global _PARALLEL_STRATEGY_WORKER_CONTEXT
     _PARALLEL_STRATEGY_WORKER_CONTEXT = {
         "ticker_data_grouped": ticker_data_grouped,
         "initial_top_tickers": list(initial_top_tickers),
+        "price_history_cache": price_history_cache,
     }
 
 
@@ -66,11 +99,13 @@ def _run_parallel_strategy_selection_task(
     current_date: datetime,
     top_n: int,
 ) -> Dict[str, Any]:
+    import os
     import time as _time
 
     started_at = _time.time()
     ticker_data_grouped = _PARALLEL_STRATEGY_WORKER_CONTEXT["ticker_data_grouped"]
     initial_top_tickers = _PARALLEL_STRATEGY_WORKER_CONTEXT["initial_top_tickers"]
+    price_history_cache = _PARALLEL_STRATEGY_WORKER_CONTEXT.get("price_history_cache")
 
     if strategy_name == "elite_hybrid":
         from elite_hybrid_strategy import select_elite_hybrid_stocks
@@ -80,6 +115,7 @@ def _run_parallel_strategy_selection_task(
             ticker_data_grouped,
             current_date=current_date,
             top_n=top_n,
+            price_history_cache=price_history_cache,
         )
     elif strategy_name == "elite_risk":
         from elite_risk_strategy import select_elite_risk_stocks
@@ -89,6 +125,7 @@ def _run_parallel_strategy_selection_task(
             ticker_data_grouped,
             current_date=current_date,
             top_n=top_n,
+            price_history_cache=price_history_cache,
         )
     elif strategy_name == "bb_mean_reversion":
         from bollinger_bands_strategy import select_bb_mean_reversion_stocks
@@ -98,6 +135,7 @@ def _run_parallel_strategy_selection_task(
             ticker_data_grouped,
             current_date,
             top_n,
+            price_history_cache=price_history_cache,
         )
     elif strategy_name == "bb_breakout":
         from bollinger_bands_strategy import select_bb_breakout_stocks
@@ -107,6 +145,7 @@ def _run_parallel_strategy_selection_task(
             ticker_data_grouped,
             current_date,
             top_n,
+            price_history_cache=price_history_cache,
         )
     elif strategy_name == "bb_rsi_combo":
         from bollinger_bands_strategy import select_bb_rsi_combo_stocks
@@ -116,6 +155,7 @@ def _run_parallel_strategy_selection_task(
             ticker_data_grouped,
             current_date,
             top_n,
+            price_history_cache=price_history_cache,
         )
     elif strategy_name == "trend_breakout":
         from new_strategies import select_trend_breakout_stocks
@@ -125,6 +165,107 @@ def _run_parallel_strategy_selection_task(
             ticker_data_grouped,
             current_date,
             top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "volatility_adj_mom":
+        from shared_strategies import select_volatility_adj_mom_stocks
+
+        selected = select_volatility_adj_mom_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "ratio_3m_1y":
+        from shared_strategies import select_3m_1y_ratio_stocks
+
+        selected = select_3m_1y_ratio_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "ratio_1m_3m":
+        from shared_strategies import select_1m_3m_ratio_stocks
+
+        selected = select_1m_3m_ratio_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "ratio_1y_3m":
+        from shared_strategies import select_1y_3m_ratio_stocks
+
+        selected = select_1y_3m_ratio_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "turnaround":
+        from shared_strategies import select_turnaround_stocks
+
+        selected = select_turnaround_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "price_acceleration":
+        from shared_strategies import select_price_acceleration_stocks
+
+        selected = select_price_acceleration_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "momentum_volatility_hybrid":
+        from shared_strategies import select_momentum_volatility_hybrid_stocks
+
+        selected = select_momentum_volatility_hybrid_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "momentum_volatility_hybrid_6m":
+        from shared_strategies import select_momentum_volatility_hybrid_6m_stocks
+
+        selected = select_momentum_volatility_hybrid_6m_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "momentum_volatility_hybrid_1y":
+        from shared_strategies import select_momentum_volatility_hybrid_1y_stocks
+
+        selected = select_momentum_volatility_hybrid_1y_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "momentum_volatility_hybrid_1y3m":
+        from shared_strategies import select_momentum_volatility_hybrid_1y3m_stocks
+
+        selected = select_momentum_volatility_hybrid_1y3m_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
         )
     else:
         from shared_strategies import get_strategy_tickers
@@ -139,6 +280,7 @@ def _run_parallel_strategy_selection_task(
     return {
         "selected": list(selected or []),
         "elapsed": float(_time.time() - started_at),
+        "pid": int(os.getpid()),
     }
 
 def calculate_daily_returns(history: List[float]) -> List[float]:
@@ -1941,33 +2083,117 @@ def _run_portfolio_backtest_walk_forward(
 
     # Centralized rebalancing tracking for all strategies (strategy_name -> bool)
     strategies_rebalanced_today = {}
-    daily_strategy_timings: Dict[str, float] = {}
+    daily_strategy_timings: Dict[str, Dict[str, float]] = {}
+    daily_queue_stats: Dict[str, Any] = {
+        "main_total": 0.0,
+        "node_total": 0.0,
+        "by_pid": {},
+        "tasks_dispatched": 0,
+        "tasks_completed": 0,
+        "fallbacks": 0,
+    }
     parallel_strategy_display_names = {
         "ratio_3m_1y": "3M/1Y Ratio",
         "ratio_1m_3m": "1M/3M Ratio",
         "ratio_1y_3m": "1Y/3M Ratio",
         "turnaround": "Turnaround",
         "price_acceleration": "Price Acceleration",
-        "momentum_volatility_hybrid": "Momentum-Vol Hybrid",
+        "momentum_volatility_hybrid": "Mom-Vol Hybrid",
         "momentum_volatility_hybrid_6m": "Mom-Vol Hybrid 6M",
         "momentum_volatility_hybrid_1y": "Mom-Vol Hybrid 1Y",
         "momentum_volatility_hybrid_1y3m": "Mom-Vol Hybrid 1Y/3M",
         "elite_hybrid": "Elite Hybrid",
         "elite_risk": "Elite Risk",
         "volatility_adj_mom": "Vol-Adj Mom",
-        "bb_mean_reversion": "BB Mean Reversion",
+        "bb_mean_reversion": "BB Mean Rev",
         "bb_breakout": "BB Breakout",
         "bb_rsi_combo": "BB RSI Combo",
         "trend_breakout": "Trend Breakout",
     }
 
-    def _record_strategy_timing(strategy_name: str, elapsed_seconds: float, phase: Optional[str] = None) -> None:
+    def _format_elapsed(elapsed_seconds: float) -> str:
+        elapsed_seconds = max(0.0, float(elapsed_seconds))
+        if elapsed_seconds < 0.001:
+            return f"{elapsed_seconds * 1000:.2f}ms"
+        if elapsed_seconds < 0.1:
+            return f"{elapsed_seconds * 1000:.1f}ms"
+        if elapsed_seconds < 1.0:
+            return f"{elapsed_seconds:.3f}s"
+        if elapsed_seconds < 10.0:
+            return f"{elapsed_seconds:.2f}s"
+        return f"{elapsed_seconds:.1f}s"
+
+    def _canonicalize_strategy_timing_name(strategy_name: str) -> str:
+        return _STRATEGY_TIMING_NAME_ALIASES.get(strategy_name, strategy_name)
+
+    def _get_strategy_timing_entry(strategy_name: str) -> Dict[str, float]:
+        strategy_name = _canonicalize_strategy_timing_name(strategy_name)
+        return daily_strategy_timings.setdefault(
+            strategy_name,
+            {
+                "selection": 0.0,
+                "decision": 0.0,
+                "rebalance": 0.0,
+                "other": 0.0,
+            },
+        )
+
+    def _format_phase_cell(value: float) -> str:
+        if value <= 0:
+            return "-"
+        return _format_elapsed(value)
+
+    def _strategy_timing_totals(strategy_name: str) -> Tuple[float, float, float, float]:
+        strategy_name = _canonicalize_strategy_timing_name(strategy_name)
+        entry = daily_strategy_timings.get(strategy_name, {})
+        selection = float(entry.get("selection", 0.0))
+        decision = float(entry.get("decision", 0.0))
+        rebalance = float(entry.get("rebalance", 0.0))
+        other = float(entry.get("other", 0.0))
+        total = selection + decision + rebalance + other
+        return selection, decision, rebalance, total
+
+    def _print_strategy_timing_breakdown(strategy_name: str) -> None:
+        strategy_name = _canonicalize_strategy_timing_name(strategy_name)
+        selection, decision, rebalance, total = _strategy_timing_totals(strategy_name)
+        print(
+            "   ⏱️ "
+            f"{strategy_name} timing: "
+            f"sel={_format_phase_cell(selection)} "
+            f"dec={_format_phase_cell(decision)} "
+            f"reb={_format_phase_cell(rebalance)} "
+            f"total={_format_phase_cell(total)}"
+        )
+
+    def _record_strategy_timing(
+        strategy_name: str,
+        elapsed_seconds: float,
+        phase: Optional[str] = None,
+        source: str = "main",
+        worker_pid: Optional[int] = None,
+    ) -> None:
         if not strategy_name:
             return
+        strategy_name = _canonicalize_strategy_timing_name(strategy_name)
         elapsed_seconds = max(0.0, float(elapsed_seconds))
-        daily_strategy_timings[strategy_name] = daily_strategy_timings.get(strategy_name, 0.0) + elapsed_seconds
+        phase_key = phase if phase in {"selection", "decision", "rebalance"} else "other"
+        timing_entry = _get_strategy_timing_entry(strategy_name)
+        timing_entry[phase_key] += elapsed_seconds
+        if source == "node":
+            daily_queue_stats["node_total"] += elapsed_seconds
+            if worker_pid is not None:
+                pid_stats = daily_queue_stats["by_pid"].setdefault(
+                    int(worker_pid),
+                    {"total": 0.0, "tasks": 0},
+                )
+                pid_stats["total"] += elapsed_seconds
+                pid_stats["tasks"] += 1
+        else:
+            daily_queue_stats["main_total"] += elapsed_seconds
         phase_suffix = f" ({phase})" if phase else ""
-        print(f"   ⏱️ {strategy_name}{phase_suffix}: {elapsed_seconds:.2f}s")
+        source_suffix = f" [{source}]" if source else ""
+        pid_suffix = f" pid={worker_pid}" if worker_pid is not None and source == "node" else ""
+        print(f"   ⏱️ {strategy_name}{phase_suffix}{source_suffix}: {_format_elapsed(elapsed_seconds)}{pid_suffix}")
 
     # Initialize - AI Elite models are trained during walk-forward, not loaded upfront
 
@@ -3288,18 +3514,6 @@ def _run_portfolio_backtest_walk_forward(
         print(f"   🔍 DEBUG: available_tickers_in_data sample: {list(available_tickers_in_data)[:5]}")
 
     price_history_cache = build_price_history_cache(ticker_data_grouped)
-    multi_tf_ensemble_selection_cache = None
-    multi_tf_intraday_daily_cache = None
-    if config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE:
-        from multi_timeframe_ensemble import build_multi_timeframe_cache
-        multi_tf_ensemble_selection_cache = build_multi_timeframe_cache(
-            ticker_data_grouped,
-            initial_top_tickers,
-            price_history_cache=price_history_cache,
-        )
-    if config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE:
-        from multi_timeframe_intraday_ensemble import build_multi_timeframe_intraday_daily_cache
-        multi_tf_intraday_daily_cache = build_multi_timeframe_intraday_daily_cache(ticker_data_grouped, initial_top_tickers)
 
     parallel_strategy_executor = None
     if config.ENABLE_PARALLEL_STRATEGIES:
@@ -3308,7 +3522,7 @@ def _run_portfolio_backtest_walk_forward(
                 max_workers=2,
                 mp_context=get_context("spawn"),
                 initializer=_init_parallel_strategy_worker,
-                initargs=(ticker_data_grouped, initial_top_tickers),
+                    initargs=(ticker_data_grouped, initial_top_tickers, price_history_cache),
             )
             print(
                 "   🚦 Parallel strategy queue enabled: "
@@ -3390,6 +3604,7 @@ def _run_portfolio_backtest_walk_forward(
                 time.perf_counter() - _started_at,
                 phase="rebalance",
             )
+            _print_strategy_timing_breakdown(strategy_name)
         return result
 
     def _ai_rebalance_portfolio(
@@ -3408,7 +3623,7 @@ def _run_portfolio_backtest_walk_forward(
         min_predicted_edge: float = 0.0,
     ) -> Tuple[Dict[str, Dict], float, List[str], float, bool, List[Tuple[str, str, float, str]], List[str]]:
         from ai_rebalance_strategy import choose_ai_rebalance_ranked_candidates
-        _started_at = time.perf_counter()
+        _decision_started_at = time.perf_counter()
 
         effective_buffer_size = buffer_size if buffer_size is not None else (portfolio_size + PORTFOLIO_BUFFER_SIZE)
         ai_ranked_candidates, decision_logs = choose_ai_rebalance_ranked_candidates(
@@ -3422,6 +3637,12 @@ def _run_portfolio_backtest_walk_forward(
             buffer_size=effective_buffer_size,
             min_predicted_edge=min_predicted_edge,
         )
+        _record_strategy_timing(
+            strategy_name,
+            time.perf_counter() - _decision_started_at,
+            phase="decision",
+        )
+        _rebalance_started_at = time.perf_counter()
         positions, cash, final_stocks, costs, rebalanced = _smart_rebalance_portfolio(
             strategy_name=strategy_name,
             current_stocks=current_stocks,
@@ -3438,9 +3659,10 @@ def _run_portfolio_backtest_walk_forward(
         )
         _record_strategy_timing(
             strategy_name,
-            time.perf_counter() - _started_at,
-            phase="ai_rebalance",
+            time.perf_counter() - _rebalance_started_at,
+            phase="rebalance",
         )
+        _print_strategy_timing_breakdown(strategy_name)
         return positions, cash, final_stocks, costs, rebalanced, decision_logs, ai_ranked_candidates
 
     def _should_rebalance_by_profit_since_last_rebalance(
@@ -3622,6 +3844,14 @@ def _run_portfolio_backtest_walk_forward(
     for current_date in business_days:
         day_count += 1
         daily_strategy_timings = {}
+        daily_queue_stats = {
+            "main_total": 0.0,
+            "node_total": 0.0,
+            "by_pid": {},
+            "tasks_dispatched": 0,
+            "tasks_completed": 0,
+            "fallbacks": 0,
+        }
         active_close_price_cache = _build_daily_close_price_cache(ticker_data_grouped, current_date)
         parallel_strategy_futures: Dict[str, Any] = {}
 
@@ -3641,6 +3871,7 @@ def _run_portfolio_backtest_walk_forward(
                     current_date,
                     top_n,
                 )
+                daily_queue_stats["tasks_dispatched"] += 1
 
         def _resolve_parallel_strategy_selection(strategy_name: str, fallback_fn):
             future = parallel_strategy_futures.pop(strategy_name, None)
@@ -3650,11 +3881,20 @@ def _run_portfolio_backtest_walk_forward(
                 task_result = future.result()
                 elapsed = float(task_result.get("elapsed", 0.0))
                 selected = list(task_result.get("selected") or [])
+                worker_pid = task_result.get("pid")
                 strategy_display_name = parallel_strategy_display_names.get(strategy_name, strategy_name)
-                _record_strategy_timing(strategy_display_name, elapsed, phase="selection")
+                _record_strategy_timing(
+                    strategy_display_name,
+                    elapsed,
+                    phase="selection",
+                    source="node",
+                    worker_pid=int(worker_pid) if worker_pid is not None else None,
+                )
+                daily_queue_stats["tasks_completed"] += 1
                 print(f"   🚦 Strategy queue: {strategy_name} returned {len(selected)} tickers")
                 return selected
             except Exception as e:
+                daily_queue_stats["fallbacks"] += 1
                 print(f"   ⚠️ Strategy queue fallback for {strategy_name}: {e}")
                 return fallback_fn()
 
@@ -3842,7 +4082,7 @@ def _run_portfolio_backtest_walk_forward(
                     ticker_data_grouped,
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    daily_cache=multi_tf_intraday_daily_cache,
+                    price_history_cache=price_history_cache,
                 )
 
                 if new_multi_tf_intraday_ensemble_stocks:
@@ -6195,7 +6435,7 @@ def _run_portfolio_backtest_walk_forward(
                     ticker_data_grouped,
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    selection_cache=multi_tf_ensemble_selection_cache,
+                    price_history_cache=price_history_cache,
                 )
 
                 if new_multi_tf_ensemble_stocks:
@@ -10316,7 +10556,10 @@ def _run_portfolio_backtest_walk_forward(
             summary_annret_width = 10
             summary_cash_width = 13
             summary_pos_width = 5
-            summary_time_width = 8
+            summary_sel_width = 10
+            summary_dec_width = 10
+            summary_reb_width = 10
+            summary_total_width = 10
             summary_row_fmt = (
                 f"{{rank:<{summary_rank_width}}} "
                 f"{{name:<{summary_name_width}}} "
@@ -10326,7 +10569,10 @@ def _run_portfolio_backtest_walk_forward(
                 f"{{ann:>{summary_annret_width}}} "
                 f"{{cash:>{summary_cash_width}}} "
                 f"{{pos:>{summary_pos_width}}} "
-                f"{{timing:>{summary_time_width}}}"
+                f"{{sel:>{summary_sel_width}}} "
+                f"{{dec:>{summary_dec_width}}} "
+                f"{{reb:>{summary_reb_width}}} "
+                f"{{total:>{summary_total_width}}}"
             )
             summary_line_width = (
                 summary_rank_width
@@ -10337,8 +10583,11 @@ def _run_portfolio_backtest_walk_forward(
                 + summary_annret_width
                 + summary_cash_width
                 + summary_pos_width
-                + summary_time_width
-                + 8
+                + summary_sel_width
+                + summary_dec_width
+                + summary_reb_width
+                + summary_total_width
+                + 11
             )
             print("=" * summary_line_width)
 
@@ -10368,7 +10617,10 @@ def _run_portfolio_backtest_walk_forward(
                 ann="Ann.Ret",
                 cash="Cash",
                 pos="Pos",
-                timing="Time",
+                sel="Sel",
+                dec="Dec",
+                reb="Reb",
+                total="Total",
             ))
             print("-" * summary_line_width)
 
@@ -10382,14 +10634,34 @@ def _run_portfolio_backtest_walk_forward(
                 num_pos = sdata['positions']
                 invested = value - strat_cash
                 history = sdata['history']
-                timing_seconds = daily_strategy_timings.get(dname)
+                selection_seconds, decision_seconds, rebalance_seconds, total_timing_seconds = _strategy_timing_totals(dname)
 
-                strategy_details.append((dname, value, strat_cash, num_pos, invested, timing_seconds))
+                strategy_details.append((
+                    dname,
+                    value,
+                    strat_cash,
+                    num_pos,
+                    invested,
+                    selection_seconds,
+                    decision_seconds,
+                    rebalance_seconds,
+                    total_timing_seconds,
+                ))
                 if history:
                     strategy_to_history[dname] = history
 
             # Display all strategies
-            for i, (name, value, strat_cash, num_pos, invested, timing_seconds) in enumerate(strategy_details, 1):
+            for i, (
+                name,
+                value,
+                strat_cash,
+                num_pos,
+                invested,
+                selection_seconds,
+                decision_seconds,
+                rebalance_seconds,
+                total_timing_seconds,
+            ) in enumerate(strategy_details, 1):
                 return_pct = ((value - initial_capital_needed) / initial_capital_needed) * 100
                 if day_count > 0:
                     total_return_multiplier = value / initial_capital_needed
@@ -10412,8 +10684,66 @@ def _run_portfolio_backtest_walk_forward(
                     ann=f"{annualized_return:+9.1f}%",
                     cash=f"$ {strat_cash:>11,.0f}",
                     pos=num_pos,
-                    timing=f"{timing_seconds:6.2f}s" if timing_seconds is not None else "",
+                    sel=_format_phase_cell(selection_seconds),
+                    dec=_format_phase_cell(decision_seconds),
+                    reb=_format_phase_cell(rebalance_seconds),
+                    total=_format_phase_cell(total_timing_seconds),
                 ))
+
+            if daily_queue_stats["tasks_dispatched"] > 0:
+                node_total = float(daily_queue_stats["node_total"])
+                main_total = float(daily_queue_stats["main_total"])
+                queue_gap = node_total - main_total
+                faster_side = "nodes" if node_total < main_total else "main"
+                worker_count = max(1, len(daily_queue_stats["by_pid"]))
+                effective_node_time = node_total / worker_count
+                overlap_gain = main_total - effective_node_time
+                if main_total > 0:
+                    efficiency_ratio = effective_node_time / main_total
+                    efficiency_pct = (1.0 - efficiency_ratio) * 100.0
+                else:
+                    efficiency_ratio = 0.0
+                    efficiency_pct = 0.0
+                print("\n🚦 QUEUE HEALTH")
+                print(
+                    "   "
+                    f"dispatched={daily_queue_stats['tasks_dispatched']} "
+                    f"completed={daily_queue_stats['tasks_completed']} "
+                    f"fallbacks={daily_queue_stats['fallbacks']}"
+                )
+                print(
+                    "   "
+                    f"node_total={node_total:.2f}s "
+                    f"main_total={main_total:.2f}s "
+                    f"delta={queue_gap:+.2f}s "
+                    f"faster={faster_side}"
+                )
+                print(
+                    "   "
+                    f"effective_node_time={effective_node_time:.2f}s "
+                    f"workers={worker_count} "
+                    f"overlap_gain={overlap_gain:+.2f}s "
+                    f"efficiency={efficiency_pct:+.1f}%"
+                )
+                if daily_queue_stats["by_pid"]:
+                    print("   Worker nodes:")
+                    for worker_pid, pid_stats in sorted(
+                        daily_queue_stats["by_pid"].items(),
+                        key=lambda item: item[1]["total"],
+                        reverse=True,
+                    ):
+                        avg_time = (
+                            pid_stats["total"] / pid_stats["tasks"]
+                            if pid_stats["tasks"] > 0
+                            else 0.0
+                        )
+                        print(
+                            "   "
+                            f"pid={worker_pid} "
+                            f"tasks={pid_stats['tasks']} "
+                            f"total={pid_stats['total']:.2f}s "
+                            f"avg={avg_time:.2f}s"
+                        )
 
             # Show Top 5 Consistency Score
             if top5_consistency_counts:

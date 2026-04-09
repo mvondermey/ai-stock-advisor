@@ -105,11 +105,31 @@ def dataframe_signature(data: Optional[pd.DataFrame]) -> str:
     if data is None or data.empty:
         return "empty"
 
-    normalized = data.copy()
-    normalized = normalized.sort_index()
-    normalized.columns = [str(column) for column in normalized.columns]
-    csv_bytes = normalized.to_csv(index=True).encode("utf-8")
-    return hashlib.sha256(csv_bytes).hexdigest()
+    normalized = data.sort_index()
+    columns = [str(column) for column in normalized.columns]
+
+    index_values = normalized.index
+    first_index = str(index_values[0]) if len(index_values) else None
+    last_index = str(index_values[-1]) if len(index_values) else None
+
+    signature_payload: Dict[str, Any] = {
+        "rows": int(len(normalized)),
+        "columns": columns,
+        "first_index": first_index,
+        "last_index": last_index,
+    }
+
+    for column_name in ("Close", "Volume", "High", "Low"):
+        if column_name not in normalized.columns:
+            continue
+        series = pd.to_numeric(normalized[column_name], errors="coerce").dropna()
+        signature_payload[f"{column_name.lower()}_count"] = int(len(series))
+        if not series.empty:
+            signature_payload[f"{column_name.lower()}_first"] = float(series.iloc[0])
+            signature_payload[f"{column_name.lower()}_last"] = float(series.iloc[-1])
+
+    encoded = json.dumps(signature_payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def universe_signature_from_frames(

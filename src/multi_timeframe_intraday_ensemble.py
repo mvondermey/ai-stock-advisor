@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from strategy_disk_cache import load_joblib_cache, save_joblib_cache, universe_signature_from_frames
+from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
 
 from config import (
     INVERSE_ETFS,
@@ -136,6 +137,18 @@ def _daily_slice_from_cache(
 
     index = pd.to_datetime(date_ns[start_idx:end_idx], utc=True)
     return pd.DataFrame(data, index=index)
+
+
+def _get_daily_cache_entry_from_price_history(price_history_cache, ticker: str) -> Optional[Dict[str, np.ndarray]]:
+    date_ns = price_history_cache.date_ns_by_ticker.get(ticker)
+    close_values = price_history_cache.close_by_ticker.get(ticker)
+    if date_ns is None or close_values is None or date_ns.size < 2 or close_values.size < 2:
+        return None
+    return {
+        "date_ns": date_ns,
+        "close": close_values,
+        "volume": price_history_cache.volume_by_ticker.get(ticker),
+    }
 
 
 def _calculate_multi_timeframe_intraday_signals_from_cache(
@@ -453,13 +466,15 @@ def calculate_ensemble_score(signals: Dict[str, float]) -> Tuple[float, bool]:
 
 
 def _init_multi_timeframe_intraday_worker(
-    daily_cache: Dict[str, Dict[str, np.ndarray]],
+    daily_cache: Optional[Dict[str, Dict[str, np.ndarray]]],
     current_date: datetime,
+    price_history_cache=None,
 ) -> None:
     global _INTRADAY_SELECTION_CONTEXT
     _INTRADAY_SELECTION_CONTEXT = {
         "daily_cache": daily_cache,
         "current_date": current_date,
+        "price_history_cache": price_history_cache,
     }
 
 
@@ -469,7 +484,10 @@ def _score_multi_timeframe_intraday_ticker_worker(
     context = _INTRADAY_SELECTION_CONTEXT
     daily_cache = context.get("daily_cache") or {}
     current_date = context.get("current_date")
+    price_history_cache = context.get("price_history_cache")
     cache_entry = daily_cache.get(ticker)
+    if cache_entry is None and price_history_cache is not None:
+        cache_entry = _get_daily_cache_entry_from_price_history(price_history_cache, ticker)
     if cache_entry is None or current_date is None:
         return ticker, None, None
 
@@ -494,12 +512,21 @@ def select_multi_timeframe_intraday_stocks(
     top_n: int = PORTFOLIO_SIZE,
     verbose: bool = True,
     daily_cache: Optional[Dict[str, Dict[str, np.ndarray]]] = None,
+    price_history_cache=None,
 ) -> List[str]:
     """Select stocks using intraday-enhanced multi-timeframe ensemble signals."""
     tickers_to_use = [ticker for ticker in initial_tickers if ticker not in INVERSE_ETFS]
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    current_date = resolve_cache_current_date(price_history_cache, current_date, tickers_to_use)
+    if current_date is None:
+        return []
     if daily_cache is None:
-        daily_cache = _build_intraday_daily_cache(ticker_data_grouped, tickers_to_use)
-    cached_tickers = [ticker for ticker in tickers_to_use if ticker in daily_cache]
+        cached_tickers = [
+            ticker for ticker in tickers_to_use
+            if _get_daily_cache_entry_from_price_history(price_history_cache, ticker) is not None
+        ]
+    else:
+        cached_tickers = [ticker for ticker in tickers_to_use if ticker in daily_cache]
     stock_scores = []
     error_count = 0
     n_workers = max(1, min(NUM_PROCESSES, len(cached_tickers))) if cached_tickers else 1
@@ -508,7 +535,7 @@ def select_multi_timeframe_intraday_stocks(
         n_workers = min(n_workers, 4)
         if verbose:
             print(f"   🚀 Multi-Horizon Intraday: Scoring {len(cached_tickers)} tickers with {n_workers} threads")
-        _init_multi_timeframe_intraday_worker(daily_cache, current_date)
+        _init_multi_timeframe_intraday_worker(daily_cache, current_date, price_history_cache=price_history_cache)
         with ThreadPoolExecutor(max_workers=n_workers) as executor:
             results = list(tqdm(
                 executor.map(_score_multi_timeframe_intraday_ticker_worker, cached_tickers),
@@ -526,7 +553,11 @@ def select_multi_timeframe_intraday_stocks(
                     print(f"   ⚠️ Multi-Horizon Intraday ticker error for {ticker}: {error_msg}")
     else:
         for ticker in cached_tickers:
-            cache_entry = daily_cache.get(ticker)
+            cache_entry = (
+                daily_cache.get(ticker)
+                if daily_cache is not None
+                else _get_daily_cache_entry_from_price_history(price_history_cache, ticker)
+            )
             if cache_entry is None:
                 continue
 
