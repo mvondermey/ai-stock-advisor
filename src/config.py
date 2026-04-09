@@ -291,7 +291,7 @@ def _auto_detect_num_processes():
 # Auto-detect a safe multiprocessing worker count based on RAM
 NUM_PROCESSES = _auto_detect_num_processes()  # For data validation, ticker selection, and backtest data collection
 
-NUM_PROCESSES = 10 
+NUM_PROCESSES = 10
 
 # Parallel processing threshold - only use parallel processing for ticker lists larger than this
 

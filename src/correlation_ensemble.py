@@ -15,6 +15,12 @@ from typing import List, Dict, Optional, Tuple, Set
 from datetime import datetime, timedelta
 from collections import defaultdict
 import itertools
+from strategy_cache_adapter import (
+    ensure_price_history_cache,
+    get_cached_frame_between,
+    get_cached_history_up_to,
+    resolve_cache_current_date,
+)
 
 # Import config
 from config import (
@@ -96,7 +102,8 @@ class CorrelationFilteredEnsemble:
     
     def calculate_correlation_matrix(self, tickers: List[str], 
                                    ticker_data_grouped: Dict[str, pd.DataFrame],
-                                   current_date: datetime) -> pd.DataFrame:
+                                   current_date: datetime,
+                                   price_history_cache=None) -> pd.DataFrame:
         """Calculate correlation matrix for given tickers."""
         try:
             # Remove duplicates from tickers list
@@ -104,39 +111,21 @@ class CorrelationFilteredEnsemble:
             
             # Get returns data
             returns_data = {}
-            # Convert current_date to pandas Timestamp with timezone
-            current_date_tz = pd.Timestamp(current_date)
-            # Use the first ticker's timezone as reference
-            if tickers and tickers[0] in ticker_data_grouped:
-                first_data = ticker_data_grouped[tickers[0]]
-                if hasattr(first_data.index, 'tz') and first_data.index.tz is not None:
-                    if current_date_tz.tz is None:
-                        current_date_tz = current_date_tz.tz_localize(first_data.index.tz)
-                    else:
-                        current_date_tz = current_date_tz.tz_convert(first_data.index.tz)
-            
-            lookback_start = current_date_tz - timedelta(days=CORRELATION_LOOKBACK_DAYS)
+            price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
             
             for ticker in tickers:
-                if ticker in ticker_data_grouped:
-                    ticker_data = ticker_data_grouped[ticker]
-                    # Reset index to avoid duplicate label issues
-                    ticker_data = ticker_data.reset_index(drop=False)
-                    if 'date' in ticker_data.columns:
-                        ticker_data = ticker_data.set_index('date')
-                    elif 'Date' in ticker_data.columns:
-                        ticker_data = ticker_data.rename(columns={'Date': 'date'}).set_index('date')
-                    elif 'index' in ticker_data.columns:
-                        ticker_data = ticker_data.set_index('index')
-                    # Remove any duplicate indices
-                    ticker_data = ticker_data[~ticker_data.index.duplicated(keep='first')]
-                    
-                    recent_data = ticker_data[(ticker_data.index >= lookback_start) & 
-                                              (ticker_data.index <= current_date_tz)]
-                    if len(recent_data) >= MIN_CORRELATION_SAMPLES:
-                        returns = recent_data['Close'].pct_change(fill_method=None).dropna()
-                        if len(returns) >= MIN_CORRELATION_SAMPLES:
-                            returns_data[ticker] = returns.reset_index(drop=True)
+                recent_data = get_cached_frame_between(
+                    price_history_cache,
+                    ticker,
+                    current_date - timedelta(days=CORRELATION_LOOKBACK_DAYS),
+                    current_date,
+                    field_names=("close",),
+                    min_rows=MIN_CORRELATION_SAMPLES,
+                )
+                if recent_data is not None and len(recent_data) >= MIN_CORRELATION_SAMPLES:
+                    returns = recent_data['close'].pct_change(fill_method=None).dropna()
+                    if len(returns) >= MIN_CORRELATION_SAMPLES:
+                        returns_data[ticker] = returns.reset_index(drop=True)
             
             if len(returns_data) < 2:
                 # Return identity matrix if insufficient data
@@ -214,48 +203,90 @@ class CorrelationFilteredEnsemble:
     
     def get_strategy_picks(self, strategy_name: str, all_tickers: List[str],
                           ticker_data_grouped: Dict[str, pd.DataFrame],
-                          current_date: datetime, top_n: int = 15) -> List[str]:
+                          current_date: datetime, top_n: int = 15,
+                          price_history_cache=None) -> List[str]:
         """Get stock picks from a specific strategy."""
         try:
             if strategy_name == 'static_bh_3m':
-                return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                               period='3m', current_date=current_date, top_n=top_n)
+                return select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='3m',
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'static_bh_6m':
-                return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                               period='6m', current_date=current_date, top_n=top_n)
+                return select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='6m',
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'static_bh_1y':
-                return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                               period='1y', current_date=current_date, top_n=top_n)
+                return select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='1y',
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'dyn_bh_6m':
-                return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                               period='6m', current_date=current_date, top_n=top_n)
+                return select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='6m',
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'dyn_bh_1y_vol':
-                picks = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                                period='1y', current_date=current_date, top_n=top_n * 2)
+                picks = select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='1y',
+                    current_date=current_date,
+                    top_n=top_n * 2,
+                    price_history_cache=price_history_cache,
+                )
                 # Apply basic filter
                 filtered_picks = []
                 for ticker in picks:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        if len(ticker_data) >= 20:
-                            daily_returns = ticker_data['Close'].pct_change(fill_method=None).dropna()
-                            vol = daily_returns.std() * np.sqrt(252) * 100
-                            if vol <= 120:
-                                filtered_picks.append(ticker)
+                    close_history = get_cached_history_up_to(
+                        price_history_cache,
+                        ticker,
+                        current_date,
+                        field_name="close",
+                        min_rows=20,
+                    )
+                    if close_history is not None and len(close_history) >= 20:
+                        daily_returns = pd.Series(close_history).pct_change(fill_method=None).dropna()
+                        vol = daily_returns.std() * np.sqrt(252) * 100
+                        if vol <= 120:
+                            filtered_picks.append(ticker)
                 return filtered_picks[:top_n]
             
             elif strategy_name == 'risk_adj_mom':
                 return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped,
                                                  current_date=current_date,
-                                                 top_n=top_n)
+                                                 top_n=top_n,
+                                                 price_history_cache=price_history_cache)
             
             elif strategy_name == 'quality_mom':
-                return select_quality_momentum_stocks(all_tickers, ticker_data_grouped,
-                                                     current_date=current_date, top_n=top_n)
+                return select_quality_momentum_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             else:
                 return []
@@ -287,7 +318,8 @@ class CorrelationFilteredEnsemble:
     def select_stocks(self, all_tickers: List[str],
                      ticker_data_grouped: Dict[str, pd.DataFrame],
                      current_date: datetime,
-                     top_n: int = PORTFOLIO_SIZE) -> List[str]:
+                     top_n: int = PORTFOLIO_SIZE,
+                     price_history_cache=None) -> List[str]:
         """Main entry point: Select stocks with correlation filtering."""
         print(f"\n   🎯 Correlation-Filtered Ensemble Strategy")
         print(f"   📅 Date: {current_date.date()}")
@@ -298,7 +330,7 @@ class CorrelationFilteredEnsemble:
             print(f"   🔍 Getting picks from {strategy}...")
             picks = self.get_strategy_picks(
                 strategy, all_tickers, ticker_data_grouped,
-                current_date, top_n=top_n * 2
+                current_date, top_n=top_n * 2, price_history_cache=price_history_cache
             )
             strategy_picks[strategy] = picks
             print(f"      → {len(picks)} picks")
@@ -326,7 +358,12 @@ class CorrelationFilteredEnsemble:
         
         # 4. Calculate correlation matrix for top candidates
         top_tickers = [ticker for ticker, score in sorted_candidates[:top_n * 3]]
-        correlation_matrix = self.calculate_correlation_matrix(top_tickers, ticker_data_grouped, current_date)
+        correlation_matrix = self.calculate_correlation_matrix(
+            top_tickers,
+            ticker_data_grouped,
+            current_date,
+            price_history_cache=price_history_cache,
+        )
         
         # 5. Find high correlation pairs
         high_corr_pairs = self.find_high_correlation_pairs(correlation_matrix)
@@ -385,7 +422,8 @@ def get_corr_ensemble_instance() -> CorrelationFilteredEnsemble:
 def select_correlation_ensemble_stocks(all_tickers: List[str],
                                        ticker_data_grouped: Dict[str, pd.DataFrame],
                                        current_date: datetime = None,
-                                       top_n: int = PORTFOLIO_SIZE) -> List[str]:
+                                       top_n: int = PORTFOLIO_SIZE,
+                                       price_history_cache=None) -> List[str]:
     """
     Correlation-Filtered Ensemble stock selection strategy.
     
@@ -408,18 +446,14 @@ def select_correlation_ensemble_stocks(all_tickers: List[str],
     from config import INVERSE_ETFS
     all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
     
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    current_date = resolve_cache_current_date(price_history_cache, current_date, all_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max()
-                       for t in all_tickers
-                       if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
+        return []
     
     ensemble = get_corr_ensemble_instance()
     return ensemble.select_stocks(
-        all_tickers, ticker_data_grouped, current_date, top_n
+        all_tickers, ticker_data_grouped, current_date, top_n, price_history_cache=price_history_cache
     )
 
 

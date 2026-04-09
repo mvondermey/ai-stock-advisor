@@ -15,6 +15,7 @@ def select_risk_adj_mom_6m_stocks(
     current_date: datetime = None,
     top_n: int = 10,
     lookback_days: int = 180,  # Allow override but default to 6M
+    price_history_cache=None,
 ) -> List[str]:
     """
     Select stocks using Risk-Adjusted Momentum with 6-month lookback.
@@ -28,5 +29,6 @@ def select_risk_adj_mom_6m_stocks(
         current_date=current_date,
         top_n=top_n,
         lookback_days=lookback_days,
-        strategy_name="Risk-Adj Mom 6M"
+        strategy_name="Risk-Adj Mom 6M",
+        price_history_cache=price_history_cache,
     )

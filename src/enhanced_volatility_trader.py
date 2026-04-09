@@ -15,6 +15,12 @@ import numpy as np
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict
+from strategy_cache_adapter import (
+    ensure_price_history_cache,
+    get_cached_frame_between,
+    get_cached_history_up_to,
+    resolve_cache_current_date,
+)
 
 # Import config
 from config import (
@@ -63,6 +69,139 @@ MAX_SINGLE_STOCK_VOLATILITY = 1.0  # 100% max annualized volatility (very permis
 # Portfolio risk limits
 MAX_PORTFOLIO_VOLATILITY = 1.0  # 100% annualized max (very permissive)
 MAX_DAILY_PORTFOLIO_LOSS = 0.03  # 3% max daily loss
+
+
+def _latest_cached_close(price_history_cache, ticker: str, current_date: datetime) -> Optional[float]:
+    close_history = get_cached_history_up_to(
+        price_history_cache,
+        ticker,
+        current_date,
+        field_name="close",
+        min_rows=1,
+    )
+    if close_history is None or close_history.size == 0:
+        return None
+    return float(close_history[-1])
+
+
+def _score_enhanced_volatility_candidates(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    top_n: int,
+    price_history_cache=None,
+) -> List[Tuple[str, float, float, float]]:
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    current_date = resolve_cache_current_date(price_history_cache, current_date, all_tickers)
+    if current_date is None:
+        return []
+
+    candidates = []
+    for ticker in all_tickers:
+        try:
+            data_slice = get_cached_frame_between(
+                price_history_cache,
+                ticker,
+                current_date - timedelta(days=30),
+                current_date,
+                field_names=("close", "high", "low"),
+                min_rows=20,
+            )
+            if data_slice is None or len(data_slice) < 20:
+                continue
+
+            returns = data_slice["close"].pct_change().dropna()
+            if len(returns) == 0:
+                continue
+
+            volatility = float(returns.std() * np.sqrt(252))
+            momentum = float((data_slice["close"].iloc[-1] / data_slice["close"].iloc[0]) - 1)
+
+            high_low = data_slice["high"] - data_slice["low"]
+            high_close = np.abs(data_slice["high"] - data_slice["close"].shift())
+            low_close = np.abs(data_slice["low"] - data_slice["close"].shift())
+            atr = float(np.maximum(high_low, np.maximum(high_close, low_close)).mean())
+
+            if volatility > 0 and momentum > 0:
+                enhanced_score = momentum / volatility
+                candidates.append((ticker, enhanced_score, volatility, atr))
+        except Exception:
+            continue
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return candidates[:top_n]
+
+
+def _score_ai_volatility_ensemble_candidates(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    top_n: int,
+    price_history_cache=None,
+) -> List[Tuple[str, float, float, float, float]]:
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    current_date = resolve_cache_current_date(price_history_cache, current_date, all_tickers)
+    if current_date is None:
+        return []
+
+    candidates = []
+    for ticker in all_tickers:
+        try:
+            data_slice = get_cached_frame_between(
+                price_history_cache,
+                ticker,
+                current_date - timedelta(days=60),
+                current_date,
+                field_names=("close", "volume"),
+                min_rows=30,
+            )
+            if data_slice is None or len(data_slice) < 30:
+                continue
+
+            returns = data_slice["close"].pct_change().dropna()
+            if len(returns) <= 5:
+                continue
+
+            real_vol = float(returns.tail(20).std() * np.sqrt(252))
+            vol_short = float(returns.tail(10).std() * np.sqrt(252))
+            vol_long = float(returns.head(20).std() * np.sqrt(252))
+            vol_trend = (vol_short - vol_long) / vol_long if vol_long > 0 else 0.0
+
+            data_30d = data_slice.tail(30)
+            price_momentum = (
+                float((data_30d["close"].iloc[-1] / data_30d["close"].iloc[0]) - 1)
+                if len(data_30d) >= 10
+                else 0.0
+            )
+
+            avg_head_volume = float(data_slice["volume"].head(30).mean())
+            volume_ratio = (
+                float(data_slice["volume"].tail(10).mean() / avg_head_volume)
+                if avg_head_volume > 0
+                else 0.0
+            )
+
+            if real_vol <= 0:
+                continue
+
+            vol_score = 1 / (1 + real_vol)
+            trend_score = 1 - max(0, vol_trend)
+            momentum_score = max(0, price_momentum)
+            volume_score = min(2, volume_ratio)
+            ai_score = (
+                0.3 * vol_score
+                + 0.25 * trend_score
+                + 0.25 * momentum_score
+                + 0.2 * volume_score
+            )
+
+            if price_momentum > 0:
+                candidates.append((ticker, ai_score, real_vol, price_momentum, vol_trend))
+        except Exception:
+            continue
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return candidates[:top_n]
 
 
 class EnhancedVolatilityTrader:
@@ -452,13 +591,211 @@ class EnhancedVolatilityTrader:
 # Main Selection Function
 # ============================================
 
-def select_enhanced_volatility_stocks(all_tickers: List[str], 
-                                      ticker_data_grouped: Dict[str, pd.DataFrame],
-                                      current_date: datetime = None,
-                                      top_n: int = PORTFOLIO_SIZE) -> List[str]:
-    """
-    Main function to select stocks using enhanced volatility strategy.
-    """
-    trader = EnhancedVolatilityTrader()
-    return trader.select_enhanced_stocks(all_tickers, ticker_data_grouped,
-                                        current_date, top_n)
+def select_enhanced_volatility_stocks(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime = None,
+    top_n: int = PORTFOLIO_SIZE,
+    price_history_cache=None,
+) -> List[str]:
+    candidates = _score_enhanced_volatility_candidates(
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        top_n,
+        price_history_cache=price_history_cache,
+    )
+    return [ticker for ticker, _, _, _ in candidates]
+
+
+def select_ai_volatility_ensemble_stocks(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime = None,
+    top_n: int = PORTFOLIO_SIZE,
+    price_history_cache=None,
+) -> List[str]:
+    candidates = _score_ai_volatility_ensemble_candidates(
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        top_n,
+        price_history_cache=price_history_cache,
+    )
+    return [ticker for ticker, _, _, _, _ in candidates]
+
+
+def rebalance_enhanced_volatility_positions(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    positions: Dict[str, Dict],
+    cash: float,
+    top_n: int = PORTFOLIO_SIZE,
+    transaction_cost: float = TRANSACTION_COST,
+    price_history_cache=None,
+) -> Tuple[Dict[str, Dict], float, List[str], List[Tuple[str, float, float, float]]]:
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    top_candidates = _score_enhanced_volatility_candidates(
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        top_n,
+        price_history_cache=price_history_cache,
+    )
+    if not top_candidates:
+        return positions, cash, list(positions.keys()), []
+
+    updated_positions = dict(positions)
+    target_tickers = {ticker for ticker, _, _, _ in top_candidates}
+    total_value = cash + sum(pos.get("value", 0.0) for pos in updated_positions.values())
+    capital_per_stock = total_value / top_n if top_n > 0 else 0.0
+
+    for ticker in list(updated_positions.keys()):
+        if ticker in target_tickers:
+            continue
+        current_price = _latest_cached_close(price_history_cache, ticker, current_date)
+        if current_price is None:
+            continue
+        shares = updated_positions[ticker]["shares"]
+        gross_sale = shares * current_price
+        sell_cost = gross_sale * transaction_cost
+        cash += gross_sale - sell_cost
+        del updated_positions[ticker]
+
+    for ticker, score, volatility, atr in top_candidates:
+        if ticker in updated_positions or capital_per_stock <= 0:
+            continue
+        current_price = _latest_cached_close(price_history_cache, ticker, current_date)
+        if current_price is None or current_price <= 0:
+            continue
+
+        max_buy = min(capital_per_stock, cash / (1 + transaction_cost))
+        shares = int(max_buy / current_price)
+        if shares <= 0:
+            continue
+
+        buy_value = shares * current_price
+        buy_cost = buy_value * transaction_cost
+        if cash < buy_value + buy_cost:
+            continue
+
+        cash -= buy_value + buy_cost
+        updated_positions[ticker] = {
+            "shares": shares,
+            "entry_price": current_price,
+            "value": buy_value,
+            "stop_loss": current_price - (2 * atr),
+            "take_profit": current_price + (3 * atr),
+            "atr": atr,
+            "score": score,
+            "volatility": volatility,
+        }
+
+    return updated_positions, cash, list(updated_positions.keys()), top_candidates
+
+
+def close_enhanced_volatility_positions(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    positions: Dict[str, Dict],
+    cash: float,
+    transaction_cost: float = TRANSACTION_COST,
+    price_history_cache=None,
+) -> Tuple[Dict[str, Dict], float, List[Tuple[str, float, str]]]:
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    updated_positions = dict(positions)
+    closed_positions: List[Tuple[str, float, str]] = []
+
+    for ticker, pos in list(updated_positions.items()):
+        current_price = _latest_cached_close(price_history_cache, ticker, current_date)
+        if current_price is None:
+            continue
+
+        reason = None
+        if current_price <= pos["stop_loss"]:
+            reason = "Stop Loss"
+        elif current_price >= pos["take_profit"]:
+            reason = "Take Profit"
+
+        if reason is None:
+            continue
+
+        shares = pos["shares"]
+        gross_sale = shares * current_price
+        sell_cost = gross_sale * transaction_cost
+        cash += gross_sale - sell_cost
+        del updated_positions[ticker]
+        closed_positions.append((ticker, current_price, reason))
+
+    return updated_positions, cash, closed_positions
+
+
+def rebalance_ai_volatility_ensemble_positions(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    positions: Dict[str, Dict],
+    cash: float,
+    top_n: int = PORTFOLIO_SIZE,
+    transaction_cost: float = TRANSACTION_COST,
+    price_history_cache=None,
+) -> Tuple[Dict[str, Dict], float, List[str], List[Tuple[str, float, float, float, float]]]:
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    top_candidates = _score_ai_volatility_ensemble_candidates(
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        top_n,
+        price_history_cache=price_history_cache,
+    )
+    if not top_candidates:
+        return positions, cash, list(positions.keys()), []
+
+    updated_positions = dict(positions)
+    target_tickers = {ticker for ticker, _, _, _, _ in top_candidates}
+    total_value = cash + sum(pos.get("value", 0.0) for pos in updated_positions.values())
+    capital_per_stock = total_value / top_n if top_n > 0 else 0.0
+    max_position_value = total_value * 0.15
+
+    for ticker in list(updated_positions.keys()):
+        if ticker in target_tickers:
+            continue
+        current_price = _latest_cached_close(price_history_cache, ticker, current_date)
+        if current_price is None:
+            continue
+        shares = updated_positions[ticker]["shares"]
+        gross_sale = shares * current_price
+        sell_cost = gross_sale * transaction_cost
+        cash += gross_sale - sell_cost
+        del updated_positions[ticker]
+
+    for ticker, ai_score, vol, momentum, vol_trend in top_candidates:
+        if ticker in updated_positions or capital_per_stock <= 0:
+            continue
+        current_price = _latest_cached_close(price_history_cache, ticker, current_date)
+        if current_price is None or current_price <= 0:
+            continue
+
+        position_value = min(capital_per_stock, max_position_value, cash / (1 + transaction_cost))
+        shares = int(position_value / current_price)
+        if shares <= 0:
+            continue
+
+        buy_value = shares * current_price
+        buy_cost = buy_value * transaction_cost
+        if cash < buy_value + buy_cost:
+            continue
+
+        cash -= buy_value + buy_cost
+        updated_positions[ticker] = {
+            "shares": shares,
+            "entry_price": current_price,
+            "value": buy_value,
+            "ai_score": ai_score,
+            "volatility": vol,
+            "momentum": momentum,
+            "vol_trend": vol_trend,
+        }
+
+    return updated_positions, cash, list(updated_positions.keys()), top_candidates

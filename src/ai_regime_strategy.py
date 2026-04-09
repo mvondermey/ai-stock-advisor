@@ -16,8 +16,11 @@ from tqdm import tqdm
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict
+from multiprocessing import Pool, get_context
 import joblib
 from pathlib import Path
+import os
+import tempfile
 
 from model_training_safety import (
     catboost_has_trained_trees,
@@ -28,7 +31,7 @@ from model_training_safety import (
     restore_native_model_artifacts,
     save_native_model_artifacts,
 )
-from config import AI_REGIME_RETRAIN_DAYS
+from config import AI_REGIME_RETRAIN_DAYS, NUM_PROCESSES
 from strategy_universes import AI_REGIME_STRATEGY_SOURCES, get_enabled_strategy_aliases
 
 # Model save paths
@@ -41,6 +44,275 @@ SUB_STRATEGIES = get_enabled_strategy_aliases(AI_REGIME_STRATEGY_SOURCES)
 
 # Regime features to extract
 REGIME_LOOKBACK = 20  # Days to look back for regime features
+
+_AI_REGIME_SAMPLE_CONTEXT_PATH: Optional[str] = None
+_AI_REGIME_SAMPLE_CONTEXT: Optional[Dict[str, object]] = None
+
+
+def _init_ai_regime_sample_worker(
+    context_path: Optional[str] = None,
+    context_data: Optional[Dict[str, object]] = None,
+) -> None:
+    global _AI_REGIME_SAMPLE_CONTEXT_PATH, _AI_REGIME_SAMPLE_CONTEXT
+    _AI_REGIME_SAMPLE_CONTEXT_PATH = context_path
+    _AI_REGIME_SAMPLE_CONTEXT = context_data
+
+
+def _get_ai_regime_sample_context() -> Dict[str, object]:
+    global _AI_REGIME_SAMPLE_CONTEXT
+    if _AI_REGIME_SAMPLE_CONTEXT is None:
+        if not _AI_REGIME_SAMPLE_CONTEXT_PATH:
+            raise ValueError("AI Regime sample context path is not initialized")
+        _AI_REGIME_SAMPLE_CONTEXT = joblib.load(_AI_REGIME_SAMPLE_CONTEXT_PATH)
+    return _AI_REGIME_SAMPLE_CONTEXT
+
+
+def _ai_regime_history_as_of(
+    strategy_histories: Dict[str, List[float]],
+    strategy_name: str,
+    day_idx: Optional[int] = None,
+) -> List[float]:
+    history = strategy_histories.get(strategy_name, [])
+    if day_idx is None:
+        return history
+    return history[: day_idx + 1]
+
+
+def _ai_regime_extract_regime_features(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    strategy_histories: Dict[str, List[float]],
+    current_date: datetime,
+    day_idx: Optional[int] = None,
+) -> Optional[Dict[str, float]]:
+    try:
+        features: Dict[str, float] = {}
+        stock_returns_5d = []
+        stock_returns_10d = []
+        stock_returns_20d = []
+        stock_returns_60d = []
+        stock_vol_short = []
+        stock_vol_long = []
+        stocks_above_sma20 = 0
+        stocks_total = 0
+
+        for _, data in ticker_data_grouped.items():
+            if data is None or len(data) < 30:
+                continue
+
+            close = data['Close'].dropna()
+            if len(close) < 30:
+                continue
+
+            close = close[close.index <= current_date]
+            if len(close) < 25:
+                continue
+
+            latest = close.iloc[-1]
+            stocks_total += 1
+
+            start_5d = current_date - timedelta(days=5)
+            data_5d = close[close.index >= start_5d]
+            if len(data_5d) >= 3 and data_5d.iloc[0] > 0:
+                stock_returns_5d.append((latest / data_5d.iloc[0] - 1) * 100)
+
+            start_10d = current_date - timedelta(days=10)
+            data_10d = close[close.index >= start_10d]
+            if len(data_10d) >= 5 and data_10d.iloc[0] > 0:
+                stock_returns_10d.append((latest / data_10d.iloc[0] - 1) * 100)
+
+            start_20d = current_date - timedelta(days=20)
+            data_20d = close[close.index >= start_20d]
+            if len(data_20d) >= 10 and data_20d.iloc[0] > 0:
+                stock_returns_20d.append((latest / data_20d.iloc[0] - 1) * 100)
+
+            start_60d = current_date - timedelta(days=60)
+            data_60d = close[close.index >= start_60d]
+            if len(data_60d) >= 30 and data_60d.iloc[0] > 0:
+                stock_returns_60d.append((latest / data_60d.iloc[0] - 1) * 100)
+
+            daily_ret = close.pct_change().dropna()
+            if len(daily_ret) >= 10:
+                stock_vol_short.append(daily_ret.tail(10).std() * np.sqrt(252) * 100)
+            if len(daily_ret) >= 60:
+                stock_vol_long.append(daily_ret.tail(60).std() * np.sqrt(252) * 100)
+
+            if len(close) >= 20:
+                sma20 = close.tail(20).mean()
+                if latest > sma20:
+                    stocks_above_sma20 += 1
+
+        if len(stock_returns_20d) < 10:
+            return None
+
+        features['market_return_5d'] = np.mean(stock_returns_5d) if stock_returns_5d else 0
+        features['market_return_10d'] = np.mean(stock_returns_10d) if stock_returns_10d else 0
+        features['market_return_20d'] = np.mean(stock_returns_20d)
+        features['market_return_60d'] = np.mean(stock_returns_60d) if stock_returns_60d else 0
+        features['market_vol_short'] = np.mean(stock_vol_short) if stock_vol_short else 0
+        features['market_vol_long'] = np.mean(stock_vol_long) if stock_vol_long else 0
+        features['vol_regime_ratio'] = (features['market_vol_short'] / features['market_vol_long']) if features['market_vol_long'] > 0 else 1.0
+        features['high_vol_regime'] = 1.0 if features['market_vol_short'] > 30 else 0.0
+        features['return_dispersion_5d'] = np.std(stock_returns_5d) if len(stock_returns_5d) > 1 else 0
+        features['return_dispersion_20d'] = np.std(stock_returns_20d)
+        features['volatility_dispersion'] = np.std(stock_vol_short) if len(stock_vol_short) > 1 else 0
+        features['breadth_pct_above_sma20'] = (stocks_above_sma20 / stocks_total * 100) if stocks_total > 0 else 50.0
+        features['momentum_acceleration'] = features['market_return_5d'] - features['market_return_20d'] / 4
+        features['trend_consistency'] = features['market_return_10d'] - features['market_return_5d']
+
+        for strat_name in SUB_STRATEGIES:
+            hist = _ai_regime_history_as_of(strategy_histories, strat_name, day_idx)
+            if len(hist) >= 10 and hist[-10] > 0:
+                features[f'{strat_name}_mom_10d'] = (hist[-1] - hist[-10]) / hist[-10] * 100
+            else:
+                features[f'{strat_name}_mom_10d'] = 0.0
+
+            if len(hist) >= 20 and hist[-20] > 0:
+                features[f'{strat_name}_mom_20d'] = (hist[-1] - hist[-20]) / hist[-20] * 100
+            else:
+                features[f'{strat_name}_mom_20d'] = 0.0
+
+            if len(hist) >= 20:
+                daily_rets = np.diff(hist[-20:]) / np.array(hist[-20:-1])
+                if len(daily_rets) > 1 and np.std(daily_rets) > 0:
+                    features[f'{strat_name}_sharpe_20d'] = (np.mean(daily_rets) / np.std(daily_rets)) * np.sqrt(252)
+                else:
+                    features[f'{strat_name}_sharpe_20d'] = 0.0
+            else:
+                features[f'{strat_name}_sharpe_20d'] = 0.0
+
+        return features
+    except Exception as e:
+        print(f"   ⚠️ AI Regime: Feature extraction failed: {e}")
+        return None
+
+
+def _ai_regime_get_best_strategy_forward(
+    strategy_histories: Dict[str, List[float]],
+    forward_days: int,
+    day_idx: int,
+) -> Optional[str]:
+    best_strategy = None
+    best_return = -np.inf
+
+    for strat_name in SUB_STRATEGIES:
+        hist = strategy_histories.get(strat_name, [])
+        if len(hist) <= day_idx + forward_days:
+            continue
+
+        start_val = hist[day_idx]
+        end_val = hist[day_idx + forward_days]
+
+        if start_val > 0:
+            ret = (end_val - start_val) / start_val * 100
+            if ret > best_return:
+                best_return = ret
+                best_strategy = strat_name
+
+    return best_strategy
+
+
+def _collect_ai_regime_training_sample(day_idx: int) -> Optional[Dict[str, float]]:
+    context = _get_ai_regime_sample_context()
+    business_days = context['business_days']
+    if day_idx >= len(business_days):
+        return None
+
+    current_date = business_days[day_idx]
+    features = _ai_regime_extract_regime_features(
+        ticker_data_grouped=context['ticker_data_grouped'],
+        strategy_histories=context['strategy_histories'],
+        current_date=current_date,
+        day_idx=day_idx,
+    )
+    if features is None:
+        return None
+
+    best_strat = _ai_regime_get_best_strategy_forward(
+        strategy_histories=context['strategy_histories'],
+        forward_days=int(context['forward_days']),
+        day_idx=day_idx,
+    )
+    if best_strat is None:
+        return None
+
+    features['label'] = best_strat
+    return features
+
+
+def _collect_ai_regime_training_samples_parallel(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    business_days: List[datetime],
+    strategy_histories: Dict[str, List[float]],
+    forward_days: int,
+    sample_day_indices: List[int],
+) -> List[Dict[str, float]]:
+    training_samples: List[Dict[str, float]] = []
+    if not sample_day_indices:
+        return training_samples
+
+    sample_context = {
+        'ticker_data_grouped': ticker_data_grouped,
+        'business_days': business_days,
+        'strategy_histories': strategy_histories,
+        'forward_days': forward_days,
+    }
+
+    n_workers = max(1, min(NUM_PROCESSES, len(sample_day_indices), 4))
+
+    if os.name != 'nt':
+        global _AI_REGIME_SAMPLE_CONTEXT_PATH, _AI_REGIME_SAMPLE_CONTEXT
+        _AI_REGIME_SAMPLE_CONTEXT_PATH = None
+        _AI_REGIME_SAMPLE_CONTEXT = sample_context
+        try:
+            with get_context('fork').Pool(
+                processes=n_workers,
+                initializer=_init_ai_regime_sample_worker,
+                initargs=(None, sample_context),
+            ) as pool:
+                results = pool.imap_unordered(_collect_ai_regime_training_sample, sample_day_indices)
+                for sample in tqdm(
+                    results,
+                    total=len(sample_day_indices),
+                    desc="   AI Regime sample build",
+                    ncols=100,
+                    unit="day",
+                ):
+                    if sample is not None:
+                        training_samples.append(sample)
+        finally:
+            _AI_REGIME_SAMPLE_CONTEXT_PATH = None
+            _AI_REGIME_SAMPLE_CONTEXT = None
+        return training_samples
+
+    temp_context_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as temp_context_file:
+            temp_context_path = temp_context_file.name
+        joblib.dump(sample_context, temp_context_path)
+
+        with Pool(
+            processes=n_workers,
+            initializer=_init_ai_regime_sample_worker,
+            initargs=(temp_context_path, None),
+        ) as pool:
+            results = pool.imap_unordered(_collect_ai_regime_training_sample, sample_day_indices)
+            for sample in tqdm(
+                results,
+                total=len(sample_day_indices),
+                desc="   AI Regime sample build",
+                ncols=100,
+                unit="day",
+            ):
+                if sample is not None:
+                    training_samples.append(sample)
+    finally:
+        if temp_context_path is not None:
+            try:
+                Path(temp_context_path).unlink()
+            except OSError as e:
+                print(f"   ⚠️ AI Regime: Failed to remove temp context: {e}")
+
+    return training_samples
 
 
 class AIRegimeAllocator:
@@ -300,33 +572,14 @@ class AIRegimeAllocator:
             print(f"   ⚠️ AI Regime: Need at least 2 days of data (have {self.day_count}), skipping training")
             return False
 
-        for day_idx in tqdm(
-            range(min_day, max_day),
-            total=max(0, max_day - min_day),
-            desc="   AI Regime sample build",
-            ncols=100,
-            unit="day",
-        ):
-            # Get features for this day
-            if day_idx >= len(business_days):
-                continue
-            current_date = business_days[day_idx]
-
-            features = self.extract_regime_features(
-                ticker_data_grouped,
-                current_date,
-                day_idx=day_idx,
-            )
-            if features is None:
-                continue
-
-            # Get label (best strategy over next forward_days)
-            best_strat = self._get_best_strategy_forward(day_idx)
-            if best_strat is None:
-                continue
-
-            features['label'] = best_strat
-            training_samples.append(features)
+        sample_day_indices = list(range(min_day, max_day))
+        training_samples = _collect_ai_regime_training_samples_parallel(
+            ticker_data_grouped=ticker_data_grouped,
+            business_days=business_days,
+            strategy_histories=dict(self.strategy_histories),
+            forward_days=self.forward_days,
+            sample_day_indices=sample_day_indices,
+        )
 
         if len(training_samples) < 1:
             if self.day_count <= self.forward_days + 1:
@@ -702,7 +955,8 @@ def select_ai_regime_stocks(
     current_date: datetime,
     top_n: int,
     predicted_strategy: str,
-    ai_elite_models: Dict = None
+    ai_elite_models: Dict = None,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Select stocks using the predicted best strategy.
@@ -722,12 +976,17 @@ def select_ai_regime_stocks(
     from shared_strategies import (
         select_top_performers, select_top_performers_vol_filtered,
         select_volatility_adj_mom_stocks, select_momentum_ai_hybrid_stocks,
-        select_ai_elite_with_training, select_risk_adj_mom_stocks,
+        select_risk_adj_mom_stocks,
         select_quality_momentum_stocks, select_3m_1y_ratio_stocks, select_1y_3m_ratio_stocks,
         select_momentum_volatility_hybrid_1y3m_stocks,
         select_momentum_volatility_hybrid_6m_stocks,
         select_momentum_volatility_hybrid_stocks,
     )
+    from ai_elite_strategy import select_ai_elite_stocks
+    from ai_elite_market_up_strategy import select_ai_elite_market_up_stocks
+    from ai_elite_filtered_strategy import select_ai_elite_filtered_stocks
+    from elite_hybrid_strategy import select_elite_hybrid_stocks
+    from elite_risk_strategy import select_elite_risk_stocks
     from new_strategies import select_concentrated_3m_stocks, select_dual_momentum_stocks, select_trend_following_atr_stocks
     from bollinger_bands_strategy import (
         select_bb_squeeze_breakout_stocks, select_bb_rsi_combo_stocks,
@@ -751,12 +1010,43 @@ def select_ai_regime_stocks(
         'risk_adj_mom_3m_sent': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
         'risk_adj_sent': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
 
-        # AI/ML Strategies (select_ai_elite_with_training returns tuple, extract first element)
-        'ai_elite': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
-        'ai_elite_market_up': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
-        'ai_elite_filtered': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
-        'elite_hybrid': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
-        'elite_risk': lambda: select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)[0],
+        # AI/ML Strategies
+        'ai_elite': lambda: select_ai_elite_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            per_ticker_models=ai_elite_models,
+        ),
+        'ai_elite_market_up': lambda: select_ai_elite_market_up_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            per_ticker_models=ai_elite_models,
+        ),
+        'ai_elite_filtered': lambda: select_ai_elite_filtered_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            per_ticker_models=ai_elite_models,
+            price_history_cache=price_history_cache,
+        ),
+        'elite_hybrid': lambda: select_elite_hybrid_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        ),
+        'elite_risk': lambda: select_elite_risk_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        ),
         'momentum_ai_hybrid': lambda: select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
 
         # Momentum Strategies

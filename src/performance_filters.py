@@ -186,15 +186,15 @@ def apply_performance_filters(
         }
         
     except Exception as e:
-        # On error, allow ticker to pass (don't filter out due to calculation issues)
-        return {'perf_1y': 0.15, 'perf_6m': 0.075, 'perf_3m': 0.0375}  # Assume good performance
+        raise
 
 
 def filter_tickers_by_performance(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime,
-    strategy_name: str = "Unknown"
+    strategy_name: str = "Unknown",
+    price_history_cache=None
 ) -> List[str]:
     """
     Filter a list of tickers by performance thresholds.
@@ -204,6 +204,7 @@ def filter_tickers_by_performance(
         ticker_data_grouped: Dict of ticker -> DataFrame
         current_date: Current analysis date
         strategy_name: Name of strategy for debug output
+        price_history_cache: Optional PriceHistoryCache for fast lookups
         
     Returns:
         List of tickers that pass performance filters
@@ -218,6 +219,81 @@ def filter_tickers_by_performance(
     
     print(f"\n   [DEBUG] {strategy_name}: Performance filter analysis (first {max_debug} failures shown)")
     
+    # ⚡ Fast path: use cached performance data when available
+    if price_history_cache is not None and current_date is not None:
+        from parallel_backtest import calculate_cached_performance
+        import time as _time
+        _filter_start = _time.time()
+
+        perf_1y_map = dict(calculate_cached_performance(all_tickers, price_history_cache, current_date, 365))
+        perf_6m_map = dict(calculate_cached_performance(all_tickers, price_history_cache, current_date, 180))
+        perf_3m_map = dict(calculate_cached_performance(all_tickers, price_history_cache, current_date, 90))
+        perf_1m_map = dict(calculate_cached_performance(all_tickers, price_history_cache, current_date, 30))
+
+        is_1m_strategy = '1M' in strategy_name and 'Monthly' not in strategy_name
+        is_3m_strategy = '3M' in strategy_name
+        is_6m_strategy = '6M' in strategy_name
+
+        for ticker in all_tickers:
+            perf_1y_pct = perf_1y_map.get(ticker)
+            perf_6m_pct = perf_6m_map.get(ticker)
+            perf_3m_pct = perf_3m_map.get(ticker)
+            perf_1m_pct = perf_1m_map.get(ticker, 0.0)
+
+            if perf_1y_pct is None or perf_6m_pct is None or perf_3m_pct is None:
+                failed_count += 1
+                continue
+
+            # Convert from percentage to ratio for threshold comparison
+            perf_1y = perf_1y_pct / 100.0
+            perf_6m = perf_6m_pct / 100.0
+            perf_3m = perf_3m_pct / 100.0
+            perf_1m = perf_1m_pct / 100.0
+
+            is_inverse_etf = ticker in INVERSE_ETFS
+            passed = True
+
+            if is_inverse_etf:
+                if not INVERSE_ETF_SKIP_1Y_FILTER and perf_1y < MIN_PERFORMANCE_1Y:
+                    passed = False
+                elif perf_3m < INVERSE_ETF_MIN_PERFORMANCE_3M:
+                    passed = False
+                elif perf_1m < INVERSE_ETF_MIN_PERFORMANCE_1M:
+                    passed = False
+            elif is_1m_strategy:
+                if perf_1m < 0.01:
+                    passed = False
+            elif is_3m_strategy:
+                if perf_3m < MIN_PERFORMANCE_3M:
+                    passed = False
+            elif is_6m_strategy:
+                if perf_6m < MIN_PERFORMANCE_6M:
+                    passed = False
+                elif perf_3m < MIN_PERFORMANCE_3M:
+                    passed = False
+            else:
+                if perf_1y < MIN_PERFORMANCE_1Y:
+                    passed = False
+                elif perf_6m < MIN_PERFORMANCE_6M:
+                    passed = False
+                elif perf_3m < MIN_PERFORMANCE_3M:
+                    passed = False
+
+            if passed:
+                passed_tickers.append(ticker)
+                if len(passed_tickers) <= 5:
+                    print(f"   [PASS] {ticker}: PASSED (1Y={perf_1y:.1%}, 6M={perf_6m:.1%}, 3M={perf_3m:.1%})")
+            else:
+                failed_count += 1
+                debug_count += 1
+
+        _elapsed = _time.time() - _filter_start
+        if failed_count > 0 and len(all_tickers) > 0:
+            pass_rate = (len(passed_tickers) / len(all_tickers)) * 100
+            print(f"   ⚡ {strategy_name}: Cached perf filter - {len(passed_tickers)}/{len(all_tickers)} passed ({pass_rate:.1f}%) in {_elapsed:.2f}s")
+        return passed_tickers
+
+    # Slow path: sequential per-ticker pandas filtering
     for ticker in all_tickers:
         try:
             if ticker not in ticker_data_grouped:

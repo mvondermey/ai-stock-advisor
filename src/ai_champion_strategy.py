@@ -11,8 +11,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta
+from multiprocessing import Pool, get_context
 from pathlib import Path
 from typing import Dict, List, Optional
+import os
+import tempfile
 
 import joblib
 import numpy as np
@@ -33,6 +36,7 @@ from config import (
     AI_CHAMPION_FORWARD_DAYS,
     AI_CHAMPION_HOLD_MARGIN,
     AI_CHAMPION_RETRAIN_DAYS,
+    NUM_PROCESSES,
     XGBOOST_USE_GPU,
 )
 from strategy_universes import (
@@ -47,6 +51,306 @@ AI_CHAMPION_MODEL_PATH = MODEL_SAVE_DIR / "ai_champion_model.joblib"
 
 CANDIDATE_STRATEGIES = tuple(get_enabled_strategy_aliases(AI_CHAMPION_STRATEGY_SOURCES))
 PAIRWISE_FEATURES = build_pairwise_feature_names(CANDIDATE_STRATEGIES)
+
+_AI_CHAMPION_SAMPLE_CONTEXT_PATH: Optional[str] = None
+_AI_CHAMPION_SAMPLE_CONTEXT: Optional[Dict[str, object]] = None
+
+
+def _init_ai_champion_sample_worker(
+    context_path: Optional[str] = None,
+    context_data: Optional[Dict[str, object]] = None,
+) -> None:
+    global _AI_CHAMPION_SAMPLE_CONTEXT_PATH, _AI_CHAMPION_SAMPLE_CONTEXT
+    _AI_CHAMPION_SAMPLE_CONTEXT_PATH = context_path
+    _AI_CHAMPION_SAMPLE_CONTEXT = context_data
+
+
+def _get_ai_champion_sample_context() -> Dict[str, object]:
+    global _AI_CHAMPION_SAMPLE_CONTEXT
+    if _AI_CHAMPION_SAMPLE_CONTEXT is None:
+        if not _AI_CHAMPION_SAMPLE_CONTEXT_PATH:
+            raise ValueError("AI Champion sample context path is not initialized")
+        _AI_CHAMPION_SAMPLE_CONTEXT = joblib.load(_AI_CHAMPION_SAMPLE_CONTEXT_PATH)
+    return _AI_CHAMPION_SAMPLE_CONTEXT
+
+
+def _ai_champion_history_as_of(
+    strategy_histories: Dict[str, List[float]],
+    strategy_name: str,
+    day_idx: Optional[int] = None,
+) -> List[float]:
+    history = strategy_histories.get(strategy_name, [])
+    if day_idx is None:
+        return history
+    return history[: day_idx + 1]
+
+
+def _ai_champion_safe_return(history: List[float], lookback: int) -> float:
+    if len(history) <= lookback or history[-(lookback + 1)] <= 0:
+        return 0.0
+    start_val = history[-(lookback + 1)]
+    end_val = history[-1]
+    return (end_val - start_val) / start_val
+
+
+def _ai_champion_safe_vol(history: List[float], lookback: int) -> float:
+    if len(history) < lookback + 1:
+        return 0.0
+    series = pd.Series(history[-(lookback + 1) :])
+    returns = series.pct_change().dropna()
+    if len(returns) < 2:
+        return 0.0
+    return float(returns.std() * np.sqrt(252))
+
+
+def _ai_champion_safe_sharpe(history: List[float], lookback: int) -> float:
+    if len(history) < lookback + 1:
+        return 0.0
+    series = pd.Series(history[-(lookback + 1) :])
+    returns = series.pct_change().dropna()
+    if len(returns) < 2:
+        return 0.0
+    std = returns.std()
+    if std <= 0:
+        return 0.0
+    return float((returns.mean() / std) * np.sqrt(252))
+
+
+def _ai_champion_safe_drawdown(history: List[float], lookback: int) -> float:
+    if len(history) < 2:
+        return 0.0
+    window = np.asarray(history[-min(len(history), lookback) :], dtype=float)
+    if len(window) == 0:
+        return 0.0
+    peaks = np.maximum.accumulate(window)
+    drawdowns = np.where(peaks > 0, (peaks - window) / peaks, 0.0)
+    return float(np.max(drawdowns)) if len(drawdowns) else 0.0
+
+
+def _ai_champion_market_proxy_features(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+) -> Dict[str, float]:
+    from market_regime import calculate_trailing_return
+
+    features: Dict[str, float] = {}
+    market_data = ticker_data_grouped.get("SPY")
+    if market_data is None or len(market_data) == 0:
+        market_data = ticker_data_grouped.get("QQQ")
+
+    if market_data is not None and len(market_data) > 0:
+        for lookback in (3, 5, 10, 20):
+            market_ret = calculate_trailing_return(market_data, current_date, lookback)
+            features[f"market_return_{lookback}d"] = (market_ret or 0.0) / 100.0
+
+        closes = market_data["Close"].dropna()
+        closes = closes[closes.index <= current_date]
+        if len(closes) >= 11:
+            returns_10d = closes.tail(11).pct_change().dropna()
+            features["market_vol_10d"] = float(returns_10d.std() * np.sqrt(252))
+        else:
+            features["market_vol_10d"] = 0.0
+
+        if len(closes) >= 21:
+            sma20 = closes.tail(20).mean()
+            features["market_above_sma20"] = 1.0 if closes.iloc[-1] > sma20 else 0.0
+        else:
+            features["market_above_sma20"] = 0.0
+    else:
+        for lookback in (3, 5, 10, 20):
+            features[f"market_return_{lookback}d"] = 0.0
+        features["market_vol_10d"] = 0.0
+        features["market_above_sma20"] = 0.0
+
+    stock_returns_5d = []
+    stocks_above_sma20 = 0
+    stocks_total = 0
+    for data in ticker_data_grouped.values():
+        if data is None or len(data) < 25:
+            continue
+        close = data["Close"].dropna()
+        close = close[close.index <= current_date]
+        if len(close) < 10:
+            continue
+        stocks_total += 1
+        start_5d = current_date - timedelta(days=5)
+        close_5d = close[close.index >= start_5d]
+        if len(close_5d) >= 2 and close_5d.iloc[0] > 0:
+            stock_returns_5d.append((close_5d.iloc[-1] / close_5d.iloc[0]) - 1)
+        if len(close) >= 20 and close.iloc[-1] > close.tail(20).mean():
+            stocks_above_sma20 += 1
+
+    features["breadth_pct_above_sma20"] = (
+        stocks_above_sma20 / stocks_total if stocks_total else 0.5
+    )
+    features["market_dispersion_5d"] = float(np.std(stock_returns_5d)) if len(stock_returns_5d) > 1 else 0.0
+    return features
+
+
+def _ai_champion_extract_features(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    strategy_histories: Dict[str, List[float]],
+    active_candidates: List[str],
+    current_date: datetime,
+    day_idx: Optional[int] = None,
+) -> Dict[str, float]:
+    features = _ai_champion_market_proxy_features(ticker_data_grouped, current_date)
+    active_candidate_set = set(active_candidates)
+
+    for name in CANDIDATE_STRATEGIES:
+        history = _ai_champion_history_as_of(strategy_histories, name, day_idx)
+        features[f"{name}_ret_1d"] = _ai_champion_safe_return(history, 1)
+        features[f"{name}_ret_3d"] = _ai_champion_safe_return(history, 3)
+        features[f"{name}_ret_5d"] = _ai_champion_safe_return(history, 5)
+        features[f"{name}_ret_10d"] = _ai_champion_safe_return(history, 10)
+        features[f"{name}_vol_5d"] = _ai_champion_safe_vol(history, 5)
+        features[f"{name}_vol_10d"] = _ai_champion_safe_vol(history, 10)
+        features[f"{name}_sharpe_5d"] = _ai_champion_safe_sharpe(history, 5)
+        features[f"{name}_sharpe_10d"] = _ai_champion_safe_sharpe(history, 10)
+        features[f"{name}_drawdown_10d"] = _ai_champion_safe_drawdown(history, 10)
+        features[f"{name}_is_active"] = 1.0 if name in active_candidate_set else 0.0
+
+    for left, right in PAIRWISE_FEATURES:
+        left_history = _ai_champion_history_as_of(strategy_histories, left, day_idx)
+        right_history = _ai_champion_history_as_of(strategy_histories, right, day_idx)
+        features[f"{left}_minus_{right}_ret_3d"] = _ai_champion_safe_return(left_history, 3) - _ai_champion_safe_return(right_history, 3)
+        features[f"{left}_minus_{right}_ret_5d"] = _ai_champion_safe_return(left_history, 5) - _ai_champion_safe_return(right_history, 5)
+        features[f"{left}_minus_{right}_sharpe_5d"] = _ai_champion_safe_sharpe(left_history, 5) - _ai_champion_safe_sharpe(right_history, 5)
+
+    return features
+
+
+def _ai_champion_get_best_strategy_forward(
+    strategy_histories: Dict[str, List[float]],
+    active_candidates: List[str],
+    forward_days: int,
+    day_idx: int,
+) -> Optional[str]:
+    best_strategy = None
+    best_return = -np.inf
+
+    for strat_name in CANDIDATE_STRATEGIES:
+        if strat_name not in active_candidates:
+            continue
+        history = strategy_histories.get(strat_name, [])
+        if len(history) <= day_idx + forward_days:
+            continue
+
+        start_val = history[day_idx]
+        end_val = history[day_idx + forward_days]
+        if start_val <= 0:
+            continue
+
+        total_return = (end_val - start_val) / start_val
+        if total_return > best_return:
+            best_return = total_return
+            best_strategy = strat_name
+
+    return best_strategy
+
+
+def _collect_ai_champion_training_sample(day_idx: int) -> Optional[Dict[str, float]]:
+    context = _get_ai_champion_sample_context()
+    business_days = context["business_days"]
+    if day_idx >= len(business_days):
+        return None
+
+    label = _ai_champion_get_best_strategy_forward(
+        strategy_histories=context["strategy_histories"],
+        active_candidates=context["active_candidates"],
+        forward_days=int(context["forward_days"]),
+        day_idx=day_idx,
+    )
+    if label is None:
+        return None
+
+    features = _ai_champion_extract_features(
+        ticker_data_grouped=context["ticker_data_grouped"],
+        strategy_histories=context["strategy_histories"],
+        active_candidates=context["active_candidates"],
+        current_date=business_days[day_idx],
+        day_idx=day_idx,
+    )
+    features["label"] = label
+    return features
+
+
+def _collect_ai_champion_training_samples_parallel(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    business_days: List[datetime],
+    strategy_histories: Dict[str, List[float]],
+    active_candidates: List[str],
+    forward_days: int,
+    sample_day_indices: List[int],
+) -> List[Dict[str, float]]:
+    training_samples: List[Dict[str, float]] = []
+    if not sample_day_indices:
+        return training_samples
+
+    sample_context = {
+        "ticker_data_grouped": ticker_data_grouped,
+        "business_days": business_days,
+        "strategy_histories": strategy_histories,
+        "active_candidates": active_candidates,
+        "forward_days": forward_days,
+    }
+
+    n_workers = max(1, min(NUM_PROCESSES, len(sample_day_indices), 4))
+
+    if os.name != "nt":
+        global _AI_CHAMPION_SAMPLE_CONTEXT_PATH, _AI_CHAMPION_SAMPLE_CONTEXT
+        _AI_CHAMPION_SAMPLE_CONTEXT_PATH = None
+        _AI_CHAMPION_SAMPLE_CONTEXT = sample_context
+        try:
+            with get_context("fork").Pool(
+                processes=n_workers,
+                initializer=_init_ai_champion_sample_worker,
+                initargs=(None, sample_context),
+            ) as pool:
+                results = pool.imap_unordered(_collect_ai_champion_training_sample, sample_day_indices)
+                for sample in tqdm(
+                    results,
+                    total=len(sample_day_indices),
+                    desc="   AI Champion sample build",
+                    ncols=100,
+                    unit="day",
+                ):
+                    if sample is not None:
+                        training_samples.append(sample)
+        finally:
+            _AI_CHAMPION_SAMPLE_CONTEXT_PATH = None
+            _AI_CHAMPION_SAMPLE_CONTEXT = None
+        return training_samples
+
+    temp_context_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as temp_context_file:
+            temp_context_path = temp_context_file.name
+        joblib.dump(sample_context, temp_context_path)
+
+        with Pool(
+            processes=n_workers,
+            initializer=_init_ai_champion_sample_worker,
+            initargs=(temp_context_path, None),
+        ) as pool:
+            results = pool.imap_unordered(_collect_ai_champion_training_sample, sample_day_indices)
+            for sample in tqdm(
+                results,
+                total=len(sample_day_indices),
+                desc="   AI Champion sample build",
+                ncols=100,
+                unit="day",
+            ):
+                if sample is not None:
+                    training_samples.append(sample)
+    finally:
+        if temp_context_path is not None:
+            try:
+                Path(temp_context_path).unlink()
+            except OSError as e:
+                print(f"   ⚠️ AI Champion: Failed to remove temp context: {e}")
+
+    return training_samples
 
 
 def _clone_model(name: str, device: str):
@@ -330,24 +634,15 @@ class AIChampionAllocator:
             print(f"   ⚠️ AI Champion: Need more history before training (have {self.day_count} days)")
             return False
 
-        training_samples = []
-        for day_idx in tqdm(
-            range(min_day, max_day),
-            total=max(0, max_day - min_day),
-            desc="   AI Champion sample build",
-            ncols=100,
-            unit="day",
-        ):
-            if day_idx >= len(business_days):
-                continue
-
-            label = self._get_best_strategy_forward(day_idx)
-            if label is None:
-                continue
-
-            features = self.extract_features(ticker_data_grouped, business_days[day_idx], day_idx=day_idx)
-            features["label"] = label
-            training_samples.append(features)
+        sample_day_indices = list(range(min_day, max_day))
+        training_samples = _collect_ai_champion_training_samples_parallel(
+            ticker_data_grouped=ticker_data_grouped,
+            business_days=business_days,
+            strategy_histories=dict(self.strategy_histories),
+            active_candidates=sorted(self.active_candidates),
+            forward_days=self.forward_days,
+            sample_day_indices=sample_day_indices,
+        )
 
         if len(training_samples) < 8:
             print(f"   ⚠️ AI Champion: Only {len(training_samples)} samples available, keeping existing model")
@@ -588,14 +883,6 @@ class AIChampionAllocator:
         except Exception:
             return None
 
-    def _fallback_strategy(self) -> Optional[str]:
-        if "ai_elite_market_up" in self.active_candidates:
-            return "ai_elite_market_up"
-        if "ai_elite" in self.active_candidates:
-            return "ai_elite"
-        candidates = self._eligible_candidates()
-        return candidates[0] if candidates else None
-
     def predict_best_strategy(
         self,
         ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -603,20 +890,22 @@ class AIChampionAllocator:
     ) -> Optional[str]:
         """Predict the best candidate strategy for the next forward window."""
         if self.model is None or not self.feature_cols:
-            return self._fallback_strategy()
+            print("   ⚠️ AI Champion: No model available, returning no selection")
+            return None
 
         try:
             features = self.extract_features(ticker_data_grouped, current_date)
             X = np.array([[features.get(col, 0.0) for col in self.feature_cols]], dtype=float)
 
             if hasattr(self.model, "n_features_in_") and self.model.n_features_in_ != X.shape[1]:
-                print("   ⚠️ AI Champion: Feature mismatch, falling back")
-                return self._fallback_strategy()
+                print("   ⚠️ AI Champion: Feature mismatch, returning no selection")
+                return None
 
             raw_pred = int(self.model.predict(X)[0])
             predicted_strategy = self._decode_prediction_label(raw_pred)
             if predicted_strategy is None:
-                return self._fallback_strategy()
+                print("   ⚠️ AI Champion: Could not decode prediction, returning no selection")
+                return None
 
             prob_by_strategy: Dict[str, float] = {}
             if hasattr(self.model, "predict_proba"):
@@ -638,7 +927,11 @@ class AIChampionAllocator:
                     final_strategy = self.current_strategy
 
             if final_strategy not in self.active_candidates:
-                final_strategy = self._fallback_strategy()
+                print(
+                    f"   ⚠️ AI Champion: Predicted inactive strategy '{final_strategy}', "
+                    "returning no selection"
+                )
+                return None
 
             if final_strategy != self.current_strategy:
                 print(
@@ -650,7 +943,7 @@ class AIChampionAllocator:
             return final_strategy
         except Exception as exc:
             print(f"   ⚠️ AI Champion: Prediction failed: {exc}")
-            return self._fallback_strategy()
+            return None
 
     def should_retrain(self) -> bool:
         if self.day_count < 3:
@@ -667,6 +960,7 @@ def select_ai_champion_stocks(
     top_n: int,
     predicted_strategy: str,
     ai_elite_models: Dict = None,
+    price_history_cache=None,
 ) -> List[str]:
     """Dispatch stock selection to the strategy chosen by AI Champion."""
     if not predicted_strategy:
@@ -703,6 +997,7 @@ def select_ai_champion_stocks(
             current_date=current_date,
             top_n=top_n,
             per_ticker_models=ai_elite_models,
+            price_history_cache=price_history_cache,
         )
 
     if predicted_strategy == "multi_tf_ensemble":

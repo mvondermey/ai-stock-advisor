@@ -23,6 +23,7 @@ def select_ai_elite_filtered_stocks(
     top_n: int = 10,
     per_ticker_models: Dict[str, any] = None,
     pre_filter_n: int = 20,
+    price_history_cache=None,
 ) -> List[str]:
     """
     AI Elite Filtered Strategy: Risk-Adj Mom 3M base + AI Elite filter
@@ -48,7 +49,8 @@ def select_ai_elite_filtered_stocks(
         all_tickers,
         ticker_data_grouped,
         current_date=current_date,
-        top_n=pre_filter_count
+        top_n=pre_filter_count,
+        price_history_cache=price_history_cache,
     )
     
     if not risk_adj_candidates:

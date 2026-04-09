@@ -14,6 +14,11 @@ import numpy as np
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict
+from strategy_cache_adapter import (
+    ensure_price_history_cache,
+    get_cached_frame_between,
+    resolve_cache_current_date,
+)
 
 # Import config
 from config import (
@@ -74,22 +79,23 @@ class VolatilityAdjustedEnsemble:
         self.current_portfolio_volatility = 0.0
         
     def calculate_stock_volatility(self, ticker: str, ticker_data_grouped: Dict[str, pd.DataFrame],
-                                  current_date: datetime) -> float:
+                                  current_date: datetime, price_history_cache=None) -> float:
         """Calculate annualized volatility for a stock."""
         try:
-            if ticker not in ticker_data_grouped:
-                return 0.5  # Default high volatility if no data
-            
-            ticker_data = ticker_data_grouped[ticker]
-            lookback_start = current_date - timedelta(days=VOLATILITY_LOOKBACK_DAYS)
-            recent_data = ticker_data[(ticker_data.index >= lookback_start) & 
-                                      (ticker_data.index <= current_date)]
-            
-            if len(recent_data) < 10:
+            price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+            recent_data = get_cached_frame_between(
+                price_history_cache,
+                ticker,
+                current_date - timedelta(days=VOLATILITY_LOOKBACK_DAYS),
+                current_date,
+                field_names=("close",),
+                min_rows=10,
+            )
+            if recent_data is None or len(recent_data) < 10:
                 return 0.5  # Default high volatility
             
             # Calculate daily returns
-            daily_returns = recent_data['Close'].pct_change().dropna()
+            daily_returns = recent_data['close'].pct_change().dropna()
             if len(daily_returns) < 5:
                 return 0.5
             
@@ -102,13 +108,19 @@ class VolatilityAdjustedEnsemble:
     
     def calculate_inverse_volatility_weights(self, tickers: List[str], 
                                             ticker_data_grouped: Dict[str, pd.DataFrame],
-                                            current_date: datetime) -> Dict[str, float]:
+                                            current_date: datetime,
+                                            price_history_cache=None) -> Dict[str, float]:
         """Calculate inverse volatility weights for position sizing."""
         volatilities = {}
         
         # Calculate volatilities
         for ticker in tickers:
-            vol = self.calculate_stock_volatility(ticker, ticker_data_grouped, current_date)
+            vol = self.calculate_stock_volatility(
+                ticker,
+                ticker_data_grouped,
+                current_date,
+                price_history_cache=price_history_cache,
+            )
             # Apply maximum volatility cap
             vol = min(vol, MAX_SINGLE_STOCK_VOLATILITY)
             volatilities[ticker] = max(vol, 0.05)  # Minimum 5% volatility
@@ -134,34 +146,55 @@ class VolatilityAdjustedEnsemble:
     def get_strategy_picks(self, strategy_name: str, all_tickers: List[str],
                           ticker_data_grouped: Dict[str, pd.DataFrame],
                           current_date: datetime, train_start_date: datetime = None,
-                          top_n: int = 15) -> List[str]:
+                          top_n: int = 15, price_history_cache=None) -> List[str]:
         """Get stock picks from a specific strategy."""
         try:
             if strategy_name == 'static_bh_3m':
-                return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                               period='3m', current_date=current_date, top_n=top_n)
+                return select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='3m',
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'dyn_bh_1y_vol':
-                picks = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                                period='1y', current_date=current_date, top_n=top_n)
+                picks = select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='1y',
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
                 # Apply volatility filter
                 filtered_picks = []
                 for ticker in picks:
-                    if ticker in ticker_data_grouped:
-                        vol = self.calculate_stock_volatility(ticker, ticker_data_grouped, current_date)
-                        if vol <= MAX_SINGLE_STOCK_VOLATILITY:  # Use the configured max
-                            filtered_picks.append(ticker)
+                    vol = self.calculate_stock_volatility(
+                        ticker,
+                        ticker_data_grouped,
+                        current_date,
+                        price_history_cache=price_history_cache,
+                    )
+                    if vol <= MAX_SINGLE_STOCK_VOLATILITY:  # Use the configured max
+                        filtered_picks.append(ticker)
                 return filtered_picks[:top_n]
             
             elif strategy_name == 'risk_adj_mom':
                 return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped,
                                                  current_date=current_date,
-                                                 train_start_date=train_start_date,
-                                                 top_n=top_n)
+                                                 top_n=top_n,
+                                                 price_history_cache=price_history_cache)
             
             elif strategy_name == 'quality_mom':
-                return select_quality_momentum_stocks(all_tickers, ticker_data_grouped,
-                                                     current_date=current_date, top_n=top_n)
+                return select_quality_momentum_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             else:
                 return []
@@ -193,23 +226,27 @@ class VolatilityAdjustedEnsemble:
     
     def calculate_portfolio_volatility(self, tickers: List[str], weights: Dict[str, float],
                                        ticker_data_grouped: Dict[str, pd.DataFrame],
-                                       current_date: datetime) -> float:
+                                       current_date: datetime,
+                                       price_history_cache=None) -> float:
         """Calculate portfolio-level volatility."""
         try:
             # Get returns data for all stocks
             returns_data = {}
-            lookback_start = current_date - timedelta(days=VOLATILITY_LOOKBACK_DAYS)
+            price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
             
             for ticker in tickers:
-                if ticker in ticker_data_grouped:
-                    ticker_data = ticker_data_grouped[ticker]
-                    recent_data = ticker_data[(ticker_data.index >= lookback_start) & 
-                                              (ticker_data.index <= current_date)]
-                    
-                    if len(recent_data) >= 10:
-                        returns = recent_data['Close'].pct_change().dropna()
-                        if len(returns) >= 5:
-                            returns_data[ticker] = returns
+                recent_data = get_cached_frame_between(
+                    price_history_cache,
+                    ticker,
+                    current_date - timedelta(days=VOLATILITY_LOOKBACK_DAYS),
+                    current_date,
+                    field_names=("close",),
+                    min_rows=10,
+                )
+                if recent_data is not None and len(recent_data) >= 10:
+                    returns = recent_data['close'].pct_change().dropna()
+                    if len(returns) >= 5:
+                        returns_data[ticker] = returns.reset_index(drop=True)
             
             # Need at least 2 tickers with data for covariance
             if len(returns_data) < 2:
@@ -261,7 +298,8 @@ class VolatilityAdjustedEnsemble:
                      ticker_data_grouped: Dict[str, pd.DataFrame],
                      current_date: datetime,
                      train_start_date: datetime = None,
-                     top_n: int = PORTFOLIO_SIZE) -> List[str]:
+                     top_n: int = PORTFOLIO_SIZE,
+                     price_history_cache=None) -> List[str]:
         """Main entry point: Select stocks with volatility adjustment."""
         print(f"\n   🎯 Volatility-Adjusted Ensemble Strategy")
         print(f"   📅 Date: {current_date.date()}")
@@ -271,7 +309,8 @@ class VolatilityAdjustedEnsemble:
         for strategy in VOL_ENSEMBLE_STRATEGIES:
             picks = self.get_strategy_picks(
                 strategy, all_tickers, ticker_data_grouped,
-                current_date, train_start_date, top_n=top_n * 2
+                current_date, train_start_date, top_n=top_n * 2,
+                price_history_cache=price_history_cache,
             )
             strategy_picks[strategy] = picks
         
@@ -297,7 +336,12 @@ class VolatilityAdjustedEnsemble:
         top_candidates = [ticker for ticker, score in sorted_candidates[:top_n * 2]]
         
         # 4. Calculate inverse volatility weights
-        vol_weights = self.calculate_inverse_volatility_weights(top_candidates, ticker_data_grouped, current_date)
+        vol_weights = self.calculate_inverse_volatility_weights(
+            top_candidates,
+            ticker_data_grouped,
+            current_date,
+            price_history_cache=price_history_cache,
+        )
         
         # 5. Select final portfolio with volatility constraint
         selected_stocks = []
@@ -318,7 +362,11 @@ class VolatilityAdjustedEnsemble:
             
             # Check portfolio volatility
             portfolio_vol = self.calculate_portfolio_volatility(
-                list(test_weights.keys()), test_weights, ticker_data_grouped, current_date
+                list(test_weights.keys()),
+                test_weights,
+                ticker_data_grouped,
+                current_date,
+                price_history_cache=price_history_cache,
             )
             
             if portfolio_vol <= MAX_PORTFOLIO_VOLATILITY:
@@ -328,7 +376,12 @@ class VolatilityAdjustedEnsemble:
         # 6. Display results
         print(f"   ✅ Selected {len(selected_stocks)} stocks:")
         for ticker in selected_stocks:
-            vol = self.calculate_stock_volatility(ticker, ticker_data_grouped, current_date)
+            vol = self.calculate_stock_volatility(
+                ticker,
+                ticker_data_grouped,
+                current_date,
+                price_history_cache=price_history_cache,
+            )
             weight = current_weights.get(ticker, 0.1)
             score = ensemble_scores[ticker]
             print(f"      {ticker}: vol={vol:.1%}, weight={weight:.1%}, score={score:.3f}")
@@ -336,7 +389,11 @@ class VolatilityAdjustedEnsemble:
         # 7. Calculate and display portfolio volatility
         if selected_stocks:
             portfolio_vol = self.calculate_portfolio_volatility(
-                selected_stocks, current_weights, ticker_data_grouped, current_date
+                selected_stocks,
+                current_weights,
+                ticker_data_grouped,
+                current_date,
+                price_history_cache=price_history_cache,
             )
             print(f"   📊 Portfolio volatility: {portfolio_vol:.1%}")
         
@@ -362,7 +419,8 @@ def select_volatility_ensemble_stocks(all_tickers: List[str],
                                       ticker_data_grouped: Dict[str, pd.DataFrame],
                                       current_date: datetime = None,
                                       train_start_date: datetime = None,
-                                      top_n: int = PORTFOLIO_SIZE) -> List[str]:
+                                      top_n: int = PORTFOLIO_SIZE,
+                                      price_history_cache=None) -> List[str]:
     """
     Volatility-Adjusted Ensemble stock selection strategy.
     
@@ -385,18 +443,15 @@ def select_volatility_ensemble_stocks(all_tickers: List[str],
     from config import INVERSE_ETFS
     all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
     
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    current_date = resolve_cache_current_date(price_history_cache, current_date, all_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max()
-                       for t in all_tickers
-                       if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
+        return []
     
     ensemble = get_vol_ensemble_instance()
     return ensemble.select_stocks(
-        all_tickers, ticker_data_grouped, current_date, train_start_date, top_n
+        all_tickers, ticker_data_grouped, current_date, train_start_date, top_n,
+        price_history_cache=price_history_cache,
     )
 
 

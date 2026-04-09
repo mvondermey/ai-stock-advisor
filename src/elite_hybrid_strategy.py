@@ -19,12 +19,19 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple
 from datetime import datetime, timedelta, timezone
+from strategy_cache_adapter import (
+    ensure_price_history_cache,
+    get_cached_history_up_to,
+    get_cached_window,
+    resolve_cache_current_date,
+)
 
 def select_elite_hybrid_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
-    top_n: int = 10
+    top_n: int = 10,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Elite Hybrid Strategy: Combines Mom-Vol Hybrid 6M + 1Y/3M Ratio
@@ -38,13 +45,10 @@ def select_elite_hybrid_stocks(
     Returns:
         List of selected ticker symbols
     """
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    current_date = resolve_cache_current_date(price_history_cache, current_date, all_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max() 
-                       for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
+        return []
     
     # Ensure current_date is timezone-aware
     if current_date.tzinfo is None:
@@ -57,7 +61,11 @@ def select_elite_hybrid_stocks(
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Elite Hybrid"
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "Elite Hybrid",
+        price_history_cache=price_history_cache,
     )
     
     candidates = []
@@ -69,37 +77,16 @@ def select_elite_hybrid_stocks(
     
     for ticker in filtered_tickers:
         try:
-            if ticker not in ticker_data_grouped:
+            close_values = get_cached_history_up_to(
+                price_history_cache,
+                ticker,
+                current_date,
+                field_name="close",
+                min_rows=60,
+            )
+            if close_values is None:
                 continue
-            
-            ticker_data = ticker_data_grouped[ticker]
-            if len(ticker_data) == 0:
-                continue
-            
-            # ✅ FIX: Filter data up to current_date to avoid temporal leakage
-            if current_date is not None:
-                current_ts = pd.Timestamp(current_date)
-                # Ensure both are timezone-aware or both are naive
-                if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                    if current_ts.tz is None:
-                        current_ts = current_ts.tz_localize(ticker_data.index.tz)
-                    else:
-                        current_ts = current_ts.tz_convert(ticker_data.index.tz)
-                elif current_ts.tz is not None:
-                    # Ticker data is naive but current_ts has timezone - make current_ts naive
-                    current_ts = current_ts.replace(tzinfo=None)
-                
-                # Use <= comparison to avoid issues with exact timestamp matches
-                try:
-                    ticker_data_filtered = ticker_data[ticker_data.index <= current_ts]
-                except (TypeError, ValueError):
-                    # Fallback: use loc with slice
-                    ticker_data_filtered = ticker_data.loc[:current_ts]
-            else:
-                ticker_data_filtered = ticker_data
-            
-            # Use dropna'd Close series for all calculations (adaptive approach)
-            close_prices = ticker_data_filtered['Close'].dropna()
+            close_prices = pd.Series(close_values)
             n_prices = len(close_prices)
             
             if n_prices < 60:  # Minimum 60 days
@@ -113,11 +100,12 @@ def select_elite_hybrid_stocks(
             # === PART 1: Mom-Vol Hybrid 6M Scoring (using calendar days) ===
             
             # Calculate 6M performance using calendar days (180 days)
-            start_6m = current_ts - timedelta(days=180)
-            data_6m = close_prices[close_prices.index >= start_6m]
-            if len(data_6m) < 40:
+            data_6m = get_cached_window(
+                price_history_cache, ticker, current_date, 180, field_name="close", min_rows=40
+            )
+            if data_6m is None or len(data_6m) < 40:
                 continue
-            price_6m_ago = data_6m.iloc[0]
+            price_6m_ago = data_6m[0]
             if price_6m_ago <= 0:
                 continue
             
@@ -139,27 +127,40 @@ def select_elite_hybrid_stocks(
             # === PART 2: 1Y/3M Ratio Scoring (using calendar days) ===
             
             # Calculate 3M performance using calendar days (90 days)
-            start_3m = current_ts - timedelta(days=90)
-            data_3m = close_prices[close_prices.index >= start_3m]
-            if len(data_3m) < 10:
+            data_3m = get_cached_window(
+                price_history_cache, ticker, current_date, 90, field_name="close", min_rows=10
+            )
+            if data_3m is None or len(data_3m) < 10:
                 continue
-            price_3m_ago = data_3m.iloc[0]
+            price_3m_ago = data_3m[0]
             if price_3m_ago <= 0:
                 continue
             perf_3m = ((latest_price - price_3m_ago) / price_3m_ago) * 100
             
             # Calculate 1Y performance using calendar days (365 days)
-            start_1y = current_ts - timedelta(days=365)
-            data_1y = close_prices[close_prices.index >= start_1y]
-            if len(data_1y) < 60:
+            data_1y = get_cached_window(
+                price_history_cache, ticker, current_date, 365, field_name="close", min_rows=60
+            )
+            if data_1y is None or len(data_1y) < 60:
                 continue
-            price_1y_ago = data_1y.iloc[0]
+            price_1y_ago = data_1y[0]
             if price_1y_ago <= 0:
                 continue
             perf_1y = ((latest_price - price_1y_ago) / price_1y_ago) * 100
             
             # Calculate average volume (for volume confirmation)
-            avg_volume = ticker_data_filtered['Volume'].tail(min(30, len(ticker_data_filtered))).mean() if 'Volume' in ticker_data_filtered.columns else 1000000
+            volume_values = get_cached_history_up_to(
+                price_history_cache,
+                ticker,
+                current_date,
+                field_name="volume",
+                min_rows=1,
+            )
+            avg_volume = (
+                float(np.mean(volume_values[-30:]))
+                if volume_values is not None and len(volume_values) > 0
+                else 1000000
+            )
             
             # Dip score: for reference only (not used in scoring)
             dip_score = max(perf_1y - perf_3m, 0)

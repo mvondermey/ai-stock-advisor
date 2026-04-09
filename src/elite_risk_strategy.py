@@ -17,24 +17,28 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta, timezone
+from strategy_cache_adapter import (
+    ensure_price_history_cache,
+    get_cached_history_up_to,
+    get_cached_window,
+    resolve_cache_current_date,
+)
 
 
 def select_elite_risk_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
-    top_n: int = 10
+    top_n: int = 10,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Elite Risk Strategy: Risk-Adj Mom base + Elite Hybrid dip/vol bonuses.
     """
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    current_date = resolve_cache_current_date(price_history_cache, current_date, all_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max()
-                        for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
+        return []
 
     if current_date.tzinfo is None:
         current_date = current_date.replace(tzinfo=timezone.utc)
@@ -45,7 +49,11 @@ def select_elite_risk_stocks(
 
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Elite Risk"
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "Elite Risk",
+        price_history_cache=price_history_cache,
     )
 
     from config import (
@@ -62,25 +70,16 @@ def select_elite_risk_stocks(
 
     for ticker in filtered_tickers:
         try:
-            if ticker not in ticker_data_grouped:
+            close_values = get_cached_history_up_to(
+                price_history_cache,
+                ticker,
+                current_date,
+                field_name="close",
+                min_rows=60,
+            )
+            if close_values is None:
                 continue
-
-            ticker_data = ticker_data_grouped[ticker]
-            if len(ticker_data) == 0:
-                continue
-
-            # --- Normalise current_date to data timezone ---
-            current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-                else:
-                    current_ts = current_ts.tz_convert(ticker_data.index.tz)
-            elif current_ts.tz is not None:
-                current_ts = current_ts.replace(tzinfo=None)
-
-            data = ticker_data[ticker_data.index <= current_ts]
-            close = data['Close'].dropna()
+            close = pd.Series(close_values)
             n = len(close)
 
             if n < 60:
@@ -95,13 +94,18 @@ def select_elite_risk_stocks(
             # Uses calendar days for consistency                               #
             # ---------------------------------------------------------------- #
             # Calculate performance using calendar days
-            perf_start = current_ts - timedelta(days=RISK_ADJ_MOM_PERFORMANCE_WINDOW)
-            perf_data = close[close.index >= perf_start]
-            
-            if len(perf_data) < 30:  # Need at least 30 trading days
+            perf_data = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                RISK_ADJ_MOM_PERFORMANCE_WINDOW,
+                field_name="close",
+                min_rows=30,
+            )
+            if perf_data is None or len(perf_data) < 30:
                 continue
 
-            start_price = perf_data.iloc[0]
+            start_price = perf_data[0]
             if start_price <= 0:
                 continue
 
@@ -126,10 +130,16 @@ def select_elite_risk_stocks(
             if RISK_ADJ_MOM_ENABLE_MOMENTUM_CONFIRMATION:
                 confirmations = 0
                 for days in [90, 180, 365]:  # Calendar days
-                    start_date = current_ts - timedelta(days=days)
-                    period_data = close[close.index >= start_date]
-                    if len(period_data) >= 10:
-                        p = period_data.iloc[0]
+                    period_data = get_cached_window(
+                        price_history_cache,
+                        ticker,
+                        current_date,
+                        days,
+                        field_name="close",
+                        min_rows=10,
+                    )
+                    if period_data is not None and len(period_data) >= 10:
+                        p = period_data[0]
                         if p > 0 and (latest_price - p) / p > 0:
                             confirmations += 1
                 if confirmations < RISK_ADJ_MOM_MIN_CONFIRMATIONS:
@@ -138,8 +148,15 @@ def select_elite_risk_stocks(
             # ---------------------------------------------------------------- #
             # PART 3: Volume confirmation (Risk-Adj Mom)                        #
             # ---------------------------------------------------------------- #
-            if RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION and 'Volume' in data.columns:
-                vol_series = data['Volume'].dropna()
+            volume_values = get_cached_history_up_to(
+                price_history_cache,
+                ticker,
+                current_date,
+                field_name="volume",
+                min_rows=1,
+            )
+            if RISK_ADJ_MOM_ENABLE_VOLUME_CONFIRMATION and volume_values is not None:
+                vol_series = pd.Series(volume_values)
                 if len(vol_series) >= RISK_ADJ_MOM_VOLUME_WINDOW + 10:
                     recent_vol = vol_series.tail(RISK_ADJ_MOM_VOLUME_WINDOW).mean()
                     avg_vol = vol_series.iloc[:-RISK_ADJ_MOM_VOLUME_WINDOW].mean()
@@ -152,13 +169,15 @@ def select_elite_risk_stocks(
             volatility_ann = daily_returns.std() * (252 ** 0.5)  # annualised
 
             # 3M and 1Y performance using calendar days
-            start_3m = current_ts - timedelta(days=90)
-            data_3m = close[close.index >= start_3m]
-            perf_3m = (latest_price / data_3m.iloc[0] - 1) * 100 if len(data_3m) >= 10 else 0.0
-            
-            start_1y = current_ts - timedelta(days=365)
-            data_1y = close[close.index >= start_1y]
-            perf_1y = (latest_price / data_1y.iloc[0] - 1) * 100 if len(data_1y) >= 60 else 0.0
+            data_3m = get_cached_window(
+                price_history_cache, ticker, current_date, 90, field_name="close", min_rows=10
+            )
+            perf_3m = (latest_price / data_3m[0] - 1) * 100 if data_3m is not None and len(data_3m) >= 10 else 0.0
+
+            data_1y = get_cached_window(
+                price_history_cache, ticker, current_date, 365, field_name="close", min_rows=60
+            )
+            perf_1y = (latest_price / data_1y[0] - 1) * 100 if data_1y is not None and len(data_1y) >= 60 else 0.0
 
             # Dip bonus: strong 1Y but weak 3M = buy-the-dip opportunity
             if perf_1y > 30 and perf_3m < 5:
@@ -186,7 +205,11 @@ def select_elite_risk_stocks(
                 vol_bonus = 1.0
 
             # Volume quality bonus
-            avg_volume = data['Volume'].tail(30).mean() if 'Volume' in data.columns else 0
+            avg_volume = (
+                float(np.mean(volume_values[-30:]))
+                if volume_values is not None and len(volume_values) > 0
+                else 0
+            )
             if avg_volume > 5_000_000:
                 vol_h_bonus = 1.15
             elif avg_volume > 2_000_000:

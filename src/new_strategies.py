@@ -12,6 +12,14 @@ import numpy as np
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 
+from strategy_cache_adapter import (
+    ensure_price_history_cache,
+    get_cached_history_up_to,
+    get_cached_values_between,
+    get_cached_window,
+    resolve_cache_current_date,
+)
+
 from config import (
     PORTFOLIO_SIZE,
     MOM_ACCEL_LOOKBACK_DAYS, MOM_ACCEL_SHORT_LOOKBACK, MOM_ACCEL_MIN_ACCELERATION,
@@ -29,7 +37,8 @@ def select_momentum_acceleration_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
-    top_n: int = PORTFOLIO_SIZE
+    top_n: int = PORTFOLIO_SIZE,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Momentum Acceleration Strategy:
@@ -42,80 +51,66 @@ def select_momentum_acceleration_stocks(
     """
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Momentum Acceleration"
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "Momentum Acceleration",
+        price_history_cache=price_history_cache,
     )
-
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max()
-                       for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
+        return []
 
     candidates = []
 
     for ticker in filtered_tickers:
         try:
-            if ticker not in ticker_data_grouped:
+            data_3m = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                MOM_ACCEL_LOOKBACK_DAYS,
+                field_name="close",
+                min_rows=5,
+            )
+            if data_3m is None or data_3m.size < 2:
                 continue
 
-            ticker_data = ticker_data_grouped[ticker]
-
-            # Need enough data for 3M + 1M lookback
-            if len(ticker_data) < MOM_ACCEL_LOOKBACK_DAYS + MOM_ACCEL_SHORT_LOOKBACK:
-                continue
-
-            # Convert current_date to pandas Timestamp with timezone
-            current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-
-            # Calculate 3M momentum
-            start_3m = current_ts - timedelta(days=MOM_ACCEL_LOOKBACK_DAYS)
-            data_3m = ticker_data[(ticker_data.index >= start_3m) & (ticker_data.index <= current_ts)]
-
-            if len(data_3m) < 5:  # Reduced from 50 to allow stocks with less history
-                continue
-
-            valid_close = data_3m['Close'].dropna()
-            if len(valid_close) < 2:
-                continue
-
-            momentum_3m = (valid_close.iloc[-1] / valid_close.iloc[0] - 1) * 100
+            momentum_3m = (data_3m[-1] / data_3m[0] - 1) * 100
 
             # Skip if 3M momentum is negative
             if momentum_3m <= 0:
                 continue
 
             # Calculate current 1M momentum (last 21 days)
-            start_1m_current = current_ts - timedelta(days=MOM_ACCEL_SHORT_LOOKBACK)
-            data_1m_current = ticker_data[(ticker_data.index >= start_1m_current) & (ticker_data.index <= current_ts)]
-
-            if len(data_1m_current) < 10:
+            valid_1m = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                MOM_ACCEL_SHORT_LOOKBACK,
+                field_name="close",
+                min_rows=10,
+            )
+            if valid_1m is None or valid_1m.size < 2:
                 continue
 
-            valid_1m = data_1m_current['Close'].dropna()
-            if len(valid_1m) < 2:
-                continue
-
-            momentum_1m_current = (valid_1m.iloc[-1] / valid_1m.iloc[0] - 1) * 100
+            momentum_1m_current = (valid_1m[-1] / valid_1m[0] - 1) * 100
 
             # Calculate previous 1M momentum (21-42 days ago)
-            start_1m_prev = current_ts - timedelta(days=MOM_ACCEL_SHORT_LOOKBACK * 2)
-            end_1m_prev = current_ts - timedelta(days=MOM_ACCEL_SHORT_LOOKBACK)
-            data_1m_prev = ticker_data[(ticker_data.index >= start_1m_prev) & (ticker_data.index <= end_1m_prev)]
-
-            if len(data_1m_prev) < 10:
+            valid_1m_prev = get_cached_values_between(
+                price_history_cache,
+                ticker,
+                current_date - timedelta(days=MOM_ACCEL_SHORT_LOOKBACK * 2),
+                current_date - timedelta(days=MOM_ACCEL_SHORT_LOOKBACK),
+                field_name="close",
+                min_rows=10,
+            )
+            if valid_1m_prev is None or valid_1m_prev.size < 2:
                 continue
 
-            valid_1m_prev = data_1m_prev['Close'].dropna()
-            if len(valid_1m_prev) < 2:
-                continue
-
-            momentum_1m_prev = (valid_1m_prev.iloc[-1] / valid_1m_prev.iloc[0] - 1) * 100
+            momentum_1m_prev = (valid_1m_prev[-1] / valid_1m_prev[0] - 1) * 100
 
             # Calculate acceleration
             acceleration = momentum_1m_current - momentum_1m_prev
@@ -154,7 +149,8 @@ def select_concentrated_3m_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
-    top_n: int = None
+    top_n: int = None,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Concentrated 3M Strategy:
@@ -168,61 +164,47 @@ def select_concentrated_3m_stocks(
     if top_n is None:
         top_n = PORTFOLIO_SIZE
 
-    if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max()
-                       for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
-
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Concentrated 3M"
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "Concentrated 3M",
+        price_history_cache=price_history_cache,
     )
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
+    if current_date is None:
+        return []
 
     candidates = []
 
     for ticker in filtered_tickers:
         try:
-            if ticker not in ticker_data_grouped:
+            valid_close = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                90,
+                field_name="close",
+                min_rows=5,
+            )
+            if valid_close is None or valid_close.size < 2:
                 continue
 
-            ticker_data = ticker_data_grouped[ticker]
-
-            if len(ticker_data) < 90:
-                continue
-
-            # Convert current_date to pandas Timestamp with timezone
-            current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-
-            # Calculate 3M momentum
-            start_3m = current_ts - timedelta(days=90)
-            data_3m = ticker_data[(ticker_data.index >= start_3m) & (ticker_data.index <= current_ts)]
-
-            if len(data_3m) < 5:  # Reduced from 50 to allow stocks with less history
-                continue
-
-            valid_close = data_3m['Close'].dropna()
-            if len(valid_close) < 2:
-                continue
-
-            momentum_3m = (valid_close.iloc[-1] / valid_close.iloc[0] - 1) * 100
+            momentum_3m = (valid_close[-1] / valid_close[0] - 1) * 100
 
             # Skip if 3M momentum is negative
             if momentum_3m <= 0:
                 continue
 
             # Calculate volatility (30-day)
-            returns = valid_close.pct_change().dropna()
-            if len(returns) < 20:
+            returns = np.diff(valid_close) / valid_close[:-1]
+            if returns.size < 20:
                 continue
 
-            volatility = returns.std() * np.sqrt(252)  # Annualized
+            volatility = float(np.std(returns, ddof=1) * np.sqrt(252))  # Annualized
 
             # Skip if volatility exceeds threshold
             if volatility > CONCENTRATED_3M_MAX_VOLATILITY:
@@ -255,7 +237,8 @@ def select_dual_momentum_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
-    top_n: int = None
+    top_n: int = None,
+    price_history_cache=None,
 ) -> Tuple[List[str], bool]:
     """
     Dual Momentum Strategy (Antonacci style):
@@ -269,19 +252,19 @@ def select_dual_momentum_stocks(
     if top_n is None:
         top_n = PORTFOLIO_SIZE
 
-    if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max()
-                       for t in all_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return [], False
-
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Dual Momentum"
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "Dual Momentum",
+        price_history_cache=price_history_cache,
     )
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
+    if current_date is None:
+        return [], False
 
     candidates = []
     total_momentum = 0.0
@@ -289,32 +272,18 @@ def select_dual_momentum_stocks(
 
     for ticker in filtered_tickers:
         try:
-            if ticker not in ticker_data_grouped:
+            valid_close = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                DUAL_MOM_LOOKBACK_DAYS,
+                field_name="close",
+                min_rows=5,
+            )
+            if valid_close is None or valid_close.size < 2:
                 continue
 
-            ticker_data = ticker_data_grouped[ticker]
-
-            if len(ticker_data) < DUAL_MOM_LOOKBACK_DAYS:
-                continue
-
-            # Convert current_date to pandas Timestamp with timezone
-            current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-
-            # Calculate momentum
-            start_date = current_ts - timedelta(days=DUAL_MOM_LOOKBACK_DAYS)
-            data = ticker_data[(ticker_data.index >= start_date) & (ticker_data.index <= current_ts)]
-
-            if len(data) < 5:  # Reduced from 50 to allow stocks with less history
-                continue
-
-            valid_close = data['Close'].dropna()
-            if len(valid_close) < 2:
-                continue
-
-            momentum = (valid_close.iloc[-1] / valid_close.iloc[0] - 1) * 100
+            momentum = (valid_close[-1] / valid_close[0] - 1) * 100
 
             total_momentum += momentum
             valid_count += 1
@@ -396,13 +365,10 @@ class TrendFollowingATR:
 
         pos = self.positions[ticker]
 
-        # Update peak price
         if current_price > pos['peak_price']:
             pos['peak_price'] = current_price
 
-        # Calculate trailing stop level
         stop_level = pos['peak_price'] - (pos['atr'] * TREND_ATR_TRAILING_MULT)
-
         return current_price < stop_level
 
     def add_position(self, ticker: str, entry_price: float, atr: float):
@@ -410,7 +376,7 @@ class TrendFollowingATR:
         self.positions[ticker] = {
             'entry_price': entry_price,
             'peak_price': entry_price,
-            'atr': atr
+            'atr': atr,
         }
 
     def remove_position(self, ticker: str):
@@ -421,6 +387,41 @@ class TrendFollowingATR:
     def get_positions(self) -> Dict:
         """Get current positions."""
         return self.positions.copy()
+
+
+def _get_cached_ohlc_frame(
+    price_history_cache,
+    ticker: str,
+    current_date: datetime,
+    min_rows: int,
+) -> Optional[pd.DataFrame]:
+    close = get_cached_history_up_to(
+        price_history_cache, ticker, current_date, field_name="close", min_rows=min_rows
+    )
+    if close is None or len(close) < min_rows:
+        return None
+
+    open_prices = get_cached_history_up_to(
+        price_history_cache, ticker, current_date, field_name="open", min_rows=min_rows
+    )
+    high_prices = get_cached_history_up_to(
+        price_history_cache, ticker, current_date, field_name="high", min_rows=min_rows
+    )
+    low_prices = get_cached_history_up_to(
+        price_history_cache, ticker, current_date, field_name="low", min_rows=min_rows
+    )
+
+    if open_prices is None or high_prices is None or low_prices is None:
+        return None
+
+    return pd.DataFrame(
+        {
+            "Open": open_prices,
+            "High": high_prices,
+            "Low": low_prices,
+            "Close": close,
+        }
+    )
 
 
 # Global instance for state persistence
@@ -443,7 +444,8 @@ def select_trend_following_atr_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
-    top_n: int = PORTFOLIO_SIZE
+    top_n: int = PORTFOLIO_SIZE,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Trend Following with ATR Trailing Stop Strategy:
@@ -462,17 +464,17 @@ def select_trend_following_atr_stocks(
     """
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Trend Following ATR"
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "Trend Following ATR",
+        price_history_cache=price_history_cache,
     )
-
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max()
-                       for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
+        return []
 
     trend_tracker = get_trend_atr_instance()
     stocks_to_buy = []
@@ -481,20 +483,17 @@ def select_trend_following_atr_stocks(
 
     for ticker in filtered_tickers:
         try:
-            if ticker not in ticker_data_grouped:
+            close_history = get_cached_history_up_to(
+                price_history_cache,
+                ticker,
+                current_date,
+                field_name="close",
+                min_rows=1,
+            )
+            if close_history is None or close_history.size == 0:
                 continue
 
-            ticker_data = ticker_data_grouped[ticker]
-            current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-
-            data = ticker_data[ticker_data.index <= current_ts]
-            if len(data) < 1:
-                continue
-
-            current_price = data['Close'].iloc[-1]
+            current_price = close_history[-1]
 
             if trend_tracker.check_trailing_stop(ticker, current_price):
                 stocks_to_sell.append(ticker)
@@ -513,37 +512,31 @@ def select_trend_following_atr_stocks(
             if ticker in trend_tracker.positions:
                 continue
 
-            if ticker not in ticker_data_grouped:
+            data = _get_cached_ohlc_frame(
+                price_history_cache,
+                ticker,
+                current_date,
+                TREND_ATR_ENTRY_BREAKOUT + 10,
+            )
+            if data is None:
                 continue
-
-            ticker_data = ticker_data_grouped[ticker]
-
-            if len(ticker_data) < TREND_ATR_LOOKBACK_DAYS:
-                continue
-
-            current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-
-            data = ticker_data[ticker_data.index <= current_ts]
             if len(data) < TREND_ATR_ENTRY_BREAKOUT + 10:
                 continue
 
             current_price = data['Close'].iloc[-1]
 
-            # Check 3M momentum first
-            start_3m = current_ts - timedelta(days=TREND_ATR_LOOKBACK_DAYS)
-            data_3m = ticker_data[(ticker_data.index >= start_3m) & (ticker_data.index <= current_ts)]
-
-            if len(data_3m) < 5:  # Reduced from 50 to allow stocks with less history
+            data_3m = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                TREND_ATR_LOOKBACK_DAYS,
+                field_name="close",
+                min_rows=5,
+            )
+            if data_3m is None or data_3m.size < 2:
                 continue
 
-            valid_close = data_3m['Close'].dropna()
-            if len(valid_close) < 2:
-                continue
-
-            momentum_3m = (valid_close.iloc[-1] / valid_close.iloc[0] - 1) * 100
+            momentum_3m = (data_3m[-1] / data_3m[0] - 1) * 100
 
             # Skip if momentum is negative
             if momentum_3m <= 0:
@@ -586,7 +579,8 @@ def select_trend_breakout_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
-    top_n: int = PORTFOLIO_SIZE
+    top_n: int = PORTFOLIO_SIZE,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Trend Breakout Strategy:
@@ -597,16 +591,17 @@ def select_trend_breakout_stocks(
         List of selected tickers (buy list only)
     """
     from performance_filters import filter_tickers_by_performance
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Trend Breakout"
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "Trend Breakout",
+        price_history_cache=price_history_cache,
     )
-
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
     if current_date is None:
-        current_ts = pd.Timestamp.now(tz='UTC')
-    else:
-        current_ts = pd.Timestamp(current_date)
-        if current_ts.tz is None:
-            current_ts = current_ts.tz_localize('UTC')
+        return []
 
     # Use TrendFollowingATR from this module (not a separate module)
     trend_tracker = TrendFollowingATR()
@@ -615,28 +610,31 @@ def select_trend_breakout_stocks(
 
     for ticker in filtered_tickers:
         try:
-            if ticker not in ticker_data_grouped:
+            data = _get_cached_ohlc_frame(
+                price_history_cache,
+                ticker,
+                current_date,
+                TREND_ATR_ENTRY_BREAKOUT + 10,
+            )
+            if data is None:
                 continue
-
-            ticker_data = ticker_data_grouped[ticker]
-            data = ticker_data[ticker_data.index <= current_ts]
-
             if len(data) < TREND_ATR_ENTRY_BREAKOUT + 10:
                 continue
 
             current_price = data['Close'].iloc[-1]
 
-            start_3m = current_ts - timedelta(days=TREND_ATR_LOOKBACK_DAYS)
-            data_3m = ticker_data[(ticker_data.index >= start_3m) & (ticker_data.index <= current_ts)]
-
-            if len(data_3m) < 5:  # Reduced from 50 to allow stocks with less history
+            data_3m = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                TREND_ATR_LOOKBACK_DAYS,
+                field_name="close",
+                min_rows=5,
+            )
+            if data_3m is None or data_3m.size < 2:
                 continue
 
-            valid_close = data_3m['Close'].dropna()
-            if len(valid_close) < 2:
-                continue
-
-            momentum_3m = (valid_close.iloc[-1] / valid_close.iloc[0] - 1) * 100
+            momentum_3m = (data_3m[-1] / data_3m[0] - 1) * 100
 
             if momentum_3m <= 0:
                 continue

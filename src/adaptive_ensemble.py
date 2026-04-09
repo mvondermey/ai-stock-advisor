@@ -14,6 +14,12 @@ import numpy as np
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict
+from strategy_cache_adapter import (
+    ensure_price_history_cache,
+    get_cached_frame_between,
+    get_cached_history_up_to,
+    resolve_cache_current_date,
+)
 
 # Import config
 from config import (
@@ -98,7 +104,7 @@ class AdaptiveMetaEnsemble:
         self.current_holdings = []
         
     def detect_market_regime(self, ticker_data_grouped: Dict[str, pd.DataFrame], 
-                            current_date: datetime) -> str:
+                            current_date: datetime, price_history_cache=None) -> str:
         """
         Detect current market regime based on SPY or market-wide metrics.
         
@@ -106,10 +112,18 @@ class AdaptiveMetaEnsemble:
             str: 'trending', 'volatile', 'mean_reverting', or 'neutral'
         """
         # Try to use SPY as market proxy
+        price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
         market_proxy = None
         for proxy_ticker in ['SPY', 'QQQ', 'IWM']:
-            if proxy_ticker in ticker_data_grouped:
-                market_proxy = ticker_data_grouped[proxy_ticker]
+            market_proxy = get_cached_frame_between(
+                price_history_cache,
+                proxy_ticker,
+                current_date - timedelta(days=30),
+                current_date,
+                field_names=("close",),
+                min_rows=10,
+            )
+            if market_proxy is not None:
                 break
         
         if market_proxy is None or len(market_proxy) < 30:
@@ -119,21 +133,7 @@ class AdaptiveMetaEnsemble:
         try:
             # Get recent data (last 30 days)
             # Convert current_date to pandas Timestamp with timezone
-            current_date_tz = pd.Timestamp(current_date)
-            if hasattr(market_proxy.index, 'tz') and market_proxy.index.tz is not None:
-                if current_date_tz.tz is None:
-                    current_date_tz = current_date_tz.tz_localize(market_proxy.index.tz)
-                else:
-                    current_date_tz = current_date_tz.tz_convert(market_proxy.index.tz)
-            
-            lookback_start = current_date_tz - timedelta(days=30)
-            recent_data = market_proxy[(market_proxy.index >= lookback_start) & 
-                                       (market_proxy.index <= current_date_tz)]
-            
-            if len(recent_data) < 10:
-                return 'neutral'
-            
-            close_prices = recent_data['Close'].dropna()
+            close_prices = market_proxy["close"].dropna()
             if len(close_prices) < 10:
                 return 'neutral'
             
@@ -171,39 +171,63 @@ class AdaptiveMetaEnsemble:
     
     def get_strategy_picks(self, strategy_name: str, all_tickers: List[str],
                           ticker_data_grouped: Dict[str, pd.DataFrame],
-                          current_date: datetime, top_n: int = 20) -> List[str]:
+                          current_date: datetime, top_n: int = 20,
+                          price_history_cache=None) -> List[str]:
         """
         Get stock picks from a specific strategy.
         """
         try:
             if strategy_name == 'static_bh_3m':
-                return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, 
-                                               period='3m', current_date=current_date, top_n=top_n)
+                return select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='3m',
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'dyn_bh_1y_vol':
                 # Dynamic BH 1Y with volatility filter
-                picks = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                                period='1y', current_date=current_date, top_n=top_n * 2)
+                picks = select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='1y',
+                    current_date=current_date,
+                    top_n=top_n * 2,
+                    price_history_cache=price_history_cache,
+                )
                 # Apply volatility filter
                 filtered_picks = []
                 for ticker in picks:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        if len(ticker_data) >= 20:
-                            daily_returns = ticker_data['Close'].pct_change().dropna()
-                            vol = daily_returns.std() * np.sqrt(252) * 100  # Annualized %
-                            if vol <= 120:  # Max 120% annualized volatility
-                                filtered_picks.append(ticker)
+                    close_history = get_cached_history_up_to(
+                        price_history_cache,
+                        ticker,
+                        current_date,
+                        field_name="close",
+                        min_rows=20,
+                    )
+                    if close_history is not None and len(close_history) >= 20:
+                        daily_returns = pd.Series(close_history).pct_change().dropna()
+                        vol = daily_returns.std() * np.sqrt(252) * 100  # Annualized %
+                        if vol <= 120:  # Max 120% annualized volatility
+                            filtered_picks.append(ticker)
                 return filtered_picks[:top_n]
             
             elif strategy_name == 'risk_adj_mom':
                 return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped,
                                                  current_date=current_date, 
-                                                 top_n=top_n)
+                                                 top_n=top_n,
+                                                 price_history_cache=price_history_cache)
             
             elif strategy_name == 'quality_mom':
-                return select_quality_momentum_stocks(all_tickers, ticker_data_grouped,
-                                                     current_date=current_date, top_n=top_n)
+                return select_quality_momentum_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             else:
                 print(f"   ⚠️ Unknown strategy: {strategy_name}")
@@ -287,7 +311,8 @@ class AdaptiveMetaEnsemble:
     def select_stocks(self, all_tickers: List[str], 
                      ticker_data_grouped: Dict[str, pd.DataFrame],
                      current_date: datetime,
-                     top_n: int = PORTFOLIO_SIZE) -> List[str]:
+                     top_n: int = PORTFOLIO_SIZE,
+                     price_history_cache=None) -> List[str]:
         """
         Main entry point: Select stocks using adaptive ensemble.
         
@@ -302,7 +327,11 @@ class AdaptiveMetaEnsemble:
         print(f"   📅 Date: {current_date.date()}")
         
         # 1. Detect market regime
-        self.current_regime = self.detect_market_regime(ticker_data_grouped, current_date)
+        self.current_regime = self.detect_market_regime(
+            ticker_data_grouped,
+            current_date,
+            price_history_cache=price_history_cache,
+        )
         
         # 2. Get picks from each strategy
         strategy_picks = {}
@@ -310,7 +339,8 @@ class AdaptiveMetaEnsemble:
             print(f"   🔍 Getting picks from {strategy}...")
             picks = self.get_strategy_picks(
                 strategy, all_tickers, ticker_data_grouped,
-                current_date, top_n=top_n * 2
+                current_date, top_n=top_n * 2,
+                price_history_cache=price_history_cache,
             )
             strategy_picks[strategy] = picks
             print(f"      → {len(picks)} picks")
@@ -372,7 +402,8 @@ def get_ensemble_instance() -> AdaptiveMetaEnsemble:
 def select_adaptive_ensemble_stocks(all_tickers: List[str], 
                                     ticker_data_grouped: Dict[str, pd.DataFrame],
                                     current_date: datetime = None,
-                                    top_n: int = PORTFOLIO_SIZE) -> List[str]:
+                                    top_n: int = PORTFOLIO_SIZE,
+                                    price_history_cache=None) -> List[str]:
     """
     Adaptive Meta-Ensemble stock selection strategy.
     
@@ -395,20 +426,17 @@ def select_adaptive_ensemble_stocks(all_tickers: List[str],
     all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
     
     # Use current date or last available date
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    current_date = resolve_cache_current_date(price_history_cache, current_date, all_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max() 
-                       for t in all_tickers 
-                       if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            print("   ❌ No data available for adaptive ensemble")
-            return []
+        print("   ❌ No data available for adaptive ensemble")
+        return []
     
     # Get ensemble instance and select stocks
     ensemble = get_ensemble_instance()
     return ensemble.select_stocks(
-        all_tickers, ticker_data_grouped, current_date, top_n
+        all_tickers, ticker_data_grouped, current_date, top_n,
+        price_history_cache=price_history_cache,
     )
 
 

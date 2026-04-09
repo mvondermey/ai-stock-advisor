@@ -15,6 +15,7 @@ def select_risk_adj_mom_3m_with_stops_stocks(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
     top_n: int = 10,
+    price_history_cache=None,
 ) -> List[str]:
     """Select stocks using Risk-Adj Mom 3M scoring (delegates to shared function)."""
     from shared_strategies import select_risk_adj_mom_stocks
@@ -25,7 +26,8 @@ def select_risk_adj_mom_3m_with_stops_stocks(
         current_date=current_date,
         top_n=top_n,
         lookback_days=90,
-        strategy_name="Risk-Adj Mom 3M with Stops"
+        strategy_name="Risk-Adj Mom 3M with Stops",
+        price_history_cache=price_history_cache,
     )
 
 

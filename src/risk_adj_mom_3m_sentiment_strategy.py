@@ -134,6 +134,7 @@ def select_risk_adj_mom_3m_sentiment_stocks(
     current_date: datetime = None,
     top_n: int = 10,
     sentiment_weight: float = 0.30,  # 30% sentiment, 70% momentum
+    price_history_cache=None,
 ) -> List[str]:
     """
     Select stocks using Risk-Adj Mom 3M + Sentiment scoring.
@@ -141,7 +142,6 @@ def select_risk_adj_mom_3m_sentiment_stocks(
     Uses shared parallel function for base scoring, then applies sentiment adjustment.
     Final score = base_score * (1 + sentiment_weight * sentiment_score)
     """
-    from parallel_backtest import calculate_parallel_risk_adjusted_scores
     from performance_filters import filter_tickers_by_performance
     from shared_strategies import check_momentum_confirmation, check_volume_confirmation
     from config import (
@@ -159,13 +159,23 @@ def select_risk_adj_mom_3m_sentiment_stocks(
         tickers_to_use, ticker_data_grouped, current_date, "RiskAdj 3M Sent"
     )
 
-    # Get base scores using parallel processing
-    scores_data = calculate_parallel_risk_adjusted_scores(
-        filtered_tickers,
-        ticker_data_grouped,
-        current_date,
-        lookback_days=90
-    )
+    # Get base scores using cached or parallel processing
+    if price_history_cache is not None:
+        from parallel_backtest import calculate_cached_risk_adjusted_scores
+        scores_data = calculate_cached_risk_adjusted_scores(
+            filtered_tickers,
+            price_history_cache,
+            current_date,
+            lookback_days=90
+        )
+    else:
+        from parallel_backtest import calculate_parallel_risk_adjusted_scores
+        scores_data = calculate_parallel_risk_adjusted_scores(
+            filtered_tickers,
+            ticker_data_grouped,
+            current_date,
+            lookback_days=90
+        )
 
     candidates = []
     sentiment_stats = {'positive': 0, 'negative': 0, 'neutral': 0}

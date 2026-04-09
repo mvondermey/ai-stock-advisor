@@ -21,7 +21,8 @@ def select_risk_adj_mom_sentiment_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime,
-    top_n: int = 10
+    top_n: int = 10,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Select stocks using Risk-Adjusted Momentum + Sentiment analysis.
@@ -53,7 +54,8 @@ def select_risk_adj_mom_sentiment_stocks(
             all_tickers,
             ticker_data_grouped,
             current_date,
-            top_n=top_n * 2  # Get more candidates for sentiment filtering
+            top_n=top_n * 2,  # Get more candidates for sentiment filtering
+            price_history_cache=price_history_cache,
         )
         
         print(f"   📈 Risk-Adj Mom Sentiment: Found {len(risk_adj_mom_stocks)} Risk-Adj Mom candidates")
@@ -93,18 +95,5 @@ def select_risk_adj_mom_sentiment_stocks(
         
     except Exception as e:
         print(f"   ❌ Risk-Adj Mom Sentiment strategy error: {e}")
-        print(f"   ⚠️ Risk-Adj Mom Sentiment: Falling back to Risk-Adjusted Momentum only")
-        
-        # Fallback to pure Risk-Adjusted Momentum
-        try:
-            fallback_stocks = select_risk_adj_mom_stocks(
-                all_tickers,
-                ticker_data_grouped,
-                current_date,
-                top_n=top_n
-            )
-            print(f"   🔄 Risk-Adj Mom Sentiment: Fallback selected {len(fallback_stocks)} stocks")
-            return fallback_stocks
-        except Exception as fallback_error:
-            print(f"   ❌ Risk-Adj Mom Sentiment: Even fallback failed: {fallback_error}")
-            return []
+        print("   ⚠️ Risk-Adj Mom Sentiment: Returning no selection")
+        return []

@@ -14,6 +14,12 @@ import numpy as np
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
+from strategy_cache_adapter import (
+    ensure_price_history_cache,
+    get_cached_history_up_to,
+    get_cached_window,
+    resolve_cache_current_date,
+)
 
 # Import config
 from config import (
@@ -86,13 +92,15 @@ class DynamicStrategyPool:
         
     def calculate_strategy_performance(self, strategy_name: str, all_tickers: List[str],
                                      ticker_data_grouped: Dict[str, pd.DataFrame],
-                                     current_date: datetime, train_start_date: datetime = None) -> float:
+                                     current_date: datetime, train_start_date: datetime = None,
+                                     price_history_cache=None) -> float:
         """Calculate recent performance for a strategy."""
         try:
             # Get strategy picks
             picks = self.get_strategy_picks(
                 strategy_name, all_tickers, ticker_data_grouped,
-                current_date, train_start_date, top_n=10
+                current_date, train_start_date, top_n=10,
+                price_history_cache=price_history_cache,
             )
             
             if not picks:
@@ -100,22 +108,23 @@ class DynamicStrategyPool:
             
             # Calculate equal-weight return over performance window
             returns = []
-            lookback_start = current_date - timedelta(days=PERFORMANCE_WINDOW_DAYS)
             
             for ticker in picks[:5]:  # Top 5 picks for performance evaluation
-                if ticker in ticker_data_grouped:
-                    ticker_data = ticker_data_grouped[ticker]
-                    window_data = ticker_data[(ticker_data.index >= lookback_start) & 
-                                             (ticker_data.index <= current_date)]
-                    
-                    if len(window_data) >= 10:
-                        start_price = window_data['Close'].iloc[0]
-                        end_price = window_data['Close'].iloc[-1]
-                        if start_price > 0:
-                            stock_return = (end_price / start_price) - 1
-                            # Subtract transaction costs (2 trades)
-                            stock_return -= 2 * TRANSACTION_COST
-                            returns.append(stock_return)
+                window_data = get_cached_window(
+                    price_history_cache,
+                    ticker,
+                    current_date,
+                    PERFORMANCE_WINDOW_DAYS,
+                    field_name="close",
+                    min_rows=10,
+                )
+                if window_data is not None and len(window_data) >= 10:
+                    start_price = window_data[0]
+                    end_price = window_data[-1]
+                    if start_price > 0:
+                        stock_return = (end_price / start_price) - 1
+                        stock_return -= 2 * TRANSACTION_COST
+                        returns.append(stock_return)
             
             if returns:
                 return np.mean(returns)
@@ -127,7 +136,8 @@ class DynamicStrategyPool:
     
     def update_strategy_performance(self, all_tickers: List[str],
                                    ticker_data_grouped: Dict[str, pd.DataFrame],
-                                   current_date: datetime, train_start_date: datetime = None):
+                                   current_date: datetime, train_start_date: datetime = None,
+                                   price_history_cache=None):
         """Update performance tracking for all strategies."""
         print(f"   📊 Updating strategy performance...")
         
@@ -136,7 +146,8 @@ class DynamicStrategyPool:
         for strategy in ALL_AVAILABLE_STRATEGIES:
             perf = self.calculate_strategy_performance(
                 strategy, all_tickers, ticker_data_grouped,
-                current_date, train_start_date
+                current_date, train_start_date,
+                price_history_cache=price_history_cache,
             )
             current_performance[strategy] = perf
             
@@ -228,68 +239,123 @@ class DynamicStrategyPool:
     def get_strategy_picks(self, strategy_name: str, all_tickers: List[str],
                           ticker_data_grouped: Dict[str, pd.DataFrame],
                           current_date: datetime, train_start_date: datetime = None,
-                          top_n: int = 10) -> List[str]:
+                          top_n: int = 10, price_history_cache=None) -> List[str]:
         """Get stock picks from a specific strategy."""
         try:
             if strategy_name == 'static_bh_3m':
-                return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                               period='3m', current_date=current_date, top_n=top_n)
+                return select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='3m',
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'static_bh_1y':
-                return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                               period='1y', current_date=current_date, top_n=top_n)
+                return select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='1y',
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'dyn_bh_1y_vol':
-                picks = select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                                period='1y', current_date=current_date, top_n=top_n * 2)
+                picks = select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='1y',
+                    current_date=current_date,
+                    top_n=top_n * 2,
+                    price_history_cache=price_history_cache,
+                )
                 filtered_picks = []
                 for ticker in picks:
-                    if ticker in ticker_data_grouped:
-                        ticker_data = ticker_data_grouped[ticker]
-                        if len(ticker_data) >= 20:
-                            daily_returns = ticker_data['Close'].pct_change().dropna()
-                            vol = daily_returns.std() * np.sqrt(252) * 100
-                            if vol <= 120:
-                                filtered_picks.append(ticker)
+                    close_history = get_cached_history_up_to(
+                        price_history_cache,
+                        ticker,
+                        current_date,
+                        field_name="close",
+                        min_rows=20,
+                    )
+                    if close_history is not None and len(close_history) >= 20:
+                        daily_returns = pd.Series(close_history).pct_change().dropna()
+                        vol = daily_returns.std() * np.sqrt(252) * 100
+                        if vol <= 120:
+                            filtered_picks.append(ticker)
                 return filtered_picks[:top_n]
             
             elif strategy_name == 'dyn_bh_3m':
-                return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                               period='3m', current_date=current_date, top_n=top_n)
+                return select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='3m',
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'dyn_bh_1m':
-                return select_dynamic_bh_stocks(all_tickers, ticker_data_grouped,
-                                               period='1m', current_date=current_date, top_n=top_n)
+                return select_dynamic_bh_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    period='1m',
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'risk_adj_mom':
                 return select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped,
                                                  current_date=current_date,
-                                                 train_start_date=train_start_date,
-                                                 top_n=top_n)
+                                                 top_n=top_n,
+                                                 price_history_cache=price_history_cache)
             
             elif strategy_name == 'quality_mom':
-                return select_quality_momentum_stocks(all_tickers, ticker_data_grouped,
-                                                     current_date=current_date, top_n=top_n)
+                return select_quality_momentum_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'vol_adj_mom':
-                return select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped,
-                                                      current_date=current_date, top_n=top_n)
+                return select_volatility_adj_mom_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == 'mean_reversion':
                 return select_mean_reversion_stocks(all_tickers, ticker_data_grouped,
                                                    current_date=current_date, top_n=top_n)
             
             elif strategy_name == '3m_1y_ratio':
-                return select_3m_1y_ratio_stocks(all_tickers, ticker_data_grouped,
-                                                current_date=current_date, top_n=top_n)
+                return select_3m_1y_ratio_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             elif strategy_name == '1y_3m_ratio':
                 return select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped,
                                                 current_date=current_date, top_n=top_n)
             
             elif strategy_name == 'turnaround':
-                return select_turnaround_stocks(all_tickers, ticker_data_grouped,
-                                              current_date=current_date, top_n=top_n)
+                return select_turnaround_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=top_n,
+                    price_history_cache=price_history_cache,
+                )
             
             else:
                 return []
@@ -322,24 +388,31 @@ class DynamicStrategyPool:
                      ticker_data_grouped: Dict[str, pd.DataFrame],
                      current_date: datetime,
                      train_start_date: datetime = None,
-                     top_n: int = PORTFOLIO_SIZE) -> List[str]:
+                     top_n: int = PORTFOLIO_SIZE,
+                     price_history_cache=None) -> List[str]:
         """Main entry point: Select stocks using dynamic strategy pool."""
         print(f"\n   🎯 Dynamic Strategy Pool Strategy")
         print(f"   📅 Date: {current_date.date()}")
         print(f"   🏊 Active strategies: {', '.join(self.active_strategies)}")
         
-        # Update performance if needed
         if (self.last_performance_update is None or 
             (current_date - self.last_performance_update).days >= PERFORMANCE_UPDATE_FREQUENCY):
-            self.update_strategy_performance(all_tickers, ticker_data_grouped, current_date, train_start_date)
-        
+            self.update_strategy_performance(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                train_start_date,
+                price_history_cache=price_history_cache,
+            )
+
         # 1. Get picks from active strategies
         strategy_picks = {}
         for strategy in self.active_strategies:
             print(f"   🔍 Getting picks from {strategy}...")
             picks = self.get_strategy_picks(
                 strategy, all_tickers, ticker_data_grouped,
-                current_date, train_start_date, top_n=top_n * 2
+                current_date, train_start_date, top_n=top_n * 2,
+                price_history_cache=price_history_cache,
             )
             strategy_picks[strategy] = picks
             print(f"      → {len(picks)} picks (weight: {self.strategy_weights.get(strategy, 0.25):.1%})")
@@ -384,7 +457,8 @@ def select_dynamic_pool_stocks(all_tickers: List[str],
                                 ticker_data_grouped: Dict[str, pd.DataFrame],
                                 current_date: datetime = None,
                                 train_start_date: datetime = None,
-                                top_n: int = PORTFOLIO_SIZE) -> List[str]:
+                                top_n: int = PORTFOLIO_SIZE,
+                                price_history_cache=None) -> List[str]:
     """
     Dynamic Strategy Pool stock selection strategy.
     
@@ -408,18 +482,15 @@ def select_dynamic_pool_stocks(all_tickers: List[str],
     from config import INVERSE_ETFS
     all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
     
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    current_date = resolve_cache_current_date(price_history_cache, current_date, all_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max()
-                       for t in all_tickers
-                       if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
+        return []
     
     pool = get_dynamic_pool_instance()
     return pool.select_stocks(
-        all_tickers, ticker_data_grouped, current_date, train_start_date, top_n
+        all_tickers, ticker_data_grouped, current_date, train_start_date, top_n,
+        price_history_cache=price_history_cache,
     )
 
 

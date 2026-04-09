@@ -14,6 +14,11 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 
 from config import PORTFOLIO_SIZE
+from strategy_cache_adapter import (
+    ensure_price_history_cache,
+    get_cached_history_up_to,
+    resolve_cache_current_date,
+)
 
 
 # ============================================
@@ -48,6 +53,25 @@ def calculate_bandwidth(upper: pd.Series, lower: pd.Series, sma: pd.Series) -> p
     return (upper - lower) / sma
 
 
+def _get_cached_series(
+    price_history_cache,
+    ticker: str,
+    current_date: datetime,
+    field_name: str,
+    min_rows: int,
+) -> Optional[pd.Series]:
+    values = get_cached_history_up_to(
+        price_history_cache,
+        ticker,
+        current_date,
+        field_name=field_name,
+        min_rows=min_rows,
+    )
+    if values is None or len(values) < min_rows:
+        return None
+    return pd.Series(values)
+
+
 def calculate_percent_b(close: pd.Series, upper: pd.Series, lower: pd.Series) -> pd.Series:
     """Calculate %B (position within bands). 0 = lower, 1 = upper."""
     return (close - lower) / (upper - lower)
@@ -75,7 +99,8 @@ def select_bb_mean_reversion_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
-    top_n: int = PORTFOLIO_SIZE
+    top_n: int = PORTFOLIO_SIZE,
+    price_history_cache=None,
 ) -> List[str]:
     """
     BB Mean Reversion Strategy:
@@ -87,39 +112,28 @@ def select_bb_mean_reversion_stocks(
         List of selected tickers
     """
     from performance_filters import filter_tickers_by_performance
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "BB Mean Reversion"
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "BB Mean Reversion",
+        price_history_cache=price_history_cache,
     )
-    
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max() 
-                       for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
+        return []
     
     candidates = []
     
     for ticker in filtered_tickers:
         try:
-            if ticker not in ticker_data_grouped:
+            close = _get_cached_series(
+                price_history_cache, ticker, current_date, "close", MIN_DATA_DAYS
+            )
+            if close is None or len(close) < MIN_DATA_DAYS:
                 continue
-            
-            ticker_data = ticker_data_grouped[ticker]
-            if len(ticker_data) < MIN_DATA_DAYS:
-                continue
-            
-            current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-            
-            data = ticker_data[ticker_data.index <= current_ts]
-            if len(data) < MIN_DATA_DAYS:
-                continue
-            
-            close = data['Close']
+
             upper, sma, lower = calculate_bollinger_bands(close)
             
             current_price = close.iloc[-1]
@@ -162,7 +176,8 @@ def select_bb_breakout_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
-    top_n: int = PORTFOLIO_SIZE
+    top_n: int = PORTFOLIO_SIZE,
+    price_history_cache=None,
 ) -> List[str]:
     """
     BB Breakout Strategy:
@@ -174,41 +189,31 @@ def select_bb_breakout_stocks(
         List of selected tickers
     """
     from performance_filters import filter_tickers_by_performance
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "BB Breakout"
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "BB Breakout",
+        price_history_cache=price_history_cache,
     )
-    
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max() 
-                       for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
+        return []
     
     candidates = []
     
     for ticker in filtered_tickers:
         try:
-            if ticker not in ticker_data_grouped:
+            close = _get_cached_series(
+                price_history_cache, ticker, current_date, "close", MIN_DATA_DAYS
+            )
+            volume = _get_cached_series(
+                price_history_cache, ticker, current_date, "volume", MIN_DATA_DAYS
+            )
+            if close is None or len(close) < MIN_DATA_DAYS:
                 continue
-            
-            ticker_data = ticker_data_grouped[ticker]
-            if len(ticker_data) < MIN_DATA_DAYS:
-                continue
-            
-            current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-            
-            data = ticker_data[ticker_data.index <= current_ts]
-            if len(data) < MIN_DATA_DAYS:
-                continue
-            
-            close = data['Close']
-            volume = data['Volume'] if 'Volume' in data.columns else None
-            
+
             upper, sma, lower = calculate_bollinger_bands(close)
             
             current_price = close.iloc[-1]
@@ -302,7 +307,8 @@ def select_bb_squeeze_breakout_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
-    top_n: int = PORTFOLIO_SIZE
+    top_n: int = PORTFOLIO_SIZE,
+    price_history_cache=None,
 ) -> List[str]:
     """
     BB Squeeze + Breakout Strategy:
@@ -315,40 +321,29 @@ def select_bb_squeeze_breakout_stocks(
         List of selected tickers
     """
     from performance_filters import filter_tickers_by_performance
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "BB Squeeze Breakout"
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "BB Squeeze Breakout",
+        price_history_cache=price_history_cache,
     )
-    
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max() 
-                       for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
+        return []
     
     tracker = get_squeeze_tracker()
     candidates = []
     
     for ticker in filtered_tickers:
         try:
-            if ticker not in ticker_data_grouped:
+            close = _get_cached_series(
+                price_history_cache, ticker, current_date, "close", MIN_DATA_DAYS
+            )
+            if close is None or len(close) < MIN_DATA_DAYS:
                 continue
-            
-            ticker_data = ticker_data_grouped[ticker]
-            if len(ticker_data) < MIN_DATA_DAYS:
-                continue
-            
-            current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-            
-            data = ticker_data[ticker_data.index <= current_ts]
-            if len(data) < MIN_DATA_DAYS:
-                continue
-            
-            close = data['Close']
+
             upper, sma, lower = calculate_bollinger_bands(close)
             bandwidth = calculate_bandwidth(upper, lower, sma)
             
@@ -405,7 +400,8 @@ def select_bb_rsi_combo_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
-    top_n: int = PORTFOLIO_SIZE
+    top_n: int = PORTFOLIO_SIZE,
+    price_history_cache=None,
 ) -> List[str]:
     """
     BB + RSI Combo Strategy:
@@ -416,39 +412,28 @@ def select_bb_rsi_combo_stocks(
         List of selected tickers
     """
     from performance_filters import filter_tickers_by_performance
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "BB RSI Combo"
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "BB RSI Combo",
+        price_history_cache=price_history_cache,
     )
-    
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
     if current_date is None:
-        latest_dates = [ticker_data_grouped[t].index.max() 
-                       for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-        if latest_dates:
-            current_date = max(latest_dates)
-        else:
-            return []
+        return []
     
     candidates = []
     
     for ticker in filtered_tickers:
         try:
-            if ticker not in ticker_data_grouped:
+            close = _get_cached_series(
+                price_history_cache, ticker, current_date, "close", MIN_DATA_DAYS
+            )
+            if close is None or len(close) < MIN_DATA_DAYS:
                 continue
-            
-            ticker_data = ticker_data_grouped[ticker]
-            if len(ticker_data) < MIN_DATA_DAYS:
-                continue
-            
-            current_ts = pd.Timestamp(current_date)
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-                if current_ts.tz is None:
-                    current_ts = current_ts.tz_localize(ticker_data.index.tz)
-            
-            data = ticker_data[ticker_data.index <= current_ts]
-            if len(data) < MIN_DATA_DAYS:
-                continue
-            
-            close = data['Close']
+
             upper, sma, lower = calculate_bollinger_bands(close)
             rsi = calculate_rsi(close)
             

@@ -35,6 +35,8 @@ config.ENABLE_ELITE_HYBRID = False
 config.ENABLE_ELITE_RISK = False
 config.ENABLE_AI_ELITE_FILTERED = False
 config.ENABLE_AI_ELITE_MARKET_UP = False
+config.ENABLE_AI_ELITE_ENSEMBLE = False
+config.ENABLE_AI_ELITE_RANK_ENSEMBLE = False
 
 from config import (
     CONCENTRATED_3M_MAX_VOLATILITY,

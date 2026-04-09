@@ -8,9 +8,13 @@ Hybrid AI Elite model training:
 import pandas as pd
 import numpy as np
 import copy
+import joblib
 import os
+from multiprocessing import Pool
+import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Tuple
+from tqdm import tqdm
 
 from model_training_safety import (
     restore_native_model_artifacts,
@@ -26,6 +30,92 @@ FEATURE_COLS = [
     # NEW: Mean reversion features
     'bollinger_position', 'sma20_distance', 'sma50_distance', 'macd'
 ]
+
+_AI_ELITE_COLLECTION_CONTEXT_PATH: Optional[str] = None
+_AI_ELITE_COLLECTION_CONTEXT: Optional[Dict[str, object]] = None
+
+
+def _init_ai_elite_collection_worker(context_path: str) -> None:
+    global _AI_ELITE_COLLECTION_CONTEXT_PATH, _AI_ELITE_COLLECTION_CONTEXT
+    _AI_ELITE_COLLECTION_CONTEXT_PATH = context_path
+    _AI_ELITE_COLLECTION_CONTEXT = None
+
+
+def _get_ai_elite_collection_context() -> Dict[str, object]:
+    global _AI_ELITE_COLLECTION_CONTEXT
+    if _AI_ELITE_COLLECTION_CONTEXT is None:
+        if not _AI_ELITE_COLLECTION_CONTEXT_PATH:
+            raise ValueError("AI Elite collection context path is not initialized")
+        _AI_ELITE_COLLECTION_CONTEXT = joblib.load(_AI_ELITE_COLLECTION_CONTEXT_PATH)
+    return _AI_ELITE_COLLECTION_CONTEXT
+
+
+def _collect_ai_elite_training_data_worker(ticker: str) -> Tuple[str, List[dict]]:
+    context = _get_ai_elite_collection_context()
+    samples = collect_ticker_training_data(
+        ticker=ticker,
+        ticker_data=context['ticker_data_grouped'].get(ticker),
+        train_start_date=context['train_start_date'],
+        train_end_date=context['train_end_date'],
+        forward_days=int(context['forward_days']),
+        market_returns=context['market_returns'],
+    )
+    return ticker, samples
+
+
+def collect_training_data_parallel(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    train_start_date: datetime,
+    train_end_date: datetime,
+    forward_days: int,
+    market_returns: Dict[datetime, float],
+    n_processes: int,
+) -> Tuple[List[dict], Dict[str, List[dict]]]:
+    all_training_data: List[dict] = []
+    ticker_samples_map: Dict[str, List[dict]] = {}
+    temp_context_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as temp_context_file:
+            temp_context_path = temp_context_file.name
+        joblib.dump(
+            {
+                'ticker_data_grouped': ticker_data_grouped,
+                'train_start_date': train_start_date,
+                'train_end_date': train_end_date,
+                'forward_days': forward_days,
+                'market_returns': market_returns,
+            },
+            temp_context_path,
+        )
+
+        worker_tickers = list(all_tickers)
+        n_workers = max(1, min(n_processes, len(worker_tickers))) if worker_tickers else 1
+        with Pool(
+            processes=n_workers,
+            initializer=_init_ai_elite_collection_worker,
+            initargs=(temp_context_path,),
+        ) as pool:
+            results = pool.imap_unordered(_collect_ai_elite_training_data_worker, worker_tickers)
+            for ticker, samples in tqdm(
+                results,
+                total=len(worker_tickers),
+                desc="   AI Elite collection",
+                ncols=100,
+                unit="ticker",
+            ):
+                if samples:
+                    all_training_data.extend(samples)
+                    ticker_samples_map[ticker] = samples
+    finally:
+        if temp_context_path is not None:
+            try:
+                os.unlink(temp_context_path)
+            except OSError as e:
+                print(f"   ⚠️ AI Elite: Failed to remove temp context: {e}")
+
+    return all_training_data, ticker_samples_map
 
 
 class IncrementalScaledSGDRegressor:
@@ -237,7 +327,13 @@ def collect_ticker_training_data(
         return []
 
     try:
-        from ai_elite_strategy import _extract_features, _calculate_forward_return, _load_hourly_data_direct
+        from ai_elite_strategy import (
+            _extract_features,
+            _calculate_forward_return,
+            _load_hourly_data_direct,
+            load_persistent_feature_cache,
+            save_persistent_feature_cache,
+        )
         from config import AI_ELITE_INTRADAY_LOOKBACK
     except ImportError:
         return []
@@ -262,7 +358,11 @@ def collect_ticker_training_data(
     while current_date <= train_end_date:
         try:
             hourly_data = hourly_cache.get(ticker)
-            features = _extract_features(ticker, hourly_data, current_date, daily_data=ticker_data)
+            features = load_persistent_feature_cache(ticker, current_date, ticker_data)
+            if features is None:
+                features = _extract_features(ticker, hourly_data, current_date, daily_data=ticker_data)
+                if features is not None:
+                    save_persistent_feature_cache(ticker, current_date, ticker_data, features)
             if features is None:
                 current_date += timedelta(days=1)
                 continue

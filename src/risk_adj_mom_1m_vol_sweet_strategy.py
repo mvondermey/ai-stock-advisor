@@ -19,6 +19,12 @@ from typing import Dict, List
 import numpy as np
 import pandas as pd
 
+from strategy_cache_adapter import (
+    ensure_price_history_cache,
+    get_cached_history_up_to,
+    resolve_cache_current_date,
+)
+
 # Constants
 PERF_WINDOW = 21  # ~1 month trading days
 VOL_SWEET_MIN = 15.0  # %
@@ -49,33 +55,50 @@ def select_risk_adj_mom_1m_vol_sweet_stocks(
     current_date: datetime = None,
     top_n: int = 10,
     verbose: bool = True,
+    price_history_cache=None,
 ) -> List[str]:
     from performance_filters import filter_tickers_by_performance
 
     # Min score for annualized vol (much lower than daily vol threshold)
     MIN_SCORE = 0.5  # With annualized vol ~30-40%, scores are ~1-5 range
 
-    filtered = filter_tickers_by_performance(all_tickers, ticker_data_grouped, current_date, "RiskAdj1MVol")
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    filtered = filter_tickers_by_performance(
+        all_tickers,
+        ticker_data_grouped,
+        current_date,
+        "RiskAdj1MVol",
+        price_history_cache=price_history_cache,
+    )
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered)
+    if current_date is None:
+        return []
     if verbose:
         print(f"   📊 1M VolSweet: analyzing {len(filtered)} tickers")
 
     candidates = []
     for tkr in filtered:
         try:
-            df = ticker_data_grouped.get(tkr)
-            if df is None or len(df) < 60:
-                continue
-            close = df["Close"].dropna()
-            if len(close) < 21:
+            close = get_cached_history_up_to(
+                price_history_cache,
+                tkr,
+                current_date,
+                field_name="close",
+                min_rows=60,
+            )
+            if close is None or len(close) < 60:
                 continue
 
             # 1-month return
-            latest = close.iloc[-1]
-            start = close.iloc[-PERF_WINDOW] if len(close) > PERF_WINDOW else close.iloc[0]
+            latest = close[-1]
+            start = close[-PERF_WINDOW] if len(close) > PERF_WINDOW else close[0]
             basic_ret = (latest / start - 1) * 100
 
             # Annualized vol (daily std * sqrt(252) * 100)
-            daily_vol = close.pct_change().dropna().std()
+            daily_returns = np.diff(close) / close[:-1]
+            if daily_returns.size == 0:
+                continue
+            daily_vol = float(np.std(daily_returns, ddof=1))
             vol_pct = daily_vol * np.sqrt(252) * 100  # annualized %
             if vol_pct <= 0:
                 continue

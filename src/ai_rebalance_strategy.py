@@ -8,6 +8,7 @@ an existing holding with the best available candidate is worth it.
 from __future__ import annotations
 
 import atexit
+from concurrent.futures import ThreadPoolExecutor
 import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -33,10 +34,11 @@ from model_training_safety import (
     restore_native_model_artifacts,
     save_native_model_artifacts,
 )
+from strategy_disk_cache import get_cache_dir
 
 
 MODEL_SAVE_DIR = Path("logs/models")
-VOTING_AI_REBALANCE_MODEL_PATH = MODEL_SAVE_DIR / "voting_ensemble_ai_rebalance.joblib"
+AI_REBALANCE_MODEL_PATH = MODEL_SAVE_DIR / "ai_rebalance.joblib"
 _REBALANCE_COLLECTION_CONTEXT: Dict[str, object] = {}
 _REBALANCE_TEMP_DIRS: set[str] = set()
 TICKER_FEATURE_NAMES = [
@@ -413,6 +415,162 @@ def build_rebalance_feature_row(
     )
 
 
+def collect_rebalance_training_samples_from_state(
+    current_holdings: List[str],
+    ranked_candidates: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    sample_date: datetime,
+    latest_allowed_date: datetime,
+    forward_days: int,
+    transaction_cost: float,
+    portfolio_size: int,
+    buffer_size: int,
+    cache_context: Optional[Dict[str, object]] = None,
+) -> List[Dict[str, object]]:
+    """
+    Build supervised rebalance samples from a real historical portfolio state.
+
+    This keeps AI Elite untouched: the rebalance model learns from historical
+    AI Elite candidate lists and the actual holdings that the AI-rebalance
+    overlay was managing on each date.
+    """
+    if not current_holdings or not ranked_candidates:
+        return []
+
+    sample_ts = pd.Timestamp(sample_date)
+    latest_allowed_ts = pd.Timestamp(latest_allowed_date)
+    if sample_ts.tzinfo is None and latest_allowed_ts.tzinfo is not None:
+        sample_ts = sample_ts.tz_localize(latest_allowed_ts.tzinfo)
+    elif sample_ts.tzinfo is not None and latest_allowed_ts.tzinfo is None:
+        latest_allowed_ts = latest_allowed_ts.tz_localize(sample_ts.tzinfo)
+    if latest_allowed_ts <= sample_ts:
+        return []
+
+    valid_holdings = [
+        ticker
+        for ticker in current_holdings
+        if ticker_data_grouped.get(ticker) is not None and len(ticker_data_grouped.get(ticker)) > 0
+    ]
+    if not valid_holdings:
+        return []
+
+    held_set = set(valid_holdings)
+    replacement_candidates = [
+        ticker
+        for ticker in ranked_candidates
+        if ticker not in held_set
+        and ticker_data_grouped.get(ticker) is not None
+        and len(ticker_data_grouped.get(ticker)) > 0
+    ]
+    if not replacement_candidates:
+        return []
+
+    ticker_to_idx = {}
+    feature_array = None
+    forward_array = None
+    market_array = None
+    start_ordinal = None
+    n_dates = None
+    date_idx = None
+    if cache_context:
+        try:
+            ticker_to_idx = {
+                ticker: idx for idx, ticker in enumerate(cache_context.get("all_tickers") or [])
+            }
+            start_ordinal = int(cache_context.get("start_ordinal", 0))
+            n_dates = int(cache_context.get("n_dates", 0))
+            date_idx = _rebalance_cache_key(sample_date).toordinal() - start_ordinal
+            if 0 <= date_idx < n_dates:
+                feature_array = np.load(str(cache_context["feature_path"]), mmap_mode="r")
+                forward_array = np.load(str(cache_context["forward_path"]), mmap_mode="r")
+                market_array = np.load(str(cache_context["market_path"]), mmap_mode="r")
+            else:
+                date_idx = None
+        except Exception:
+            ticker_to_idx = {}
+            feature_array = None
+            forward_array = None
+            market_array = None
+            date_idx = None
+
+    samples: List[Dict[str, object]] = []
+    for held_ticker in valid_holdings:
+        held_idx = ticker_to_idx.get(held_ticker)
+        if forward_array is not None and held_idx is not None and date_idx is not None:
+            keep_return = float(forward_array[held_idx, date_idx])
+            if np.isnan(keep_return):
+                keep_return = None
+        else:
+            keep_return = _calculate_forward_return(
+                ticker_data_grouped=ticker_data_grouped,
+                ticker=held_ticker,
+                current_date=sample_date,
+                forward_days=forward_days,
+                latest_allowed_date=latest_allowed_date,
+            )
+        if keep_return is None:
+            continue
+
+        for candidate_ticker in replacement_candidates:
+            candidate_idx = ticker_to_idx.get(candidate_ticker)
+            if forward_array is not None and candidate_idx is not None and date_idx is not None:
+                replace_return = float(forward_array[candidate_idx, date_idx])
+                if np.isnan(replace_return):
+                    replace_return = None
+            else:
+                replace_return = _calculate_forward_return(
+                    ticker_data_grouped=ticker_data_grouped,
+                    ticker=candidate_ticker,
+                    current_date=sample_date,
+                    forward_days=forward_days,
+                    latest_allowed_date=latest_allowed_date,
+                )
+            if replace_return is None:
+                continue
+
+            if (
+                feature_array is not None
+                and market_array is not None
+                and held_idx is not None
+                and candidate_idx is not None
+                and date_idx is not None
+            ):
+                row = _build_rebalance_feature_row_from_vectors(
+                    held_ticker=held_ticker,
+                    candidate_ticker=candidate_ticker,
+                    ranked_candidates=ranked_candidates,
+                    current_holdings=valid_holdings,
+                    held_vector=np.asarray(feature_array[held_idx, date_idx], dtype=np.float32),
+                    candidate_vector=np.asarray(feature_array[candidate_idx, date_idx], dtype=np.float32),
+                    market_vector=np.asarray(market_array[date_idx], dtype=np.float32),
+                    transaction_cost=transaction_cost,
+                    portfolio_size=portfolio_size,
+                    buffer_size=buffer_size,
+                )
+            else:
+                row = build_rebalance_feature_row(
+                    held_ticker=held_ticker,
+                    candidate_ticker=candidate_ticker,
+                    ranked_candidates=ranked_candidates,
+                    current_holdings=valid_holdings,
+                    ticker_data_grouped=ticker_data_grouped,
+                    current_date=sample_date,
+                    transaction_cost=transaction_cost,
+                    portfolio_size=portfolio_size,
+                    buffer_size=buffer_size,
+                )
+            switch_advantage = replace_return - keep_return - (2.0 * transaction_cost)
+            row.update({
+                "label": switch_advantage,
+                "held_ticker": held_ticker,
+                "candidate_ticker": candidate_ticker,
+                "sample_date": sample_date,
+            })
+            samples.append(row)
+
+    return samples
+
+
 def _valid_rebalance_tickers(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     all_tickers: List[str],
@@ -422,6 +580,20 @@ def _valid_rebalance_tickers(
         for ticker in all_tickers
         if ticker_data_grouped.get(ticker) is not None and len(ticker_data_grouped.get(ticker)) > 0
     ]
+
+
+def _rebalance_context_cache_key(
+    valid_tickers: List[str],
+    train_start_date: datetime,
+    train_end_date: datetime,
+    forward_days: int,
+) -> Dict[str, object]:
+    return {
+        "tickers": list(valid_tickers),
+        "train_start_date": pd.Timestamp(train_start_date).isoformat(),
+        "train_end_date": pd.Timestamp(train_end_date).isoformat(),
+        "forward_days": int(forward_days),
+    }
 
 
 def _cleanup_rebalance_temp_dirs_at_exit() -> None:
@@ -444,6 +616,8 @@ def precompute_rebalance_training_context(
     train_end_date: datetime,
     forward_days: int,
     existing_context: Optional[Dict[str, object]] = None,
+    cache_start_date: Optional[datetime] = None,
+    cache_end_date: Optional[datetime] = None,
 ) -> Dict[str, object]:
     """Build or extend file-backed numeric caches so workers mmap shared readonly data."""
     MODEL_SAVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -452,10 +626,13 @@ def precompute_rebalance_training_context(
         market_df = ticker_data_grouped.get("QQQ")
 
     valid_tickers = _valid_rebalance_tickers(ticker_data_grouped, all_tickers)
-    start_key = _rebalance_cache_key(train_start_date)
-    end_key = _rebalance_cache_key(train_end_date)
+    cache_start = cache_start_date if cache_start_date is not None else train_start_date
+    cache_end = cache_end_date if cache_end_date is not None else train_end_date
+    start_key = _rebalance_cache_key(cache_start)
+    end_key = _rebalance_cache_key(cache_end)
     requested_start_ordinal = start_key.toordinal()
     requested_end_ordinal = end_key.toordinal()
+    requested_latest_allowed_ordinal = _rebalance_cache_key(train_end_date).toordinal()
 
     cache_context = existing_context if isinstance(existing_context, dict) else None
     cache_is_compatible = False
@@ -464,6 +641,7 @@ def precompute_rebalance_training_context(
         cached_start_ordinal = int(cache_context.get("start_ordinal", 0))
         cached_n_dates = int(cache_context.get("n_dates", 0))
         cached_end_ordinal = cached_start_ordinal + cached_n_dates - 1
+        cached_latest_allowed_ordinal = int(cache_context.get("latest_allowed_ordinal", cached_end_ordinal))
         cache_is_compatible = (
             cached_tickers == valid_tickers
             and int(cache_context.get("forward_days", -1)) == int(forward_days)
@@ -473,8 +651,16 @@ def precompute_rebalance_training_context(
             and Path(str(cache_context.get("market_path", ""))).exists()
         )
         if cache_is_compatible and cached_end_ordinal >= requested_end_ordinal:
+            if requested_latest_allowed_ordinal > cached_latest_allowed_ordinal:
+                return _refresh_existing_rebalance_training_context(
+                    ticker_data_grouped=ticker_data_grouped,
+                    valid_tickers=valid_tickers,
+                    train_end_date=train_end_date,
+                    forward_days=forward_days,
+                    context=cache_context,
+                )
             print(
-                f"   ♻️ Voting AI Reb: Reusing file cache "
+                f"   ♻️ AI Rebalance: Reusing file cache "
                 f"({len(valid_tickers)} tickers, {cached_n_dates} cached dates)"
             )
             return cache_context
@@ -496,8 +682,9 @@ def precompute_rebalance_training_context(
         ticker_data_grouped=ticker_data_grouped,
         market_df=market_df,
         valid_tickers=valid_tickers,
-        train_start_date=train_start_date,
-        train_end_date=train_end_date,
+        train_start_date=cache_start,
+        train_end_date=cache_end,
+        latest_allowed_date=train_end_date,
         forward_days=forward_days,
     )
 
@@ -508,14 +695,17 @@ def _build_rebalance_training_context(
     valid_tickers: List[str],
     train_start_date: datetime,
     train_end_date: datetime,
+    latest_allowed_date: datetime,
     forward_days: int,
 ) -> Dict[str, object]:
     start_key = _rebalance_cache_key(train_start_date)
     end_key = _rebalance_cache_key(train_end_date)
     start_ordinal = start_key.toordinal()
     n_dates = max(1, int((end_key - start_key).days) + 1)
-    temp_dir = Path(tempfile.mkdtemp(prefix="voting_ai_reb_cache_", dir=str(MODEL_SAVE_DIR)))
-    _REBALANCE_TEMP_DIRS.add(str(temp_dir))
+    temp_dir = get_cache_dir(
+        "ai_rebalance/context",
+        _rebalance_context_cache_key(valid_tickers, train_start_date, train_end_date, forward_days),
+    )
     feature_path = temp_dir / "ticker_features.npy"
     forward_path = temp_dir / "forward_returns.npy"
     market_path = temp_dir / "market_features.npy"
@@ -540,7 +730,7 @@ def _build_rebalance_training_context(
     )
     forward_array.fill(np.nan)
 
-    print(f"   🗂️ Voting AI Reb: Building file cache ({len(valid_tickers)} tickers, {n_dates} dates)...")
+    print(f"   🗂️ AI Rebalance: Building file cache ({len(valid_tickers)} tickers, {n_dates} dates)...")
     _populate_rebalance_market_cache(
         market_array=market_array,
         market_df=market_df,
@@ -558,14 +748,14 @@ def _build_rebalance_training_context(
         fill_start_ordinal=start_ordinal,
         fill_end_ordinal=start_ordinal + n_dates - 1,
         forward_days=forward_days,
-        latest_allowed_date=train_end_date,
+        latest_allowed_date=latest_allowed_date,
         progress_label="build",
     )
 
     feature_array.flush()
     forward_array.flush()
     market_array.flush()
-    print("   💾 Voting AI Reb: File cache ready")
+    print("   💾 AI Rebalance: File cache ready")
     return {
         "all_tickers": valid_tickers,
         "start_ordinal": start_ordinal,
@@ -575,6 +765,8 @@ def _build_rebalance_training_context(
         "market_path": str(market_path),
         "temp_dir": str(temp_dir),
         "forward_days": int(forward_days),
+        "latest_allowed_ordinal": _rebalance_cache_key(latest_allowed_date).toordinal(),
+        "persistent": True,
     }
 
 
@@ -631,7 +823,7 @@ def _extend_rebalance_training_context(
 
     append_days = requested_end_ordinal - old_end_ordinal
     print(
-        f"   ♻️ Voting AI Reb: Extending file cache by {append_days} day(s) "
+        f"   ♻️ AI Rebalance: Extending file cache by {append_days} day(s) "
         f"to {new_n_dates} total cached dates"
     )
     _populate_rebalance_market_cache(
@@ -679,7 +871,7 @@ def _extend_rebalance_training_context(
         except Exception:
             pass
 
-    print("   💾 Voting AI Reb: File cache ready")
+    print("   💾 AI Rebalance: File cache ready")
     return {
         "all_tickers": valid_tickers,
         "start_ordinal": start_ordinal,
@@ -689,7 +881,44 @@ def _extend_rebalance_training_context(
         "market_path": str(market_path),
         "temp_dir": str(temp_dir),
         "forward_days": int(forward_days),
+        "latest_allowed_ordinal": _rebalance_cache_key(train_end_date).toordinal(),
     }
+
+
+def _refresh_existing_rebalance_training_context(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    valid_tickers: List[str],
+    train_end_date: datetime,
+    forward_days: int,
+    context: Dict[str, object],
+) -> Dict[str, object]:
+    start_ordinal = int(context["start_ordinal"])
+    latest_allowed_ordinal = _rebalance_cache_key(train_end_date).toordinal()
+    old_latest_allowed_ordinal = int(context.get("latest_allowed_ordinal", start_ordinal - 1))
+    if latest_allowed_ordinal <= old_latest_allowed_ordinal:
+        return context
+
+    forward_array = np.load(str(context["forward_path"]), mmap_mode="r+")
+    refresh_start_ordinal = max(start_ordinal, old_latest_allowed_ordinal - forward_days + 1)
+    print(
+        f"   ♻️ AI Rebalance: Refreshing forward labels by "
+        f"{latest_allowed_ordinal - old_latest_allowed_ordinal} day(s)"
+    )
+    _refresh_rebalance_forward_cache(
+        ticker_data_grouped=ticker_data_grouped,
+        valid_tickers=valid_tickers,
+        forward_array=forward_array,
+        start_ordinal=start_ordinal,
+        refresh_start_ordinal=refresh_start_ordinal,
+        refresh_end_ordinal=latest_allowed_ordinal,
+        forward_days=forward_days,
+        latest_allowed_date=train_end_date,
+    )
+    forward_array.flush()
+    del forward_array
+    updated_context = dict(context)
+    updated_context["latest_allowed_ordinal"] = latest_allowed_ordinal
+    return updated_context
 
 
 def _rebalance_datetime_from_ordinal(ordinal: int, reference_date: datetime) -> datetime:
@@ -729,14 +958,10 @@ def _populate_rebalance_ticker_cache(
 ) -> None:
     if fill_end_ordinal < fill_start_ordinal:
         return
-    iterator = tqdm(
-        enumerate(valid_tickers),
-        total=len(valid_tickers),
-        desc=f"   Voting AI Reb cache {progress_label}",
-        ncols=100,
-        unit="ticker",
-    )
-    for ticker_idx, ticker in iterator:
+    from config import NUM_PROCESSES
+
+    def _build_ticker_cache_row(args) -> None:
+        ticker_idx, ticker = args
         ticker_df = ticker_data_grouped.get(ticker)
         for ordinal in range(fill_start_ordinal, fill_end_ordinal + 1):
             current_date = _rebalance_datetime_from_ordinal(ordinal, latest_allowed_date)
@@ -755,6 +980,19 @@ def _populate_rebalance_ticker_cache(
             else:
                 forward_array[ticker_idx, date_idx] = np.nan
 
+    worker_args = list(enumerate(valid_tickers))
+    n_workers = max(1, min(NUM_PROCESSES, len(worker_args))) if worker_args else 1
+    with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="voting-reb-cache") as executor:
+        results = executor.map(_build_ticker_cache_row, worker_args)
+        with tqdm(
+            total=len(worker_args),
+            desc=f"   AI Rebalance cache {progress_label}",
+            ncols=100,
+            unit="ticker",
+        ) as pbar:
+            for _ in results:
+                pbar.update(1)
+
 
 def _refresh_rebalance_forward_cache(
     ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -768,14 +1006,10 @@ def _refresh_rebalance_forward_cache(
 ) -> None:
     if refresh_end_ordinal < refresh_start_ordinal:
         return
-    iterator = tqdm(
-        enumerate(valid_tickers),
-        total=len(valid_tickers),
-        desc="   Voting AI Reb cache refresh",
-        ncols=100,
-        unit="ticker",
-    )
-    for ticker_idx, ticker in iterator:
+    from config import NUM_PROCESSES
+
+    def _refresh_ticker_forward_row(args) -> None:
+        ticker_idx, ticker = args
         ticker_df = ticker_data_grouped.get(ticker)
         for ordinal in range(refresh_start_ordinal, refresh_end_ordinal + 1):
             current_date = _rebalance_datetime_from_ordinal(ordinal, latest_allowed_date)
@@ -790,6 +1024,19 @@ def _refresh_rebalance_forward_cache(
                 forward_array[ticker_idx, date_idx] = np.float32(forward_ret)
             else:
                 forward_array[ticker_idx, date_idx] = np.nan
+
+    worker_args = list(enumerate(valid_tickers))
+    n_workers = max(1, min(NUM_PROCESSES, len(worker_args))) if worker_args else 1
+    with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="voting-reb-refresh") as executor:
+        results = executor.map(_refresh_ticker_forward_row, worker_args)
+        with tqdm(
+            total=len(worker_args),
+            desc="   AI Rebalance cache refresh",
+            ncols=100,
+            unit="ticker",
+        ) as pbar:
+            for _ in results:
+                pbar.update(1)
 
 
 def init_rebalance_collection_worker(context: Dict[str, object]) -> None:
@@ -809,6 +1056,8 @@ def init_rebalance_collection_worker(context: Dict[str, object]) -> None:
 def cleanup_rebalance_training_context(context: Optional[Dict[str, object]]) -> None:
     """Delete the persistent temp cache directory when it is no longer needed."""
     if not context:
+        return
+    if context.get("persistent"):
         return
     temp_dir = context.get("temp_dir")
     if not temp_dir:
@@ -956,10 +1205,10 @@ def _save_model(model, path: str, metadata: dict = None):
         joblib.dump(payload, path_obj)
         save_native_model_artifacts(model, path_obj)
     except Exception as exc:
-        print(f"   ⚠️ Voting AI Reb: Failed to save model to {path}: {exc}")
+        print(f"   ⚠️ AI Rebalance: Failed to save model to {path}: {exc}")
 
 
-def load_voting_ai_rebalance_model(path: str | Path = VOTING_AI_REBALANCE_MODEL_PATH):
+def load_ai_rebalance_model(path: str | Path = AI_REBALANCE_MODEL_PATH):
     path_obj = Path(path)
     if not path_obj.exists():
         return None
@@ -975,51 +1224,51 @@ def load_voting_ai_rebalance_model(path: str | Path = VOTING_AI_REBALANCE_MODEL_
         loaded_model = restore_native_model_artifacts(loaded_model, path_obj)
         loaded_model, reset_catboost = reset_legacy_catboost_member(loaded_model)
         if reset_catboost:
-            print("   ♻️ Voting AI Reb: Resetting saved CatBoost member for clean CPU continuation")
+            print("   ♻️ AI Rebalance: Resetting saved CatBoost member for clean CPU continuation")
         if metadata.get("trained"):
-            print(f"   ✅ Voting AI Reb: Loaded model from {path_obj} (trained {metadata['trained'][:10]})")
+            print(f"   ✅ AI Rebalance: Loaded model from {path_obj} (trained {metadata['trained'][:10]})")
         else:
-            print(f"   ✅ Voting AI Reb: Loaded model from {path_obj}")
+            print(f"   ✅ AI Rebalance: Loaded model from {path_obj}")
         return loaded_model
     except Exception as exc:
-        print(f"   ⚠️ Voting AI Reb: Failed to load model: {exc}")
+        print(f"   ⚠️ AI Rebalance: Failed to load model: {exc}")
         return None
 
 
-def train_voting_ai_rebalance_model(
+def train_ai_rebalance_model(
     all_training_data: List[Dict[str, object]],
-    save_path: str | Path = VOTING_AI_REBALANCE_MODEL_PATH,
+    save_path: str | Path = AI_REBALANCE_MODEL_PATH,
     existing_model=None,
     train_start: Optional[datetime] = None,
     train_end: Optional[datetime] = None,
 ):
     try:
-        from config import AI_VOTING_REBALANCE_MIN_SAMPLES, XGBOOST_USE_GPU
+        from config import AI_REBALANCE_MIN_SAMPLES, XGBOOST_USE_GPU
         from sklearn.metrics import r2_score
         from sklearn.model_selection import train_test_split
         import time
         import warnings
         import xgboost as xgb
 
-        if len(all_training_data) < AI_VOTING_REBALANCE_MIN_SAMPLES:
+        if len(all_training_data) < AI_REBALANCE_MIN_SAMPLES:
             print(
-                f"   ⚠️ Voting AI Reb: Insufficient training data "
-                f"({len(all_training_data)} samples, need {AI_VOTING_REBALANCE_MIN_SAMPLES})"
+                f"   ⚠️ AI Rebalance: Insufficient training data "
+                f"({len(all_training_data)} samples, need {AI_REBALANCE_MIN_SAMPLES})"
             )
             return existing_model, None
 
         train_df = pd.DataFrame(all_training_data)
         X = train_df[FEATURE_COLS].fillna(0.0)
         y = train_df["label"].astype(float).values
-        if len(X) < AI_VOTING_REBALANCE_MIN_SAMPLES or np.all(y == y[0]):
-            print("   ⚠️ Voting AI Reb: Training target not usable, keeping existing model")
+        if len(X) < AI_REBALANCE_MIN_SAMPLES or np.all(y == y[0]):
+            print("   ⚠️ AI Rebalance: Training target not usable, keeping existing model")
             return existing_model, None
 
         has_existing = existing_model is not None and isinstance(existing_model, dict) and "all_models" in existing_model
         device = "cuda" if XGBOOST_USE_GPU else "cpu"
 
         status_msg = "Continuing" if has_existing else "Training NEW"
-        print(f"   📊 Voting AI Reb: {status_msg} training on {len(X)} samples...")
+        print(f"   📊 AI Rebalance: {status_msg} training on {len(X)} samples...")
 
         if has_existing:
             models = dict(existing_model.get("all_models") or {})
@@ -1039,7 +1288,7 @@ def train_voting_ai_rebalance_model(
                         pass
             models = _order_models_for_training(models)
             print(
-                f"   🚀 Voting AI Reb: Incremental training {len(models)} models "
+                f"   🚀 AI Rebalance: Incremental training {len(models)} models "
                 f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu, SGD=cpu)"
             )
         else:
@@ -1058,7 +1307,7 @@ def train_voting_ai_rebalance_model(
             models["SGDRegressor-ElasticNet"] = _fresh_ensemble_model("SGDRegressor-ElasticNet", device)
             models = _order_models_for_training(models)
             print(
-                f"   🚀 Voting AI Reb: Fresh training {list(models.keys())} "
+                f"   🚀 AI Rebalance: Fresh training {list(models.keys())} "
                 f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu, SGD=cpu)"
             )
 
@@ -1143,7 +1392,7 @@ def train_voting_ai_rebalance_model(
                 print(f"failed: {exc}")
 
         if not trained_models:
-            print("   ⚠️ Voting AI Reb: No models trained successfully")
+            print("   ⚠️ AI Rebalance: No models trained successfully")
             return existing_model, None
 
         best_idx = max(range(len(model_scores)), key=lambda idx: model_scores[idx])
@@ -1173,7 +1422,7 @@ def train_voting_ai_rebalance_model(
                 metadata["train_end"] = train_end.isoformat()
             _save_model(model_dict, str(save_path), metadata)
 
-        print(f"   ✅ Voting AI Reb: Best model = {best_name} (R² {best_score:.3f})")
+        print(f"   ✅ AI Rebalance: Best model = {best_name} (R² {best_score:.3f})")
         return model_dict, best_score
     finally:
         release_runtime_memory()
@@ -1233,7 +1482,7 @@ def choose_ai_rebalance_ranked_candidates(
         try:
             predicted_edge = float(best_model.predict(X)[0])
         except Exception as exc:
-            print(f"   ⚠️ Voting AI Reb: Prediction failed for {held_ticker}: {exc}")
+            print(f"   ⚠️ AI Rebalance: Prediction failed for {held_ticker}: {exc}")
             keepers.append(held_ticker)
             continue
 

@@ -646,7 +646,8 @@ def select_meta_strategy_stocks(
     ticker_data_grouped: dict,
     current_date,
     top_n: int = 10,
-    ai_elite_models: dict = None
+    ai_elite_models: dict = None,
+    price_history_cache=None,
 ) -> list:
     """
     Select actual tickers based on the meta-strategy's chosen sub-strategy.
@@ -672,60 +673,157 @@ def select_meta_strategy_stocks(
         # === STATIC BH STRATEGIES ===
         if selected_strategy in META_STATIC_BH_STRATEGIES:
             lookback = 365 if '1y' in selected_strategy else 90
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=lookback, top_n=top_n)
+            return select_top_performers(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                lookback_days=lookback,
+                top_n=top_n,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy == 'static_bh_6m':
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=top_n)
+            return select_top_performers(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                lookback_days=180,
+                top_n=top_n,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy == 'static_bh_1m':
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=30, top_n=top_n)
+            return select_top_performers(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                lookback_days=30,
+                top_n=top_n,
+                price_history_cache=price_history_cache,
+            )
 
         # === MONTHLY REBALANCE VARIANTS ===
         elif selected_strategy in META_MONTHLY_BH_STRATEGIES:
             lookback_map = {'1y': 365, '6m': 180, '3m': 90, '1m': 30}
             lookback = lookback_map[selected_strategy.split('_')[1]]
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=lookback, top_n=top_n)
+            return select_top_performers(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                lookback_days=lookback,
+                top_n=top_n,
+                price_history_cache=price_history_cache,
+            )
 
         # === DYNAMIC BH STRATEGIES ===
         elif selected_strategy in META_DYNAMIC_BH_STRATEGIES:
             lookback = 365 if '1y' in selected_strategy else 90
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=lookback, top_n=top_n, apply_performance_filter=True)
+            return select_top_performers(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                lookback_days=lookback,
+                top_n=top_n,
+                apply_performance_filter=True,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy == 'dynamic_bh_6m':
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=top_n, apply_performance_filter=True)
+            return select_top_performers(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                lookback_days=180,
+                top_n=top_n,
+                apply_performance_filter=True,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy == 'dynamic_bh_1m':
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=30, top_n=top_n, apply_performance_filter=True)
+            return select_top_performers(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                lookback_days=30,
+                top_n=top_n,
+                apply_performance_filter=True,
+                price_history_cache=price_history_cache,
+            )
 
         # === DYNAMIC BH VARIANTS ===
         elif selected_strategy == 'dynamic_bh_1y_vol_filter':
             from shared_strategies import select_top_performers_vol_filtered
-            return select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=top_n, max_volatility=0.4)
+            return select_top_performers_vol_filtered(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                lookback_days=365,
+                top_n=top_n,
+                max_volatility=0.4,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy == 'dynamic_bh_1y_trailing_stop':
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=top_n)
+            return select_top_performers(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                lookback_days=365,
+                top_n=top_n,
+                price_history_cache=price_history_cache,
+            )
 
         # === RISK-ADJ MOMENTUM STRATEGIES ===
         elif selected_strategy in META_RISK_ADJ_MOM_STRATEGIES:
             from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
-            return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return select_risk_adj_mom_3m_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         # === RISK-ADJ MOM VARIANTS ===
         elif selected_strategy in META_RISK_ADJ_MOM_MONTHLY_STRATEGIES:
             from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
-            return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return select_risk_adj_mom_3m_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy in META_RISK_ADJ_MOM_VARIANT_STRATEGIES:
             from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
-            return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return select_risk_adj_mom_3m_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy == 'risk_adj_mom_1m_vol_sweet':
-            from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
-            return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+            return select_risk_adj_mom_1m_vol_sweet_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy == 'vol_sweet_mom':
-            from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
-            return select_risk_adj_mom_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+            return select_risk_adj_mom_1m_vol_sweet_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         # === OTHER CORE STRATEGIES ===
         elif selected_strategy == 'mean_reversion':
@@ -747,27 +845,57 @@ def select_meta_strategy_stocks(
         # === ENHANCED VOLATILITY STRATEGIES ===
         elif selected_strategy in META_ENHANCED_VOLATILITY_STRATEGIES:
             from enhanced_volatility_trader import select_enhanced_volatility_stocks
-            return select_enhanced_volatility_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return select_enhanced_volatility_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         # === TREND AND MOMENTUM STRATEGIES ===
         elif selected_strategy == 'trend_atr':
             from new_strategies import select_trend_following_atr_stocks
-            result = select_trend_following_atr_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            result = select_trend_following_atr_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
             if isinstance(result, tuple):
                 return result[0]
             return result
 
         elif selected_strategy == 'dual_momentum':
             from new_strategies import select_dual_momentum_stocks
-            return select_dual_momentum_stocks(all_tickers, ticker_data_grouped, current_date, top_n)[0]
+            return select_dual_momentum_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )[0]
 
         elif selected_strategy == 'momentum_acceleration':
             from momentum_acceleration_strategy import select_momentum_acceleration_stocks
-            return select_momentum_acceleration_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return select_momentum_acceleration_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy == 'concentrated_3m':
             from concentrated_3m_strategy import select_concentrated_3m_stocks
-            return select_concentrated_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return select_concentrated_3m_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy == 'price_acceleration':
             from price_acceleration_strategy import select_price_acceleration_stocks
@@ -775,16 +903,34 @@ def select_meta_strategy_stocks(
 
         elif selected_strategy == 'turnaround':
             from turnaround_strategy import select_turnaround_stocks
-            return select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return select_turnaround_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         # === ELITE STRATEGIES ===
         elif selected_strategy == 'elite_hybrid':
             from elite_hybrid_strategy import select_elite_hybrid_stocks
-            return select_elite_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return select_elite_hybrid_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy == 'elite_risk':
             from elite_risk_strategy import select_elite_risk_stocks
-            return select_elite_risk_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return select_elite_risk_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         # === MOMENTUM-VOLATILITY HYBRIDS ===
         elif selected_strategy in META_MOMENTUM_VOLATILITY_HYBRID_STRATEGIES:
@@ -801,7 +947,13 @@ def select_meta_strategy_stocks(
                 'momentum_volatility_hybrid_1y': select_momentum_volatility_hybrid_1y_stocks,
                 'momentum_volatility_hybrid_1y3m': select_momentum_volatility_hybrid_1y3m_stocks,
             }
-            return strategy_selectors[selected_strategy](all_tickers, ticker_data_grouped, current_date, top_n)
+            return strategy_selectors[selected_strategy](
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         # === RATIO STRATEGIES ===
         elif selected_strategy in META_RATIO_STRATEGIES:
@@ -810,8 +962,46 @@ def select_meta_strategy_stocks(
 
         # === ENSEMBLE STRATEGIES ===
         elif selected_strategy in META_ENSEMBLE_STRATEGIES:
-            from ensemble_strategies import select_ensemble_stocks
-            return select_ensemble_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            if selected_strategy == 'adaptive_ensemble':
+                from adaptive_ensemble import select_adaptive_ensemble_stocks
+                return select_adaptive_ensemble_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    current_date,
+                    top_n,
+                    price_history_cache=price_history_cache,
+                )
+            elif selected_strategy == 'volatility_ensemble':
+                from volatility_ensemble import select_volatility_ensemble_stocks
+                return select_volatility_ensemble_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    current_date,
+                    top_n,
+                    price_history_cache=price_history_cache,
+                )
+            elif selected_strategy == 'correlation_ensemble':
+                from correlation_ensemble import select_correlation_ensemble_stocks
+                return select_correlation_ensemble_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    current_date,
+                    top_n,
+                    price_history_cache=price_history_cache,
+                )
+            elif selected_strategy == 'dynamic_pool':
+                from dynamic_pool import select_dynamic_pool_stocks
+                return select_dynamic_pool_stocks(
+                    all_tickers,
+                    ticker_data_grouped,
+                    current_date,
+                    top_n,
+                    price_history_cache=price_history_cache,
+                )
+            elif selected_strategy == 'voting_ensemble':
+                from shared_strategies import select_voting_ensemble_stocks
+                return select_voting_ensemble_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return []
 
         # === AI STRATEGIES ===
         elif selected_strategy in META_AI_STRATEGIES:
@@ -838,24 +1028,58 @@ def select_meta_strategy_stocks(
         # === ADAPTIVE REBALANCING STRATEGIES ===
         elif selected_strategy in META_ADAPTIVE_REBALANCING_STRATEGIES:
             # These use the same base selection as Static BH 1Y
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=top_n)
+            return select_top_performers(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                lookback_days=365,
+                top_n=top_n,
+                price_history_cache=price_history_cache,
+            )
 
         # === BOLLINGER BANDS STRATEGIES ===
         elif selected_strategy in META_BB_STRATEGIES:
-            from bollinger_bands_strategies import select_bb_stocks
-            return select_bb_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            from bollinger_bands_strategy import (
+                select_bb_breakout_stocks,
+                select_bb_mean_reversion_stocks,
+                select_bb_rsi_combo_stocks,
+                select_bb_squeeze_breakout_stocks,
+            )
+
+            bb_selectors = {
+                'bb_mean_reversion': select_bb_mean_reversion_stocks,
+                'bb_breakout': select_bb_breakout_stocks,
+                'bb_squeeze_breakout': select_bb_squeeze_breakout_stocks,
+                'bb_rsi_combo': select_bb_rsi_combo_stocks,
+            }
+            selector = bb_selectors.get(selected_strategy)
+            if selector is None:
+                return []
+            if selected_strategy == 'bb_rsi_combo':
+                return selector(all_tickers, ticker_data_grouped, current_date, top_n)
+            return selector(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         # === TREND STRATEGIES ===
         elif selected_strategy == 'trend_breakout':
             from new_strategies import select_trend_breakout_stocks
-            return select_trend_breakout_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return select_trend_breakout_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         else:
-            print(f"⚠️ Meta strategy: Unknown sub-strategy '{selected_strategy}', using Static BH 1Y fallback")
-            return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=top_n)
+            print(f"⚠️ Meta strategy: Unknown sub-strategy '{selected_strategy}', returning no selection")
+            return []
 
     except Exception as e:
         print(f"⚠️ Meta strategy error for '{selected_strategy}': {e}")
-        # Fallback to Static BH 1Y
-        from shared_strategies import select_top_performers
-        return select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=top_n)
+        return []
