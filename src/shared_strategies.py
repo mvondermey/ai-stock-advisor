@@ -17,6 +17,13 @@ from tqdm import tqdm
 
 from datetime import datetime, timedelta, timezone
 
+from strategy_disk_cache import (
+    build_cache_hash,
+    load_json_cache,
+    save_json_cache,
+    universe_signature_from_frames,
+)
+
 
 
 # Import config for strategy parameters
@@ -54,6 +61,48 @@ from ai_elite_strategy import _calculate_market_return
 # Global tracking for inverse ETF hedges used
 
 _inverse_etf_hedge_log = []  # List of (date, etf, market_decline) tuples
+_selector_result_memory_cache: Dict[str, List[str]] = {}
+
+_CACHEABLE_REGISTRY_STRATEGIES = {
+    "volatility_adj_mom",
+    "ratio_3m_1y",
+    "ratio_1y_3m",
+    "ratio_1m_3m",
+    "turnaround",
+    "price_acceleration",
+    "momentum_volatility_hybrid",
+    "momentum_volatility_hybrid_6m",
+    "momentum_volatility_hybrid_1y",
+    "momentum_volatility_hybrid_1y3m",
+    "multi_tf_ensemble",
+    "multi_tf_intraday_ensemble",
+}
+
+
+def _normalize_selector_current_date(current_date: Optional[datetime]) -> Optional[str]:
+    if current_date is None:
+        return None
+    ts = pd.Timestamp(current_date)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    return ts.isoformat()
+
+
+def _selector_cache_key(
+    strategy_name: str,
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    all_tickers: list,
+    current_date: Optional[datetime],
+    top_n: int,
+) -> Dict[str, object]:
+    normalized_tickers = sorted(str(ticker) for ticker in all_tickers)
+    return {
+        "strategy_name": strategy_name,
+        "current_date": _normalize_selector_current_date(current_date),
+        "top_n": int(top_n),
+        "tickers": normalized_tickers,
+        "universe_signature": universe_signature_from_frames(ticker_data_grouped, normalized_tickers),
+    }
 
 
 
@@ -7392,6 +7441,26 @@ def get_strategy_tickers(strategy_name: str, all_tickers: list, ticker_data_grou
 
 
 
+    cache_key_parts = _selector_cache_key(
+        strategy_name,
+        ticker_data_grouped,
+        all_tickers,
+        current_date,
+        top_n,
+    )
+    cache_key = build_cache_hash("selector_results", cache_key_parts)
+
+    if strategy_name in _CACHEABLE_REGISTRY_STRATEGIES:
+        cached_result = _selector_result_memory_cache.get(cache_key)
+        if cached_result is not None:
+            return list(cached_result)
+
+        disk_result = load_json_cache("selector_results", cache_key_parts, filename="tickers.json")
+        if isinstance(disk_result, list):
+            normalized_result = [str(ticker) for ticker in disk_result]
+            _selector_result_memory_cache[cache_key] = normalized_result
+            return list(normalized_result)
+
     # Execute the strategy
 
     try:
@@ -7399,8 +7468,11 @@ def get_strategy_tickers(strategy_name: str, all_tickers: list, ticker_data_grou
         result = registry[strategy_name](all_tickers, ticker_data_grouped, current_date, top_n)
 
         if result:
-
-            return result
+            normalized_result = [str(ticker) for ticker in result]
+            if strategy_name in _CACHEABLE_REGISTRY_STRATEGIES:
+                _selector_result_memory_cache[cache_key] = normalized_result
+                save_json_cache("selector_results", cache_key_parts, normalized_result, filename="tickers.json")
+            return normalized_result
 
         # Debug: log when result is empty/None
 

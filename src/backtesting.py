@@ -7,8 +7,10 @@ import numpy as np
 import pandas as pd
 import sys
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import Pool, cpu_count, current_process
+from multiprocessing import get_context
 from tqdm import tqdm
 from backtesting_env import RuleTradingEnv
 from ml_models import initialize_ml_libraries, train_and_evaluate_models
@@ -42,6 +44,101 @@ from strategy_universes import (
 class PredictionTimeoutError(Exception):
     """Raised when a prediction takes too long."""
     pass
+
+
+_PARALLEL_STRATEGY_WORKER_CONTEXT: Dict[str, Any] = {}
+
+
+def _init_parallel_strategy_worker(
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    initial_top_tickers: List[str],
+) -> None:
+    global _PARALLEL_STRATEGY_WORKER_CONTEXT
+    _PARALLEL_STRATEGY_WORKER_CONTEXT = {
+        "ticker_data_grouped": ticker_data_grouped,
+        "initial_top_tickers": list(initial_top_tickers),
+    }
+
+
+def _run_parallel_strategy_selection_task(
+    strategy_name: str,
+    current_date: datetime,
+    top_n: int,
+) -> Dict[str, Any]:
+    import time as _time
+
+    started_at = _time.time()
+    ticker_data_grouped = _PARALLEL_STRATEGY_WORKER_CONTEXT["ticker_data_grouped"]
+    initial_top_tickers = _PARALLEL_STRATEGY_WORKER_CONTEXT["initial_top_tickers"]
+
+    if strategy_name == "elite_hybrid":
+        from elite_hybrid_strategy import select_elite_hybrid_stocks
+
+        selected = select_elite_hybrid_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+        )
+    elif strategy_name == "elite_risk":
+        from elite_risk_strategy import select_elite_risk_stocks
+
+        selected = select_elite_risk_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+        )
+    elif strategy_name == "bb_mean_reversion":
+        from bollinger_bands_strategy import select_bb_mean_reversion_stocks
+
+        selected = select_bb_mean_reversion_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date,
+            top_n,
+        )
+    elif strategy_name == "bb_breakout":
+        from bollinger_bands_strategy import select_bb_breakout_stocks
+
+        selected = select_bb_breakout_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date,
+            top_n,
+        )
+    elif strategy_name == "bb_rsi_combo":
+        from bollinger_bands_strategy import select_bb_rsi_combo_stocks
+
+        selected = select_bb_rsi_combo_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date,
+            top_n,
+        )
+    elif strategy_name == "trend_breakout":
+        from new_strategies import select_trend_breakout_stocks
+
+        selected = select_trend_breakout_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date,
+            top_n,
+        )
+    else:
+        from shared_strategies import get_strategy_tickers
+
+        selected = get_strategy_tickers(
+            strategy_name,
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+        )
+    return {
+        "selected": list(selected or []),
+        "elapsed": float(_time.time() - started_at),
+    }
 
 def calculate_daily_returns(history: List[float]) -> List[float]:
     """Calculate daily returns from portfolio history."""
@@ -3167,10 +3264,31 @@ def _run_portfolio_backtest_walk_forward(
     multi_tf_intraday_daily_cache = None
     if config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE:
         from multi_timeframe_ensemble import build_multi_timeframe_cache
-        multi_tf_ensemble_selection_cache = build_multi_timeframe_cache(ticker_data_grouped, initial_top_tickers)
+        multi_tf_ensemble_selection_cache = build_multi_timeframe_cache(
+            ticker_data_grouped,
+            initial_top_tickers,
+            price_history_cache=price_history_cache,
+        )
     if config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE:
         from multi_timeframe_intraday_ensemble import build_multi_timeframe_intraday_daily_cache
         multi_tf_intraday_daily_cache = build_multi_timeframe_intraday_daily_cache(ticker_data_grouped, initial_top_tickers)
+
+    parallel_strategy_executor = None
+    if config.ENABLE_PARALLEL_STRATEGIES:
+        try:
+            parallel_strategy_executor = ProcessPoolExecutor(
+                max_workers=2,
+                mp_context=get_context("spawn"),
+                initializer=_init_parallel_strategy_worker,
+                initargs=(ticker_data_grouped, initial_top_tickers),
+            )
+            print(
+                "   🚦 Parallel strategy queue enabled: "
+                f"{len(getattr(config, '_PARALLEL_STRATEGY_PILOT_CONFIG', {}))} pilot strategies across 2 workers"
+            )
+        except Exception as e:
+            parallel_strategy_executor = None
+            print(f"   ⚠️ Parallel strategy queue disabled: {e}")
 
     # Build a fixed benchmark portfolio from the highest performers at the backtest start.
     benchmark_start_date = business_days[0] if business_days else backtest_start_date
@@ -3460,6 +3578,41 @@ def _run_portfolio_backtest_walk_forward(
     for current_date in business_days:
         day_count += 1
         active_close_price_cache = _build_daily_close_price_cache(ticker_data_grouped, current_date)
+        parallel_strategy_futures: Dict[str, Any] = {}
+
+        if parallel_strategy_executor is not None:
+            for strategy_name, strategy_config in getattr(config, "_PARALLEL_STRATEGY_PILOT_CONFIG", {}).items():
+                enable_flag_name = str(strategy_config.get("enable_flag", ""))
+                if not enable_flag_name or not bool(getattr(config, enable_flag_name, False)):
+                    continue
+                top_n = (
+                    PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                    if bool(strategy_config.get("use_buffer", False))
+                    else PORTFOLIO_SIZE
+                )
+                parallel_strategy_futures[strategy_name] = parallel_strategy_executor.submit(
+                    _run_parallel_strategy_selection_task,
+                    strategy_name,
+                    current_date,
+                    top_n,
+                )
+
+        def _resolve_parallel_strategy_selection(strategy_name: str, fallback_fn):
+            future = parallel_strategy_futures.pop(strategy_name, None)
+            if future is None:
+                return fallback_fn()
+            try:
+                task_result = future.result()
+                elapsed = float(task_result.get("elapsed", 0.0))
+                selected = list(task_result.get("selected") or [])
+                print(
+                    f"   🚦 Strategy queue: {strategy_name} completed in "
+                    f"{elapsed:.2f}s ({len(selected)} tickers)"
+                )
+                return selected
+            except Exception as e:
+                print(f"   ⚠️ Strategy queue fallback for {strategy_name}: {e}")
+                return fallback_fn()
 
         # VOTING ENSEMBLE AI REBALANCE TRAINING
         # Run the heavy cache collection/training early so crashes show up immediately.
@@ -5339,16 +5492,20 @@ def _run_portfolio_backtest_walk_forward(
         # 3M/1Y RATIO: Rebalance to highest 3M/1Y ratio stocks DAILY
         if config.ENABLE_3M_1Y_RATIO:
             try:
-                from shared_strategies import select_3m_1y_ratio_stocks
-
                 print(f"   📊 3M/1Y Ratio Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                # Use shared strategy for consistent selection
-                new_ratio_3m_1y_stocks = select_3m_1y_ratio_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date,  # Add the current date parameter!
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE  # Use configured portfolio size (default 10)
+                def _fallback_ratio_3m_1y():
+                    from shared_strategies import select_3m_1y_ratio_stocks
+                    return select_3m_1y_ratio_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_ratio_3m_1y_stocks = _resolve_parallel_strategy_selection(
+                    "ratio_3m_1y",
+                    _fallback_ratio_3m_1y,
                 )
 
                 if new_ratio_3m_1y_stocks:
@@ -5380,16 +5537,20 @@ def _run_portfolio_backtest_walk_forward(
         # 1M/3M RATIO: Rebalance to highest short-term acceleration stocks DAILY
         if config.ENABLE_1M_3M_RATIO:
             try:
-                from shared_strategies import select_1m_3m_ratio_stocks
-
                 print(f"   📊 1M/3M Ratio Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                # Use shared strategy for consistent selection
-                new_ratio_1m_3m_stocks = select_1m_3m_ratio_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                def _fallback_ratio_1m_3m():
+                    from shared_strategies import select_1m_3m_ratio_stocks
+                    return select_1m_3m_ratio_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_ratio_1m_3m_stocks = _resolve_parallel_strategy_selection(
+                    "ratio_1m_3m",
+                    _fallback_ratio_1m_3m,
                 )
 
                 if new_ratio_1m_3m_stocks:
@@ -5421,16 +5582,20 @@ def _run_portfolio_backtest_walk_forward(
         # 1Y/3M RATIO: Rebalance to highest 1Y/3M ratio stocks DAILY
         if config.ENABLE_3M_1Y_RATIO:
             try:
-                from shared_strategies import select_1y_3m_ratio_stocks
-
                 print(f"   📊 1Y/3M Ratio Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-            # Use shared strategy for consistent selection
-                new_ratio_1y_3m_stocks = select_1y_3m_ratio_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date,  # Add the current date parameter!
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE  # Use configured portfolio size (default 10)
+                def _fallback_ratio_1y_3m():
+                    from shared_strategies import select_1y_3m_ratio_stocks
+                    return select_1y_3m_ratio_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_ratio_1y_3m_stocks = _resolve_parallel_strategy_selection(
+                    "ratio_1y_3m",
+                    _fallback_ratio_1y_3m,
                 )
 
                 if new_ratio_1y_3m_stocks:
@@ -5462,16 +5627,20 @@ def _run_portfolio_backtest_walk_forward(
         # TURNAROUND: Rebalance to best turnaround stocks DAILY
         if config.ENABLE_TURNAROUND:
             try:
-                from shared_strategies import select_turnaround_stocks
-
                 print(f"   📊 Turnaround Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                # Use shared strategy for consistent selection
-                new_turnaround_stocks = select_turnaround_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date,  # Add the current date parameter!
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE  # Use configured portfolio size (default 10)
+                def _fallback_turnaround():
+                    from shared_strategies import select_turnaround_stocks
+                    return select_turnaround_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_turnaround_stocks = _resolve_parallel_strategy_selection(
+                    "turnaround",
+                    _fallback_turnaround,
                 )
 
                 if new_turnaround_stocks:
@@ -5503,16 +5672,20 @@ def _run_portfolio_backtest_walk_forward(
         # MOMENTUM-VOLATILITY HYBRID: Rebalance using hybrid strategy DAILY
         if config.ENABLE_MOMENTUM_VOLATILITY_HYBRID:
             try:
-                from shared_strategies import select_momentum_volatility_hybrid_stocks
-
                 print(f"   🎯 Momentum-Volatility Hybrid Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                # Use momentum-volatility hybrid for stock selection
-                new_momentum_volatility_hybrid_stocks = select_momentum_volatility_hybrid_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE  # Use configured portfolio size (default 10)
+                def _fallback_momentum_volatility_hybrid():
+                    from shared_strategies import select_momentum_volatility_hybrid_stocks
+                    return select_momentum_volatility_hybrid_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_momentum_volatility_hybrid_stocks = _resolve_parallel_strategy_selection(
+                    "momentum_volatility_hybrid",
+                    _fallback_momentum_volatility_hybrid,
                 )
 
                 if new_momentum_volatility_hybrid_stocks:
@@ -5544,15 +5717,20 @@ def _run_portfolio_backtest_walk_forward(
         # MOMENTUM-VOLATILITY HYBRID 6M: Rebalance using hybrid strategy (6M lookback) DAILY
         if config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M:
             try:
-                from shared_strategies import select_momentum_volatility_hybrid_6m_stocks
-
                 print(f"   🎯 Mom-Vol Hybrid 6M Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                new_momentum_volatility_hybrid_6m_stocks = select_momentum_volatility_hybrid_6m_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                def _fallback_momentum_volatility_hybrid_6m():
+                    from shared_strategies import select_momentum_volatility_hybrid_6m_stocks
+                    return select_momentum_volatility_hybrid_6m_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_momentum_volatility_hybrid_6m_stocks = _resolve_parallel_strategy_selection(
+                    "momentum_volatility_hybrid_6m",
+                    _fallback_momentum_volatility_hybrid_6m,
                 )
 
                 if new_momentum_volatility_hybrid_6m_stocks:
@@ -5583,15 +5761,20 @@ def _run_portfolio_backtest_walk_forward(
         # MOMENTUM-VOLATILITY HYBRID 1Y: Rebalance using hybrid strategy (1Y lookback) DAILY
         if config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y:
             try:
-                from shared_strategies import select_momentum_volatility_hybrid_1y_stocks
-
                 print(f"   🎯 Mom-Vol Hybrid 1Y Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                new_momentum_volatility_hybrid_1y_stocks = select_momentum_volatility_hybrid_1y_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                def _fallback_momentum_volatility_hybrid_1y():
+                    from shared_strategies import select_momentum_volatility_hybrid_1y_stocks
+                    return select_momentum_volatility_hybrid_1y_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_momentum_volatility_hybrid_1y_stocks = _resolve_parallel_strategy_selection(
+                    "momentum_volatility_hybrid_1y",
+                    _fallback_momentum_volatility_hybrid_1y,
                 )
 
                 if new_momentum_volatility_hybrid_1y_stocks:
@@ -5622,15 +5805,20 @@ def _run_portfolio_backtest_walk_forward(
         # MOMENTUM-VOLATILITY HYBRID 1Y/3M: Rebalance using hybrid strategy (1Y/3M ratio) DAILY
         if config.ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M:
             try:
-                from shared_strategies import select_momentum_volatility_hybrid_1y3m_stocks
-
                 print(f"   🎯 Mom-Vol Hybrid 1Y/3M Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                new_momentum_volatility_hybrid_1y3m_stocks = select_momentum_volatility_hybrid_1y3m_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                def _fallback_momentum_volatility_hybrid_1y3m():
+                    from shared_strategies import select_momentum_volatility_hybrid_1y3m_stocks
+                    return select_momentum_volatility_hybrid_1y3m_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_momentum_volatility_hybrid_1y3m_stocks = _resolve_parallel_strategy_selection(
+                    "momentum_volatility_hybrid_1y3m",
+                    _fallback_momentum_volatility_hybrid_1y3m,
                 )
 
                 if new_momentum_volatility_hybrid_1y3m_stocks:
@@ -5661,16 +5849,20 @@ def _run_portfolio_backtest_walk_forward(
         # PRICE ACCELERATION: Rebalance using velocity/acceleration strategy DAILY
         if config.ENABLE_PRICE_ACCELERATION:
             try:
-                from shared_strategies import select_price_acceleration_stocks
-
                 print(f"   🚀 Price Acceleration Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                # Use price acceleration for stock selection
-                new_price_acceleration_stocks = select_price_acceleration_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE  # Use configured portfolio size (default 10)
+                def _fallback_price_acceleration():
+                    from shared_strategies import select_price_acceleration_stocks
+                    return select_price_acceleration_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_price_acceleration_stocks = _resolve_parallel_strategy_selection(
+                    "price_acceleration",
+                    _fallback_price_acceleration,
                 )
 
                 if new_price_acceleration_stocks:
@@ -6099,10 +6291,18 @@ def _run_portfolio_backtest_walk_forward(
         # VOLATILITY-ADJUSTED MOMENTUM STRATEGY
         if config.ENABLE_VOLATILITY_ADJ_MOM:
             try:
-                from shared_strategies import select_volatility_adj_mom_stocks
+                def _fallback_volatility_adj_mom():
+                    from shared_strategies import select_volatility_adj_mom_stocks
+                    return select_volatility_adj_mom_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        PORTFOLIO_SIZE,
+                    )
 
-                new_volatility_adj_mom_stocks = select_volatility_adj_mom_stocks(
-                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                new_volatility_adj_mom_stocks = _resolve_parallel_strategy_selection(
+                    "volatility_adj_mom",
+                    _fallback_volatility_adj_mom,
                 )
 
                 if new_volatility_adj_mom_stocks:
@@ -6840,15 +7040,20 @@ def _run_portfolio_backtest_walk_forward(
         # ELITE HYBRID STRATEGY (Mom-Vol 6M + 1Y/3M Ratio)
         if config.ENABLE_ELITE_HYBRID:
             try:
-                from elite_hybrid_strategy import select_elite_hybrid_stocks
-
                 print(f"   🏆 Elite Hybrid: Analyzing {len(initial_top_tickers)} tickers...")
 
-                new_elite_hybrid_stocks = select_elite_hybrid_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                def _fallback_elite_hybrid():
+                    from elite_hybrid_strategy import select_elite_hybrid_stocks
+                    return select_elite_hybrid_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_elite_hybrid_stocks = _resolve_parallel_strategy_selection(
+                    "elite_hybrid",
+                    _fallback_elite_hybrid,
                 )
 
                 if new_elite_hybrid_stocks:
@@ -6875,13 +7080,18 @@ def _run_portfolio_backtest_walk_forward(
         # ELITE RISK STRATEGY (Risk-Adj Mom base + Elite Hybrid dip/vol bonuses)
         if config.ENABLE_ELITE_RISK:
             try:
-                from elite_risk_strategy import select_elite_risk_stocks
+                def _fallback_elite_risk():
+                    from elite_risk_strategy import select_elite_risk_stocks
+                    return select_elite_risk_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
 
-                new_elite_risk_stocks = select_elite_risk_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                new_elite_risk_stocks = _resolve_parallel_strategy_selection(
+                    "elite_risk",
+                    _fallback_elite_risk,
                 )
 
                 if new_elite_risk_stocks:
@@ -7633,9 +7843,18 @@ def _run_portfolio_backtest_walk_forward(
         # BB Mean Reversion
         if config.ENABLE_BB_MEAN_REVERSION:
             try:
-                from bollinger_bands_strategy import select_bb_mean_reversion_stocks
-                new_bb_mean_reversion_stocks = select_bb_mean_reversion_stocks(
-                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                def _fallback_bb_mean_reversion():
+                    from bollinger_bands_strategy import select_bb_mean_reversion_stocks
+                    return select_bb_mean_reversion_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        PORTFOLIO_SIZE,
+                    )
+
+                new_bb_mean_reversion_stocks = _resolve_parallel_strategy_selection(
+                    "bb_mean_reversion",
+                    _fallback_bb_mean_reversion,
                 )
                 if new_bb_mean_reversion_stocks:
                     print(f"   📊 BB Mean Reversion Day {day_count}: {new_bb_mean_reversion_stocks}")
@@ -7659,9 +7878,18 @@ def _run_portfolio_backtest_walk_forward(
         # BB Breakout
         if config.ENABLE_BB_BREAKOUT:
             try:
-                from bollinger_bands_strategy import select_bb_breakout_stocks
-                new_bb_breakout_stocks = select_bb_breakout_stocks(
-                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                def _fallback_bb_breakout():
+                    from bollinger_bands_strategy import select_bb_breakout_stocks
+                    return select_bb_breakout_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        PORTFOLIO_SIZE,
+                    )
+
+                new_bb_breakout_stocks = _resolve_parallel_strategy_selection(
+                    "bb_breakout",
+                    _fallback_bb_breakout,
                 )
                 if new_bb_breakout_stocks:
                     print(f"   📊 BB Breakout Day {day_count}: {new_bb_breakout_stocks}")
@@ -7711,9 +7939,18 @@ def _run_portfolio_backtest_walk_forward(
         # BB RSI Combo
         if config.ENABLE_BB_RSI_COMBO:
             try:
-                from bollinger_bands_strategy import select_bb_rsi_combo_stocks
-                new_bb_rsi_combo_stocks = select_bb_rsi_combo_stocks(
-                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                def _fallback_bb_rsi_combo():
+                    from bollinger_bands_strategy import select_bb_rsi_combo_stocks
+                    return select_bb_rsi_combo_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        PORTFOLIO_SIZE,
+                    )
+
+                new_bb_rsi_combo_stocks = _resolve_parallel_strategy_selection(
+                    "bb_rsi_combo",
+                    _fallback_bb_rsi_combo,
                 )
                 if new_bb_rsi_combo_stocks:
                     print(f"   📊 BB RSI Combo Day {day_count}: {new_bb_rsi_combo_stocks}")
@@ -7737,9 +7974,18 @@ def _run_portfolio_backtest_walk_forward(
         # TREND BREAKOUT (no ATR selling, uses smart_rebalance)
         if config.ENABLE_TREND_BREAKOUT:
             try:
-                from new_strategies import select_trend_breakout_stocks
-                new_trend_breakout_stocks = select_trend_breakout_stocks(
-                    initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE
+                def _fallback_trend_breakout():
+                    from new_strategies import select_trend_breakout_stocks
+                    return select_trend_breakout_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        PORTFOLIO_SIZE,
+                    )
+
+                new_trend_breakout_stocks = _resolve_parallel_strategy_selection(
+                    "trend_breakout",
+                    _fallback_trend_breakout,
                 )
                 if new_trend_breakout_stocks:
                     print(f"   📊 Trend Breakout Day {day_count}: {new_trend_breakout_stocks}")
@@ -10841,6 +11087,9 @@ def _run_portfolio_backtest_walk_forward(
             _cleanup_voting_ai_rebalance_training_context(voting_ensemble_ai_rebalance_cache_context)
         except Exception:
             pass
+
+    if parallel_strategy_executor is not None:
+        parallel_strategy_executor.shutdown(wait=True)
 
     return results
 

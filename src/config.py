@@ -1,4 +1,5 @@
 from operator import truediv
+from typing import Dict
 
 import os
 
@@ -289,9 +290,8 @@ def _auto_detect_num_processes():
 
 # Auto-detect a safe multiprocessing worker count based on RAM
 NUM_PROCESSES = _auto_detect_num_processes()  # For data validation, ticker selection, and backtest data collection
-NUM_PROCESSES = max(1, cpu_count() - 4)  # For data validation, ticker selection, and backtest data collection
 
-
+NUM_PROCESSES = 10 
 
 # Parallel processing threshold - only use parallel processing for ticker lists larger than this
 
@@ -306,6 +306,25 @@ PARALLEL_THRESHOLD     = 200      # Use parallel only for >200 tickers
 # This runs strategy selections in parallel to improve CPU usage
 
 ENABLE_PARALLEL_STRATEGIES = True   # Run strategies in parallel within each day
+
+_PARALLEL_STRATEGY_PILOT_CONFIG: Dict[str, Dict[str, object]] = {
+    "ratio_3m_1y": {"enable_flag": "ENABLE_3M_1Y_RATIO", "use_buffer": True},
+    "ratio_1m_3m": {"enable_flag": "ENABLE_1M_3M_RATIO", "use_buffer": True},
+    "ratio_1y_3m": {"enable_flag": "ENABLE_3M_1Y_RATIO", "use_buffer": True},
+    "turnaround": {"enable_flag": "ENABLE_TURNAROUND", "use_buffer": True},
+    "price_acceleration": {"enable_flag": "ENABLE_PRICE_ACCELERATION", "use_buffer": True},
+    "momentum_volatility_hybrid": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID", "use_buffer": True},
+    "momentum_volatility_hybrid_6m": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M", "use_buffer": True},
+    "momentum_volatility_hybrid_1y": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y", "use_buffer": True},
+    "momentum_volatility_hybrid_1y3m": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M", "use_buffer": True},
+    "elite_hybrid": {"enable_flag": "ENABLE_ELITE_HYBRID", "use_buffer": True},
+    "elite_risk": {"enable_flag": "ENABLE_ELITE_RISK", "use_buffer": True},
+    "volatility_adj_mom": {"enable_flag": "ENABLE_VOLATILITY_ADJ_MOM", "use_buffer": False},
+    "bb_mean_reversion": {"enable_flag": "ENABLE_BB_MEAN_REVERSION", "use_buffer": False},
+    "bb_breakout": {"enable_flag": "ENABLE_BB_BREAKOUT", "use_buffer": False},
+    "bb_rsi_combo": {"enable_flag": "ENABLE_BB_RSI_COMBO", "use_buffer": False},
+    "trend_breakout": {"enable_flag": "ENABLE_TREND_BREAKOUT", "use_buffer": False},
+}
 
 
 
@@ -326,7 +345,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 # --- Backtest windows
 
-BACKTEST_DAYS           =   90   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   50   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
 
@@ -524,7 +543,6 @@ ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 ENABLE_PRICE_ACCELERATION = True   # ENABLED - Price Acceleration Strategy (physics-based velocity/acceleration)
 
 ENABLE_VOTING_ENSEMBLE = True   # ENABLED - Voting Ensemble Strategy
-ENABLE_VOTING_ENSEMBLE_AI_REBALANCE = True   # NEW - Voting Ensemble selection + AI rebalance decisions
 
 
 
@@ -574,6 +592,8 @@ ENABLE_BH_1Y_DYNAMIC_ACCEL = True          # NEW - BH 1Y Dynamic Accel (dynamic 
 
 ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip opportunities)
 
+ENABLE_AI_ELITE_AI_REBALANCE = False  # NEW - AI Elite selection + AI rebalance decisions
+
 ENABLE_AI_ELITE_MONTHLY_SHARED = True   # NEW - AI Elite Monthly Shared (monthly rebalance using daily AI Elite shared model)
 
 ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre-filter + AI Elite re-rank)
@@ -589,7 +609,7 @@ ENABLE_AI_REGIME_MONTHLY = True   # NEW - AI Regime Monthly (same as AI Regime b
 
 ENABLE_UNIVERSAL_MODEL = True   # NEW - Universal Model (single ML model for all tickers)
 
-ENABLE_SAVGOL_TREND = True   # NEW - SavGol Trend (local polynomial trend features + pooled ML)
+ENABLE_SAVGOL_TREND = False  # NEW - SavGol Trend (local polynomial trend features + pooled ML)
 
 ENABLE_TOP5_CONSISTENCY_BLEND = True   # NEW - Blend current top strategies using prior-day top-5 consistency weights
 
@@ -623,12 +643,12 @@ AI_ELITE_TRAINING_LOOKBACK = 90  # Days of history to use for training
 
 AI_ELITE_FORWARD_DAYS = 5  # Predict performance over next N days
 
-AI_VOTING_REBALANCE_RETRAIN_DAYS = 1  # Retrain/continue training every day
-AI_VOTING_REBALANCE_TRAINING_LOOKBACK = AI_ELITE_TRAINING_LOOKBACK  # Use same lookback as AI Elite
-AI_VOTING_REBALANCE_FORWARD_DAYS = 5  # Evaluate replace-vs-keep over the next N trading days
-AI_VOTING_REBALANCE_MIN_SAMPLES = 80  # Minimum hold-vs-replace samples before fitting
-AI_VOTING_REBALANCE_MIN_PREDICTED_EDGE = 0.0  # Require positive predicted net switch advantage
-AI_VOTING_REBALANCE_FORCE_FRESH_TRAIN = False  # False = load existing model and continue where possible
+AI_REBALANCE_RETRAIN_DAYS = 1  # Retrain/continue training every day
+AI_REBALANCE_TRAINING_LOOKBACK = AI_ELITE_TRAINING_LOOKBACK  # Use same lookback as AI Elite
+AI_REBALANCE_FORWARD_DAYS = 5  # Evaluate replace-vs-keep over the next N trading days
+AI_REBALANCE_MIN_SAMPLES = 80  # Minimum hold-vs-replace samples before fitting
+AI_REBALANCE_MIN_PREDICTED_EDGE = 0.0  # Require positive predicted net switch advantage
+AI_REBALANCE_FORCE_FRESH_TRAIN = False  # False = load existing model and continue where possible
 
 AI_ELITE_FORCE_FRESH_TRAIN = False  # False = load existing model and do incremental training; True = always fresh train
 AI_ELITE_CATBOOST_USED_RAM_LIMIT = "24gb"  # Raise CatBoost CPU RAM budget to avoid continuation crashes
@@ -644,8 +664,9 @@ AI_CHAMPION_HOLD_MARGIN = 0.08  # Keep current strategy unless the edge is meani
 
 # SavGol Trend Parameters
 SAVGOL_TREND_RETRAIN_DAYS = 1  # Retrain every day like AI Elite
-SAVGOL_TREND_LOOKBACK_DAYS = 60  # History window used for local trend features
+SAVGOL_TREND_LOOKBACK_DAYS = 90  # History window used for local trend features
 SAVGOL_TREND_FORWARD_DAYS = 5  # Predict 5-day forward returns
+SAVGOL_TREND_MAX_WORKERS = 16  # Allow SavGol data collection to fan out a bit wider
 SAVGOL_TREND_MIN_SAMPLES = 300  # Minimum pooled samples before fitting the model
 SAVGOL_TREND_MIN_MODEL_SPEARMAN = 0.02  # Skip model-driven rotation when validation rank skill is negligible
 SAVGOL_TREND_MIN_PREDICTED_EDGE = 0.0  # Require the top predicted excess score to be positive

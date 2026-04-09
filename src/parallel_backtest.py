@@ -13,12 +13,21 @@ import time
 import gc
 from datetime import datetime, timedelta
 
+from strategy_disk_cache import (
+    load_joblib_cache,
+    save_joblib_cache,
+    universe_signature_from_frames,
+)
+
 
 @dataclass
 class PriceHistoryCache:
     """Precomputed valid close arrays plus rolling window caches for ranking."""
     date_ns_by_ticker: Dict[str, np.ndarray]
     close_by_ticker: Dict[str, np.ndarray]
+    volume_by_ticker: Dict[str, np.ndarray] = field(default_factory=dict)
+    high_by_ticker: Dict[str, np.ndarray] = field(default_factory=dict)
+    low_by_ticker: Dict[str, np.ndarray] = field(default_factory=dict)
     performance_cache: Dict[Tuple[int, int], Dict[str, float]] = field(default_factory=dict)
     risk_adjusted_cache: Dict[Tuple[int, int], Dict[str, Tuple[float, float, float]]] = field(default_factory=dict)
     volatility_cache: Dict[Tuple[int, int], Dict[str, float]] = field(default_factory=dict)
@@ -58,8 +67,23 @@ def _window_slice(
 
 def build_price_history_cache(ticker_data_grouped: Dict[str, pd.DataFrame]) -> PriceHistoryCache:
     """Precompute valid close arrays for fast window lookups."""
+    cache_key_parts = {
+        "universe_signature": universe_signature_from_frames(ticker_data_grouped),
+        "ticker_count": len(ticker_data_grouped),
+    }
+    cached_result = load_joblib_cache(
+        "parallel_backtest/base_price_history",
+        cache_key_parts,
+        filename="price_history_cache.joblib",
+    )
+    if isinstance(cached_result, PriceHistoryCache):
+        return cached_result
+
     date_ns_by_ticker: Dict[str, np.ndarray] = {}
     close_by_ticker: Dict[str, np.ndarray] = {}
+    volume_by_ticker: Dict[str, np.ndarray] = {}
+    high_by_ticker: Dict[str, np.ndarray] = {}
+    low_by_ticker: Dict[str, np.ndarray] = {}
 
     for ticker, ticker_data in ticker_data_grouped.items():
         if ticker_data is None or ticker_data.empty or 'Close' not in ticker_data.columns:
@@ -73,10 +97,30 @@ def build_price_history_cache(ticker_data_grouped: Dict[str, pd.DataFrame]) -> P
         date_ns_by_ticker[ticker] = date_index.to_numpy(dtype="datetime64[ns]").astype(np.int64, copy=True)
         close_by_ticker[ticker] = valid_close.to_numpy(dtype=float, copy=True)
 
-    return PriceHistoryCache(
+        if 'Volume' in ticker_data.columns:
+            volume_values = pd.to_numeric(ticker_data.loc[valid_close.index, 'Volume'], errors='coerce').to_numpy(dtype=float, copy=True)
+            volume_by_ticker[ticker] = volume_values
+        if 'High' in ticker_data.columns:
+            high_values = pd.to_numeric(ticker_data.loc[valid_close.index, 'High'], errors='coerce').to_numpy(dtype=float, copy=True)
+            high_by_ticker[ticker] = high_values
+        if 'Low' in ticker_data.columns:
+            low_values = pd.to_numeric(ticker_data.loc[valid_close.index, 'Low'], errors='coerce').to_numpy(dtype=float, copy=True)
+            low_by_ticker[ticker] = low_values
+
+    cache = PriceHistoryCache(
         date_ns_by_ticker=date_ns_by_ticker,
         close_by_ticker=close_by_ticker,
+        volume_by_ticker=volume_by_ticker,
+        high_by_ticker=high_by_ticker,
+        low_by_ticker=low_by_ticker,
     )
+    save_joblib_cache(
+        "parallel_backtest/base_price_history",
+        cache_key_parts,
+        cache,
+        filename="price_history_cache.joblib",
+    )
+    return cache
 
 
 def calculate_cached_performance(

@@ -16,6 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 import joblib
 from tqdm import tqdm
+from strategy_disk_cache import load_joblib_cache, save_joblib_cache
 
 from model_training_safety import (
     catboost_has_trained_trees,
@@ -42,6 +43,27 @@ UNIVERSAL_SCALER_PATH = MODEL_SAVE_DIR / "universal_scaler.joblib"
 LOOKBACK_DAYS = 60  # Days of history required for universal features
 FORWARD_DAYS = AI_ELITE_FORWARD_DAYS
 TRAINING_LOOKBACK_DAYS = AI_ELITE_TRAINING_LOOKBACK
+_universal_feature_memory_cache: Dict[str, Dict[str, float]] = {}
+
+
+def _feature_cache_key(ticker: str, data: pd.DataFrame, current_date: datetime) -> Dict[str, object]:
+    if hasattr(data.index, "tz") and data.index.tz is not None and current_date.tzinfo is None:
+        current_date = current_date.replace(tzinfo=data.index.tz)
+    hist = data.loc[:current_date]
+    if hist.empty:
+        return {
+            "ticker": ticker,
+            "current_date": str(pd.Timestamp(current_date)),
+            "rows": 0,
+        }
+    last_close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+    return {
+        "ticker": ticker,
+        "current_date": str(pd.Timestamp(current_date)),
+        "rows": int(len(hist)),
+        "last_index": str(hist.index[-1]),
+        "last_close": float(last_close.iloc[-1]) if not last_close.empty else None,
+    }
 
 
 def calculate_universal_features(ticker: str, data: pd.DataFrame, current_date: datetime) -> Optional[Dict[str, float]]:
@@ -50,6 +72,18 @@ def calculate_universal_features(ticker: str, data: pd.DataFrame, current_date: 
     All features are relative/normalized so they're comparable across stocks.
     """
     try:
+        cache_key_parts = _feature_cache_key(ticker, data, current_date)
+        cache_key = str(cache_key_parts)
+        memory_cached = _universal_feature_memory_cache.get(cache_key)
+        if memory_cached is not None:
+            return dict(memory_cached)
+
+        disk_cached = load_joblib_cache("universal_model/features", cache_key_parts, filename="features.joblib")
+        if isinstance(disk_cached, dict):
+            normalized_disk_cached = {str(key): float(value) for key, value in disk_cached.items()}
+            _universal_feature_memory_cache[cache_key] = normalized_disk_cached
+            return dict(normalized_disk_cached)
+
         # Filter to current date
         if hasattr(data.index, 'tz') and data.index.tz is not None:
             if current_date.tzinfo is None:
@@ -119,7 +153,7 @@ def calculate_universal_features(ticker: str, data: pd.DataFrame, current_date: 
         rs = avg_gain / avg_loss if avg_loss > 0 else 1
         rsi = 100 - (100 / (1 + rs))
 
-        return {
+        features = {
             'mom_5d': mom_5d,
             'mom_10d': mom_10d,
             'mom_20d': mom_20d,
@@ -136,6 +170,9 @@ def calculate_universal_features(ticker: str, data: pd.DataFrame, current_date: 
             'drawdown': drawdown,
             'rsi': rsi,
         }
+        _universal_feature_memory_cache[cache_key] = features
+        save_joblib_cache("universal_model/features", cache_key_parts, features, filename="features.joblib")
+        return dict(features)
 
     except Exception as e:
         return None

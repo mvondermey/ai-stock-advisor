@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+from strategy_disk_cache import load_joblib_cache, save_joblib_cache, universe_signature_from_frames
 
 from config import (
     INVERSE_ETFS,
@@ -28,6 +29,7 @@ from config import (
 
 _HOURLY_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
 _INTRADAY_SELECTION_CONTEXT: Dict[str, object] = {}
+_INTRADAY_DAILY_CACHE_MEMORY: Dict[str, Dict[str, Dict[str, np.ndarray]]] = {}
 
 
 def _timestamp_ns(value: datetime) -> int:
@@ -84,7 +86,34 @@ def build_multi_timeframe_intraday_daily_cache(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     tickers: List[str],
 ) -> Dict[str, Dict[str, np.ndarray]]:
-    return _build_intraday_daily_cache(ticker_data_grouped, tickers)
+    sorted_tickers = sorted(tickers)
+    cache_key_parts = {
+        "tickers": sorted_tickers,
+        "universe_signature": universe_signature_from_frames(ticker_data_grouped, sorted_tickers),
+    }
+    cache_key = str(cache_key_parts)
+    memory_cached = _INTRADAY_DAILY_CACHE_MEMORY.get(cache_key)
+    if memory_cached is not None:
+        return memory_cached
+
+    disk_cached = load_joblib_cache(
+        "multi_timeframe_intraday/daily_cache",
+        cache_key_parts,
+        filename="daily_cache.joblib",
+    )
+    if isinstance(disk_cached, dict):
+        _INTRADAY_DAILY_CACHE_MEMORY[cache_key] = disk_cached
+        return disk_cached
+
+    built_cache = _build_intraday_daily_cache(ticker_data_grouped, tickers)
+    _INTRADAY_DAILY_CACHE_MEMORY[cache_key] = built_cache
+    save_joblib_cache(
+        "multi_timeframe_intraday/daily_cache",
+        cache_key_parts,
+        built_cache,
+        filename="daily_cache.joblib",
+    )
+    return built_cache
 
 
 def _daily_slice_from_cache(

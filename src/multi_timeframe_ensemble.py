@@ -11,6 +11,12 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from tqdm import tqdm
 from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
+from strategy_disk_cache import (
+    load_joblib_cache,
+    save_joblib_cache,
+    universe_signature_from_frames,
+    universe_signature_from_price_cache,
+)
 from config import (
     MULTI_TIMEFRAMES, MULTI_TIMEFRAME_LOOKBACK,
     MULTI_TIMEFRAME_WEIGHTS, MULTI_TIMEFRAME_MIN_CONSENSUS,
@@ -18,6 +24,7 @@ from config import (
 )
 
 _MULTI_TIMEFRAME_SELECTION_CONTEXT: Dict[str, object] = {}
+_MULTI_TIMEFRAME_CACHE_MEMORY: Dict[str, Dict[str, Dict[str, np.ndarray]]] = {}
 
 
 def _timestamp_ns(value: datetime) -> int:
@@ -127,9 +134,46 @@ def build_multi_timeframe_cache(
     tickers: List[str],
     price_history_cache=None,
 ) -> Dict[str, Dict[str, np.ndarray]]:
+    sorted_tickers = sorted(tickers)
     if price_history_cache is not None:
-        return _build_multi_timeframe_cache_from_price_history(price_history_cache, tickers)
-    return _build_multi_timeframe_cache(ticker_data_grouped, tickers)
+        universe_signature = universe_signature_from_price_cache(
+            price_history_cache.date_ns_by_ticker,
+            price_history_cache.close_by_ticker,
+        )
+    else:
+        universe_signature = universe_signature_from_frames(ticker_data_grouped, sorted_tickers)
+
+    cache_key_parts = {
+        "tickers": sorted_tickers,
+        "universe_signature": universe_signature,
+    }
+    cache_key = str(cache_key_parts)
+    memory_cached = _MULTI_TIMEFRAME_CACHE_MEMORY.get(cache_key)
+    if memory_cached is not None:
+        return memory_cached
+
+    disk_cached = load_joblib_cache(
+        "multi_timeframe/cache",
+        cache_key_parts,
+        filename="selection_cache.joblib",
+    )
+    if isinstance(disk_cached, dict):
+        _MULTI_TIMEFRAME_CACHE_MEMORY[cache_key] = disk_cached
+        return disk_cached
+
+    if price_history_cache is not None:
+        built_cache = _build_multi_timeframe_cache_from_price_history(price_history_cache, tickers)
+    else:
+        built_cache = _build_multi_timeframe_cache(ticker_data_grouped, tickers)
+
+    _MULTI_TIMEFRAME_CACHE_MEMORY[cache_key] = built_cache
+    save_joblib_cache(
+        "multi_timeframe/cache",
+        cache_key_parts,
+        built_cache,
+        filename="selection_cache.joblib",
+    )
+    return built_cache
 
 
 def _get_cache_entry_from_price_history(price_history_cache, ticker: str) -> Optional[Dict[str, np.ndarray]]:

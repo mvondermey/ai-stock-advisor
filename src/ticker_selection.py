@@ -549,13 +549,19 @@ def _get_yahoo_1y_return(ticker: str, end_date: datetime) -> Optional[float]:
         if hist.empty or len(hist) < 10:
             return None
 
-        start_price = hist['Close'].iloc[0]
-        end_price = hist['Close'].iloc[-1]
+        close_prices = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+        if close_prices.empty or len(close_prices) < 2:
+            return None
 
-        if start_price <= 0:
+        start_price = float(close_prices.iloc[0])
+        end_price = float(close_prices.iloc[-1])
+
+        if start_price <= 0 or not np.isfinite(start_price) or not np.isfinite(end_price):
             return None
 
         return_pct = ((end_price - start_price) / start_price) * 100
+        if not np.isfinite(return_pct):
+            return None
         return float(return_pct)
     except Exception:
         return None
