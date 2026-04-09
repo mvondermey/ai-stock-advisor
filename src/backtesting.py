@@ -6,6 +6,7 @@ Final version – includes 1D sequential optimisation, compatible with main.py a
 import numpy as np
 import pandas as pd
 import sys
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor
@@ -1940,6 +1941,33 @@ def _run_portfolio_backtest_walk_forward(
 
     # Centralized rebalancing tracking for all strategies (strategy_name -> bool)
     strategies_rebalanced_today = {}
+    daily_strategy_timings: Dict[str, float] = {}
+    parallel_strategy_display_names = {
+        "ratio_3m_1y": "3M/1Y Ratio",
+        "ratio_1m_3m": "1M/3M Ratio",
+        "ratio_1y_3m": "1Y/3M Ratio",
+        "turnaround": "Turnaround",
+        "price_acceleration": "Price Acceleration",
+        "momentum_volatility_hybrid": "Momentum-Vol Hybrid",
+        "momentum_volatility_hybrid_6m": "Mom-Vol Hybrid 6M",
+        "momentum_volatility_hybrid_1y": "Mom-Vol Hybrid 1Y",
+        "momentum_volatility_hybrid_1y3m": "Mom-Vol Hybrid 1Y/3M",
+        "elite_hybrid": "Elite Hybrid",
+        "elite_risk": "Elite Risk",
+        "volatility_adj_mom": "Vol-Adj Mom",
+        "bb_mean_reversion": "BB Mean Reversion",
+        "bb_breakout": "BB Breakout",
+        "bb_rsi_combo": "BB RSI Combo",
+        "trend_breakout": "Trend Breakout",
+    }
+
+    def _record_strategy_timing(strategy_name: str, elapsed_seconds: float, phase: Optional[str] = None) -> None:
+        if not strategy_name:
+            return
+        elapsed_seconds = max(0.0, float(elapsed_seconds))
+        daily_strategy_timings[strategy_name] = daily_strategy_timings.get(strategy_name, 0.0) + elapsed_seconds
+        phase_suffix = f" ({phase})" if phase else ""
+        print(f"   ⏱️ {strategy_name}{phase_suffix}: {elapsed_seconds:.2f}s")
 
     # Initialize - AI Elite models are trained during walk-forward, not loaded upfront
 
@@ -3335,8 +3363,10 @@ def _run_portfolio_backtest_walk_forward(
         use_atr_trailing_stop: bool = False,
         atr_multiplier: float = 2.0,
         custom_weights: Dict[str, float] = None,
+        log_timing: bool = True,
     ) -> Tuple[Dict[str, Dict], float, List[str], float, bool]:
-        return _smart_rebalance_portfolio_impl(
+        _started_at = time.perf_counter()
+        result = _smart_rebalance_portfolio_impl(
             strategy_name=strategy_name,
             current_stocks=current_stocks,
             new_stocks=new_stocks,
@@ -3354,6 +3384,13 @@ def _run_portfolio_backtest_walk_forward(
             custom_weights=custom_weights,
             close_price_cache=active_close_price_cache,
         )
+        if log_timing:
+            _record_strategy_timing(
+                strategy_name,
+                time.perf_counter() - _started_at,
+                phase="rebalance",
+            )
+        return result
 
     def _ai_rebalance_portfolio(
         strategy_name: str,
@@ -3371,6 +3408,7 @@ def _run_portfolio_backtest_walk_forward(
         min_predicted_edge: float = 0.0,
     ) -> Tuple[Dict[str, Dict], float, List[str], float, bool, List[Tuple[str, str, float, str]], List[str]]:
         from ai_rebalance_strategy import choose_ai_rebalance_ranked_candidates
+        _started_at = time.perf_counter()
 
         effective_buffer_size = buffer_size if buffer_size is not None else (portfolio_size + PORTFOLIO_BUFFER_SIZE)
         ai_ranked_candidates, decision_logs = choose_ai_rebalance_ranked_candidates(
@@ -3396,6 +3434,12 @@ def _run_portfolio_backtest_walk_forward(
             portfolio_size=portfolio_size,
             force_rebalance=force_rebalance,
             buffer_size=effective_buffer_size,
+            log_timing=False,
+        )
+        _record_strategy_timing(
+            strategy_name,
+            time.perf_counter() - _started_at,
+            phase="ai_rebalance",
         )
         return positions, cash, final_stocks, costs, rebalanced, decision_logs, ai_ranked_candidates
 
@@ -3577,6 +3621,7 @@ def _run_portfolio_backtest_walk_forward(
 
     for current_date in business_days:
         day_count += 1
+        daily_strategy_timings = {}
         active_close_price_cache = _build_daily_close_price_cache(ticker_data_grouped, current_date)
         parallel_strategy_futures: Dict[str, Any] = {}
 
@@ -3605,10 +3650,9 @@ def _run_portfolio_backtest_walk_forward(
                 task_result = future.result()
                 elapsed = float(task_result.get("elapsed", 0.0))
                 selected = list(task_result.get("selected") or [])
-                print(
-                    f"   🚦 Strategy queue: {strategy_name} completed in "
-                    f"{elapsed:.2f}s ({len(selected)} tickers)"
-                )
+                strategy_display_name = parallel_strategy_display_names.get(strategy_name, strategy_name)
+                _record_strategy_timing(strategy_display_name, elapsed, phase="selection")
+                print(f"   🚦 Strategy queue: {strategy_name} returned {len(selected)} tickers")
                 return selected
             except Exception as e:
                 print(f"   ⚠️ Strategy queue fallback for {strategy_name}: {e}")
@@ -10272,6 +10316,7 @@ def _run_portfolio_backtest_walk_forward(
             summary_annret_width = 10
             summary_cash_width = 13
             summary_pos_width = 5
+            summary_time_width = 8
             summary_row_fmt = (
                 f"{{rank:<{summary_rank_width}}} "
                 f"{{name:<{summary_name_width}}} "
@@ -10280,7 +10325,8 @@ def _run_portfolio_backtest_walk_forward(
                 f"{{std:>{summary_stddev_width}}} "
                 f"{{ann:>{summary_annret_width}}} "
                 f"{{cash:>{summary_cash_width}}} "
-                f"{{pos:>{summary_pos_width}}}"
+                f"{{pos:>{summary_pos_width}}} "
+                f"{{timing:>{summary_time_width}}}"
             )
             summary_line_width = (
                 summary_rank_width
@@ -10291,7 +10337,8 @@ def _run_portfolio_backtest_walk_forward(
                 + summary_annret_width
                 + summary_cash_width
                 + summary_pos_width
-                + 7
+                + summary_time_width
+                + 8
             )
             print("=" * summary_line_width)
 
@@ -10321,6 +10368,7 @@ def _run_portfolio_backtest_walk_forward(
                 ann="Ann.Ret",
                 cash="Cash",
                 pos="Pos",
+                timing="Time",
             ))
             print("-" * summary_line_width)
 
@@ -10334,13 +10382,14 @@ def _run_portfolio_backtest_walk_forward(
                 num_pos = sdata['positions']
                 invested = value - strat_cash
                 history = sdata['history']
+                timing_seconds = daily_strategy_timings.get(dname)
 
-                strategy_details.append((dname, value, strat_cash, num_pos, invested))
+                strategy_details.append((dname, value, strat_cash, num_pos, invested, timing_seconds))
                 if history:
                     strategy_to_history[dname] = history
 
             # Display all strategies
-            for i, (name, value, strat_cash, num_pos, invested) in enumerate(strategy_details, 1):
+            for i, (name, value, strat_cash, num_pos, invested, timing_seconds) in enumerate(strategy_details, 1):
                 return_pct = ((value - initial_capital_needed) / initial_capital_needed) * 100
                 if day_count > 0:
                     total_return_multiplier = value / initial_capital_needed
@@ -10363,10 +10412,11 @@ def _run_portfolio_backtest_walk_forward(
                     ann=f"{annualized_return:+9.1f}%",
                     cash=f"$ {strat_cash:>11,.0f}",
                     pos=num_pos,
+                    timing=f"{timing_seconds:6.2f}s" if timing_seconds is not None else "",
                 ))
 
             # Show Top 5 Consistency Score
-            if day_count >= 3 and top5_consistency_counts:
+            if top5_consistency_counts:
                 print(f"\n🏆 TOP 5 CONSISTENCY (Days in Top 5 / {day_count} total days):")
                 sorted_consistency = sorted(top5_consistency_counts.items(), key=lambda x: x[1], reverse=True)
                 for rank, (strat_name, count) in enumerate(sorted_consistency[:10], 1):

@@ -594,6 +594,8 @@ ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip 
 
 ENABLE_AI_ELITE_AI_REBALANCE = False  # NEW - AI Elite selection + AI rebalance decisions
 
+ENABLE_VOTING_ENSEMBLE_AI_REBALANCE = False  # NEW - Voting Ensemble selection + AI rebalance decisions
+
 ENABLE_AI_ELITE_MONTHLY_SHARED = True   # NEW - AI Elite Monthly Shared (monthly rebalance using daily AI Elite shared model)
 
 ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre-filter + AI Elite re-rank)
@@ -649,6 +651,12 @@ AI_REBALANCE_FORWARD_DAYS = 5  # Evaluate replace-vs-keep over the next N tradin
 AI_REBALANCE_MIN_SAMPLES = 80  # Minimum hold-vs-replace samples before fitting
 AI_REBALANCE_MIN_PREDICTED_EDGE = 0.0  # Require positive predicted net switch advantage
 AI_REBALANCE_FORCE_FRESH_TRAIN = False  # False = load existing model and continue where possible
+
+AI_VOTING_REBALANCE_RETRAIN_DAYS = AI_REBALANCE_RETRAIN_DAYS
+AI_VOTING_REBALANCE_TRAINING_LOOKBACK = AI_REBALANCE_TRAINING_LOOKBACK
+AI_VOTING_REBALANCE_FORWARD_DAYS = AI_REBALANCE_FORWARD_DAYS
+AI_VOTING_REBALANCE_MIN_PREDICTED_EDGE = AI_REBALANCE_MIN_PREDICTED_EDGE
+AI_VOTING_REBALANCE_FORCE_FRESH_TRAIN = AI_REBALANCE_FORCE_FRESH_TRAIN
 
 AI_ELITE_FORCE_FRESH_TRAIN = False  # False = load existing model and do incremental training; True = always fresh train
 AI_ELITE_CATBOOST_USED_RAM_LIMIT = "24gb"  # Raise CatBoost CPU RAM budget to avoid continuation crashes
