@@ -667,31 +667,6 @@ def _build_daily_strategy_data(locals_dict):
             }
 
     return data
-
-
-def _collect_data_worker(args):
-    """Top-level worker for ProcessPoolExecutor - collects training data for one ticker."""
-    ticker, ticker_data, train_start, train_end, forward_days, market_returns = args
-    from ai_elite_strategy_per_ticker import collect_ticker_training_data
-    samples = collect_ticker_training_data(
-        ticker=ticker, ticker_data=ticker_data,
-        train_start_date=train_start, train_end_date=train_end,
-        forward_days=forward_days, market_returns=market_returns
-    )
-    return ticker, samples
-
-
-def _fine_tune_worker(args):
-    """Top-level worker for ProcessPoolExecutor - fine-tunes base model for one ticker."""
-    ticker, ticker_samples, base_model, save_path = args
-    from ai_elite_strategy_per_ticker import fine_tune_per_ticker
-    model = fine_tune_per_ticker(
-        ticker=ticker, ticker_samples=ticker_samples,
-        base_model=base_model, save_path=save_path
-    )
-    return ticker, model
-
-
 def _select_top5_consistency_blend_stocks(
     source_strategy_data: Dict[str, Dict],
     top5_consistency_counts: Dict[str, int],
@@ -3666,7 +3641,7 @@ def _run_portfolio_backtest_walk_forward(
             ai_elite_worker_model_path = str(Path("logs/models/_shared_base_ai_elite.joblib").resolve())
             parallel_strategy_executor = ProcessPoolExecutor(
                 max_workers=2,
-                mp_context=get_context("spawn"),
+                mp_context=get_context("fork"),
                 initializer=_init_parallel_strategy_worker,
                     initargs=(
                         ticker_data_grouped,

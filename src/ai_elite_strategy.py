@@ -18,95 +18,57 @@ import numpy as np
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from multiprocessing import get_context
+from threading import Lock
 import os
+import time
 from pathlib import Path
 
 from model_training_safety import restore_native_model_artifacts
 from strategy_cache_adapter import ensure_hourly_history_cache, get_cached_hourly_frame_between
 
 _AI_ELITE_SHARED_MODEL_CACHE: Dict[Tuple[str, Optional[str]], any] = {}
-_AI_ELITE_PREDICT_CONTEXT: Optional[Dict[str, object]] = None
 
 
-def _init_ai_elite_predict_pool(context: Dict[str, object]) -> None:
-    global _AI_ELITE_PREDICT_CONTEXT
-    _AI_ELITE_PREDICT_CONTEXT = context
-
-
-def _predict_ticker_from_shared_context(ticker: str):
-    if _AI_ELITE_PREDICT_CONTEXT is None:
-        raise ValueError("AI Elite predict context is not initialized")
-
-    context = _AI_ELITE_PREDICT_CONTEXT
-    ticker_data_grouped = context["ticker_data_grouped"]
-    current_date = context["current_date"]
-    per_ticker_models = context["per_ticker_models"]
-    shared_base_model = context.get("shared_base_model")
-    price_history_cache = context.get("price_history_cache")
-    hourly_history_cache = context.get("hourly_history_cache")
-    mode = context["mode"]
-
-    ticker_data = ticker_data_grouped.get(ticker)
-    ticker_model = None
-    if isinstance(per_ticker_models, dict):
-        ticker_model = per_ticker_models.get(ticker, shared_base_model)
-
-    if mode == "regular":
-        return _predict_ticker_worker((ticker, ticker_data, current_date, ticker_model, price_history_cache, hourly_history_cache))
-    if mode == "ensemble":
-        return _predict_ticker_ensemble_worker((ticker, ticker_data, current_date, ticker_model, price_history_cache, hourly_history_cache))
-    if mode == "rank":
-        selected_model_names = context.get("selected_model_names") or []
-        return _predict_ticker_rank_ensemble_worker(
-            (ticker, ticker_data, current_date, ticker_model, selected_model_names, price_history_cache, hourly_history_cache)
-        )
-    raise ValueError(f"Unsupported AI Elite predict mode: {mode}")
-
-
-def _run_ai_elite_predictions_forked(
-    tickers: List[str],
-    ticker_data_grouped: Dict[str, pd.DataFrame],
-    current_date: datetime,
-    per_ticker_models: Dict[str, any],
-    price_history_cache=None,
-    hourly_history_cache=None,
-    *,
-    mode: str,
-    selected_model_names: Optional[List[str]] = None,
-    max_workers: int = 4,
-):
-    if os.name == "nt":
-        return None
-
-    worker_tickers = list(tickers)
-    n_workers = max(1, min(max_workers, len(worker_tickers))) if worker_tickers else 1
-    if n_workers <= 1:
-        return None
-
-    context = {
-        "ticker_data_grouped": ticker_data_grouped,
-        "current_date": current_date,
-        "per_ticker_models": per_ticker_models,
-        "shared_base_model": per_ticker_models.get("_shared_base") if isinstance(per_ticker_models, dict) else None,
-        "price_history_cache": price_history_cache,
-        "hourly_history_cache": hourly_history_cache,
-        "mode": mode,
-        "selected_model_names": list(selected_model_names or []),
+def _create_prediction_timing_stats() -> Dict[str, object]:
+    return {
+        "lock": Lock(),
+        "hourly_seconds": 0.0,
+        "hourly_count": 0,
+        "feature_seconds": 0.0,
+        "feature_count": 0,
+        "model_seconds": 0.0,
+        "model_count": 0,
     }
 
-    global _AI_ELITE_PREDICT_CONTEXT
-    _AI_ELITE_PREDICT_CONTEXT = context
-    try:
-        with get_context("fork").Pool(
-            processes=n_workers,
-            initializer=_init_ai_elite_predict_pool,
-            initargs=(context,),
-            maxtasksperchild=50,
-        ) as pool:
-            return list(pool.imap_unordered(_predict_ticker_from_shared_context, worker_tickers))
-    finally:
-        _AI_ELITE_PREDICT_CONTEXT = None
+
+def _record_prediction_timing(stats, phase: str, elapsed_seconds: float) -> None:
+    if stats is None:
+        return
+    with stats["lock"]:
+        stats[f"{phase}_seconds"] += float(elapsed_seconds)
+        stats[f"{phase}_count"] += 1
+
+
+def _print_prediction_timing(label: str, stats) -> None:
+    if stats is None:
+        return
+
+    phase_labels = (
+        ("hourly", "hourly load"),
+        ("feature", "feature extract"),
+        ("model", "model predict"),
+    )
+    segments = []
+    for phase_key, phase_label in phase_labels:
+        count = int(stats[f"{phase_key}_count"])
+        if count <= 0:
+            continue
+        total_seconds = float(stats[f"{phase_key}_seconds"])
+        avg_ms = (total_seconds / count) * 1000.0
+        segments.append(f"{phase_label}={total_seconds:.1f}s ({avg_ms:.1f}ms x {count})")
+
+    if segments:
+        print(f"   ⏱️ {label} timing: " + ", ".join(segments))
 
 
 def select_ai_elite_stocks(
@@ -172,25 +134,30 @@ def select_ai_elite_stocks(
 
     # Use threads here instead of another process pool to avoid nested multiprocessing issues.
     from config import NUM_PROCESSES, PARALLEL_THRESHOLD
-    import time
 
     start_time = time.time()
+    timing_stats = _create_prediction_timing_stats()
 
     ai_scores = {}
+    candidate_payloads = {}
     fail_reasons = {'not_in_data': 0, 'empty': 0, 'features_none': 0, 'no_model': 0, 'exception': 0}
 
-    def _record_prediction_result(ticker_result, score, status):
+    def _record_prediction_result(ticker_result, score, status, payload=None):
         if status == 'success':
             ai_scores[ticker_result] = score
+            if payload is not None:
+                candidate_payloads[ticker_result] = payload
         else:
             fail_reasons[status] += 1
             if status == 'no_model':
                 ai_scores[ticker_result] = 0.0
+                if payload is not None:
+                    candidate_payloads[ticker_result] = payload
 
     def _run_sequential_prediction():
         for args in predict_args:
-            ticker_result, score, status = _predict_ticker_worker(args)
-            _record_prediction_result(ticker_result, score, status)
+            ticker_result, score, status, payload = _predict_ticker_worker(args)
+            _record_prediction_result(ticker_result, score, status, payload)
 
     predict_args = []
     shared_base_model = per_ticker_models.get('_shared_base') if isinstance(per_ticker_models, dict) else None
@@ -199,49 +166,29 @@ def select_ai_elite_stocks(
         ticker_model = None
         if isinstance(per_ticker_models, dict):
             ticker_model = per_ticker_models.get(ticker, shared_base_model)
-        predict_args.append((ticker, ticker_data, current_date, ticker_model, price_history_cache, hourly_history_cache))
+        predict_args.append((ticker, ticker_data, current_date, ticker_model, price_history_cache, hourly_history_cache, timing_stats))
 
     configured_workers = max_prediction_workers if max_prediction_workers is not None else min(NUM_PROCESSES, 4)
     n_workers = min(max(1, configured_workers), len(predict_args)) if predict_args else 1
     use_parallel_prediction = n_workers > 1 and len(predict_args) >= PARALLEL_THRESHOLD
 
     if use_parallel_prediction:
-        if os.name != "nt":
-            print(f"   🔀 AI Elite: Predicting with {n_workers} fork workers")
-            try:
-                fork_results = _run_ai_elite_predictions_forked(
-                    filtered_tickers,
-                    ticker_data_grouped,
-                    current_date,
-                    per_ticker_models,
-                    price_history_cache=price_history_cache,
-                    hourly_history_cache=hourly_history_cache,
-                    mode="regular",
-                    max_workers=n_workers,
-                )
-                if fork_results is None:
-                    return []
-                for ticker_result, score, status in fork_results:
-                    _record_prediction_result(ticker_result, score, status)
-            except Exception as e:
-                print(f"   ⚠️ AI Elite: Fork-worker prediction failed ({type(e).__name__}: {e})")
-                return []
-        else:
-            print(f"   🧵 AI Elite: Predicting with {n_workers} threads")
-            try:
-                with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="ai-elite-predict") as executor:
-                    futures = [executor.submit(_predict_ticker_worker, args) for args in predict_args]
-                    for future in as_completed(futures):
-                        ticker_result, score, status = future.result()
-                        _record_prediction_result(ticker_result, score, status)
-            except Exception as e:
-                print(f"   ⚠️ AI Elite: Threaded prediction failed ({type(e).__name__}: {e})")
-                return []
+        print(f"   🧵 AI Elite: Predicting with {n_workers} threads")
+        try:
+            with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="ai-elite-predict") as executor:
+                futures = [executor.submit(_predict_ticker_worker, args) for args in predict_args]
+                for future in as_completed(futures):
+                    ticker_result, score, status, payload = future.result()
+                    _record_prediction_result(ticker_result, score, status, payload)
+        except Exception as e:
+            print(f"   ⚠️ AI Elite: Threaded prediction failed ({type(e).__name__}: {e})")
+            return []
     else:
         _run_sequential_prediction()
 
     elapsed = time.time() - start_time
     print(f"   📊 AI Elite: Predicted {len(ai_scores)} tickers ({elapsed:.1f}s)")
+    _print_prediction_timing("AI Elite", timing_stats)
 
     if not ai_scores:
         print(f"   ⚠️ AI Elite: No predictions found")
@@ -257,23 +204,16 @@ def select_ai_elite_stocks(
                     # NEW: Mean reversion features
                     'bollinger_position', 'sma20_distance', 'sma50_distance', 'macd']
 
-    # Extract features for successful tickers (sequential - much faster now)
+    # Reuse features computed during prediction to avoid a second hourly load pass.
     candidates = []
     debug_count = 0
     for ticker, ai_score in ai_scores.items():
         try:
             daily_data = ticker_data_grouped[ticker]
-            hourly_data = _load_hourly_data_direct(ticker,
-                current_date - timedelta(days=30), current_date, hourly_history_cache=hourly_history_cache)
-            features = _extract_features(
-                ticker,
-                hourly_data,
-                current_date,
-                daily_data=daily_data,
-                price_history_cache=price_history_cache,
-            )
-            if features is None:
+            payload = candidate_payloads.get(ticker)
+            if payload is None:
                 continue
+            features = dict(payload["features"])
 
             features['ticker'] = ticker
             features['ai_score'] = ai_score
@@ -281,7 +221,7 @@ def select_ai_elite_stocks(
 
             # Debug first 3 tickers
             if debug_count < 3:
-                has_hourly = hourly_data is not None and len(hourly_data) > 0
+                has_hourly = bool(payload.get("has_hourly_data"))
                 print(f"   🔍 AI Elite DEBUG {ticker}: daily={len(daily_data)} rows, hourly={'yes' if has_hourly else 'no'}")
                 debug_count += 1
         except Exception as e:
@@ -820,20 +760,23 @@ def _calculate_forward_return(
 
 
 def _predict_ticker_worker(args):
-    """Top-level worker for multiprocessing - predicts score for one ticker."""
-    ticker, ticker_data, current_date, ticker_model, price_history_cache, hourly_history_cache = args
+    """Predict score for one ticker and return reusable feature payload."""
+    ticker, ticker_data, current_date, ticker_model, price_history_cache, hourly_history_cache, timing_stats = args
 
     try:
         if ticker_data is None or len(ticker_data) == 0:
-            return ticker, None, 'empty'
+            return ticker, None, 'empty', None
 
         # Load hourly data
+        hourly_start = time.perf_counter()
         hourly_data = _load_hourly_data_direct(ticker,
             current_date - timedelta(days=30),
             current_date + timedelta(days=5),
             hourly_history_cache=hourly_history_cache)
+        _record_prediction_timing(timing_stats, "hourly", time.perf_counter() - hourly_start)
 
         # Extract features
+        feature_start = time.perf_counter()
         features = _extract_features(
             ticker,
             hourly_data,
@@ -841,51 +784,60 @@ def _predict_ticker_worker(args):
             daily_data=ticker_data,
             price_history_cache=price_history_cache,
         )
+        _record_prediction_timing(timing_stats, "feature", time.perf_counter() - feature_start)
         if features is None:
-            return ticker, None, 'features_none'
+            return ticker, None, 'features_none', None
+
+        payload = {
+            "features": dict(features),
+            "has_hourly_data": hourly_data is not None and len(hourly_data) > 0,
+        }
 
         # Get model and predict
         if ticker_model is None:
-            return ticker, 0.0, 'no_model'
+            return ticker, 0.0, 'no_model', payload
 
         # Extract the actual model from ensemble dict
         if isinstance(ticker_model, dict):
             actual_model = ticker_model.get('best_model')
             if actual_model is None:
-                return ticker, 0.0, 'no_model'
+                return ticker, 0.0, 'no_model', payload
         else:
             actual_model = ticker_model
 
-        # Predict (keep as DataFrame for compatibility)
+        # Use numpy array for faster single-row prediction
         from ai_elite_strategy_per_ticker import FEATURE_COLS
-        # Use explicit feature ordering to match training
-        feature_values = [features.get(col, 0.0) for col in FEATURE_COLS]
-        X_ticker = pd.DataFrame([feature_values], columns=FEATURE_COLS)
-        ai_score = actual_model.predict(X_ticker)[0]
+        feature_values = np.array([[features.get(col, 0.0) for col in FEATURE_COLS]], dtype=np.float64)
+        model_start = time.perf_counter()
+        ai_score = actual_model.predict(feature_values)[0]
+        _record_prediction_timing(timing_stats, "model", time.perf_counter() - model_start)
 
-        return ticker, ai_score, 'success'
+        return ticker, ai_score, 'success', payload
     except Exception as e:
         import traceback
         print(f"   ⚠️ AI Elite worker exception for {ticker}: {e}")
         traceback.print_exc()
-        return ticker, None, 'exception'
+        return ticker, None, 'exception', None
 
 
 def _predict_ticker_ensemble_worker(args):
     """Predict using weighted average of top 3 positive-R² models."""
-    ticker, ticker_data, current_date, ticker_model, price_history_cache, hourly_history_cache = args
+    ticker, ticker_data, current_date, ticker_model, price_history_cache, hourly_history_cache, timing_stats = args
 
     try:
         if ticker_data is None or len(ticker_data) == 0:
             return ticker, None, 'empty'
 
+        hourly_start = time.perf_counter()
         hourly_data = _load_hourly_data_direct(
             ticker,
             current_date - timedelta(days=30),
             current_date + timedelta(days=5),
             hourly_history_cache=hourly_history_cache,
         )
+        _record_prediction_timing(timing_stats, "hourly", time.perf_counter() - hourly_start)
 
+        feature_start = time.perf_counter()
         features = _extract_features(
             ticker,
             hourly_data,
@@ -893,6 +845,7 @@ def _predict_ticker_ensemble_worker(args):
             daily_data=ticker_data,
             price_history_cache=price_history_cache,
         )
+        _record_prediction_timing(timing_stats, "feature", time.perf_counter() - feature_start)
         if features is None:
             return ticker, None, 'features_none'
 
@@ -914,17 +867,18 @@ def _predict_ticker_ensemble_worker(args):
         top_models = positive_models[:3]
 
         from ai_elite_strategy_per_ticker import FEATURE_COLS
-        feature_values = [features.get(col, 0.0) for col in FEATURE_COLS]
-        X_ticker = pd.DataFrame([feature_values], columns=FEATURE_COLS)
+        feature_values = np.array([[features.get(col, 0.0) for col in FEATURE_COLS]], dtype=np.float64)
 
         # Weighted average: weight = R² score
+        model_start = time.perf_counter()
         weighted_sum = 0.0
         weight_total = 0.0
         for name, r2 in top_models:
             model = all_models[name]
-            pred = model.predict(X_ticker)[0]
+            pred = model.predict(feature_values)[0]
             weighted_sum += pred * r2
             weight_total += r2
+        _record_prediction_timing(timing_stats, "model", time.perf_counter() - model_start)
 
         if weight_total <= 0:
             return ticker, 0.0, 'no_model'
@@ -980,9 +934,9 @@ def select_ai_elite_ensemble_stocks(
     print(f"   🤖 AI Elite Ensemble: Analyzing {len(filtered_tickers)} tickers (top-3 weighted avg)")
 
     from config import NUM_PROCESSES, PARALLEL_THRESHOLD
-    import time
 
     start_time = time.time()
+    timing_stats = _create_prediction_timing_stats()
 
     ai_scores = {}
     fail_reasons = {'not_in_data': 0, 'empty': 0, 'features_none': 0, 'no_model': 0, 'exception': 0}
@@ -1002,48 +956,28 @@ def select_ai_elite_ensemble_stocks(
     for ticker in filtered_tickers:
         ticker_data = ticker_data_grouped.get(ticker)
         ticker_model = per_ticker_models.get(ticker) if per_ticker_models else None
-        predict_args.append((ticker, ticker_data, current_date, ticker_model, price_history_cache, hourly_history_cache))
+        predict_args.append((ticker, ticker_data, current_date, ticker_model, price_history_cache, hourly_history_cache, timing_stats))
 
     n_workers = min(max(1, min(NUM_PROCESSES, 4)), len(predict_args)) if predict_args else 1
     use_parallel = n_workers > 1 and len(predict_args) >= PARALLEL_THRESHOLD
 
     if use_parallel:
-        if os.name != "nt":
-            print(f"   🔀 AI Elite Ensemble: Predicting with {n_workers} fork workers")
-            try:
-                fork_results = _run_ai_elite_predictions_forked(
-                    filtered_tickers,
-                    ticker_data_grouped,
-                    current_date,
-                    per_ticker_models,
-                    price_history_cache=price_history_cache,
-                    hourly_history_cache=hourly_history_cache,
-                    mode="ensemble",
-                    max_workers=n_workers,
-                )
-                if fork_results is None:
-                    return []
-                for ticker_result, score, status in fork_results:
+        print(f"   🧵 AI Elite Ensemble: Predicting with {n_workers} threads")
+        try:
+            with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="ai-ensemble") as executor:
+                futures = [executor.submit(_predict_ticker_ensemble_worker, args) for args in predict_args]
+                for future in as_completed(futures):
+                    ticker_result, score, status = future.result()
                     _record_result(ticker_result, score, status)
-            except Exception as e:
-                print(f"   ⚠️ AI Elite Ensemble: Fork-worker prediction failed ({type(e).__name__}: {e})")
-                return []
-        else:
-            print(f"   🧵 AI Elite Ensemble: Predicting with {n_workers} threads")
-            try:
-                with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="ai-ensemble") as executor:
-                    futures = [executor.submit(_predict_ticker_ensemble_worker, args) for args in predict_args]
-                    for future in as_completed(futures):
-                        ticker_result, score, status = future.result()
-                        _record_result(ticker_result, score, status)
-            except Exception as e:
-                print(f"   ⚠️ AI Elite Ensemble: Threaded prediction failed ({type(e).__name__}: {e})")
-                return []
+        except Exception as e:
+            print(f"   ⚠️ AI Elite Ensemble: Threaded prediction failed ({type(e).__name__}: {e})")
+            return []
     else:
         _run_sequential()
 
     elapsed = time.time() - start_time
     print(f"   📊 AI Elite Ensemble: Predicted {len(ai_scores)} tickers ({elapsed:.1f}s)")
+    _print_prediction_timing("AI Elite Ensemble", timing_stats)
 
     if not ai_scores:
         print(f"   ⚠️ AI Elite Ensemble: No predictions")
@@ -1096,19 +1030,22 @@ def _get_representative_ai_elite_model(per_ticker_models):
 
 def _predict_ticker_rank_ensemble_worker(args):
     """Return per-model predictions for weighted rank aggregation."""
-    ticker, ticker_data, current_date, ticker_model, selected_model_names, price_history_cache, hourly_history_cache = args
+    ticker, ticker_data, current_date, ticker_model, selected_model_names, price_history_cache, hourly_history_cache, timing_stats = args
 
     try:
         if ticker_data is None or len(ticker_data) == 0:
             return ticker, None, 'empty'
 
+        hourly_start = time.perf_counter()
         hourly_data = _load_hourly_data_direct(
             ticker,
             current_date - timedelta(days=30),
             current_date + timedelta(days=5),
             hourly_history_cache=hourly_history_cache,
         )
+        _record_prediction_timing(timing_stats, "hourly", time.perf_counter() - hourly_start)
 
+        feature_start = time.perf_counter()
         features = _extract_features(
             ticker,
             hourly_data,
@@ -1116,6 +1053,7 @@ def _predict_ticker_rank_ensemble_worker(args):
             daily_data=ticker_data,
             price_history_cache=price_history_cache,
         )
+        _record_prediction_timing(timing_stats, "feature", time.perf_counter() - feature_start)
         if features is None:
             return ticker, None, 'features_none'
 
@@ -1127,15 +1065,16 @@ def _predict_ticker_rank_ensemble_worker(args):
             return ticker, None, 'no_model'
 
         from ai_elite_strategy_per_ticker import FEATURE_COLS
-        feature_values = [features.get(col, 0.0) for col in FEATURE_COLS]
-        X_ticker = pd.DataFrame([feature_values], columns=FEATURE_COLS)
+        feature_values = np.array([[features.get(col, 0.0) for col in FEATURE_COLS]], dtype=np.float64)
 
         per_model_predictions = {}
+        model_start = time.perf_counter()
         for model_name in selected_model_names:
             model = all_models.get(model_name)
             if model is None:
                 return ticker, None, 'no_model'
-            per_model_predictions[model_name] = model.predict(X_ticker)[0]
+            per_model_predictions[model_name] = model.predict(feature_values)[0]
+        _record_prediction_timing(timing_stats, "model", time.perf_counter() - model_start)
 
         return ticker, per_model_predictions, 'success'
 
@@ -1197,9 +1136,9 @@ def select_ai_elite_rank_ensemble_stocks(
     print(f"   🤖 AI Elite Rank Ensemble: Analyzing {len(filtered_tickers)} tickers (top-3 weighted rank)")
 
     from config import NUM_PROCESSES, PARALLEL_THRESHOLD
-    import time
 
     start_time = time.time()
+    timing_stats = _create_prediction_timing_stats()
 
     per_ticker_predictions = {}
     fail_reasons = {'not_in_data': 0, 'empty': 0, 'features_none': 0, 'no_model': 0, 'exception': 0}
@@ -1219,49 +1158,28 @@ def select_ai_elite_rank_ensemble_stocks(
     for ticker in filtered_tickers:
         ticker_data = ticker_data_grouped.get(ticker)
         ticker_model = per_ticker_models.get(ticker) if per_ticker_models else None
-        predict_args.append((ticker, ticker_data, current_date, ticker_model, selected_model_names, price_history_cache, hourly_history_cache))
+        predict_args.append((ticker, ticker_data, current_date, ticker_model, selected_model_names, price_history_cache, hourly_history_cache, timing_stats))
 
     n_workers = min(max(1, min(NUM_PROCESSES, 4)), len(predict_args)) if predict_args else 1
     use_parallel = n_workers > 1 and len(predict_args) >= PARALLEL_THRESHOLD
 
     if use_parallel:
-        if os.name != "nt":
-            print(f"   🔀 AI Elite Rank Ensemble: Predicting with {n_workers} fork workers")
-            try:
-                fork_results = _run_ai_elite_predictions_forked(
-                    filtered_tickers,
-                    ticker_data_grouped,
-                    current_date,
-                    per_ticker_models,
-                    price_history_cache=price_history_cache,
-                    hourly_history_cache=hourly_history_cache,
-                    mode="rank",
-                    selected_model_names=selected_model_names,
-                    max_workers=n_workers,
-                )
-                if fork_results is None:
-                    return []
-                for ticker_result, score_map, status in fork_results:
+        print(f"   🧵 AI Elite Rank Ensemble: Predicting with {n_workers} threads")
+        try:
+            with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="ai-rank-ensemble") as executor:
+                futures = [executor.submit(_predict_ticker_rank_ensemble_worker, args) for args in predict_args]
+                for future in as_completed(futures):
+                    ticker_result, score_map, status = future.result()
                     _record_result(ticker_result, score_map, status)
-            except Exception as e:
-                print(f"   ⚠️ AI Elite Rank Ensemble: Fork-worker prediction failed ({type(e).__name__}: {e})")
-                return []
-        else:
-            print(f"   🧵 AI Elite Rank Ensemble: Predicting with {n_workers} threads")
-            try:
-                with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="ai-rank-ensemble") as executor:
-                    futures = [executor.submit(_predict_ticker_rank_ensemble_worker, args) for args in predict_args]
-                    for future in as_completed(futures):
-                        ticker_result, score_map, status = future.result()
-                        _record_result(ticker_result, score_map, status)
-            except Exception as e:
-                print(f"   ⚠️ AI Elite Rank Ensemble: Threaded prediction failed ({type(e).__name__}: {e})")
-                return []
+        except Exception as e:
+            print(f"   ⚠️ AI Elite Rank Ensemble: Threaded prediction failed ({type(e).__name__}: {e})")
+            return []
     else:
         _run_sequential()
 
     elapsed = time.time() - start_time
     print(f"   📊 AI Elite Rank Ensemble: Predicted {len(per_ticker_predictions)} tickers ({elapsed:.1f}s)")
+    _print_prediction_timing("AI Elite Rank Ensemble", timing_stats)
 
     if not per_ticker_predictions:
         print("   ⚠️ AI Elite Rank Ensemble: No predictions")

@@ -32,6 +32,20 @@ sys.path.insert(0, str(src_dir))
 sys.path.insert(1, str(project_root))
 
 # Parse command-line arguments BEFORE importing config to enable --no-download flag
+def _parse_cli_bool(value):
+    """Accept common true/false spellings and optional bare flag usage."""
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Expected true/false, got '{value}'")
+
+
 parser = argparse.ArgumentParser(description="AI Stock Advisor - Backtesting and Live Trading")
 parser.add_argument("--num-stocks", type=int, default=None,
                    help="Number of stocks to select (overrides PORTFOLIO_SIZE from config)")
@@ -39,22 +53,75 @@ parser.add_argument("--live-trading", action="store_true",
                    help="Run in live trading mode instead of backtesting")
 parser.add_argument("--live-run", action="store_true",
                    help="Run strategies live with current data (like quick_strategy_check.py)")
-parser.add_argument("--strategy", type=str, default="volatility_ensemble",
-                   help="Strategy for live trading. Available: volatility_ensemble, enhanced_volatility, correlation_ensemble, momentum_breakout, factor_rotation, pairs_trading, earnings_momentum, insider_trading, options_sentiment, ml_ensemble, risk_adj_mom, dynamic_bh_1y, quality_momentum, momentum_ai_hybrid, elite_hybrid")
+parser.add_argument("--strategy", type=str, default=None,
+                   help="Strategy override. In backtests, only the requested strategy/strategies run. In live modes, defaults to volatility_ensemble.")
+parser.add_argument("--list", action="store_true",
+                   help="Print available backtest strategy names for --strategy and exit.")
+parser.add_argument("--retrain", nargs="?", const=True, default=None, type=_parse_cli_bool,
+                   help="Override walk-forward retraining for backtests. Examples: --retrain true, --retrain false, or bare --retrain.")
 parser.add_argument("--no-download", action="store_true",
                    help="Disable data downloads (use only cached data)")
 
 args = parser.parse_args()
 
+# Import config only after CLI parsing so runtime overrides can be applied cleanly.
+import config
+from strategy_registry import (
+    get_strategy_names,
+    get_strategy_registry,
+    parse_strategy_list,
+)
+
 # Override ENABLE_DATA_DOWNLOAD if --no-download is specified
-# Must do this BEFORE importing config to ensure it takes effect
 if args.no_download:
-    import config as config_module
-    config_module.ENABLE_DATA_DOWNLOAD = False
+    config.ENABLE_DATA_DOWNLOAD = False
     # Only print in main process (not in multiprocessing workers)
     import multiprocessing
     if multiprocessing.current_process().name == 'MainProcess':
         print("📦 Data downloads disabled (--no-download flag). Using only cached data.")
+
+
+_CLI_BACKTEST_STRATEGIES = None
+
+
+def _apply_backtest_cli_overrides() -> list[str]:
+    """Restrict backtests to selected strategies and apply retraining overrides."""
+    selected_strategies: list[str] = []
+
+    if args.strategy:
+        strategy_registry = get_strategy_registry()
+        available_names = get_strategy_names()
+        selected_strategies = parse_strategy_list(args.strategy, available_names)
+        unknown = [name for name in selected_strategies if name not in strategy_registry]
+        if unknown:
+            available = ", ".join(available_names)
+            raise ValueError(
+                f"Unknown backtest strategy name(s): {', '.join(unknown)}. "
+                f"Available backtest strategies: {available}"
+            )
+
+        enabled_flags = {
+            entry["enable_flag"]
+            for entry in strategy_registry.values()
+            if entry.get("enable_flag")
+        }
+        for flag_name in enabled_flags:
+            setattr(config, flag_name, False)
+        for strategy_name in selected_strategies:
+            enable_flag = strategy_registry[strategy_name]["enable_flag"]
+            setattr(config, enable_flag, True)
+
+        print(
+            "🎯 Backtest strategy override enabled: "
+            + ", ".join(selected_strategies)
+        )
+
+    if args.retrain is not None:
+        config.ENABLE_WALK_FORWARD_RETRAINING = bool(args.retrain)
+        status = "enabled" if config.ENABLE_WALK_FORWARD_RETRAINING else "disabled"
+        print(f"🎓 Walk-forward retraining {status} via CLI override")
+
+    return selected_strategies
 
 from config import (
     PYTORCH_AVAILABLE, CUDA_AVAILABLE, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
@@ -475,6 +542,7 @@ def main(
     single_ticker: Optional[str] = None,
     optimized_params_per_ticker: Optional[Dict[str, Dict[str, float]]] = None
 ) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[Dict]]:
+    targeted_backtest = bool(_CLI_BACKTEST_STRATEGIES)
 
     # Set the start method for multiprocessing to 'spawn'
     # This is crucial for CUDA compatibility with multiprocessing
@@ -880,45 +948,49 @@ def main(
     top_tickers = [ticker for ticker, _ in top_performers_data]
     print(f"\n✅ Identified {len(top_tickers)} stocks for backtesting: {', '.join(top_tickers)}\n")
 
-    # --- Run Selection Strategy Comparison ---
-    # Compare multiple selection strategies to see which would have picked the best performers
-    print("\n" + "="*80)
-    print("📊 Running Selection Strategy Comparison...")
-    print("   This compares different stock selection criteria to find the best approach.")
-    print("="*80)
+    selection_comparison_results = None
+    if targeted_backtest:
+        print("\n🎯 Skipping selection strategy comparison for targeted backtest run")
+    else:
+        # --- Run Selection Strategy Comparison ---
+        # Compare multiple selection strategies to see which would have picked the best performers
+        print("\n" + "="*80)
+        print("📊 Running Selection Strategy Comparison...")
+        print("   This compares different stock selection criteria to find the best approach.")
+        print("="*80)
 
-    # Convert all_tickers_data to dict format for selection backtester
-    ticker_data_dict = {}
-    if isinstance(all_tickers_data, pd.DataFrame):
-        if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
-            # Long format - convert to dict using groupby (much faster than filtering)
-            print("   Converting data to dict format...")
-            grouped = all_tickers_data.groupby('ticker')
-            for ticker, group in grouped:
-                ticker_df = group.set_index('date')
-                ticker_data_dict[ticker] = ticker_df
-            print(f"   Converted {len(ticker_data_dict)} tickers to dict format")
-        else:
-            # Should not happen with new long format data
-            print(f"   [WARN] Unexpected data format in main.py")
-            print(f"   Available columns: {list(all_tickers_data.columns[:5])}")
-    elif isinstance(all_tickers_data, dict):
-        ticker_data_dict = all_tickers_data
+        # Convert all_tickers_data to dict format for selection backtester
+        ticker_data_dict = {}
+        if isinstance(all_tickers_data, pd.DataFrame):
+            if 'date' in all_tickers_data.columns and 'ticker' in all_tickers_data.columns:
+                # Long format - convert to dict using groupby (much faster than filtering)
+                print("   Converting data to dict format...")
+                grouped = all_tickers_data.groupby('ticker')
+                for ticker, group in grouped:
+                    ticker_df = group.set_index('date')
+                    ticker_data_dict[ticker] = ticker_df
+                print(f"   Converted {len(ticker_data_dict)} tickers to dict format")
+            else:
+                # Should not happen with new long format data
+                print(f"   [WARN] Unexpected data format in main.py")
+                print(f"   Available columns: {list(all_tickers_data.columns[:5])}")
+        elif isinstance(all_tickers_data, dict):
+            ticker_data_dict = all_tickers_data
 
-    # Run the comparison
-    # Use 20 tickers per strategy for meaningful comparison between strategies
-    selection_comparison_results = run_selection_strategy_comparison(
-        all_tickers_data=ticker_data_dict,
-        all_available_tickers=all_available_tickers,
-        selection_date=bt_start_1y,
-        evaluation_date=bt_end,
-        n_top=20,
-        benchmark_ticker='SPY'
-    )
+        # Run the comparison
+        # Use 20 tickers per strategy for meaningful comparison between strategies
+        selection_comparison_results = run_selection_strategy_comparison(
+            all_tickers_data=ticker_data_dict,
+            all_available_tickers=all_available_tickers,
+            selection_date=bt_start_1y,
+            evaluation_date=bt_end,
+            n_top=20,
+            benchmark_ticker='SPY'
+        )
 
-    # Print stock overlap analysis
-    if selection_comparison_results and 'strategy_results' in selection_comparison_results:
-        print_strategy_stock_overlap(selection_comparison_results['strategy_results'])
+        # Print stock overlap analysis
+        if selection_comparison_results and 'strategy_results' in selection_comparison_results:
+            print_strategy_stock_overlap(selection_comparison_results['strategy_results'])
 
     # Log skipped tickers
     skipped_tickers = set(all_available_tickers) - set(top_tickers)
@@ -1045,23 +1117,31 @@ def main(
     # PHASE 3: RUN ALL BACKTESTS
     # ========================================================================
 
-    # Optional: Run rebalance optimization
-    try:
-        rebalance_optimization_results = optimize_rebalance_horizons(
-            all_tickers_data=all_tickers_data,
-            backtest_start=bt_start_1y,
-            backtest_end=bt_end,
-            initial_capital=capital_per_stock_1y * 3,  # Same as n_top_rebal
-            portfolio_size=3,
-            strategy_types=['1Y', '6M', '3M', '1M']
-        )
-    except Exception as e:
-        print(f"   ⚠️ Rebalance optimization failed: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
+    rebalance_optimization_results = None
+    if targeted_backtest:
+        print("🎯 Skipping rebalance horizon optimization for targeted backtest run")
+    else:
+        # Optional: Run rebalance optimization
+        try:
+            rebalance_optimization_results = optimize_rebalance_horizons(
+                all_tickers_data=all_tickers_data,
+                backtest_start=bt_start_1y,
+                backtest_end=bt_end,
+                initial_capital=capital_per_stock_1y * 3,  # Same as n_top_rebal
+                portfolio_size=3,
+                strategy_types=['1Y', '6M', '3M', '1M']
+            )
+        except Exception as e:
+            print(f"   ⚠️ Rebalance optimization failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
     # AI Strategy removed - running comparison strategies only
-    print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (comparison strategies only)...")
+    if targeted_backtest:
+        selected_label = ", ".join(_CLI_BACKTEST_STRATEGIES)
+        print(f"\n🔍 Step 8: Running {actual_period_name} Backtest ({selected_label})...")
+    else:
+        print(f"\n🔍 Step 8: Running {actual_period_name} Backtest (comparison strategies only)...")
 
     # Send push notification at start of backtest
     from notifications import send_push_notification
@@ -1501,10 +1581,18 @@ def main(
 # Main
 
 if __name__ == "__main__":
+    if args.list:
+        print("Available backtest strategies for --strategy:")
+        for strategy_name in get_strategy_names():
+            print(strategy_name)
+        sys.exit(0)
+
     # Override PORTFOLIO_SIZE if --num-stocks is specified
     if args.num_stocks is not None:
         config.PORTFOLIO_SIZE = args.num_stocks
         print(f"📊 Portfolio size: {args.num_stocks} stocks")
+
+    live_strategy_arg = args.strategy or "volatility_ensemble"
 
     if args.live_run:
         # Live run mode: execute strategies with current data (like quick_strategy_check.py)
@@ -1542,7 +1630,7 @@ if __name__ == "__main__":
         print(f"   ✅ Got data for {len(ticker_data_grouped)} tickers")
 
         # Check if multiple strategies requested
-        strategies = [s.strip() for s in args.strategy.split(',')]
+        strategies = [s.strip() for s in live_strategy_arg.split(',')]
 
         if len(strategies) > 1:
             # Multi-strategy live run with acceleration ranking
@@ -1659,8 +1747,7 @@ if __name__ == "__main__":
 
     elif args.live_trading:
         # Set strategy in config for live trading
-        import src.config as config
-        config.LIVE_TRADING_STRATEGY = args.strategy
+        config.LIVE_TRADING_STRATEGY = live_strategy_arg
 
         # Override PORTFOLIO_SIZE if --num-stocks is specified
         if args.num_stocks is not None:
@@ -1668,7 +1755,7 @@ if __name__ == "__main__":
             config.INVESTMENT_PER_STOCK = config.TOTAL_CAPITAL / args.num_stocks
             print(f"📊 Overriding portfolio size to {args.num_stocks} stocks (${config.INVESTMENT_PER_STOCK:,.0f} per stock)")
 
-        print(f"🚀 Starting Live Trading with Strategy: {args.strategy}")
+        print(f"🚀 Starting Live Trading with Strategy: {live_strategy_arg}")
 
         # Load strategy selections first to get available strategies
         print("\n📂 Reading strategy selections from JSON (no data download needed)...")
@@ -1725,7 +1812,7 @@ if __name__ == "__main__":
         print("=" * 80)
 
         # Check if multiple strategies requested (comma-separated)
-        strategies = [s.strip() for s in args.strategy.split(',')]
+        strategies = [s.strip() for s in live_strategy_arg.split(',')]
 
         # Use the live trading implementation - no data needed, reads from JSON
         try:
@@ -1891,6 +1978,7 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"❌ Live trading failed: {e}")
     else:
+        _CLI_BACKTEST_STRATEGIES = _apply_backtest_cli_overrides()
         # Run normal backtesting and get the data
         all_tickers_data = main()
 

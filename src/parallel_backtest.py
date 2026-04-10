@@ -11,6 +11,7 @@ import pandas as pd
 import numpy as np
 import time
 import gc
+from threading import Lock
 from datetime import datetime, timedelta
 
 from strategy_disk_cache import (
@@ -44,6 +45,16 @@ class HourlyHistoryCache:
     volume_by_ticker: Dict[str, np.ndarray] = field(default_factory=dict)
     loaded_tickers: Set[str] = field(default_factory=set)
     missing_tickers: Set[str] = field(default_factory=set)
+    load_lock: Any = field(default_factory=Lock, repr=False, compare=False)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state.pop("load_lock", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.load_lock = Lock()
 
 
 def _timestamp_ns(value: datetime) -> int:
@@ -230,27 +241,34 @@ def _build_hourly_ticker_artifact(ticker: str) -> Optional[Dict[str, np.ndarray]
 
 def ensure_hourly_ticker_loaded(hourly_history_cache: HourlyHistoryCache, ticker: str) -> bool:
     """Load one ticker's hourly arrays into memory if needed."""
-    if ticker in hourly_history_cache.loaded_tickers:
-        return True
-    if ticker in hourly_history_cache.missing_tickers:
-        return False
+    with hourly_history_cache.load_lock:
+        if ticker in hourly_history_cache.loaded_tickers:
+            return True
+        if ticker in hourly_history_cache.missing_tickers:
+            return False
 
     artifact = _build_hourly_ticker_artifact(ticker)
-    if artifact is None:
-        hourly_history_cache.missing_tickers.add(ticker)
-        return False
+    with hourly_history_cache.load_lock:
+        if ticker in hourly_history_cache.loaded_tickers:
+            return True
+        if ticker in hourly_history_cache.missing_tickers:
+            return False
 
-    hourly_history_cache.date_ns_by_ticker[ticker] = np.asarray(artifact["date_ns"], dtype=np.int64)
-    hourly_history_cache.close_by_ticker[ticker] = np.asarray(artifact["close"], dtype=float)
+        if artifact is None:
+            hourly_history_cache.missing_tickers.add(ticker)
+            return False
 
-    for field_name in ("open", "high", "low", "volume"):
-        field_map = getattr(hourly_history_cache, f"{field_name}_by_ticker")
-        field_values = artifact.get(field_name)
-        if field_values is not None:
-            field_map[ticker] = np.asarray(field_values, dtype=float)
+        hourly_history_cache.date_ns_by_ticker[ticker] = np.asarray(artifact["date_ns"], dtype=np.int64)
+        hourly_history_cache.close_by_ticker[ticker] = np.asarray(artifact["close"], dtype=float)
 
-    hourly_history_cache.loaded_tickers.add(ticker)
-    return True
+        for field_name in ("open", "high", "low", "volume"):
+            field_map = getattr(hourly_history_cache, f"{field_name}_by_ticker")
+            field_values = artifact.get(field_name)
+            if field_values is not None:
+                field_map[ticker] = np.asarray(field_values, dtype=float)
+
+        hourly_history_cache.loaded_tickers.add(ticker)
+        return True
 
 
 def calculate_cached_performance(

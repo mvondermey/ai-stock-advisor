@@ -5866,7 +5866,7 @@ def select_ai_elite_with_training(
 
 
 
-        n_workers = max(1, min(NUM_PROCESSES, len(all_tickers), 4))
+        n_workers = max(1, min(NUM_PROCESSES, len(all_tickers)))
 
         print(f"   📊 {strategy_label}: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
 
@@ -7293,4 +7293,6 @@ def get_available_strategies() -> list:
 
     """Return list of all available strategy names in the registry."""
 
-    return sorted(_get_strategy_registry().keys())
+    from strategy_registry import get_strategy_names
+
+    return get_strategy_names()
