@@ -1048,8 +1048,6 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
 
 
 
-    # Always use parallel processing
-
     if price_history_cache is not None:
 
         from parallel_backtest import calculate_cached_risk_adjusted_scores
@@ -1068,19 +1066,9 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
 
     else:
 
-        from parallel_backtest import calculate_parallel_risk_adjusted_scores
+        print(f"   ⚠️ {strategy_name}: Missing price_history_cache, returning empty selection")
 
-        scores_data = calculate_parallel_risk_adjusted_scores(
-
-            filtered_tickers,
-
-            ticker_data_grouped,
-
-            current_date,
-
-            lookback_days=lookback_days
-
-        )
+        return []
 
 
 
@@ -5122,13 +5110,9 @@ def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookba
 
     else:
 
-        from parallel_backtest import calculate_parallel_performance
+        print(f"   ⚠️ {filter_label}: Missing price_history_cache, returning empty selection")
 
-        performances = calculate_parallel_performance(
-
-            tickers_to_rank, ticker_data_grouped, current_date, period_days=lookback_days
-
-        )
+        return []
 
 
 
@@ -5192,13 +5176,9 @@ def select_top_performers_with_scores(all_tickers, ticker_data_grouped, current_
 
     else:
 
-        from parallel_backtest import calculate_parallel_performance
+        print(f"   ⚠️ {filter_label}: Missing price_history_cache, returning empty selection")
 
-        performances = calculate_parallel_performance(
-
-            tickers_to_rank, ticker_data_grouped, current_date, period_days=lookback_days
-
-        )
+        return []
 
 
 
@@ -5271,14 +5251,9 @@ def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current
 
     else:
 
-        from parallel_backtest import calculate_parallel_performance
+        print("   ⚠️ Vol-filtered top performers: Missing price_history_cache, returning empty selection")
 
-        performances = calculate_parallel_performance(
-
-            all_tickers, ticker_data_grouped, current_date, period_days=lookback_days
-
-        )
-        cached_volatility = None
+        return [], 0, 0
 
 
 
@@ -5486,6 +5461,8 @@ def select_ai_elite_with_training(
     ai_elite_models: dict = None,
     force_train: bool = False,
     run_selection: bool = True,
+    price_history_cache=None,
+    hourly_history_cache=None,
 ) -> tuple:
 
     """
@@ -5521,7 +5498,10 @@ def select_ai_elite_with_training(
 
     """
 
-    from ai_elite_strategy_per_ticker import train_shared_base_model, collect_ticker_training_data
+    from ai_elite_strategy_per_ticker import (
+        collect_training_data_parallel,
+        train_shared_base_model,
+    )
 
     from ai_elite_strategy import select_ai_elite_stocks
     from model_training_safety import restore_native_model_artifacts
@@ -5826,6 +5806,8 @@ def select_ai_elite_with_training(
                 current_date=current_date,
                 top_n=top_n,
                 per_ticker_models=ai_elite_models,
+                price_history_cache=price_history_cache,
+                hourly_history_cache=hourly_history_cache,
             )
             return selected, ai_elite_models
 
@@ -5880,61 +5862,26 @@ def select_ai_elite_with_training(
 
 
 
-        # Collect training data from all tickers (PARALLEL with multiprocessing.Pool)
-
-        from multiprocessing import Pool
-
         import time
 
 
 
-        n_workers = max(1, NUM_PROCESSES)
+        n_workers = max(1, min(NUM_PROCESSES, len(all_tickers), 4))
 
         print(f"   📊 {strategy_label}: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
 
         start_time = time.time()
-
-
-
-        all_training_data = []
-
-        ticker_samples_map = {}
-
-
-
-        # Prepare args for parallel workers
-
-        collect_args = [
-
-            (t, ticker_data_grouped.get(t), train_start, train_end, AI_ELITE_FORWARD_DAYS, market_returns)
-
-            for t in all_tickers
-
-        ]
-
-
-
-        with Pool(processes=n_workers) as pool:
-
-            from backtesting import _collect_data_worker
-
-            results = list(tqdm(
-                pool.imap_unordered(_collect_data_worker, collect_args),
-                total=len(collect_args),
-                desc=f"   {strategy_label} collection",
-                ncols=100,
-                unit="ticker",
-            ))
-
-
-
-        for ticker, samples in results:
-
-            if samples:
-
-                all_training_data.extend(samples)
-
-                ticker_samples_map[ticker] = samples
+        all_training_data, ticker_samples_map = collect_training_data_parallel(
+            all_tickers=all_tickers,
+            ticker_data_grouped=ticker_data_grouped,
+            train_start_date=train_start,
+            train_end_date=train_end,
+            forward_days=AI_ELITE_FORWARD_DAYS,
+            market_returns=market_returns,
+            n_processes=n_workers,
+            price_history_cache=price_history_cache,
+            hourly_history_cache=hourly_history_cache,
+        )
 
 
 
@@ -5987,7 +5934,11 @@ def select_ai_elite_with_training(
 
             top_n=top_n,
 
-            per_ticker_models=ai_elite_models
+            per_ticker_models=ai_elite_models,
+
+            price_history_cache=price_history_cache,
+
+            hourly_history_cache=hourly_history_cache
 
         )
 

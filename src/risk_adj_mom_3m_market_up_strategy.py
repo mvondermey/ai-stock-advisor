@@ -13,6 +13,7 @@ def select_risk_adj_mom_3m_market_up_stocks(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime = None,
     top_n: int = 10,
+    price_history_cache=None,
 ) -> List[str]:
     """Select stocks using Risk-Adj Mom 3M scoring, but only when market is up."""
     from market_regime import get_trailing_market_regime
@@ -43,5 +44,6 @@ def select_risk_adj_mom_3m_market_up_stocks(
         current_date=current_date,
         top_n=top_n,
         lookback_days=90,
-        strategy_name="Risk-Adj Mom 3M Market-Up"
+        strategy_name="Risk-Adj Mom 3M Market-Up",
+        price_history_cache=price_history_cache,
     )

@@ -6,7 +6,7 @@ This module provides parallelized versions of performance calculation functions.
 from dataclasses import dataclass, field
 from multiprocessing import Pool, cpu_count
 from functools import partial
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Set, Any
 import pandas as pd
 import numpy as np
 import time
@@ -31,6 +31,19 @@ class PriceHistoryCache:
     performance_cache: Dict[Tuple[int, int], Dict[str, float]] = field(default_factory=dict)
     risk_adjusted_cache: Dict[Tuple[int, int], Dict[str, Tuple[float, float, float]]] = field(default_factory=dict)
     volatility_cache: Dict[Tuple[int, int], Dict[str, float]] = field(default_factory=dict)
+
+
+@dataclass
+class HourlyHistoryCache:
+    """Lazy-loaded hourly OHLCV arrays backed by per-ticker disk artifacts."""
+    date_ns_by_ticker: Dict[str, np.ndarray] = field(default_factory=dict)
+    open_by_ticker: Dict[str, np.ndarray] = field(default_factory=dict)
+    high_by_ticker: Dict[str, np.ndarray] = field(default_factory=dict)
+    low_by_ticker: Dict[str, np.ndarray] = field(default_factory=dict)
+    close_by_ticker: Dict[str, np.ndarray] = field(default_factory=dict)
+    volume_by_ticker: Dict[str, np.ndarray] = field(default_factory=dict)
+    loaded_tickers: Set[str] = field(default_factory=set)
+    missing_tickers: Set[str] = field(default_factory=set)
 
 
 def _timestamp_ns(value: datetime) -> int:
@@ -121,6 +134,123 @@ def build_price_history_cache(ticker_data_grouped: Dict[str, pd.DataFrame]) -> P
         filename="price_history_cache.joblib",
     )
     return cache
+
+
+def build_hourly_history_cache() -> HourlyHistoryCache:
+    """Create an empty hourly cache that lazily hydrates tickers on demand."""
+    return HourlyHistoryCache()
+
+
+def _hourly_cache_key_parts(ticker: str, cache_file, stat_result) -> Dict[str, Any]:
+    return {
+        "ticker": ticker,
+        "source_path": str(cache_file.resolve()),
+        "mtime_ns": int(stat_result.st_mtime_ns),
+        "size": int(stat_result.st_size),
+    }
+
+
+def _build_hourly_ticker_artifact(ticker: str) -> Optional[Dict[str, np.ndarray]]:
+    try:
+        from data_utils import _RESOLVED_DATA_CACHE_DIR
+    except Exception:
+        return None
+
+    cache_file = _RESOLVED_DATA_CACHE_DIR / f"{ticker}.csv"
+    if not cache_file.exists():
+        return None
+
+    try:
+        stat_result = cache_file.stat()
+    except OSError:
+        return None
+
+    cache_key_parts = _hourly_cache_key_parts(ticker, cache_file, stat_result)
+    disk_cached = load_joblib_cache(
+        "parallel_backtest/hourly_history_ticker",
+        cache_key_parts,
+        filename="hourly_history.joblib",
+    )
+    if isinstance(disk_cached, dict) and "date_ns" in disk_cached and "close" in disk_cached:
+        return disk_cached
+
+    try:
+        hourly_df = pd.read_csv(cache_file, index_col=0, parse_dates=True)
+    except Exception:
+        return None
+
+    if hourly_df.empty or "Close" not in hourly_df.columns:
+        return None
+
+    hourly_df = hourly_df.sort_index()
+    if hourly_df.index.duplicated().any():
+        hourly_df = hourly_df[~hourly_df.index.duplicated(keep="last")]
+
+    date_index = pd.DatetimeIndex(hourly_df.index)
+    if date_index.tz is None:
+        date_index = date_index.tz_localize("UTC")
+    else:
+        date_index = date_index.tz_convert("UTC")
+    date_index = date_index.tz_localize(None)
+
+    close_series = pd.to_numeric(hourly_df["Close"], errors="coerce")
+    valid_mask = close_series.notna()
+    if int(valid_mask.sum()) < 2:
+        return None
+
+    valid_index = close_series.index[valid_mask]
+    aligned_hourly = hourly_df.loc[valid_index]
+    aligned_dates = pd.DatetimeIndex(valid_index)
+    if aligned_dates.tz is None:
+        aligned_dates = aligned_dates.tz_localize("UTC")
+    else:
+        aligned_dates = aligned_dates.tz_convert("UTC")
+    aligned_dates = aligned_dates.tz_localize(None)
+
+    artifact: Dict[str, np.ndarray] = {
+        "date_ns": aligned_dates.to_numpy(dtype="datetime64[ns]").astype(np.int64, copy=True),
+        "close": close_series.loc[valid_index].to_numpy(dtype=float, copy=True),
+    }
+
+    for field_name in ("Open", "High", "Low", "Volume"):
+        if field_name in aligned_hourly.columns:
+            artifact[field_name.lower()] = pd.to_numeric(
+                aligned_hourly[field_name],
+                errors="coerce",
+            ).to_numpy(dtype=float, copy=True)
+
+    save_joblib_cache(
+        "parallel_backtest/hourly_history_ticker",
+        cache_key_parts,
+        artifact,
+        filename="hourly_history.joblib",
+    )
+    return artifact
+
+
+def ensure_hourly_ticker_loaded(hourly_history_cache: HourlyHistoryCache, ticker: str) -> bool:
+    """Load one ticker's hourly arrays into memory if needed."""
+    if ticker in hourly_history_cache.loaded_tickers:
+        return True
+    if ticker in hourly_history_cache.missing_tickers:
+        return False
+
+    artifact = _build_hourly_ticker_artifact(ticker)
+    if artifact is None:
+        hourly_history_cache.missing_tickers.add(ticker)
+        return False
+
+    hourly_history_cache.date_ns_by_ticker[ticker] = np.asarray(artifact["date_ns"], dtype=np.int64)
+    hourly_history_cache.close_by_ticker[ticker] = np.asarray(artifact["close"], dtype=float)
+
+    for field_name in ("open", "high", "low", "volume"):
+        field_map = getattr(hourly_history_cache, f"{field_name}_by_ticker")
+        field_values = artifact.get(field_name)
+        if field_values is not None:
+            field_map[ticker] = np.asarray(field_values, dtype=float)
+
+    hourly_history_cache.loaded_tickers.add(ticker)
+    return True
 
 
 def calculate_cached_performance(

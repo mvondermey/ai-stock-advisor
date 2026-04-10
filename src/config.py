@@ -441,7 +441,7 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 
 RETRAIN_FREQUENCY_DAYS = 10  # Retrain every 10 days - aligned with prediction horizon
 
-ENABLE_WALK_FORWARD_RETRAINING = False   # Set to False to use only saved models, no retraining
+ENABLE_WALK_FORWARD_RETRAINING = True   # Retrain enabled AI strategies during walk-forward runs
 
 
 

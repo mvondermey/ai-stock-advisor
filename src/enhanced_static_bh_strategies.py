@@ -422,16 +422,14 @@ def select_rank_drift_bh_1y_stocks(
         (selected_stocks, should_rebalance, updated_rankings)
     """
     # Get current top performers with their performances
-    from parallel_backtest import calculate_parallel_performance, calculate_cached_performance
+    from parallel_backtest import calculate_cached_performance
     
     if price_history_cache is not None:
         performances = calculate_cached_performance(
             tickers, price_history_cache, current_date, period_days=365
         )
     else:
-        performances = calculate_parallel_performance(
-            tickers, ticker_data_grouped, current_date, period_days=365
-        )
+        return [], False, previous_rankings
     
     # Sort by performance (highest first) and create rankings
     # performances is already a list of (ticker, perf) tuples

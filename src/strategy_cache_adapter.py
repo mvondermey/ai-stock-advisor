@@ -6,7 +6,13 @@ from typing import Dict, Iterable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from parallel_backtest import PriceHistoryCache, build_price_history_cache
+from parallel_backtest import (
+    PriceHistoryCache,
+    HourlyHistoryCache,
+    build_price_history_cache,
+    build_hourly_history_cache,
+    ensure_hourly_ticker_loaded,
+)
 
 
 def _normalize_timestamp(value: datetime) -> pd.Timestamp:
@@ -23,6 +29,14 @@ def ensure_price_history_cache(
     if price_history_cache is not None:
         return price_history_cache
     return build_price_history_cache(ticker_data_grouped)
+
+
+def ensure_hourly_history_cache(
+    hourly_history_cache: Optional[HourlyHistoryCache] = None,
+) -> HourlyHistoryCache:
+    if hourly_history_cache is not None:
+        return hourly_history_cache
+    return build_hourly_history_cache()
 
 
 def resolve_cache_current_date(
@@ -221,3 +235,120 @@ def get_cached_frame_up_to(
     if len(frame) < min_rows:
         return None
     return frame.reset_index(drop=True)
+
+
+def get_cached_hourly_values_between(
+    hourly_history_cache: HourlyHistoryCache,
+    ticker: str,
+    start_date: datetime,
+    end_date: datetime,
+    field_name: str = "close",
+    min_rows: int = 2,
+) -> Optional[np.ndarray]:
+    if not ensure_hourly_ticker_loaded(hourly_history_cache, ticker):
+        return None
+    return get_cached_values_between(
+        hourly_history_cache,
+        ticker,
+        start_date,
+        end_date,
+        field_name=field_name,
+        min_rows=min_rows,
+    )
+
+
+def get_cached_hourly_history_up_to(
+    hourly_history_cache: HourlyHistoryCache,
+    ticker: str,
+    current_date: datetime,
+    field_name: str = "close",
+    min_rows: int = 2,
+) -> Optional[np.ndarray]:
+    if not ensure_hourly_ticker_loaded(hourly_history_cache, ticker):
+        return None
+    return get_cached_history_up_to(
+        hourly_history_cache,
+        ticker,
+        current_date,
+        field_name=field_name,
+        min_rows=min_rows,
+    )
+
+
+def get_cached_hourly_frame_between(
+    hourly_history_cache: HourlyHistoryCache,
+    ticker: str,
+    start_date: datetime,
+    end_date: datetime,
+    field_names: Sequence[str],
+    min_rows: int = 2,
+) -> Optional[pd.DataFrame]:
+    if not ensure_hourly_ticker_loaded(hourly_history_cache, ticker):
+        return None
+    date_ns = hourly_history_cache.date_ns_by_ticker.get(ticker)
+    if date_ns is None or date_ns.size == 0:
+        return None
+
+    start_ns = int(_normalize_timestamp(start_date).value)
+    end_ns = int(_normalize_timestamp(end_date).value)
+    start_idx = int(np.searchsorted(date_ns, start_ns, side="left"))
+    end_idx = int(np.searchsorted(date_ns, end_ns, side="right"))
+    if end_idx - start_idx < min_rows:
+        return None
+
+    data = {}
+    for field_name in field_names:
+        values = _field_map(hourly_history_cache, field_name).get(ticker)
+        if values is None or values.size == 0:
+            return None
+        data[field_name] = values[start_idx:end_idx]
+
+    frame = pd.DataFrame(
+        data,
+        index=pd.to_datetime(date_ns[start_idx:end_idx], unit="ns", utc=True),
+    )
+    if "close" in frame.columns:
+        frame = frame.dropna(subset=["close"])
+    else:
+        frame = frame.dropna()
+    if len(frame) < min_rows:
+        return None
+    return frame.sort_index()
+
+
+def get_cached_hourly_frame_up_to(
+    hourly_history_cache: HourlyHistoryCache,
+    ticker: str,
+    current_date: datetime,
+    field_names: Sequence[str],
+    min_rows: int = 2,
+) -> Optional[pd.DataFrame]:
+    if not ensure_hourly_ticker_loaded(hourly_history_cache, ticker):
+        return None
+    date_ns = hourly_history_cache.date_ns_by_ticker.get(ticker)
+    if date_ns is None or date_ns.size == 0:
+        return None
+
+    end_ns = int(_normalize_timestamp(current_date).value)
+    end_idx = int(np.searchsorted(date_ns, end_ns, side="right"))
+    if end_idx < min_rows:
+        return None
+
+    data = {}
+    for field_name in field_names:
+        values = _field_map(hourly_history_cache, field_name).get(ticker)
+        if values is None or values.size == 0:
+            return None
+        data[field_name] = values[:end_idx]
+
+    frame = pd.DataFrame(
+        data,
+        index=pd.to_datetime(date_ns[:end_idx], unit="ns", utc=True),
+    )
+    if "close" in frame.columns:
+        frame = frame.dropna(subset=["close"])
+    else:
+        frame = frame.dropna()
+    if len(frame) < min_rows:
+        return None
+    return frame.sort_index()

@@ -9,14 +9,18 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from strategy_disk_cache import load_joblib_cache, save_joblib_cache, universe_signature_from_frames
-from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
+from strategy_cache_adapter import (
+    ensure_hourly_history_cache,
+    ensure_price_history_cache,
+    get_cached_hourly_frame_between,
+    resolve_cache_current_date,
+)
 
 from config import (
     INVERSE_ETFS,
@@ -28,7 +32,6 @@ from config import (
     PORTFOLIO_SIZE,
 )
 
-_HOURLY_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
 _INTRADAY_SELECTION_CONTEXT: Dict[str, object] = {}
 _INTRADAY_DAILY_CACHE_MEMORY: Dict[str, Dict[str, Dict[str, np.ndarray]]] = {}
 
@@ -156,14 +159,23 @@ def _calculate_multi_timeframe_intraday_signals_from_cache(
     cache_entry: Dict[str, np.ndarray],
     current_date: datetime,
     timeframes: List[str] = None,
-    cache_hourly_data: bool = True,
+    hourly_history_cache=None,
 ) -> Dict[str, float]:
     if timeframes is None:
         timeframes = MULTI_TIMEFRAMES
 
     signals: Dict[str, float] = {}
     current_ts = _to_utc_timestamp(current_date) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
-    hourly_data = _load_hourly_data_cached(ticker, cache_result=cache_hourly_data)
+    max_lookback_days = max(
+        (MULTI_TIMEFRAME_LOOKBACK[timeframe] for timeframe in timeframes if timeframe != "long_term"),
+        default=0,
+    )
+    hourly_data = _load_hourly_data_cached(
+        ticker,
+        current_ts.to_pydatetime() - timedelta(days=max_lookback_days),
+        current_ts.to_pydatetime(),
+        hourly_history_cache=hourly_history_cache,
+    )
 
     for timeframe in timeframes:
         lookback_days = MULTI_TIMEFRAME_LOOKBACK[timeframe]
@@ -194,39 +206,35 @@ def _calculate_multi_timeframe_intraday_signals_from_cache(
     return signals
 
 
-def _load_hourly_data_cached(ticker: str, cache_result: bool = True) -> Optional[pd.DataFrame]:
-    """Load cached hourly data once per ticker from the shared data cache."""
-    if cache_result and ticker in _HOURLY_CACHE:
-        return _HOURLY_CACHE[ticker]
-
+def _load_hourly_data_cached(
+    ticker: str,
+    start: datetime,
+    end: datetime,
+    hourly_history_cache=None,
+) -> Optional[pd.DataFrame]:
+    """Load cached hourly data from the shared hourly history cache."""
     try:
-        from data_utils import _RESOLVED_DATA_CACHE_DIR
-
-        cache_file = Path(_RESOLVED_DATA_CACHE_DIR) / f"{ticker}.csv"
-        if not cache_file.exists():
-            if cache_result:
-                _HOURLY_CACHE[ticker] = None
+        hourly_history_cache = ensure_hourly_history_cache(hourly_history_cache)
+        hourly_df = get_cached_hourly_frame_between(
+            hourly_history_cache,
+            ticker,
+            start,
+            end,
+            field_names=("open", "high", "low", "close", "volume"),
+            min_rows=2,
+        )
+        if hourly_df is None or hourly_df.empty:
             return None
-
-        hourly_df = pd.read_csv(cache_file, index_col=0, parse_dates=True)
-        if hourly_df.empty:
-            if cache_result:
-                _HOURLY_CACHE[ticker] = None
-            return None
-
-        if hourly_df.index.tz is None:
-            hourly_df.index = hourly_df.index.tz_localize("UTC")
-        else:
-            hourly_df.index = hourly_df.index.tz_convert("UTC")
-
-        hourly_df = hourly_df.sort_index()
-        if cache_result:
-            _HOURLY_CACHE[ticker] = hourly_df
-            return _HOURLY_CACHE[ticker]
-        return hourly_df
+        return hourly_df.rename(
+            columns={
+                "open": "Open",
+                "high": "High",
+                "low": "Low",
+                "close": "Close",
+                "volume": "Volume",
+            }
+        )
     except Exception:
-        if cache_result:
-            _HOURLY_CACHE[ticker] = None
         return None
 
 
@@ -349,6 +357,7 @@ def calculate_multi_timeframe_intraday_signals(
     daily_data: pd.DataFrame,
     current_date: datetime,
     timeframes: List[str] = None,
+    hourly_history_cache=None,
 ) -> Dict[str, float]:
     """Calculate long-term from daily data and medium/short horizons from hourly data."""
     if timeframes is None:
@@ -356,7 +365,16 @@ def calculate_multi_timeframe_intraday_signals(
 
     signals: Dict[str, float] = {}
     current_ts = _to_utc_timestamp(current_date) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
-    hourly_data = _load_hourly_data_cached(ticker)
+    max_lookback_days = max(
+        (MULTI_TIMEFRAME_LOOKBACK[timeframe] for timeframe in timeframes if timeframe != "long_term"),
+        default=0,
+    )
+    hourly_data = _load_hourly_data_cached(
+        ticker,
+        current_ts.to_pydatetime() - timedelta(days=max_lookback_days),
+        current_ts.to_pydatetime(),
+        hourly_history_cache=hourly_history_cache,
+    )
 
     for timeframe in timeframes:
         lookback_days = MULTI_TIMEFRAME_LOOKBACK[timeframe]
@@ -406,12 +424,14 @@ def _init_multi_timeframe_intraday_worker(
     daily_cache: Optional[Dict[str, Dict[str, np.ndarray]]],
     current_date: datetime,
     price_history_cache=None,
+    hourly_history_cache=None,
 ) -> None:
     global _INTRADAY_SELECTION_CONTEXT
     _INTRADAY_SELECTION_CONTEXT = {
         "daily_cache": daily_cache,
         "current_date": current_date,
         "price_history_cache": price_history_cache,
+        "hourly_history_cache": hourly_history_cache,
     }
 
 
@@ -422,6 +442,7 @@ def _score_multi_timeframe_intraday_ticker_worker(
     daily_cache = context.get("daily_cache") or {}
     current_date = context.get("current_date")
     price_history_cache = context.get("price_history_cache")
+    hourly_history_cache = context.get("hourly_history_cache")
     cache_entry = daily_cache.get(ticker)
     if cache_entry is None and price_history_cache is not None:
         cache_entry = _get_daily_cache_entry_from_price_history(price_history_cache, ticker)
@@ -433,7 +454,7 @@ def _score_multi_timeframe_intraday_ticker_worker(
             ticker,
             cache_entry,
             current_date,
-            cache_hourly_data=False,
+            hourly_history_cache=hourly_history_cache,
         )
         ensemble_score, has_consensus = calculate_ensemble_score(signals)
         if has_consensus:
@@ -450,10 +471,12 @@ def select_multi_timeframe_intraday_stocks(
     verbose: bool = True,
     daily_cache: Optional[Dict[str, Dict[str, np.ndarray]]] = None,
     price_history_cache=None,
+    hourly_history_cache=None,
 ) -> List[str]:
     """Select stocks using intraday-enhanced multi-timeframe ensemble signals."""
     tickers_to_use = [ticker for ticker in initial_tickers if ticker not in INVERSE_ETFS]
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    hourly_history_cache = ensure_hourly_history_cache(hourly_history_cache)
     current_date = resolve_cache_current_date(price_history_cache, current_date, tickers_to_use)
     if current_date is None:
         return []
@@ -472,7 +495,12 @@ def select_multi_timeframe_intraday_stocks(
         n_workers = min(n_workers, 4)
         if verbose:
             print(f"   🚀 Multi-Horizon Intraday: Scoring {len(cached_tickers)} tickers with {n_workers} threads")
-        _init_multi_timeframe_intraday_worker(daily_cache, current_date, price_history_cache=price_history_cache)
+        _init_multi_timeframe_intraday_worker(
+            daily_cache,
+            current_date,
+            price_history_cache=price_history_cache,
+            hourly_history_cache=hourly_history_cache,
+        )
         with ThreadPoolExecutor(max_workers=n_workers) as executor:
             results = list(tqdm(
                 executor.map(_score_multi_timeframe_intraday_ticker_worker, cached_tickers),
@@ -499,7 +527,12 @@ def select_multi_timeframe_intraday_stocks(
                 continue
 
             try:
-                signals = _calculate_multi_timeframe_intraday_signals_from_cache(ticker, cache_entry, current_date)
+                signals = _calculate_multi_timeframe_intraday_signals_from_cache(
+                    ticker,
+                    cache_entry,
+                    current_date,
+                    hourly_history_cache=hourly_history_cache,
+                )
                 ensemble_score, has_consensus = calculate_ensemble_score(signals)
                 if has_consensus:
                     stock_scores.append((ticker, ensemble_score, signals))

@@ -85,6 +85,7 @@ def _init_parallel_strategy_worker(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     initial_top_tickers: List[str],
     price_history_cache=None,
+    hourly_history_cache=None,
     ai_elite_model_path: Optional[str] = None,
 ) -> None:
     global _PARALLEL_STRATEGY_WORKER_CONTEXT
@@ -92,6 +93,7 @@ def _init_parallel_strategy_worker(
         "ticker_data_grouped": ticker_data_grouped,
         "initial_top_tickers": list(initial_top_tickers),
         "price_history_cache": price_history_cache,
+        "hourly_history_cache": hourly_history_cache,
         "ai_elite_model_path": ai_elite_model_path,
     }
 
@@ -110,6 +112,7 @@ def _run_parallel_strategy_selection_task(
     ticker_data_grouped = _PARALLEL_STRATEGY_WORKER_CONTEXT["ticker_data_grouped"]
     initial_top_tickers = _PARALLEL_STRATEGY_WORKER_CONTEXT["initial_top_tickers"]
     price_history_cache = _PARALLEL_STRATEGY_WORKER_CONTEXT.get("price_history_cache")
+    hourly_history_cache = _PARALLEL_STRATEGY_WORKER_CONTEXT.get("hourly_history_cache")
 
     if strategy_name == "elite_hybrid":
         from elite_hybrid_strategy import select_elite_hybrid_stocks
@@ -283,6 +286,8 @@ def _run_parallel_strategy_selection_task(
             shared_model_path=model_path,
             shared_model_token=runtime_context.get("ai_elite_model_token"),
             max_prediction_workers=runtime_context.get("ai_elite_max_prediction_workers"),
+            price_history_cache=price_history_cache,
+            hourly_history_cache=hourly_history_cache,
         )
     else:
         from shared_strategies import get_strategy_tickers
@@ -1246,6 +1251,8 @@ def _prepare_ai_elite_step(
     day_count: int,
     ai_elite_models: Dict,
     ai_elite_last_train_days: Dict[str, int],
+    price_history_cache=None,
+    hourly_history_cache=None,
 ) -> Tuple[Dict, Dict[str, int], float, Dict[str, Any]]:
     """Prepare AI Elite model state in main and publish worker runtime metadata."""
     from shared_strategies import select_ai_elite_with_training
@@ -1275,6 +1282,8 @@ def _prepare_ai_elite_step(
         ai_elite_models=ai_elite_models,
         force_train=should_train_ai_elite,
         run_selection=False,
+        price_history_cache=price_history_cache,
+        hourly_history_cache=hourly_history_cache,
     )
     selection_elapsed = time.perf_counter() - selection_started_at
 
@@ -1353,6 +1362,8 @@ def _run_ai_elite_step(
     ai_elite_portfolio_value: float,
     ai_elite_last_rebalance_value: float,
     close_price_cache: Dict[str, float],
+    price_history_cache=None,
+    hourly_history_cache=None,
 ) -> Tuple[Dict, Dict[str, int], Dict[str, Dict], float, List[str], float, float, bool, float]:
     """Run one AI Elite backtest step entirely in main."""
     from ai_elite_strategy import select_ai_elite_stocks
@@ -1364,6 +1375,8 @@ def _run_ai_elite_step(
         day_count=day_count,
         ai_elite_models=ai_elite_models,
         ai_elite_last_train_days=ai_elite_last_train_days,
+        price_history_cache=price_history_cache,
+        hourly_history_cache=hourly_history_cache,
     )
     inference_started_at = time.perf_counter()
     new_ai_elite_stocks = select_ai_elite_stocks(
@@ -1372,6 +1385,8 @@ def _run_ai_elite_step(
         current_date=current_date,
         top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
         per_ticker_models=ai_elite_models,
+        price_history_cache=price_history_cache,
+        hourly_history_cache=hourly_history_cache,
     )
     inference_elapsed = time.perf_counter() - inference_started_at
     (
@@ -2170,7 +2185,7 @@ def _run_portfolio_backtest_walk_forward(
     print(f"   💰 Running all enabled strategies")
 
     # Clear inverse ETF hedge log at start of backtest
-    from parallel_backtest import build_price_history_cache
+    from parallel_backtest import build_hourly_history_cache, build_price_history_cache
     from shared_strategies import (
         clear_inverse_etf_hedge_log,
         get_strategy_tickers,
@@ -3643,6 +3658,7 @@ def _run_portfolio_backtest_walk_forward(
         print(f"   🔍 DEBUG: available_tickers_in_data sample: {list(available_tickers_in_data)[:5]}")
 
     price_history_cache = build_price_history_cache(ticker_data_grouped)
+    hourly_history_cache = build_hourly_history_cache()
 
     parallel_strategy_executor = None
     if config.ENABLE_PARALLEL_STRATEGIES:
@@ -3652,7 +3668,13 @@ def _run_portfolio_backtest_walk_forward(
                 max_workers=2,
                 mp_context=get_context("spawn"),
                 initializer=_init_parallel_strategy_worker,
-                    initargs=(ticker_data_grouped, initial_top_tickers, price_history_cache, ai_elite_worker_model_path),
+                    initargs=(
+                        ticker_data_grouped,
+                        initial_top_tickers,
+                        price_history_cache,
+                        hourly_history_cache,
+                        ai_elite_worker_model_path,
+                    ),
             )
             print(
                 "   🚦 Parallel strategy queue enabled: "
@@ -4213,6 +4235,8 @@ def _run_portfolio_backtest_walk_forward(
                     day_count=day_count,
                     ai_elite_models=ai_elite_models,
                     ai_elite_last_train_days=ai_elite_last_train_days,
+                    price_history_cache=price_history_cache,
+                    hourly_history_cache=hourly_history_cache,
                 )
                 _record_strategy_timing("AI Elite", ai_elite_prepare_elapsed, phase="selection")
 
@@ -4242,6 +4266,8 @@ def _run_portfolio_backtest_walk_forward(
                         current_date=current_date,
                         top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
                         per_ticker_models=ai_elite_models,
+                        price_history_cache=price_history_cache,
+                        hourly_history_cache=hourly_history_cache,
                     )
                     _record_strategy_timing(
                         "AI Elite",
@@ -7723,6 +7749,7 @@ def _run_portfolio_backtest_walk_forward(
                     ticker_data_grouped,
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    price_history_cache=price_history_cache,
                 )
 
                 if new_risk_adj_mom_6m_stocks:
@@ -7760,6 +7787,7 @@ def _run_portfolio_backtest_walk_forward(
                         ticker_data_grouped,
                         current_date=current_date,
                         top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
                     )
 
                     if new_stocks:
@@ -7800,6 +7828,7 @@ def _run_portfolio_backtest_walk_forward(
                     ticker_data_grouped,
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    price_history_cache=price_history_cache,
                 )
 
                 if new_risk_adj_mom_3m_stocks:
@@ -7837,6 +7866,7 @@ def _run_portfolio_backtest_walk_forward(
                         ticker_data_grouped,
                         current_date=current_date,
                         top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
                     )
 
                     if new_stocks:
@@ -7877,6 +7907,7 @@ def _run_portfolio_backtest_walk_forward(
                     ticker_data_grouped,
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    price_history_cache=price_history_cache,
                 )
 
                 if new_stocks:
@@ -7950,6 +7981,7 @@ def _run_portfolio_backtest_walk_forward(
                     ticker_data_grouped,
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    price_history_cache=price_history_cache,
                 )
 
                 if new_stocks:
@@ -7989,6 +8021,7 @@ def _run_portfolio_backtest_walk_forward(
                     ticker_data_grouped,
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    price_history_cache=price_history_cache,
                 )
 
                 if new_stocks:
@@ -8157,6 +8190,7 @@ def _run_portfolio_backtest_walk_forward(
                     ticker_data_grouped,
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    price_history_cache=price_history_cache,
                 )
 
                 if new_risk_adj_mom_1m_stocks:
@@ -8194,6 +8228,7 @@ def _run_portfolio_backtest_walk_forward(
                         ticker_data_grouped,
                         current_date=current_date,
                         top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
                     )
 
                     if new_stocks:
@@ -8282,6 +8317,8 @@ def _run_portfolio_backtest_walk_forward(
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
                     per_ticker_models=ai_elite_models,
                     pre_filter_n=PORTFOLIO_SIZE * 2,
+                    price_history_cache=price_history_cache,
+                    hourly_history_cache=hourly_history_cache,
                 )
 
                 if new_ai_elite_filtered_stocks:
@@ -8320,6 +8357,8 @@ def _run_portfolio_backtest_walk_forward(
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
                     per_ticker_models=ai_elite_models,
+                    price_history_cache=price_history_cache,
+                    hourly_history_cache=hourly_history_cache,
                 )
 
                 if new_ai_elite_market_up_stocks:
@@ -8368,6 +8407,8 @@ def _run_portfolio_backtest_walk_forward(
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
                     per_ticker_models=ai_elite_models,
+                    price_history_cache=price_history_cache,
+                    hourly_history_cache=hourly_history_cache,
                 )
 
                 if new_ai_elite_ensemble_stocks:
@@ -8407,6 +8448,8 @@ def _run_portfolio_backtest_walk_forward(
                     current_date=current_date,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
                     per_ticker_models=ai_elite_models,
+                    price_history_cache=price_history_cache,
+                    hourly_history_cache=hourly_history_cache,
                 )
 
                 if new_ai_elite_rank_ensemble_stocks:

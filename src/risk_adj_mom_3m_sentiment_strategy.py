@@ -159,7 +159,7 @@ def select_risk_adj_mom_3m_sentiment_stocks(
         tickers_to_use, ticker_data_grouped, current_date, "RiskAdj 3M Sent"
     )
 
-    # Get base scores using cached or parallel processing
+    # Use the cache-backed scorer only; do not fall back to the slow parallel path.
     if price_history_cache is not None:
         from parallel_backtest import calculate_cached_risk_adjusted_scores
         scores_data = calculate_cached_risk_adjusted_scores(
@@ -169,13 +169,8 @@ def select_risk_adj_mom_3m_sentiment_stocks(
             lookback_days=90
         )
     else:
-        from parallel_backtest import calculate_parallel_risk_adjusted_scores
-        scores_data = calculate_parallel_risk_adjusted_scores(
-            filtered_tickers,
-            ticker_data_grouped,
-            current_date,
-            lookback_days=90
-        )
+        print("   ⚠️ RiskAdj 3M Sent: Missing price_history_cache, returning empty selection")
+        return []
 
     candidates = []
     sentiment_stats = {'positive': 0, 'negative': 0, 'neutral': 0}

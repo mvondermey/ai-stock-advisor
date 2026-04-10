@@ -10,7 +10,7 @@ import numpy as np
 import copy
 import joblib
 import os
-from multiprocessing import Pool
+from multiprocessing import Pool, get_context
 import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Tuple
@@ -35,10 +35,13 @@ _AI_ELITE_COLLECTION_CONTEXT_PATH: Optional[str] = None
 _AI_ELITE_COLLECTION_CONTEXT: Optional[Dict[str, object]] = None
 
 
-def _init_ai_elite_collection_worker(context_path: str) -> None:
+def _init_ai_elite_collection_worker(
+    context_path: Optional[str],
+    context: Optional[Dict[str, object]] = None,
+) -> None:
     global _AI_ELITE_COLLECTION_CONTEXT_PATH, _AI_ELITE_COLLECTION_CONTEXT
     _AI_ELITE_COLLECTION_CONTEXT_PATH = context_path
-    _AI_ELITE_COLLECTION_CONTEXT = None
+    _AI_ELITE_COLLECTION_CONTEXT = context
 
 
 def _get_ai_elite_collection_context() -> Dict[str, object]:
@@ -59,6 +62,8 @@ def _collect_ai_elite_training_data_worker(ticker: str) -> Tuple[str, List[dict]
         train_end_date=context['train_end_date'],
         forward_days=int(context['forward_days']),
         market_returns=context['market_returns'],
+        price_history_cache=context.get('price_history_cache'),
+        hourly_history_cache=context.get('hourly_history_cache'),
     )
     return ticker, samples
 
@@ -71,27 +76,56 @@ def collect_training_data_parallel(
     forward_days: int,
     market_returns: Dict[datetime, float],
     n_processes: int,
+    price_history_cache=None,
+    hourly_history_cache=None,
 ) -> Tuple[List[dict], Dict[str, List[dict]]]:
     all_training_data: List[dict] = []
     ticker_samples_map: Dict[str, List[dict]] = {}
     temp_context_path = None
 
     try:
+        worker_tickers = list(all_tickers)
+        n_workers = max(1, min(n_processes, len(worker_tickers), 4)) if worker_tickers else 1
+        sample_context = {
+            'ticker_data_grouped': ticker_data_grouped,
+            'train_start_date': train_start_date,
+            'train_end_date': train_end_date,
+            'forward_days': forward_days,
+            'market_returns': market_returns,
+            'price_history_cache': price_history_cache,
+            'hourly_history_cache': hourly_history_cache,
+        }
+
+        if os.name != "nt":
+            global _AI_ELITE_COLLECTION_CONTEXT_PATH, _AI_ELITE_COLLECTION_CONTEXT
+            _AI_ELITE_COLLECTION_CONTEXT_PATH = None
+            _AI_ELITE_COLLECTION_CONTEXT = sample_context
+            try:
+                with get_context("fork").Pool(
+                    processes=n_workers,
+                    initializer=_init_ai_elite_collection_worker,
+                    initargs=(None, sample_context),
+                ) as pool:
+                    results = pool.imap_unordered(_collect_ai_elite_training_data_worker, worker_tickers)
+                    for ticker, samples in tqdm(
+                        results,
+                        total=len(worker_tickers),
+                        desc="   AI Elite collection",
+                        ncols=100,
+                        unit="ticker",
+                    ):
+                        if samples:
+                            all_training_data.extend(samples)
+                            ticker_samples_map[ticker] = samples
+            finally:
+                _AI_ELITE_COLLECTION_CONTEXT_PATH = None
+                _AI_ELITE_COLLECTION_CONTEXT = None
+            return all_training_data, ticker_samples_map
+
         with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as temp_context_file:
             temp_context_path = temp_context_file.name
-        joblib.dump(
-            {
-                'ticker_data_grouped': ticker_data_grouped,
-                'train_start_date': train_start_date,
-                'train_end_date': train_end_date,
-                'forward_days': forward_days,
-                'market_returns': market_returns,
-            },
-            temp_context_path,
-        )
+        joblib.dump(sample_context, temp_context_path)
 
-        worker_tickers = list(all_tickers)
-        n_workers = max(1, min(n_processes, len(worker_tickers))) if worker_tickers else 1
         with Pool(
             processes=n_workers,
             initializer=_init_ai_elite_collection_worker,
@@ -319,7 +353,9 @@ def collect_ticker_training_data(
     train_end_date: datetime,
     forward_days: int = 5,
     hourly_cache: dict = None,
-    market_returns: dict = None
+    market_returns: dict = None,
+    price_history_cache=None,
+    hourly_history_cache=None,
 ) -> List[dict]:
     """Collect training samples for a single ticker. Returns list of dicts.
     market_returns: dict mapping sample_date -> market return (pre-computed)."""
@@ -331,8 +367,6 @@ def collect_ticker_training_data(
             _extract_features,
             _calculate_forward_return,
             _load_hourly_data_direct,
-            load_persistent_feature_cache,
-            save_persistent_feature_cache,
         )
         from config import AI_ELITE_INTRADAY_LOOKBACK
     except ImportError:
@@ -350,7 +384,8 @@ def collect_ticker_training_data(
         hourly_cache = {ticker: _load_hourly_data_direct(
             ticker,
             train_start_date - timedelta(days=AI_ELITE_INTRADAY_LOOKBACK + 5),
-            train_end_date + timedelta(days=forward_days + 2)
+            train_end_date + timedelta(days=forward_days + 2),
+            hourly_history_cache=hourly_history_cache,
         )}
 
     samples = []
@@ -358,11 +393,13 @@ def collect_ticker_training_data(
     while current_date <= train_end_date:
         try:
             hourly_data = hourly_cache.get(ticker)
-            features = load_persistent_feature_cache(ticker, current_date, ticker_data)
-            if features is None:
-                features = _extract_features(ticker, hourly_data, current_date, daily_data=ticker_data)
-                if features is not None:
-                    save_persistent_feature_cache(ticker, current_date, ticker_data, features)
+            features = _extract_features(
+                ticker,
+                hourly_data,
+                current_date,
+                daily_data=ticker_data,
+                price_history_cache=price_history_cache,
+            )
             if features is None:
                 current_date += timedelta(days=1)
                 continue
