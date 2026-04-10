@@ -741,8 +741,8 @@ def train_shared_base_model(
 
     # Prepare training arguments for parallel execution
     model_names_to_train = list(models.keys())
-    X_train_np = X_train.values if hasattr(X_train, 'values') else X_train
-    X_val_np = X_val.values if hasattr(X_val, 'values') else X_val
+    X_train_frame = X_train if isinstance(X_train, pd.DataFrame) else pd.DataFrame(X_train, columns=FEATURE_COLS)
+    X_val_frame = X_val if isinstance(X_val, pd.DataFrame) else pd.DataFrame(X_val, columns=FEATURE_COLS)
     y_train_np = np.asarray(y_train)
     y_val_np = np.asarray(y_val)
 
@@ -773,9 +773,9 @@ def train_shared_base_model(
     global _AI_ELITE_TRAIN_CONTEXT_PATH, _AI_ELITE_TRAIN_CONTEXT
     _AI_ELITE_TRAIN_CONTEXT = {
         'models': models,
-        'X_train': X_train_np,
+        'X_train': X_train_frame,
         'y_train': y_train_np,
-        'X_val': X_val_np,
+        'X_val': X_val_frame,
         'y_val': y_val_np,
         'device': device,
         'has_existing': has_existing,

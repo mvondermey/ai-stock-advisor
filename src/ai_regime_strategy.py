@@ -873,13 +873,13 @@ class AIRegimeAllocator:
         if self.model is None or not hasattr(self.model, 'predict'):
             if self.model is not None:
                 print(f"   ⚠️ AI Regime: Model corrupted (type: {type(self.model)})")
-            print("   ⚠️ AI Regime: No selection (model unavailable)")
+            print("   ℹ️ AI Regime: Model unavailable, leaving portfolio in cash")
             return None  # No fallback - let strategy handle it
 
         # Extract current features
         features = self.extract_regime_features(ticker_data_grouped, current_date)
         if features is None or not isinstance(features, dict):
-            print("   ⚠️ AI Regime: No selection (feature extraction failed)")
+            print("   ℹ️ AI Regime: Feature extraction failed, leaving portfolio in cash")
             return None  # No fallback - let strategy handle it
 
         # Predict
@@ -890,7 +890,7 @@ class AIRegimeAllocator:
             if not hasattr(self.model, 'n_features_in_') or self.model.n_features_in_ != X.shape[1]:
                 print(f"   ⚠️ AI Regime: Model feature mismatch, resetting model")
                 self.model = None
-                print("   ⚠️ AI Regime: No selection (model feature mismatch)")
+                print("   ℹ️ AI Regime: Model feature mismatch, leaving portfolio in cash")
                 return None
 
             pred_idx = self.model.predict(X)[0]
@@ -908,7 +908,7 @@ class AIRegimeAllocator:
 
         except Exception as e:
             print(f"   ⚠️ AI Regime: Prediction failed: {e}")
-            print("   ⚠️ AI Regime: No selection (prediction failed)")
+            print("   ℹ️ AI Regime: Prediction unavailable, leaving portfolio in cash")
             return None  # No fallback - let strategy handle it
 
     def should_retrain(self) -> bool:
@@ -954,7 +954,7 @@ def select_ai_regime_stocks(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime,
     top_n: int,
-    predicted_strategy: str,
+    predicted_strategy: Optional[str] = None,
     ai_elite_models: Dict = None,
     price_history_cache=None,
 ) -> List[str]:
@@ -972,6 +972,19 @@ def select_ai_regime_stocks(
     Returns:
         List of selected tickers
     """
+    if predicted_strategy is None:
+        try:
+            allocator = AIRegimeAllocator(retrain_days=AI_REGIME_RETRAIN_DAYS, forward_days=1)
+            allocator.load_model()
+            predicted_strategy = allocator.predict_best_strategy(ticker_data_grouped, current_date)
+        except Exception as e:
+            print(f"   ❌ AI Regime error: Could not determine strategy: {e}")
+            return []
+
+    if not predicted_strategy:
+        print("   ℹ️ AI Regime: No predicted strategy available, leaving portfolio in cash")
+        return []
+
     # Import shared functions
     from shared_strategies import (
         select_top_performers, select_top_performers_vol_filtered,
@@ -998,17 +1011,17 @@ def select_ai_regime_stocks(
     # Map strategy names to their implementations
     strategy_map = {
         # Risk-Adjusted Momentum (use shared function with different lookbacks)
-        'risk_adj_mom_3m': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
-        'risk_adj_mom_3m_monthly': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
-        'risk_adj_mom_3m_up': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
-        'risk_adj_mom_3m_stop': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
-        'risk_adj_mom_6m': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=180),
-        'risk_adj_mom_6m_monthly': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=180),
-        'risk_adj_mom': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365),
-        'risk_adj_mom_1m': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=30),
-        'risk_adj_mom_1m_monthly': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=30),
-        'risk_adj_mom_3m_sent': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
-        'risk_adj_sent': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90),
+        'risk_adj_mom_3m': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90, price_history_cache=price_history_cache),
+        'risk_adj_mom_3m_monthly': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90, price_history_cache=price_history_cache),
+        'risk_adj_mom_3m_up': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90, price_history_cache=price_history_cache),
+        'risk_adj_mom_3m_stop': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90, price_history_cache=price_history_cache),
+        'risk_adj_mom_6m': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=180, price_history_cache=price_history_cache),
+        'risk_adj_mom_6m_monthly': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=180, price_history_cache=price_history_cache),
+        'risk_adj_mom': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365, price_history_cache=price_history_cache),
+        'risk_adj_mom_1m': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=30, price_history_cache=price_history_cache),
+        'risk_adj_mom_1m_monthly': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=30, price_history_cache=price_history_cache),
+        'risk_adj_mom_3m_sent': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90, price_history_cache=price_history_cache),
+        'risk_adj_sent': lambda: select_risk_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=90, price_history_cache=price_history_cache),
 
         # AI/ML Strategies
         'ai_elite': lambda: select_ai_elite_stocks(
@@ -1050,57 +1063,69 @@ def select_ai_regime_stocks(
         'momentum_ai_hybrid': lambda: select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
 
         # Momentum Strategies
-        'momentum_volatility_hybrid_6m': lambda: select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'momentum_volatility_hybrid': lambda: select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'momentum_volatility_hybrid_1y_3m': lambda: select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'vol_adj_mom': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'vol_sweet_mom': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        '1m_vol_sweet': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'price_acceleration': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n),
+        'momentum_volatility_hybrid_6m': lambda: select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped, current_date, top_n, price_history_cache=price_history_cache),
+        'momentum_volatility_hybrid': lambda: select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, current_date, top_n, price_history_cache=price_history_cache),
+        'momentum_volatility_hybrid_1y_3m': lambda: select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n, price_history_cache=price_history_cache),
+        'vol_adj_mom': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, price_history_cache=price_history_cache),
+        'vol_sweet_mom': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, price_history_cache=price_history_cache),
+        '1m_vol_sweet': lambda: select_volatility_adj_mom_stocks(all_tickers, ticker_data_grouped, current_date, top_n, price_history_cache=price_history_cache),
+        'price_acceleration': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n, price_history_cache=price_history_cache),
 
         # Buy & Hold Strategies
-        'static_bh_1y': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'static_bh_6m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 180, top_n),
-        'static_bh_3m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n),
-        'static_bh_1m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 30, top_n),
-        'bh_1y_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_6m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 180, top_n),
-        'bh_3m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n),
-        'bh_1m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 30, top_n),
+        'static_bh_1y': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'static_bh_6m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 180, top_n, price_history_cache=price_history_cache),
+        'static_bh_3m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n, price_history_cache=price_history_cache),
+        'static_bh_1m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 30, top_n, price_history_cache=price_history_cache),
+        'bh_1y_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_6m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 180, top_n, price_history_cache=price_history_cache),
+        'bh_3m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n, price_history_cache=price_history_cache),
+        'bh_1m_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 30, top_n, price_history_cache=price_history_cache),
 
         # Dynamic Buy & Hold Strategies
-        'dynamic_bh_1y': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, apply_performance_filter=True),
-        'dynamic_bh_6m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 180, top_n, apply_performance_filter=True),
-        'dynamic_bh_3m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n, apply_performance_filter=True),
-        'dynamic_bh_1m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 30, top_n, apply_performance_filter=True),
-        'dynamic_bh_1y_vol': lambda: select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current_date, top_n, lookback_days=365, max_volatility=0.4),
-        'dynamic_bh_1y_ts': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'dynamic_bh_1y': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, apply_performance_filter=True, price_history_cache=price_history_cache),
+        'dynamic_bh_6m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 180, top_n, apply_performance_filter=True, price_history_cache=price_history_cache),
+        'dynamic_bh_3m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 90, top_n, apply_performance_filter=True, price_history_cache=price_history_cache),
+        'dynamic_bh_1m': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 30, top_n, apply_performance_filter=True, price_history_cache=price_history_cache),
+        'dynamic_bh_1y_vol': lambda: select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current_date, lookback_days=365, max_volatility=0.4, top_n=top_n, price_history_cache=price_history_cache)[0],
+        'dynamic_bh_1y_ts': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
 
         # Enhanced BH Strategies (all use 1Y lookback with different triggers - simplified to base selection)
-        'bh_1y_vol_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_perf_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_mom_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_atr_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_hybrid_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_volume': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_sector': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_perf_thresh': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_market_regime': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_mom_persist': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_overlap': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_rank_drift': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_drawdown': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
-        'bh_1y_smart_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n),
+        'bh_1y_vol_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_perf_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_mom_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_atr_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_hybrid_trigger': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_volume': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_sector': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_perf_thresh': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_market_regime': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_mom_persist': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_overlap': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_rank_drift': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_drawdown': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
+        'bh_1y_smart_monthly': lambda: select_top_performers(all_tickers, ticker_data_grouped, current_date, 365, top_n, price_history_cache=price_history_cache),
 
         # Technical Strategies
         'concentrated_3m': lambda: select_concentrated_3m_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'dual_momentum': lambda: select_dual_momentum_stocks(all_tickers, ticker_data_grouped, current_date, top_n)[0],
-        'trend_atr': lambda: select_trend_following_atr_stocks(all_tickers, ticker_data_grouped, current_date, top_n)[0],
+        'trend_atr': lambda: select_trend_following_atr_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date,
+            top_n,
+            price_history_cache=price_history_cache,
+        )[0],
         'bb_squeeze': lambda: select_bb_squeeze_breakout_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'bb_rsi_combo': lambda: select_bb_rsi_combo_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'bb_breakout': lambda: select_bb_breakout_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
         'bb_mean_rev': lambda: select_bb_mean_reversion_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
-        'trend_breakout': lambda: select_trend_following_atr_stocks(all_tickers, ticker_data_grouped, current_date, top_n),
+        'trend_breakout': lambda: select_trend_breakout_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date,
+            top_n,
+            price_history_cache=price_history_cache,
+        ),
 
         # Ratio Strategies
         '3m_1y_ratio': lambda: select_3m_1y_ratio_stocks(all_tickers, ticker_data_grouped, current_date, top_n),

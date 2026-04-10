@@ -687,17 +687,38 @@ class AIChampionAllocator:
                 f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu)..."
             )
 
-        test_size = min(0.2, max(0.1, len(X) // 3))
         unique, counts = np.unique(y, return_counts=True)
-        can_stratify = all(count >= 2 for count in counts) and len(unique) >= 2
+        n_classes = len(unique)
+        min_class_count = int(counts.min()) if len(counts) > 0 else 0
+
+        test_size = max(n_classes, int(round(len(X) * 0.2)))
+        test_size = min(test_size, len(X) - n_classes)
+
+        can_stratify = (
+            n_classes >= 2
+            and min_class_count >= 2
+            and test_size >= n_classes
+            and (len(X) - test_size) >= n_classes
+        )
+
         if can_stratify:
             X_train, X_val, y_train, y_val = train_test_split(
                 X, y, test_size=test_size, random_state=42, stratify=y
             )
         else:
+            if len(X) < max(8, n_classes + 2):
+                print(
+                    f"   ℹ️ AI Champion: Need more samples for a safe train/val split "
+                    f"(samples={len(X)}, classes={n_classes})"
+                )
+                return True
             X_train, X_val, y_train, y_val = train_test_split(
                 X, y, test_size=test_size, random_state=42
             )
+
+        if len(np.unique(y_train)) < 2:
+            print("   ℹ️ AI Champion: Training split has only one class, keeping existing model")
+            return True
 
         unique_labels_all = np.unique(y_train)
         label_map_all = {old: new for new, old in enumerate(unique_labels_all)}
@@ -890,7 +911,7 @@ class AIChampionAllocator:
     ) -> Optional[str]:
         """Predict the best candidate strategy for the next forward window."""
         if self.model is None or not self.feature_cols:
-            print("   ⚠️ AI Champion: No model available, returning no selection")
+            print("   ℹ️ AI Champion: Model unavailable, leaving portfolio in cash")
             return None
 
         try:
@@ -898,13 +919,13 @@ class AIChampionAllocator:
             X = np.array([[features.get(col, 0.0) for col in self.feature_cols]], dtype=float)
 
             if hasattr(self.model, "n_features_in_") and self.model.n_features_in_ != X.shape[1]:
-                print("   ⚠️ AI Champion: Feature mismatch, returning no selection")
+                print("   ℹ️ AI Champion: Feature mismatch, leaving portfolio in cash")
                 return None
 
             raw_pred = int(self.model.predict(X)[0])
             predicted_strategy = self._decode_prediction_label(raw_pred)
             if predicted_strategy is None:
-                print("   ⚠️ AI Champion: Could not decode prediction, returning no selection")
+                print("   ℹ️ AI Champion: Could not decode prediction, leaving portfolio in cash")
                 return None
 
             prob_by_strategy: Dict[str, float] = {}
@@ -928,8 +949,8 @@ class AIChampionAllocator:
 
             if final_strategy not in self.active_candidates:
                 print(
-                    f"   ⚠️ AI Champion: Predicted inactive strategy '{final_strategy}', "
-                    "returning no selection"
+                    f"   ℹ️ AI Champion: Predicted inactive strategy '{final_strategy}', "
+                    "leaving portfolio in cash"
                 )
                 return None
 

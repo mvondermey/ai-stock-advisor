@@ -4368,7 +4368,14 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
 
 
 
-def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', current_date=None, top_n=20):
+def select_dynamic_bh_stocks(
+    all_tickers,
+    ticker_data_grouped,
+    period='1y',
+    current_date=None,
+    top_n=20,
+    price_history_cache=None,
+):
 
     """
 
@@ -6978,11 +6985,12 @@ def _select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top
     For full functionality, use the AI Regime system directly.
     """
     try:
-        from ai_regime_strategy import select_ai_regime_stocks, AIRegimeStrategy
+        from ai_regime_strategy import AIRegimeAllocator, select_ai_regime_stocks
 
         # Try to predict the best strategy based on current market conditions
         try:
-            regime_model = AIRegimeStrategy()
+            regime_model = AIRegimeAllocator()
+            regime_model.load_model()
             predicted_strategy = regime_model.predict_best_strategy(ticker_data_grouped, current_date)
             if predicted_strategy is None:
                 return []

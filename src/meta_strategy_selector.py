@@ -753,7 +753,7 @@ def select_meta_strategy_stocks(
         # === DYNAMIC BH VARIANTS ===
         elif selected_strategy == 'dynamic_bh_1y_vol_filter':
             from shared_strategies import select_top_performers_vol_filtered
-            return select_top_performers_vol_filtered(
+            selection = select_top_performers_vol_filtered(
                 all_tickers,
                 ticker_data_grouped,
                 current_date,
@@ -762,6 +762,7 @@ def select_meta_strategy_stocks(
                 max_volatility=0.4,
                 price_history_cache=price_history_cache,
             )
+            return selection[0] if isinstance(selection, tuple) else selection
 
         elif selected_strategy == 'dynamic_bh_1y_trailing_stop':
             return select_top_performers(
@@ -1006,11 +1007,24 @@ def select_meta_strategy_stocks(
         # === AI STRATEGIES ===
         elif selected_strategy in META_AI_STRATEGIES:
             from shared_strategies import select_ai_elite_with_training
-            return select_ai_elite_with_training(all_tickers, ticker_data_grouped, current_date, top_n)
+            selection = select_ai_elite_with_training(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
+            return selection[0] if isinstance(selection, tuple) else selection
 
         elif selected_strategy in META_AI_REGIME_STRATEGIES:
             from ai_regime_strategy import select_ai_regime_stocks
-            return select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top_n)
+            return select_ai_regime_stocks(
+                all_tickers,
+                ticker_data_grouped,
+                current_date,
+                top_n,
+                price_history_cache=price_history_cache,
+            )
 
         elif selected_strategy == 'universal_model':
             from shared_strategies import _select_universal_model_stocks

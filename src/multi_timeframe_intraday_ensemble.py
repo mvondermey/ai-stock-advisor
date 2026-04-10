@@ -166,6 +166,7 @@ def _calculate_multi_timeframe_intraday_signals_from_cache(
 
     signals: Dict[str, float] = {}
     current_ts = _to_utc_timestamp(current_date) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+    current_date_utc = _to_utc_timestamp(current_date)
     max_lookback_days = max(
         (MULTI_TIMEFRAME_LOOKBACK[timeframe] for timeframe in timeframes if timeframe != "long_term"),
         default=0,
@@ -182,7 +183,11 @@ def _calculate_multi_timeframe_intraday_signals_from_cache(
         daily_slice = _daily_slice_from_cache(cache_entry, current_date, lookback_days)
 
         if timeframe == "long_term":
-            signals[timeframe] = calculate_daily_momentum(daily_slice, current_date) if len(daily_slice) >= 10 else 0.0
+            signals[timeframe] = (
+                calculate_daily_momentum(daily_slice, current_date_utc)
+                if len(daily_slice) >= 10
+                else 0.0
+            )
             continue
 
         if hourly_data is None or hourly_data.empty:
@@ -364,6 +369,7 @@ def calculate_multi_timeframe_intraday_signals(
         timeframes = MULTI_TIMEFRAMES
 
     signals: Dict[str, float] = {}
+    current_date_utc = _to_utc_timestamp(current_date)
     current_ts = _to_utc_timestamp(current_date) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
     max_lookback_days = max(
         (MULTI_TIMEFRAME_LOOKBACK[timeframe] for timeframe in timeframes if timeframe != "long_term"),
@@ -378,11 +384,15 @@ def calculate_multi_timeframe_intraday_signals(
 
     for timeframe in timeframes:
         lookback_days = MULTI_TIMEFRAME_LOOKBACK[timeframe]
-        start_date = current_date - timedelta(days=lookback_days)
+        start_date = current_date_utc - timedelta(days=lookback_days)
         daily_slice = daily_data[daily_data.index >= start_date]
 
         if timeframe == "long_term":
-            signals[timeframe] = calculate_daily_momentum(daily_slice, current_date) if len(daily_slice) >= 10 else 0.0
+            signals[timeframe] = (
+                calculate_daily_momentum(daily_slice, current_date_utc)
+                if len(daily_slice) >= 10
+                else 0.0
+            )
             continue
 
         if hourly_data is None or hourly_data.empty:

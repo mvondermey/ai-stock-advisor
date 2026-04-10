@@ -2245,6 +2245,22 @@ def _run_portfolio_backtest_walk_forward(
         )
         return result
 
+    def _normalize_selected_tickers(selection) -> list[str]:
+        """Coerce selector outputs into a plain list of ticker symbols."""
+        if selection is None:
+            return []
+        if isinstance(selection, str):
+            return [selection]
+        if isinstance(selection, tuple):
+            selection = selection[0] if selection else []
+        normalized = []
+        for item in selection or []:
+            if isinstance(item, str):
+                normalized.append(item)
+            elif isinstance(item, (list, tuple)) and item and isinstance(item[0], str):
+                normalized.append(item[0])
+        return normalized
+
     def _get_strategy_timing_entry(strategy_name: str) -> Dict[str, float]:
         strategy_name = _canonicalize_strategy_timing_name(strategy_name)
         return daily_strategy_timings.setdefault(
@@ -4509,7 +4525,8 @@ def _run_portfolio_backtest_walk_forward(
         if config.ENABLE_STATIC_BH_1Y_VOLUME_FILTER:
             from enhanced_static_bh_strategies import select_volume_filtered_bh_1y_stocks
             new_stocks = select_volume_filtered_bh_1y_stocks(
-                initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE, STATIC_BH_1Y_VOLUME_MIN_DAILY
+                initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE, STATIC_BH_1Y_VOLUME_MIN_DAILY,
+                price_history_cache=price_history_cache,
             )
             if new_stocks and (not static_bh_1y_volume_initialized or set(new_stocks) != set(current_static_bh_1y_volume_stocks)):
                 print(f"   📊 Static BH 1Y Volume Day {day_count}: {new_stocks}")
@@ -4531,7 +4548,8 @@ def _run_portfolio_backtest_walk_forward(
         if config.ENABLE_STATIC_BH_1Y_SECTOR_ROTATION:
             from enhanced_static_bh_strategies import select_sector_rotated_bh_1y_stocks
             new_stocks = select_sector_rotated_bh_1y_stocks(
-                initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE, STATIC_BH_1Y_SECTOR_MAX_PER_SECTOR
+                initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE, STATIC_BH_1Y_SECTOR_MAX_PER_SECTOR,
+                price_history_cache=price_history_cache,
             )
             if new_stocks and (not static_bh_1y_sector_initialized or set(new_stocks) != set(current_static_bh_1y_sector_stocks)):
                 print(f"   📊 Static BH 1Y Sector Day {day_count}: {new_stocks}")
@@ -4554,7 +4572,8 @@ def _run_portfolio_backtest_walk_forward(
             from enhanced_static_bh_strategies import select_performance_threshold_bh_1y_stocks
             new_stocks, should_rebalance = select_performance_threshold_bh_1y_stocks(
                 initial_top_tickers, ticker_data_grouped, current_date,
-                current_static_bh_1y_perf_threshold_stocks, PORTFOLIO_SIZE, STATIC_BH_1Y_PERFORMANCE_MIN_IMPROVEMENT
+                current_static_bh_1y_perf_threshold_stocks, PORTFOLIO_SIZE, STATIC_BH_1Y_PERFORMANCE_MIN_IMPROVEMENT,
+                price_history_cache=price_history_cache,
             )
             if should_rebalance and new_stocks:
                 print(f"   📊 Static BH 1Y Perf Thresh Day {day_count}: {new_stocks}")
@@ -4582,7 +4601,8 @@ def _run_portfolio_backtest_walk_forward(
                 new_stocks, next_rebalance_days = select_market_regime_bh_1y_stocks(
                     initial_top_tickers, ticker_data_grouped, current_date, PORTFOLIO_SIZE,
                     STATIC_BH_1Y_MARKET_REGIME_BASE_DAYS, STATIC_BH_1Y_MARKET_REGIME_HIGH_VOL_DAYS,
-                    STATIC_BH_1Y_MARKET_REGIME_LOW_VOL_DAYS, STATIC_BH_1Y_MARKET_REGIME_VOL_THRESHOLD
+                    STATIC_BH_1Y_MARKET_REGIME_LOW_VOL_DAYS, STATIC_BH_1Y_MARKET_REGIME_VOL_THRESHOLD,
+                    price_history_cache=price_history_cache,
                 )
                 if new_stocks and (not static_bh_1y_market_regime_initialized or set(new_stocks) != set(current_static_bh_1y_market_regime_stocks)):
                     print(f"   📊 Static BH 1Y Market Regime Day {day_count}: {new_stocks}")
@@ -4608,7 +4628,8 @@ def _run_portfolio_backtest_walk_forward(
             new_stocks, should_rebalance, static_bh_1y_mom_persist_top_stocks_history = select_momentum_persistence_bh_1y_stocks(
                 initial_top_tickers, ticker_data_grouped, current_date,
                 static_bh_1y_mom_persist_top_stocks_history, current_static_bh_1y_mom_persist_stocks,
-                PORTFOLIO_SIZE, STATIC_BH_1Y_MOMENTUM_PERSIST_DAYS, STATIC_BH_1Y_MOMENTUM_PERSIST_MIN_OVERLAP
+                PORTFOLIO_SIZE, STATIC_BH_1Y_MOMENTUM_PERSIST_DAYS, STATIC_BH_1Y_MOMENTUM_PERSIST_MIN_OVERLAP,
+                price_history_cache=price_history_cache,
             )
             # Force initialization on first run even if stability check fails
             if (not static_bh_1y_mom_persist_initialized or should_rebalance) and new_stocks:
@@ -4632,7 +4653,8 @@ def _run_portfolio_backtest_walk_forward(
             from enhanced_static_bh_strategies import select_overlap_based_bh_1y_stocks
             new_stocks, should_rebalance = select_overlap_based_bh_1y_stocks(
                 initial_top_tickers, ticker_data_grouped, current_date,
-                current_static_bh_1y_overlap_stocks, PORTFOLIO_SIZE, STATIC_BH_1Y_OVERLAP_THRESHOLD
+                current_static_bh_1y_overlap_stocks, PORTFOLIO_SIZE, STATIC_BH_1Y_OVERLAP_THRESHOLD,
+                price_history_cache=price_history_cache,
             )
             # Force initialization on first run
             if (not static_bh_1y_overlap_initialized or should_rebalance) and new_stocks:
@@ -4658,7 +4680,8 @@ def _run_portfolio_backtest_walk_forward(
             new_stocks, should_rebalance, static_bh_1y_rank_drift_previous_rankings = select_rank_drift_bh_1y_stocks(
                 initial_top_tickers, ticker_data_grouped, current_date,
                 static_bh_1y_rank_drift_previous_rankings, current_static_bh_1y_rank_drift_stocks,
-                PORTFOLIO_SIZE, STATIC_BH_1Y_RANK_DRIFT_THRESHOLD
+                PORTFOLIO_SIZE, STATIC_BH_1Y_RANK_DRIFT_THRESHOLD,
+                price_history_cache=price_history_cache,
             )
             # Force initialization on first run
             if (not static_bh_1y_rank_drift_initialized or should_rebalance) and new_stocks:
@@ -4683,7 +4706,8 @@ def _run_portfolio_backtest_walk_forward(
             new_stocks, should_rebalance = select_drawdown_trigger_bh_1y_stocks(
                 initial_top_tickers, ticker_data_grouped, current_date,
                 current_static_bh_1y_drawdown_stocks, static_bh_1y_drawdown_portfolio_value,
-                static_bh_1y_drawdown_peak, PORTFOLIO_SIZE, STATIC_BH_1Y_DRAWDOWN_THRESHOLD
+                static_bh_1y_drawdown_peak, PORTFOLIO_SIZE, STATIC_BH_1Y_DRAWDOWN_THRESHOLD,
+                price_history_cache=price_history_cache,
             )
             # Force initialization on first run
             if (not static_bh_1y_drawdown_initialized or should_rebalance) and new_stocks:
@@ -4710,7 +4734,8 @@ def _run_portfolio_backtest_walk_forward(
                 initial_top_tickers, ticker_data_grouped, current_date,
                 current_static_bh_1y_smart_monthly_stocks, static_bh_1y_smart_monthly_portfolio_value,
                 static_bh_1y_smart_monthly_peak, static_bh_1y_smart_monthly_last_rebalance_month,
-                PORTFOLIO_SIZE, STATIC_BH_1Y_SMART_MONTHLY_DRAWDOWN
+                PORTFOLIO_SIZE, STATIC_BH_1Y_SMART_MONTHLY_DRAWDOWN,
+                price_history_cache=price_history_cache,
             )
             # Force initialization on first run
             if (not static_bh_1y_smart_monthly_initialized or should_rebalance) and new_stocks:
@@ -6706,7 +6731,8 @@ def _run_portfolio_backtest_walk_forward(
                     initial_top_tickers,
                     ticker_data_grouped,
                     current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    price_history_cache=price_history_cache,
                 )
 
                 if new_risk_adj_mom_sentiment_stocks:
@@ -7587,7 +7613,8 @@ def _run_portfolio_backtest_walk_forward(
                     "selection",
                     select_trend_following_atr_stocks,
                     initial_top_tickers, ticker_data_grouped, current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    price_history_cache=price_history_cache,
                 )
 
                 # Process sells first
@@ -8657,6 +8684,7 @@ def _run_portfolio_backtest_walk_forward(
                         ticker_data_grouped,
                         current_date,
                         PORTFOLIO_SIZE,
+                        price_history_cache=price_history_cache,
                     )
 
                 new_trend_breakout_stocks = _resolve_parallel_strategy_selection(
@@ -10425,6 +10453,7 @@ def _run_portfolio_backtest_walk_forward(
                             PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
                             ai_regime_current_strategy,
                             ai_elite_models=ai_elite_models,
+                            price_history_cache=price_history_cache,
                         )
                     else:
                         new_ai_regime_stocks = []
@@ -10496,6 +10525,7 @@ def _run_portfolio_backtest_walk_forward(
                                 PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
                                 ai_regime_monthly_current_strategy,
                                 ai_elite_models=ai_elite_models,
+                                price_history_cache=price_history_cache,
                             )
                         else:
                             new_ai_regime_monthly_stocks = []
@@ -10557,7 +10587,9 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped,
                             current_date,
                             PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
                         )
+                        new_stocks = _normalize_selected_tickers(new_stocks)
                         if new_stocks and set(new_stocks) != set(current_meta_weighted_composite_stocks):
                             meta_weighted_composite_positions, meta_weighted_composite_cash, current_meta_weighted_composite_stocks, rc, _ = _smart_rebalance_portfolio(
                                 strategy_name=f"Meta Weighted ({selected_strategy[:8]})",
@@ -10590,7 +10622,9 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped,
                             current_date,
                             PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
                         )
+                        new_stocks = _normalize_selected_tickers(new_stocks)
                         if new_stocks and set(new_stocks) != set(current_meta_tiered_selection_stocks):
                             meta_tiered_selection_positions, meta_tiered_selection_cash, current_meta_tiered_selection_stocks, rc, _ = _smart_rebalance_portfolio(
                                 strategy_name=f"Meta Tiered ({selected_strategy[:8]})",
@@ -10623,7 +10657,9 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped,
                             current_date,
                             PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
                         )
+                        new_stocks = _normalize_selected_tickers(new_stocks)
                         if new_stocks and set(new_stocks) != set(current_meta_ensemble_alloc_stocks):
                             meta_ensemble_alloc_positions, meta_ensemble_alloc_cash, current_meta_ensemble_alloc_stocks, rc, _ = _smart_rebalance_portfolio(
                                 strategy_name=f"Meta Ensemble ({selected_strategy[:8]})",
@@ -10656,7 +10692,9 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped,
                             current_date,
                             PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
                         )
+                        new_stocks = _normalize_selected_tickers(new_stocks)
                         if new_stocks and set(new_stocks) != set(current_meta_regime_based_stocks):
                             meta_regime_based_positions, meta_regime_based_cash, current_meta_regime_based_stocks, rc, _ = _smart_rebalance_portfolio(
                                 strategy_name=f"Meta Regime ({selected_strategy[:8]})",
@@ -10689,7 +10727,9 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped,
                             current_date,
                             PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
                         )
+                        new_stocks = _normalize_selected_tickers(new_stocks)
                         if new_stocks and set(new_stocks) != set(current_meta_recency_weighted_stocks):
                             meta_recency_weighted_positions, meta_recency_weighted_cash, current_meta_recency_weighted_stocks, rc, _ = _smart_rebalance_portfolio(
                                 strategy_name=f"Meta Recency ({selected_strategy[:8]})",
@@ -10722,7 +10762,9 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped,
                             current_date,
                             PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
                         )
+                        new_stocks = _normalize_selected_tickers(new_stocks)
                         if new_stocks and set(new_stocks) != set(current_meta_efficiency_ratio_stocks):
                             meta_efficiency_ratio_positions, meta_efficiency_ratio_cash, current_meta_efficiency_ratio_stocks, rc, _ = _smart_rebalance_portfolio(
                                 strategy_name=f"Meta Efficiency ({selected_strategy[:8]})",
@@ -10755,7 +10797,9 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped,
                             current_date,
                             PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
                         )
+                        new_stocks = _normalize_selected_tickers(new_stocks)
                         if new_stocks and set(new_stocks) != set(current_meta_min_variance_stocks):
                             meta_min_variance_positions, meta_min_variance_cash, current_meta_min_variance_stocks, rc, _ = _smart_rebalance_portfolio(
                                 strategy_name=f"Meta MinVar ({selected_strategy[:8]})",
@@ -10788,7 +10832,9 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped,
                             current_date,
                             PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
                         )
+                        new_stocks = _normalize_selected_tickers(new_stocks)
                         if new_stocks and set(new_stocks) != set(current_meta_bayesian_stocks):
                             meta_bayesian_positions, meta_bayesian_cash, current_meta_bayesian_stocks, rc, _ = _smart_rebalance_portfolio(
                                 strategy_name=f"Meta Bayesian ({selected_strategy[:8]})",
@@ -10821,7 +10867,9 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped,
                             current_date,
                             PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
                         )
+                        new_stocks = _normalize_selected_tickers(new_stocks)
                         if new_stocks and set(new_stocks) != set(current_meta_adaptive_convex_stocks):
                             meta_adaptive_convex_positions, meta_adaptive_convex_cash, current_meta_adaptive_convex_stocks, rc, _ = _smart_rebalance_portfolio(
                                 strategy_name=f"Meta Adaptive ({selected_strategy[:8]})",
@@ -10854,7 +10902,9 @@ def _run_portfolio_backtest_walk_forward(
                             ticker_data_grouped,
                             current_date,
                             PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
                         )
+                        new_stocks = _normalize_selected_tickers(new_stocks)
                         if new_stocks and set(new_stocks) != set(current_meta_consensus_stocks):
                             meta_consensus_positions, meta_consensus_cash, current_meta_consensus_stocks, rc, _ = _smart_rebalance_portfolio(
                                 strategy_name=f"Meta Consensus ({selected_strategy[:8]})",

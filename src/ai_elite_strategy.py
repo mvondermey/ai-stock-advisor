@@ -71,6 +71,16 @@ def _print_prediction_timing(label: str, stats) -> None:
         print(f"   ⏱️ {label} timing: " + ", ".join(segments))
 
 
+def _build_prediction_input(features: dict, model):
+    """Use named columns for models fitted with feature names."""
+    from ai_elite_strategy_per_ticker import FEATURE_COLS
+
+    row = [features.get(col, 0.0) for col in FEATURE_COLS]
+    if hasattr(model, "feature_names_in_"):
+        return pd.DataFrame([row], columns=FEATURE_COLS)
+    return np.array([row], dtype=np.float64)
+
+
 def select_ai_elite_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
@@ -805,9 +815,7 @@ def _predict_ticker_worker(args):
         else:
             actual_model = ticker_model
 
-        # Use numpy array for faster single-row prediction
-        from ai_elite_strategy_per_ticker import FEATURE_COLS
-        feature_values = np.array([[features.get(col, 0.0) for col in FEATURE_COLS]], dtype=np.float64)
+        feature_values = _build_prediction_input(features, actual_model)
         model_start = time.perf_counter()
         ai_score = actual_model.predict(feature_values)[0]
         _record_prediction_timing(timing_stats, "model", time.perf_counter() - model_start)
@@ -866,8 +874,7 @@ def _predict_ticker_ensemble_worker(args):
         positive_models.sort(key=lambda x: x[1], reverse=True)
         top_models = positive_models[:3]
 
-        from ai_elite_strategy_per_ticker import FEATURE_COLS
-        feature_values = np.array([[features.get(col, 0.0) for col in FEATURE_COLS]], dtype=np.float64)
+        feature_values = _build_prediction_input(features, all_models[top_models[0][0]])
 
         # Weighted average: weight = R² score
         model_start = time.perf_counter()
@@ -1064,15 +1071,13 @@ def _predict_ticker_rank_ensemble_worker(args):
         if not all_models:
             return ticker, None, 'no_model'
 
-        from ai_elite_strategy_per_ticker import FEATURE_COLS
-        feature_values = np.array([[features.get(col, 0.0) for col in FEATURE_COLS]], dtype=np.float64)
-
         per_model_predictions = {}
         model_start = time.perf_counter()
         for model_name in selected_model_names:
             model = all_models.get(model_name)
             if model is None:
                 return ticker, None, 'no_model'
+            feature_values = _build_prediction_input(features, model)
             per_model_predictions[model_name] = model.predict(feature_values)[0]
         _record_prediction_timing(timing_stats, "model", time.perf_counter() - model_start)
 

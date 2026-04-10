@@ -346,7 +346,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 # --- Backtest windows
 
-BACKTEST_DAYS           =   70   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   75   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 BACKTEST_END_DATE       = False  # False = use current last trading day, or set "YYYY-MM-DD" to freeze runs for debugging
 
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
