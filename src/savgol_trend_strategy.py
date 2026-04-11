@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
+from multiprocessing import get_context
 from pathlib import Path
+import tempfile
 from typing import Dict, List, Optional, Tuple
 
 import joblib
@@ -20,6 +23,14 @@ from scipy.signal import savgol_filter
 from scipy.stats import spearmanr
 from tqdm import tqdm
 import config
+from ai_elite_strategy_per_ticker import (
+    _configure_existing_model_backend,
+    _format_training_plan,
+    _model_backend,
+    _model_worker_mode,
+    _predictions_are_unstable,
+    _set_model_parallelism,
+)
 
 from model_training_safety import (
     catboost_has_trained_trees,
@@ -34,19 +45,22 @@ from config import (
     SAVGOL_TREND_FALLBACK_TO_MOMENTUM,
     SAVGOL_TREND_FORWARD_DAYS,
     SAVGOL_TREND_HOLD_MARGIN,
-    SAVGOL_TREND_LOOKBACK_DAYS,
     SAVGOL_TREND_MAX_WORKERS,
     SAVGOL_TREND_MIN_MODEL_SPEARMAN,
     SAVGOL_TREND_MIN_PREDICTED_EDGE,
     SAVGOL_TREND_MIN_SAMPLES,
     SAVGOL_TREND_MIN_SCORE_SPREAD,
     SAVGOL_TREND_RETRAIN_DAYS,
+    SAVGOL_TREND_TRAINING_LOOKBACK_DAYS,
     XGBOOST_USE_GPU,
 )
 
 
 MODEL_SAVE_DIR = Path("logs/models")
 SAVGOL_TREND_MODEL_PATH = MODEL_SAVE_DIR / "savgol_trend_model.joblib"
+SAVGOL_MIN_HISTORY_ROWS = 20
+_SAVGOL_TRAIN_CONTEXT_PATH: Optional[str] = None
+_SAVGOL_TRAIN_CONTEXT: Optional[Dict[str, object]] = None
 
 
 def _normalize_current_date(data: pd.DataFrame, current_date: datetime) -> datetime:
@@ -215,20 +229,19 @@ def _calculate_savgol_features_from_history(
     high_history: np.ndarray,
     low_history: np.ndarray,
     volume_history: np.ndarray,
-    lookback_days: int,
     market_context: Optional[Dict[str, float]] = None,
 ) -> Optional[Dict[str, float]]:
     """Shared SavGol feature logic for both direct and index-based collection."""
-    if len(close_history) < lookback_days:
+    if len(close_history) < SAVGOL_MIN_HISTORY_ROWS:
         return None
 
-    close = np.asarray(close_history.iloc[-lookback_days:], dtype=float)
-    if len(close) < lookback_days or close[-1] <= 0:
+    close = np.asarray(close_history, dtype=float)
+    if len(close) < SAVGOL_MIN_HISTORY_ROWS or close[-1] <= 0:
         return None
 
-    volume = np.asarray(volume_history[-lookback_days:], dtype=float)
-    high = np.asarray(high_history[-lookback_days:], dtype=float)
-    low = np.asarray(low_history[-lookback_days:], dtype=float)
+    volume = np.asarray(volume_history, dtype=float)
+    high = np.asarray(high_history, dtype=float)
+    low = np.asarray(low_history, dtype=float)
 
     log_close = np.log(np.clip(close, 1e-12, None))
     returns = np.diff(close) / np.clip(close[:-1], 1e-12, None)
@@ -377,7 +390,6 @@ def calculate_savgol_features(
     ticker: str,
     data: pd.DataFrame,
     current_date: datetime,
-    lookback_days: int = SAVGOL_TREND_LOOKBACK_DAYS,
     market_context: Optional[Dict[str, float]] = None,
 ) -> Optional[Dict[str, float]]:
     """Calculate local polynomial trend and medium-horizon context features."""
@@ -386,11 +398,11 @@ def calculate_savgol_features(
     try:
         current_date = _normalize_current_date(data, current_date)
         hist = data.loc[:current_date]
-        if len(hist) < lookback_days:
+        if len(hist) < SAVGOL_MIN_HISTORY_ROWS:
             return None
 
         close_history = pd.to_numeric(hist["Close"], errors="coerce").dropna()
-        if len(close_history) < lookback_days:
+        if len(close_history) < SAVGOL_MIN_HISTORY_ROWS:
             return None
 
         aligned_hist = hist.reindex(close_history.index)
@@ -415,7 +427,6 @@ def calculate_savgol_features(
             high_history=high_history,
             low_history=low_history,
             volume_history=volume_history,
-            lookback_days=lookback_days,
             market_context=market_context,
         )
     except Exception:
@@ -474,7 +485,6 @@ def collect_savgol_ticker_training_data(
     ticker_data: pd.DataFrame,
     train_start_date: datetime,
     train_end_date: datetime,
-    lookback_days: int,
     forward_days: int,
     market_context_map: Dict[pd.Timestamp, Dict[str, float]],
 ) -> List[Tuple[pd.Timestamp, Dict[str, float], float]]:
@@ -516,7 +526,7 @@ def collect_savgol_ticker_training_data(
     start_ns = _timestamp_ns(train_start_date)
     end_ns = _timestamp_ns(train_end_date)
     min_future_rows = max(2, forward_days // 2)
-    start_pos = max(lookback_days - 1, int(np.searchsorted(date_ns, start_ns, side="left")))
+    start_pos = max(SAVGOL_MIN_HISTORY_ROWS - 1, int(np.searchsorted(date_ns, start_ns, side="left")))
     end_pos = min(
         int(np.searchsorted(date_ns, end_ns, side="right")) - 1,
         len(close_series) - min_future_rows,
@@ -524,21 +534,18 @@ def collect_savgol_ticker_training_data(
     if start_pos > end_pos:
         return []
 
-    history_limit = max(lookback_days, 260)
     samples: List[Tuple[pd.Timestamp, Dict[str, float], float]] = []
     for pos in range(start_pos, end_pos + 1):
         try:
             sample_key = pd.Timestamp(close_series.index[pos])
             cache_key = _market_context_key(sample_key)
             market_context = market_context_map.get(cache_key, {})
-            history_start = max(0, pos - history_limit + 1)
-            close_history = close_series.iloc[history_start : pos + 1]
+            close_history = close_series.iloc[: pos + 1]
             features = _calculate_savgol_features_from_history(
                 close_history=close_history,
-                high_history=high_values[history_start : pos + 1],
-                low_history=low_values[history_start : pos + 1],
-                volume_history=volume_values[history_start : pos + 1],
-                lookback_days=lookback_days,
+                high_history=high_values[: pos + 1],
+                low_history=low_values[: pos + 1],
+                volume_history=volume_values[: pos + 1],
                 market_context=market_context,
             )
             if features is None:
@@ -567,7 +574,6 @@ def _collect_savgol_data_worker(args):
         ticker_data,
         train_start_date,
         train_end_date,
-        lookback_days,
         forward_days,
         market_context_map,
     ) = args
@@ -576,14 +582,13 @@ def _collect_savgol_data_worker(args):
         ticker_data=ticker_data,
         train_start_date=train_start_date,
         train_end_date=train_end_date,
-        lookback_days=lookback_days,
         forward_days=forward_days,
         market_context_map=market_context_map,
     )
     return ticker, samples
 
 
-def _fresh_model(name: str, device: str):
+def _fresh_model(name: str, device: str, n_jobs: int = -1):
     """Create a new model instance for the requested backend."""
     import xgboost as xgb
     import lightgbm as lgb
@@ -598,9 +603,10 @@ def _fresh_model(name: str, device: str):
             tree_method="hist",
             device=device,
             verbosity=0,
-            n_jobs=-1,
+            n_jobs=n_jobs,
         )
     if name == "LightGBM":
+        lightgbm_device = _model_backend("LightGBM", device)
         return lgb.LGBMRegressor(
             n_estimators=200,
             max_depth=5,
@@ -608,7 +614,8 @@ def _fresh_model(name: str, device: str):
             subsample=0.8,
             random_state=42,
             verbose=-1,
-            n_jobs=-1,
+            n_jobs=n_jobs,
+            device=lightgbm_device,
         )
     if name == "CatBoost":
         import catboost as cb
@@ -623,7 +630,7 @@ def _fresh_model(name: str, device: str):
             random_seed=42,
             verbose=0,
             allow_writing_files=False,
-            thread_count=1,
+            thread_count=n_jobs if n_jobs > 0 else (os.cpu_count() or 1),
         )
     raise ValueError(f"Unknown model backend: {name}")
 
@@ -642,6 +649,102 @@ def _build_model_set():
     return models, device
 
 
+def _get_savgol_train_context() -> Dict[str, object]:
+    global _SAVGOL_TRAIN_CONTEXT
+    if _SAVGOL_TRAIN_CONTEXT is None:
+        if not _SAVGOL_TRAIN_CONTEXT_PATH:
+            raise ValueError("SavGol training context is not initialized")
+        _SAVGOL_TRAIN_CONTEXT = joblib.load(_SAVGOL_TRAIN_CONTEXT_PATH)
+    return _SAVGOL_TRAIN_CONTEXT
+
+
+def _init_savgol_train_worker(
+    context_path: Optional[str] = None,
+    context_data: Optional[Dict[str, object]] = None,
+) -> None:
+    global _SAVGOL_TRAIN_CONTEXT_PATH, _SAVGOL_TRAIN_CONTEXT
+    _SAVGOL_TRAIN_CONTEXT_PATH = context_path
+    _SAVGOL_TRAIN_CONTEXT = context_data
+
+
+def _train_single_savgol_model(
+    name: str,
+    n_jobs_limit: int = 4,
+) -> Tuple[bool, Optional[object], Optional[float], float, str, str]:
+    import time
+    import warnings
+
+    start_time = time.time()
+    context = _get_savgol_train_context()
+    X_train = context["X_train"]
+    y_train = context["y_train"]
+    X_val = context["X_val"]
+    y_val = context["y_val"]
+    device = context["device"]
+    has_existing = bool(context["has_existing"])
+    existing_model = context["models"].get(name) if has_existing else None
+
+    if len(X_train) < 10:
+        return (False, None, None, 0.0, "skipped", "insufficient training data")
+    if np.all(y_train == y_train[0]):
+        return (False, None, None, 0.0, "skipped", "constant target")
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            incremental_failed = False
+            used_incremental = False
+            incremental_error = None
+
+            model = existing_model
+            if has_existing and model is not None:
+                _set_model_parallelism(model, n_jobs_limit)
+                try:
+                    if name == "XGBoost":
+                        used_incremental = True
+                        model.fit(X_train, y_train, xgb_model=model.get_booster())
+                    elif name == "LightGBM":
+                        used_incremental = True
+                        model.fit(X_train, y_train, init_model=model.booster_)
+                    elif name == "CatBoost":
+                        used_incremental = True
+                        if catboost_has_trained_trees(model):
+                            configure_catboost_cpu_continuation(model)
+                            model.fit(X_train, y_train, init_model=model)
+                        else:
+                            incremental_error = "no saved trees yet"
+                            incremental_failed = True
+                    if used_incremental:
+                        quick_pred = np.asarray(model.predict(X_val[: min(100, len(X_val))]), dtype=float)
+                        if _predictions_are_unstable(quick_pred):
+                            incremental_error = "incremental predictions unstable"
+                            incremental_failed = True
+                except Exception as exc:
+                    incremental_error = str(exc)
+                    incremental_failed = True
+
+            if not used_incremental or incremental_failed:
+                model = _fresh_model(name, device, n_jobs=n_jobs_limit)
+                model.fit(X_train, y_train)
+
+            val_pred = np.asarray(model.predict(X_val), dtype=float)
+            if _predictions_are_unstable(val_pred):
+                return (False, None, None, time.time() - start_time, "failed", "unstable predictions")
+
+            score = spearmanr(y_val, val_pred).correlation if len(y_val) > 1 else 0.0
+            if score is None or np.isnan(score):
+                score = 0.0
+
+            elapsed = time.time() - start_time
+            status = "incremental" if used_incremental and not incremental_failed else "fresh"
+            detail = "ok"
+            if incremental_failed and incremental_error:
+                detail = f"incremental fallback: {incremental_error}"
+            return (True, model, float(score), elapsed, status, detail)
+    except Exception as exc:
+        return (False, None, None, time.time() - start_time, "failed", str(exc))
+
+
 class SavgolTrendStrategy:
     """Pooled ML strategy driven by Savitzky-Golay and market-context features."""
 
@@ -649,12 +752,12 @@ class SavgolTrendStrategy:
         self,
         retrain_days: int = SAVGOL_TREND_RETRAIN_DAYS,
         min_samples: int = SAVGOL_TREND_MIN_SAMPLES,
-        lookback_days: int = SAVGOL_TREND_LOOKBACK_DAYS,
+        training_lookback_days: int = SAVGOL_TREND_TRAINING_LOOKBACK_DAYS,
         forward_days: int = SAVGOL_TREND_FORWARD_DAYS,
     ):
         self.retrain_days = retrain_days
         self.min_samples = min_samples
-        self.lookback_days = lookback_days
+        self.training_lookback_days = training_lookback_days
         self.forward_days = forward_days
         self.model = None
         self.all_models: Optional[Dict[str, object]] = None
@@ -686,7 +789,7 @@ class SavgolTrendStrategy:
             if current_day_idx >= len(business_days):
                 current_day_idx = len(business_days) - 1
             current_date = business_days[current_day_idx] if current_day_idx >= 0 else business_days[0]
-            train_start = current_date - timedelta(days=self.lookback_days)
+            train_start = current_date - timedelta(days=self.training_lookback_days)
 
             import time as _time
 
@@ -704,7 +807,11 @@ class SavgolTrendStrategy:
                 sample_dates=market_context_dates,
             )
 
-            print(f"   📊 SavGol Trend: Collecting data from {len(all_tickers)} tickers ({n_workers} workers, {self.lookback_days}d lookback)...")
+            print(
+                f"   📊 SavGol Trend: Collecting data from {len(all_tickers)} tickers "
+                f"({n_workers} workers, {self.training_lookback_days}d train window, "
+                f"full available feature history)..."
+            )
             _start_time = _time.time()
 
             collect_args = [
@@ -713,7 +820,6 @@ class SavgolTrendStrategy:
                     ticker_data_grouped.get(t),
                     train_start,
                     current_date,
-                    self.lookback_days,
                     self.forward_days,
                     market_context_map,
                 )
@@ -773,7 +879,6 @@ class SavgolTrendStrategy:
             y_val = np.array([row[2] for row in val_samples], dtype=float)
 
             import time
-            import warnings
 
             models, device = _build_model_set()
             has_existing = self.all_models is not None and len(self.all_models) > 0
@@ -785,65 +890,121 @@ class SavgolTrendStrategy:
                             models[name] = _fresh_model(name, device)
                         except Exception:
                             continue
+                for name, model in models.items():
+                    _configure_existing_model_backend(name, model, device)
 
             print(f"   📊 Train/Val split: {len(X_train)} train, {len(X_val)} val samples")
 
             trained_models: Dict[str, object] = {}
             model_scores: Dict[str, float] = {}
+            model_names_to_train = list(models.keys())
+            X_train_np = X_train.values if hasattr(X_train, "values") else X_train
+            X_val_np = X_val.values if hasattr(X_val, "values") else X_val
+            y_train_np = np.asarray(y_train)
+            y_val_np = np.asarray(y_val)
 
-            for name, model in models.items():
-                print(f"      🔄 {name}: Training started...", end=" ", flush=True)
+            spawn_model_names: List[str] = []
+            parallel_model_names = list(model_names_to_train)
+            for name in list(parallel_model_names):
+                if _model_worker_mode(name, device) == "spawn":
+                    parallel_model_names.remove(name)
+                    spawn_model_names.append(name)
+
+            total_cores = os.cpu_count() or 8
+            n_train_workers = max(1, min(3, len(parallel_model_names), total_cores)) if parallel_model_names else 1
+            n_jobs_per_model = max(1, total_cores // n_train_workers)
+
+            print(
+                f"   🚀 SavGol Trend: Training {len(model_names_to_train)} models in parallel "
+                f"({n_train_workers} fork workers, {n_jobs_per_model} threads/model; "
+                f"{len(spawn_model_names)} spawn models)..."
+            )
+            if spawn_model_names:
+                print("   ℹ️ SavGol Trend: GPU models use spawned workers; CPU models stay on fork workers")
+                for name in spawn_model_names:
+                    print(f"      🔄 {name}: queued (spawn, backend={_model_backend(name, device)})")
+
+            global _SAVGOL_TRAIN_CONTEXT_PATH, _SAVGOL_TRAIN_CONTEXT
+            _SAVGOL_TRAIN_CONTEXT = {
+                "models": models,
+                "X_train": X_train_np,
+                "y_train": y_train_np,
+                "X_val": X_val_np,
+                "y_val": y_val_np,
+                "device": device,
+                "has_existing": has_existing,
+            }
+            train_context_path = None
+            try:
+                pending: Dict[str, object] = {}
+                fork_pool = None
+                spawn_pool = None
                 try:
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore")
-                        incremental_failed = False
-                        train_start = time.perf_counter()
+                    if os.name != "nt" and parallel_model_names and n_train_workers > 1:
+                        fork_pool = get_context("fork").Pool(
+                            processes=n_train_workers,
+                            initializer=_init_savgol_train_worker,
+                            initargs=(None, _SAVGOL_TRAIN_CONTEXT),
+                        )
+                        for name in parallel_model_names:
+                            print(f"      🔄 {name}: queued (fork, backend={_model_backend(name, device)})")
+                            pending[name] = fork_pool.apply_async(_train_single_savgol_model, (name, n_jobs_per_model))
+                    else:
+                        for name in parallel_model_names:
+                            print(f"      🔄 {name}: starting (main-process, backend={_model_backend(name, device)})")
+                            ok, model, score, elapsed, status, detail = _train_single_savgol_model(name, n_jobs_limit=-1)
+                            if ok:
+                                print(f"      🔄 {name}: spearman = {score:.3f} ({status}, {elapsed:.1f}s)")
+                                trained_models[name] = model
+                                model_scores[name] = float(score)
+                            else:
+                                print(f"      ⚠️ {name}: {detail} ({status}, {elapsed:.1f}s)")
 
-                        if has_existing:
+                    if spawn_model_names:
+                        with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as temp_context_file:
+                            train_context_path = temp_context_file.name
+                        joblib.dump(_SAVGOL_TRAIN_CONTEXT, train_context_path)
+                        _SAVGOL_TRAIN_CONTEXT_PATH = train_context_path
+                        spawn_pool = get_context("spawn").Pool(
+                            processes=len(spawn_model_names),
+                            initializer=_init_savgol_train_worker,
+                            initargs=(train_context_path, None),
+                        )
+                        for name in spawn_model_names:
+                            pending[name] = spawn_pool.apply_async(_train_single_savgol_model, (name, 1))
+
+                    while pending:
+                        ready_names = [name for name, handle in pending.items() if handle.ready()]
+                        if not ready_names:
+                            time.sleep(0.5)
+                            continue
+                        for name in ready_names:
+                            result_handle = pending.pop(name)
                             try:
-                                if name == "XGBoost":
-                                    model.fit(X_train, y_train, xgb_model=model.get_booster())
-                                elif name == "LightGBM":
-                                    model.fit(X_train, y_train, init_model=model.booster_)
-                                elif name == "CatBoost":
-                                    if catboost_has_trained_trees(model):
-                                        configure_catboost_cpu_continuation(model)
-                                        model.fit(X_train, y_train, init_model=model)
-                                    else:
-                                        incremental_failed = True
+                                ok, model, score, elapsed, status, detail = result_handle.get(timeout=0)
+                                if ok:
+                                    print(f"      🔄 {name}: spearman = {score:.3f} ({status}, {elapsed:.1f}s)")
+                                    trained_models[name] = model
+                                    model_scores[name] = float(score)
                                 else:
-                                    model.fit(X_train, y_train)
-
-                                quick_pred = np.asarray(model.predict(X_val.iloc[:min(len(X_val), 100)]), dtype=float)
-                                if (
-                                    np.any(np.isnan(quick_pred))
-                                    or np.any(np.isinf(quick_pred))
-                                    or (len(quick_pred) > 0 and np.max(np.abs(quick_pred)) > 1e10)
-                                ):
-                                    incremental_failed = True
-                            except Exception:
-                                incremental_failed = True
-
-                        if not has_existing or incremental_failed:
-                            model = _fresh_model(name, device)
-                            model.fit(X_train, y_train)
-
-                    train_elapsed = time.perf_counter() - train_start
-
-                    val_pred = np.asarray(model.predict(X_val), dtype=float)
-                    if np.any(np.isnan(val_pred)) or np.any(np.isinf(val_pred)):
-                        continue
-
-                    score = spearmanr(y_val, val_pred).correlation if len(y_val) > 1 else 0.0
-                    if score is None or np.isnan(score):
-                        score = 0.0
-
-                    trained_models[name] = model
-                    model_scores[name] = float(score)
-                    mode = "incremental" if has_existing and not incremental_failed else "fresh"
-                    print(f"spearman = {score:.3f} ({mode}, {train_elapsed:.1f}s)")
-                except Exception as exc:
-                    print(f"failed: {exc}")
+                                    print(f"      ⚠️ {name}: {detail} ({status}, {elapsed:.1f}s)")
+                            except Exception as exc:
+                                print(f"      ⚠️ {name}: Training error: {exc}")
+                finally:
+                    if fork_pool is not None:
+                        fork_pool.close()
+                        fork_pool.join()
+                    if spawn_pool is not None:
+                        spawn_pool.close()
+                        spawn_pool.join()
+            finally:
+                _SAVGOL_TRAIN_CONTEXT_PATH = None
+                _SAVGOL_TRAIN_CONTEXT = None
+                if train_context_path is not None:
+                    try:
+                        os.unlink(train_context_path)
+                    except OSError as exc:
+                        print(f"   ⚠️ SavGol Trend: Failed to remove train context: {exc}")
 
             if not trained_models:
                 print("   ⚠️ SavGol Trend: No models trained successfully")
@@ -904,7 +1065,7 @@ class SavgolTrendStrategy:
                     "last_train_day": self.last_train_day,
                     "retrain_days": self.retrain_days,
                     "min_samples": self.min_samples,
-                    "lookback_days": self.lookback_days,
+                    "training_lookback_days": self.training_lookback_days,
                     "forward_days": self.forward_days,
                     "metadata": metadata,
                 }
@@ -979,7 +1140,6 @@ class SavgolTrendStrategy:
                 ticker,
                 data,
                 current_date,
-                lookback_days=self.lookback_days,
                 market_context=market_context,
             )
             if features is None:

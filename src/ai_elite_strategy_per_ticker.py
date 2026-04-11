@@ -583,7 +583,6 @@ def collect_ticker_training_data(
             _calculate_forward_return,
             _load_hourly_data_direct,
         )
-        from config import AI_ELITE_INTRADAY_LOOKBACK
     except ImportError:
         return []
 
@@ -598,7 +597,7 @@ def collect_ticker_training_data(
     if hourly_cache is None:
         hourly_cache = {ticker: _load_hourly_data_direct(
             ticker,
-            train_start_date - timedelta(days=AI_ELITE_INTRADAY_LOOKBACK + 5),
+            datetime(1970, 1, 1, tzinfo=timezone.utc),
             train_end_date + timedelta(days=forward_days + 2),
             hourly_history_cache=hourly_history_cache,
         )}

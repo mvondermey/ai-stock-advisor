@@ -316,8 +316,6 @@ def _extract_features(
     daily_data is required - returns None if missing.
     """
     try:
-        from config import AI_ELITE_INTRADAY_LOOKBACK
-
         # --- Normalise current_date to UTC timestamp ---
         current_ts = pd.Timestamp(current_date)
         if current_ts.tz is None:
@@ -494,7 +492,7 @@ def _extract_features(
         avg_intraday_range = 0.0
         avg_last_hour_momentum = 0.0
 
-        if hourly_data is not None and len(hourly_data) >= AI_ELITE_INTRADAY_LOOKBACK * 24:
+        if hourly_data is not None and len(hourly_data) > 0:
             try:
                 if hourly_data.index.duplicated().any():
                     hourly_data = hourly_data[~hourly_data.index.duplicated(keep='last')]
@@ -505,9 +503,9 @@ def _extract_features(
                     hourly_data = hourly_data.copy()
                     hourly_data.index = hourly_data.index.tz_convert('UTC')
 
-                recent_h = hourly_data[hourly_data.index <= current_ts].tail(AI_ELITE_INTRADAY_LOOKBACK * 24)
+                recent_h = hourly_data[hourly_data.index <= current_ts]
 
-                if len(recent_h) >= AI_ELITE_INTRADAY_LOOKBACK * 24:
+                if len(recent_h) >= 24:
                     # Overnight gap
                     daily_opens_h  = recent_h.iloc[::24]['Close'].values
                     daily_closes_h = recent_h.iloc[23::24]['Close'].values

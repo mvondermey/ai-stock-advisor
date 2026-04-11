@@ -31,7 +31,7 @@ from config import (
     MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M, MIN_DATA_DAYS_GENERAL,
     CALENDAR_DAYS_PER_YEAR,
     CONCENTRATED_3M_REBALANCE_DAYS,
-    AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, AI_ELITE_INTRADAY_LOOKBACK,
+    AI_ELITE_RETRAIN_DAYS, AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS,
     AI_REGIME_RETRAIN_DAYS, UNIVERSAL_MODEL_RETRAIN_DAYS,
 )
 import signal
@@ -3888,16 +3888,28 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 from multiprocessing import Pool
 
-                if (
-                    voting_ensemble_ai_rebalance_model is None
-                    and not config.AI_VOTING_REBALANCE_FORCE_FRESH_TRAIN
-                ):
-                    voting_ensemble_ai_rebalance_model = load_voting_ai_rebalance_model()
+                walk_forward_retraining_enabled = bool(getattr(config, "ENABLE_WALK_FORWARD_RETRAINING", True))
+                force_fresh_voting_ai_rebalance = bool(config.AI_VOTING_REBALANCE_FORCE_FRESH_TRAIN)
 
-                should_train_voting_ai_rebalance = (
-                    voting_ensemble_ai_rebalance_model is None
-                    or (day_count - voting_ensemble_ai_rebalance_last_train_day) >= config.AI_VOTING_REBALANCE_RETRAIN_DAYS
-                )
+                if not force_fresh_voting_ai_rebalance:
+                    voting_ensemble_ai_rebalance_model = load_voting_ai_rebalance_model()
+                else:
+                    voting_ensemble_ai_rebalance_model = None
+
+                should_train_voting_ai_rebalance = False
+                if force_fresh_voting_ai_rebalance:
+                    should_train_voting_ai_rebalance = True
+                elif not walk_forward_retraining_enabled:
+                    if voting_ensemble_ai_rebalance_model is not None:
+                        print("   ⏭️ Voting Ens AI Reb: Walk-forward retraining disabled, using loaded model")
+                    else:
+                        print("   ⚠️ Voting Ens AI Reb: Walk-forward retraining disabled and no saved model loaded")
+                else:
+                    should_train_voting_ai_rebalance = (
+                        voting_ensemble_ai_rebalance_model is None
+                        or (day_count - voting_ensemble_ai_rebalance_last_train_day) >= config.AI_VOTING_REBALANCE_RETRAIN_DAYS
+                    )
+
                 if should_train_voting_ai_rebalance:
                     import time as _time
                     train_start = current_date - timedelta(days=config.AI_VOTING_REBALANCE_TRAINING_LOOKBACK)
@@ -3955,16 +3967,16 @@ def _run_portfolio_backtest_walk_forward(
                     _elapsed = _time.time() - _start_time
                     print(f"   📊 Voting Ens AI Reb: Collected {len(rebalance_training_samples)} samples from {len(ticker_samples_map)} tickers ({_elapsed:.1f}s)")
 
-                    voting_ensemble_ai_rebalance_model, _ = train_voting_ai_rebalance_model(
+                    voting_ensemble_ai_rebalance_model, voting_ensemble_ai_rebalance_score = train_voting_ai_rebalance_model(
                         all_training_data=rebalance_training_samples,
                         existing_model=(
-                            None if config.AI_VOTING_REBALANCE_FORCE_FRESH_TRAIN
+                            None if force_fresh_voting_ai_rebalance
                             else voting_ensemble_ai_rebalance_model
                         ),
                         train_start=train_start,
                         train_end=current_date,
                     )
-                    if voting_ensemble_ai_rebalance_model is not None:
+                    if voting_ensemble_ai_rebalance_score is not None:
                         voting_ensemble_ai_rebalance_last_train_day = day_count
             except Exception as e:
                 print(f"   ⚠️ Voting Ens AI Reb training error: {e}")
@@ -3977,9 +3989,9 @@ def _run_portfolio_backtest_walk_forward(
                 if savgol_trend_strategy is None:
                     savgol_trend_strategy = SavgolTrendStrategy(
                         retrain_days=config.SAVGOL_TREND_RETRAIN_DAYS,
-                        min_samples=config.MIN_TRAINING_SAMPLES_AI_ELITE,
-                        lookback_days=config.AI_ELITE_TRAINING_LOOKBACK,
-                        forward_days=config.AI_ELITE_FORWARD_DAYS,
+                        min_samples=config.SAVGOL_TREND_MIN_SAMPLES,
+                        training_lookback_days=config.SAVGOL_TREND_TRAINING_LOOKBACK_DAYS,
+                        forward_days=config.SAVGOL_TREND_FORWARD_DAYS,
                     )
                 savgol_trend_strategy.load_model()
 
@@ -10666,6 +10678,8 @@ def _run_portfolio_backtest_walk_forward(
         # They are checkpointed to disk and reloaded when needed.
         if config.ENABLE_AI_ELITE and ai_elite_models:
             ai_elite_models = {}
+        if config.ENABLE_VOTING_ENSEMBLE_AI_REBALANCE and voting_ensemble_ai_rebalance_model is not None:
+            voting_ensemble_ai_rebalance_model = None
         if config.ENABLE_SAVGOL_TREND and savgol_trend_strategy is not None:
             savgol_trend_strategy.release_model_artifacts()
         try:

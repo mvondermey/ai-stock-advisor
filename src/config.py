@@ -441,7 +441,7 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 
 RETRAIN_FREQUENCY_DAYS = 1  # Retrain every 10 days - aligned with prediction horizon
 
-ENABLE_WALK_FORWARD_RETRAINING = False  # Disable AI retraining during walk-forward backtests
+ENABLE_WALK_FORWARD_RETRAINING = True  # Enable AI retraining during walk-forward backtests
 
 
 
@@ -594,9 +594,7 @@ ENABLE_BH_1Y_DYNAMIC_ACCEL = True          # NEW - BH 1Y Dynamic Accel (dynamic 
 
 ENABLE_AI_ELITE = True   # NEW - AI Elite (ML-powered scoring of momentum + dip opportunities)
 
-ENABLE_AI_ELITE_AI_REBALANCE = False  # NEW - AI Elite selection + AI rebalance decisions
-
-ENABLE_VOTING_ENSEMBLE_AI_REBALANCE = False  # NEW - Voting Ensemble selection + AI rebalance decisions
+ENABLE_VOTING_ENSEMBLE_AI_REBALANCE = True  # NEW - Voting Ensemble selection + AI rebalance decisions
 
 ENABLE_AI_ELITE_MONTHLY_SHARED = True   # NEW - AI Elite Monthly Shared (monthly rebalance using daily AI Elite shared model)
 
@@ -605,7 +603,7 @@ ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre
 ENABLE_AI_ELITE_MARKET_UP = True   # NEW - AI Elite Market-Up (only rebalances when market is up)
 ENABLE_AI_ELITE_ENSEMBLE = True   # NEW - AI Elite Ensemble (weighted avg of top 3 positive-R² models)
 ENABLE_AI_ELITE_RANK_ENSEMBLE = True   # NEW - AI Elite Rank Ensemble (weighted rank avg of top 3 positive-R² models)
-ENABLE_SAVGOL_TREND = False  # NEW - SavGol Trend (local polynomial trend features + pooled ML)
+ENABLE_SAVGOL_TREND = True  # NEW - SavGol Trend (local polynomial trend features + pooled ML)
 
 ENABLE_TOP5_CONSISTENCY_BLEND = True   # NEW - Blend current top strategies using prior-day top-5 consistency weights
 
@@ -622,7 +620,7 @@ ENABLE_BB_RSI_COMBO = True           # BB + RSI Combo (buy at lower band AND RSI
 
 AI_ELITE_RETRAIN_DAYS = 1  # Retrain model every 1 days
 
-AI_ELITE_TRAINING_LOOKBACK = 90  # Days of history to use for training
+AI_ELITE_TRAINING_LOOKBACK = 20  # Days of history to use for training
 
 AI_ELITE_FORWARD_DAYS = 5  # Predict performance over next N days
 
@@ -653,7 +651,7 @@ AI_CHAMPION_HOLD_MARGIN = 0.08  # Keep current strategy unless the edge is meani
 
 # SavGol Trend Parameters
 SAVGOL_TREND_RETRAIN_DAYS = 1  # Retrain every day like AI Elite
-SAVGOL_TREND_LOOKBACK_DAYS = 90  # History window used for local trend features
+SAVGOL_TREND_TRAINING_LOOKBACK_DAYS = AI_ELITE_TRAINING_LOOKBACK  # Short rolling training window, separate from feature history
 SAVGOL_TREND_FORWARD_DAYS = 5  # Predict 5-day forward returns
 SAVGOL_TREND_MAX_WORKERS = 16  # Allow SavGol data collection to fan out a bit wider
 SAVGOL_TREND_MIN_SAMPLES = 300  # Minimum pooled samples before fitting the model
@@ -668,8 +666,6 @@ SAVGOL_TREND_FALLBACK_TO_MOMENTUM = True  # On low-confidence initial entry, use
 # AI Elite Intraday Configuration
 
 AI_ELITE_INTRADAY_INTERVAL = "1h"  # Use 1-hour data for intraday features
-
-AI_ELITE_INTRADAY_LOOKBACK = 10  # Days of hourly data to use (240 data points per stock)
 
 
 

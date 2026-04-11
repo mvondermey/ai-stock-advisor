@@ -77,7 +77,6 @@ STRATEGY_REGISTRY: Dict[str, Dict[str, str]] = {
     "risk_adj_mom_1m": _entry("Risk-Adj Mom 1M", "ENABLE_RISK_ADJ_MOM_1M", "risk_adj_mom_1m_portfolio_value", "risk_adj_mom_1m_portfolio_history", "risk_adj_mom_1m_cash", "current_risk_adj_mom_1m_stocks"),
     "risk_adj_mom_1m_monthly": _entry("RiskAdj 1M Mth", "ENABLE_RISK_ADJ_MOM_1M_MONTHLY", "risk_adj_mom_1m_monthly_portfolio_value", "risk_adj_mom_1m_monthly_portfolio_history", "risk_adj_mom_1m_monthly_cash", "risk_adj_mom_1m_monthly_positions"),
     "ai_elite": _entry("AI Elite", "ENABLE_AI_ELITE", "ai_elite_portfolio_value", "ai_elite_portfolio_history", "ai_elite_cash", "ai_elite_positions"),
-    "ai_elite_ai_rebalance": _entry("AI Elite + AI Reb", "ENABLE_AI_ELITE_AI_REBALANCE", "ai_elite_ai_rebalance_portfolio_value", "ai_elite_ai_rebalance_portfolio_history", "ai_elite_ai_rebalance_cash", "ai_elite_ai_rebalance_positions"),
     "ai_elite_monthly_shared": _entry("AI Elite Mth Sh", "ENABLE_AI_ELITE_MONTHLY_SHARED", "ai_elite_monthly_shared_portfolio_value", "ai_elite_monthly_shared_portfolio_history", "ai_elite_monthly_shared_cash", "ai_elite_monthly_shared_positions"),
     "ai_elite_filtered": _entry("AI Elite Flt", "ENABLE_AI_ELITE_FILTERED", "ai_elite_filtered_portfolio_value", "ai_elite_filtered_portfolio_history", "ai_elite_filtered_cash", "ai_elite_filtered_positions"),
     "ai_elite_market_up": _entry("AI Elite Up Sh", "ENABLE_AI_ELITE_MARKET_UP", "ai_elite_market_up_portfolio_value", "ai_elite_market_up_portfolio_history", "ai_elite_market_up_cash", "ai_elite_market_up_positions"),

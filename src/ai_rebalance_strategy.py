@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import atexit
 from concurrent.futures import ThreadPoolExecutor
+import os
 import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
-from multiprocessing import Pool
+from multiprocessing import Pool, get_context
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -23,10 +24,15 @@ from tqdm import tqdm
 
 from ai_elite_strategy_per_ticker import (
     _catboost_has_trained_trees,
+    _configure_existing_model_backend,
     _configure_catboost_continuation,
+    _format_training_plan,
     _fresh_ensemble_model,
+    _model_backend,
+    _model_worker_mode,
     _order_models_for_training,
     _predictions_are_unstable,
+    _set_model_parallelism,
 )
 from model_training_safety import (
     release_runtime_memory,
@@ -39,8 +45,11 @@ from strategy_disk_cache import get_cache_dir
 
 MODEL_SAVE_DIR = Path("logs/models")
 AI_REBALANCE_MODEL_PATH = MODEL_SAVE_DIR / "ai_rebalance.joblib"
+VOTING_AI_REBALANCE_MODEL_PATH = AI_REBALANCE_MODEL_PATH
 _REBALANCE_COLLECTION_CONTEXT: Dict[str, object] = {}
 _REBALANCE_TEMP_DIRS: set[str] = set()
+_AI_REBALANCE_TRAIN_CONTEXT_PATH: Optional[str] = None
+_AI_REBALANCE_TRAIN_CONTEXT: Optional[Dict[str, object]] = None
 TICKER_FEATURE_NAMES = [
     "ret_3d",
     "ret_5d",
@@ -607,6 +616,117 @@ def _cleanup_rebalance_temp_dirs_at_exit() -> None:
 
 
 atexit.register(_cleanup_rebalance_temp_dirs_at_exit)
+
+
+def _get_ai_rebalance_train_context() -> Dict[str, object]:
+    global _AI_REBALANCE_TRAIN_CONTEXT
+    if _AI_REBALANCE_TRAIN_CONTEXT is None:
+        if not _AI_REBALANCE_TRAIN_CONTEXT_PATH:
+            raise ValueError("AI Rebalance training context is not initialized")
+        _AI_REBALANCE_TRAIN_CONTEXT = joblib.load(_AI_REBALANCE_TRAIN_CONTEXT_PATH)
+    return _AI_REBALANCE_TRAIN_CONTEXT
+
+
+def _init_ai_rebalance_train_worker(
+    context_path: Optional[str] = None,
+    context_data: Optional[Dict[str, object]] = None,
+) -> None:
+    global _AI_REBALANCE_TRAIN_CONTEXT_PATH, _AI_REBALANCE_TRAIN_CONTEXT
+    _AI_REBALANCE_TRAIN_CONTEXT_PATH = context_path
+    _AI_REBALANCE_TRAIN_CONTEXT = context_data
+
+
+def _train_single_ai_rebalance_model(
+    name: str,
+    n_jobs_limit: int = 4,
+) -> Tuple[bool, Optional[object], Optional[float], float, str, str]:
+    import time
+    import warnings
+    from sklearn.metrics import r2_score
+
+    start_time = time.time()
+    context = _get_ai_rebalance_train_context()
+    X_train = context["X_train"]
+    y_train = context["y_train"]
+    X_val = context["X_val"]
+    y_val = context["y_val"]
+    device = context["device"]
+    has_existing = bool(context["has_existing"])
+    existing_model = context["models"].get(name) if has_existing else None
+
+    if len(X_train) < 10:
+        return (False, None, None, 0.0, "skipped", "insufficient training data")
+    if np.all(y_train == y_train[0]):
+        return (False, None, None, 0.0, "skipped", "constant target")
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            incremental_failed = False
+            used_incremental = False
+            incremental_error = None
+
+            model = existing_model
+            if has_existing and model is not None:
+                _set_model_parallelism(model, n_jobs_limit)
+                try:
+                    if name == "XGBoost":
+                        used_incremental = True
+                        model.fit(X_train, y_train, xgb_model=model.get_booster())
+                    elif name == "LightGBM":
+                        used_incremental = True
+                        model.fit(X_train, y_train, init_model=model.booster_)
+                    elif name == "CatBoost":
+                        used_incremental = True
+                        if _catboost_has_trained_trees(model):
+                            _configure_catboost_continuation(
+                                model,
+                                thread_count=n_jobs_limit if n_jobs_limit > 0 else (os.cpu_count() or 1),
+                            )
+                            model.fit(X_train, y_train, init_model=model)
+                        else:
+                            incremental_error = "no saved trees yet"
+                            incremental_failed = True
+                    elif name in ("SGDRegressor-L2", "SGDRegressor-ElasticNet"):
+                        used_incremental = True
+                        model.partial_fit(X_train, y_train)
+                    if used_incremental:
+                        quick_pred = model.predict(X_val[: min(100, len(X_val))])
+                        if _predictions_are_unstable(quick_pred):
+                            incremental_error = "incremental predictions unstable"
+                            incremental_failed = True
+                except Exception as exc:
+                    incremental_error = str(exc)
+                    incremental_failed = True
+
+            if not used_incremental or incremental_failed:
+                model = _fresh_ensemble_model(name, device, n_jobs=n_jobs_limit)
+                model.fit(X_train, y_train)
+
+            y_pred = model.predict(X_val)
+            if _predictions_are_unstable(y_pred):
+                return (False, None, None, time.time() - start_time, "failed", "unstable predictions")
+
+            score = r2_score(y_val, y_pred)
+            if used_incremental and (score < -10 or score > 1 or np.isnan(score) or np.isinf(score)):
+                model = _fresh_ensemble_model(name, device, n_jobs=n_jobs_limit)
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_val)
+                if _predictions_are_unstable(y_pred):
+                    return (False, None, None, time.time() - start_time, "failed", "unstable after fresh retrain")
+                score = r2_score(y_val, y_pred)
+
+            if score < -10 or score > 1 or np.isnan(score) or np.isinf(score):
+                return (False, None, None, time.time() - start_time, "failed", f"invalid validation score {score:.3f}")
+
+            elapsed = time.time() - start_time
+            status = "incremental" if used_incremental and not incremental_failed else "fresh"
+            detail = "ok"
+            if incremental_failed and incremental_error:
+                detail = f"incremental fallback: {incremental_error}"
+            return (True, model, score, elapsed, status, detail)
+    except Exception as exc:
+        return (False, None, None, time.time() - start_time, "failed", str(exc))
 
 
 def precompute_rebalance_training_context(
@@ -1244,11 +1364,8 @@ def train_ai_rebalance_model(
 ):
     try:
         from config import AI_REBALANCE_MIN_SAMPLES, XGBOOST_USE_GPU
-        from sklearn.metrics import r2_score
         from sklearn.model_selection import train_test_split
         import time
-        import warnings
-        import xgboost as xgb
 
         if len(all_training_data) < AI_REBALANCE_MIN_SAMPLES:
             print(
@@ -1286,10 +1403,12 @@ def train_ai_rebalance_model(
                         models[model_name] = _fresh_ensemble_model(model_name, device)
                     except ImportError:
                         pass
+            for model_name, model in models.items():
+                _configure_existing_model_backend(model_name, model, device)
             models = _order_models_for_training(models)
             print(
                 f"   🚀 AI Rebalance: Incremental training {len(models)} models "
-                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu, SGD=cpu)"
+                f"({_format_training_plan(list(models.keys()), device)})"
             )
         else:
             models = {}
@@ -1308,88 +1427,126 @@ def train_ai_rebalance_model(
             models = _order_models_for_training(models)
             print(
                 f"   🚀 AI Rebalance: Fresh training {list(models.keys())} "
-                f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu, SGD=cpu)"
+                f"({_format_training_plan(list(models.keys()), device)})"
             )
 
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+        print(f"   📊 Train/Val split: {len(X_train)} train, {len(X_val)} val samples")
 
         trained_models = []
         model_scores = []
         model_names = []
 
-        for name, model in models.items():
+        model_names_to_train = list(models.keys())
+        X_train_np = X_train.values if hasattr(X_train, "values") else X_train
+        X_val_np = X_val.values if hasattr(X_val, "values") else X_val
+        y_train_np = np.asarray(y_train)
+        y_val_np = np.asarray(y_val)
+
+        spawn_model_names: List[str] = []
+        parallel_model_names = list(model_names_to_train)
+        for name in list(parallel_model_names):
+            if _model_worker_mode(name, device) == "spawn":
+                parallel_model_names.remove(name)
+                spawn_model_names.append(name)
+
+        total_cores = os.cpu_count() or 8
+        n_train_workers = max(1, min(3, len(parallel_model_names), total_cores)) if parallel_model_names else 1
+        n_jobs_per_model = max(1, total_cores // n_train_workers)
+
+        print(
+            f"   🚀 AI Rebalance: Training {len(model_names_to_train)} models in parallel "
+            f"({n_train_workers} fork workers, {n_jobs_per_model} threads/model; "
+            f"{len(spawn_model_names)} spawn models)..."
+        )
+        if spawn_model_names:
+            print("   ℹ️ AI Rebalance: GPU models use spawned workers; CPU models stay on fork workers")
+            for name in spawn_model_names:
+                print(f"      🔄 {name}: queued (spawn, backend={_model_backend(name, device)})")
+
+        global _AI_REBALANCE_TRAIN_CONTEXT_PATH, _AI_REBALANCE_TRAIN_CONTEXT
+        _AI_REBALANCE_TRAIN_CONTEXT = {
+            "models": models,
+            "X_train": X_train_np,
+            "y_train": y_train_np,
+            "X_val": X_val_np,
+            "y_val": y_val_np,
+            "device": device,
+            "has_existing": has_existing,
+        }
+        train_context_path = None
+        try:
+            pending: Dict[str, object] = {}
+            fork_pool = None
+            spawn_pool = None
             try:
-                print(f"      🔄 {name}: Training...", end=" ", flush=True)
-                start_time = time.time()
-                if len(X_train) < 10:
-                    print(f"skipped (insufficient data: {len(X_train)} samples)")
-                    continue
+                if os.name != "nt" and parallel_model_names and n_train_workers > 1:
+                    fork_pool = get_context("fork").Pool(
+                        processes=n_train_workers,
+                        initializer=_init_ai_rebalance_train_worker,
+                        initargs=(None, _AI_REBALANCE_TRAIN_CONTEXT),
+                    )
+                    for name in parallel_model_names:
+                        print(f"      🔄 {name}: queued (fork, backend={_model_backend(name, device)})")
+                        pending[name] = fork_pool.apply_async(_train_single_ai_rebalance_model, (name, n_jobs_per_model))
+                else:
+                    for name in parallel_model_names:
+                        print(f"      🔄 {name}: starting (main-process, backend={_model_backend(name, device)})")
+                        ok, model, score, elapsed, status, detail = _train_single_ai_rebalance_model(name, n_jobs_limit=-1)
+                        if ok:
+                            print(f"      🔄 {name}: R² = {score:.3f} ({status}, {elapsed:.1f}s)")
+                            trained_models.append(model)
+                            model_scores.append(score)
+                            model_names.append(name)
+                        else:
+                            print(f"      ⚠️ {name}: {detail} ({status}, {elapsed:.1f}s)")
 
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    incremental_failed = False
-                    used_incremental = False
+                if spawn_model_names:
+                    with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as temp_context_file:
+                        train_context_path = temp_context_file.name
+                    joblib.dump(_AI_REBALANCE_TRAIN_CONTEXT, train_context_path)
+                    _AI_REBALANCE_TRAIN_CONTEXT_PATH = train_context_path
+                    spawn_pool = get_context("spawn").Pool(
+                        processes=len(spawn_model_names),
+                        initializer=_init_ai_rebalance_train_worker,
+                        initargs=(train_context_path, None),
+                    )
+                    for name in spawn_model_names:
+                        pending[name] = spawn_pool.apply_async(_train_single_ai_rebalance_model, (name, 1))
 
-                    if has_existing:
+                while pending:
+                    ready_names = [name for name, handle in pending.items() if handle.ready()]
+                    if not ready_names:
+                        time.sleep(0.5)
+                        continue
+                    for name in ready_names:
+                        result_handle = pending.pop(name)
                         try:
-                            if name == "XGBoost":
-                                used_incremental = True
-                                model.fit(X_train, y_train, xgb_model=model.get_booster())
-                            elif name == "LightGBM":
-                                used_incremental = True
-                                model.fit(X_train, y_train, init_model=model.booster_)
-                            elif name == "CatBoost":
-                                used_incremental = True
-                                if _catboost_has_trained_trees(model):
-                                    _configure_catboost_continuation(model)
-                                    model.fit(X_train, y_train, init_model=model)
-                                else:
-                                    print("(no saved trees yet, training fresh)...", end=" ", flush=True)
-                                    incremental_failed = True
-                            elif name in ("SGDRegressor-L2", "SGDRegressor-ElasticNet"):
-                                used_incremental = True
-                                model.partial_fit(X_train, y_train)
-                            if used_incremental:
-                                quick_pred = model.predict(X_val[: min(100, len(X_val))])
-                                if _predictions_are_unstable(quick_pred):
-                                    print("(incremental unstable, retraining fresh)...", end=" ", flush=True)
-                                    incremental_failed = True
+                            ok, model, score, elapsed, status, detail = result_handle.get(timeout=0)
+                            if ok:
+                                print(f"      🔄 {name}: R² = {score:.3f} ({status}, {elapsed:.1f}s)")
+                                trained_models.append(model)
+                                model_scores.append(score)
+                                model_names.append(name)
+                            else:
+                                print(f"      ⚠️ {name}: {detail} ({status}, {elapsed:.1f}s)")
                         except Exception as exc:
-                            print(f"(incremental failed: {exc}, retraining fresh)...", end=" ", flush=True)
-                            incremental_failed = True
-
-                    if not used_incremental or incremental_failed:
-                        model = _fresh_ensemble_model(name, device)
-                        model.fit(X_train, y_train)
-
-                    y_pred = model.predict(X_val)
-                    if _predictions_are_unstable(y_pred):
-                        print("failed: unstable predictions")
-                        continue
-
-                    score = r2_score(y_val, y_pred)
-                    if used_incremental and (score < -10 or score > 1 or np.isnan(score) or np.isinf(score)):
-                        print(f"⚠️ retraining fresh after invalid R² {score:.3f}...", end=" ", flush=True)
-                        model = _fresh_ensemble_model(name, device)
-                        model.fit(X_train, y_train)
-                        y_pred = model.predict(X_val)
-                        if _predictions_are_unstable(y_pred):
-                            print("failed: unstable after fresh retrain")
-                            continue
-                        score = r2_score(y_val, y_pred)
-
-                    if score < -10 or score > 1 or np.isnan(score) or np.isinf(score):
-                        print(f"failed: invalid validation score {score:.3f}")
-                        continue
-
-                elapsed = time.time() - start_time
-                status = "incremental" if used_incremental and not incremental_failed else "fresh"
-                print(f"R² = {score:.3f} ({status}, {elapsed:.1f}s)")
-                trained_models.append(model)
-                model_scores.append(score)
-                model_names.append(name)
-            except Exception as exc:
-                print(f"failed: {exc}")
+                            print(f"      ⚠️ {name}: Training error: {exc}")
+            finally:
+                if fork_pool is not None:
+                    fork_pool.close()
+                    fork_pool.join()
+                if spawn_pool is not None:
+                    spawn_pool.close()
+                    spawn_pool.join()
+        finally:
+            _AI_REBALANCE_TRAIN_CONTEXT_PATH = None
+            _AI_REBALANCE_TRAIN_CONTEXT = None
+            if train_context_path is not None:
+                try:
+                    os.unlink(train_context_path)
+                except OSError as exc:
+                    print(f"   ⚠️ AI Rebalance: Failed to remove train context: {exc}")
 
         if not trained_models:
             print("   ⚠️ AI Rebalance: No models trained successfully")
@@ -1426,6 +1583,30 @@ def train_ai_rebalance_model(
         return model_dict, best_score
     finally:
         release_runtime_memory()
+
+
+def load_voting_ai_rebalance_model(
+    path: str | Path = VOTING_AI_REBALANCE_MODEL_PATH,
+):
+    """Compatibility wrapper for the voting-ensemble AI rebalance checkpoint."""
+    return load_ai_rebalance_model(path=path)
+
+
+def train_voting_ai_rebalance_model(
+    all_training_data: List[Dict[str, object]],
+    save_path: str | Path = VOTING_AI_REBALANCE_MODEL_PATH,
+    existing_model=None,
+    train_start: Optional[datetime] = None,
+    train_end: Optional[datetime] = None,
+):
+    """Compatibility wrapper that preserves the voting-ensemble naming used by backtesting."""
+    return train_ai_rebalance_model(
+        all_training_data=all_training_data,
+        save_path=save_path,
+        existing_model=existing_model,
+        train_start=train_start,
+        train_end=train_end,
+    )
 
 
 def choose_ai_rebalance_ranked_candidates(

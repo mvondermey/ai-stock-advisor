@@ -6957,7 +6957,7 @@ def _select_ultimate_stocks(all_tickers, ticker_data_grouped, current_date, top_
 def _select_savgol_trend_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
     """Wrapper for SavGol Trend strategy."""
     try:
-        from savgol_trend_strategy import SavgolTrendStrategy, select_savgol_trend_stocks
+        from savgol_trend_strategy import SavgolTrendStrategy, select_savgol_trend_stocks_with_training
 
         sample_ticker = next(iter(ticker_data_grouped.keys()), None)
         if sample_ticker is None:
@@ -6972,12 +6972,12 @@ def _select_savgol_trend_stocks(all_tickers, ticker_data_grouped, current_date, 
         model = SavgolTrendStrategy(
             retrain_days=config.SAVGOL_TREND_RETRAIN_DAYS,
             min_samples=config.SAVGOL_TREND_MIN_SAMPLES,
-            lookback_days=config.SAVGOL_TREND_LOOKBACK_DAYS,
+            training_lookback_days=config.SAVGOL_TREND_TRAINING_LOOKBACK_DAYS,
             forward_days=config.SAVGOL_TREND_FORWARD_DAYS,
         )
         model.load_model()
 
-        return select_savgol_trend_stocks(
+        return select_savgol_trend_stocks_with_training(
             all_tickers,
             ticker_data_grouped,
             current_date,
