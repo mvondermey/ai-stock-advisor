@@ -270,6 +270,8 @@ def calculate_daily_momentum(data: pd.DataFrame, current_date: datetime = None) 
 
     if current_date is None:
         current_date = close.index.max()
+    else:
+        current_date = _to_utc_timestamp(current_date)
 
     data = data[data.index <= current_date]
     close = _clean_close_series(data)
@@ -378,7 +380,7 @@ def calculate_multi_timeframe_intraday_signals(
 
     for timeframe in timeframes:
         lookback_days = MULTI_TIMEFRAME_LOOKBACK[timeframe]
-        start_date = current_date - timedelta(days=lookback_days)
+        start_date = current_ts - timedelta(days=lookback_days)
         daily_slice = daily_data[daily_data.index >= start_date]
 
         if timeframe == "long_term":

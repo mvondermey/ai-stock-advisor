@@ -117,13 +117,6 @@ def _disable_ai_retraining_for_validation() -> None:
     os.environ["CACHE_VALIDATION_DISABLE_AI_TRAINING"] = "1"
 
     try:
-        from universal_model_strategy import UniversalModelStrategy
-
-        UniversalModelStrategy.should_retrain = lambda self: False
-    except Exception:
-        pass
-
-    try:
         from savgol_trend_strategy import SavgolTrendStrategy
 
         SavgolTrendStrategy.should_retrain = lambda self: False
@@ -197,38 +190,6 @@ def _disable_ai_retraining_for_validation() -> None:
             shared_strategies.select_ai_elite_with_training = _select_ai_elite_without_retraining
     except Exception as exc:
         print(f"   ⚠️ AI validation override: could not patch AI Elite training wrapper: {exc}")
-
-    try:
-        import shared_strategies
-        from universal_model_strategy import UniversalModelStrategy, select_universal_model_stocks
-
-        def _select_universal_model_without_retraining(all_tickers, ticker_data_grouped, current_date, top_n):
-            sample_ticker = next(iter(ticker_data_grouped.keys()), None)
-            if sample_ticker is None:
-                return shared_strategies.select_top_performers(all_tickers, ticker_data_grouped, current_date, top_n)
-
-            sample_df = ticker_data_grouped[sample_ticker]
-            business_days = sorted(sample_df.index.tolist())
-            current_day_idx = len([d for d in business_days if d <= current_date]) - 1
-            if current_day_idx < 0:
-                current_day_idx = 0
-
-            model = UniversalModelStrategy()
-            model.load_model()
-            return select_universal_model_stocks(
-                all_tickers,
-                ticker_data_grouped,
-                current_date,
-                top_n,
-                model,
-                business_days,
-                current_day_idx,
-            )
-
-        shared_strategies._select_universal_model_stocks = _select_universal_model_without_retraining
-    except Exception as exc:
-        print(f"   ⚠️ AI validation override: could not patch Universal Model wrapper: {exc}")
-
 
 def _wire_analyst_data_for_validation() -> None:
     """Use the real analyst-data fetch/select path during validation."""

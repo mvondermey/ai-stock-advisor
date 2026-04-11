@@ -6812,22 +6812,6 @@ def _get_strategy_registry():
             fromlist=['select_ai_elite_market_up_stocks']
         ).select_ai_elite_market_up_stocks(t, d, dt, n),
 
-        'ai_champion': lambda t, d, dt, n: _select_ai_champion_stocks(t, d, dt, n),
-
-
-
-        # AI Regime strategies
-
-        'ai_regime': lambda t, d, dt, n: _select_ai_regime_stocks(t, d, dt, n),
-
-        'ai_regime_monthly': lambda t, d, dt, n: _select_ai_regime_stocks(t, d, dt, n),
-
-
-
-        # Universal Model
-
-        'universal_model': lambda t, d, dt, n: _select_universal_model_stocks(t, d, dt, n),
-
         'savgol_trend': lambda t, d, dt, n: _select_savgol_trend_stocks(t, d, dt, n),
 
 
@@ -6968,97 +6952,6 @@ def _select_ultimate_stocks(all_tickers, ticker_data_grouped, current_date, top_
 
 
 
-
-
-def _select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
-    """Wrapper for AI Regime strategy.
-
-    Note: This strategy requires a predicted_strategy from the AI Regime model.
-    When called from the simple registry without context, it returns [].
-    For full functionality, use the AI Regime system directly.
-    """
-    try:
-        from ai_regime_strategy import select_ai_regime_stocks, AIRegimeStrategy
-
-        # Try to predict the best strategy based on current market conditions
-        try:
-            regime_model = AIRegimeStrategy()
-            predicted_strategy = regime_model.predict_best_strategy(ticker_data_grouped, current_date)
-            if predicted_strategy is None:
-                return []
-        except Exception:
-            return []
-
-        return select_ai_regime_stocks(all_tickers, ticker_data_grouped, current_date, top_n, predicted_strategy)
-    except ImportError:
-        return []
-    except Exception as e:
-        print(f"  ⚠️ AI Regime failed: {e}")
-        return []
-
-
-
-
-
-def _select_ai_champion_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
-    """Wrapper for AI Champion strategy."""
-    try:
-        from ai_champion_strategy import AIChampionAllocator, select_ai_champion_stocks
-
-        champion = AIChampionAllocator()
-        champion.load_model()
-        predicted_strategy = champion.predict_best_strategy(ticker_data_grouped, current_date)
-        if predicted_strategy is None:
-            return []
-        return select_ai_champion_stocks(
-            all_tickers,
-            ticker_data_grouped,
-            current_date,
-            top_n,
-            predicted_strategy,
-        )
-    except ImportError:
-        return []
-    except Exception as e:
-        print(f"  ⚠️ AI Champion failed: {e}")
-        return []
-
-
-def _select_universal_model_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
-    """Wrapper for Universal Model strategy.
-
-    Note: This strategy requires a trained model, business_days list, and current_day_idx.
-    When called from the simple registry without context, it returns [].
-    For full functionality, use the Universal Model system directly.
-    """
-    try:
-        from universal_model_strategy import UniversalModelStrategy, select_universal_model_stocks
-
-        # Create business days list from ticker data
-        sample_ticker = next(iter(ticker_data_grouped.keys()), None)
-        if sample_ticker is None:
-            return []
-
-        sample_df = ticker_data_grouped[sample_ticker]
-        business_days = sorted(sample_df.index.tolist())
-
-        # Find current day index
-        current_day_idx = len([d for d in business_days if d <= current_date]) - 1
-        if current_day_idx < 0:
-            current_day_idx = 0
-
-        # Create and train model on-the-fly (simplified for registry usage)
-        model = UniversalModelStrategy()
-
-        return select_universal_model_stocks(
-            all_tickers, ticker_data_grouped, current_date, top_n,
-            model, business_days, current_day_idx
-        )
-    except ImportError:
-        return []
-    except Exception as e:
-        print(f"  ⚠️ Universal Model failed: {e}")
-        return []
 
 
 def _select_savgol_trend_stocks(all_tickers, ticker_data_grouped, current_date, top_n):

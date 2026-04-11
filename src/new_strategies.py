@@ -351,12 +351,18 @@ class TrendFollowingATR:
         return atr if not pd.isna(atr) else 0.0
 
     def is_breakout(self, ticker_data: pd.DataFrame, current_price: float) -> bool:
-        """Check if current price is a breakout above N-day high."""
+        """Check if current price is a breakout above N-day high.
+        
+        Uses the highest CLOSE (not High) of the prior N days as the breakout level.
+        This is more appropriate for end-of-day backtesting where we only have
+        close prices to act on.
+        """
         if len(ticker_data) < TREND_ATR_ENTRY_BREAKOUT:
             return False
 
-        high_n_days = ticker_data['High'].iloc[-TREND_ATR_ENTRY_BREAKOUT:-1].max()
-        return current_price > high_n_days
+        # Use close prices for breakout detection - more realistic for EOD signals
+        close_n_days = ticker_data['Close'].iloc[-TREND_ATR_ENTRY_BREAKOUT:-1].max()
+        return current_price > close_n_days
 
     def check_trailing_stop(self, ticker: str, current_price: float) -> bool:
         """Check if trailing stop is hit. Returns True if should sell."""
@@ -480,6 +486,12 @@ def select_trend_following_atr_stocks(
     stocks_to_buy = []
     stocks_to_sell = []
     breakout_candidates = []
+    positive_momentum_count = 0
+    negative_momentum_count = 0
+    breakout_signal_count = 0
+    insufficient_history_count = 0
+    selection_error_count = 0
+    selection_error_sample = None
 
     for ticker in filtered_tickers:
         try:
@@ -492,6 +504,7 @@ def select_trend_following_atr_stocks(
             )
             if close_history is None or close_history.size == 0:
                 continue
+            close_history = np.asarray(close_history, dtype=float)
 
             current_price = close_history[-1]
 
@@ -519,8 +532,10 @@ def select_trend_following_atr_stocks(
                 TREND_ATR_ENTRY_BREAKOUT + 10,
             )
             if data is None:
+                insufficient_history_count += 1
                 continue
             if len(data) < TREND_ATR_ENTRY_BREAKOUT + 10:
+                insufficient_history_count += 1
                 continue
 
             current_price = data['Close'].iloc[-1]
@@ -534,21 +549,29 @@ def select_trend_following_atr_stocks(
                 min_rows=5,
             )
             if data_3m is None or data_3m.size < 2:
+                insufficient_history_count += 1
                 continue
+            data_3m = np.asarray(data_3m, dtype=float)
 
             momentum_3m = (data_3m[-1] / data_3m[0] - 1) * 100
 
             # Skip if momentum is negative
             if momentum_3m <= 0:
+                negative_momentum_count += 1
                 continue
+            positive_momentum_count += 1
 
             # Check for breakout
             if trend_tracker.is_breakout(data, current_price):
+                breakout_signal_count += 1
                 atr = trend_tracker.calculate_atr(data)
                 if atr > 0:
                     breakout_candidates.append((ticker, momentum_3m, current_price, atr))
 
-        except Exception:
+        except Exception as exc:
+            selection_error_count += 1
+            if selection_error_sample is None:
+                selection_error_sample = f"{ticker}: {type(exc).__name__}: {exc}"
             continue
 
     # Select top breakouts by momentum
@@ -564,7 +587,25 @@ def select_trend_following_atr_stocks(
             trend_tracker.add_position(ticker, price, atr)
             print(f"      🚀 {ticker}: Breakout entry @ ${price:.2f}, ATR=${atr:.2f}, 3M={momentum:+.1f}%")
 
-    print(f"   📈 Trend Following ATR: {len(stocks_to_buy)} buys, {len(stocks_to_sell)} sells, {len(trend_tracker.positions)} positions")
+    print(
+        "   📈 Trend Following ATR: "
+        f"{len(stocks_to_buy)} buys, {len(stocks_to_sell)} sells, {len(trend_tracker.positions)} positions "
+        f"(filtered={len(filtered_tickers)}, pos_mom={positive_momentum_count}, neg_mom={negative_momentum_count}, "
+        f"breakouts={breakout_signal_count}, qualified={len(breakout_candidates)}, "
+        f"insufficient={insufficient_history_count}, errors={selection_error_count})"
+    )
+    if selection_error_sample:
+        print(f"      ⚠️ Trend ATR sample error: {selection_error_sample}")
+    if not stocks_to_buy and not stocks_to_sell and not trend_tracker.positions:
+        if positive_momentum_count == 0:
+            print("      ℹ️ No Trend ATR entries yet. No filtered tickers had positive 3M momentum.")
+        elif breakout_signal_count == 0:
+            print(
+                "      ℹ️ No Trend ATR entries yet. Positive-momentum names were found, "
+                "but none broke above the breakout threshold."
+            )
+        elif not breakout_candidates:
+            print("      ℹ️ No Trend ATR entries yet. Breakouts were found, but ATR validation rejected them.")
 
     return stocks_to_buy, stocks_to_sell
 

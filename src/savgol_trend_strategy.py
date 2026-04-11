@@ -19,6 +19,7 @@ import pandas as pd
 from scipy.signal import savgol_filter
 from scipy.stats import spearmanr
 from tqdm import tqdm
+import config
 
 from model_training_safety import (
     catboost_has_trained_trees,
@@ -1094,9 +1095,20 @@ def select_savgol_trend_stocks_with_training(
     current_holdings: Optional[List[str]] = None,
     force_train: bool = False,
 ) -> List[str]:
-    """AI-Elite-style SavGol wrapper: retrain only when scheduled, then predict."""
-    if force_train or model.should_retrain():
-        model.train_model(ticker_data_grouped, business_days, current_day_idx)
+    """AI-Elite-style SavGol wrapper backed by the on-disk checkpoint."""
+    walk_forward_retraining_enabled = bool(getattr(config, "ENABLE_WALK_FORWARD_RETRAINING", True))
+    if not walk_forward_retraining_enabled and not force_train:
+        if model.model is None:
+            if model.load_model() and model.model is not None:
+                print("   ⏭️ SavGol Trend: Walk-forward retraining disabled, using loaded model")
+            else:
+                print("   ⚠️ SavGol Trend: Walk-forward retraining disabled and no saved model loaded")
+                return []
+    else:
+        if model.model is None:
+            model.load_model()
+        if force_train or model.should_retrain():
+            model.train_model(ticker_data_grouped, business_days, current_day_idx)
 
     return select_savgol_trend_stocks(
         all_tickers,

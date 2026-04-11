@@ -12,10 +12,14 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from multiprocessing import get_context
+import os
 from tqdm import tqdm
 
 from config import N_TOP_TICKERS, NUM_PROCESSES
+
+
+_SELECTION_METRICS_CONTEXT: Dict[str, object] = {}
 
 
 def calculate_momentum(prices: pd.Series, days: int) -> Optional[float]:
@@ -129,6 +133,49 @@ def get_price_series(ticker: str, all_tickers_data: dict, start_date: datetime, 
         return None
 
 
+def _calculate_ticker_metrics_worker(ticker: str) -> Tuple[str, Dict[str, Optional[float]]]:
+    """Calculate all strategy metrics for a single ticker inside a worker."""
+    context = _SELECTION_METRICS_CONTEXT
+    strategies = context["strategies"]
+    selection_date = context["selection_date"]
+    all_tickers_data = context["all_tickers_data"]
+    benchmark_prices_historical = context["benchmark_prices_historical"]
+
+    metrics = {}
+    for strategy_name, config in strategies.items():
+        lookback = config['lookback']
+        metric_type = config['metric']
+
+        hist_start = selection_date - timedelta(days=lookback + 30)
+        hist_prices = get_price_series(ticker, all_tickers_data, hist_start, selection_date)
+
+        if hist_prices is None or len(hist_prices) < 10:
+            metrics[strategy_name] = None
+            continue
+
+        if len(hist_prices) > lookback:
+            hist_prices = hist_prices.iloc[-lookback:]
+
+        if metric_type == 'momentum':
+            metrics[strategy_name] = calculate_momentum(hist_prices, len(hist_prices))
+        elif metric_type == 'sharpe':
+            metrics[strategy_name] = calculate_sharpe_ratio(hist_prices)
+        elif metric_type == 'low_volatility':
+            vol = calculate_volatility(hist_prices)
+            metrics[strategy_name] = -vol if vol is not None else None
+        elif metric_type == 'mean_reversion':
+            mom = calculate_momentum(hist_prices, len(hist_prices))
+            metrics[strategy_name] = -mom if mom is not None else None
+        elif metric_type == 'relative_strength':
+            if benchmark_prices_historical is not None:
+                metrics[strategy_name] = calculate_relative_strength(
+                    hist_prices, benchmark_prices_historical
+                )
+            else:
+                metrics[strategy_name] = None
+    return ticker, metrics
+
+
 def run_selection_strategy_comparison(
     all_tickers_data: dict,
     all_available_tickers: List[str],
@@ -181,52 +228,36 @@ def run_selection_strategy_comparison(
     # Calculate metrics for all tickers at selection_date
     print(f"\n📈 Calculating selection metrics for {len(all_available_tickers)} tickers (parallel)...")
 
-    def calculate_ticker_metrics(ticker):
-        """Calculate all strategy metrics for a single ticker"""
-        metrics = {}
-        for strategy_name, config in strategies.items():
-            lookback = config['lookback']
-            metric_type = config['metric']
-
-            # Get historical prices (before selection date)
-            hist_start = selection_date - timedelta(days=lookback + 30)  # Extra buffer
-            hist_prices = get_price_series(ticker, all_tickers_data, hist_start, selection_date)
-
-            if hist_prices is None or len(hist_prices) < 10:
-                metrics[strategy_name] = None
-                continue
-
-            # Trim to exact lookback period
-            if len(hist_prices) > lookback:
-                hist_prices = hist_prices.iloc[-lookback:]
-
-            # Calculate metric based on strategy type
-            if metric_type == 'momentum':
-                metrics[strategy_name] = calculate_momentum(hist_prices, len(hist_prices))
-            elif metric_type == 'sharpe':
-                metrics[strategy_name] = calculate_sharpe_ratio(hist_prices)
-            elif metric_type == 'low_volatility':
-                vol = calculate_volatility(hist_prices)
-                metrics[strategy_name] = -vol if vol is not None else None
-            elif metric_type == 'mean_reversion':
-                mom = calculate_momentum(hist_prices, len(hist_prices))
-                metrics[strategy_name] = -mom if mom is not None else None
-            elif metric_type == 'relative_strength':
-                if benchmark_prices_historical is not None:
-                    metrics[strategy_name] = calculate_relative_strength(
-                        hist_prices, benchmark_prices_historical
-                    )
-                else:
-                    metrics[strategy_name] = None
-        return ticker, metrics
-
     ticker_metrics = {}
     max_workers = max(1, min(NUM_PROCESSES, len(all_available_tickers)))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(calculate_ticker_metrics, ticker): ticker for ticker in all_available_tickers}
-        for future in tqdm(as_completed(futures), total=len(all_available_tickers), desc="Calculating metrics", ncols=100):
-            ticker, metrics = future.result()
-            ticker_metrics[ticker] = metrics
+    global _SELECTION_METRICS_CONTEXT
+    _SELECTION_METRICS_CONTEXT = {
+        "strategies": strategies,
+        "selection_date": selection_date,
+        "all_tickers_data": all_tickers_data,
+        "benchmark_prices_historical": benchmark_prices_historical,
+    }
+    try:
+        if os.name != "nt" and max_workers > 1:
+            with get_context("fork").Pool(processes=max_workers) as pool:
+                results = pool.imap_unordered(_calculate_ticker_metrics_worker, all_available_tickers)
+                for ticker, metrics in tqdm(
+                    results,
+                    total=len(all_available_tickers),
+                    desc="Calculating metrics",
+                    ncols=100,
+                ):
+                    ticker_metrics[ticker] = metrics
+        else:
+            for ticker, metrics in tqdm(
+                map(_calculate_ticker_metrics_worker, all_available_tickers),
+                total=len(all_available_tickers),
+                desc="Calculating metrics",
+                ncols=100,
+            ):
+                ticker_metrics[ticker] = metrics
+    finally:
+        _SELECTION_METRICS_CONTEXT = {}
 
     # Select top N tickers for each strategy
     print(f"\n🎯 Selecting top {n_top} stocks for each strategy...")

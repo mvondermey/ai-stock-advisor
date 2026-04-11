@@ -241,9 +241,11 @@ def _fresh_ensemble_model(name: str, device: str, n_jobs: int = -1):
             tree_method='hist', device=device, verbosity=0, n_jobs=n_jobs
         )
     if name == 'LightGBM':
+        lgbm_device = _lightgbm_device()
         return lgb.LGBMRegressor(
             n_estimators=100, max_depth=4, learning_rate=0.1,
-            subsample=0.8, random_state=42, verbose=-1, n_jobs=n_jobs
+            subsample=0.8, random_state=42, verbose=-1, n_jobs=n_jobs,
+            device=lgbm_device
         )
     if name == 'CatBoost':
         import catboost as cb
@@ -298,6 +300,48 @@ def _fresh_ensemble_model(name: str, device: str, n_jobs: int = -1):
             random_state=42,
         )
     raise ValueError(f"Unknown model: {name}")
+
+
+def _lightgbm_device() -> str:
+    """Mirror the native-Linux GPU policy used at startup for LightGBM."""
+    kernel_release = ""
+    try:
+        kernel_release = os.uname().release.lower()
+    except AttributeError:
+        kernel_release = ""
+    is_wsl = bool(os.getenv("WSL_DISTRO_NAME")) or "microsoft" in kernel_release
+    return "cpu" if is_wsl else "gpu"
+
+
+def _model_backend(name: str, xgb_device: str) -> str:
+    if name == "XGBoost":
+        return xgb_device
+    if name == "LightGBM":
+        return _lightgbm_device()
+    return "cpu"
+
+
+def _model_worker_mode(name: str, xgb_device: str) -> str:
+    return "spawn" if _model_backend(name, xgb_device) in {"cuda", "gpu"} else "fork"
+
+
+def _format_training_plan(model_names: List[str], xgb_device: str) -> str:
+    return ", ".join(
+        f"{name}={_model_backend(name, xgb_device)}/{_model_worker_mode(name, xgb_device)}"
+        for name in model_names
+    )
+
+
+def _configure_existing_model_backend(name: str, model, xgb_device: str) -> None:
+    """Keep restored models aligned with the backend policy used for fresh models."""
+    backend = _model_backend(name, xgb_device)
+    if name in {"XGBoost", "LightGBM"} and hasattr(model, "set_params"):
+        try:
+            model.set_params(device=backend)
+        except Exception:
+            pass
+    if name == "CatBoost" and hasattr(model, "_init_params"):
+        model._init_params["task_type"] = "CPU"
 
 
 def _predictions_are_unstable(predictions) -> bool:
@@ -400,7 +444,7 @@ def _train_single_model(
     n_jobs_limit: int = 4,
 ) -> Tuple[bool, Optional[object], Optional[float], float, str, str]:
     """
-    Train a single model in a fork worker process.
+    Train a single model in a worker process.
     Returns (ok, model, score, elapsed_time, status, detail).
     
     Args:
@@ -702,10 +746,12 @@ def train_shared_base_model(
                     models[model_name] = _fresh_ensemble_model(model_name, device)
                 except ImportError:
                     pass
+        for model_name, model in models.items():
+            _configure_existing_model_backend(model_name, model, device)
         models = _order_models_for_training(models)
         print(
             f"   🚀 Incremental training: {len(models)} models "
-            f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu, SGD=cpu)"
+            f"({_format_training_plan(list(models.keys()), device)})"
         )
     else:
         # Fresh training - create new models
@@ -726,7 +772,7 @@ def train_shared_base_model(
         models = _order_models_for_training(models)
         print(
             f"   🚀 Fresh training: {list(models.keys())} "
-            f"(XGBoost={device}, LightGBM=cpu, CatBoost=cpu, SGD=cpu)"
+            f"({_format_training_plan(list(models.keys()), device)})"
         )
 
     # Train with incremental learning (no CV for speed - just train/val split)
@@ -746,13 +792,12 @@ def train_shared_base_model(
     y_train_np = np.asarray(y_train)
     y_val_np = np.asarray(y_val)
 
-    # CUDA + fork is a bad mix for XGBoost. Keep GPU XGBoost out of fork workers
-    # and run it in a separate spawned process instead.
     spawn_model_names: List[str] = []
     parallel_model_names = list(model_names_to_train)
-    if device == 'cuda' and 'XGBoost' in parallel_model_names:
-        parallel_model_names.remove('XGBoost')
-        spawn_model_names.append('XGBoost')
+    for name in list(parallel_model_names):
+        if _model_worker_mode(name, device) == "spawn":
+            parallel_model_names.remove(name)
+            spawn_model_names.append(name)
 
     # Determine number of parallel training workers
     # Cap workers by available cores so the pool doesn't oversubscribe small machines.
@@ -762,12 +807,13 @@ def train_shared_base_model(
 
     print(
         f"   🚀 Training {len(model_names_to_train)} models in parallel "
-        f"({n_train_workers} fork workers, {n_jobs_per_model} threads/model)..."
+        f"({n_train_workers} fork workers, {n_jobs_per_model} threads/model; "
+        f"{len(spawn_model_names)} spawn models)..."
     )
     if spawn_model_names:
-        print("   ℹ️ XGBoost will train in a spawned worker to avoid CUDA+fork hangs")
+        print("   ℹ️ GPU models use spawned workers; CPU models stay on fork workers")
         for name in spawn_model_names:
-            print(f"      🔄 {name}: queued (spawn, gpu-safe)")
+            print(f"      🔄 {name}: queued (spawn, backend={_model_backend(name, device)})")
     overall_start = time.time()
 
     global _AI_ELITE_TRAIN_CONTEXT_PATH, _AI_ELITE_TRAIN_CONTEXT
@@ -795,12 +841,12 @@ def train_shared_base_model(
                     initargs=(None, _AI_ELITE_TRAIN_CONTEXT),
                 )
                 for name in parallel_model_names:
-                    print(f"      🔄 {name}: queued")
+                    print(f"      🔄 {name}: queued (fork, backend={_model_backend(name, device)})")
                     pending[name] = fork_pool.apply_async(_train_single_model, (name, n_jobs_per_model))
             else:
                 # Sequential fallback for Windows or single-worker runs - use all cores.
                 for name in parallel_model_names:
-                    print(f"      🔄 {name}: starting")
+                    print(f"      🔄 {name}: starting (main-process, backend={_model_backend(name, device)})")
                     result = _train_single_model(name, n_jobs_limit=-1)
                     ok, m, score, elapsed, status, detail = result
                     if ok:

@@ -291,7 +291,7 @@ def _auto_detect_num_processes():
 # Auto-detect a safe multiprocessing worker count based on RAM
 NUM_PROCESSES = _auto_detect_num_processes()  # For data validation, ticker selection, and backtest data collection
 
-NUM_PROCESSES = 10
+NUM_PROCESSES = 16
 
 # Parallel processing threshold - only use parallel processing for ticker lists larger than this
 
@@ -346,7 +346,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 # --- Backtest windows
 
-BACKTEST_DAYS           =   70   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   90   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 BACKTEST_END_DATE       = False  # False = use current last trading day, or set "YYYY-MM-DD" to freeze runs for debugging
 
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
@@ -439,7 +439,7 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 
 #   60 = Quarterly retraining (rare, only for very stable/long-term strategies)
 
-RETRAIN_FREQUENCY_DAYS = 10  # Retrain every 10 days - aligned with prediction horizon
+RETRAIN_FREQUENCY_DAYS = 1  # Retrain every 10 days - aligned with prediction horizon
 
 ENABLE_WALK_FORWARD_RETRAINING = False  # Disable AI retraining during walk-forward backtests
 
@@ -605,14 +605,6 @@ ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre
 ENABLE_AI_ELITE_MARKET_UP = True   # NEW - AI Elite Market-Up (only rebalances when market is up)
 ENABLE_AI_ELITE_ENSEMBLE = True   # NEW - AI Elite Ensemble (weighted avg of top 3 positive-R² models)
 ENABLE_AI_ELITE_RANK_ENSEMBLE = True   # NEW - AI Elite Rank Ensemble (weighted rank avg of top 3 positive-R² models)
-ENABLE_AI_CHAMPION = True   # NEW - AI Champion (ML selector across the top AI/ensemble strategies)
-
-ENABLE_AI_REGIME = True   # NEW - AI Regime (ML predicts which strategy to use based on market conditions)
-
-ENABLE_AI_REGIME_MONTHLY = True   # NEW - AI Regime Monthly (same as AI Regime but rebalance start of month only)
-
-ENABLE_UNIVERSAL_MODEL = True   # NEW - Universal Model (single ML model for all tickers)
-
 ENABLE_SAVGOL_TREND = False  # NEW - SavGol Trend (local polynomial trend features + pooled ML)
 
 ENABLE_TOP5_CONSISTENCY_BLEND = True   # NEW - Blend current top strategies using prior-day top-5 consistency weights
@@ -625,19 +617,6 @@ ENABLE_BB_MEAN_REVERSION = True      # BB Mean Reversion (buy at lower band, sel
 ENABLE_BB_BREAKOUT = True            # BB Breakout (buy when price breaks above upper band with volume)
 ENABLE_BB_SQUEEZE_BREAKOUT = True    # BB Squeeze + Breakout (wait for squeeze, trade breakout)
 ENABLE_BB_RSI_COMBO = True           # BB + RSI Combo (buy at lower band AND RSI < 30)
-
-ENABLE_META_WEIGHTED_COMPOSITE = True   # Proposal 1: Weighted composite score
-ENABLE_META_TIERED_SELECTION = True     # Proposal 2: Tiered selection (filter + rank)
-ENABLE_META_ENSEMBLE_ALLOC = True       # Proposal 3: Ensemble allocation by consistency
-ENABLE_META_REGIME_BASED = True         # Proposal 4: Regime-based selection
-ENABLE_META_RECENCY_WEIGHTED = True     # Proposal 5: Recency-weighted consistency
-ENABLE_META_EFFICIENCY_RATIO = True     # Proposal 6: Consistency-return efficiency
-ENABLE_META_MIN_VARIANCE = True         # Proposal 7: Minimum variance ensemble
-ENABLE_META_BAYESIAN = True             # Proposal 8: Bayesian strategy selector
-ENABLE_META_ADAPTIVE_CONVEX = True      # Proposal 9: Adaptive convex combination
-ENABLE_META_CONSENSUS = True            # Proposal 10: Best of best consensus
-
-
 
 # AI Elite Parameters
 

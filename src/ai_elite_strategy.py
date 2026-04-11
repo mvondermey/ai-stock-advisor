@@ -29,6 +29,15 @@ from strategy_cache_adapter import ensure_hourly_history_cache, get_cached_hourl
 _AI_ELITE_SHARED_MODEL_CACHE: Dict[Tuple[str, Optional[str]], any] = {}
 
 
+def _build_feature_frame(features: Dict[str, float], feature_cols: List[str]) -> pd.DataFrame:
+    """Build a single-row DataFrame so sklearn/lightgbm keep feature-name alignment."""
+    return pd.DataFrame(
+        [[features.get(col, 0.0) for col in feature_cols]],
+        columns=feature_cols,
+        dtype=np.float64,
+    )
+
+
 def _create_prediction_timing_stats() -> Dict[str, object]:
     return {
         "lock": Lock(),
@@ -805,9 +814,8 @@ def _predict_ticker_worker(args):
         else:
             actual_model = ticker_model
 
-        # Use numpy array for faster single-row prediction
         from ai_elite_strategy_per_ticker import FEATURE_COLS
-        feature_values = np.array([[features.get(col, 0.0) for col in FEATURE_COLS]], dtype=np.float64)
+        feature_values = _build_feature_frame(features, FEATURE_COLS)
         model_start = time.perf_counter()
         ai_score = actual_model.predict(feature_values)[0]
         _record_prediction_timing(timing_stats, "model", time.perf_counter() - model_start)
@@ -867,7 +875,7 @@ def _predict_ticker_ensemble_worker(args):
         top_models = positive_models[:3]
 
         from ai_elite_strategy_per_ticker import FEATURE_COLS
-        feature_values = np.array([[features.get(col, 0.0) for col in FEATURE_COLS]], dtype=np.float64)
+        feature_values = _build_feature_frame(features, FEATURE_COLS)
 
         # Weighted average: weight = R² score
         model_start = time.perf_counter()
@@ -1065,7 +1073,7 @@ def _predict_ticker_rank_ensemble_worker(args):
             return ticker, None, 'no_model'
 
         from ai_elite_strategy_per_ticker import FEATURE_COLS
-        feature_values = np.array([[features.get(col, 0.0) for col in FEATURE_COLS]], dtype=np.float64)
+        feature_values = _build_feature_frame(features, FEATURE_COLS)
 
         per_model_predictions = {}
         model_start = time.perf_counter()

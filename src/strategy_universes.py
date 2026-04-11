@@ -119,9 +119,6 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "ai_elite": _source("ENABLE_AI_ELITE", "ai_elite_portfolio_value"),
     "ai_elite_filtered": _source("ENABLE_AI_ELITE_FILTERED", "ai_elite_filtered_portfolio_value"),
     "ai_elite_market_up": _source("ENABLE_AI_ELITE_MARKET_UP", "ai_elite_market_up_portfolio_value"),
-    "ai_regime": _source("ENABLE_AI_REGIME", "ai_regime_portfolio_value"),
-    "ai_regime_monthly": _source("ENABLE_AI_REGIME_MONTHLY", "ai_regime_monthly_portfolio_value"),
-    "universal_model": _source("ENABLE_UNIVERSAL_MODEL", "universal_model_portfolio_value"),
     "inverse_etf_hedge": _source("ENABLE_INVERSE_ETF_HEDGE", "inverse_etf_hedge_portfolio_value"),
     "analyst_recommendation": _source("ENABLE_ANALYST_RECOMMENDATION", "analyst_rec_portfolio_value"),
     "static_bh_1y_volatility": _source("ENABLE_STATIC_BH_1Y_VOLATILITY", "static_bh_1y_vol_portfolio_value"),
@@ -162,7 +159,6 @@ META_ENSEMBLE_STRATEGIES = {
     "voting_ensemble",
 }
 META_AI_STRATEGIES = {"ai_elite", "ai_elite_filtered", "ai_elite_market_up"}
-META_AI_REGIME_STRATEGIES = {"ai_regime", "ai_regime_monthly"}
 META_ADAPTIVE_REBALANCING_STRATEGIES = {
     "static_bh_1y_volatility",
     "static_bh_1y_performance",

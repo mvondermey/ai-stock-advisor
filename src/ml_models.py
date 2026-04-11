@@ -574,16 +574,27 @@ def initialize_ml_libraries():
             from lightgbm import LGBMClassifier as lgbm
             LGBMClassifier = lgbm
             
-            # Force CPU for LightGBM due to OpenCL/PoCL compatibility issues with NVIDIA in WSL2
-            # OpenCL requires a different runtime than CUDA and often fails with PoCL
-            _lgbm_gpu_available = False
-            
+            # Keep the old WSL safeguard, but allow native Linux systems to use
+            # LightGBM GPU when OpenCL is available.
+            kernel_release = ""
+            try:
+                kernel_release = os.uname().release.lower()
+            except AttributeError:
+                kernel_release = ""
+            is_wsl = bool(os.getenv("WSL_DISTRO_NAME")) or "microsoft" in kernel_release
+
+            lgbm_device = 'cpu' if is_wsl else 'gpu'
+            _lgbm_gpu_available = lgbm_device == 'gpu'
+
             lgbm_model_params = {
-                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device='cpu'),
+                "model": LGBMClassifier(random_state=SEED, class_weight="balanced", verbosity=-1, device=lgbm_device),
                 "params": {'n_estimators': [50, 100, 200, 300], 'learning_rate': [0.01, 0.05, 0.1, 0.2]}
             }
-            models_and_params["LightGBM (CPU)"] = lgbm_model_params
-            print("ℹ️ LightGBM: using CPU (OpenCL not compatible with NVIDIA/PoCL in WSL2).")
+            models_and_params[f"LightGBM ({'GPU' if _lgbm_gpu_available else 'CPU'})"] = lgbm_model_params
+            if _lgbm_gpu_available:
+                print("✅ LightGBM: using GPU on native Linux/OpenCL runtime.")
+            else:
+                print("ℹ️ LightGBM: using CPU (OpenCL not compatible with NVIDIA/PoCL in WSL2).")
         except ImportError:
             print("⚠️ lightgbm not installed. Run: pip install lightgbm. It will be skipped.")
 
@@ -597,16 +608,35 @@ def initialize_ml_libraries():
         # Use XGBOOST_USE_GPU flag instead of CUDA_AVAILABLE
         from config import XGBOOST_USE_GPU
         if XGBOOST_USE_GPU and CUDA_AVAILABLE:
+            _xgb_gpu_available = True
             xgb_model_params["model"].set_params(device='cuda')  # XGBoost 2.0+ API
             models_and_params["XGBoost (GPU)"] = xgb_model_params
             print(f"✅ XGBoostRegressor found. Configured for GPU (device='cuda').")
         else:
+            _xgb_gpu_available = False
             xgb_model_params["model"].set_params(tree_method='hist')
             models_and_params["XGBoost (CPU)"] = xgb_model_params
             if XGBOOST_USE_GPU:
                 print(f"ℹ️ XGBoostRegressor found. Will use CPU (GPU not available).")
             else:
                 print(f"ℹ️ XGBoostRegressor found. Will use CPU (XGBOOST_USE_GPU=False).")
+
+    try:
+        import importlib.util as _importlib_util
+
+        torch_backend = "GPU" if CUDA_AVAILABLE and PYTORCH_AVAILABLE and (USE_LSTM or USE_GRU) else "CPU"
+        lgbm_backend = "GPU" if _lgbm_gpu_available else ("CPU" if USE_LIGHTGBM else "disabled")
+        xgb_backend = "GPU" if _xgb_gpu_available else ("CPU" if USE_XGBOOST and XGBOOST_AVAILABLE else "disabled")
+        catboost_backend = "installed (CPU in strategy code)" if _importlib_util.find_spec("catboost") else "not installed"
+        print(
+            "📋 ML backend summary: "
+            f"PyTorch={torch_backend}, "
+            f"LightGBM={lgbm_backend}, "
+            f"XGBoost={xgb_backend}, "
+            f"CatBoost={catboost_backend}"
+        )
+    except Exception:
+        pass
 
     _ml_libraries_initialized = True
     return models_and_params
