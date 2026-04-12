@@ -5503,14 +5503,20 @@ def select_ai_elite_with_training(
         train_shared_base_model,
     )
 
-    from ai_elite_strategy import select_ai_elite_stocks
+    from ai_elite_strategy import (
+        clone_ai_elite_feature_cache_context,
+        precompute_ai_elite_market_context_map,
+        precompute_ai_elite_training_context,
+        select_ai_elite_stocks,
+    )
     from model_training_safety import restore_native_model_artifacts
 
     from config import AI_ELITE_TRAINING_LOOKBACK, AI_ELITE_FORWARD_DAYS, NUM_PROCESSES
 
     import os
+    import time
 
-    from datetime import timedelta, timezone as tz_utc
+    from datetime import datetime, timedelta, timezone as tz_utc
     import config
 
 
@@ -5791,6 +5797,55 @@ def select_ai_elite_with_training(
 
     try:
 
+        if current_date is None:
+            latest_dates = [
+                ticker_data_grouped[t].index.max()
+                for t in all_tickers
+                if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0
+            ]
+            if latest_dates:
+                current_date = max(latest_dates)
+            else:
+                current_date = datetime.now(tz_utc.utc)
+
+        if current_date.tzinfo is None:
+            current_date = current_date.replace(tzinfo=tz_utc.utc)
+
+        train_end = current_date
+        train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
+        print(
+            f"   🌐 {strategy_label}: Preparing market context "
+            f"({train_start.date()} to {train_end.date()})..."
+        )
+        market_context_start = time.perf_counter()
+        ai_elite_market_context_map = precompute_ai_elite_market_context_map(
+            ticker_data_grouped,
+            train_start,
+            train_end,
+        )
+        market_context_elapsed = time.perf_counter() - market_context_start
+        print(
+            f"   ✅ {strategy_label}: Market context ready "
+            f"({len(ai_elite_market_context_map)} days, {market_context_elapsed:.1f}s)"
+        )
+
+        ai_elite_feature_cache_context = None
+        if should_train_model or run_selection:
+            print(f"   🗂️ {strategy_label}: Preparing global feature cache...")
+            ai_elite_feature_cache_context = precompute_ai_elite_training_context(
+                ticker_data_grouped=ticker_data_grouped,
+                all_tickers=all_tickers,
+                train_start_date=train_start,
+                train_end_date=train_end,
+                forward_days=AI_ELITE_FORWARD_DAYS,
+                existing_context=getattr(select_ai_elite_with_training, "_feature_cache_context", None),
+                market_context_map=ai_elite_market_context_map,
+                hourly_history_cache=hourly_history_cache,
+            )
+            select_ai_elite_with_training._feature_cache_context = clone_ai_elite_feature_cache_context(
+                ai_elite_feature_cache_context
+            )
+
         if not should_train_model:
             if ai_elite_models.get('_shared_base') is not None:
                 print(f"   ⏭️ {strategy_label}: Walk-forward retraining disabled, using loaded shared model")
@@ -5808,6 +5863,8 @@ def select_ai_elite_with_training(
                 per_ticker_models=ai_elite_models,
                 price_history_cache=price_history_cache,
                 hourly_history_cache=hourly_history_cache,
+                feature_cache_context=ai_elite_feature_cache_context,
+                market_context_map=ai_elite_market_context_map,
             )
             return selected, ai_elite_models
 
@@ -5816,24 +5873,6 @@ def select_ai_elite_with_training(
         # This ensures model adapts to recent market conditions
 
         print(f"   🎓 {strategy_label}: Training shared base model...")
-
-
-
-        # Determine training window
-
-        if current_date is None:
-
-            import pandas as pd
-
-            from datetime import datetime
-
-            current_date = datetime.now(tz_utc.utc)
-
-
-
-        train_end = current_date
-
-        train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
 
 
 
@@ -5871,7 +5910,7 @@ def select_ai_elite_with_training(
         print(f"   📊 {strategy_label}: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {AI_ELITE_TRAINING_LOOKBACK}d lookback)...")
 
         start_time = time.time()
-        all_training_data, ticker_samples_map = collect_training_data_parallel(
+        all_training_data, ticker_count = collect_training_data_parallel(
             all_tickers=all_tickers,
             ticker_data_grouped=ticker_data_grouped,
             train_start_date=train_start,
@@ -5881,13 +5920,15 @@ def select_ai_elite_with_training(
             n_processes=n_workers,
             price_history_cache=price_history_cache,
             hourly_history_cache=hourly_history_cache,
+            feature_cache_context=ai_elite_feature_cache_context,
+            market_context_map=ai_elite_market_context_map,
         )
 
 
 
         elapsed = time.time() - start_time
 
-        print(f"   📊 {strategy_label}: Collected {len(all_training_data)} samples from {len(ticker_samples_map)} tickers ({elapsed:.1f}s)")
+        print(f"   📊 {strategy_label}: Collected {len(all_training_data)} samples from {ticker_count} tickers ({elapsed:.1f}s)")
 
 
 
@@ -5927,19 +5968,15 @@ def select_ai_elite_with_training(
         # Step 3: Select stocks using trained model
 
         selected = select_ai_elite_stocks(
-
-            all_tickers, ticker_data_grouped,
-
+            all_tickers,
+            ticker_data_grouped,
             current_date=current_date,
-
             top_n=top_n,
-
             per_ticker_models=ai_elite_models,
-
             price_history_cache=price_history_cache,
-
-            hourly_history_cache=hourly_history_cache
-
+            hourly_history_cache=hourly_history_cache,
+            feature_cache_context=ai_elite_feature_cache_context,
+            market_context_map=ai_elite_market_context_map,
         )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import joblib
 from functools import wraps
 from typing import Any, Dict, Tuple
 
@@ -110,19 +111,31 @@ def lightgbm_has_trained_booster(model: Any) -> bool:
         return False
 
 
-def _native_model_artifact_path(path: str, model_name: str) -> str:
+MODEL_ARTIFACT_SUFFIXES = {
+    "XGBoost": ".xgboost.json",
+    "LightGBM": ".lightgbm.txt",
+    "CatBoost": ".catboost.cbm",
+    "RandomForest": ".randomforest.joblib",
+    "ExtraTrees": ".extratrees.joblib",
+    "Ridge": ".ridge.joblib",
+    "ElasticNet": ".elasticnet.joblib",
+    "SGDRegressor-L2": ".sgdregressor_l2.joblib",
+    "SGDRegressor-ElasticNet": ".sgdregressor_elasticnet.joblib",
+}
+
+
+def _model_artifact_path(path: str, model_name: str) -> str:
     """Return the sidecar artifact path for one ensemble member."""
-    suffixes = {
-        "XGBoost": ".xgboost.json",
-        "LightGBM": ".lightgbm.txt",
-        "CatBoost": ".catboost.cbm",
-    }
-    return f"{os.fspath(path)}{suffixes[model_name]}"
+    suffix = MODEL_ARTIFACT_SUFFIXES.get(model_name)
+    if suffix is None:
+        safe_name = "".join(ch.lower() if ch.isalnum() else "_" for ch in model_name).strip("_")
+        suffix = f".{safe_name}.joblib"
+    return f"{os.fspath(path)}{suffix}"
 
 
 def _remove_native_model_artifact(path: str, model_name: str) -> None:
     """Delete a stale sidecar artifact if it exists."""
-    artifact_path = _native_model_artifact_path(path, model_name)
+    artifact_path = _model_artifact_path(path, model_name)
     if os.path.exists(artifact_path):
         try:
             os.remove(artifact_path)
@@ -141,6 +154,23 @@ def _infer_native_model_name(model: Any) -> str | None:
         return "LightGBM"
     if "catboost" in qualified_name:
         return "CatBoost"
+    if "randomforest" in qualified_name:
+        return "RandomForest"
+    if "extratrees" in qualified_name:
+        return "ExtraTrees"
+    if "ridge" in qualified_name:
+        return "Ridge"
+    if "elasticnet" in qualified_name:
+        return "ElasticNet"
+    if "sgdregressor" in qualified_name:
+        penalty = ""
+        try:
+            penalty = str(getattr(model, "penalty", "") or "").lower()
+        except Exception:
+            penalty = ""
+        if penalty == "elasticnet":
+            return "SGDRegressor-ElasticNet"
+        return "SGDRegressor-L2"
     return None
 
 
@@ -156,24 +186,29 @@ def _extract_native_models(payload_or_model: Any) -> Dict[str, Any]:
 
 
 def save_native_model_artifacts(payload_or_model: Any, path: str) -> None:
-    """Persist fitted XGBoost/LightGBM/CatBoost models using native formats."""
+    """Persist ensemble members using native or dedicated sidecar formats."""
     models = _extract_native_models(payload_or_model)
-    for model_name in ("XGBoost", "LightGBM", "CatBoost"):
+    for model_name in MODEL_ARTIFACT_SUFFIXES:
         model = models.get(model_name)
         try:
             if model_name == "XGBoost":
                 if model is not None and xgboost_has_trained_booster(model):
-                    model.save_model(_native_model_artifact_path(path, model_name))
+                    model.save_model(_model_artifact_path(path, model_name))
                 else:
                     _remove_native_model_artifact(path, model_name)
             elif model_name == "LightGBM":
                 if model is not None and lightgbm_has_trained_booster(model):
-                    model.booster_.save_model(_native_model_artifact_path(path, model_name))
+                    model.booster_.save_model(_model_artifact_path(path, model_name))
                 else:
                     _remove_native_model_artifact(path, model_name)
             elif model_name == "CatBoost":
                 if model is not None and catboost_has_trained_trees(model):
-                    model.save_model(_native_model_artifact_path(path, model_name), format="cbm")
+                    model.save_model(_model_artifact_path(path, model_name), format="cbm")
+                else:
+                    _remove_native_model_artifact(path, model_name)
+            else:
+                if model is not None:
+                    joblib.dump(model, _model_artifact_path(path, model_name))
                 else:
                     _remove_native_model_artifact(path, model_name)
         except Exception:
@@ -182,7 +217,7 @@ def save_native_model_artifacts(payload_or_model: Any, path: str) -> None:
 
 def _restore_single_native_model(model_name: str, model: Any, path: str, is_classifier: bool = False) -> Any:
     """Load one model sidecar back into an sklearn wrapper (creating one if needed)."""
-    artifact_path = _native_model_artifact_path(path, model_name)
+    artifact_path = _model_artifact_path(path, model_name)
     if not os.path.exists(artifact_path):
         return model
 
@@ -212,6 +247,8 @@ def _restore_single_native_model(model_name: str, model: Any, path: str, is_clas
                 model = cb.CatBoostClassifier() if is_classifier else cb.CatBoostRegressor()
             model.load_model(artifact_path, format="cbm")
             return model
+        if model_name in MODEL_ARTIFACT_SUFFIXES:
+            return joblib.load(artifact_path)
     except Exception:
         return model
 
@@ -219,7 +256,7 @@ def _restore_single_native_model(model_name: str, model: Any, path: str, is_clas
 
 
 def restore_native_model_artifacts(payload_or_model: Any, path: str, is_classifier: bool = False) -> Any:
-    """Restore any native model sidecars that exist for the saved checkpoint.
+    """Restore any dedicated model sidecars that exist for the saved checkpoint.
 
     Args:
         payload_or_model: The loaded checkpoint data
@@ -230,7 +267,7 @@ def restore_native_model_artifacts(payload_or_model: Any, path: str, is_classifi
         restored_payload = dict(payload_or_model)
         restored_models = dict(restored_payload.get("all_models") or {})
 
-        for model_name in ("XGBoost", "LightGBM", "CatBoost"):
+        for model_name in MODEL_ARTIFACT_SUFFIXES:
             original_model = restored_models.get(model_name)
             restored_model = _restore_single_native_model(model_name, original_model, path, is_classifier)
             if restored_model is not None:

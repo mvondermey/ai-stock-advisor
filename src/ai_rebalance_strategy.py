@@ -8,10 +8,10 @@ an existing holding with the best available candidate is worth it.
 from __future__ import annotations
 
 import atexit
-from concurrent.futures import ThreadPoolExecutor
 import os
 import shutil
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from multiprocessing import Pool, get_context
 from pathlib import Path
@@ -48,8 +48,11 @@ AI_REBALANCE_MODEL_PATH = MODEL_SAVE_DIR / "ai_rebalance.joblib"
 VOTING_AI_REBALANCE_MODEL_PATH = AI_REBALANCE_MODEL_PATH
 _REBALANCE_COLLECTION_CONTEXT: Dict[str, object] = {}
 _REBALANCE_TEMP_DIRS: set[str] = set()
+_AI_REBALANCE_CACHE_CONTEXT_PATH: Optional[str] = None
+_AI_REBALANCE_CACHE_CONTEXT: Optional[Dict[str, object]] = None
 _AI_REBALANCE_TRAIN_CONTEXT_PATH: Optional[str] = None
 _AI_REBALANCE_TRAIN_CONTEXT: Optional[Dict[str, object]] = None
+AI_REBALANCE_CACHE_NUMERIC_DTYPE = "float64"
 TICKER_FEATURE_NAMES = [
     "ret_3d",
     "ret_5d",
@@ -115,11 +118,11 @@ def _default_market_features() -> Dict[str, float]:
 
 
 def _ticker_feature_vector(features: Dict[str, float]) -> np.ndarray:
-    return np.asarray([float(features.get(name, 0.0)) for name in TICKER_FEATURE_NAMES], dtype=np.float32)
+    return np.asarray([float(features.get(name, 0.0)) for name in TICKER_FEATURE_NAMES], dtype=np.float64)
 
 
 def _market_feature_vector(features: Dict[str, float]) -> np.ndarray:
-    return np.asarray([float(features.get(name, 0.0)) for name in MARKET_FEATURE_NAMES], dtype=np.float32)
+    return np.asarray([float(features.get(name, 0.0)) for name in MARKET_FEATURE_NAMES], dtype=np.float64)
 
 
 def _rebalance_cache_key(current_date: datetime) -> pd.Timestamp:
@@ -549,9 +552,9 @@ def collect_rebalance_training_samples_from_state(
                     candidate_ticker=candidate_ticker,
                     ranked_candidates=ranked_candidates,
                     current_holdings=valid_holdings,
-                    held_vector=np.asarray(feature_array[held_idx, date_idx], dtype=np.float32),
-                    candidate_vector=np.asarray(feature_array[candidate_idx, date_idx], dtype=np.float32),
-                    market_vector=np.asarray(market_array[date_idx], dtype=np.float32),
+                    held_vector=np.asarray(feature_array[held_idx, date_idx], dtype=np.float64),
+                    candidate_vector=np.asarray(feature_array[candidate_idx, date_idx], dtype=np.float64),
+                    market_vector=np.asarray(market_array[date_idx], dtype=np.float64),
                     transaction_cost=transaction_cost,
                     portfolio_size=portfolio_size,
                     buffer_size=buffer_size,
@@ -602,6 +605,7 @@ def _rebalance_context_cache_key(
         "train_start_date": pd.Timestamp(train_start_date).isoformat(),
         "train_end_date": pd.Timestamp(train_end_date).isoformat(),
         "forward_days": int(forward_days),
+        "numeric_dtype": AI_REBALANCE_CACHE_NUMERIC_DTYPE,
     }
 
 
@@ -742,8 +746,10 @@ def precompute_rebalance_training_context(
     """Build or extend file-backed numeric caches so workers mmap shared readonly data."""
     MODEL_SAVE_DIR.mkdir(parents=True, exist_ok=True)
     market_df = ticker_data_grouped.get("SPY")
+    market_symbol = "SPY"
     if market_df is None or len(market_df) == 0:
         market_df = ticker_data_grouped.get("QQQ")
+        market_symbol = "QQQ"
 
     valid_tickers = _valid_rebalance_tickers(ticker_data_grouped, all_tickers)
     cache_start = cache_start_date if cache_start_date is not None else train_start_date
@@ -753,6 +759,11 @@ def precompute_rebalance_training_context(
     requested_start_ordinal = start_key.toordinal()
     requested_end_ordinal = end_key.toordinal()
     requested_latest_allowed_ordinal = _rebalance_cache_key(train_end_date).toordinal()
+    print(
+        f"   🗂️ AI Rebalance: Preparing global feature cache "
+        f"({len(valid_tickers)} tickers, {cache_start.date()} to {cache_end.date()}, "
+        f"market={market_symbol if market_df is not None and len(market_df) > 0 else 'fallback-none'})..."
+    )
 
     cache_context = existing_context if isinstance(existing_context, dict) else None
     cache_is_compatible = False
@@ -833,24 +844,26 @@ def _build_rebalance_training_context(
     feature_array = np.lib.format.open_memmap(
         feature_path,
         mode="w+",
-        dtype=np.float32,
+        dtype=np.float64,
         shape=(len(valid_tickers), n_dates, len(TICKER_FEATURE_NAMES)),
     )
     forward_array = np.lib.format.open_memmap(
         forward_path,
         mode="w+",
-        dtype=np.float32,
+        dtype=np.float64,
         shape=(len(valid_tickers), n_dates),
     )
     market_array = np.lib.format.open_memmap(
         market_path,
         mode="w+",
-        dtype=np.float32,
+        dtype=np.float64,
         shape=(n_dates, len(MARKET_FEATURE_NAMES)),
     )
     forward_array.fill(np.nan)
 
     print(f"   🗂️ AI Rebalance: Building file cache ({len(valid_tickers)} tickers, {n_dates} dates)...")
+    print("   🌐 AI Rebalance: Populating market feature cache...")
+    market_cache_start = time.perf_counter()
     _populate_rebalance_market_cache(
         market_array=market_array,
         market_df=market_df,
@@ -859,6 +872,8 @@ def _build_rebalance_training_context(
         fill_end_ordinal=start_ordinal + n_dates - 1,
         reference_date=train_end_date,
     )
+    market_cache_elapsed = time.perf_counter() - market_cache_start
+    print(f"   ✅ AI Rebalance: Market feature cache ready ({market_cache_elapsed:.1f}s)")
     _populate_rebalance_ticker_cache(
         ticker_data_grouped=ticker_data_grouped,
         valid_tickers=valid_tickers,
@@ -921,19 +936,19 @@ def _extend_rebalance_training_context(
     feature_array = np.lib.format.open_memmap(
         feature_path,
         mode="w+",
-        dtype=np.float32,
+        dtype=np.float64,
         shape=(len(valid_tickers), new_n_dates, len(TICKER_FEATURE_NAMES)),
     )
     forward_array = np.lib.format.open_memmap(
         forward_path,
         mode="w+",
-        dtype=np.float32,
+        dtype=np.float64,
         shape=(len(valid_tickers), new_n_dates),
     )
     market_array = np.lib.format.open_memmap(
         market_path,
         mode="w+",
-        dtype=np.float32,
+        dtype=np.float64,
         shape=(new_n_dates, len(MARKET_FEATURE_NAMES)),
     )
     forward_array.fill(np.nan)
@@ -946,6 +961,8 @@ def _extend_rebalance_training_context(
         f"   ♻️ AI Rebalance: Extending file cache by {append_days} day(s) "
         f"to {new_n_dates} total cached dates"
     )
+    print("   🌐 AI Rebalance: Extending market feature cache...")
+    market_cache_start = time.perf_counter()
     _populate_rebalance_market_cache(
         market_array=market_array,
         market_df=market_df,
@@ -954,6 +971,8 @@ def _extend_rebalance_training_context(
         fill_end_ordinal=requested_end_ordinal,
         reference_date=train_end_date,
     )
+    market_cache_elapsed = time.perf_counter() - market_cache_start
+    print(f"   ✅ AI Rebalance: Market feature cache ready ({market_cache_elapsed:.1f}s)")
     forward_refresh_start = max(start_ordinal, old_end_ordinal - forward_days + 1)
     _populate_rebalance_ticker_cache(
         ticker_data_grouped=ticker_data_grouped,
@@ -1064,6 +1083,168 @@ def _populate_rebalance_market_cache(
         market_array[date_idx] = _market_feature_vector(_market_features_from_df(market_df, current_date))
 
 
+def _get_ai_rebalance_cache_context() -> Dict[str, object]:
+    global _AI_REBALANCE_CACHE_CONTEXT
+    if _AI_REBALANCE_CACHE_CONTEXT is None:
+        if not _AI_REBALANCE_CACHE_CONTEXT_PATH:
+            raise ValueError("AI Rebalance cache context is not initialized")
+        _AI_REBALANCE_CACHE_CONTEXT = joblib.load(_AI_REBALANCE_CACHE_CONTEXT_PATH)
+
+    if "_feature_array" not in _AI_REBALANCE_CACHE_CONTEXT and _AI_REBALANCE_CACHE_CONTEXT.get("feature_path"):
+        _AI_REBALANCE_CACHE_CONTEXT["_feature_array"] = np.load(
+            str(_AI_REBALANCE_CACHE_CONTEXT["feature_path"]),
+            mmap_mode="r+",
+        )
+    if "_forward_array" not in _AI_REBALANCE_CACHE_CONTEXT and _AI_REBALANCE_CACHE_CONTEXT.get("forward_path"):
+        _AI_REBALANCE_CACHE_CONTEXT["_forward_array"] = np.load(
+            str(_AI_REBALANCE_CACHE_CONTEXT["forward_path"]),
+            mmap_mode="r+",
+        )
+    return _AI_REBALANCE_CACHE_CONTEXT
+
+
+def ensure_ai_rebalance_feature_cache_context(
+    context: Optional[Dict[str, object]],
+    mmap_mode: str = "r",
+) -> Optional[Dict[str, object]]:
+    if not isinstance(context, dict):
+        return None
+    if "_feature_array" not in context and context.get("feature_path"):
+        context["_feature_array"] = np.load(str(context["feature_path"]), mmap_mode=mmap_mode)
+    if "_forward_array" not in context and context.get("forward_path"):
+        context["_forward_array"] = np.load(str(context["forward_path"]), mmap_mode=mmap_mode)
+    if "_market_array" not in context and context.get("market_path"):
+        context["_market_array"] = np.load(str(context["market_path"]), mmap_mode=mmap_mode)
+    if "ticker_to_idx" not in context:
+        context["ticker_to_idx"] = {
+            ticker: idx for idx, ticker in enumerate(context.get("all_tickers") or [])
+        }
+    return context
+
+
+def clone_ai_rebalance_feature_cache_context(
+    context: Optional[Dict[str, object]],
+) -> Optional[Dict[str, object]]:
+    if not isinstance(context, dict):
+        return None
+    return {
+        key: value
+        for key, value in context.items()
+        if not str(key).startswith("_")
+    }
+
+
+def get_ai_rebalance_cached_feature_row(
+    held_ticker: str,
+    candidate_ticker: str,
+    ranked_candidates: List[str],
+    current_holdings: List[str],
+    current_date: datetime,
+    transaction_cost: float,
+    portfolio_size: int,
+    buffer_size: int,
+    cache_context: Optional[Dict[str, object]],
+) -> Optional[Dict[str, float]]:
+    context = ensure_ai_rebalance_feature_cache_context(cache_context, mmap_mode="r")
+    if context is None:
+        return None
+
+    ticker_to_idx = context.get("ticker_to_idx") or {}
+    held_idx = ticker_to_idx.get(held_ticker)
+    candidate_idx = ticker_to_idx.get(candidate_ticker)
+    if held_idx is None or candidate_idx is None:
+        return None
+
+    start_ordinal = int(context.get("start_ordinal", 0))
+    n_dates = int(context.get("n_dates", 0))
+    date_idx = _rebalance_cache_key(current_date).toordinal() - start_ordinal
+    if date_idx < 0 or date_idx >= n_dates:
+        return None
+
+    feature_array = context.get("_feature_array")
+    market_array = context.get("_market_array")
+    if feature_array is None or market_array is None:
+        return None
+
+    return _build_rebalance_feature_row_from_vectors(
+        held_ticker=held_ticker,
+        candidate_ticker=candidate_ticker,
+        ranked_candidates=ranked_candidates,
+        current_holdings=current_holdings,
+        held_vector=np.asarray(feature_array[held_idx, date_idx], dtype=np.float64),
+        candidate_vector=np.asarray(feature_array[candidate_idx, date_idx], dtype=np.float64),
+        market_vector=np.asarray(market_array[date_idx], dtype=np.float64),
+        transaction_cost=transaction_cost,
+        portfolio_size=portfolio_size,
+        buffer_size=buffer_size,
+    )
+
+
+def _init_ai_rebalance_cache_worker(
+    context_path: Optional[str] = None,
+    context_data: Optional[Dict[str, object]] = None,
+) -> None:
+    global _AI_REBALANCE_CACHE_CONTEXT_PATH, _AI_REBALANCE_CACHE_CONTEXT
+    _AI_REBALANCE_CACHE_CONTEXT_PATH = context_path
+    _AI_REBALANCE_CACHE_CONTEXT = context_data
+
+
+def _build_ticker_cache_row(args) -> None:
+    ticker_idx, ticker = args
+    context = _get_ai_rebalance_cache_context()
+    ticker_df = context["ticker_data_grouped"].get(ticker)
+    feature_array = context["_feature_array"]
+    forward_array = context["_forward_array"]
+    fill_start_ordinal = int(context["fill_start_ordinal"])
+    fill_end_ordinal = int(context["fill_end_ordinal"])
+    start_ordinal = int(context["start_ordinal"])
+    forward_days = int(context["forward_days"])
+    latest_allowed_date = context["latest_allowed_date"]
+
+    for ordinal in range(fill_start_ordinal, fill_end_ordinal + 1):
+        current_date = _rebalance_datetime_from_ordinal(ordinal, latest_allowed_date)
+        date_idx = ordinal - start_ordinal
+        feature_array[ticker_idx, date_idx] = _ticker_feature_vector(
+            _ticker_features_from_df(ticker_df, current_date)
+        )
+        forward_ret = _calculate_forward_return_from_df(
+            ticker_df=ticker_df,
+            current_date=current_date,
+            forward_days=forward_days,
+            latest_allowed_date=latest_allowed_date,
+        )
+        if forward_ret is not None:
+            forward_array[ticker_idx, date_idx] = float(forward_ret)
+        else:
+            forward_array[ticker_idx, date_idx] = np.nan
+
+
+def _refresh_ticker_forward_row(args) -> None:
+    ticker_idx, ticker = args
+    context = _get_ai_rebalance_cache_context()
+    ticker_df = context["ticker_data_grouped"].get(ticker)
+    forward_array = context["_forward_array"]
+    refresh_start_ordinal = int(context["refresh_start_ordinal"])
+    refresh_end_ordinal = int(context["refresh_end_ordinal"])
+    start_ordinal = int(context["start_ordinal"])
+    forward_days = int(context["forward_days"])
+    latest_allowed_date = context["latest_allowed_date"]
+
+    for ordinal in range(refresh_start_ordinal, refresh_end_ordinal + 1):
+        current_date = _rebalance_datetime_from_ordinal(ordinal, latest_allowed_date)
+        date_idx = ordinal - start_ordinal
+        forward_ret = _calculate_forward_return_from_df(
+            ticker_df=ticker_df,
+            current_date=current_date,
+            forward_days=forward_days,
+            latest_allowed_date=latest_allowed_date,
+        )
+        if forward_ret is not None:
+            forward_array[ticker_idx, date_idx] = float(forward_ret)
+        else:
+            forward_array[ticker_idx, date_idx] = np.nan
+
+
 def _populate_rebalance_ticker_cache(
     ticker_data_grouped: Dict[str, pd.DataFrame],
     valid_tickers: List[str],
@@ -1080,38 +1261,73 @@ def _populate_rebalance_ticker_cache(
         return
     from config import NUM_PROCESSES
 
-    def _build_ticker_cache_row(args) -> None:
-        ticker_idx, ticker = args
-        ticker_df = ticker_data_grouped.get(ticker)
-        for ordinal in range(fill_start_ordinal, fill_end_ordinal + 1):
-            current_date = _rebalance_datetime_from_ordinal(ordinal, latest_allowed_date)
-            date_idx = ordinal - start_ordinal
-            feature_array[ticker_idx, date_idx] = _ticker_feature_vector(
-                _ticker_features_from_df(ticker_df, current_date)
-            )
-            forward_ret = _calculate_forward_return_from_df(
-                ticker_df=ticker_df,
-                current_date=current_date,
-                forward_days=forward_days,
-                latest_allowed_date=latest_allowed_date,
-            )
-            if forward_ret is not None:
-                forward_array[ticker_idx, date_idx] = np.float32(forward_ret)
-            else:
-                forward_array[ticker_idx, date_idx] = np.nan
-
     worker_args = list(enumerate(valid_tickers))
     n_workers = max(1, min(NUM_PROCESSES, len(worker_args))) if worker_args else 1
-    with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="voting-reb-cache") as executor:
-        results = executor.map(_build_ticker_cache_row, worker_args)
-        with tqdm(
-            total=len(worker_args),
-            desc=f"   AI Rebalance cache {progress_label}",
-            ncols=100,
-            unit="ticker",
-        ) as pbar:
-            for _ in results:
-                pbar.update(1)
+    cache_context = {
+        "ticker_data_grouped": ticker_data_grouped,
+        "feature_path": str(feature_array.filename),
+        "forward_path": str(forward_array.filename),
+        "start_ordinal": int(start_ordinal),
+        "fill_start_ordinal": int(fill_start_ordinal),
+        "fill_end_ordinal": int(fill_end_ordinal),
+        "forward_days": int(forward_days),
+        "latest_allowed_date": latest_allowed_date,
+    }
+    temp_context_path: Optional[str] = None
+    chunksize = max(1, len(worker_args) // (n_workers * 4))
+    try:
+        if os.name != "nt":
+            global _AI_REBALANCE_CACHE_CONTEXT_PATH, _AI_REBALANCE_CACHE_CONTEXT
+            _AI_REBALANCE_CACHE_CONTEXT_PATH = None
+            _AI_REBALANCE_CACHE_CONTEXT = cache_context
+            with get_context("fork").Pool(
+                processes=n_workers,
+                initializer=_init_ai_rebalance_cache_worker,
+                initargs=(None, cache_context),
+            ) as pool:
+                results = pool.imap_unordered(
+                    _build_ticker_cache_row,
+                    worker_args,
+                    chunksize=chunksize,
+                )
+                for _ in tqdm(
+                    results,
+                    total=len(worker_args),
+                    desc=f"   AI Rebalance cache {progress_label}",
+                    ncols=100,
+                    unit="ticker",
+                ):
+                    pass
+        else:
+            with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as temp_context_file:
+                temp_context_path = temp_context_file.name
+            joblib.dump(cache_context, temp_context_path)
+            with Pool(
+                processes=n_workers,
+                initializer=_init_ai_rebalance_cache_worker,
+                initargs=(temp_context_path,),
+            ) as pool:
+                results = pool.imap_unordered(
+                    _build_ticker_cache_row,
+                    worker_args,
+                    chunksize=chunksize,
+                )
+                for _ in tqdm(
+                    results,
+                    total=len(worker_args),
+                    desc=f"   AI Rebalance cache {progress_label}",
+                    ncols=100,
+                    unit="ticker",
+                ):
+                    pass
+    finally:
+        _AI_REBALANCE_CACHE_CONTEXT_PATH = None
+        _AI_REBALANCE_CACHE_CONTEXT = None
+        if temp_context_path:
+            try:
+                os.unlink(temp_context_path)
+            except OSError:
+                pass
 
 
 def _refresh_rebalance_forward_cache(
@@ -1128,35 +1344,72 @@ def _refresh_rebalance_forward_cache(
         return
     from config import NUM_PROCESSES
 
-    def _refresh_ticker_forward_row(args) -> None:
-        ticker_idx, ticker = args
-        ticker_df = ticker_data_grouped.get(ticker)
-        for ordinal in range(refresh_start_ordinal, refresh_end_ordinal + 1):
-            current_date = _rebalance_datetime_from_ordinal(ordinal, latest_allowed_date)
-            date_idx = ordinal - start_ordinal
-            forward_ret = _calculate_forward_return_from_df(
-                ticker_df=ticker_df,
-                current_date=current_date,
-                forward_days=forward_days,
-                latest_allowed_date=latest_allowed_date,
-            )
-            if forward_ret is not None:
-                forward_array[ticker_idx, date_idx] = np.float32(forward_ret)
-            else:
-                forward_array[ticker_idx, date_idx] = np.nan
-
     worker_args = list(enumerate(valid_tickers))
     n_workers = max(1, min(NUM_PROCESSES, len(worker_args))) if worker_args else 1
-    with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="voting-reb-refresh") as executor:
-        results = executor.map(_refresh_ticker_forward_row, worker_args)
-        with tqdm(
-            total=len(worker_args),
-            desc="   AI Rebalance cache refresh",
-            ncols=100,
-            unit="ticker",
-        ) as pbar:
-            for _ in results:
-                pbar.update(1)
+    cache_context = {
+        "ticker_data_grouped": ticker_data_grouped,
+        "forward_path": str(forward_array.filename),
+        "start_ordinal": int(start_ordinal),
+        "refresh_start_ordinal": int(refresh_start_ordinal),
+        "refresh_end_ordinal": int(refresh_end_ordinal),
+        "forward_days": int(forward_days),
+        "latest_allowed_date": latest_allowed_date,
+    }
+    temp_context_path: Optional[str] = None
+    chunksize = max(1, len(worker_args) // (n_workers * 4))
+    try:
+        if os.name != "nt":
+            global _AI_REBALANCE_CACHE_CONTEXT_PATH, _AI_REBALANCE_CACHE_CONTEXT
+            _AI_REBALANCE_CACHE_CONTEXT_PATH = None
+            _AI_REBALANCE_CACHE_CONTEXT = cache_context
+            with get_context("fork").Pool(
+                processes=n_workers,
+                initializer=_init_ai_rebalance_cache_worker,
+                initargs=(None, cache_context),
+            ) as pool:
+                results = pool.imap_unordered(
+                    _refresh_ticker_forward_row,
+                    worker_args,
+                    chunksize=chunksize,
+                )
+                for _ in tqdm(
+                    results,
+                    total=len(worker_args),
+                    desc="   AI Rebalance cache refresh",
+                    ncols=100,
+                    unit="ticker",
+                ):
+                    pass
+        else:
+            with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as temp_context_file:
+                temp_context_path = temp_context_file.name
+            joblib.dump(cache_context, temp_context_path)
+            with Pool(
+                processes=n_workers,
+                initializer=_init_ai_rebalance_cache_worker,
+                initargs=(temp_context_path,),
+            ) as pool:
+                results = pool.imap_unordered(
+                    _refresh_ticker_forward_row,
+                    worker_args,
+                    chunksize=chunksize,
+                )
+                for _ in tqdm(
+                    results,
+                    total=len(worker_args),
+                    desc="   AI Rebalance cache refresh",
+                    ncols=100,
+                    unit="ticker",
+                ):
+                    pass
+    finally:
+        _AI_REBALANCE_CACHE_CONTEXT_PATH = None
+        _AI_REBALANCE_CACHE_CONTEXT = None
+        if temp_context_path:
+            try:
+                os.unlink(temp_context_path)
+            except OSError:
+                pass
 
 
 def init_rebalance_collection_worker(context: Dict[str, object]) -> None:
@@ -1254,9 +1507,9 @@ def collect_rebalance_ticker_training_data(
                 candidate_ticker=candidate_ticker,
                 ranked_candidates=simulated_candidates,
                 current_holdings=simulated_holdings,
-                held_vector=np.asarray(feature_array[ticker_idx, date_idx], dtype=np.float32),
-                candidate_vector=np.asarray(feature_array[candidate_ticker_idx, date_idx], dtype=np.float32),
-                market_vector=np.asarray(market_array[date_idx], dtype=np.float32),
+                held_vector=np.asarray(feature_array[ticker_idx, date_idx], dtype=np.float64),
+                candidate_vector=np.asarray(feature_array[candidate_ticker_idx, date_idx], dtype=np.float64),
+                market_vector=np.asarray(market_array[date_idx], dtype=np.float64),
                 transaction_cost=transaction_cost,
                 portfolio_size=portfolio_size,
                 buffer_size=buffer_size,
@@ -1619,6 +1872,7 @@ def choose_ai_rebalance_ranked_candidates(
     portfolio_size: int,
     buffer_size: int,
     min_predicted_edge: float,
+    cache_context: Optional[Dict[str, object]] = None,
 ) -> Tuple[List[str], List[Tuple[str, str, float, str]]]:
     if not current_holdings:
         return list(ranked_candidates), []
@@ -1647,17 +1901,29 @@ def choose_ai_rebalance_ranked_candidates(
             keepers.append(held_ticker)
             continue
 
-        row = build_rebalance_feature_row(
+        row = get_ai_rebalance_cached_feature_row(
             held_ticker=held_ticker,
             candidate_ticker=candidate_ticker,
             ranked_candidates=ranked_candidates,
             current_holdings=current_holdings,
-            ticker_data_grouped=ticker_data_grouped,
             current_date=current_date,
             transaction_cost=transaction_cost,
             portfolio_size=portfolio_size,
             buffer_size=buffer_size,
+            cache_context=cache_context,
         )
+        if row is None:
+            row = build_rebalance_feature_row(
+                held_ticker=held_ticker,
+                candidate_ticker=candidate_ticker,
+                ranked_candidates=ranked_candidates,
+                current_holdings=current_holdings,
+                ticker_data_grouped=ticker_data_grouped,
+                current_date=current_date,
+                transaction_cost=transaction_cost,
+                portfolio_size=portfolio_size,
+                buffer_size=buffer_size,
+            )
         X = pd.DataFrame([[row.get(col, 0.0) for col in feature_cols]], columns=feature_cols)
 
         try:

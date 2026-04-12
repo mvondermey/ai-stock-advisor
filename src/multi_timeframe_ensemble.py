@@ -7,8 +7,10 @@ for better entry/exit timing.
 import pandas as pd
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import get_context
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
+import os
 from tqdm import tqdm
 from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
 from strategy_disk_cache import (
@@ -568,18 +570,44 @@ def select_multi_timeframe_stocks(
     n_workers = max(1, min(NUM_PROCESSES, len(cached_tickers))) if cached_tickers else 1
 
     if n_workers > 1 and len(cached_tickers) >= max(32, n_workers * 2):
-        if verbose:
-            print(f"   🚀 Multi-Horizon Ensemble: Scoring {len(cached_tickers)} tickers with {n_workers} threads")
-        _init_multi_timeframe_worker(selection_cache, current_date, price_history_cache=price_history_cache)
-        with ThreadPoolExecutor(max_workers=n_workers) as executor:
-            results = list(tqdm(
-                executor.map(_score_multi_timeframe_ticker_worker, cached_tickers),
-                total=len(cached_tickers),
-                desc="   Multi-Horizon Ensemble scoring",
-                ncols=100,
-                unit="ticker",
-            ))
-        stock_scores = [result for result in results if result is not None]
+        if os.name != "nt":
+            if verbose:
+                print(f"   🚀 Multi-Horizon Ensemble: Scoring {len(cached_tickers)} tickers with {n_workers} fork workers")
+            chunksize = max(1, len(cached_tickers) // (n_workers * 4))
+            with get_context("fork").Pool(
+                processes=n_workers,
+                initializer=_init_multi_timeframe_worker,
+                initargs=(selection_cache, current_date, price_history_cache),
+            ) as pool:
+                results = pool.imap_unordered(
+                    _score_multi_timeframe_ticker_worker,
+                    cached_tickers,
+                    chunksize=chunksize,
+                )
+                for result in tqdm(
+                    results,
+                    total=len(cached_tickers),
+                    desc="   Multi-Horizon Ensemble scoring",
+                    ncols=100,
+                    unit="ticker",
+                ):
+                    if result is not None:
+                        stock_scores.append(result)
+        else:
+            if verbose:
+                print(f"   🚀 Multi-Horizon Ensemble: Scoring {len(cached_tickers)} tickers with {n_workers} threads")
+            _init_multi_timeframe_worker(selection_cache, current_date, price_history_cache=price_history_cache)
+            with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                results = executor.map(_score_multi_timeframe_ticker_worker, cached_tickers)
+                for result in tqdm(
+                    results,
+                    total=len(cached_tickers),
+                    desc="   Multi-Horizon Ensemble scoring",
+                    ncols=100,
+                    unit="ticker",
+                ):
+                    if result is not None:
+                        stock_scores.append(result)
     else:
         for ticker in cached_tickers:
             cache_entry = (

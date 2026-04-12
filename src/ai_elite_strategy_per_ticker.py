@@ -20,21 +20,28 @@ from model_training_safety import (
     restore_native_model_artifacts,
     save_native_model_artifacts,
 )
+from ai_elite_strategy import AI_ELITE_FEATURE_NAMES
 
-FEATURE_COLS = [
-    'perf_3m', 'perf_6m', 'perf_1y', 'volatility', 'avg_volume',
-    'overnight_gap', 'intraday_range', 'last_hour_momentum',
-    'risk_adj_score', 'dip_score', 'mom_accel', 'vol_sweet_spot',
-    'volume_ratio', 'rsi_14',
-    'short_term_reversal', 'volume_sentiment', 'risk_adj_mom_3m',
-    # NEW: Mean reversion features
-    'bollinger_position', 'sma20_distance', 'sma50_distance', 'macd'
-]
+FEATURE_COLS = list(AI_ELITE_FEATURE_NAMES)
 
 _AI_ELITE_COLLECTION_CONTEXT_PATH: Optional[str] = None
 _AI_ELITE_COLLECTION_CONTEXT: Optional[Dict[str, object]] = None
 _AI_ELITE_TRAIN_CONTEXT_PATH: Optional[str] = None
 _AI_ELITE_TRAIN_CONTEXT: Optional[Dict[str, object]] = None
+
+
+def _build_ai_elite_training_sample(
+    ticker: str,
+    features: Dict[str, float],
+    forward_return: float,
+    market_return: float,
+) -> Dict[str, float]:
+    sample = {'ticker': ticker}
+    for feature_name in FEATURE_COLS:
+        sample[feature_name] = float(features.get(feature_name, 0.0))
+    sample['forward_return'] = float(forward_return)
+    sample['market_return'] = float(market_return)
+    return sample
 
 
 def _init_ai_elite_collection_worker(
@@ -44,6 +51,16 @@ def _init_ai_elite_collection_worker(
     global _AI_ELITE_COLLECTION_CONTEXT_PATH, _AI_ELITE_COLLECTION_CONTEXT
     _AI_ELITE_COLLECTION_CONTEXT_PATH = context_path
     _AI_ELITE_COLLECTION_CONTEXT = context
+    if isinstance(_AI_ELITE_COLLECTION_CONTEXT, dict) and _AI_ELITE_COLLECTION_CONTEXT.get("feature_cache_context"):
+        try:
+            from ai_elite_strategy import _ensure_ai_elite_feature_cache_context
+
+            _AI_ELITE_COLLECTION_CONTEXT["feature_cache_context"] = _ensure_ai_elite_feature_cache_context(
+                _AI_ELITE_COLLECTION_CONTEXT["feature_cache_context"],
+                mmap_mode="r",
+            )
+        except Exception:
+            pass
 
 
 def _get_ai_elite_collection_context() -> Dict[str, object]:
@@ -52,6 +69,13 @@ def _get_ai_elite_collection_context() -> Dict[str, object]:
         if not _AI_ELITE_COLLECTION_CONTEXT_PATH:
             raise ValueError("AI Elite collection context path is not initialized")
         _AI_ELITE_COLLECTION_CONTEXT = joblib.load(_AI_ELITE_COLLECTION_CONTEXT_PATH)
+        if isinstance(_AI_ELITE_COLLECTION_CONTEXT, dict) and _AI_ELITE_COLLECTION_CONTEXT.get("feature_cache_context"):
+            from ai_elite_strategy import _ensure_ai_elite_feature_cache_context
+
+            _AI_ELITE_COLLECTION_CONTEXT["feature_cache_context"] = _ensure_ai_elite_feature_cache_context(
+                _AI_ELITE_COLLECTION_CONTEXT["feature_cache_context"],
+                mmap_mode="r",
+            )
     return _AI_ELITE_COLLECTION_CONTEXT
 
 
@@ -68,13 +92,15 @@ def _collect_ai_elite_training_data_worker(ticker: str) -> Tuple[str, List[dict]
     context = _get_ai_elite_collection_context()
     samples = collect_ticker_training_data(
         ticker=ticker,
-        ticker_data=context['ticker_data_grouped'].get(ticker),
+        ticker_data=(context.get('ticker_data_grouped') or {}).get(ticker),
         train_start_date=context['train_start_date'],
         train_end_date=context['train_end_date'],
         forward_days=int(context['forward_days']),
         market_returns=context['market_returns'],
         price_history_cache=context.get('price_history_cache'),
         hourly_history_cache=context.get('hourly_history_cache'),
+        feature_cache_context=context.get('feature_cache_context'),
+        market_context_map=context.get('market_context_map'),
     )
     return ticker, samples
 
@@ -89,23 +115,61 @@ def collect_training_data_parallel(
     n_processes: int,
     price_history_cache=None,
     hourly_history_cache=None,
-) -> Tuple[List[dict], Dict[str, List[dict]]]:
+    feature_cache_context=None,
+    market_context_map=None,
+) -> Tuple[List[dict], int]:
+    """Returns (all_training_data, ticker_count) - ticker_count instead of full map to save memory."""
+    from parallel_backtest import (
+        build_hourly_history_cache,
+        preload_hourly_tickers_parallel,
+    )
+
     all_training_data: List[dict] = []
-    ticker_samples_map: Dict[str, List[dict]] = {}
+    tickers_with_samples = 0
     temp_context_path = None
 
     try:
         worker_tickers = list(all_tickers)
         n_workers = max(1, min(n_processes, len(worker_tickers))) if worker_tickers else 1
-        sample_context = {
-            'ticker_data_grouped': ticker_data_grouped,
-            'train_start_date': train_start_date,
-            'train_end_date': train_end_date,
-            'forward_days': forward_days,
-            'market_returns': market_returns,
-            'price_history_cache': price_history_cache,
-            'hourly_history_cache': hourly_history_cache,
-        }
+
+        if feature_cache_context is None:
+            if hourly_history_cache is None:
+                hourly_history_cache = build_hourly_history_cache()
+
+            preload_start = pd.Timestamp.now()
+            preloaded = preload_hourly_tickers_parallel(
+                hourly_history_cache,
+                worker_tickers,
+                n_workers=n_workers,
+                show_progress=False,
+            )
+            preload_time = (pd.Timestamp.now() - preload_start).total_seconds()
+            if preload_time > 1.0:
+                print(f"   ⚡ AI Elite: Pre-loaded {preloaded} hourly caches in {preload_time:.1f}s")
+
+            sample_context = {
+                'ticker_data_grouped': ticker_data_grouped,
+                'train_start_date': train_start_date,
+                'train_end_date': train_end_date,
+                'forward_days': forward_days,
+                'market_returns': market_returns,
+                'price_history_cache': price_history_cache,
+                'hourly_history_cache': hourly_history_cache,
+                'market_context_map': market_context_map,
+            }
+        else:
+            from ai_elite_strategy import clone_ai_elite_feature_cache_context
+
+            sample_context = {
+                'train_start_date': train_start_date,
+                'train_end_date': train_end_date,
+                'forward_days': forward_days,
+                'market_returns': market_returns,
+                'feature_cache_context': clone_ai_elite_feature_cache_context(feature_cache_context),
+                'market_context_map': market_context_map,
+            }
+
+        chunksize = max(1, len(worker_tickers) // (n_workers * 4))
 
         if os.name != "nt":
             global _AI_ELITE_COLLECTION_CONTEXT_PATH, _AI_ELITE_COLLECTION_CONTEXT
@@ -117,7 +181,11 @@ def collect_training_data_parallel(
                     initializer=_init_ai_elite_collection_worker,
                     initargs=(None, sample_context),
                 ) as pool:
-                    results = pool.imap_unordered(_collect_ai_elite_training_data_worker, worker_tickers)
+                    results = pool.imap_unordered(
+                        _collect_ai_elite_training_data_worker,
+                        worker_tickers,
+                        chunksize=chunksize,
+                    )
                     for ticker, samples in tqdm(
                         results,
                         total=len(worker_tickers),
@@ -127,11 +195,11 @@ def collect_training_data_parallel(
                     ):
                         if samples:
                             all_training_data.extend(samples)
-                            ticker_samples_map[ticker] = samples
+                            tickers_with_samples += 1
             finally:
                 _AI_ELITE_COLLECTION_CONTEXT_PATH = None
                 _AI_ELITE_COLLECTION_CONTEXT = None
-            return all_training_data, ticker_samples_map
+            return all_training_data, tickers_with_samples
 
         with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as temp_context_file:
             temp_context_path = temp_context_file.name
@@ -142,7 +210,11 @@ def collect_training_data_parallel(
             initializer=_init_ai_elite_collection_worker,
             initargs=(temp_context_path,),
         ) as pool:
-            results = pool.imap_unordered(_collect_ai_elite_training_data_worker, worker_tickers)
+            results = pool.imap_unordered(
+                _collect_ai_elite_training_data_worker,
+                worker_tickers,
+                chunksize=chunksize,
+            )
             for ticker, samples in tqdm(
                 results,
                 total=len(worker_tickers),
@@ -152,7 +224,7 @@ def collect_training_data_parallel(
             ):
                 if samples:
                     all_training_data.extend(samples)
-                    ticker_samples_map[ticker] = samples
+                    tickers_with_samples += 1
     finally:
         if temp_context_path is not None:
             try:
@@ -160,7 +232,7 @@ def collect_training_data_parallel(
             except OSError as e:
                 print(f"   ⚠️ AI Elite: Failed to remove temp context: {e}")
 
-    return all_training_data, ticker_samples_map
+    return all_training_data, tickers_with_samples
 
 
 class IncrementalScaledSGDRegressor:
@@ -571,17 +643,22 @@ def collect_ticker_training_data(
     market_returns: dict = None,
     price_history_cache=None,
     hourly_history_cache=None,
+    feature_cache_context=None,
+    market_context_map=None,
 ) -> List[dict]:
     """Collect training samples for a single ticker. Returns list of dicts.
     market_returns: dict mapping sample_date -> market return (pre-computed)."""
-    if ticker_data is None or len(ticker_data) == 0:
+    if feature_cache_context is None and (ticker_data is None or len(ticker_data) == 0):
         return []
 
     try:
         from ai_elite_strategy import (
             _extract_features,
-            _calculate_forward_return,
             _load_hourly_data_direct,
+            _prepare_ai_elite_daily_context,
+            _prepare_ai_elite_hourly_context,
+            _ensure_ai_elite_feature_cache_context,
+            get_ai_elite_cached_feature_payload,
         )
     except ImportError:
         return []
@@ -594,6 +671,60 @@ def collect_ticker_training_data(
     if train_end_date.tzinfo is None:
         train_end_date = train_end_date.replace(tzinfo=timezone.utc)
 
+    if feature_cache_context is not None:
+        cache_context = _ensure_ai_elite_feature_cache_context(feature_cache_context, mmap_mode="r")
+        if cache_context is None:
+            return []
+
+        ticker_to_idx = cache_context.get("ticker_to_idx") or {}
+        ticker_idx = ticker_to_idx.get(ticker)
+        forward_array = cache_context.get("_forward_array")
+        start_ordinal = int(cache_context.get("start_ordinal", 0))
+        n_dates = int(cache_context.get("n_dates", 0))
+        if ticker_idx is None or forward_array is None:
+            return []
+
+        samples = []
+        current_date = train_start_date
+        while current_date <= train_end_date:
+            try:
+                payload = get_ai_elite_cached_feature_payload(
+                    cache_context,
+                    ticker,
+                    current_date,
+                    require_intraday_coverage=False,
+                )
+                if payload is None:
+                    current_date += timedelta(days=1)
+                    continue
+
+                current_ordinal = current_date.date().toordinal()
+                date_idx = current_ordinal - start_ordinal
+                if date_idx < 0 or date_idx >= n_dates:
+                    current_date += timedelta(days=1)
+                    continue
+
+                forward_return = float(forward_array[ticker_idx, date_idx])
+                if np.isnan(forward_return):
+                    current_date += timedelta(days=1)
+                    continue
+
+                features = payload["features"]
+                samples.append(
+                    _build_ai_elite_training_sample(
+                        ticker=ticker,
+                        features=features,
+                        forward_return=forward_return,
+                        market_return=market_returns.get(current_date, 0.0),
+                    )
+                )
+            except Exception:
+                pass
+            current_date += timedelta(days=1)
+        return samples
+
+    from ai_elite_strategy import _calculate_forward_return
+
     if hourly_cache is None:
         hourly_cache = {ticker: _load_hourly_data_direct(
             ticker,
@@ -601,6 +732,11 @@ def collect_ticker_training_data(
             train_end_date + timedelta(days=forward_days + 2),
             hourly_history_cache=hourly_history_cache,
         )}
+
+    daily_context = _prepare_ai_elite_daily_context(ticker_data, market_context_map=market_context_map)
+    if daily_context is None:
+        return []
+    hourly_context = _prepare_ai_elite_hourly_context(hourly_cache.get(ticker))
 
     samples = []
     current_date = train_start_date
@@ -612,7 +748,10 @@ def collect_ticker_training_data(
                 hourly_data,
                 current_date,
                 daily_data=ticker_data,
-                price_history_cache=price_history_cache,
+                price_history_cache=None,
+                daily_context=daily_context,
+                hourly_context=hourly_context,
+                market_context_map=market_context_map,
             )
             if features is None:
                 current_date += timedelta(days=1)
@@ -622,33 +761,14 @@ def collect_ticker_training_data(
                 current_date += timedelta(days=1)
                 continue
 
-            samples.append({
-                'ticker':             ticker,
-                'perf_3m':            features['perf_3m'],
-                'perf_6m':            features['perf_6m'],
-                'perf_1y':            features['perf_1y'],
-                'volatility':         features['volatility'],
-                'avg_volume':         features['avg_volume'],
-                'overnight_gap':      features.get('overnight_gap', 0),
-                'intraday_range':     features.get('intraday_range', 0),
-                'last_hour_momentum': features.get('last_hour_momentum', 0),
-                'risk_adj_score':     features.get('risk_adj_score', 0),
-                'dip_score':          features.get('dip_score', 0),
-                'mom_accel':          features.get('mom_accel', 0),
-                'vol_sweet_spot':     features.get('vol_sweet_spot', 0),
-                'volume_ratio':       features.get('volume_ratio', 1.0),
-                'rsi_14':             features.get('rsi_14', 50.0),
-                'short_term_reversal': features.get('short_term_reversal', 0),
-                'volume_sentiment':   features.get('volume_sentiment', 0),
-                'risk_adj_mom_3m':    features.get('risk_adj_mom_3m', 0),
-                # NEW: Mean reversion features
-                'bollinger_position': features.get('bollinger_position', 0.5),
-                'sma20_distance':     features.get('sma20_distance', 0),
-                'sma50_distance':     features.get('sma50_distance', 0),
-                'macd':               features.get('macd', 0),
-                'forward_return':     forward_return,
-                'market_return':      market_returns.get(current_date, 0.0),
-            })
+            samples.append(
+                _build_ai_elite_training_sample(
+                    ticker=ticker,
+                    features=features,
+                    forward_return=forward_return,
+                    market_return=market_returns.get(current_date, 0.0),
+                )
+            )
         except Exception as e:
             pass  # Skip date on error
         current_date += timedelta(days=1)

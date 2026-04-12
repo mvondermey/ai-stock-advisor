@@ -239,8 +239,13 @@ def run_selection_strategy_comparison(
     }
     try:
         if os.name != "nt" and max_workers > 1:
+            chunksize = max(1, len(all_available_tickers) // (max_workers * 4))
             with get_context("fork").Pool(processes=max_workers) as pool:
-                results = pool.imap_unordered(_calculate_ticker_metrics_worker, all_available_tickers)
+                results = pool.imap_unordered(
+                    _calculate_ticker_metrics_worker,
+                    all_available_tickers,
+                    chunksize=chunksize,
+                )
                 for ticker, metrics in tqdm(
                     results,
                     total=len(all_available_tickers),

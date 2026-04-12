@@ -274,6 +274,132 @@ def _run_parallel_strategy_selection_task(
             top_n=top_n,
             price_history_cache=price_history_cache,
         )
+    elif strategy_name == "multi_timeframe_intraday":
+        from multi_timeframe_intraday_ensemble import select_multi_timeframe_intraday_stocks
+
+        selected = select_multi_timeframe_intraday_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "dynamic_bh_1y":
+        selected = _select_top_performers_impl(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date,
+            365,
+            top_n=top_n,
+            apply_performance_filter=True,
+            filter_label="Dynamic BH 1Y",
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "dynamic_bh_6m":
+        selected = _select_top_performers_impl(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date,
+            180,
+            top_n=top_n,
+            apply_performance_filter=True,
+            filter_label="Dynamic BH 6M",
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "dynamic_bh_3m":
+        selected = _select_top_performers_impl(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date,
+            90,
+            top_n=top_n,
+            apply_performance_filter=True,
+            filter_label="Dynamic BH 3M",
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "dynamic_bh_1m":
+        selected = _select_top_performers_impl(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date,
+            21,
+            top_n=top_n,
+            apply_performance_filter=True,
+            filter_label="Dynamic BH 1M",
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "dynamic_bh_1y_trailing_stop":
+        selected = _select_top_performers_impl(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date,
+            365,
+            top_n=top_n,
+            apply_performance_filter=True,
+            filter_label="Dynamic BH 1Y+TS",
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "risk_adj_mom":
+        selected = _select_risk_adj_mom_stocks_impl(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            lookback_days=365,
+            strategy_name="Risk-Adj Mom",
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "risk_adj_mom_6m":
+        from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
+
+        selected = select_risk_adj_mom_6m_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "risk_adj_mom_6m_monthly":
+        from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
+
+        selected = select_risk_adj_mom_6m_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "risk_adj_mom_3m":
+        from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
+
+        selected = select_risk_adj_mom_3m_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "risk_adj_mom_3m_monthly":
+        from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
+
+        selected = select_risk_adj_mom_3m_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "trend_atr":
+        from new_strategies import reset_trend_atr_state, select_trend_following_atr_stocks
+
+        if runtime_context.get("reset_trend_atr_state"):
+            reset_trend_atr_state()
+        selected = select_trend_following_atr_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date,
+            top_n=top_n,
+        )
     elif strategy_name == "ai_elite":
         from ai_elite_strategy import select_ai_elite_stocks
 
@@ -1938,27 +2064,30 @@ def optimize_thresholds_for_portfolio_parallel(optimization_params, num_processe
     num_processes = num_processes or max(1, cpu_count() - 5)
     print(f"\nOptimizing thresholds for {len(optimization_params)} tickers using {num_processes} processes...")
 
-    with Pool(processes=num_processes, maxtasksperchild=20) as pool:
-        results = list(tqdm(
-            pool.imap_unordered(optimize_single_ticker_worker, optimization_params),
-            total=len(optimization_params),
-            desc="Optimizing Thresholds"
-        ))
-    gc.collect()  # Release semaphores after Pool closes (WSL fix)
-
+    chunksize = max(1, len(optimization_params) // (num_processes * 4))
     optimized_params = {}
     all_tested_combinations = {}  # Store all tested combinations per ticker
-
-    for res in results:
-        if res and res.get('ticker'):
-            optimized_params[res['ticker']] = {
-                k: res[k] for k in ['min_proba_buy', 'min_proba_sell', 'class_horizon', 'optimization_status', 'revenue_beats_bh']
-            }
-            if 'tested_combinations' in res and res['tested_combinations']:
-                all_tested_combinations[res['ticker']] = res['tested_combinations']
-            beats_bh_status = "✅ Beats B&H" if res.get('revenue_beats_bh', False) else "❌ Below B&H"
-            print(f"Optimized {res['ticker']}: Buy>{res['min_proba_buy']:.2f}, Sell>{res['min_proba_sell']:.2f}, "
-                  f"Horizon={res['class_horizon']}d → {res['optimization_status']} | {beats_bh_status}")
+    with Pool(processes=num_processes, maxtasksperchild=20) as pool:
+        results = pool.imap_unordered(
+            optimize_single_ticker_worker,
+            optimization_params,
+            chunksize=chunksize,
+        )
+        for res in tqdm(
+            results,
+            total=len(optimization_params),
+            desc="Optimizing Thresholds"
+        ):
+            if res and res.get('ticker'):
+                optimized_params[res['ticker']] = {
+                    k: res[k] for k in ['min_proba_buy', 'min_proba_sell', 'class_horizon', 'optimization_status', 'revenue_beats_bh']
+                }
+                if 'tested_combinations' in res and res['tested_combinations']:
+                    all_tested_combinations[res['ticker']] = res['tested_combinations']
+                beats_bh_status = "✅ Beats B&H" if res.get('revenue_beats_bh', False) else "❌ Below B&H"
+                print(f"Optimized {res['ticker']}: Buy>{res['min_proba_buy']:.2f}, Sell>{res['min_proba_sell']:.2f}, "
+                      f"Horizon={res['class_horizon']}d → {res['optimization_status']} | {beats_bh_status}")
+    gc.collect()  # Release semaphores after Pool closes (WSL fix)
 
     return optimized_params, all_tested_combinations
 
@@ -3574,6 +3703,7 @@ def _run_portfolio_backtest_walk_forward(
         force_rebalance: bool = False,
         buffer_size: int = None,
         min_predicted_edge: float = 0.0,
+        cache_context=None,
     ) -> Tuple[Dict[str, Dict], float, List[str], float, bool, List[Tuple[str, str, float, str]], List[str]]:
         from ai_rebalance_strategy import choose_ai_rebalance_ranked_candidates
         _decision_started_at = time.perf_counter()
@@ -3589,6 +3719,7 @@ def _run_portfolio_backtest_walk_forward(
             portfolio_size=portfolio_size,
             buffer_size=effective_buffer_size,
             min_predicted_edge=min_predicted_edge,
+            cache_context=cache_context,
         )
         _record_strategy_timing(
             strategy_name,
@@ -3839,21 +3970,29 @@ def _run_portfolio_backtest_walk_forward(
                     if bool(strategy_config.get("use_buffer", False))
                     else PORTFOLIO_SIZE
                 )
+                task_runtime_context = None
+                if strategy_name == "trend_atr" and day_count == 1:
+                    task_runtime_context = {"reset_trend_atr_state": True}
                 parallel_strategy_futures[strategy_name] = parallel_strategy_executor.submit(
                     _run_parallel_strategy_selection_task,
                     strategy_name,
                     current_date,
                     top_n,
-                    None,
+                    task_runtime_context,
                 )
                 daily_queue_stats["tasks_dispatched"] += 1
 
         def _resolve_parallel_strategy_selection(strategy_name: str, fallback_fn=None):
             future = parallel_strategy_futures.pop(strategy_name, None)
-            if future is None:
+            def _run_fallback(reason: str):
                 daily_queue_stats["fallbacks"] += 1
-                print(f"   ⚠️ Strategy queue missing result for {strategy_name}; returning empty selection")
-                return []
+                if fallback_fn is None:
+                    print(f"   ⚠️ Strategy queue {reason} for {strategy_name}; returning empty selection")
+                    return []
+                print(f"   ⚠️ Strategy queue {reason} for {strategy_name}; running main-process fallback")
+                return fallback_fn()
+            if future is None:
+                return _run_fallback("missing result")
             try:
                 task_result = future.result()
                 elapsed = float(task_result.get("elapsed", 0.0))
@@ -3871,9 +4010,8 @@ def _run_portfolio_backtest_walk_forward(
                 print(f"   🚦 Strategy queue: {strategy_name} returned {len(selected)} tickers")
                 return selected
             except Exception as e:
-                daily_queue_stats["fallbacks"] += 1
                 print(f"   ⚠️ Strategy queue failed for {strategy_name}: {e}")
-                return []
+                return _run_fallback("failed")
 
         # VOTING ENSEMBLE AI REBALANCE TRAINING
         # Run the heavy cache collection/training early so crashes show up immediately.
@@ -3918,6 +4056,7 @@ def _run_portfolio_backtest_walk_forward(
                     n_workers = max(1, NUM_PROCESSES)
                     print(f"   📊 Voting Ens AI Reb: Collecting data from {len(all_tickers)} tickers ({n_workers} processes, {config.AI_VOTING_REBALANCE_TRAINING_LOOKBACK}d lookback)...")
                     _start_time = _time.time()
+                    print("   🗂️ Voting Ens AI Reb: Preparing global feature cache...")
                     rebalance_context = precompute_rebalance_training_context(
                         ticker_data_grouped=ticker_data_grouped,
                         all_tickers=all_tickers,
@@ -3946,23 +4085,27 @@ def _run_portfolio_backtest_walk_forward(
                     rebalance_training_samples = []
                     ticker_samples_map = {}
 
+                    chunksize = max(1, len(collect_args) // (n_workers * 4))
                     with Pool(
                         processes=n_workers,
                         initializer=init_rebalance_collection_worker,
                         initargs=(rebalance_context,),
                     ) as pool:
-                        results = list(tqdm(
-                            pool.imap_unordered(_collect_rebalance_data_worker, collect_args),
+                        result_iter = tqdm(
+                            pool.imap_unordered(
+                                _collect_rebalance_data_worker,
+                                collect_args,
+                                chunksize=chunksize,
+                            ),
                             total=len(collect_args),
                             desc="   Voting AI Reb collection",
                             ncols=100,
                             unit="ticker",
-                        ))
-
-                    for ticker, samples in results:
-                        if samples:
-                            rebalance_training_samples.extend(samples)
-                            ticker_samples_map[ticker] = samples
+                        )
+                        for ticker, samples in result_iter:
+                            if samples:
+                                rebalance_training_samples.extend(samples)
+                                ticker_samples_map[ticker] = samples
 
                     _elapsed = _time.time() - _start_time
                     print(f"   📊 Voting Ens AI Reb: Collected {len(rebalance_training_samples)} samples from {len(ticker_samples_map)} tickers ({_elapsed:.1f}s)")
@@ -4117,17 +4260,20 @@ def _run_portfolio_backtest_walk_forward(
         # MULTI-HORIZON INTRADAY: Rebalance using hourly data for medium/short horizons
         if config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE:
             try:
-                from multi_timeframe_intraday_ensemble import select_multi_timeframe_intraday_stocks
+                def _fallback_multi_timeframe_intraday():
+                    from multi_timeframe_intraday_ensemble import select_multi_timeframe_intraday_stocks
 
-                new_multi_tf_intraday_ensemble_stocks = _time_strategy_phase_call(
-                    "Multi-Horizon Intraday",
-                    "selection",
-                    select_multi_timeframe_intraday_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    price_history_cache=price_history_cache,
+                    return select_multi_timeframe_intraday_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_multi_tf_intraday_ensemble_stocks = _resolve_parallel_strategy_selection(
+                    "multi_timeframe_intraday",
+                    _fallback_multi_timeframe_intraday,
                 )
 
                 if new_multi_tf_intraday_ensemble_stocks:
@@ -5607,10 +5753,16 @@ def _run_portfolio_backtest_walk_forward(
             print(f"\n🔄 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): Dynamic BH 1Y Rebalancing...")
 
             try:
-                new_dynamic_bh_stocks = select_top_performers(
-                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    apply_performance_filter=True, filter_label="Dynamic BH 1Y",
-                    timing_strategy_name="Dynamic BH 1Y",
+                def _fallback_dynamic_bh_1y():
+                    return select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        apply_performance_filter=True, filter_label="Dynamic BH 1Y",
+                        timing_strategy_name="Dynamic BH 1Y",
+                    )
+
+                new_dynamic_bh_stocks = _resolve_parallel_strategy_selection(
+                    "dynamic_bh_1y",
+                    _fallback_dynamic_bh_1y,
                 )
 
                 if new_dynamic_bh_stocks:
@@ -5643,10 +5795,16 @@ def _run_portfolio_backtest_walk_forward(
             print(f"\n🔄 Day {day_count} ({current_date.strftime('%Y-%m-%d')}): Dynamic BH 6M Rebalancing...")
 
             try:
-                new_dynamic_bh_6m_stocks = select_top_performers(
-                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    apply_performance_filter=True, filter_label="Dynamic BH 6M",
-                    timing_strategy_name="Dynamic BH 6M",
+                def _fallback_dynamic_bh_6m():
+                    return select_top_performers(
+                        initial_top_tickers, ticker_data_grouped, current_date, lookback_days=180, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        apply_performance_filter=True, filter_label="Dynamic BH 6M",
+                        timing_strategy_name="Dynamic BH 6M",
+                    )
+
+                new_dynamic_bh_6m_stocks = _resolve_parallel_strategy_selection(
+                    "dynamic_bh_6m",
+                    _fallback_dynamic_bh_6m,
                 )
 
                 if new_dynamic_bh_6m_stocks:
@@ -5676,10 +5834,16 @@ def _run_portfolio_backtest_walk_forward(
 
         # DYNAMIC BH 3M PORTFOLIO: Rebalance to current top N performers DAILY
         if config.ENABLE_DYNAMIC_BH_3M:
-            new_dynamic_bh_3m_stocks = select_top_performers(
-                initial_top_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                apply_performance_filter=True, filter_label="Dynamic BH 3M",
-                timing_strategy_name="Dynamic BH 3M",
+            def _fallback_dynamic_bh_3m():
+                return select_top_performers(
+                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=90, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    apply_performance_filter=True, filter_label="Dynamic BH 3M",
+                    timing_strategy_name="Dynamic BH 3M",
+                )
+
+            new_dynamic_bh_3m_stocks = _resolve_parallel_strategy_selection(
+                "dynamic_bh_3m",
+                _fallback_dynamic_bh_3m,
             )
 
             if new_dynamic_bh_3m_stocks:
@@ -5706,10 +5870,16 @@ def _run_portfolio_backtest_walk_forward(
 
         # DYNAMIC BH 1M PORTFOLIO: Rebalance to current top N performers DAILY
         if config.ENABLE_DYNAMIC_BH_1M:
-            new_dynamic_bh_1m_stocks = select_top_performers(
-                initial_top_tickers, ticker_data_grouped, current_date, lookback_days=21, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                apply_performance_filter=True, filter_label="Dynamic BH 1M",
-                timing_strategy_name="Dynamic BH 1M",
+            def _fallback_dynamic_bh_1m():
+                return select_top_performers(
+                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=21, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    apply_performance_filter=True, filter_label="Dynamic BH 1M",
+                    timing_strategy_name="Dynamic BH 1M",
+                )
+
+            new_dynamic_bh_1m_stocks = _resolve_parallel_strategy_selection(
+                "dynamic_bh_1m",
+                _fallback_dynamic_bh_1m,
             )
 
             if new_dynamic_bh_1m_stocks:
@@ -5827,10 +5997,16 @@ def _run_portfolio_backtest_walk_forward(
                         continue
 
             # Regular rebalancing (same as Dynamic BH 1Y)
-            new_dynamic_bh_1y_trailing_stop_stocks = select_top_performers(
-                initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                apply_performance_filter=True, filter_label="Dynamic BH 1Y+TS",
-                timing_strategy_name="Dynamic BH 1Y+TS",
+            def _fallback_dynamic_bh_1y_trailing_stop():
+                return select_top_performers(
+                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    apply_performance_filter=True, filter_label="Dynamic BH 1Y+TS",
+                    timing_strategy_name="Dynamic BH 1Y+TS",
+                )
+
+            new_dynamic_bh_1y_trailing_stop_stocks = _resolve_parallel_strategy_selection(
+                "dynamic_bh_1y_trailing_stop",
+                _fallback_dynamic_bh_1y_trailing_stop,
             )
 
             if new_dynamic_bh_1y_trailing_stop_stocks:
@@ -5903,11 +6079,17 @@ def _run_portfolio_backtest_walk_forward(
         # RISK-ADJUSTED MOMENTUM: Rebalance to current top N using shared strategy
         if config.ENABLE_RISK_ADJ_MOM:
             # Use shared strategy for consistent selection
-            new_risk_adj_mom_stocks = select_risk_adj_mom_stocks(
-                initial_top_tickers,
-                ticker_data_grouped,
-                current_date,
-                top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+            def _fallback_risk_adj_mom():
+                return select_risk_adj_mom_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                )
+
+            new_risk_adj_mom_stocks = _resolve_parallel_strategy_selection(
+                "risk_adj_mom",
+                _fallback_risk_adj_mom,
             )
 
             if new_risk_adj_mom_stocks:
@@ -7433,12 +7615,18 @@ def _run_portfolio_backtest_walk_forward(
 
                 print(f"   📈 Trend Following ATR: Analyzing {len(initial_top_tickers)} tickers...")
 
-                stocks_to_buy, stocks_to_sell = _time_strategy_phase_call(
-                    "Trend ATR",
-                    "selection",
-                    select_trend_following_atr_stocks,
-                    initial_top_tickers, ticker_data_grouped, current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                def _fallback_trend_atr():
+                    return _time_strategy_phase_call(
+                        "Trend ATR",
+                        "selection",
+                        select_trend_following_atr_stocks,
+                        initial_top_tickers, ticker_data_grouped, current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                    )
+
+                stocks_to_buy, stocks_to_sell = _resolve_parallel_strategy_selection(
+                    "trend_atr",
+                    _fallback_trend_atr,
                 )
 
                 # Process sells first
@@ -7565,17 +7753,23 @@ def _run_portfolio_backtest_walk_forward(
         # RISK-ADJ MOM 6M STRATEGY
         if config.ENABLE_RISK_ADJ_MOM_6M:
             try:
-                from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
+                def _fallback_risk_adj_mom_6m():
+                    from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
 
-                new_risk_adj_mom_6m_stocks = _time_strategy_phase_call(
-                    "Risk-Adj Mom 6M",
-                    "selection",
-                    select_risk_adj_mom_6m_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    price_history_cache=price_history_cache,
+                    return _time_strategy_phase_call(
+                        "Risk-Adj Mom 6M",
+                        "selection",
+                        select_risk_adj_mom_6m_stocks,
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_risk_adj_mom_6m_stocks = _resolve_parallel_strategy_selection(
+                    "risk_adj_mom_6m",
+                    _fallback_risk_adj_mom_6m,
                 )
 
                 if new_risk_adj_mom_6m_stocks:
@@ -7603,17 +7797,23 @@ def _run_portfolio_backtest_walk_forward(
             should_rebalance_6m_mom_monthly = (not risk_adj_mom_6m_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_6m_mom_monthly:
                 try:
-                    from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
+                    def _fallback_risk_adj_mom_6m_monthly():
+                        from risk_adj_mom_6m_strategy import select_risk_adj_mom_6m_stocks
 
-                    new_stocks = _time_strategy_phase_call(
-                        "RiskAdj 6M Mth",
-                        "selection",
-                        select_risk_adj_mom_6m_stocks,
-                        initial_top_tickers,
-                        ticker_data_grouped,
-                        current_date=current_date,
-                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                        price_history_cache=price_history_cache,
+                        return _time_strategy_phase_call(
+                            "RiskAdj 6M Mth",
+                            "selection",
+                            select_risk_adj_mom_6m_stocks,
+                            initial_top_tickers,
+                            ticker_data_grouped,
+                            current_date=current_date,
+                            top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
+                        )
+
+                    new_stocks = _resolve_parallel_strategy_selection(
+                        "risk_adj_mom_6m_monthly",
+                        _fallback_risk_adj_mom_6m_monthly,
                     )
 
                     if new_stocks:
@@ -7644,17 +7844,23 @@ def _run_portfolio_backtest_walk_forward(
         # RISK-ADJ MOM 3M STRATEGY
         if config.ENABLE_RISK_ADJ_MOM_3M:
             try:
-                from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
+                def _fallback_risk_adj_mom_3m():
+                    from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
 
-                new_risk_adj_mom_3m_stocks = _time_strategy_phase_call(
-                    "Risk-Adj Mom 3M",
-                    "selection",
-                    select_risk_adj_mom_3m_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    price_history_cache=price_history_cache,
+                    return _time_strategy_phase_call(
+                        "Risk-Adj Mom 3M",
+                        "selection",
+                        select_risk_adj_mom_3m_stocks,
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_risk_adj_mom_3m_stocks = _resolve_parallel_strategy_selection(
+                    "risk_adj_mom_3m",
+                    _fallback_risk_adj_mom_3m,
                 )
 
                 if new_risk_adj_mom_3m_stocks:
@@ -7682,17 +7888,23 @@ def _run_portfolio_backtest_walk_forward(
             should_rebalance_3m_mom_monthly = (not risk_adj_mom_3m_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_3m_mom_monthly:
                 try:
-                    from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
+                    def _fallback_risk_adj_mom_3m_monthly():
+                        from risk_adj_mom_3m_strategy import select_risk_adj_mom_3m_stocks
 
-                    new_stocks = _time_strategy_phase_call(
-                        "RiskAdj 3M Mth",
-                        "selection",
-                        select_risk_adj_mom_3m_stocks,
-                        initial_top_tickers,
-                        ticker_data_grouped,
-                        current_date=current_date,
-                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                        price_history_cache=price_history_cache,
+                        return _time_strategy_phase_call(
+                            "RiskAdj 3M Mth",
+                            "selection",
+                            select_risk_adj_mom_3m_stocks,
+                            initial_top_tickers,
+                            ticker_data_grouped,
+                            current_date=current_date,
+                            top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
+                        )
+
+                    new_stocks = _resolve_parallel_strategy_selection(
+                        "risk_adj_mom_3m_monthly",
+                        _fallback_risk_adj_mom_3m_monthly,
                     )
 
                     if new_stocks:
@@ -10175,6 +10387,7 @@ def _run_portfolio_backtest_walk_forward(
                             force_rebalance=not current_voting_ensemble_ai_rebalance_stocks,
                             buffer_size=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
                             min_predicted_edge=config.AI_VOTING_REBALANCE_MIN_PREDICTED_EDGE,
+                            cache_context=voting_ensemble_ai_rebalance_cache_context,
                         )
                         strategies_rebalanced_today['Voting Ens AI Reb'] = rebalanced_flag
                         voting_ensemble_ai_rebalance_transaction_costs += rebalance_costs

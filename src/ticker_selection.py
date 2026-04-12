@@ -895,13 +895,13 @@ def find_top_performers(
 
     try:
         with Pool(processes=num_workers, maxtasksperchild=20) as pool:
-            results = list(tqdm(
-                pool.imap(_calculate_performance_worker, params, chunksize=chunksize),
+            results = pool.imap(_calculate_performance_worker, params, chunksize=chunksize)
+            for res in tqdm(
+                results,
                 total=len(params),
                 desc="Calculating 1Y Performance",
                 ncols=100
-            ))
-            for res in results:
+            ):
                 if res:
                     all_tickers_performance_with_df.append(res)
     except Exception as e:

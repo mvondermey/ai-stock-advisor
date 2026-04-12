@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from multiprocessing import get_context
 from typing import Dict, List, Optional, Tuple
+import os
 
 import numpy as np
 import pandas as pd
@@ -495,29 +497,57 @@ def select_multi_timeframe_intraday_stocks(
 
     if n_workers > 1 and len(cached_tickers) >= max(32, n_workers * 2):
         n_workers = min(n_workers, 4)
-        if verbose:
-            print(f"   🚀 Multi-Horizon Intraday: Scoring {len(cached_tickers)} tickers with {n_workers} threads")
-        _init_multi_timeframe_intraday_worker(
-            daily_cache,
-            current_date,
-            price_history_cache=price_history_cache,
-            hourly_history_cache=hourly_history_cache,
-        )
-        with ThreadPoolExecutor(max_workers=n_workers) as executor:
-            results = list(tqdm(
-                executor.map(_score_multi_timeframe_intraday_ticker_worker, cached_tickers),
-                total=len(cached_tickers),
-                desc="   Multi-Horizon Intraday scoring",
-                ncols=100,
-                unit="ticker",
-            ))
-        for ticker, scored_item, error_msg in results:
-            if scored_item is not None:
-                stock_scores.append(scored_item)
-            elif error_msg:
-                error_count += 1
-                if verbose and error_count <= 5:
-                    print(f"   ⚠️ Multi-Horizon Intraday ticker error for {ticker}: {error_msg}")
+        if os.name != "nt":
+            if verbose:
+                print(f"   🚀 Multi-Horizon Intraday: Scoring {len(cached_tickers)} tickers with {n_workers} fork workers")
+            chunksize = max(1, len(cached_tickers) // (n_workers * 4))
+            with get_context("fork").Pool(
+                processes=n_workers,
+                initializer=_init_multi_timeframe_intraday_worker,
+                initargs=(daily_cache, current_date, price_history_cache, hourly_history_cache),
+            ) as pool:
+                results = pool.imap_unordered(
+                    _score_multi_timeframe_intraday_ticker_worker,
+                    cached_tickers,
+                    chunksize=chunksize,
+                )
+                for ticker, scored_item, error_msg in tqdm(
+                    results,
+                    total=len(cached_tickers),
+                    desc="   Multi-Horizon Intraday scoring",
+                    ncols=100,
+                    unit="ticker",
+                ):
+                    if scored_item is not None:
+                        stock_scores.append(scored_item)
+                    elif error_msg:
+                        error_count += 1
+                        if verbose and error_count <= 5:
+                            print(f"   ⚠️ Multi-Horizon Intraday ticker error for {ticker}: {error_msg}")
+        else:
+            if verbose:
+                print(f"   🚀 Multi-Horizon Intraday: Scoring {len(cached_tickers)} tickers with {n_workers} threads")
+            _init_multi_timeframe_intraday_worker(
+                daily_cache,
+                current_date,
+                price_history_cache=price_history_cache,
+                hourly_history_cache=hourly_history_cache,
+            )
+            with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                results = executor.map(_score_multi_timeframe_intraday_ticker_worker, cached_tickers)
+                for ticker, scored_item, error_msg in tqdm(
+                    results,
+                    total=len(cached_tickers),
+                    desc="   Multi-Horizon Intraday scoring",
+                    ncols=100,
+                    unit="ticker",
+                ):
+                    if scored_item is not None:
+                        stock_scores.append(scored_item)
+                    elif error_msg:
+                        error_count += 1
+                        if verbose and error_count <= 5:
+                            print(f"   ⚠️ Multi-Horizon Intraday ticker error for {ticker}: {error_msg}")
     else:
         for ticker in cached_tickers:
             cache_entry = (

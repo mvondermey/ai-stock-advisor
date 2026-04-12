@@ -9,9 +9,8 @@ more conservative selection logic.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
-from multiprocessing import get_context
+from multiprocessing import Pool, get_context
 from pathlib import Path
 import tempfile
 from typing import Dict, List, Optional, Tuple
@@ -59,6 +58,9 @@ from config import (
 MODEL_SAVE_DIR = Path("logs/models")
 SAVGOL_TREND_MODEL_PATH = MODEL_SAVE_DIR / "savgol_trend_model.joblib"
 SAVGOL_MIN_HISTORY_ROWS = 20
+_SAVGOL_COLLECTION_CONTEXT_PATH: Optional[str] = None
+_SAVGOL_COLLECTION_CONTEXT: Optional[Dict[str, object]] = None
+_SAVGOL_PREDICT_CONTEXT: Optional[Dict[str, object]] = None
 _SAVGOL_TRAIN_CONTEXT_PATH: Optional[str] = None
 _SAVGOL_TRAIN_CONTEXT: Optional[Dict[str, object]] = None
 
@@ -70,12 +72,12 @@ def _normalize_current_date(data: pd.DataFrame, current_date: datetime) -> datet
     return current_date
 
 
-def _timestamp_ns(value: datetime | pd.Timestamp) -> int:
-    """Convert timestamps to comparable UTC-naive nanoseconds."""
+def _normalize_search_timestamp(value: datetime | pd.Timestamp) -> pd.Timestamp:
+    """Normalize timestamps for DatetimeIndex.searchsorted comparisons."""
     ts = pd.Timestamp(value)
     if ts.tzinfo is not None:
         ts = ts.tz_convert("UTC").tz_localize(None)
-    return int(ts.value)
+    return ts
 
 
 def _odd_window(length: int, target: int, minimum: int = 5) -> int:
@@ -224,6 +226,17 @@ def _prepare_label(raw_label: float) -> float:
     return float(np.clip(raw_label, -100.0, 200.0))
 
 
+def _fast_pct_change(arr: np.ndarray, periods: int) -> float:
+    """Vectorized percent change using numpy array (no pandas overhead)."""
+    if len(arr) <= periods:
+        return 0.0
+    start_val = arr[-(periods + 1)]
+    end_val = arr[-1]
+    if start_val <= 0:
+        return 0.0
+    return (end_val / start_val - 1.0) * 100.0
+
+
 def _calculate_savgol_features_from_history(
     close_history: pd.Series,
     high_history: np.ndarray,
@@ -236,7 +249,8 @@ def _calculate_savgol_features_from_history(
         return None
 
     close = np.asarray(close_history, dtype=float)
-    if len(close) < SAVGOL_MIN_HISTORY_ROWS or close[-1] <= 0:
+    n = len(close)
+    if n < SAVGOL_MIN_HISTORY_ROWS or close[-1] <= 0:
         return None
 
     volume = np.asarray(volume_history, dtype=float)
@@ -246,8 +260,8 @@ def _calculate_savgol_features_from_history(
     log_close = np.log(np.clip(close, 1e-12, None))
     returns = np.diff(close) / np.clip(close[:-1], 1e-12, None)
 
-    short_window = _odd_window(len(log_close), 9)
-    long_window = _odd_window(len(log_close), 21)
+    short_window = _odd_window(n, 9)
+    long_window = _odd_window(n, 21)
     if short_window == 0 or long_window == 0:
         return None
 
@@ -272,42 +286,53 @@ def _calculate_savgol_features_from_history(
         else 0.0
     )
 
-    short_diffs = np.diff(sg_short[-10:]) if len(sg_short) >= 10 else np.diff(sg_short)
-    long_diffs = np.diff(sg_long[-10:]) if len(sg_long) >= 10 else np.diff(sg_long)
+    short_tail = sg_short[-10:] if len(sg_short) >= 10 else sg_short
+    long_tail = sg_long[-10:] if len(sg_long) >= 10 else sg_long
+    short_diffs = np.diff(short_tail)
+    long_diffs = np.diff(long_tail)
     sg_trend_stability = float(np.mean(short_diffs > 0)) if len(short_diffs) > 0 else 0.5
     sg_long_stability = float(np.mean(long_diffs > 0)) if len(long_diffs) > 0 else 0.5
 
-    x = np.arange(min(10, len(sg_long)))
-    sg_regression_slope = (
-        float(np.polyfit(x, sg_long[-len(x):], 1)[0] * 100.0)
-        if len(x) >= 2
-        else 0.0
-    )
+    reg_len = min(10, len(sg_long))
+    if reg_len >= 2:
+        x = np.arange(reg_len)
+        sg_regression_slope = float(np.polyfit(x, sg_long[-reg_len:], 1)[0] * 100.0)
+    else:
+        sg_regression_slope = 0.0
 
     residual = log_close - sg_long
     residual_vol_20d = float(np.std(residual[-20:]) * 100.0) if len(residual) >= 20 else 0.0
 
-    high_20 = np.max(close[-20:])
-    atr_14 = float(np.mean(high[-14:] - low[-14:])) if len(high) >= 14 and len(low) >= 14 else 0.0
-    avg_vol_20 = float(np.mean(volume[-20:])) if len(volume) >= 20 else float(np.mean(volume))
-    avg_vol_60 = float(np.mean(volume)) if len(volume) > 0 else 1.0
+    close_20 = close[-20:] if n >= 20 else close
+    high_20 = float(np.max(close_20))
+    atr_14 = float(np.mean(high[-14:] - low[-14:])) if n >= 14 else 0.0
+    avg_vol_20 = float(np.mean(volume[-20:])) if n >= 20 else float(np.mean(volume))
+    avg_vol_60 = float(np.mean(volume)) if n > 0 else 1.0
 
-    perf_5d = _series_pct_change(close_history, 5)
-    perf_20d = _series_pct_change(close_history, 20)
-    perf_3m = _series_pct_change(close_history, 63)
-    perf_6m = _series_pct_change(close_history, 126)
-    perf_1y = _series_pct_change(close_history, 252)
-    daily_volatility = _series_volatility_pct(close_history, 20)
-    risk_adj_mom_3m = perf_3m / (np.sqrt(max(daily_volatility, 5.0)) if daily_volatility > 0 else np.sqrt(5.0))
+    perf_5d = _fast_pct_change(close, 5)
+    perf_10d = _fast_pct_change(close, 10)
+    perf_20d = _fast_pct_change(close, 20)
+    perf_40d = _fast_pct_change(close, 40)
+    perf_60d = _fast_pct_change(close, 60)
+    perf_3m = _fast_pct_change(close, 63)
+    perf_6m = _fast_pct_change(close, 126)
+    perf_1y = _fast_pct_change(close, 252)
+
+    vol_20d = 0.0
+    if len(returns) >= 20:
+        vol_20d = float(np.std(returns[-20:]) * np.sqrt(252) * 100.0)
+    daily_volatility = vol_20d
+    risk_adj_mom_3m = perf_3m / np.sqrt(max(daily_volatility, 5.0))
     dip_score = perf_1y - perf_3m
     mom_accel = perf_3m - perf_6m
 
     rsi_14 = 50.0
     if len(returns) >= 14:
-        gains = np.clip(returns, 0.0, None)
-        losses = np.clip(-returns, 0.0, None)
-        avg_gain = float(np.mean(gains[-14:]))
-        avg_loss = float(np.mean(losses[-14:]))
+        r14 = returns[-14:]
+        gains = np.clip(r14, 0.0, None)
+        losses = np.clip(-r14, 0.0, None)
+        avg_gain = float(np.mean(gains))
+        avg_loss = float(np.mean(losses))
         if avg_loss > 0:
             rs = avg_gain / avg_loss
             rsi_14 = 100.0 - (100.0 / (1.0 + rs))
@@ -317,22 +342,22 @@ def _calculate_savgol_features_from_history(
     bollinger_position = 0.5
     sma20_distance = 0.0
     sma50_distance = 0.0
-    if len(close_history) >= 20:
-        sma20 = float(close_history.tail(20).mean())
-        std20 = float(close_history.tail(20).std())
+    if n >= 20:
+        sma20 = float(np.mean(close_20))
+        std20 = float(pd.Series(close_20).std())
         if sma20 > 0 and std20 > 0:
             upper_band = sma20 + 2.0 * std20
             lower_band = sma20 - 2.0 * std20
             if upper_band > lower_band:
                 bollinger_position = float(np.clip((close[-1] - lower_band) / (upper_band - lower_band), 0.0, 1.0))
             sma20_distance = _safe_pct_change(close[-1], sma20)
-    if len(close_history) >= 50:
-        sma50 = float(close_history.tail(50).mean())
+    if n >= 50:
+        sma50 = float(np.mean(close[-50:]))
         if sma50 > 0:
             sma50_distance = _safe_pct_change(close[-1], sma50)
 
     macd = 0.0
-    if len(close_history) >= 35:
+    if n >= 35:
         ema12 = close_history.ewm(span=12, adjust=False).mean()
         ema26 = close_history.ewm(span=26, adjust=False).mean()
         macd_line = ema12 - ema26
@@ -343,19 +368,21 @@ def _calculate_savgol_features_from_history(
     market_return_20d = float(context.get("market_return_20d", 0.0))
     market_return_60d = float(context.get("market_return_60d", 0.0))
 
+    vol_10d = float(np.std(returns[-10:]) * np.sqrt(252) * 100.0) if len(returns) >= 10 else 0.0
+
     return {
         "mom_5d": perf_5d,
-        "mom_10d": _series_pct_change(close_history, 10),
+        "mom_10d": perf_10d,
         "mom_20d": perf_20d,
-        "mom_40d": _series_pct_change(close_history, 40),
+        "mom_40d": perf_40d,
         "perf_3m": perf_3m,
         "perf_6m": perf_6m,
         "perf_1y": perf_1y,
         "risk_adj_mom_3m": risk_adj_mom_3m,
         "dip_score": dip_score,
         "mom_accel": mom_accel,
-        "volatility_10d": float(np.std(returns[-10:]) * np.sqrt(252) * 100.0) if len(returns) >= 10 else 0.0,
-        "volatility_20d": float(np.std(returns[-20:]) * np.sqrt(252) * 100.0) if len(returns) >= 20 else 0.0,
+        "volatility_10d": vol_10d,
+        "volatility_20d": vol_20d,
         "drawdown_20d": _safe_pct_change(close[-1], high_20),
         "atr_pct_14d": (atr_14 / close[-1]) * 100.0 if close[-1] > 0 else 0.0,
         "volume_ratio_20_60": avg_vol_20 / avg_vol_60 if avg_vol_60 > 0 else 1.0,
@@ -382,7 +409,7 @@ def _calculate_savgol_features_from_history(
         "market_breadth_20d": float(context.get("market_breadth_20d", 0.5)),
         "market_breadth_60d": float(context.get("market_breadth_60d", 0.5)),
         "rel_strength_20d": perf_20d - market_return_20d,
-        "rel_strength_60d": _series_pct_change(close_history, 60) - market_return_60d,
+        "rel_strength_60d": perf_60d - market_return_60d,
     }
 
 
@@ -522,13 +549,15 @@ def collect_savgol_ticker_training_data(
         normalized_index = date_index.tz_convert("UTC").tz_localize(None)
     else:
         normalized_index = date_index
-    date_ns = normalized_index.asi8
-    start_ns = _timestamp_ns(train_start_date)
-    end_ns = _timestamp_ns(train_end_date)
+    start_ts = _normalize_search_timestamp(train_start_date)
+    end_ts = _normalize_search_timestamp(train_end_date)
     min_future_rows = max(2, forward_days // 2)
-    start_pos = max(SAVGOL_MIN_HISTORY_ROWS - 1, int(np.searchsorted(date_ns, start_ns, side="left")))
+    start_pos = max(
+        SAVGOL_MIN_HISTORY_ROWS - 1,
+        int(normalized_index.searchsorted(start_ts, side="left")),
+    )
     end_pos = min(
-        int(np.searchsorted(date_ns, end_ns, side="right")) - 1,
+        int(normalized_index.searchsorted(end_ts, side="right")) - 1,
         len(close_series) - min_future_rows,
     )
     if start_pos > end_pos:
@@ -567,16 +596,33 @@ def collect_savgol_ticker_training_data(
     return samples
 
 
-def _collect_savgol_data_worker(args):
+def _get_savgol_collection_context() -> Dict[str, object]:
+    global _SAVGOL_COLLECTION_CONTEXT
+    if _SAVGOL_COLLECTION_CONTEXT is None:
+        if not _SAVGOL_COLLECTION_CONTEXT_PATH:
+            raise ValueError("SavGol collection context is not initialized")
+        _SAVGOL_COLLECTION_CONTEXT = joblib.load(_SAVGOL_COLLECTION_CONTEXT_PATH)
+    return _SAVGOL_COLLECTION_CONTEXT
+
+
+def _init_savgol_collection_worker(
+    context_path: Optional[str] = None,
+    context_data: Optional[Dict[str, object]] = None,
+) -> None:
+    global _SAVGOL_COLLECTION_CONTEXT_PATH, _SAVGOL_COLLECTION_CONTEXT
+    _SAVGOL_COLLECTION_CONTEXT_PATH = context_path
+    _SAVGOL_COLLECTION_CONTEXT = context_data
+
+
+def _collect_savgol_data_worker(ticker: str):
     """Top-level worker for multiprocessing Pool - collects SavGol training data for one ticker."""
-    (
-        ticker,
-        ticker_data,
-        train_start_date,
-        train_end_date,
-        forward_days,
-        market_context_map,
-    ) = args
+    context = _get_savgol_collection_context()
+    ticker_data_grouped = context["ticker_data_grouped"]
+    ticker_data = ticker_data_grouped.get(ticker)
+    train_start_date = context["train_start_date"]
+    train_end_date = context["train_end_date"]
+    forward_days = context["forward_days"]
+    market_context_map = context["market_context_map"]
     samples = collect_savgol_ticker_training_data(
         ticker=ticker,
         ticker_data=ticker_data,
@@ -586,6 +632,32 @@ def _collect_savgol_data_worker(args):
         market_context_map=market_context_map,
     )
     return ticker, samples
+
+
+
+
+def _init_savgol_predict_worker(context: Dict[str, object]) -> None:
+    global _SAVGOL_PREDICT_CONTEXT
+    _SAVGOL_PREDICT_CONTEXT = context
+
+
+def _predict_savgol_features_worker(ticker: str):
+    context = _SAVGOL_PREDICT_CONTEXT or {}
+    ticker_data_grouped = context.get("ticker_data_grouped") or {}
+    data = ticker_data_grouped.get(ticker)
+    if data is None:
+        return None
+
+    features = calculate_savgol_features(
+        ticker,
+        data,
+        context.get("current_date"),
+        market_context=context.get("market_context"),
+    )
+    if features is None:
+        return None
+
+    return ticker, features
 
 
 def _fresh_model(name: str, device: str, n_jobs: int = -1):
@@ -791,8 +863,6 @@ class SavgolTrendStrategy:
             current_date = business_days[current_day_idx] if current_day_idx >= 0 else business_days[0]
             train_start = current_date - timedelta(days=self.training_lookback_days)
 
-            import time as _time
-
             all_tickers = list(ticker_data_grouped.keys())
             n_workers = max(1, min(SAVGOL_TREND_MAX_WORKERS, len(all_tickers)))
 
@@ -812,43 +882,82 @@ class SavgolTrendStrategy:
                 f"({n_workers} workers, {self.training_lookback_days}d train window, "
                 f"full available feature history)..."
             )
-            _start_time = _time.time()
 
-            collect_args = [
-                (
-                    t,
-                    ticker_data_grouped.get(t),
-                    train_start,
-                    current_date,
-                    self.forward_days,
-                    market_context_map,
-                )
-                for t in all_tickers
-            ]
+            import time as _time
+            _start_time = _time.time()
 
             samples: List[Tuple[pd.Timestamp, Dict[str, float], float]] = []
             ticker_samples_map = {}
 
-            results = []
-            # ThreadPoolExecutor avoids the DataFrame pickling overhead of process workers.
-            with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="savgol-collect") as executor:
-                futures = [
-                    executor.submit(_collect_savgol_data_worker, args)
-                    for args in collect_args
-                ]
-                for future in tqdm(
-                    as_completed(futures),
-                    total=len(futures),
-                    desc="   SavGol Trend collection",
-                    ncols=100,
-                    unit="ticker",
-                ):
-                    results.append(future.result())
+            collection_context = {
+                "ticker_data_grouped": ticker_data_grouped,
+                "train_start_date": train_start,
+                "train_end_date": current_date,
+                "forward_days": self.forward_days,
+                "market_context_map": market_context_map,
+            }
 
-            for ticker, ticker_samples in results:
-                if ticker_samples:
-                    samples.extend(ticker_samples)
-                    ticker_samples_map[ticker] = ticker_samples
+            temp_context_path: Optional[str] = None
+            chunksize = max(1, len(all_tickers) // (n_workers * 4))
+            try:
+                if os.name != "nt":
+                    global _SAVGOL_COLLECTION_CONTEXT_PATH, _SAVGOL_COLLECTION_CONTEXT
+                    _SAVGOL_COLLECTION_CONTEXT_PATH = None
+                    _SAVGOL_COLLECTION_CONTEXT = collection_context
+                    with get_context("fork").Pool(
+                        processes=n_workers,
+                        initializer=_init_savgol_collection_worker,
+                        initargs=(None, collection_context),
+                    ) as pool:
+                        result_iter = pool.imap_unordered(
+                            _collect_savgol_data_worker,
+                            all_tickers,
+                            chunksize=chunksize,
+                        )
+                        for result in tqdm(
+                            result_iter,
+                            total=len(all_tickers),
+                            desc="   SavGol Trend collection",
+                            ncols=100,
+                            unit="ticker",
+                        ):
+                            ticker, ticker_samples = result
+                            if ticker_samples:
+                                samples.extend(ticker_samples)
+                                ticker_samples_map[ticker] = ticker_samples
+                else:
+                    with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as temp_context_file:
+                        temp_context_path = temp_context_file.name
+                    joblib.dump(collection_context, temp_context_path)
+                    with Pool(
+                        processes=n_workers,
+                        initializer=_init_savgol_collection_worker,
+                        initargs=(temp_context_path,),
+                    ) as pool:
+                        result_iter = pool.imap_unordered(
+                            _collect_savgol_data_worker,
+                            all_tickers,
+                            chunksize=chunksize,
+                        )
+                        for result in tqdm(
+                            result_iter,
+                            total=len(all_tickers),
+                            desc="   SavGol Trend collection",
+                            ncols=100,
+                            unit="ticker",
+                        ):
+                            ticker, ticker_samples = result
+                            if ticker_samples:
+                                samples.extend(ticker_samples)
+                                ticker_samples_map[ticker] = ticker_samples
+            finally:
+                _SAVGOL_COLLECTION_CONTEXT_PATH = None
+                _SAVGOL_COLLECTION_CONTEXT = None
+                if temp_context_path:
+                    try:
+                        os.unlink(temp_context_path)
+                    except OSError:
+                        pass
 
             _elapsed = _time.time() - _start_time
             print(f"   📊 SavGol Trend: Collected {len(samples)} samples from {len(ticker_samples_map)} tickers ({_elapsed:.1f}s)")
@@ -1147,23 +1256,40 @@ class SavgolTrendStrategy:
 
             return ticker, features
 
-        # Use ThreadPoolExecutor for parallel processing
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        import os
-        
-        # Limit threads to avoid overwhelming the system
+        # Use a fork pool on Linux so feature extraction can spread across CPUs
+        # without serializing every ticker frame into each task.
         max_workers = min(32, (os.cpu_count() or 1) + 4, len(tickers))
-        
+
         valid_results = []
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks
-            future_to_ticker = {executor.submit(process_single_ticker, ticker): ticker for ticker in tickers}
-            
-            # Collect results as they complete
-            for future in as_completed(future_to_ticker):
-                result = future.result()
-                if result is not None:
-                    valid_results.append(result)
+        if os.name != "nt" and max_workers > 1:
+            predict_context = {
+                "ticker_data_grouped": ticker_data_grouped,
+                "current_date": current_date,
+                "market_context": market_context,
+            }
+            chunksize = max(1, len(tickers) // (max_workers * 4))
+            with get_context("fork").Pool(
+                processes=max_workers,
+                initializer=_init_savgol_predict_worker,
+                initargs=(predict_context,),
+            ) as pool:
+                results = pool.imap_unordered(
+                    _predict_savgol_features_worker,
+                    tickers,
+                    chunksize=chunksize,
+                )
+                for result in results:
+                    if result is not None:
+                        valid_results.append(result)
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_ticker = {executor.submit(process_single_ticker, ticker): ticker for ticker in tickers}
+                for future in as_completed(future_to_ticker):
+                    result = future.result()
+                    if result is not None:
+                        valid_results.append(result)
         
         # Batch predict all valid results at once for massive speedup
         if not valid_results:

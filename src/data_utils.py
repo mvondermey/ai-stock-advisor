@@ -22,6 +22,7 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 
 # Suppress yfinance logging noise (thread-safe approach)
 import contextlib
+import io
 import os
 import sys
 import logging
@@ -540,6 +541,191 @@ def _is_cache_current(last_cached_date, ticker_symbol=None, requested_end_date=N
 # when called concurrently. This lock serializes all yfinance API calls.
 _yfinance_global_lock = threading.Lock()
 
+
+def _is_intraday_interval(interval: str) -> bool:
+    return str(interval).lower() in {"1m", "5m", "15m", "30m", "1h", "60m", "90m"}
+
+
+def _effective_requested_end_utc(
+    ticker_symbol: Optional[str],
+    requested_end_utc: pd.Timestamp,
+) -> pd.Timestamp:
+    """Clamp any requested end date to the end of the last trading day for the ticker's market."""
+    try:
+        last_trading_day = _get_last_trading_day(ticker_symbol)
+        last_trading_day_ts = pd.Timestamp(last_trading_day)
+        if last_trading_day_ts.tzinfo is None:
+            last_trading_day_ts = last_trading_day_ts.tz_localize("UTC")
+        else:
+            last_trading_day_ts = last_trading_day_ts.tz_convert("UTC")
+        last_trading_day_end = last_trading_day_ts + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+        requested_end_utc = pd.Timestamp(requested_end_utc)
+        if requested_end_utc.tzinfo is None:
+            requested_end_utc = requested_end_utc.tz_localize("UTC")
+        else:
+            requested_end_utc = requested_end_utc.tz_convert("UTC")
+        if (
+            requested_end_utc.date() == last_trading_day_ts.date()
+            and requested_end_utc.time() == datetime.min.time()
+        ):
+            return last_trading_day_end
+        return min(requested_end_utc, last_trading_day_end)
+    except Exception:
+        return pd.Timestamp(requested_end_utc)
+
+
+def _extract_yahoo_error_detail(output_text: str) -> str:
+    lines = [line.strip() for line in str(output_text).splitlines() if line.strip()]
+    if not lines:
+        return ""
+    for line in lines:
+        if "Yahoo error" in line or "Failed download" in line or "possibly delisted" in line:
+            return line
+    return lines[-1]
+
+
+def _normalize_downloaded_price_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    normalized = df.copy()
+    if isinstance(normalized.columns, pd.MultiIndex):
+        normalized.columns = [col[0] if isinstance(col, tuple) else col for col in normalized.columns]
+    normalized.columns = [str(col).capitalize() for col in normalized.columns]
+    normalized = normalized.loc[:, ~normalized.columns.duplicated()]
+
+    if "Close" not in normalized.columns and "Adj close" in normalized.columns:
+        normalized = normalized.rename(columns={"Adj close": "Close"})
+    if "Volume" in normalized.columns:
+        normalized["Volume"] = normalized["Volume"].fillna(0).astype(int)
+    else:
+        normalized["Volume"] = 0
+
+    if normalized.index.tzinfo is None:
+        normalized.index = normalized.index.tz_localize("UTC")
+    else:
+        normalized.index = normalized.index.tz_convert("UTC")
+
+    if "Close" in normalized.columns:
+        normalized = normalized.dropna(subset=["Close"])
+
+    return normalized.sort_index()
+
+
+def _download_from_yahoo_with_logging(
+    ticker: str,
+    start_utc: pd.Timestamp,
+    end_utc: pd.Timestamp,
+) -> tuple[pd.DataFrame, str]:
+    import config as config_module
+
+    start_utc = pd.Timestamp(start_utc)
+    end_utc = pd.Timestamp(end_utc)
+    if start_utc.tzinfo is None:
+        start_utc = start_utc.tz_localize("UTC")
+    else:
+        start_utc = start_utc.tz_convert("UTC")
+    if end_utc.tzinfo is None:
+        end_utc = end_utc.tz_localize("UTC")
+    else:
+        end_utc = end_utc.tz_convert("UTC")
+
+    # Yahoo's intraday boundary checks are brittle near the 730-day limit.
+    # Trim the actual request window instead of relying on period=Nd, which can
+    # still fail for some symbols like AHR even when an equivalent explicit
+    # start/end range succeeds.
+    if _is_intraday_interval(DATA_INTERVAL):
+        max_intraday_span = pd.Timedelta(days=config_module.get_data_lookback_days())
+        if end_utc - start_utc > max_intraday_span:
+            start_utc = end_utc - max_intraday_span
+
+    request_kwargs = dict(
+        interval=DATA_INTERVAL,
+        auto_adjust=True,
+        progress=False,
+        multi_level_index=False,
+        threads=False,
+        start=start_utc,
+        end=end_utc,
+    )
+
+    stdout_buffer = io.StringIO()
+    stderr_buffer = io.StringIO()
+    with _yfinance_global_lock:
+        with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+            downloaded_df = yf.download(ticker, **request_kwargs)
+
+    error_detail = _extract_yahoo_error_detail(
+        "\n".join([stdout_buffer.getvalue(), stderr_buffer.getvalue()])
+    )
+    return downloaded_df, error_detail
+
+
+def _latest_row_on_or_before(df: pd.DataFrame, anchor_ts: pd.Timestamp) -> Optional[tuple[pd.Timestamp, pd.Series]]:
+    if df is None or df.empty or "Close" not in df.columns:
+        return None
+    window = df[df.index <= anchor_ts]
+    if window.empty:
+        return None
+    return window.index[-1], window.iloc[-1]
+
+
+def _cache_matches_recent_yahoo_history(
+    ticker: str,
+    cached_df: pd.DataFrame,
+    requested_end_utc: pd.Timestamp,
+) -> tuple[bool, str, pd.DataFrame]:
+    if cached_df is None or cached_df.empty or "Close" not in cached_df.columns:
+        return True, "no cached close history", pd.DataFrame()
+
+    effective_end_utc = _effective_requested_end_utc(ticker, requested_end_utc)
+    compare_start = effective_end_utc - timedelta(days=40)
+    fresh_df, yahoo_error_detail = _download_from_yahoo_with_logging(
+        ticker=ticker,
+        start_utc=compare_start,
+        end_utc=effective_end_utc,
+    )
+    fresh_df = _normalize_downloaded_price_df(fresh_df)
+    if fresh_df.empty:
+        detail = yahoo_error_detail or "recent Yahoo validation returned empty data"
+        return True, detail, fresh_df
+
+    anchors = (
+        ("1mo", effective_end_utc - timedelta(days=30)),
+        ("1w", effective_end_utc - timedelta(days=7)),
+    )
+    compared = 0
+    for label, anchor_ts in anchors:
+        cached_row = _latest_row_on_or_before(cached_df, anchor_ts)
+        fresh_row = _latest_row_on_or_before(fresh_df, anchor_ts)
+        if cached_row is None or fresh_row is None:
+            continue
+
+        cached_idx, cached_values = cached_row
+        fresh_idx, fresh_values = fresh_row
+        if abs(cached_idx - fresh_idx) > pd.Timedelta(days=2):
+            return False, (
+                f"{label} anchor timestamp mismatch "
+                f"(cache={cached_idx.isoformat()}, yahoo={fresh_idx.isoformat()})"
+            ), fresh_df
+
+        cached_close = float(cached_values["Close"])
+        fresh_close = float(fresh_values["Close"])
+        if not np.isfinite(cached_close) or not np.isfinite(fresh_close):
+            continue
+
+        rel_diff = abs(cached_close - fresh_close) / max(abs(fresh_close), 1e-9)
+        if rel_diff > 0.002:
+            return False, (
+                f"{label} anchor close mismatch "
+                f"(cache={cached_close:.6f}, yahoo={fresh_close:.6f}, rel_diff={rel_diff:.4%})"
+            ), fresh_df
+        compared += 1
+
+    if compared == 0:
+        return True, "no comparable recent anchors", fresh_df
+    return True, "ok", fresh_df
+
 # CLASS_HORIZON is now imported from config above
 def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     """
@@ -574,10 +760,11 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     new_df = pd.DataFrame()
     fetch_start = None
     requested_end_utc = _to_utc(end)
-    fetch_end = requested_end_utc
+    fetch_end = _effective_requested_end_utc(ticker, requested_end_utc)
     needs_fetch = True if ENABLE_DATA_DOWNLOAD else False
     last_cached_date = None
     cache_is_current = None
+    recent_yahoo_validation_df = pd.DataFrame()
 
     # --- Step 1: Check existing cache and determine what to fetch ---
     with ticker_lock:
@@ -607,6 +794,27 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                     cached_df = cached_df.dropna(subset=['Close'])
 
                 cached_df = cached_df.sort_index()
+
+                if not cached_df.empty:
+                    should_validate_cache = bool(
+                        ENABLE_DATA_DOWNLOAD and (DATA_PROVIDER == 'yahoo' or USE_YAHOO_FALLBACK)
+                    )
+                    if should_validate_cache:
+                        cache_valid, validation_detail, recent_yahoo_validation_df = _cache_matches_recent_yahoo_history(
+                            ticker=ticker,
+                            cached_df=cached_df,
+                            requested_end_utc=requested_end_utc,
+                        )
+                        if not cache_valid:
+                            print(
+                                f"  [WARNING] {ticker}: Cached CSV mismatches recent Yahoo data "
+                                f"({validation_detail}); deleting cache and redownloading full history"
+                            )
+                            try:
+                                cache_file.unlink(missing_ok=True)
+                            except Exception as delete_exc:
+                                print(f"  [WARNING] {ticker}: Could not delete mismatched cache: {delete_exc}")
+                            cached_df = pd.DataFrame()
 
                 if not cached_df.empty:
                     last_cached_date = cached_df.index[-1]
@@ -646,6 +854,19 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         start_utc = _to_utc(fetch_start)
         end_utc = _to_utc(fetch_end)
 
+        if not recent_yahoo_validation_df.empty:
+            validation_tail_df = recent_yahoo_validation_df.loc[
+                (recent_yahoo_validation_df.index >= start_utc)
+                & (recent_yahoo_validation_df.index <= end_utc)
+            ].copy()
+            if not validation_tail_df.empty:
+                new_df = validation_tail_df
+                if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
+                    print(
+                        f"  [INFO] Reusing recent Yahoo validation data for {ticker} "
+                        f"({len(new_df)} rows)"
+                    )
+
         days_to_fetch = (fetch_end - fetch_start).days
         if days_to_fetch > 5:
             # Always show hours for 1h data - DATA_INTERVAL should be '1h' from config
@@ -682,29 +903,29 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         # Yahoo as final fallback (always try if others fail)
         if new_df.empty:
             providers_tried.append("Yahoo")
+            yahoo_error_detail = ""
             try:
-                # Suppress yfinance stderr output for delisted tickers
-                # CRITICAL: Use global lock - yfinance has threading bugs that cause
-                # data corruption when called concurrently (returns wrong ticker's data)
-                with _yfinance_global_lock:
-                    with suppress_yfinance_output():
-                        downloaded_df = yf.download(ticker, start=start_utc, end=end_utc,
-                                                   interval=DATA_INTERVAL, auto_adjust=True, progress=False,
-                                                   multi_level_index=False, threads=False)
+                downloaded_df, yahoo_error_detail = _download_from_yahoo_with_logging(
+                    ticker=ticker,
+                    start_utc=start_utc,
+                    end_utc=end_utc,
+                )
                 if downloaded_df is not None and not downloaded_df.empty:
                     new_df = downloaded_df.dropna()
                 else:
+                    detail_suffix = f" ({yahoo_error_detail})" if yahoo_error_detail else ""
                     try:
                         from tqdm import tqdm
-                        tqdm.write(f"  [ERROR] {ticker}: Yahoo returned empty data")
+                        tqdm.write(f"  [ERROR] {ticker}: Yahoo returned empty data{detail_suffix}")
                     except:
-                        print(f"  [ERROR] {ticker}: Yahoo returned empty data")
+                        print(f"  [ERROR] {ticker}: Yahoo returned empty data{detail_suffix}")
             except Exception as e:
+                detail_suffix = f" | {yahoo_error_detail}" if yahoo_error_detail else ""
                 try:
                     from tqdm import tqdm
-                    tqdm.write(f"  [ERROR] {ticker}: Yahoo failed - {str(e)[:100]}")
+                    tqdm.write(f"  [ERROR] {ticker}: Yahoo failed - {str(e)[:100]}{detail_suffix}")
                 except:
-                    print(f"  [ERROR] {ticker}: Yahoo failed - {str(e)[:100]}")
+                    print(f"  [ERROR] {ticker}: Yahoo failed - {str(e)[:100]}{detail_suffix}")
 
         # If all providers failed, silently use stale cache (reduces log noise)
 

@@ -52,7 +52,7 @@ def get_data_lookback_days():
 
     if DATA_INTERVAL in ['1h', '30m', '15m', '5m', '1m']:
 
-        return 729  # Stay within Yahoo's 730-day limit for intraday
+        return 728  # Leave extra headroom for Yahoo's brittle intraday boundary checks
 
     else:
 
@@ -311,6 +311,18 @@ _PARALLEL_STRATEGY_PILOT_CONFIG: Dict[str, Dict[str, object]] = {
     "ratio_3m_1y": {"enable_flag": "ENABLE_3M_1Y_RATIO", "use_buffer": True},
     "ratio_1m_3m": {"enable_flag": "ENABLE_1M_3M_RATIO", "use_buffer": True},
     "ratio_1y_3m": {"enable_flag": "ENABLE_3M_1Y_RATIO", "use_buffer": True},
+    "multi_timeframe_intraday": {"enable_flag": "ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE", "use_buffer": True},
+    "dynamic_bh_1y": {"enable_flag": "ENABLE_DYNAMIC_BH_1Y", "use_buffer": True},
+    "dynamic_bh_6m": {"enable_flag": "ENABLE_DYNAMIC_BH_6M", "use_buffer": True},
+    "dynamic_bh_3m": {"enable_flag": "ENABLE_DYNAMIC_BH_3M", "use_buffer": True},
+    "dynamic_bh_1m": {"enable_flag": "ENABLE_DYNAMIC_BH_1M", "use_buffer": True},
+    "dynamic_bh_1y_trailing_stop": {"enable_flag": "ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP", "use_buffer": True},
+    "risk_adj_mom": {"enable_flag": "ENABLE_RISK_ADJ_MOM", "use_buffer": True},
+    "risk_adj_mom_6m": {"enable_flag": "ENABLE_RISK_ADJ_MOM_6M", "use_buffer": True},
+    "risk_adj_mom_6m_monthly": {"enable_flag": "ENABLE_RISK_ADJ_MOM_6M_MONTHLY", "use_buffer": True},
+    "risk_adj_mom_3m": {"enable_flag": "ENABLE_RISK_ADJ_MOM_3M", "use_buffer": True},
+    "risk_adj_mom_3m_monthly": {"enable_flag": "ENABLE_RISK_ADJ_MOM_3M_MONTHLY", "use_buffer": True},
+    "trend_atr": {"enable_flag": "ENABLE_TREND_FOLLOWING_ATR", "use_buffer": True},
     "turnaround": {"enable_flag": "ENABLE_TURNAROUND", "use_buffer": True},
     "price_acceleration": {"enable_flag": "ENABLE_PRICE_ACCELERATION", "use_buffer": True},
     "momentum_volatility_hybrid": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID", "use_buffer": True},
@@ -346,7 +358,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 # --- Backtest windows
 
-BACKTEST_DAYS           =   90   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   40   # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 BACKTEST_END_DATE       = False  # False = use current last trading day, or set "YYYY-MM-DD" to freeze runs for debugging
 
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
@@ -441,7 +453,7 @@ LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from bac
 
 RETRAIN_FREQUENCY_DAYS = 1  # Retrain every 10 days - aligned with prediction horizon
 
-ENABLE_WALK_FORWARD_RETRAINING = True  # Enable AI retraining during walk-forward backtests
+ENABLE_WALK_FORWARD_RETRAINING = False  # Enable AI retraining during walk-forward backtests
 
 
 
@@ -603,7 +615,7 @@ ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre
 ENABLE_AI_ELITE_MARKET_UP = True   # NEW - AI Elite Market-Up (only rebalances when market is up)
 ENABLE_AI_ELITE_ENSEMBLE = True   # NEW - AI Elite Ensemble (weighted avg of top 3 positive-R² models)
 ENABLE_AI_ELITE_RANK_ENSEMBLE = True   # NEW - AI Elite Rank Ensemble (weighted rank avg of top 3 positive-R² models)
-ENABLE_SAVGOL_TREND = True  # NEW - SavGol Trend (local polynomial trend features + pooled ML)
+ENABLE_SAVGOL_TREND = False  # NEW - SavGol Trend (local polynomial trend features + pooled ML)
 
 ENABLE_TOP5_CONSISTENCY_BLEND = True   # NEW - Blend current top strategies using prior-day top-5 consistency weights
 
@@ -620,7 +632,7 @@ ENABLE_BB_RSI_COMBO = True           # BB + RSI Combo (buy at lower band AND RSI
 
 AI_ELITE_RETRAIN_DAYS = 1  # Retrain model every 1 days
 
-AI_ELITE_TRAINING_LOOKBACK = 20  # Days of history to use for training
+AI_ELITE_TRAINING_LOOKBACK = 180  # Days of history to use for training
 
 AI_ELITE_FORWARD_DAYS = 5  # Predict performance over next N days
 

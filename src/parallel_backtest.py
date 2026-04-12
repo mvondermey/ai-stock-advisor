@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from multiprocessing import Pool, cpu_count
 from functools import partial
 from typing import List, Tuple, Dict, Optional, Set, Any
+import os
 import pandas as pd
 import numpy as np
 import time
@@ -269,6 +270,104 @@ def ensure_hourly_ticker_loaded(hourly_history_cache: HourlyHistoryCache, ticker
 
         hourly_history_cache.loaded_tickers.add(ticker)
         return True
+
+
+def _preload_hourly_ticker_worker(ticker: str) -> Tuple[str, Optional[Dict[str, np.ndarray]]]:
+    """Worker function to load a single ticker's hourly data."""
+    artifact = _build_hourly_ticker_artifact(ticker)
+    return ticker, artifact
+
+
+def preload_hourly_tickers_parallel(
+    hourly_history_cache: HourlyHistoryCache,
+    tickers: List[str],
+    n_workers: int = None,
+    show_progress: bool = False,
+) -> int:
+    """
+    Pre-load hourly data for all tickers in parallel before forking.
+    Returns the number of tickers successfully loaded.
+    """
+    if n_workers is None:
+        n_workers = min(16, len(tickers))
+    n_workers = max(1, min(n_workers, len(tickers)))
+
+    tickers_to_load = [
+        t for t in tickers
+        if t not in hourly_history_cache.loaded_tickers
+        and t not in hourly_history_cache.missing_tickers
+    ]
+
+    if not tickers_to_load:
+        return len(hourly_history_cache.loaded_tickers)
+
+    loaded_count = 0
+
+    if os.name != "nt":
+        from multiprocessing import get_context
+        ctx = get_context("fork")
+        chunksize = max(1, len(tickers_to_load) // (n_workers * 4))
+        with ctx.Pool(processes=n_workers) as pool:
+            iterator = pool.imap_unordered(
+                _preload_hourly_ticker_worker,
+                tickers_to_load,
+                chunksize=chunksize,
+            )
+            if show_progress:
+                from tqdm import tqdm
+                iterator = tqdm(
+                    iterator,
+                    total=len(tickers_to_load),
+                    desc="   Pre-loading hourly data",
+                    ncols=100,
+                    unit="ticker",
+                )
+            for ticker, artifact in iterator:
+                if artifact is not None:
+                    hourly_history_cache.date_ns_by_ticker[ticker] = np.asarray(artifact["date_ns"], dtype=np.int64)
+                    hourly_history_cache.close_by_ticker[ticker] = np.asarray(artifact["close"], dtype=float)
+                    for field_name in ("open", "high", "low", "volume"):
+                        field_map = getattr(hourly_history_cache, f"{field_name}_by_ticker")
+                        field_values = artifact.get(field_name)
+                        if field_values is not None:
+                            field_map[ticker] = np.asarray(field_values, dtype=float)
+                    hourly_history_cache.loaded_tickers.add(ticker)
+                    loaded_count += 1
+                else:
+                    hourly_history_cache.missing_tickers.add(ticker)
+    else:
+        from multiprocessing import Pool
+        chunksize = max(1, len(tickers_to_load) // (n_workers * 4))
+        with Pool(processes=n_workers) as pool:
+            iterator = pool.imap_unordered(
+                _preload_hourly_ticker_worker,
+                tickers_to_load,
+                chunksize=chunksize,
+            )
+            if show_progress:
+                from tqdm import tqdm
+                iterator = tqdm(
+                    iterator,
+                    total=len(tickers_to_load),
+                    desc="   Pre-loading hourly data",
+                    ncols=100,
+                    unit="ticker",
+                )
+            for ticker, artifact in iterator:
+                if artifact is not None:
+                    hourly_history_cache.date_ns_by_ticker[ticker] = np.asarray(artifact["date_ns"], dtype=np.int64)
+                    hourly_history_cache.close_by_ticker[ticker] = np.asarray(artifact["close"], dtype=float)
+                    for field_name in ("open", "high", "low", "volume"):
+                        field_map = getattr(hourly_history_cache, f"{field_name}_by_ticker")
+                        field_values = artifact.get(field_name)
+                        if field_values is not None:
+                            field_map[ticker] = np.asarray(field_values, dtype=float)
+                    hourly_history_cache.loaded_tickers.add(ticker)
+                    loaded_count += 1
+                else:
+                    hourly_history_cache.missing_tickers.add(ticker)
+
+    return loaded_count
 
 
 def calculate_cached_performance(
