@@ -51,7 +51,7 @@ try:
     from config import (
         PAUSE_BETWEEN_YF_CALLS, DATA_PROVIDER, USE_YAHOO_FALLBACK, DATA_INTERVAL, DATA_CACHE_DIR, CACHE_DAYS,
         TWELVEDATA_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_AVAILABLE, TWELVEDATA_SDK_AVAILABLE,
-        FEAT_SMA_SHORT, FEAT_SMA_LONG, FEAT_VOL_WINDOW, ATR_PERIOD
+        FEAT_SMA_SHORT, FEAT_SMA_LONG, FEAT_VOL_WINDOW, ATR_PERIOD, AGGREGATE_TO_DAILY, NUM_PROCESSES
     )
 except ImportError:
     # Fallback values if config is not available
@@ -69,6 +69,8 @@ except ImportError:
     FEAT_SMA_SHORT = 5
     FEAT_VOL_WINDOW = 10
     ATR_PERIOD = 14
+    AGGREGATE_TO_DAILY = True
+    NUM_PROCESSES = 16
 
 # Resolve cache directory relative to repo root (not current working directory)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -994,98 +996,16 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
     # --- Step 5: Convert 1h data to daily data if DATA_INTERVAL is 1h ---
     if DATA_INTERVAL == '1h' and not price_df.empty:
         try:
-            # Make explicit copy to avoid SettingWithCopyWarning
-            price_df = price_df.copy()
-
-            # Normalize column names (handle case variations)
-            price_df.columns = [str(col).strip().capitalize() for col in price_df.columns]
-
-            # Remove duplicate columns if any (can happen with malformed yfinance data)
-            price_df = price_df.loc[:, ~price_df.columns.duplicated()]
-
-            # Verify Close column is a Series not a DataFrame (safety check)
-            if isinstance(price_df['Close'], pd.DataFrame):
-                price_df['Close'] = price_df['Close'].iloc[:, 0]
-
-            # --- Step 5.1: Calculate Core 1h Features before aggregation ---
-            # Calculate intraday returns
-            price_df['Hourly_Return'] = price_df['Close'].pct_change()
-
-            # Intraday volatility patterns
-            price_df['Intraday_Range_Pct'] = (price_df['High'] - price_df['Low']) / price_df['Open'] * 100
-            price_df['Hourly_Volatility'] = price_df['Hourly_Return'].rolling(5).std()
-            price_df['Intraday_Vol_Ratio'] = price_df['Hourly_Volatility'] / price_df['Hourly_Return'].rolling(20).std()
-
-            # Volume distribution analysis
-            price_df['Volume_Weighted_Price'] = (price_df['Volume'] * price_df['Close']).cumsum() / price_df['Volume'].cumsum()
-            price_df['Volume_Concentration'] = price_df['Volume'] / price_df['Volume'].rolling(8).sum()
-            price_df['Buying_Pressure'] = (price_df['Close'] > price_df['Open']).astype(int) * price_df['Volume']
-            price_df['Selling_Pressure'] = (price_df['Close'] < price_df['Open']).astype(int) * price_df['Volume']
-
-            # Price discovery metrics
-            price_df['Price_Discovery_Efficiency'] = abs(price_df['Close'] - price_df['Volume_Weighted_Price']) / price_df['Volume_Weighted_Price'] * 100
-            price_df['Information_Shock'] = abs(price_df['Hourly_Return']).rolling(20).mean() * price_df['Volume_Concentration']
-
-            # Intraday momentum cycles
-            price_df['Hourly_Direction'] = (price_df['Hourly_Return'] > 0).astype(int)
-            price_df['Momentum_Persistence'] = price_df['Hourly_Direction'].rolling(4).sum()
-            price_df['Intraday_Trend_Strength'] = price_df['Close'].rolling(8).apply(lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x) > 1 else 0)
-
-            # Market microstructure features
-            price_df['Liquidity_Detection'] = price_df['Volume'] / price_df['Intraday_Range_Pct']
-            price_df['Net_Order_Flow'] = (price_df['Buying_Pressure'] - price_df['Selling_Pressure']) / price_df['Volume']
-            price_df['Market_Impact'] = abs(price_df['Hourly_Return']) / price_df['Volume']
-
-            # Volatility clustering and regime detection
-            price_df['Vol_Clustering'] = (price_df['Hourly_Volatility'] > price_df['Hourly_Volatility'].rolling(20).mean()).astype(int)
-            price_df['Vol_Regime_Change'] = price_df['Hourly_Volatility'].rolling(8).std() / price_df['Hourly_Volatility'].rolling(20).std()
-
-            # Resample 1h data to daily data with enhanced features
-            # Use 'B' for business days to preserve trading day alignment
-            daily_df = price_df.resample('B').agg({
-                # Basic OHLCV
-                'Open': 'first',
-                'High': 'max',
-                'Low': 'min',
-                'Close': 'last',
-                'Volume': 'sum',
-                # 1h Features - aggregated appropriately
-                'Intraday_Range_Pct': 'mean',
-                'Hourly_Volatility': 'mean',
-                'Intraday_Vol_Ratio': 'mean',
-                'Volume_Weighted_Price': 'last',
-                'Volume_Concentration': 'mean',
-                'Buying_Pressure': 'sum',
-                'Selling_Pressure': 'sum',
-                'Price_Discovery_Efficiency': 'mean',
-                'Information_Shock': 'sum',
-                'Momentum_Persistence': 'mean',
-                'Intraday_Trend_Strength': 'mean',
-                'Liquidity_Detection': 'mean',
-                'Net_Order_Flow': 'mean',
-                'Market_Impact': 'mean',
-                'Vol_Clustering': 'sum',
-                'Vol_Regime_Change': 'mean'
-            }).dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'])  # Only drop if core OHLCV is missing
-
-            # Calculate additional daily features from 1h aggregates
-            daily_df['Net_Buying_Pressure'] = daily_df['Buying_Pressure'] - daily_df['Selling_Pressure']
-            daily_df['Buying_Pressure_Ratio'] = daily_df['Buying_Pressure'] / (daily_df['Buying_Pressure'] + daily_df['Selling_Pressure'])
-            daily_df['Total_Order_Flow'] = daily_df['Buying_Pressure'] + daily_df['Selling_Pressure']
-
-            # Calculate technical indicators for AI training features
-            daily_df = _calculate_technical_indicators(daily_df)
-
-            # Debug: Show conversion info for specific tickers
-            if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
-                original_features = len(price_df.columns)
-                daily_features = len(daily_df.columns)
-                start_date = daily_df.index[0].strftime('%Y-%m-%d')
-                end_date = daily_df.index[-1].strftime('%Y-%m-%d')
-                print(f"  [INFO] Converted {ticker}: 1h ({price_df.shape[0]} rows, {original_features} features) -> daily ({daily_df.shape[0]} rows, {daily_features} features)")
-                print(f"     [INFO] Date range: {start_date} to {end_date} ({daily_df.shape[0]} trading days)")
-
-            price_df = daily_df
+            converted_df = _convert_hourly_frame_to_daily(price_df)
+            if converted_df is not None and not converted_df.empty:
+                if ticker in ['SNDK', 'SLV', 'MU', 'NEM', 'AAPL']:
+                    original_features = len(price_df.columns)
+                    daily_features = len(converted_df.columns)
+                    start_date = converted_df.index[0].strftime('%Y-%m-%d')
+                    end_date = converted_df.index[-1].strftime('%Y-%m-%d')
+                    print(f"  [INFO] Converted {ticker}: 1h ({price_df.shape[0]} rows, {original_features} features) -> daily ({converted_df.shape[0]} rows, {daily_features} features)")
+                    print(f"     [INFO] Date range: {start_date} to {end_date} ({converted_df.shape[0]} trading days)")
+                price_df = converted_df
         except Exception as e:
             print(f"  Warning: Could not convert {ticker} from 1h to daily: {e}")
             # Fall back to original 1h data if conversion fails
@@ -1142,7 +1062,7 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
 
     print(f"  [INFO] Processing {len(tickers)} tickers with incremental caching (parallel)...")
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
     # Global rate limiter for API calls (shared across threads)
     import threading
@@ -1669,6 +1589,45 @@ def _fetch_intermarket_data(start: datetime, end: datetime) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _load_ticker_csv_from_cache_worker(args: Tuple[str, datetime, datetime, str]) -> Optional[pd.DataFrame]:
+    """Process-safe worker for loading one ticker CSV from cache."""
+    ticker, start_utc, end_utc, cache_dir_str = args
+    cache_dir = Path(cache_dir_str)
+    try:
+        cache_file = cache_dir / f"{ticker}.csv"
+        if not cache_file.exists():
+            return None
+
+        df = pd.read_csv(cache_file)
+
+        if 'Datetime' in df.columns:
+            date_col = 'Datetime'
+        elif 'Date' in df.columns:
+            date_col = 'Date'
+        elif 'Unnamed: 0' in df.columns:
+            date_col = 'Unnamed: 0'
+        else:
+            return None
+
+        df[date_col] = pd.to_datetime(df[date_col], utc=True)
+        df = df.set_index(date_col)
+        df = df.loc[(df.index >= start_utc) & (df.index <= end_utc)].copy()
+        if DATA_INTERVAL == '1h' and AGGREGATE_TO_DAILY and not df.empty:
+            converted_df = _convert_hourly_frame_to_daily(df)
+            if converted_df is not None and not converted_df.empty:
+                df = converted_df
+        if df.empty:
+            return None
+
+        df['ticker'] = ticker
+        df = df.reset_index()
+        if df.columns[0] != 'date':
+            df = df.rename(columns={df.columns[0]: 'date'})
+        return df
+    except Exception:
+        return None
+
+
 def _load_from_cache_parallel(all_tickers: list, start_date: datetime, end_date: datetime) -> pd.DataFrame:
     """
     Load data from cache files in parallel. Fast path - no API calls, no locks.
@@ -1681,55 +1640,67 @@ def _load_from_cache_parallel(all_tickers: list, start_date: datetime, end_date:
     Returns:
         DataFrame with all ticker data in long format
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+    from multiprocessing import get_context
     from utils import _to_utc
 
-    print(f"  [INFO] Loading cache for {len(all_tickers)} tickers (parallel)...")
+    worker_count = max(1, min(NUM_PROCESSES, len(all_tickers))) if all_tickers else 1
+    print(
+        f"  [INFO] Loading price history cache for {len(all_tickers)} tickers "
+        f"(parallel, {worker_count} fork workers)..."
+    )
 
     start_utc = _to_utc(start_date)
     end_utc = _to_utc(end_date)
     cache_dir = _RESOLVED_DATA_CACHE_DIR
 
-    def load_ticker_csv_direct(ticker):
-        """Load ticker directly from CSV - no locks, no debug messages"""
-        try:
-            cache_file = cache_dir / f"{ticker}.csv"
-            if cache_file.exists():
-                df = pd.read_csv(cache_file)
-
-                # Handle different date column formats
-                if 'Datetime' in df.columns:
-                    date_col = 'Datetime'
-                elif 'Date' in df.columns:
-                    date_col = 'Date'
-                elif 'Unnamed: 0' in df.columns:
-                    # Handle CSV saved with unnamed index column (ETFs often have this format)
-                    date_col = 'Unnamed: 0'
-                else:
-                    # No recognizable date column
-                    return None
-
-                df[date_col] = pd.to_datetime(df[date_col], utc=True)
-                df = df.set_index(date_col)
-                df = df.loc[(df.index >= start_utc) & (df.index <= end_utc)].copy()
-                if not df.empty:
-                    df['ticker'] = ticker
-                    df = df.reset_index()
-                    df = df.rename(columns={date_col: 'date'})
-                    return df
-        except Exception:
-            pass
-        return None
-
     all_data_frames = []
-    with ThreadPoolExecutor(max_workers=16) as executor:
-        futures = {executor.submit(load_ticker_csv_direct, ticker): ticker for ticker in all_tickers}
-        for future in as_completed(futures):
-            result = future.result()
-            if result is not None:
-                all_data_frames.append(result)
+    worker_args = [
+        (ticker, start_utc, end_utc, str(cache_dir))
+        for ticker in all_tickers
+    ]
+    with ProcessPoolExecutor(
+        max_workers=worker_count,
+        mp_context=get_context("fork"),
+    ) as executor:
+        futures = {
+            executor.submit(_load_ticker_csv_from_cache_worker, worker_arg): worker_arg[0]
+            for worker_arg in worker_args
+        }
+        pending_futures = set(futures)
+        completed_count = 0
+        from tqdm import tqdm
+        progress_bar = tqdm(
+            total=len(futures),
+            desc="  [INFO] Loading price history cache",
+            unit="ticker",
+        )
+        try:
+            while pending_futures:
+                done, pending_futures = wait(
+                    pending_futures,
+                    timeout=10.0,
+                    return_when=FIRST_COMPLETED,
+                )
+                if not done:
+                    print(
+                        "  [INFO] Price history cache heartbeat: "
+                        f"{completed_count}/{len(futures)} tickers completed..."
+                    )
+                    continue
+                for future in done:
+                    result = future.result()
+                    completed_count += 1
+                    progress_bar.update(1)
+                    if result is not None:
+                        all_data_frames.append(result)
+        finally:
+            progress_bar.close()
 
-    print(f"  [INFO] Loaded {len(all_data_frames)}/{len(all_tickers)} tickers from cache")
+    print(
+        f"  [INFO] Loaded {len(all_data_frames)}/{len(all_tickers)} tickers "
+        "from price history cache"
+    )
 
     if all_data_frames:
         all_tickers_data = pd.concat(all_data_frames, ignore_index=True)
@@ -1738,6 +1709,95 @@ def _load_from_cache_parallel(all_tickers: list, start_date: datetime, end_date:
         return all_tickers_data
     else:
         return pd.DataFrame()
+
+
+def _convert_hourly_frame_to_daily(price_df: pd.DataFrame) -> pd.DataFrame:
+    """Convert cached hourly OHLCV data into one daily bar plus aggregated intraday features."""
+    if price_df is None or price_df.empty:
+        return pd.DataFrame()
+
+    working = price_df.copy()
+    working.columns = [str(col).strip().capitalize() for col in working.columns]
+    working = working.loc[:, ~working.columns.duplicated()]
+
+    required_cols = {'Open', 'High', 'Low', 'Close', 'Volume'}
+    if not required_cols.issubset(set(working.columns)):
+        return pd.DataFrame()
+
+    if isinstance(working['Close'], pd.DataFrame):
+        working['Close'] = working['Close'].iloc[:, 0]
+
+    working['Hourly_Return'] = working['Close'].pct_change()
+    working['Intraday_Range_Pct'] = (working['High'] - working['Low']) / working['Open'] * 100
+    working['Hourly_Volatility'] = working['Hourly_Return'].rolling(5).std()
+    working['Intraday_Vol_Ratio'] = working['Hourly_Volatility'] / working['Hourly_Return'].rolling(20).std()
+    working['Volume_Weighted_Price'] = (working['Volume'] * working['Close']).cumsum() / working['Volume'].cumsum()
+    working['Volume_Concentration'] = working['Volume'] / working['Volume'].rolling(8).sum()
+    working['Buying_Pressure'] = (working['Close'] > working['Open']).astype(int) * working['Volume']
+    working['Selling_Pressure'] = (working['Close'] < working['Open']).astype(int) * working['Volume']
+    working['Price_Discovery_Efficiency'] = abs(working['Close'] - working['Volume_Weighted_Price']) / working['Volume_Weighted_Price'] * 100
+    working['Information_Shock'] = abs(working['Hourly_Return']).rolling(20).mean() * working['Volume_Concentration']
+    working['Hourly_Direction'] = (working['Hourly_Return'] > 0).astype(int)
+    working['Momentum_Persistence'] = working['Hourly_Direction'].rolling(4).sum()
+    # Preserve the original rolling slope semantics without Python-level rolling apply.
+    trend_window = 8
+    close_values = pd.to_numeric(working['Close'], errors='coerce').to_numpy(dtype=float, copy=False)
+    trend_strength = np.full(close_values.shape, np.nan, dtype=float)
+    if close_values.size >= trend_window:
+        x = np.arange(trend_window, dtype=float)
+        x_centered = x - x.mean()
+        denominator = np.square(x_centered).sum()
+        valid_close_values = np.nan_to_num(close_values, nan=0.0)
+        slope_numerators = np.convolve(valid_close_values, x_centered[::-1], mode='valid')
+        trend_strength[trend_window - 1:] = slope_numerators / denominator
+        valid_window_mask = (
+            pd.Series(close_values).rolling(trend_window).count().to_numpy() == trend_window
+        )
+        trend_strength[~valid_window_mask] = np.nan
+    working['Intraday_Trend_Strength'] = trend_strength
+    working['Liquidity_Detection'] = working['Volume'] / working['Intraday_Range_Pct']
+    working['Net_Order_Flow'] = (working['Buying_Pressure'] - working['Selling_Pressure']) / working['Volume']
+    working['Market_Impact'] = abs(working['Hourly_Return']) / working['Volume']
+    working['Vol_Clustering'] = (
+        working['Hourly_Volatility'] > working['Hourly_Volatility'].rolling(20).mean()
+    ).astype(int)
+    working['Vol_Regime_Change'] = (
+        working['Hourly_Volatility'].rolling(8).std() / working['Hourly_Volatility'].rolling(20).std()
+    )
+
+    daily_df = working.resample('B').agg({
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum',
+        'Intraday_Range_Pct': 'mean',
+        'Hourly_Volatility': 'mean',
+        'Intraday_Vol_Ratio': 'mean',
+        'Volume_Weighted_Price': 'last',
+        'Volume_Concentration': 'mean',
+        'Buying_Pressure': 'sum',
+        'Selling_Pressure': 'sum',
+        'Price_Discovery_Efficiency': 'mean',
+        'Information_Shock': 'sum',
+        'Momentum_Persistence': 'mean',
+        'Intraday_Trend_Strength': 'mean',
+        'Liquidity_Detection': 'mean',
+        'Net_Order_Flow': 'mean',
+        'Market_Impact': 'mean',
+        'Vol_Clustering': 'sum',
+        'Vol_Regime_Change': 'mean',
+    }).dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'])
+
+    if daily_df.empty:
+        return daily_df
+
+    daily_df['Net_Buying_Pressure'] = daily_df['Buying_Pressure'] - daily_df['Selling_Pressure']
+    daily_df['Buying_Pressure_Ratio'] = daily_df['Buying_Pressure'] / (
+        daily_df['Buying_Pressure'] + daily_df['Selling_Pressure']
+    )
+    daily_df['Total_Order_Flow'] = daily_df['Buying_Pressure'] + daily_df['Selling_Pressure']
+    return _calculate_technical_indicators(daily_df)
 
 
 def _download_and_update_cache(all_tickers: list, start_date: datetime, end_date: datetime) -> None:

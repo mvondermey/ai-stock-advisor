@@ -1946,7 +1946,7 @@ def _build_ai_elite_cache_rows(args) -> None:
     context = _get_ai_elite_file_cache_context(mmap_mode="r+")
     latest_allowed_date = context["latest_allowed_date"]
     price_history_cache = context.get("price_history_cache")
-    ticker_df = None
+    forward_source_data = None
     daily_data = _get_ai_elite_daily_frame_from_price_cache(
         ticker,
         latest_allowed_date,
@@ -1959,6 +1959,9 @@ def _build_ai_elite_cache_rows(args) -> None:
         daily_data = ticker_df.loc[:latest_allowed_date]
         if daily_data is None or len(daily_data) == 0:
             return
+        forward_source_data = daily_data
+    else:
+        forward_source_data = daily_data
 
     daily_context = _prepare_ai_elite_daily_context(
         daily_data,
@@ -2011,7 +2014,7 @@ def _build_ai_elite_cache_rows(args) -> None:
             valid_mask_array[ticker_idx, date_idx] = False
             intraday_coverage_array[ticker_idx, date_idx] = False
 
-        forward_ret = _calculate_forward_return(ticker_df, current_date, forward_days)
+        forward_ret = _calculate_forward_return(forward_source_data, current_date, forward_days)
         if forward_ret is not None:
             forward_array[ticker_idx, date_idx] = float(forward_ret)
         else:
@@ -2883,7 +2886,7 @@ def select_ai_elite_rank_ensemble_stocks(
             predict_context = {
                 "ticker_data_grouped": ticker_data_grouped,
                 "per_ticker_models": per_ticker_models,
-                "selected_model_names": selected_model_names,
+                "selected_model_names": None,
                 "current_date": current_date,
                 "price_history_cache": price_history_cache,
                 "hourly_history_cache": hourly_history_cache,

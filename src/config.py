@@ -308,6 +308,12 @@ PARALLEL_THRESHOLD     = 200      # Use parallel only for >200 tickers
 ENABLE_PARALLEL_STRATEGIES = True   # Run strategies in parallel within each day
 
 _PARALLEL_STRATEGY_PILOT_CONFIG: Dict[str, Dict[str, object]] = {
+    "adaptive_ensemble": {"enable_flag": "ENABLE_ADAPTIVE_STRATEGY", "use_buffer": True},
+    "volatility_ensemble": {"enable_flag": "ENABLE_VOLATILITY_ENSEMBLE", "use_buffer": True},
+    "dynamic_pool": {"enable_flag": "ENABLE_DYNAMIC_POOL", "use_buffer": True},
+    "risk_adj_mom_sentiment": {"enable_flag": "ENABLE_RISK_ADJ_MOM_SENTIMENT", "use_buffer": True},
+    "multi_tf_ensemble": {"enable_flag": "ENABLE_MULTI_TIMEFRAME_ENSEMBLE", "use_buffer": True},
+    "quality_momentum": {"enable_flag": "ENABLE_QUALITY_MOM", "use_buffer": False},
     "ratio_3m_1y": {"enable_flag": "ENABLE_3M_1Y_RATIO", "use_buffer": True},
     "ratio_1m_3m": {"enable_flag": "ENABLE_1M_3M_RATIO", "use_buffer": True},
     "ratio_1y_3m": {"enable_flag": "ENABLE_3M_1Y_RATIO", "use_buffer": True},
@@ -322,6 +328,15 @@ _PARALLEL_STRATEGY_PILOT_CONFIG: Dict[str, Dict[str, object]] = {
     "risk_adj_mom_6m_monthly": {"enable_flag": "ENABLE_RISK_ADJ_MOM_6M_MONTHLY", "use_buffer": True},
     "risk_adj_mom_3m": {"enable_flag": "ENABLE_RISK_ADJ_MOM_3M", "use_buffer": True},
     "risk_adj_mom_3m_monthly": {"enable_flag": "ENABLE_RISK_ADJ_MOM_3M_MONTHLY", "use_buffer": True},
+    "risk_adj_mom_1m": {"enable_flag": "ENABLE_RISK_ADJ_MOM_1M", "use_buffer": True},
+    "risk_adj_mom_1m_monthly": {"enable_flag": "ENABLE_RISK_ADJ_MOM_1M_MONTHLY", "use_buffer": True},
+    "risk_adj_mom_3m_sentiment": {"enable_flag": "ENABLE_RISK_ADJ_MOM_3M_SENTIMENT", "use_buffer": True},
+    "vol_sweet_mom": {"enable_flag": "ENABLE_VOL_SWEET_MOM", "use_buffer": True},
+    "risk_adj_mom_3m_market_up": {"enable_flag": "ENABLE_RISK_ADJ_MOM_3M_MARKET_UP", "use_buffer": True},
+    "risk_adj_mom_3m_with_stops": {"enable_flag": "ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS", "use_buffer": True},
+    "risk_adj_mom_1m_vol_sweet": {"enable_flag": "ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET", "use_buffer": True},
+    "bh_1y_volsweet_accel": {"enable_flag": "ENABLE_BH_1Y_VOL_SWEET_ACCEL", "use_buffer": True},
+    "bh_1y_dynamic_accel": {"enable_flag": "ENABLE_BH_1Y_DYNAMIC_ACCEL", "use_buffer": True},
     "trend_atr": {"enable_flag": "ENABLE_TREND_FOLLOWING_ATR", "use_buffer": True},
     "turnaround": {"enable_flag": "ENABLE_TURNAROUND", "use_buffer": True},
     "price_acceleration": {"enable_flag": "ENABLE_PRICE_ACCELERATION", "use_buffer": True},
@@ -329,11 +344,15 @@ _PARALLEL_STRATEGY_PILOT_CONFIG: Dict[str, Dict[str, object]] = {
     "momentum_volatility_hybrid_6m": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M", "use_buffer": True},
     "momentum_volatility_hybrid_1y": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y", "use_buffer": True},
     "momentum_volatility_hybrid_1y3m": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M", "use_buffer": True},
+    "mom_accel": {"enable_flag": "ENABLE_MOMENTUM_ACCELERATION", "use_buffer": True},
+    "concentrated_3m": {"enable_flag": "ENABLE_CONCENTRATED_3M", "use_buffer": True},
+    "dual_momentum": {"enable_flag": "ENABLE_DUAL_MOMENTUM", "use_buffer": True},
     "elite_hybrid": {"enable_flag": "ENABLE_ELITE_HYBRID", "use_buffer": True},
     "elite_risk": {"enable_flag": "ENABLE_ELITE_RISK", "use_buffer": True},
     "volatility_adj_mom": {"enable_flag": "ENABLE_VOLATILITY_ADJ_MOM", "use_buffer": False},
     "bb_mean_reversion": {"enable_flag": "ENABLE_BB_MEAN_REVERSION", "use_buffer": False},
     "bb_breakout": {"enable_flag": "ENABLE_BB_BREAKOUT", "use_buffer": False},
+    "bb_squeeze_breakout": {"enable_flag": "ENABLE_BB_SQUEEZE_BREAKOUT", "use_buffer": False},
     "bb_rsi_combo": {"enable_flag": "ENABLE_BB_RSI_COMBO", "use_buffer": False},
     "trend_breakout": {"enable_flag": "ENABLE_TREND_BREAKOUT", "use_buffer": False},
     "ai_elite": {"enable_flag": "ENABLE_AI_ELITE", "use_buffer": True},
@@ -358,7 +377,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 # --- Backtest windows
 
-BACKTEST_DAYS           =   40 # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   50 # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 BACKTEST_END_DATE       = False  # False = use current last trading day, or set "YYYY-MM-DD" to freeze runs for debugging
 
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days

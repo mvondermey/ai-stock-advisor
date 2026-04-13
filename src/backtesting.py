@@ -50,7 +50,17 @@ class PredictionTimeoutError(Exception):
 _PARALLEL_STRATEGY_WORKER_CONTEXT: Dict[str, Any] = {}
 
 _STRATEGY_TIMING_NAME_ALIASES = {
+    "Adaptive Ensemble": "Adaptive Ensemble",
+    "Volatility Ensemble": "Volatility Ensemble",
+    "Dynamic Pool": "Dynamic Pool",
     "Momentum-Vol Hybrid": "Mom-Vol Hybrid",
+    "Quality+Mom": "Quality+Mom",
+    "RiskAdj Sent": "RiskAdj Sent",
+    "Multi-Horizon Ensemble": "Multi-Horizon Ensemble",
+    "Mom Acceleration": "Mom Acceleration",
+    "Concentrated 3M": "Concentrated 3M",
+    "Dual Momentum": "Dual Momentum",
+    "BH 1Y Dynamic Accel": "BH 1Y Dynamic Accel",
     "Static BH 1Y Vol": "BH 1Y Vol Trig",
     "Static BH 1Y Perf": "BH 1Y Perf Trig",
     "Static BH 1Y Mom": "BH 1Y Mom Trig",
@@ -113,6 +123,8 @@ def _run_parallel_strategy_selection_task(
     initial_top_tickers = _PARALLEL_STRATEGY_WORKER_CONTEXT["initial_top_tickers"]
     price_history_cache = _PARALLEL_STRATEGY_WORKER_CONTEXT.get("price_history_cache")
     hourly_history_cache = _PARALLEL_STRATEGY_WORKER_CONTEXT.get("hourly_history_cache")
+    result_kind = "selected_list"
+    result_meta: Dict[str, Any] = {}
 
     if strategy_name == "elite_hybrid":
         from elite_hybrid_strategy import select_elite_hybrid_stocks
@@ -284,7 +296,65 @@ def _run_parallel_strategy_selection_task(
             top_n=top_n,
             price_history_cache=price_history_cache,
         )
+    elif strategy_name == "adaptive_ensemble":
+        from adaptive_ensemble import select_adaptive_ensemble_stocks
+
+        selected = select_adaptive_ensemble_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+        )
+    elif strategy_name == "volatility_ensemble":
+        from volatility_ensemble import select_volatility_ensemble_stocks
+
+        selected = select_volatility_ensemble_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+        )
+    elif strategy_name == "dynamic_pool":
+        from dynamic_pool import select_dynamic_pool_stocks
+
+        selected = select_dynamic_pool_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+        )
+    elif strategy_name == "risk_adj_mom_sentiment":
+        from risk_adj_mom_sentiment import select_risk_adj_mom_sentiment_stocks
+
+        selected = select_risk_adj_mom_sentiment_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "multi_tf_ensemble":
+        from multi_timeframe_ensemble import select_multi_timeframe_stocks
+
+        selected = select_multi_timeframe_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "quality_momentum":
+        from shared_strategies import select_quality_momentum_stocks
+
+        selected = select_quality_momentum_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+        )
     elif strategy_name == "dynamic_bh_1y":
+        from shared_strategies import select_top_performers as _select_top_performers_impl
+
         selected = _select_top_performers_impl(
             initial_top_tickers,
             ticker_data_grouped,
@@ -296,6 +366,8 @@ def _run_parallel_strategy_selection_task(
             price_history_cache=price_history_cache,
         )
     elif strategy_name == "dynamic_bh_6m":
+        from shared_strategies import select_top_performers as _select_top_performers_impl
+
         selected = _select_top_performers_impl(
             initial_top_tickers,
             ticker_data_grouped,
@@ -307,6 +379,8 @@ def _run_parallel_strategy_selection_task(
             price_history_cache=price_history_cache,
         )
     elif strategy_name == "dynamic_bh_3m":
+        from shared_strategies import select_top_performers as _select_top_performers_impl
+
         selected = _select_top_performers_impl(
             initial_top_tickers,
             ticker_data_grouped,
@@ -318,6 +392,8 @@ def _run_parallel_strategy_selection_task(
             price_history_cache=price_history_cache,
         )
     elif strategy_name == "dynamic_bh_1m":
+        from shared_strategies import select_top_performers as _select_top_performers_impl
+
         selected = _select_top_performers_impl(
             initial_top_tickers,
             ticker_data_grouped,
@@ -329,6 +405,8 @@ def _run_parallel_strategy_selection_task(
             price_history_cache=price_history_cache,
         )
     elif strategy_name == "dynamic_bh_1y_trailing_stop":
+        from shared_strategies import select_top_performers as _select_top_performers_impl
+
         selected = _select_top_performers_impl(
             initial_top_tickers,
             ticker_data_grouped,
@@ -340,6 +418,8 @@ def _run_parallel_strategy_selection_task(
             price_history_cache=price_history_cache,
         )
     elif strategy_name == "risk_adj_mom":
+        from shared_strategies import select_risk_adj_mom_stocks as _select_risk_adj_mom_stocks_impl
+
         selected = _select_risk_adj_mom_stocks_impl(
             initial_top_tickers,
             ticker_data_grouped,
@@ -347,6 +427,26 @@ def _run_parallel_strategy_selection_task(
             top_n=top_n,
             lookback_days=365,
             strategy_name="Risk-Adj Mom",
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "risk_adj_mom_1m":
+        from risk_adj_mom_1m_strategy import select_risk_adj_mom_1m_stocks
+
+        selected = select_risk_adj_mom_1m_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "risk_adj_mom_1m_monthly":
+        from risk_adj_mom_1m_strategy import select_risk_adj_mom_1m_stocks
+
+        selected = select_risk_adj_mom_1m_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
             price_history_cache=price_history_cache,
         )
     elif strategy_name == "risk_adj_mom_6m":
@@ -389,16 +489,140 @@ def _run_parallel_strategy_selection_task(
             top_n=top_n,
             price_history_cache=price_history_cache,
         )
+    elif strategy_name == "risk_adj_mom_3m_sentiment":
+        from risk_adj_mom_3m_sentiment_strategy import select_risk_adj_mom_3m_sentiment_stocks
+
+        selected = select_risk_adj_mom_3m_sentiment_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "vol_sweet_mom":
+        from vol_sweet_mom_strategy import select_vol_sweet_mom_stocks
+
+        selected = select_vol_sweet_mom_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+        )
+    elif strategy_name == "risk_adj_mom_3m_market_up":
+        from risk_adj_mom_3m_market_up_strategy import select_risk_adj_mom_3m_market_up_stocks
+
+        selected = select_risk_adj_mom_3m_market_up_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "risk_adj_mom_3m_with_stops":
+        from risk_adj_mom_3m_with_stops_strategy import select_risk_adj_mom_3m_with_stops_stocks
+
+        selected = select_risk_adj_mom_3m_with_stops_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "risk_adj_mom_1m_vol_sweet":
+        from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+
+        selected = select_risk_adj_mom_1m_vol_sweet_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "bh_1y_volsweet_accel":
+        from shared_strategies import select_bh_1y_volsweet_accel_stocks
+
+        selected = select_bh_1y_volsweet_accel_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+        )
+    elif strategy_name == "bh_1y_dynamic_accel":
+        from shared_strategies import select_bh_1y_dynamic_accel_stocks
+
+        selected_tickers, should_rebalance = select_bh_1y_dynamic_accel_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            days_since_rebalance=int(runtime_context.get("days_since_rebalance", 0)),
+            min_days=int(runtime_context.get("min_days", 5)),
+            max_days=int(runtime_context.get("max_days", 44)),
+        )
+        selected = list(selected_tickers or [])
+        result_kind = "bh_1y_dynamic_accel"
+        result_meta = {
+            "should_rebalance": bool(should_rebalance),
+        }
     elif strategy_name == "trend_atr":
         from new_strategies import reset_trend_atr_state, select_trend_following_atr_stocks
 
         if runtime_context.get("reset_trend_atr_state"):
             reset_trend_atr_state()
-        selected = select_trend_following_atr_stocks(
+        stocks_to_buy, stocks_to_sell = select_trend_following_atr_stocks(
             initial_top_tickers,
             ticker_data_grouped,
             current_date,
             top_n=top_n,
+        )
+        selected = list(stocks_to_buy or [])
+        result_kind = "buy_sell_lists"
+        result_meta = {
+            "stocks_to_sell": list(stocks_to_sell or []),
+        }
+    elif strategy_name == "dual_momentum":
+        from new_strategies import select_dual_momentum_stocks
+
+        selected_tickers, is_risk_on = select_dual_momentum_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+        selected = list(selected_tickers or [])
+        result_kind = "dual_momentum"
+        result_meta = {
+            "is_risk_on": bool(is_risk_on),
+        }
+    elif strategy_name == "mom_accel":
+        from new_strategies import select_momentum_acceleration_stocks
+
+        selected = select_momentum_acceleration_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "concentrated_3m":
+        from new_strategies import select_concentrated_3m_stocks
+
+        selected = select_concentrated_3m_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "bb_squeeze_breakout":
+        from bollinger_bands_strategy import select_bb_squeeze_breakout_stocks
+
+        selected = select_bb_squeeze_breakout_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date,
+            top_n,
         )
     elif strategy_name == "ai_elite":
         from ai_elite_strategy import select_ai_elite_stocks
@@ -429,6 +653,9 @@ def _run_parallel_strategy_selection_task(
         )
     return {
         "selected": list(selected or []),
+        "result_kind": result_kind,
+        "result_meta": result_meta,
+        "selection_count": int(len(selected or [])),
         "elapsed": float(_time.time() - started_at),
         "pid": int(os.getpid()),
     }
@@ -2309,6 +2536,12 @@ def _run_portfolio_backtest_walk_forward(
         "fallbacks": 0,
     }
     parallel_strategy_display_names = {
+        "adaptive_ensemble": "Adaptive Ensemble",
+        "volatility_ensemble": "Volatility Ensemble",
+        "dynamic_pool": "Dynamic Pool",
+        "risk_adj_mom_sentiment": "RiskAdj Sent",
+        "multi_tf_ensemble": "Multi-Horizon Ensemble",
+        "quality_momentum": "Quality+Mom",
         "ratio_3m_1y": "3M/1Y Ratio",
         "ratio_1m_3m": "1M/3M Ratio",
         "ratio_1y_3m": "1Y/3M Ratio",
@@ -2318,11 +2551,24 @@ def _run_portfolio_backtest_walk_forward(
         "momentum_volatility_hybrid_6m": "Mom-Vol Hybrid 6M",
         "momentum_volatility_hybrid_1y": "Mom-Vol Hybrid 1Y",
         "momentum_volatility_hybrid_1y3m": "Mom-Vol Hybrid 1Y/3M",
+        "mom_accel": "Mom Acceleration",
+        "concentrated_3m": "Concentrated 3M",
         "elite_hybrid": "Elite Hybrid",
         "elite_risk": "Elite Risk",
+        "risk_adj_mom_1m": "Risk-Adj Mom 1M",
+        "risk_adj_mom_1m_monthly": "RiskAdj 1M Mth",
+        "risk_adj_mom_3m_sentiment": "RiskAdj 3M Sent",
+        "vol_sweet_mom": "VolSweet Mom",
+        "risk_adj_mom_3m_market_up": "RiskAdj 3M Up",
+        "risk_adj_mom_3m_with_stops": "RiskAdj 3M Stop",
+        "risk_adj_mom_1m_vol_sweet": "1M VolSweet",
+        "bh_1y_volsweet_accel": "BH 1Y VolSweet Accel",
+        "bh_1y_dynamic_accel": "BH 1Y Dynamic Accel",
         "volatility_adj_mom": "Vol-Adj Mom",
+        "dual_momentum": "Dual Momentum",
         "bb_mean_reversion": "BB Mean Rev",
         "bb_breakout": "BB Breakout",
+        "bb_squeeze_breakout": "BB Squeeze",
         "bb_rsi_combo": "BB RSI Combo",
         "trend_breakout": "Trend Breakout",
         "ai_elite": "AI Elite",
@@ -3971,7 +4217,13 @@ def _run_portfolio_backtest_walk_forward(
         parallel_strategy_futures: Dict[str, Any] = {}
         ai_elite_selection_pending = False
 
-        if parallel_strategy_executor is not None:
+        def _dispatch_parallel_strategy_tasks() -> None:
+            has_non_ai_futures = any(
+                queued_strategy_name != "ai_elite"
+                for queued_strategy_name in parallel_strategy_futures
+            )
+            if parallel_strategy_executor is None or has_non_ai_futures:
+                return
             for strategy_name, strategy_config in getattr(config, "_PARALLEL_STRATEGY_PILOT_CONFIG", {}).items():
                 if strategy_name == "ai_elite":
                     continue
@@ -3986,6 +4238,20 @@ def _run_portfolio_backtest_walk_forward(
                 task_runtime_context = None
                 if strategy_name == "trend_atr" and day_count == 1:
                     task_runtime_context = {"reset_trend_atr_state": True}
+                elif strategy_name == "bh_1y_dynamic_accel":
+                    is_initial_dynamic_accel = (
+                        not bh_1y_dynamic_accel_initialized
+                        and len(bh_1y_dynamic_accel_positions) == 0
+                    )
+                    task_runtime_context = {
+                        "days_since_rebalance": (
+                            0
+                            if is_initial_dynamic_accel
+                            else bh_1y_dynamic_accel_days_since_rebalance + 1
+                        ),
+                        "min_days": 5,
+                        "max_days": 44,
+                    }
                 parallel_strategy_futures[strategy_name] = parallel_strategy_executor.submit(
                     _run_parallel_strategy_selection_task,
                     strategy_name,
@@ -4010,6 +4276,9 @@ def _run_portfolio_backtest_walk_forward(
                 task_result = future.result()
                 elapsed = float(task_result.get("elapsed", 0.0))
                 selected = list(task_result.get("selected") or [])
+                result_kind = str(task_result.get("result_kind") or "selected_list")
+                result_meta = dict(task_result.get("result_meta") or {})
+                selection_count = int(task_result.get("selection_count", len(selected)))
                 worker_pid = task_result.get("pid")
                 strategy_display_name = parallel_strategy_display_names.get(strategy_name, strategy_name)
                 _record_strategy_timing(
@@ -4020,7 +4289,13 @@ def _run_portfolio_backtest_walk_forward(
                     worker_pid=int(worker_pid) if worker_pid is not None else None,
                 )
                 daily_queue_stats["tasks_completed"] += 1
-                print(f"   🚦 Strategy queue: {strategy_name} returned {len(selected)} tickers")
+                print(f"   🚦 Strategy queue: {strategy_name} returned {selection_count} tickers")
+                if result_kind == "buy_sell_lists":
+                    return selected, list(result_meta.get("stocks_to_sell") or [])
+                if result_kind == "dual_momentum":
+                    return selected, bool(result_meta.get("is_risk_on", False))
+                if result_kind == "bh_1y_dynamic_accel":
+                    return selected, bool(result_meta.get("should_rebalance", False))
                 return selected
             except Exception as e:
                 print(f"   ⚠️ Strategy queue failed for {strategy_name}: {e}")
@@ -4284,6 +4559,10 @@ def _run_portfolio_backtest_walk_forward(
                     strategies_rebalanced_today['AI Elite'] = rebalanced_flag
             except Exception as e:
                 print(f"   ⚠️ AI Elite error: {e}")
+
+        # Submit the parallel queue only after AI-heavy prep above has finished.
+        # This avoids nested fork pools during cache/training phases like AI Elite.
+        _dispatch_parallel_strategy_tasks()
 
         # MULTI-HORIZON INTRADAY: Rebalance using hourly data for medium/short horizons
         if config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE:
@@ -6546,16 +6825,21 @@ def _run_portfolio_backtest_walk_forward(
         # ADAPTIVE ENSEMBLE: Rebalance using meta-ensemble strategy DAILY
         if config.ENABLE_ADAPTIVE_STRATEGY:
             try:
-                from adaptive_ensemble import select_adaptive_ensemble_stocks, reset_ensemble_state
-
                 print(f"   📊 Adaptive Ensemble Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                # Use adaptive ensemble for stock selection
-                new_adaptive_ensemble_stocks = select_adaptive_ensemble_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                def _fallback_adaptive_ensemble():
+                    from adaptive_ensemble import select_adaptive_ensemble_stocks
+
+                    return select_adaptive_ensemble_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_adaptive_ensemble_stocks = _resolve_parallel_strategy_selection(
+                    "adaptive_ensemble",
+                    _fallback_adaptive_ensemble,
                 )
 
                 if new_adaptive_ensemble_stocks:
@@ -6589,15 +6873,21 @@ def _run_portfolio_backtest_walk_forward(
         # VOLATILITY ENSEMBLE: Rebalance using volatility-adjusted strategy DAILY
         if config.ENABLE_VOLATILITY_ENSEMBLE:
             try:
-                from volatility_ensemble import select_volatility_ensemble_stocks, reset_vol_ensemble_state
-
                 print(f"   📊 Volatility Ensemble Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                new_volatility_ensemble_stocks = select_volatility_ensemble_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                def _fallback_volatility_ensemble():
+                    from volatility_ensemble import select_volatility_ensemble_stocks
+
+                    return select_volatility_ensemble_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_volatility_ensemble_stocks = _resolve_parallel_strategy_selection(
+                    "volatility_ensemble",
+                    _fallback_volatility_ensemble,
                 )
 
                 if new_volatility_ensemble_stocks:
@@ -6718,15 +7008,21 @@ def _run_portfolio_backtest_walk_forward(
         # DYNAMIC POOL: Rebalance using dynamic strategy pool DAILY
         if config.ENABLE_DYNAMIC_POOL:
             try:
-                from dynamic_pool import select_dynamic_pool_stocks
-
                 print(f"   📊 Dynamic Pool Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                new_dynamic_pool_stocks = select_dynamic_pool_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                def _fallback_dynamic_pool():
+                    from dynamic_pool import select_dynamic_pool_stocks
+
+                    return select_dynamic_pool_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_dynamic_pool_stocks = _resolve_parallel_strategy_selection(
+                    "dynamic_pool",
+                    _fallback_dynamic_pool,
                 )
 
                 if new_dynamic_pool_stocks:
@@ -6758,16 +7054,22 @@ def _run_portfolio_backtest_walk_forward(
         # RISK-ADJ MOMENTUM SENTIMENT: Rebalance using risk-adjusted momentum + sentiment strategy DAILY
         if config.ENABLE_RISK_ADJ_MOM_SENTIMENT:
             try:
-                from risk_adj_mom_sentiment import select_risk_adj_mom_sentiment_stocks
-
                 print(f"   📊 Risk-Adj Mom Sentiment Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                new_risk_adj_mom_sentiment_stocks = select_risk_adj_mom_sentiment_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    price_history_cache=price_history_cache
+                def _fallback_risk_adj_mom_sentiment():
+                    from risk_adj_mom_sentiment import select_risk_adj_mom_sentiment_stocks
+
+                    return select_risk_adj_mom_sentiment_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_risk_adj_mom_sentiment_stocks = _resolve_parallel_strategy_selection(
+                    "risk_adj_mom_sentiment",
+                    _fallback_risk_adj_mom_sentiment,
                 )
 
                 if new_risk_adj_mom_sentiment_stocks:
@@ -6797,14 +7099,20 @@ def _run_portfolio_backtest_walk_forward(
         # MULTI-HORIZON ENSEMBLE: Rebalance using multi-horizon signals from daily data
         if config.ENABLE_MULTI_TIMEFRAME_ENSEMBLE:
             try:
-                from multi_timeframe_ensemble import select_multi_timeframe_stocks
+                def _fallback_multi_tf_ensemble():
+                    from multi_timeframe_ensemble import select_multi_timeframe_stocks
 
-                new_multi_tf_ensemble_stocks = select_multi_timeframe_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    price_history_cache=price_history_cache,
+                    return select_multi_timeframe_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_multi_tf_ensemble_stocks = _resolve_parallel_strategy_selection(
+                    "multi_tf_ensemble",
+                    _fallback_multi_tf_ensemble,
                 )
 
                 if new_multi_tf_ensemble_stocks:
@@ -6907,11 +7215,17 @@ def _run_portfolio_backtest_walk_forward(
             try:
                 print(f"   🔍 Quality+Mom: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
 
-                new_quality_momentum_stocks = select_quality_momentum_stocks(
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE,
+                def _fallback_quality_momentum():
+                    return select_quality_momentum_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE,
+                    )
+
+                new_quality_momentum_stocks = _resolve_parallel_strategy_selection(
+                    "quality_momentum",
+                    _fallback_quality_momentum,
                 )
 
                 if new_quality_momentum_stocks:
@@ -7496,12 +7810,22 @@ def _run_portfolio_backtest_walk_forward(
         # MOMENTUM ACCELERATION STRATEGY
         if config.ENABLE_MOMENTUM_ACCELERATION:
             try:
-                from new_strategies import select_momentum_acceleration_stocks
-
                 print(f"   📈 Momentum Acceleration: Analyzing {len(initial_top_tickers)} tickers...")
 
-                new_mom_accel_stocks = select_momentum_acceleration_stocks(
-                    initial_top_tickers, ticker_data_grouped, current_date, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                def _fallback_mom_accel():
+                    from new_strategies import select_momentum_acceleration_stocks
+
+                    return select_momentum_acceleration_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_mom_accel_stocks = _resolve_parallel_strategy_selection(
+                    "mom_accel",
+                    _fallback_mom_accel,
                 )
 
                 if new_mom_accel_stocks:
@@ -7553,15 +7877,22 @@ def _run_portfolio_backtest_walk_forward(
 
                 # Only rebalance monthly
                 if concentrated_3m_days_since_rebalance >= CONCENTRATED_3M_REBALANCE_DAYS or not current_concentrated_3m_stocks:
-                    from new_strategies import select_concentrated_3m_stocks
-
                     print(f"   🎯 Concentrated 3M: Analyzing {len(initial_top_tickers)} tickers...")
 
-                    new_concentrated_3m_stocks = select_concentrated_3m_stocks(
-                        initial_top_tickers,
-                        ticker_data_grouped,
-                        current_date=current_date,
-                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                    def _fallback_concentrated_3m():
+                        from new_strategies import select_concentrated_3m_stocks
+
+                        return select_concentrated_3m_stocks(
+                            initial_top_tickers,
+                            ticker_data_grouped,
+                            current_date=current_date,
+                            top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
+                        )
+
+                    new_concentrated_3m_stocks = _resolve_parallel_strategy_selection(
+                        "concentrated_3m",
+                        _fallback_concentrated_3m,
                     )
 
                     if new_concentrated_3m_stocks:
@@ -7589,12 +7920,22 @@ def _run_portfolio_backtest_walk_forward(
         # DUAL MOMENTUM STRATEGY
         if config.ENABLE_DUAL_MOMENTUM:
             try:
-                from new_strategies import select_dual_momentum_stocks
-
                 print(f"   📊 Dual Momentum: Analyzing {len(initial_top_tickers)} tickers...")
 
-                new_dual_mom_stocks, is_risk_on = select_dual_momentum_stocks(
-                    initial_top_tickers, ticker_data_grouped, current_date, top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE
+                def _fallback_dual_momentum():
+                    from new_strategies import select_dual_momentum_stocks
+
+                    return select_dual_momentum_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_dual_mom_stocks, is_risk_on = _resolve_parallel_strategy_selection(
+                    "dual_momentum",
+                    _fallback_dual_momentum,
                 )
 
                 # If risk-off, sell all positions
@@ -7963,17 +8304,23 @@ def _run_portfolio_backtest_walk_forward(
         # RISK-ADJ MOM 3M SENTIMENT STRATEGY
         if config.ENABLE_RISK_ADJ_MOM_3M_SENTIMENT:
             try:
-                from risk_adj_mom_3m_sentiment_strategy import select_risk_adj_mom_3m_sentiment_stocks
+                def _fallback_risk_adj_mom_3m_sentiment():
+                    from risk_adj_mom_3m_sentiment_strategy import select_risk_adj_mom_3m_sentiment_stocks
 
-                new_stocks = _time_strategy_phase_call(
-                    "RiskAdj 3M Sent",
-                    "selection",
-                    select_risk_adj_mom_3m_sentiment_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    price_history_cache=price_history_cache,
+                    return _time_strategy_phase_call(
+                        "RiskAdj 3M Sent",
+                        "selection",
+                        select_risk_adj_mom_3m_sentiment_stocks,
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_stocks = _resolve_parallel_strategy_selection(
+                    "risk_adj_mom_3m_sentiment",
+                    _fallback_risk_adj_mom_3m_sentiment,
                 )
 
                 if new_stocks:
@@ -7999,16 +8346,22 @@ def _run_portfolio_backtest_walk_forward(
         # VOL-SWEET MOMENTUM STRATEGY
         if config.ENABLE_VOL_SWEET_MOM:
             try:
-                from vol_sweet_mom_strategy import select_vol_sweet_mom_stocks
+                def _fallback_vol_sweet_mom():
+                    from vol_sweet_mom_strategy import select_vol_sweet_mom_stocks
 
-                new_stocks = _time_strategy_phase_call(
-                    "VolSweet Mom",
-                    "selection",
-                    select_vol_sweet_mom_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    return _time_strategy_phase_call(
+                        "VolSweet Mom",
+                        "selection",
+                        select_vol_sweet_mom_stocks,
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_stocks = _resolve_parallel_strategy_selection(
+                    "vol_sweet_mom",
+                    _fallback_vol_sweet_mom,
                 )
 
                 if new_stocks:
@@ -8037,17 +8390,23 @@ def _run_portfolio_backtest_walk_forward(
         # RISK-ADJ MOM 3M MARKET-UP ONLY STRATEGY
         if config.ENABLE_RISK_ADJ_MOM_3M_MARKET_UP:
             try:
-                from risk_adj_mom_3m_market_up_strategy import select_risk_adj_mom_3m_market_up_stocks
+                def _fallback_risk_adj_mom_3m_market_up():
+                    from risk_adj_mom_3m_market_up_strategy import select_risk_adj_mom_3m_market_up_stocks
 
-                new_stocks = _time_strategy_phase_call(
-                    "RiskAdj 3M Up",
-                    "selection",
-                    select_risk_adj_mom_3m_market_up_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    price_history_cache=price_history_cache,
+                    return _time_strategy_phase_call(
+                        "RiskAdj 3M Up",
+                        "selection",
+                        select_risk_adj_mom_3m_market_up_stocks,
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_stocks = _resolve_parallel_strategy_selection(
+                    "risk_adj_mom_3m_market_up",
+                    _fallback_risk_adj_mom_3m_market_up,
                 )
 
                 if new_stocks:
@@ -8077,17 +8436,23 @@ def _run_portfolio_backtest_walk_forward(
         # RISK-ADJ MOM 3M WITH STOPS STRATEGY
         if config.ENABLE_RISK_ADJ_MOM_3M_WITH_STOPS:
             try:
-                from risk_adj_mom_3m_with_stops_strategy import select_risk_adj_mom_3m_with_stops_stocks
+                def _fallback_risk_adj_mom_3m_with_stops():
+                    from risk_adj_mom_3m_with_stops_strategy import select_risk_adj_mom_3m_with_stops_stocks
 
-                new_stocks = _time_strategy_phase_call(
-                    "RiskAdj 3M Stop",
-                    "selection",
-                    select_risk_adj_mom_3m_with_stops_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    price_history_cache=price_history_cache,
+                    return _time_strategy_phase_call(
+                        "RiskAdj 3M Stop",
+                        "selection",
+                        select_risk_adj_mom_3m_with_stops_stocks,
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_stocks = _resolve_parallel_strategy_selection(
+                    "risk_adj_mom_3m_with_stops",
+                    _fallback_risk_adj_mom_3m_with_stops,
                 )
 
                 if new_stocks:
@@ -8128,16 +8493,23 @@ def _run_portfolio_backtest_walk_forward(
         # RISK-ADJ MOM 1M + VOL-SWEET STRATEGY
         if config.ENABLE_RISK_ADJ_MOM_1M_VOL_SWEET:
             try:
-                from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+                def _fallback_risk_adj_mom_1m_vol_sweet():
+                    from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
 
-                new_stocks = _time_strategy_phase_call(
-                    "1M VolSweet",
-                    "selection",
-                    select_risk_adj_mom_1m_vol_sweet_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    return _time_strategy_phase_call(
+                        "1M VolSweet",
+                        "selection",
+                        select_risk_adj_mom_1m_vol_sweet_stocks,
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_stocks = _resolve_parallel_strategy_selection(
+                    "risk_adj_mom_1m_vol_sweet",
+                    _fallback_risk_adj_mom_1m_vol_sweet,
                 )
 
                 if new_stocks:
@@ -8163,16 +8535,22 @@ def _run_portfolio_backtest_walk_forward(
         # BH 1Y VOL-SWEET ACCEL STRATEGY
         if config.ENABLE_BH_1Y_VOL_SWEET_ACCEL:
             try:
-                from shared_strategies import select_bh_1y_volsweet_accel_stocks
+                def _fallback_bh_1y_volsweet_accel():
+                    from shared_strategies import select_bh_1y_volsweet_accel_stocks
 
-                new_bh_1y_volsweet_accel_stocks = _time_strategy_phase_call(
-                    "BH 1Y VolSweet Accel",
-                    "selection",
-                    select_bh_1y_volsweet_accel_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    return _time_strategy_phase_call(
+                        "BH 1Y VolSweet Accel",
+                        "selection",
+                        select_bh_1y_volsweet_accel_stocks,
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_bh_1y_volsweet_accel_stocks = _resolve_parallel_strategy_selection(
+                    "bh_1y_volsweet_accel",
+                    _fallback_bh_1y_volsweet_accel,
                 )
 
                 if new_bh_1y_volsweet_accel_stocks:
@@ -8198,24 +8576,30 @@ def _run_portfolio_backtest_walk_forward(
         # BH 1Y DYNAMIC ACCEL STRATEGY (dynamic rebalancing)
         if config.ENABLE_BH_1Y_DYNAMIC_ACCEL:
             try:
-                from shared_strategies import select_bh_1y_dynamic_accel_stocks
-
                 # Check if this is initial allocation (no positions yet)
                 is_initial = not bh_1y_dynamic_accel_initialized and len(bh_1y_dynamic_accel_positions) == 0
 
                 bh_1y_dynamic_accel_days_since_rebalance += 1
 
-                new_bh_1y_dynamic_accel_stocks, should_rebalance = _time_strategy_phase_call(
-                    "BH 1Y Dynamic Accel",
-                    "selection",
-                    select_bh_1y_dynamic_accel_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    days_since_rebalance=0 if is_initial else bh_1y_dynamic_accel_days_since_rebalance,
-                    min_days=5,
-                    max_days=44,
+                def _fallback_bh_1y_dynamic_accel():
+                    from shared_strategies import select_bh_1y_dynamic_accel_stocks
+
+                    return _time_strategy_phase_call(
+                        "BH 1Y Dynamic Accel",
+                        "selection",
+                        select_bh_1y_dynamic_accel_stocks,
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        days_since_rebalance=0 if is_initial else bh_1y_dynamic_accel_days_since_rebalance,
+                        min_days=5,
+                        max_days=44,
+                    )
+
+                new_bh_1y_dynamic_accel_stocks, should_rebalance = _resolve_parallel_strategy_selection(
+                    "bh_1y_dynamic_accel",
+                    _fallback_bh_1y_dynamic_accel,
                 )
 
                 if should_rebalance and new_bh_1y_dynamic_accel_stocks:
@@ -8246,17 +8630,23 @@ def _run_portfolio_backtest_walk_forward(
         # RISK-ADJ MOM 1M STRATEGY
         if config.ENABLE_RISK_ADJ_MOM_1M:
             try:
-                from risk_adj_mom_1m_strategy import select_risk_adj_mom_1m_stocks
+                def _fallback_risk_adj_mom_1m():
+                    from risk_adj_mom_1m_strategy import select_risk_adj_mom_1m_stocks
 
-                new_risk_adj_mom_1m_stocks = _time_strategy_phase_call(
-                    "Risk-Adj Mom 1M",
-                    "selection",
-                    select_risk_adj_mom_1m_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date=current_date,
-                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    price_history_cache=price_history_cache,
+                    return _time_strategy_phase_call(
+                        "Risk-Adj Mom 1M",
+                        "selection",
+                        select_risk_adj_mom_1m_stocks,
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                        price_history_cache=price_history_cache,
+                    )
+
+                new_risk_adj_mom_1m_stocks = _resolve_parallel_strategy_selection(
+                    "risk_adj_mom_1m",
+                    _fallback_risk_adj_mom_1m,
                 )
 
                 if new_risk_adj_mom_1m_stocks:
@@ -8284,17 +8674,23 @@ def _run_portfolio_backtest_walk_forward(
             should_rebalance_1m_mom_monthly = (not risk_adj_mom_1m_monthly_initialized) or is_first_trading_day_of_month
             if should_rebalance_1m_mom_monthly:
                 try:
-                    from risk_adj_mom_1m_strategy import select_risk_adj_mom_1m_stocks
+                    def _fallback_risk_adj_mom_1m_monthly():
+                        from risk_adj_mom_1m_strategy import select_risk_adj_mom_1m_stocks
 
-                    new_stocks = _time_strategy_phase_call(
-                        "RiskAdj 1M Mth",
-                        "selection",
-                        select_risk_adj_mom_1m_stocks,
-                        initial_top_tickers,
-                        ticker_data_grouped,
-                        current_date=current_date,
-                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                        price_history_cache=price_history_cache,
+                        return _time_strategy_phase_call(
+                            "RiskAdj 1M Mth",
+                            "selection",
+                            select_risk_adj_mom_1m_stocks,
+                            initial_top_tickers,
+                            ticker_data_grouped,
+                            current_date=current_date,
+                            top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                            price_history_cache=price_history_cache,
+                        )
+
+                    new_stocks = _resolve_parallel_strategy_selection(
+                        "risk_adj_mom_1m_monthly",
+                        _fallback_risk_adj_mom_1m_monthly,
                     )
 
                     if new_stocks:
@@ -8695,15 +9091,22 @@ def _run_portfolio_backtest_walk_forward(
         # BB Squeeze Breakout
         if config.ENABLE_BB_SQUEEZE_BREAKOUT:
             try:
-                from bollinger_bands_strategy import select_bb_squeeze_breakout_stocks
-                new_bb_squeeze_breakout_stocks = _time_strategy_phase_call(
-                    "BB Squeeze",
-                    "selection",
-                    select_bb_squeeze_breakout_stocks,
-                    initial_top_tickers,
-                    ticker_data_grouped,
-                    current_date,
-                    PORTFOLIO_SIZE,
+                def _fallback_bb_squeeze_breakout():
+                    from bollinger_bands_strategy import select_bb_squeeze_breakout_stocks
+
+                    return _time_strategy_phase_call(
+                        "BB Squeeze",
+                        "selection",
+                        select_bb_squeeze_breakout_stocks,
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date,
+                        PORTFOLIO_SIZE,
+                    )
+
+                new_bb_squeeze_breakout_stocks = _resolve_parallel_strategy_selection(
+                    "bb_squeeze_breakout",
+                    _fallback_bb_squeeze_breakout,
                 )
                 if new_bb_squeeze_breakout_stocks:
                     print(f"   📊 BB Squeeze Breakout Day {day_count}: {new_bb_squeeze_breakout_stocks}")
