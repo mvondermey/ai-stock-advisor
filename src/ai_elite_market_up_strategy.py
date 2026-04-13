@@ -17,6 +17,8 @@ def select_ai_elite_market_up_stocks(
     per_ticker_models: Dict[str, any] = None,
     price_history_cache=None,
     hourly_history_cache=None,
+    feature_cache_context=None,
+    market_context_map=None,
 ) -> List[str]:
     """Select stocks using the daily AI Elite shared model, but only when market is up."""
     from ai_elite_strategy import select_ai_elite_stocks
@@ -49,4 +51,6 @@ def select_ai_elite_market_up_stocks(
         per_ticker_models=per_ticker_models,
         price_history_cache=price_history_cache,
         hourly_history_cache=hourly_history_cache,
+        feature_cache_context=feature_cache_context,
+        market_context_map=market_context_map,
     )

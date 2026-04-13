@@ -33,7 +33,12 @@ import joblib
 from tqdm import tqdm
 
 from model_training_safety import restore_native_model_artifacts
-from strategy_cache_adapter import ensure_hourly_history_cache, get_cached_hourly_frame_between
+from strategy_cache_adapter import (
+    ensure_hourly_history_cache,
+    ensure_price_history_cache,
+    get_cached_hourly_frame_between,
+    get_cached_hourly_frame_up_to,
+)
 from strategy_disk_cache import get_cache_dir, universe_signature_from_frames
 
 _AI_ELITE_SHARED_MODEL_CACHE: Dict[Tuple[str, Optional[str]], any] = {}
@@ -260,9 +265,16 @@ def precompute_ai_elite_market_context_map(
     end_date: datetime,
 ) -> Dict[pd.Timestamp, Dict[str, float]]:
     context_map: Dict[pd.Timestamp, Dict[str, float]] = {}
-    current_date = _normalize_ai_elite_timestamp(start_date).normalize()
+    start_ts = _normalize_ai_elite_timestamp(start_date).normalize()
     end_ts = _normalize_ai_elite_timestamp(end_date).normalize()
-    while current_date <= end_ts:
+    total_days = max(0, (end_ts - start_ts).days) + 1
+    current_date = start_ts
+    for _ in tqdm(
+        range(total_days),
+        desc="AI Elite market context",
+        total=total_days,
+        ncols=100,
+    ):
         context_map[current_date] = _calculate_ai_elite_market_context(ticker_data_grouped, current_date)
         current_date += timedelta(days=1)
     return context_map
@@ -651,6 +663,22 @@ def select_ai_elite_stocks(
     if current_date.tzinfo is None:
         current_date = current_date.replace(tzinfo=timezone.utc)
 
+    if per_ticker_models is None and shared_model_path:
+        shared_model = _load_shared_ai_elite_model_for_inference(shared_model_path, shared_model_token)
+        if shared_model is None:
+            print(f"   ⚠️ AI Elite: No shared model available for inference at {shared_model_path}")
+            return []
+        per_ticker_models = {"_shared_base": shared_model}
+
+    if not per_ticker_models or not isinstance(per_ticker_models, dict):
+        print("   ⚠️ AI Elite: No AI models available, returning empty")
+        return []
+
+    shared_base = per_ticker_models.get('_shared_base')
+    if not shared_base and not any(k != '_shared_base' for k in per_ticker_models):
+        print("   ⚠️ AI Elite: No valid AI models found, returning empty")
+        return []
+
     hourly_history_cache = ensure_hourly_history_cache(hourly_history_cache)
     if market_context_map is None:
         market_context_map = precompute_ai_elite_market_context_map(
@@ -658,13 +686,6 @@ def select_ai_elite_stocks(
             current_date,
             current_date,
         )
-
-    if per_ticker_models is None and shared_model_path:
-        shared_model = _load_shared_ai_elite_model_for_inference(shared_model_path, shared_model_token)
-        if shared_model is None:
-            print(f"   ⚠️ AI Elite: No shared model available for inference at {shared_model_path}")
-            return []
-        per_ticker_models = {"_shared_base": shared_model}
 
     # Filter out inverse ETFs - they should only be in inverse_etf_hedge strategy
     from config import INVERSE_ETFS
@@ -701,7 +722,12 @@ def select_ai_elite_stocks(
                     candidate_payloads[ticker_result] = payload
 
     def _run_sequential_prediction():
-        for args in predict_args:
+        for args in tqdm(
+            predict_args,
+            total=len(predict_args),
+            desc="AI Elite prediction",
+            unit="ticker",
+        ):
             ticker_result, score, status, payload = _predict_ticker_worker(args)
             _record_prediction_result(ticker_result, score, status, payload)
 
@@ -753,7 +779,12 @@ def select_ai_elite_stocks(
                         filtered_tickers,
                         chunksize=chunksize,
                     )
-                    for ticker_result, score, status, payload in results:
+                    for ticker_result, score, status, payload in tqdm(
+                        results,
+                        total=len(filtered_tickers),
+                        desc="AI Elite prediction",
+                        unit="ticker",
+                    ):
                         _record_prediction_result(ticker_result, score, status, payload)
             except Exception as e:
                 print(f"   ⚠️ AI Elite: Forked prediction failed ({type(e).__name__}: {e})")
@@ -763,7 +794,12 @@ def select_ai_elite_stocks(
             try:
                 with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="ai-elite-predict") as executor:
                     futures = [executor.submit(_predict_ticker_worker, args) for args in predict_args]
-                    for future in as_completed(futures):
+                    for future in tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc="AI Elite prediction",
+                        unit="ticker",
+                    ):
                         ticker_result, score, status, payload = future.result()
                         _record_prediction_result(ticker_result, score, status, payload)
             except Exception as e:
@@ -1446,6 +1482,7 @@ def precompute_ai_elite_training_context(
     cache_start_date: Optional[datetime] = None,
     cache_end_date: Optional[datetime] = None,
     market_context_map: Optional[Dict[pd.Timestamp, Dict[str, float]]] = None,
+    price_history_cache=None,
     hourly_history_cache=None,
 ) -> Dict[str, object]:
     from parallel_backtest import build_hourly_history_cache, preload_hourly_tickers_parallel
@@ -1475,6 +1512,7 @@ def precompute_ai_elite_training_context(
 
     if hourly_history_cache is None:
         hourly_history_cache = build_hourly_history_cache()
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     n_workers = max(1, min(NUM_PROCESSES, len(valid_tickers))) if valid_tickers else 1
     if valid_tickers:
@@ -1572,6 +1610,7 @@ def precompute_ai_elite_training_context(
             forward_days=forward_days,
             context=cache_context,
             market_context_map=_ensure_market_context_map(),
+            price_history_cache=price_history_cache,
             hourly_history_cache=hourly_history_cache,
         )
 
@@ -1586,6 +1625,7 @@ def precompute_ai_elite_training_context(
         daily_signature=daily_signature,
         hourly_signature=hourly_signature,
         market_context_map=_ensure_market_context_map(),
+        price_history_cache=price_history_cache,
         hourly_history_cache=hourly_history_cache,
     )
 
@@ -1601,6 +1641,7 @@ def _build_ai_elite_training_context(
     daily_signature: str,
     hourly_signature: str,
     market_context_map: Optional[Dict[pd.Timestamp, Dict[str, float]]] = None,
+    price_history_cache=None,
     hourly_history_cache=None,
 ) -> Dict[str, object]:
     start_ordinal = _normalize_ai_elite_timestamp(train_start_date).to_pydatetime().date().toordinal()
@@ -1671,6 +1712,7 @@ def _build_ai_elite_training_context(
         valid_mask_path=valid_mask_path,
         intraday_coverage_path=intraday_coverage_path,
         market_context_map=market_context_map,
+        price_history_cache=price_history_cache,
         hourly_history_cache=hourly_history_cache,
         progress_label="build",
     )
@@ -1715,6 +1757,7 @@ def _extend_ai_elite_training_context(
     forward_days: int,
     context: Dict[str, object],
     market_context_map: Optional[Dict[pd.Timestamp, Dict[str, float]]] = None,
+    price_history_cache=None,
     hourly_history_cache=None,
 ) -> Dict[str, object]:
     start_ordinal = int(context["start_ordinal"])
@@ -1808,6 +1851,7 @@ def _extend_ai_elite_training_context(
         valid_mask_path=valid_mask_path,
         intraday_coverage_path=intraday_coverage_path,
         market_context_map=market_context_map,
+        price_history_cache=price_history_cache,
         hourly_history_cache=hourly_history_cache,
         progress_label="append",
     )
@@ -1900,20 +1944,43 @@ def _refresh_existing_ai_elite_training_context(
 def _build_ai_elite_cache_rows(args) -> None:
     ticker_idx, ticker = args
     context = _get_ai_elite_file_cache_context(mmap_mode="r+")
-    ticker_df = context["ticker_data_grouped"].get(ticker)
-    if ticker_df is None or len(ticker_df) == 0:
-        return
+    latest_allowed_date = context["latest_allowed_date"]
+    price_history_cache = context.get("price_history_cache")
+    ticker_df = None
+    daily_data = _get_ai_elite_daily_frame_from_price_cache(
+        ticker,
+        latest_allowed_date,
+        price_history_cache,
+    )
+    if daily_data is None:
+        ticker_df = context["ticker_data_grouped"].get(ticker)
+        if ticker_df is None or len(ticker_df) == 0:
+            return
+        daily_data = ticker_df.loc[:latest_allowed_date]
+        if daily_data is None or len(daily_data) == 0:
+            return
 
     daily_context = _prepare_ai_elite_daily_context(
-        ticker_df,
+        daily_data,
         market_context_map=context.get("market_context_map"),
     )
-    hourly_data = _load_hourly_data_direct(
+    hourly_data = get_cached_hourly_frame_up_to(
+        ensure_hourly_history_cache(context.get("hourly_history_cache")),
         ticker,
-        datetime(1970, 1, 1, tzinfo=timezone.utc),
-        context["latest_allowed_date"] + timedelta(days=int(context["forward_days"]) + 2),
-        hourly_history_cache=context.get("hourly_history_cache"),
+        latest_allowed_date,
+        field_names=("open", "high", "low", "close", "volume"),
+        min_rows=2,
     )
+    if hourly_data is not None and not hourly_data.empty:
+        hourly_data = hourly_data.rename(
+            columns={
+                "open": "Open",
+                "high": "High",
+                "low": "Low",
+                "close": "Close",
+                "volume": "Volume",
+            }
+        )
     hourly_context = _prepare_ai_elite_hourly_context(hourly_data)
 
     daily_feature_array = context["_daily_feature_array"]
@@ -1989,6 +2056,7 @@ def _populate_ai_elite_ticker_cache(
     valid_mask_path: Path,
     intraday_coverage_path: Path,
     market_context_map: Optional[Dict[pd.Timestamp, Dict[str, float]]],
+    price_history_cache,
     hourly_history_cache,
     progress_label: str,
 ) -> None:
@@ -2001,6 +2069,7 @@ def _populate_ai_elite_ticker_cache(
     n_workers = max(1, min(NUM_PROCESSES, len(worker_args))) if worker_args else 1
     cache_context = {
         "ticker_data_grouped": ticker_data_grouped,
+        "price_history_cache": price_history_cache,
         "hourly_history_cache": hourly_history_cache,
         "daily_feature_path": str(daily_feature_path),
         "intraday_feature_path": str(intraday_feature_path),
@@ -2486,98 +2555,9 @@ def _predict_ticker_worker(args):
 
 
 def _predict_ticker_ensemble_worker(args):
-    """Predict using weighted average of top 3 positive-R² models."""
-    (
-        ticker,
-        ticker_data,
-        current_date,
-        ticker_model,
-        price_history_cache,
-        hourly_history_cache,
-        feature_cache_context,
-        market_context_map,
-        timing_stats,
-    ) = args
-
-    try:
-        if ticker_data is None or len(ticker_data) == 0:
-            return ticker, None, 'empty'
-
-        feature_start = time.perf_counter()
-        cached_payload = get_ai_elite_cached_feature_payload(
-            feature_cache_context,
-            ticker,
-            current_date,
-            require_intraday_coverage=True,
-        )
-        _record_prediction_timing(timing_stats, "feature", time.perf_counter() - feature_start)
-        if cached_payload is not None:
-            features = dict(cached_payload["features"])
-        else:
-            hourly_start = time.perf_counter()
-            hourly_data = _load_hourly_data_direct(
-                ticker,
-                current_date - timedelta(days=30),
-                current_date + timedelta(days=5),
-                hourly_history_cache=hourly_history_cache,
-            )
-            _record_prediction_timing(timing_stats, "hourly", time.perf_counter() - hourly_start)
-
-            feature_start = time.perf_counter()
-            features = _extract_features(
-                ticker,
-                hourly_data,
-                current_date,
-                daily_data=ticker_data,
-                price_history_cache=price_history_cache,
-                market_context_map=market_context_map,
-            )
-            _record_prediction_timing(timing_stats, "feature", time.perf_counter() - feature_start)
-            if features is None:
-                return ticker, None, 'features_none'
-
-        if ticker_model is None or not isinstance(ticker_model, dict):
-            return ticker, 0.0, 'no_model'
-
-        all_models = ticker_model.get('all_models')
-        all_scores = ticker_model.get('all_scores')
-        if not all_models or not all_scores:
-            return ticker, 0.0, 'no_model'
-
-        # Select top 3 models with positive R² only.
-        positive_models = [(name, all_scores[name]) for name in all_models if all_scores.get(name, -999) > 0]
-        if not positive_models:
-            return ticker, 0.0, 'no_model'
-
-        # Sort by R² descending, take top 3
-        positive_models.sort(key=lambda x: x[1], reverse=True)
-        top_models = positive_models[:3]
-
-        from ai_elite_strategy_per_ticker import FEATURE_COLS
-        feature_values = _build_feature_frame(features, FEATURE_COLS)
-
-        # Weighted average: weight = R² score
-        model_start = time.perf_counter()
-        weighted_sum = 0.0
-        weight_total = 0.0
-        for name, r2 in top_models:
-            model = all_models[name]
-            pred = model.predict(feature_values)[0]
-            weighted_sum += pred * r2
-            weight_total += r2
-        _record_prediction_timing(timing_stats, "model", time.perf_counter() - model_start)
-
-        if weight_total <= 0:
-            return ticker, 0.0, 'no_model'
-
-        ensemble_score = weighted_sum / weight_total
-        return ticker, ensemble_score, 'success'
-
-    except Exception as e:
-        import traceback
-        print(f"   ⚠️ AI Elite Ensemble worker exception for {ticker}: {e}")
-        traceback.print_exc()
-        return ticker, None, 'exception'
+    """Predict using the same single best model path as regular AI Elite."""
+    ticker, score, status, _payload = _predict_ticker_worker(args)
+    return ticker, score, status
 
 
 def select_ai_elite_ensemble_stocks(
@@ -2626,7 +2606,7 @@ def select_ai_elite_ensemble_stocks(
         all_tickers, ticker_data_grouped, current_date, "AI Elite Ensemble"
     )
 
-    print(f"   🤖 AI Elite Ensemble: Analyzing {len(filtered_tickers)} tickers (top-3 weighted avg)")
+    print(f"   🤖 AI Elite Ensemble: Analyzing {len(filtered_tickers)} tickers (best-model scoring)")
 
     from config import NUM_PROCESSES, PARALLEL_THRESHOLD
 
@@ -2643,7 +2623,12 @@ def select_ai_elite_ensemble_stocks(
             fail_reasons[status] += 1
 
     def _run_sequential():
-        for args in predict_args:
+        for args in tqdm(
+            predict_args,
+            total=len(predict_args),
+            desc="AI Elite Ensemble prediction",
+            unit="ticker",
+        ):
             ticker_result, score, status = _predict_ticker_ensemble_worker(args)
             _record_result(ticker_result, score, status)
 
@@ -2690,7 +2675,12 @@ def select_ai_elite_ensemble_stocks(
                         filtered_tickers,
                         chunksize=chunksize,
                     )
-                    for ticker_result, score, status in results:
+                    for ticker_result, score, status in tqdm(
+                        results,
+                        total=len(filtered_tickers),
+                        desc="AI Elite Ensemble prediction",
+                        unit="ticker",
+                    ):
                         _record_result(ticker_result, score, status)
             except Exception as e:
                 print(f"   ⚠️ AI Elite Ensemble: Forked prediction failed ({type(e).__name__}: {e})")
@@ -2700,7 +2690,12 @@ def select_ai_elite_ensemble_stocks(
             try:
                 with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="ai-ensemble") as executor:
                     futures = [executor.submit(_predict_ticker_ensemble_worker, args) for args in predict_args]
-                    for future in as_completed(futures):
+                    for future in tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc="AI Elite Ensemble prediction",
+                        unit="ticker",
+                    ):
                         ticker_result, score, status = future.result()
                         _record_result(ticker_result, score, status)
             except Exception as e:
@@ -2722,7 +2717,7 @@ def select_ai_elite_ensemble_stocks(
     sorted_tickers = sorted(ai_scores.items(), key=lambda x: x[1], reverse=True)
 
     # Debug top 5
-    print(f"   📊 AI Elite Ensemble: Top 5 by weighted score:")
+    print(f"   📊 AI Elite Ensemble: Top 5 by best-model score:")
     for ticker, score in sorted_tickers[:5]:
         print(f"      {ticker}: {score:+.2f}")
 
@@ -2763,7 +2758,7 @@ def _get_representative_ai_elite_model(per_ticker_models):
 
 
 def _predict_ticker_rank_ensemble_worker(args):
-    """Return per-model predictions for weighted rank aggregation."""
+    """Predict using the same single best model path as regular AI Elite."""
     (
         ticker,
         ticker_data,
@@ -2777,69 +2772,20 @@ def _predict_ticker_rank_ensemble_worker(args):
         timing_stats,
     ) = args
 
-    try:
-        if ticker_data is None or len(ticker_data) == 0:
-            return ticker, None, 'empty'
-
-        feature_start = time.perf_counter()
-        cached_payload = get_ai_elite_cached_feature_payload(
-            feature_cache_context,
+    ticker, score, status, _payload = _predict_ticker_worker(
+        (
             ticker,
+            ticker_data,
             current_date,
-            require_intraday_coverage=True,
+            ticker_model,
+            price_history_cache,
+            hourly_history_cache,
+            feature_cache_context,
+            market_context_map,
+            timing_stats,
         )
-        _record_prediction_timing(timing_stats, "feature", time.perf_counter() - feature_start)
-        if cached_payload is not None:
-            features = dict(cached_payload["features"])
-        else:
-            hourly_start = time.perf_counter()
-            hourly_data = _load_hourly_data_direct(
-                ticker,
-                current_date - timedelta(days=30),
-                current_date + timedelta(days=5),
-                hourly_history_cache=hourly_history_cache,
-            )
-            _record_prediction_timing(timing_stats, "hourly", time.perf_counter() - hourly_start)
-
-            feature_start = time.perf_counter()
-            features = _extract_features(
-                ticker,
-                hourly_data,
-                current_date,
-                daily_data=ticker_data,
-                price_history_cache=price_history_cache,
-                market_context_map=market_context_map,
-            )
-            _record_prediction_timing(timing_stats, "feature", time.perf_counter() - feature_start)
-            if features is None:
-                return ticker, None, 'features_none'
-
-        if ticker_model is None or not isinstance(ticker_model, dict):
-            return ticker, None, 'no_model'
-
-        all_models = ticker_model.get('all_models') or {}
-        if not all_models:
-            return ticker, None, 'no_model'
-
-        from ai_elite_strategy_per_ticker import FEATURE_COLS
-        feature_values = _build_feature_frame(features, FEATURE_COLS)
-
-        per_model_predictions = {}
-        model_start = time.perf_counter()
-        for model_name in selected_model_names:
-            model = all_models.get(model_name)
-            if model is None:
-                return ticker, None, 'no_model'
-            per_model_predictions[model_name] = model.predict(feature_values)[0]
-        _record_prediction_timing(timing_stats, "model", time.perf_counter() - model_start)
-
-        return ticker, per_model_predictions, 'success'
-
-    except Exception as e:
-        import traceback
-        print(f"   ⚠️ AI Elite Rank Ensemble worker exception for {ticker}: {e}")
-        traceback.print_exc()
-        return ticker, None, 'exception'
+    )
+    return ticker, score, status
 
 
 def select_ai_elite_rank_ensemble_stocks(
@@ -2880,15 +2826,7 @@ def select_ai_elite_rank_ensemble_stocks(
             current_date,
         )
 
-    representative_model = _get_representative_ai_elite_model(per_ticker_models)
-    top_models = _get_top_positive_ai_elite_models(representative_model, top_k=3)
-    if not top_models:
-        print("   ⚠️ AI Elite Rank Ensemble: No positive-R² models available")
-        return []
-
-    selected_model_names = [name for name, _ in top_models]
-    model_weights = {name: score for name, score in top_models}
-    print(f"   🤖 AI Elite Rank Ensemble: Using models {selected_model_names}")
+    print("   🤖 AI Elite Rank Ensemble: Using best-model scoring")
 
     from config import INVERSE_ETFS
     all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
@@ -2898,7 +2836,7 @@ def select_ai_elite_rank_ensemble_stocks(
         all_tickers, ticker_data_grouped, current_date, "AI Elite Rank Ensemble"
     )
 
-    print(f"   🤖 AI Elite Rank Ensemble: Analyzing {len(filtered_tickers)} tickers (top-3 weighted rank)")
+    print(f"   🤖 AI Elite Rank Ensemble: Analyzing {len(filtered_tickers)} tickers (best-model rank)")
 
     from config import NUM_PROCESSES, PARALLEL_THRESHOLD
 
@@ -2916,8 +2854,8 @@ def select_ai_elite_rank_ensemble_stocks(
 
     def _run_sequential():
         for args in predict_args:
-            ticker_result, score_map, status = _predict_ticker_rank_ensemble_worker(args)
-            _record_result(ticker_result, score_map, status)
+            ticker_result, score, status = _predict_ticker_rank_ensemble_worker(args)
+            _record_result(ticker_result, score, status)
 
     predict_args = []
     for ticker in filtered_tickers:
@@ -2928,7 +2866,7 @@ def select_ai_elite_rank_ensemble_stocks(
             ticker_data,
             current_date,
             ticker_model,
-            selected_model_names,
+            None,
             price_history_cache,
             hourly_history_cache,
             feature_cache_context,
@@ -2964,8 +2902,13 @@ def select_ai_elite_rank_ensemble_stocks(
                         filtered_tickers,
                         chunksize=chunksize,
                     )
-                    for ticker_result, score_map, status in results:
-                        _record_result(ticker_result, score_map, status)
+                    for ticker_result, score, status in tqdm(
+                        results,
+                        total=len(filtered_tickers),
+                        desc="AI Elite Rank Ensemble prediction",
+                        unit="ticker",
+                    ):
+                        _record_result(ticker_result, score, status)
             except Exception as e:
                 print(f"   ⚠️ AI Elite Rank Ensemble: Forked prediction failed ({type(e).__name__}: {e})")
                 return []
@@ -2974,9 +2917,14 @@ def select_ai_elite_rank_ensemble_stocks(
             try:
                 with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="ai-rank-ensemble") as executor:
                     futures = [executor.submit(_predict_ticker_rank_ensemble_worker, args) for args in predict_args]
-                    for future in as_completed(futures):
-                        ticker_result, score_map, status = future.result()
-                        _record_result(ticker_result, score_map, status)
+                    for future in tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc="AI Elite Rank Ensemble prediction",
+                        unit="ticker",
+                    ):
+                        ticker_result, score, status = future.result()
+                        _record_result(ticker_result, score, status)
             except Exception as e:
                 print(f"   ⚠️ AI Elite Rank Ensemble: Threaded prediction failed ({type(e).__name__}: {e})")
                 return []
@@ -2992,28 +2940,13 @@ def select_ai_elite_rank_ensemble_stocks(
         print(f"   🔍 AI Elite Rank Ensemble: Fail reasons: {fail_reasons}")
         return []
 
-    predictions_df = pd.DataFrame.from_dict(per_ticker_predictions, orient='index')
-    if predictions_df.empty:
+    sorted_scores = pd.Series(per_ticker_predictions, dtype=float).sort_values(ascending=False)
+    if sorted_scores.empty:
         print("   ⚠️ AI Elite Rank Ensemble: No rankable predictions")
         print(f"   🔍 AI Elite Rank Ensemble: Fail reasons: {fail_reasons}")
         return []
 
-    weighted_rank_sum = pd.Series(0.0, index=predictions_df.index)
-    weight_total = 0.0
-    for model_name in selected_model_names:
-        ranks = predictions_df[model_name].rank(method='average', pct=True)
-        weight = model_weights[model_name]
-        weighted_rank_sum += ranks * weight
-        weight_total += weight
-
-    if weight_total <= 0:
-        print("   ⚠️ AI Elite Rank Ensemble: Invalid model weights")
-        return []
-
-    final_scores = weighted_rank_sum / weight_total
-    sorted_scores = final_scores.sort_values(ascending=False)
-
-    print("   📊 AI Elite Rank Ensemble: Top 5 by weighted rank score:")
+    print("   📊 AI Elite Rank Ensemble: Top 5 by best-model score:")
     for ticker, score in sorted_scores.head(5).items():
         print(f"      {ticker}: {score:.4f}")
 

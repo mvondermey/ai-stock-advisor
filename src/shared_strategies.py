@@ -5098,6 +5098,12 @@ def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookba
 
 
 
+    if price_history_cache is None:
+
+        from strategy_cache_adapter import ensure_price_history_cache
+
+        price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+
     if price_history_cache is not None:
 
         from parallel_backtest import calculate_cached_performance
@@ -5795,6 +5801,10 @@ def select_ai_elite_with_training(
     walk_forward_retraining_enabled = bool(getattr(config, "ENABLE_WALK_FORWARD_RETRAINING", True))
     should_train_model = bool(force_train or walk_forward_retraining_enabled)
 
+    if not should_train_model and ai_elite_models.get('_shared_base') is None:
+        print(f"   ⚠️ {strategy_label}: No model exists and retraining disabled, skipping")
+        return [], ai_elite_models
+
     try:
 
         if current_date is None:
@@ -5813,16 +5823,19 @@ def select_ai_elite_with_training(
 
         train_end = current_date
         train_start = train_end - timedelta(days=AI_ELITE_TRAINING_LOOKBACK)
+        cache_start = train_start if should_train_model else current_date
+        cache_end = train_end if should_train_model else current_date
         print(
             f"   🌐 {strategy_label}: Preparing market context "
-            f"({train_start.date()} to {train_end.date()})..."
+            f"({cache_start.date()} to {cache_end.date()})..."
         )
         market_context_start = time.perf_counter()
         ai_elite_market_context_map = precompute_ai_elite_market_context_map(
             ticker_data_grouped,
-            train_start,
-            train_end,
+            cache_start,
+            cache_end,
         )
+        select_ai_elite_with_training._market_context_map = dict(ai_elite_market_context_map)
         market_context_elapsed = time.perf_counter() - market_context_start
         print(
             f"   ✅ {strategy_label}: Market context ready "
@@ -5830,8 +5843,16 @@ def select_ai_elite_with_training(
         )
 
         ai_elite_feature_cache_context = None
-        if should_train_model or run_selection:
-            print(f"   🗂️ {strategy_label}: Preparing global feature cache...")
+        should_prepare_feature_cache = bool(
+            should_train_model
+            or run_selection
+            or ai_elite_models.get('_shared_base') is not None
+        )
+        if should_prepare_feature_cache:
+            if should_train_model or run_selection:
+                print(f"   🗂️ {strategy_label}: Preparing global feature cache...")
+            else:
+                print(f"   🗂️ {strategy_label}: Preparing global feature cache for inference...")
             ai_elite_feature_cache_context = precompute_ai_elite_training_context(
                 ticker_data_grouped=ticker_data_grouped,
                 all_tickers=all_tickers,
@@ -5839,7 +5860,10 @@ def select_ai_elite_with_training(
                 train_end_date=train_end,
                 forward_days=AI_ELITE_FORWARD_DAYS,
                 existing_context=getattr(select_ai_elite_with_training, "_feature_cache_context", None),
+                cache_start_date=cache_start,
+                cache_end_date=cache_end,
                 market_context_map=ai_elite_market_context_map,
+                price_history_cache=price_history_cache,
                 hourly_history_cache=hourly_history_cache,
             )
             select_ai_elite_with_training._feature_cache_context = clone_ai_elite_feature_cache_context(
@@ -6701,6 +6725,79 @@ def _get_strategy_registry():
 
     """
 
+    def _select_adaptive_ensemble(t, d, dt, n):
+        from adaptive_ensemble import select_adaptive_ensemble_stocks
+        return select_adaptive_ensemble_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_volatility_ensemble(t, d, dt, n):
+        from volatility_ensemble import select_volatility_ensemble_stocks
+        return select_volatility_ensemble_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_enhanced_volatility(t, d, dt, n):
+        from enhanced_volatility_trader import select_enhanced_volatility_stocks
+        return select_enhanced_volatility_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_ai_volatility_ensemble(t, d, dt, n):
+        from enhanced_volatility_trader import select_ai_volatility_ensemble_stocks
+        return select_ai_volatility_ensemble_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_correlation_ensemble(t, d, dt, n):
+        from correlation_ensemble import select_correlation_ensemble_stocks
+        return select_correlation_ensemble_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_dynamic_pool(t, d, dt, n):
+        from dynamic_pool import select_dynamic_pool_stocks
+        return select_dynamic_pool_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_sentiment_ensemble(t, d, dt, n):
+        from sentiment_ensemble import select_sentiment_ensemble_stocks
+        return select_sentiment_ensemble_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_mom_accel(t, d, dt, n):
+        from new_strategies import select_momentum_acceleration_stocks
+        return select_momentum_acceleration_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_concentrated_3m(t, d, dt, n):
+        from new_strategies import select_concentrated_3m_stocks
+        return select_concentrated_3m_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_dual_momentum(t, d, dt, n):
+        from new_strategies import select_dual_momentum_stocks
+        selected, _ = select_dual_momentum_stocks(t, d, current_date=dt, top_n=n)
+        return selected
+
+    def _select_trend_atr(t, d, dt, n):
+        from new_strategies import select_trend_following_atr_stocks
+        return select_trend_following_atr_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_elite_hybrid(t, d, dt, n):
+        from elite_hybrid_strategy import select_elite_hybrid_stocks
+        return select_elite_hybrid_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_elite_risk(t, d, dt, n):
+        from elite_risk_strategy import select_elite_risk_stocks
+        return select_elite_risk_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_bb_mean_reversion(t, d, dt, n):
+        from bollinger_bands_strategy import select_bb_mean_reversion_stocks
+        return select_bb_mean_reversion_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_bb_breakout(t, d, dt, n):
+        from bollinger_bands_strategy import select_bb_breakout_stocks
+        return select_bb_breakout_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_bb_squeeze_breakout(t, d, dt, n):
+        from bollinger_bands_strategy import select_bb_squeeze_breakout_stocks
+        return select_bb_squeeze_breakout_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_bb_rsi_combo(t, d, dt, n):
+        from bollinger_bands_strategy import select_bb_rsi_combo_stocks
+        return select_bb_rsi_combo_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_trend_breakout(t, d, dt, n):
+        from new_strategies import select_trend_breakout_stocks
+        return select_trend_breakout_stocks(t, d, current_date=dt, top_n=n)
+
     return {
 
         # Static BH strategies (lookback-based)
@@ -6718,12 +6815,16 @@ def _get_strategy_registry():
         # Static BH Monthly variants
 
         'static_bh_1y_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_6m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 180, n),
+        'bh_6m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 180, n),
 
         'static_bh_3m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 90, n),
+        'bh_3m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 90, n),
 
         'static_bh_1m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 30, n),
+        'bh_1m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 30, n),
 
 
 
@@ -6790,6 +6891,24 @@ def _get_strategy_registry():
         'quality_momentum': lambda t, d, dt, n: select_quality_momentum_stocks(t, d, dt, n),
 
         'volatility_adj_mom': lambda t, d, dt, n: select_volatility_adj_mom_stocks(t, d, dt, n),
+        'adaptive_ensemble': _select_adaptive_ensemble,
+        'volatility_ensemble': _select_volatility_ensemble,
+        'enhanced_volatility': _select_enhanced_volatility,
+        'ai_volatility_ensemble': _select_ai_volatility_ensemble,
+        'correlation_ensemble': _select_correlation_ensemble,
+        'dynamic_pool': _select_dynamic_pool,
+        'sentiment_ensemble': _select_sentiment_ensemble,
+        'mom_accel': _select_mom_accel,
+        'concentrated_3m': _select_concentrated_3m,
+        'dual_momentum': _select_dual_momentum,
+        'trend_atr': _select_trend_atr,
+        'elite_hybrid': _select_elite_hybrid,
+        'elite_risk': _select_elite_risk,
+        'bb_mean_reversion': _select_bb_mean_reversion,
+        'bb_breakout': _select_bb_breakout,
+        'bb_squeeze_breakout': _select_bb_squeeze_breakout,
+        'bb_rsi_combo': _select_bb_rsi_combo,
+        'trend_breakout': _select_trend_breakout,
 
 
 
@@ -6868,24 +6987,31 @@ def _get_strategy_registry():
         # BH 1Y Adaptive Rebalancing variants (all use same base selection)
 
         'static_bh_1y_volatility': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_vol': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_1y_performance': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_perf': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_1y_momentum': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_mom': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_1y_atr': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_1y_hybrid': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_1y_volume_filter': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_volume': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_1y_sector_rotation': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_sector': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_1y_performance_threshold': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_perf_threshold': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_1y_market_regime': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_1y_momentum_persist': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'static_bh_1y_mom_persist': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_1y_overlap': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 

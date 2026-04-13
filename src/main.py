@@ -59,6 +59,8 @@ parser.add_argument("--list", action="store_true",
                    help="Print available backtest strategy names for --strategy and exit.")
 parser.add_argument("--retrain", nargs="?", const=True, default=None, type=_parse_cli_bool,
                    help="Override walk-forward retraining for backtests. Examples: --retrain true, --retrain false, or bare --retrain.")
+parser.add_argument("--backtest-days", type=int, default=None,
+                   help="Override BACKTEST_DAYS from config for this run only.")
 parser.add_argument("--no-download", action="store_true",
                    help="Disable data downloads (use only cached data)")
 
@@ -86,6 +88,7 @@ _CLI_BACKTEST_STRATEGIES = None
 
 def _apply_backtest_cli_overrides() -> list[str]:
     """Restrict backtests to selected strategies and apply retraining overrides."""
+    global BACKTEST_DAYS
     selected_strategies: list[str] = []
 
     if args.strategy:
@@ -101,14 +104,19 @@ def _apply_backtest_cli_overrides() -> list[str]:
             )
 
         enabled_flags = {
-            entry["enable_flag"]
+            entry.get("enable_flag_name") or entry.get("enable_flag")
             for entry in strategy_registry.values()
-            if entry.get("enable_flag")
+            if entry.get("enable_flag_name") or entry.get("enable_flag")
         }
         for flag_name in enabled_flags:
             setattr(config, flag_name, False)
         for strategy_name in selected_strategies:
-            enable_flag = strategy_registry[strategy_name]["enable_flag"]
+            enable_flag = (
+                strategy_registry[strategy_name].get("enable_flag_name")
+                or strategy_registry[strategy_name].get("enable_flag")
+            )
+            if not enable_flag:
+                raise KeyError(f"Strategy '{strategy_name}' is missing an enable flag in the registry")
             setattr(config, enable_flag, True)
 
         print(
@@ -120,6 +128,13 @@ def _apply_backtest_cli_overrides() -> list[str]:
         config.ENABLE_WALK_FORWARD_RETRAINING = bool(args.retrain)
         status = "enabled" if config.ENABLE_WALK_FORWARD_RETRAINING else "disabled"
         print(f"🎓 Walk-forward retraining {status} via CLI override")
+
+    if args.backtest_days is not None:
+        if args.backtest_days <= 0:
+            raise ValueError("--backtest-days must be a positive integer")
+        config.BACKTEST_DAYS = int(args.backtest_days)
+        BACKTEST_DAYS = config.BACKTEST_DAYS
+        print(f"📅 Backtest days overridden via CLI: {BACKTEST_DAYS}")
 
     return selected_strategies
 

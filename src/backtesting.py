@@ -414,6 +414,8 @@ def _run_parallel_strategy_selection_task(
             max_prediction_workers=runtime_context.get("ai_elite_max_prediction_workers"),
             price_history_cache=price_history_cache,
             hourly_history_cache=hourly_history_cache,
+            feature_cache_context=runtime_context.get("ai_elite_feature_cache_context"),
+            market_context_map=runtime_context.get("ai_elite_market_context_map"),
         )
     else:
         from shared_strategies import get_strategy_tickers
@@ -1342,6 +1344,7 @@ def _prepare_ai_elite_step(
     hourly_history_cache=None,
 ) -> Tuple[Dict, Dict[str, int], float, Dict[str, Any]]:
     """Prepare AI Elite model state in main and publish worker runtime metadata."""
+    from ai_elite_strategy import clone_ai_elite_feature_cache_context
     from shared_strategies import select_ai_elite_with_training
 
     should_train_ai_elite = False
@@ -1388,6 +1391,14 @@ def _prepare_ai_elite_step(
         "ai_elite_model_path": model_path,
         "ai_elite_model_token": model_token,
         "ai_elite_max_prediction_workers": 1,
+        "ai_elite_feature_cache_context": clone_ai_elite_feature_cache_context(
+            getattr(select_ai_elite_with_training, "_feature_cache_context", None)
+        ),
+        "ai_elite_market_context_map": getattr(
+            select_ai_elite_with_training,
+            "_market_context_map",
+            None,
+        ),
     }
     return ai_elite_models, ai_elite_last_train_days, selection_elapsed, worker_runtime_context
 
@@ -3594,8 +3605,9 @@ def _run_portfolio_backtest_walk_forward(
     if config.ENABLE_PARALLEL_STRATEGIES:
         try:
             ai_elite_worker_model_path = str(Path("logs/models/_shared_base_ai_elite.joblib").resolve())
+            parallel_strategy_worker_count = max(1, NUM_PROCESSES)
             parallel_strategy_executor = ProcessPoolExecutor(
-                max_workers=2,
+                max_workers=parallel_strategy_worker_count,
                 mp_context=get_context("fork"),
                 initializer=_init_parallel_strategy_worker,
                     initargs=(
@@ -3608,7 +3620,8 @@ def _run_portfolio_backtest_walk_forward(
             )
             print(
                 "   🚦 Parallel strategy queue enabled: "
-                f"{len(getattr(config, '_PARALLEL_STRATEGY_PILOT_CONFIG', {}))} pilot strategies across 2 workers"
+                f"{len(getattr(config, '_PARALLEL_STRATEGY_PILOT_CONFIG', {}))} "
+                f"pilot strategies across {parallel_strategy_worker_count} workers"
             )
         except Exception as e:
             parallel_strategy_executor = None
@@ -4121,6 +4134,19 @@ def _run_portfolio_backtest_walk_forward(
                     )
                     if voting_ensemble_ai_rebalance_score is not None:
                         voting_ensemble_ai_rebalance_last_train_day = day_count
+                elif voting_ensemble_ai_rebalance_model is not None:
+                    all_tickers = list(ticker_data_grouped.keys())
+                    print("   🗂️ Voting Ens AI Reb: Preparing global feature cache for inference...")
+                    voting_ensemble_ai_rebalance_cache_context = precompute_rebalance_training_context(
+                        ticker_data_grouped=ticker_data_grouped,
+                        all_tickers=all_tickers,
+                        train_start_date=current_date,
+                        train_end_date=current_date,
+                        forward_days=config.AI_VOTING_REBALANCE_FORWARD_DAYS,
+                        existing_context=voting_ensemble_ai_rebalance_cache_context,
+                        cache_start_date=current_date,
+                        cache_end_date=current_date,
+                    )
             except Exception as e:
                 print(f"   ⚠️ Voting Ens AI Reb training error: {e}")
 
@@ -4227,6 +4253,8 @@ def _run_portfolio_backtest_walk_forward(
                         per_ticker_models=ai_elite_models,
                         price_history_cache=price_history_cache,
                         hourly_history_cache=hourly_history_cache,
+                        feature_cache_context=ai_elite_worker_runtime_context.get("ai_elite_feature_cache_context"),
+                        market_context_map=ai_elite_worker_runtime_context.get("ai_elite_market_context_map"),
                     )
                     _record_strategy_timing(
                         "AI Elite",
@@ -8299,7 +8327,20 @@ def _run_portfolio_backtest_walk_forward(
             should_act_ai_elite_monthly_shared = (not ai_elite_monthly_shared_initialized) or is_first_trading_day_of_month
             if should_act_ai_elite_monthly_shared:
                 try:
-                    from ai_elite_strategy import select_ai_elite_stocks
+                    from ai_elite_strategy import (
+                        clone_ai_elite_feature_cache_context,
+                        select_ai_elite_stocks,
+                    )
+                    from shared_strategies import select_ai_elite_with_training
+
+                    ai_elite_feature_cache_context = clone_ai_elite_feature_cache_context(
+                        getattr(select_ai_elite_with_training, "_feature_cache_context", None)
+                    )
+                    ai_elite_market_context_map = getattr(
+                        select_ai_elite_with_training,
+                        "_market_context_map",
+                        None,
+                    )
 
                     print(f"   📊 AI Elite Monthly Shared: {'Initializing' if not ai_elite_monthly_shared_initialized else 'Start-of-month'} ({current_date.strftime('%b %Y')})")
 
@@ -8315,6 +8356,10 @@ def _run_portfolio_backtest_walk_forward(
                             current_date=current_date,
                             top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
                             per_ticker_models=ai_elite_models,
+                            price_history_cache=price_history_cache,
+                            hourly_history_cache=hourly_history_cache,
+                            feature_cache_context=ai_elite_feature_cache_context,
+                            market_context_map=ai_elite_market_context_map,
                         )
 
                         if new_stocks:
@@ -8343,6 +8388,17 @@ def _run_portfolio_backtest_walk_forward(
         if config.ENABLE_AI_ELITE_FILTERED:
             try:
                 from ai_elite_filtered_strategy import select_ai_elite_filtered_stocks
+                from ai_elite_strategy import clone_ai_elite_feature_cache_context
+                from shared_strategies import select_ai_elite_with_training
+
+                ai_elite_feature_cache_context = clone_ai_elite_feature_cache_context(
+                    getattr(select_ai_elite_with_training, "_feature_cache_context", None)
+                )
+                ai_elite_market_context_map = getattr(
+                    select_ai_elite_with_training,
+                    "_market_context_map",
+                    None,
+                )
 
                 # Use the same AI Elite models (shared with daily AI Elite)
                 new_ai_elite_filtered_stocks = _time_strategy_phase_call(
@@ -8357,6 +8413,8 @@ def _run_portfolio_backtest_walk_forward(
                     pre_filter_n=PORTFOLIO_SIZE * 2,
                     price_history_cache=price_history_cache,
                     hourly_history_cache=hourly_history_cache,
+                    feature_cache_context=ai_elite_feature_cache_context,
+                    market_context_map=ai_elite_market_context_map,
                 )
 
                 if new_ai_elite_filtered_stocks:
@@ -8385,6 +8443,17 @@ def _run_portfolio_backtest_walk_forward(
         if config.ENABLE_AI_ELITE_MARKET_UP:
             try:
                 from ai_elite_market_up_strategy import select_ai_elite_market_up_stocks
+                from ai_elite_strategy import clone_ai_elite_feature_cache_context
+                from shared_strategies import select_ai_elite_with_training
+
+                ai_elite_feature_cache_context = clone_ai_elite_feature_cache_context(
+                    getattr(select_ai_elite_with_training, "_feature_cache_context", None)
+                )
+                ai_elite_market_context_map = getattr(
+                    select_ai_elite_with_training,
+                    "_market_context_map",
+                    None,
+                )
 
                 new_ai_elite_market_up_stocks = _time_strategy_phase_call(
                     "AI Elite Up Sh",
@@ -8397,6 +8466,8 @@ def _run_portfolio_backtest_walk_forward(
                     per_ticker_models=ai_elite_models,
                     price_history_cache=price_history_cache,
                     hourly_history_cache=hourly_history_cache,
+                    feature_cache_context=ai_elite_feature_cache_context,
+                    market_context_map=ai_elite_market_context_map,
                 )
 
                 if new_ai_elite_market_up_stocks:
@@ -8434,7 +8505,20 @@ def _run_portfolio_backtest_walk_forward(
         # AI ELITE ENSEMBLE STRATEGY (weighted avg of top 3 positive-R² models)
         if config.ENABLE_AI_ELITE_ENSEMBLE:
             try:
-                from ai_elite_strategy import select_ai_elite_ensemble_stocks
+                from ai_elite_strategy import (
+                    clone_ai_elite_feature_cache_context,
+                    select_ai_elite_ensemble_stocks,
+                )
+                from shared_strategies import select_ai_elite_with_training
+
+                ai_elite_feature_cache_context = clone_ai_elite_feature_cache_context(
+                    getattr(select_ai_elite_with_training, "_feature_cache_context", None)
+                )
+                ai_elite_market_context_map = getattr(
+                    select_ai_elite_with_training,
+                    "_market_context_map",
+                    None,
+                )
 
                 new_ai_elite_ensemble_stocks = _time_strategy_phase_call(
                     "AI Elite Ens",
@@ -8447,6 +8531,8 @@ def _run_portfolio_backtest_walk_forward(
                     per_ticker_models=ai_elite_models,
                     price_history_cache=price_history_cache,
                     hourly_history_cache=hourly_history_cache,
+                    feature_cache_context=ai_elite_feature_cache_context,
+                    market_context_map=ai_elite_market_context_map,
                 )
 
                 if new_ai_elite_ensemble_stocks:
@@ -8475,7 +8561,20 @@ def _run_portfolio_backtest_walk_forward(
         # AI ELITE RANK ENSEMBLE STRATEGY (weighted rank avg of top 3 positive-R² models)
         if config.ENABLE_AI_ELITE_RANK_ENSEMBLE:
             try:
-                from ai_elite_strategy import select_ai_elite_rank_ensemble_stocks
+                from ai_elite_strategy import (
+                    clone_ai_elite_feature_cache_context,
+                    select_ai_elite_rank_ensemble_stocks,
+                )
+                from shared_strategies import select_ai_elite_with_training
+
+                ai_elite_feature_cache_context = clone_ai_elite_feature_cache_context(
+                    getattr(select_ai_elite_with_training, "_feature_cache_context", None)
+                )
+                ai_elite_market_context_map = getattr(
+                    select_ai_elite_with_training,
+                    "_market_context_map",
+                    None,
+                )
 
                 new_ai_elite_rank_ensemble_stocks = _time_strategy_phase_call(
                     "AI Elite Rank",
@@ -8488,6 +8587,8 @@ def _run_portfolio_backtest_walk_forward(
                     per_ticker_models=ai_elite_models,
                     price_history_cache=price_history_cache,
                     hourly_history_cache=hourly_history_cache,
+                    feature_cache_context=ai_elite_feature_cache_context,
+                    market_context_map=ai_elite_market_context_map,
                 )
 
                 if new_ai_elite_rank_ensemble_stocks:
@@ -8695,6 +8796,18 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Trend Breakout error: {e}")
 
+        valuation_progress = tqdm(
+            total=11,
+            desc="Daily value updates",
+            unit="phase",
+            ncols=100,
+            leave=False,
+        )
+
+        def _advance_valuation_progress(label: str) -> None:
+            valuation_progress.set_postfix_str(label, refresh=False)
+            valuation_progress.update(1)
+
         # Update DYNAMIC BH 1Y portfolio value daily (skip if disabled)
         if config.ENABLE_DYNAMIC_BH_1Y:
             dynamic_bh_portfolio_value = _update_portfolio_value_from_cache(
@@ -8790,6 +8903,7 @@ def _run_portfolio_backtest_walk_forward(
         else:
             dynamic_bh_1m_portfolio_value = dynamic_bh_1m_cash
         dynamic_bh_1m_portfolio_history.append(dynamic_bh_1m_portfolio_value)
+        _advance_valuation_progress("dynamic BH + sector")
 
         # Update RISK-ADJUSTED MOMENTUM portfolio value daily (skip if disabled)
         if config.ENABLE_RISK_ADJ_MOM:
@@ -8961,6 +9075,7 @@ def _run_portfolio_backtest_walk_forward(
 
         price_acceleration_portfolio_value = price_acceleration_invested_value + price_acceleration_cash
         price_acceleration_portfolio_history.append(price_acceleration_portfolio_value)
+        _advance_valuation_progress("hybrid + acceleration")
 
         # Update 1Y/3M RATIO portfolio value daily
         ratio_1y_3m_invested_value = 0.0
@@ -9031,6 +9146,7 @@ def _run_portfolio_backtest_walk_forward(
 
         turnaround_portfolio_value = turnaround_invested_value + turnaround_cash
         turnaround_portfolio_history.append(turnaround_portfolio_value)
+        _advance_valuation_progress("risk/ratio/turnaround")
 
         # Update ADAPTIVE ENSEMBLE portfolio value daily (skip if disabled)
         if config.ENABLE_ADAPTIVE_STRATEGY:
@@ -9201,6 +9317,8 @@ def _run_portfolio_backtest_walk_forward(
 
             dynamic_pool_portfolio_value = dynamic_pool_invested_value + dynamic_pool_cash
             dynamic_pool_portfolio_history.append(dynamic_pool_portfolio_value)
+
+        _advance_valuation_progress("ensemble family")
 
         # Voting Ensemble is updated after all other day-end strategy values are known.
 
@@ -9625,6 +9743,7 @@ def _run_portfolio_backtest_walk_forward(
                     risk_adj_mom_1m_monthly_invested_value += risk_adj_mom_1m_monthly_positions[ticker].get('value', 0.0)
         risk_adj_mom_1m_monthly_portfolio_value = risk_adj_mom_1m_monthly_invested_value + risk_adj_mom_1m_monthly_cash
         risk_adj_mom_1m_monthly_portfolio_history.append(risk_adj_mom_1m_monthly_portfolio_value)
+        _advance_valuation_progress("specialized risk-adj")
 
         if ai_elite_selection_pending:
             try:
@@ -9879,6 +9998,7 @@ def _run_portfolio_backtest_walk_forward(
         top5_consistency_blend_portfolio_value = top5_consistency_blend_invested_value + top5_consistency_blend_cash
         if config.ENABLE_TOP5_CONSISTENCY_BLEND:
             top5_consistency_blend_portfolio_history.append(top5_consistency_blend_portfolio_value)
+        _advance_valuation_progress("AI + top5 blend")
 
         # Update META STRATEGIES portfolio values daily
         def _update_meta_portfolio(positions, cash):
@@ -9945,6 +10065,7 @@ def _run_portfolio_backtest_walk_forward(
         if config.ENABLE_MOMENTUM_AI_HYBRID:
             momentum_ai_hybrid_portfolio_value = _update_portfolio_value_from_cache(momentum_ai_hybrid_positions, momentum_ai_hybrid_cash)
             momentum_ai_hybrid_portfolio_history.append(momentum_ai_hybrid_portfolio_value)
+        _advance_valuation_progress("meta + misc")
 
         # Update STATIC BH 1Y portfolio value daily (skip if disabled)
         if config.ENABLE_STATIC_BH:
@@ -10033,6 +10154,8 @@ def _run_portfolio_backtest_walk_forward(
             # Update peak
             if static_bh_1y_smart_monthly_portfolio_value > static_bh_1y_smart_monthly_peak:
                 static_bh_1y_smart_monthly_peak = static_bh_1y_smart_monthly_portfolio_value
+
+        _advance_valuation_progress("static BH + adaptive")
 
         # =====================================================================
         # Update portfolio values for 6 SMART REBALANCING STRATEGIES
@@ -10172,6 +10295,8 @@ def _run_portfolio_backtest_walk_forward(
             )
             bh_1y_time_decay_portfolio_history.append(bh_1y_time_decay_portfolio_value)
 
+        _advance_valuation_progress("smart rebalancing")
+
         # Update STATIC BH 6M portfolio value daily (skip if disabled)
         if config.ENABLE_STATIC_BH_6M:
             static_bh_6m_portfolio_value = _update_portfolio_value_from_cache(
@@ -10227,6 +10352,8 @@ def _run_portfolio_backtest_walk_forward(
                 elif var_prefix == 'static_bh_1m_monthly':
                     static_bh_1m_monthly_portfolio_value = invested + static_bh_1m_monthly_cash
                     static_bh_1m_monthly_portfolio_history.append(static_bh_1m_monthly_portfolio_value)
+
+        _advance_valuation_progress("monthly BH variants")
 
         # Update portfolio value (invested + cash) at end of each day
         invested_value = 0.0
@@ -10284,6 +10411,8 @@ def _run_portfolio_backtest_walk_forward(
 
         # Update portfolio value history
         portfolio_values_history.append(total_portfolio_value)
+        _advance_valuation_progress("main portfolio")
+        valuation_progress.close()
 
         # AI CHAMPION / AI REGIME: at day end, use the completed shared source
         # snapshot before meta and voting consume the same information.
@@ -11201,7 +11330,7 @@ def _run_portfolio_backtest_walk_forward(
         for strategy_name in results['strategies'].keys():
             try:
                 # Skip strategies that don't have selection functions (e.g., meta strategies)
-                if strategy_name in ['meta_strategy_ml', 'meta_strategy_mom', 'top5_consistency_blend', 'voting_ensemble', 'voting_ensemble_ai_rebalance']:
+                if strategy_name in ['benchmark_top_start', 'meta_strategy_ml', 'meta_strategy_mom', 'top5_consistency_blend', 'voting_ensemble', 'voting_ensemble_ai_rebalance']:
                     continue
 
                 # Skip disabled strategies (especially AI strategies that are slow to run)
