@@ -229,6 +229,17 @@ def get_all_tickers() -> List[str]:
             ]
             etf_tickers.update(sector_etfs)
 
+            # Add market proxy ETFs required for regime detection strategies
+            # (Defensive Momentum, Adaptive Ensemble, etc.)
+            market_proxy_etfs = [
+                'SPY',   # S&P 500 (primary market proxy)
+                'QQQ',   # NASDAQ 100 (tech-heavy market proxy)
+                'IWM',   # Russell 2000 (small-cap proxy)
+                'DIA',   # Dow Jones Industrial Average
+                'VTI',   # Total US Stock Market
+            ]
+            etf_tickers.update(market_proxy_etfs)
+
             all_tickers.update(etf_tickers)
             print(f"✅ Fetched {len(etf_tickers)} tickers from Popular ETFs list.")
         except Exception as e:

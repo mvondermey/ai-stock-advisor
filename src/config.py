@@ -338,6 +338,7 @@ _PARALLEL_STRATEGY_PILOT_CONFIG: Dict[str, Dict[str, object]] = {
     "bh_1y_volsweet_accel": {"enable_flag": "ENABLE_BH_1Y_VOL_SWEET_ACCEL", "use_buffer": True},
     "bh_1y_dynamic_accel": {"enable_flag": "ENABLE_BH_1Y_DYNAMIC_ACCEL", "use_buffer": True},
     "trend_atr": {"enable_flag": "ENABLE_TREND_FOLLOWING_ATR", "use_buffer": True},
+    "confirmed_leaders": {"enable_flag": "ENABLE_CONFIRMED_LEADERS", "use_buffer": True},
     "turnaround": {"enable_flag": "ENABLE_TURNAROUND", "use_buffer": True},
     "price_acceleration": {"enable_flag": "ENABLE_PRICE_ACCELERATION", "use_buffer": True},
     "price_curvature": {"enable_flag": "ENABLE_PRICE_CURVATURE", "use_buffer": True},
@@ -576,7 +577,7 @@ ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 
 ENABLE_PRICE_ACCELERATION = True   # ENABLED - Price Acceleration Strategy (physics-based velocity/acceleration)
 
-ENABLE_PRICE_CURVATURE = False   # NEW - Price Curvature Strategy (quadratic curvature of recent log-price)
+ENABLE_PRICE_CURVATURE = True   # NEW - Price Curvature Strategy (quadratic curvature of recent log-price)
 
 ENABLE_VOTING_ENSEMBLE = True   # ENABLED - Voting Ensemble Strategy
 
@@ -595,6 +596,21 @@ ENABLE_TREND_FOLLOWING_ATR = True   # NEW - Trend Following with ATR Trailing St
 ENABLE_TREND_BREAKOUT = True   # NEW - Trend Breakout (same entry as Trend ATR but no ATR selling, uses smart_rebalance)
 TREND_BREAKOUT_USE_ATR_STOP = True  # If True, Trend Breakout uses ATR trailing stop in smart_rebalance
 TREND_BREAKOUT_ATR_MULTIPLIER = 2.0  # ATR multiplier for trailing stop
+
+ENABLE_CONFIRMED_LEADERS = True   # NEW - Confirmed Leaders (1Y leaders + 6M/3M/1M continuation + vol cap)
+CONFIRMED_LEADERS_SMA_DAYS = 200   # Require price above 200-day SMA
+CONFIRMED_LEADERS_MIN_1Y_RETURN = 25.0   # Minimum 1Y return for established leadership
+CONFIRMED_LEADERS_MIN_6M_RETURN = 10.0   # Minimum 6M continuation
+CONFIRMED_LEADERS_MIN_3M_RETURN = 5.0   # Minimum 3M continuation
+CONFIRMED_LEADERS_MIN_1M_RETURN = 0.0   # 1M must still be positive
+CONFIRMED_LEADERS_MAX_VOLATILITY = 0.85   # Annualized volatility cap
+
+ENABLE_DEFENSIVE_MOMENTUM = True   # NEW - Defensive Momentum (cash-first trend filter + momentum ranking)
+DEFENSIVE_MOMENTUM_SMA_DAYS = 200   # Require price above 200-day SMA
+DEFENSIVE_MOMENTUM_MIN_1Y_RETURN = 15.0   # Minimum 1Y return to consider a stock
+DEFENSIVE_MOMENTUM_MIN_3M_RETURN = 5.0   # Minimum 3M return to consider a stock
+DEFENSIVE_MOMENTUM_MAX_VOLATILITY = 0.35   # Annualized volatility cap
+DEFENSIVE_MOMENTUM_MIN_MARKET_20D_RETURN = 0.0   # Market must have positive 20D momentum
 
 ENABLE_ELITE_HYBRID = True   # NEW - Elite Hybrid (Mom-Vol 6M + 1Y/3M Ratio - combines top 2 most consistent strategies)
 

@@ -256,6 +256,26 @@ def _run_parallel_strategy_selection_task(
             top_n=top_n,
             price_history_cache=price_history_cache,
         )
+    elif strategy_name == "defensive_momentum":
+        from defensive_momentum_strategy import select_defensive_momentum_stocks
+
+        selected = select_defensive_momentum_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "confirmed_leaders":
+        from new_strategies import select_confirmed_leaders_stocks
+
+        selected = select_confirmed_leaders_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
     elif strategy_name == "momentum_volatility_hybrid":
         from shared_strategies import select_momentum_volatility_hybrid_stocks
 
@@ -830,6 +850,8 @@ STRATEGY_REGISTRY = {
     'momentum_volatility_hybrid_1y3m': _strategy_registry_entry('Mom-Vol Hybrid 1Y/3M', 'ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M', 'momentum_volatility_hybrid_1y3m_portfolio_value', 'momentum_volatility_hybrid_1y3m_portfolio_history', 'momentum_volatility_hybrid_1y3m_cash', 'momentum_volatility_hybrid_1y3m_positions'),
     'price_acceleration': _strategy_registry_entry('Price Acceleration', 'ENABLE_PRICE_ACCELERATION', 'price_acceleration_portfolio_value', 'price_acceleration_portfolio_history', 'price_acceleration_cash', 'current_price_acceleration_stocks'),
     'price_curvature': _strategy_registry_entry('Price Curvature', 'ENABLE_PRICE_CURVATURE', 'price_curvature_portfolio_value', 'price_curvature_portfolio_history', 'price_curvature_cash', 'current_price_curvature_stocks'),
+    'confirmed_leaders': _strategy_registry_entry('Confirmed Leaders', 'ENABLE_CONFIRMED_LEADERS', 'confirmed_leaders_portfolio_value', 'confirmed_leaders_portfolio_history', 'confirmed_leaders_cash', 'current_confirmed_leaders_stocks'),
+    'defensive_momentum': _strategy_registry_entry('Defensive Momentum', 'ENABLE_DEFENSIVE_MOMENTUM', 'defensive_momentum_portfolio_value', 'defensive_momentum_portfolio_history', 'defensive_momentum_cash', 'current_defensive_momentum_stocks'),
     'turnaround': _strategy_registry_entry('Turnaround', 'ENABLE_TURNAROUND', 'turnaround_portfolio_value', 'turnaround_portfolio_history', 'turnaround_cash', 'current_turnaround_stocks'),
     'adaptive_ensemble': _strategy_registry_entry('Adaptive Ensemble', 'ENABLE_ADAPTIVE_STRATEGY', 'adaptive_ensemble_portfolio_value', 'adaptive_ensemble_portfolio_history', 'adaptive_ensemble_cash', 'adaptive_ensemble_positions'),
     'volatility_ensemble': _strategy_registry_entry('Volatility Ensemble', 'ENABLE_VOLATILITY_ENSEMBLE', 'volatility_ensemble_portfolio_value', 'volatility_ensemble_portfolio_history', 'volatility_ensemble_cash', 'volatility_ensemble_positions'),
@@ -2560,6 +2582,8 @@ def _run_portfolio_backtest_walk_forward(
         "turnaround": "Turnaround",
         "price_acceleration": "Price Acceleration",
         "price_curvature": "Price Curvature",
+        "confirmed_leaders": "Confirmed Leaders",
+        "defensive_momentum": "Defensive Momentum",
         "momentum_volatility_hybrid": "Mom-Vol Hybrid",
         "momentum_volatility_hybrid_6m": "Mom-Vol Hybrid 6M",
         "momentum_volatility_hybrid_1y": "Mom-Vol Hybrid 1Y",
@@ -3254,6 +3278,22 @@ def _run_portfolio_backtest_walk_forward(
     current_price_curvature_stocks = []
     price_curvature_last_rebalance_value = initial_capital_needed
 
+    # CONFIRMED LEADERS: Initialize portfolio tracking
+    confirmed_leaders_portfolio_value = initial_capital_needed
+    confirmed_leaders_portfolio_history = [confirmed_leaders_portfolio_value]
+    confirmed_leaders_positions = {}
+    confirmed_leaders_cash = initial_capital_needed
+    current_confirmed_leaders_stocks = []
+    confirmed_leaders_last_rebalance_value = initial_capital_needed
+
+    # DEFENSIVE MOMENTUM: Initialize portfolio tracking
+    defensive_momentum_portfolio_value = initial_capital_needed
+    defensive_momentum_portfolio_history = [defensive_momentum_portfolio_value]
+    defensive_momentum_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    defensive_momentum_cash = initial_capital_needed
+    current_defensive_momentum_stocks = []
+    defensive_momentum_last_rebalance_value = initial_capital_needed
+
     # TURNAROUND: Initialize portfolio tracking
     turnaround_portfolio_value = initial_capital_needed
     turnaround_portfolio_history = [turnaround_portfolio_value]
@@ -3774,6 +3814,8 @@ def _run_portfolio_backtest_walk_forward(
     momentum_volatility_hybrid_1y3m_transaction_costs = 0.0
     price_acceleration_transaction_costs = 0.0
     price_curvature_transaction_costs = 0.0
+    confirmed_leaders_transaction_costs = 0.0
+    defensive_momentum_transaction_costs = 0.0
     turnaround_transaction_costs = 0.0
     ai_classification_transaction_costs = 0.0
 
@@ -6854,6 +6896,93 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Price Curvature strategy error: {e}")
 
+        if config.ENABLE_CONFIRMED_LEADERS:
+            try:
+                print(f"   ✅ Confirmed Leaders Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+
+                def _fallback_confirmed_leaders():
+                    from new_strategies import select_confirmed_leaders_stocks
+                    return select_confirmed_leaders_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_confirmed_leaders_stocks = _resolve_parallel_strategy_selection(
+                    "confirmed_leaders",
+                    _fallback_confirmed_leaders,
+                )
+
+                if new_confirmed_leaders_stocks:
+                    print(f"   📊 Confirmed Leaders Day {day_count}: {new_confirmed_leaders_stocks}")
+                    confirmed_leaders_positions, confirmed_leaders_cash, current_confirmed_leaders_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Confirmed Leaders",
+                        current_stocks=current_confirmed_leaders_stocks,
+                        new_stocks=new_confirmed_leaders_stocks,
+                        positions=confirmed_leaders_positions,
+                        cash=confirmed_leaders_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_confirmed_leaders_stocks,
+                    )
+                    strategies_rebalanced_today['Confirmed Leaders'] = rebalanced_flag
+                    confirmed_leaders_transaction_costs += rebalance_costs
+                    confirmed_leaders_last_rebalance_value = _mark_to_market_value(
+                        confirmed_leaders_positions, confirmed_leaders_cash, ticker_data_grouped, current_date
+                    )
+                else:
+                    print("   ❌ No Confirmed Leaders stocks selected")
+
+            except Exception as e:
+                print(f"   ⚠️ Confirmed Leaders strategy error: {e}")
+
+        if config.ENABLE_DEFENSIVE_MOMENTUM:
+            try:
+                print(f"   🛡️ Defensive Momentum Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+
+                def _fallback_defensive_momentum():
+                    from defensive_momentum_strategy import select_defensive_momentum_stocks
+                    return select_defensive_momentum_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_defensive_momentum_stocks = _resolve_parallel_strategy_selection(
+                    "defensive_momentum",
+                    _fallback_defensive_momentum,
+                )
+
+                if new_defensive_momentum_stocks:
+                    print(f"   📊 Defensive Momentum Day {day_count}: {new_defensive_momentum_stocks}")
+                else:
+                    print(f"   🛡️ Defensive Momentum Day {day_count}: moving to cash")
+
+                defensive_momentum_positions, defensive_momentum_cash, current_defensive_momentum_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                    strategy_name="Defensive Momentum",
+                    current_stocks=current_defensive_momentum_stocks,
+                    new_stocks=new_defensive_momentum_stocks,
+                    positions=defensive_momentum_positions,
+                    cash=defensive_momentum_cash,
+                    ticker_data_grouped=ticker_data_grouped,
+                    current_date=current_date,
+                    transaction_cost=TRANSACTION_COST,
+                    portfolio_size=PORTFOLIO_SIZE,
+                    force_rebalance=(not current_defensive_momentum_stocks) or (not new_defensive_momentum_stocks),
+                )
+                strategies_rebalanced_today['Defensive Momentum'] = rebalanced_flag
+                defensive_momentum_transaction_costs += rebalance_costs
+                defensive_momentum_last_rebalance_value = _mark_to_market_value(
+                    defensive_momentum_positions, defensive_momentum_cash, ticker_data_grouped, current_date
+                )
+
+            except Exception as e:
+                print(f"   ⚠️ Defensive Momentum strategy error: {e}")
+
         # ADAPTIVE ENSEMBLE: Rebalance using meta-ensemble strategy DAILY
         if config.ENABLE_ADAPTIVE_STRATEGY:
             try:
@@ -9599,6 +9728,60 @@ def _run_portfolio_backtest_walk_forward(
 
         price_curvature_portfolio_value = price_curvature_invested_value + price_curvature_cash
         price_curvature_portfolio_history.append(price_curvature_portfolio_value)
+
+        # Update CONFIRMED LEADERS portfolio value daily
+        confirmed_leaders_invested_value = 0.0
+        if config.ENABLE_CONFIRMED_LEADERS:
+            for ticker in list(confirmed_leaders_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None:
+                            shares = confirmed_leaders_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            confirmed_leaders_positions[ticker]['value'] = position_value
+                            confirmed_leaders_invested_value += position_value
+                        else:
+                            confirmed_leaders_invested_value += confirmed_leaders_positions[ticker].get('value', 0.0)
+                    else:
+                        confirmed_leaders_invested_value += confirmed_leaders_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating Confirmed Leaders position for {ticker}: {e}")
+                    confirmed_leaders_invested_value += confirmed_leaders_positions[ticker].get('value', 0.0)
+
+        confirmed_leaders_portfolio_value = confirmed_leaders_invested_value + confirmed_leaders_cash
+        confirmed_leaders_portfolio_history.append(confirmed_leaders_portfolio_value)
+
+        # Update DEFENSIVE MOMENTUM portfolio value daily
+        defensive_momentum_invested_value = 0.0
+        if config.ENABLE_DEFENSIVE_MOMENTUM:
+            for ticker in list(defensive_momentum_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None and hasattr(ticker_data_grouped, 'get_group'):
+                        try:
+                            ticker_data = ticker_data_grouped.get_group(ticker)
+                        except KeyError:
+                            ticker_data = None
+
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None:
+                            shares = defensive_momentum_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            defensive_momentum_positions[ticker]['value'] = position_value
+                            defensive_momentum_invested_value += position_value
+                        else:
+                            defensive_momentum_invested_value += defensive_momentum_positions[ticker].get('value', 0.0)
+                    else:
+                        defensive_momentum_invested_value += defensive_momentum_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating Defensive Momentum position for {ticker}: {e}")
+                    defensive_momentum_invested_value += defensive_momentum_positions[ticker].get('value', 0.0)
+
+        defensive_momentum_portfolio_value = defensive_momentum_invested_value + defensive_momentum_cash
+        defensive_momentum_portfolio_history.append(defensive_momentum_portfolio_value)
         _advance_valuation_progress("hybrid + acceleration")
 
         # Update 1Y/3M RATIO portfolio value daily
@@ -11444,6 +11627,8 @@ def _run_portfolio_backtest_walk_forward(
             ("Concentrated 3M",     concentrated_3m_portfolio_history     if config.ENABLE_CONCENTRATED_3M else None),
             ("Price Acceleration",  price_acceleration_portfolio_history  if config.ENABLE_PRICE_ACCELERATION else None),
             ("Price Curvature",     price_curvature_portfolio_history     if config.ENABLE_PRICE_CURVATURE else None),
+            ("Confirmed Leaders",   confirmed_leaders_portfolio_history   if config.ENABLE_CONFIRMED_LEADERS else None),
+            ("Defensive Momentum",  defensive_momentum_portfolio_history  if config.ENABLE_DEFENSIVE_MOMENTUM else None),
             ("Elite Hybrid",        elite_hybrid_portfolio_history        if config.ENABLE_ELITE_HYBRID else None),
             ("Elite Risk",          elite_risk_portfolio_history          if config.ENABLE_ELITE_RISK else None),
             ("Risk-Adj Mom 6M",     risk_adj_mom_6m_portfolio_history     if config.ENABLE_RISK_ADJ_MOM_6M else None),
@@ -11603,6 +11788,8 @@ def _run_portfolio_backtest_walk_forward(
             'momentum_volatility_hybrid_1y3m': _strat(momentum_volatility_hybrid_1y3m_portfolio_value, momentum_volatility_hybrid_1y3m_portfolio_history, momentum_volatility_hybrid_1y3m_transaction_costs, momentum_volatility_hybrid_1y3m_cash),
             'price_acceleration':       _strat(price_acceleration_portfolio_value, price_acceleration_portfolio_history, price_acceleration_transaction_costs, price_acceleration_cash),
             'price_curvature':         _strat(price_curvature_portfolio_value, price_curvature_portfolio_history, price_curvature_transaction_costs, price_curvature_cash),
+            'confirmed_leaders':       _strat(confirmed_leaders_portfolio_value, confirmed_leaders_portfolio_history, confirmed_leaders_transaction_costs, confirmed_leaders_cash),
+            'defensive_momentum':      _strat(defensive_momentum_portfolio_value, defensive_momentum_portfolio_history, defensive_momentum_transaction_costs, defensive_momentum_cash),
             'turnaround':               _strat(turnaround_portfolio_value, turnaround_portfolio_history, turnaround_transaction_costs, turnaround_cash),
             'adaptive_ensemble':        _strat(adaptive_ensemble_portfolio_value, adaptive_ensemble_portfolio_history, adaptive_ensemble_transaction_costs, adaptive_ensemble_cash),
             'volatility_ensemble':      _strat(volatility_ensemble_portfolio_value, volatility_ensemble_portfolio_history, volatility_ensemble_transaction_costs, volatility_ensemble_cash),
@@ -11734,6 +11921,8 @@ def _run_portfolio_backtest_walk_forward(
             'turnaround': {'tickers': list(current_turnaround_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in turnaround_positions.items()}},
             'price_acceleration': {'tickers': list(current_price_acceleration_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in price_acceleration_positions.items()}},
             'price_curvature': {'tickers': list(current_price_curvature_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in price_curvature_positions.items()}},
+            'confirmed_leaders': {'tickers': list(current_confirmed_leaders_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in confirmed_leaders_positions.items()}},
+            'defensive_momentum': {'tickers': list(current_defensive_momentum_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in defensive_momentum_positions.items()}},
             'volatility_adj_mom': {'tickers': list(current_volatility_adj_mom_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in volatility_adj_mom_positions.items()}},
             'enhanced_volatility': {'tickers': list(current_enhanced_volatility_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in enhanced_volatility_positions.items()}},
             'ratio_3m_1y': {'tickers': list(current_ratio_3m_1y_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ratio_3m_1y_positions.items()}},

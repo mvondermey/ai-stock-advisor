@@ -77,6 +77,7 @@ _CACHEABLE_REGISTRY_STRATEGIES = {
     "momentum_volatility_hybrid_1y3m",
     "multi_tf_ensemble",
     "multi_tf_intraday_ensemble",
+    "confirmed_leaders",
 }
 
 
@@ -6838,6 +6839,14 @@ def _get_strategy_registry():
         from new_strategies import select_trend_breakout_stocks
         return select_trend_breakout_stocks(t, d, current_date=dt, top_n=n)
 
+    def _select_defensive_momentum(t, d, dt, n):
+        from defensive_momentum_strategy import select_defensive_momentum_stocks
+        return select_defensive_momentum_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_confirmed_leaders(t, d, dt, n):
+        from new_strategies import select_confirmed_leaders_stocks
+        return select_confirmed_leaders_stocks(t, d, current_date=dt, top_n=n)
+
     return {
 
         # Static BH strategies (lookback-based)
@@ -6941,6 +6950,8 @@ def _get_strategy_registry():
         'mom_accel': _select_mom_accel,
         'concentrated_3m': _select_concentrated_3m,
         'dual_momentum': _select_dual_momentum,
+        'confirmed_leaders': _select_confirmed_leaders,
+        'defensive_momentum': _select_defensive_momentum,
         'trend_atr': _select_trend_atr,
         'elite_hybrid': _select_elite_hybrid,
         'elite_risk': _select_elite_risk,

@@ -26,6 +26,10 @@ from config import (
     CONCENTRATED_3M_MAX_VOLATILITY, CONCENTRATED_3M_REBALANCE_DAYS,
     DUAL_MOM_LOOKBACK_DAYS, DUAL_MOM_ABSOLUTE_THRESHOLD, DUAL_MOM_RISK_OFF_TICKER,
     TREND_ATR_LOOKBACK_DAYS, TREND_ATR_PERIOD, TREND_ATR_TRAILING_MULT, TREND_ATR_ENTRY_BREAKOUT,
+    CONFIRMED_LEADERS_SMA_DAYS, CONFIRMED_LEADERS_MIN_1Y_RETURN,
+    CONFIRMED_LEADERS_MIN_6M_RETURN, CONFIRMED_LEADERS_MIN_3M_RETURN,
+    CONFIRMED_LEADERS_MIN_1M_RETURN, CONFIRMED_LEADERS_MAX_VOLATILITY,
+    MIN_DATA_DAYS_1Y, MIN_DATA_DAYS_6M, MIN_DATA_DAYS_3M, MIN_DATA_DAYS_1M,
 )
 
 
@@ -690,3 +694,173 @@ def select_trend_breakout_stocks(
         stocks_to_buy = [ticker for ticker, _ in breakout_candidates[:top_n]]
 
     return stocks_to_buy
+
+
+# ============================================
+# 5. CONFIRMED LEADERS STRATEGY
+# ============================================
+
+def select_confirmed_leaders_stocks(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime = None,
+    top_n: int = PORTFOLIO_SIZE,
+    price_history_cache=None,
+) -> List[str]:
+    """
+    Confirmed Leaders Strategy:
+    - Start from established 1Y leaders
+    - Require 6M/3M/1M continuation and price above SMA200
+    - Prefer improving short-term momentum with a volatility cap
+    """
+    from config import INVERSE_ETFS
+    from performance_filters import filter_tickers_by_performance
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    tickers_to_use = [ticker for ticker in all_tickers if ticker not in INVERSE_ETFS and ticker not in {"SPY", "QQQ"}]
+    filtered_tickers = filter_tickers_by_performance(
+        tickers_to_use,
+        ticker_data_grouped,
+        current_date,
+        "Confirmed Leaders",
+        price_history_cache=price_history_cache,
+    )
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
+    if current_date is None:
+        return []
+
+    candidates = []
+    data_insufficient = 0
+    sma_filtered = 0
+    momentum_filtered = 0
+    volatility_filtered = 0
+
+    for ticker in filtered_tickers:
+        try:
+            close_history = get_cached_history_up_to(
+                price_history_cache,
+                ticker,
+                current_date,
+                field_name="close",
+                min_rows=CONFIRMED_LEADERS_SMA_DAYS,
+            )
+            if close_history is None or len(close_history) < CONFIRMED_LEADERS_SMA_DAYS:
+                data_insufficient += 1
+                continue
+
+            close_1y = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                365,
+                field_name="close",
+                min_rows=MIN_DATA_DAYS_1Y,
+            )
+            close_6m = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                180,
+                field_name="close",
+                min_rows=MIN_DATA_DAYS_6M,
+            )
+            close_3m = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                90,
+                field_name="close",
+                min_rows=MIN_DATA_DAYS_3M,
+            )
+            close_1m = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                30,
+                field_name="close",
+                min_rows=MIN_DATA_DAYS_1M,
+            )
+            close_prev_1m = get_cached_values_between(
+                price_history_cache,
+                ticker,
+                current_date - timedelta(days=60),
+                current_date - timedelta(days=30),
+                field_name="close",
+                min_rows=MIN_DATA_DAYS_1M,
+            )
+
+            required_windows = (close_1y, close_6m, close_3m, close_1m, close_prev_1m)
+            if any(window is None or len(window) < 2 for window in required_windows):
+                data_insufficient += 1
+                continue
+
+            latest = float(close_history[-1])
+            sma_200 = float(np.mean(close_history[-CONFIRMED_LEADERS_SMA_DAYS:]))
+            if latest <= sma_200:
+                sma_filtered += 1
+                continue
+
+            perf_1y = ((float(close_1y[-1]) - float(close_1y[0])) / float(close_1y[0])) * 100
+            perf_6m = ((float(close_6m[-1]) - float(close_6m[0])) / float(close_6m[0])) * 100
+            perf_3m = ((float(close_3m[-1]) - float(close_3m[0])) / float(close_3m[0])) * 100
+            perf_1m = ((float(close_1m[-1]) - float(close_1m[0])) / float(close_1m[0])) * 100
+            perf_prev_1m = ((float(close_prev_1m[-1]) - float(close_prev_1m[0])) / float(close_prev_1m[0])) * 100
+
+            if (
+                perf_1y < CONFIRMED_LEADERS_MIN_1Y_RETURN
+                or perf_6m < CONFIRMED_LEADERS_MIN_6M_RETURN
+                or perf_3m < CONFIRMED_LEADERS_MIN_3M_RETURN
+                or perf_1m < CONFIRMED_LEADERS_MIN_1M_RETURN
+            ):
+                momentum_filtered += 1
+                continue
+
+            returns = np.diff(close_history[-63:]) / close_history[-63:-1]
+            if returns.size < 20:
+                data_insufficient += 1
+                continue
+
+            volatility = float(np.std(returns, ddof=1) * np.sqrt(252))
+            if volatility > CONFIRMED_LEADERS_MAX_VOLATILITY:
+                volatility_filtered += 1
+                continue
+
+            acceleration = perf_1m - perf_prev_1m
+            sma_gap_pct = ((latest - sma_200) / sma_200) * 100
+            score = (
+                (0.40 * perf_1y)
+                + (0.25 * perf_6m)
+                + (0.15 * perf_3m)
+                + (0.10 * perf_1m)
+                + (0.05 * max(acceleration, 0.0))
+                + (0.05 * sma_gap_pct)
+                - (12.0 * volatility)
+            )
+            candidates.append((ticker, score, perf_1y, perf_6m, perf_3m, perf_1m, acceleration, volatility))
+        except Exception:
+            data_insufficient += 1
+            continue
+
+    if not candidates:
+        print(
+            "   ❌ Confirmed Leaders: No candidates found "
+            f"(insufficient={data_insufficient}, sma={sma_filtered}, "
+            f"momentum={momentum_filtered}, vol={volatility_filtered})"
+        )
+        return []
+
+    candidates.sort(key=lambda item: item[1], reverse=True)
+    selected = [ticker for ticker, *_ in candidates[:top_n]]
+
+    print(f"   ✅ Confirmed Leaders: Selected {len(selected)} stocks")
+    print(
+        f"      Filter breakdown: insufficient={data_insufficient}, sma={sma_filtered}, "
+        f"momentum={momentum_filtered}, vol={volatility_filtered}"
+    )
+    for ticker, score, perf_1y, perf_6m, perf_3m, perf_1m, acceleration, volatility in candidates[:min(5, len(candidates))]:
+        print(
+            f"      {ticker}: score={score:.1f}, 1Y={perf_1y:+.1f}%, 6M={perf_6m:+.1f}%, "
+            f"3M={perf_3m:+.1f}%, 1M={perf_1m:+.1f}%, accel={acceleration:+.1f}%, vol={volatility*100:.1f}%"
+        )
+
+    return selected

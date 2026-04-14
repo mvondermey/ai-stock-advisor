@@ -583,7 +583,7 @@ def _extract_yahoo_error_detail(output_text: str) -> str:
     for line in lines:
         if "Yahoo error" in line or "Failed download" in line or "possibly delisted" in line:
             return line
-    return lines[-1]
+    return ""
 
 
 def _normalize_downloaded_price_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -681,7 +681,7 @@ def _cache_matches_recent_yahoo_history(
         return True, "no cached close history", pd.DataFrame()
 
     effective_end_utc = _effective_requested_end_utc(ticker, requested_end_utc)
-    compare_start = effective_end_utc - timedelta(days=40)
+    compare_start = effective_end_utc - timedelta(days=200)
     fresh_df, yahoo_error_detail = _download_from_yahoo_with_logging(
         ticker=ticker,
         start_utc=compare_start,
@@ -692,7 +692,49 @@ def _cache_matches_recent_yahoo_history(
         detail = yahoo_error_detail or "recent Yahoo validation returned empty data"
         return True, detail, fresh_df
 
+    recent_week_start = effective_end_utc - timedelta(days=7)
+    cached_recent_df = cached_df.loc[
+        (cached_df.index >= recent_week_start) & (cached_df.index <= effective_end_utc)
+    ].copy()
+    fresh_recent_df = fresh_df.loc[
+        (fresh_df.index >= recent_week_start) & (fresh_df.index <= effective_end_utc)
+    ].copy()
+
+    if not fresh_recent_df.empty:
+        missing_recent_timestamps = fresh_recent_df.index.difference(cached_recent_df.index)
+        if len(missing_recent_timestamps) > 0:
+            first_missing = missing_recent_timestamps[0].isoformat()
+            last_missing = missing_recent_timestamps[-1].isoformat()
+            return False, (
+                f"missing {len(missing_recent_timestamps)} Yahoo bars in last week "
+                f"(first_missing={first_missing}, last_missing={last_missing})"
+            ), fresh_df
+
+        recent_joined = cached_recent_df[["Close"]].join(
+            fresh_recent_df[["Close"]],
+            how="inner",
+            lsuffix="_cache",
+            rsuffix="_yahoo",
+        )
+        if not recent_joined.empty:
+            rel_diff = (
+                (recent_joined["Close_cache"] - recent_joined["Close_yahoo"]).abs()
+                / recent_joined["Close_yahoo"].abs().clip(lower=1e-9)
+            )
+            bad_recent = rel_diff[rel_diff > 0.002]
+            if not bad_recent.empty:
+                mismatch_ts = bad_recent.index[0]
+                mismatch_rel_diff = float(bad_recent.iloc[0])
+                return False, (
+                    f"last-week close mismatch at {mismatch_ts.isoformat()} "
+                    f"(cache={recent_joined.loc[mismatch_ts, 'Close_cache']:.6f}, "
+                    f"yahoo={recent_joined.loc[mismatch_ts, 'Close_yahoo']:.6f}, "
+                    f"rel_diff={mismatch_rel_diff:.4%})"
+                ), fresh_df
+
     anchors = (
+        ("6mo_a", effective_end_utc - timedelta(days=182)),
+        ("6mo_b", effective_end_utc - timedelta(days=175)),
         ("1mo", effective_end_utc - timedelta(days=30)),
         ("1w", effective_end_utc - timedelta(days=7)),
     )
@@ -817,6 +859,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                             except Exception as delete_exc:
                                 print(f"  [WARNING] {ticker}: Could not delete mismatched cache: {delete_exc}")
                             cached_df = pd.DataFrame()
+                            recent_yahoo_validation_df = pd.DataFrame()
 
                 if not cached_df.empty:
                     last_cached_date = cached_df.index[-1]
@@ -836,8 +879,17 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                         # Cache already has data up to the last trading day
                         needs_fetch = False
                     else:
-                        # Need to fetch data from last cached date + 1
-                        fetch_start = last_cached_date + timedelta(days=1)
+                        # For intraday data, restart at the next calendar day boundary
+                        # instead of carrying forward the last cached bar's clock time.
+                        if _is_intraday_interval(DATA_INTERVAL):
+                            fetch_start = pd.Timestamp(last_cached_date).normalize() + timedelta(days=1)
+                            if fetch_start.tzinfo is None:
+                                fetch_start = fetch_start.tz_localize("UTC")
+                            else:
+                                fetch_start = fetch_start.tz_convert("UTC")
+                        else:
+                            # Daily/longer intervals can safely continue from the next day.
+                            fetch_start = last_cached_date + timedelta(days=1)
 
             except Exception as e:
                 print(f"  Warning: Could not read cache for {ticker}: {e}. Will refetch all.")
@@ -856,7 +908,7 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
         start_utc = _to_utc(fetch_start)
         end_utc = _to_utc(fetch_end)
 
-        if not recent_yahoo_validation_df.empty:
+        if not recent_yahoo_validation_df.empty and not cached_df.empty:
             validation_tail_df = recent_yahoo_validation_df.loc[
                 (recent_yahoo_validation_df.index >= start_utc)
                 & (recent_yahoo_validation_df.index <= end_utc)
@@ -915,12 +967,19 @@ def load_prices(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
                 if downloaded_df is not None and not downloaded_df.empty:
                     new_df = downloaded_df.dropna()
                 else:
+                    if last_cached_date is not None:
+                        error_message = (
+                            f"  [ERROR] {ticker}: No today's {DATA_INTERVAL} data available. "
+                            f"Last cached date: {last_cached_date.date()}"
+                        )
+                    else:
+                        error_message = f"  [ERROR] {ticker}: Yahoo returned empty data"
                     detail_suffix = f" ({yahoo_error_detail})" if yahoo_error_detail else ""
                     try:
                         from tqdm import tqdm
-                        tqdm.write(f"  [ERROR] {ticker}: Yahoo returned empty data{detail_suffix}")
+                        tqdm.write(f"{error_message}{detail_suffix}")
                     except:
-                        print(f"  [ERROR] {ticker}: Yahoo returned empty data{detail_suffix}")
+                        print(f"{error_message}{detail_suffix}")
             except Exception as e:
                 detail_suffix = f" | {yahoo_error_detail}" if yahoo_error_detail else ""
                 try:
@@ -1062,7 +1121,7 @@ def _download_batch_robust(tickers: List[str], start: datetime, end: datetime) -
 
     print(f"  [INFO] Processing {len(tickers)} tickers with incremental caching (parallel)...")
 
-    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 
     # Global rate limiter for API calls (shared across threads)
     import threading

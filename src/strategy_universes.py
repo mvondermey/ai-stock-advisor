@@ -99,6 +99,7 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "enhanced_volatility": _source("ENABLE_ENHANCED_VOLATILITY", "enhanced_volatility_portfolio_value"),
     "trend_atr": _source("ENABLE_TREND_FOLLOWING_ATR", "trend_atr_portfolio_value"),
     "dual_momentum": _source("ENABLE_DUAL_MOMENTUM", "dual_mom_portfolio_value"),
+    "defensive_momentum": _source("ENABLE_DEFENSIVE_MOMENTUM", "defensive_momentum_portfolio_value"),
     "momentum_acceleration": _source("ENABLE_MOMENTUM_ACCELERATION", "mom_accel_portfolio_value"),
     "concentrated_3m": _source("ENABLE_CONCENTRATED_3M", "concentrated_3m_portfolio_value"),
     "price_acceleration": _source("ENABLE_PRICE_ACCELERATION", "price_acceleration_portfolio_value"),
@@ -171,8 +172,8 @@ META_BB_STRATEGIES = {"bb_mean_reversion", "bb_breakout", "bb_squeeze_breakout",
 
 
 META_REGIME_HIGH_VOL_CANDIDATES = ("mean_reversion", "risk_adj_mom", "risk_adj_mom_3m", "elite_risk")
-META_REGIME_LOW_VOL_CANDIDATES = ("static_bh_1y", "dynamic_bh_1y", "momentum_volatility_hybrid")
+META_REGIME_LOW_VOL_CANDIDATES = ("static_bh_1y", "dynamic_bh_1y", "momentum_volatility_hybrid", "defensive_momentum")
 META_REGIME_MEDIUM_VOL_CANDIDATES = ("trend_atr", "dual_momentum", "elite_hybrid")
-META_ADAPTIVE_CONVEX_DEFENSIVE = ("mean_reversion", "risk_adj_mom", "risk_adj_mom_3m", "elite_risk")
-META_ADAPTIVE_CONVEX_MOMENTUM = ("static_bh_1y", "dynamic_bh_1y", "momentum_volatility_hybrid", "momentum_volatility_hybrid_6m")
+META_ADAPTIVE_CONVEX_DEFENSIVE = ("mean_reversion", "risk_adj_mom", "risk_adj_mom_3m", "elite_risk", "defensive_momentum")
+META_ADAPTIVE_CONVEX_MOMENTUM = ("static_bh_1y", "dynamic_bh_1y", "momentum_volatility_hybrid", "momentum_volatility_hybrid_6m", "defensive_momentum")
 META_ADAPTIVE_CONVEX_BALANCED = ("trend_atr", "dual_momentum", "elite_hybrid", "enhanced_volatility")

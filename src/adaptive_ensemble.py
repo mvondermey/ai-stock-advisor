@@ -126,7 +126,9 @@ class AdaptiveMetaEnsemble:
             if market_proxy is not None:
                 break
         
-        if market_proxy is None or len(market_proxy) < 30:
+        # A 30-calendar-day daily slice usually contains about 20-22 trading bars,
+        # so `min_rows=10` is the realistic sufficiency check here.
+        if market_proxy is None:
             return None
         
         try:
