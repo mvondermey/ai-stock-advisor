@@ -102,6 +102,7 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "momentum_acceleration": _source("ENABLE_MOMENTUM_ACCELERATION", "mom_accel_portfolio_value"),
     "concentrated_3m": _source("ENABLE_CONCENTRATED_3M", "concentrated_3m_portfolio_value"),
     "price_acceleration": _source("ENABLE_PRICE_ACCELERATION", "price_acceleration_portfolio_value"),
+    "price_curvature": _source("ENABLE_PRICE_CURVATURE", "price_curvature_portfolio_value"),
     "turnaround": _source("ENABLE_TURNAROUND", "turnaround_portfolio_value"),
     "elite_hybrid": _source("ENABLE_ELITE_HYBRID", "elite_hybrid_portfolio_value"),
     "elite_risk": _source("ENABLE_ELITE_RISK", "elite_risk_portfolio_value"),

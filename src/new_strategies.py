@@ -407,9 +407,6 @@ def _get_cached_ohlc_frame(
     if close is None or len(close) < min_rows:
         return None
 
-    open_prices = get_cached_history_up_to(
-        price_history_cache, ticker, current_date, field_name="open", min_rows=min_rows
-    )
     high_prices = get_cached_history_up_to(
         price_history_cache, ticker, current_date, field_name="high", min_rows=min_rows
     )
@@ -417,12 +414,11 @@ def _get_cached_ohlc_frame(
         price_history_cache, ticker, current_date, field_name="low", min_rows=min_rows
     )
 
-    if open_prices is None or high_prices is None or low_prices is None:
+    if high_prices is None or low_prices is None:
         return None
 
     return pd.DataFrame(
         {
-            "Open": open_prices,
             "High": high_prices,
             "Low": low_prices,
             "Close": close,

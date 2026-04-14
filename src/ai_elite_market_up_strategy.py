@@ -23,6 +23,9 @@ def select_ai_elite_market_up_stocks(
     """Select stocks using the daily AI Elite shared model, but only when market is up."""
     from ai_elite_strategy import select_ai_elite_stocks
     from market_regime import get_trailing_market_regime
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     market_return, is_market_up, proxy = get_trailing_market_regime(
         ticker_data_grouped,

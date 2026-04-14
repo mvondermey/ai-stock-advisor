@@ -159,6 +159,11 @@ def select_risk_adj_mom_3m_sentiment_stocks(
         tickers_to_use, ticker_data_grouped, current_date, "RiskAdj 3M Sent"
     )
 
+    if price_history_cache is None:
+        from strategy_cache_adapter import ensure_price_history_cache
+
+        price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+
     # Use the cache-backed scorer only; do not fall back to the slow parallel path.
     if price_history_cache is not None:
         from parallel_backtest import calculate_cached_risk_adjusted_scores

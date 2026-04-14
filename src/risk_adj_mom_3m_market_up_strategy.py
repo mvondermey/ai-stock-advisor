@@ -18,6 +18,9 @@ def select_risk_adj_mom_3m_market_up_stocks(
     """Select stocks using Risk-Adj Mom 3M scoring, but only when market is up."""
     from market_regime import get_trailing_market_regime
     from shared_strategies import select_risk_adj_mom_stocks
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     market_return, is_market_up, proxy = get_trailing_market_regime(
         ticker_data_grouped,

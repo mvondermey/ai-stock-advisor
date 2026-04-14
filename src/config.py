@@ -340,6 +340,7 @@ _PARALLEL_STRATEGY_PILOT_CONFIG: Dict[str, Dict[str, object]] = {
     "trend_atr": {"enable_flag": "ENABLE_TREND_FOLLOWING_ATR", "use_buffer": True},
     "turnaround": {"enable_flag": "ENABLE_TURNAROUND", "use_buffer": True},
     "price_acceleration": {"enable_flag": "ENABLE_PRICE_ACCELERATION", "use_buffer": True},
+    "price_curvature": {"enable_flag": "ENABLE_PRICE_CURVATURE", "use_buffer": True},
     "momentum_volatility_hybrid": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID", "use_buffer": True},
     "momentum_volatility_hybrid_6m": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M", "use_buffer": True},
     "momentum_volatility_hybrid_1y": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y", "use_buffer": True},
@@ -492,7 +493,7 @@ ENABLE_1YEAR_BACKTEST   = True   # Enabled - For simulation and strategy validat
 
 # Set to False to disable specific portfolios in the backtest
 
-ENABLE_MOMENTUM_AI_HYBRID = True  # ENABLED - Momentum+AI Hybrid
+ENABLE_MOMENTUM_AI_HYBRID = False  # DISABLED - Momentum+AI Hybrid (just 3M momentum, no actual AI)
 
 ENABLE_AI_VOLATILITY_ENSEMBLE = True  # ENABLED - AI Volatility Ensemble
 
@@ -575,6 +576,8 @@ ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 
 ENABLE_PRICE_ACCELERATION = True   # ENABLED - Price Acceleration Strategy (physics-based velocity/acceleration)
 
+ENABLE_PRICE_CURVATURE = False   # NEW - Price Curvature Strategy (quadratic curvature of recent log-price)
+
 ENABLE_VOTING_ENSEMBLE = True   # ENABLED - Voting Ensemble Strategy
 
 
@@ -632,8 +635,8 @@ ENABLE_AI_ELITE_MONTHLY_SHARED = True   # NEW - AI Elite Monthly Shared (monthly
 ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre-filter + AI Elite re-rank)
 
 ENABLE_AI_ELITE_MARKET_UP = True   # NEW - AI Elite Market-Up (only rebalances when market is up)
-ENABLE_AI_ELITE_ENSEMBLE = True   # NEW - AI Elite Ensemble (weighted avg of top 3 positive-R² models)
-ENABLE_AI_ELITE_RANK_ENSEMBLE = True   # NEW - AI Elite Rank Ensemble (weighted rank avg of top 3 positive-R² models)
+ENABLE_AI_ELITE_ENSEMBLE = False   # NEW - AI Elite Ensemble (weighted avg of top 3 positive-R² models)
+ENABLE_AI_ELITE_RANK_ENSEMBLE = False   # NEW - AI Elite Rank Ensemble (weighted rank avg of top 3 positive-R² models)
 ENABLE_SAVGOL_TREND = False  # NEW - SavGol Trend (local polynomial trend features + pooled ML)
 
 ENABLE_TOP5_CONSISTENCY_BLEND = True   # NEW - Blend current top strategies using prior-day top-5 consistency weights
@@ -926,6 +929,8 @@ TURNAROUND_STOP_LOSS = 0.05            # +2.5% improvement (+20.0% vs +17.5%)
 
 PRICE_ACCELERATION_STOP_LOSS = 0.05    # +2.4% improvement (+2.1% vs -0.3%)
 
+PRICE_CURVATURE_STOP_LOSS = 0.05       # Default stop loss for upward-curvature trend strategy
+
 ADAPTIVE_ENSEMBLE_STOP_LOSS = 0.05     # +2.4% improvement (+18.0% vs +15.6%)
 
 CONCENTRATED_3M_STOP_LOSS = 0.05       # +1.4% improvement (+5.6% vs +4.2%)
@@ -987,6 +992,8 @@ STRATEGY_STOP_LOSS_PCT = {
     'Turnaround': TURNAROUND_STOP_LOSS,
 
     'Price Acceleration': PRICE_ACCELERATION_STOP_LOSS,
+
+    'Price Curvature': PRICE_CURVATURE_STOP_LOSS,
 
     'Adaptive Ensemble': ADAPTIVE_ENSEMBLE_STOP_LOSS,
 
@@ -1492,6 +1499,17 @@ MOMENTUM_VOLATILITY_HYBRID_STOP_LOSS = 0.10  # 10% stop loss
 
 MOMENTUM_VOLATILITY_HYBRID_TRAILING_STOP = 0.08  # 8% trailing stop
 
+
+
+# --- Price Curvature Strategy Parameters ---
+
+PRICE_CURVATURE_LOOKBACK_DAYS = 60  # Fit curvature over roughly one quarter of trading days
+
+PRICE_CURVATURE_MIN_FIT_R2 = 0.55  # Ignore tickers whose quadratic fit is mostly noise
+
+PRICE_CURVATURE_MIN_SLOPE = 0.015  # Require the fitted curve to still slope upward at the right edge
+
+PRICE_CURVATURE_MIN_RECENT_RETURN = 0.03  # Require the lookback window to have a positive net move
 
 
 # --- Volatility-Adjusted Momentum Strategy Parameters ---

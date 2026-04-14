@@ -928,6 +928,12 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
 
 
 
+    if price_history_cache is None:
+
+        from strategy_cache_adapter import ensure_price_history_cache
+
+        price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+
     current_top_performers = []
 
 
@@ -1047,6 +1053,12 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
     current_top_performers = []
 
 
+
+    if price_history_cache is None:
+
+        from strategy_cache_adapter import ensure_price_history_cache
+
+        price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     if price_history_cache is not None:
 
@@ -2047,6 +2059,9 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
     """
 
     from config import INVERSE_ETFS
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
 
 
@@ -2325,6 +2340,9 @@ def select_1m_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
     """
 
     from config import INVERSE_ETFS
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
 
 
@@ -2865,6 +2883,9 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
     """
 
     # Apply performance filters if enabled
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     from performance_filters import filter_tickers_by_performance
 
@@ -3120,6 +3141,10 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
 
         current_date = datetime.now()
 
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+
 
 
     # Apply performance filters if enabled
@@ -3359,6 +3384,10 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
     if current_date is None:
 
         current_date = datetime.now()
+
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
 
 
@@ -3601,6 +3630,10 @@ def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_group
     if current_date is None:
 
         current_date = datetime.now()
+
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
 
 
@@ -3845,6 +3878,10 @@ def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped
     if current_date is None:
 
         current_date = datetime.now()
+
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
 
 
@@ -4095,6 +4132,9 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
     """
 
     from config import INVERSE_ETFS, MIN_DATA_DAYS_PERIOD_DATA
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
 
 
@@ -6954,6 +6994,11 @@ def _get_strategy_registry():
 
         'price_acceleration': lambda t, d, dt, n: select_price_acceleration_stocks(t, d, dt, n),
 
+        'price_curvature': lambda t, d, dt, n: __import__(
+            'price_curvature_strategy',
+            fromlist=['select_price_curvature_stocks']
+        ).select_price_curvature_stocks(t, d, dt, n),
+
         'sector_rotation': lambda t, d, dt, n: select_sector_rotation_etfs(t, d, dt, n),
 
         'voting_ensemble': lambda t, d, dt, n: select_voting_ensemble_stocks(t, d, dt, n),
@@ -6963,10 +7008,7 @@ def _get_strategy_registry():
         # AI Elite strategies
         'ai_elite': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
         'ai_elite_filtered': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
-        'ai_elite_market_up': lambda t, d, dt, n: __import__(
-            'ai_elite_market_up_strategy',
-            fromlist=['select_ai_elite_market_up_stocks']
-        ).select_ai_elite_market_up_stocks(t, d, dt, n),
+        'ai_elite_market_up': lambda t, d, dt, n: _select_ai_elite_market_up_stocks(t, d, dt, n),
 
         'savgol_trend': lambda t, d, dt, n: _select_savgol_trend_stocks(t, d, dt, n),
 
@@ -7156,7 +7198,49 @@ def _select_savgol_trend_stocks(all_tickers, ticker_data_grouped, current_date, 
         return []
 
 
+def _select_ai_elite_market_up_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for AI Elite Market-Up that reuses the saved shared model when available."""
+    try:
+        from market_regime import get_trailing_market_regime
 
+        market_return, is_market_up, proxy = get_trailing_market_regime(
+            ticker_data_grouped,
+            current_date,
+            lookback_days=5,
+        )
+
+        if market_return is None:
+            print("   📊 AI Elite Market-Up Shared: Market data unavailable, allowing initial investment")
+            market_return = 0.0
+            is_market_up = True
+
+        if not is_market_up:
+            print(
+                f"   📊 AI Elite Market-Up Shared: Market is down "
+                f"({market_return:+.1f}% over trailing 5d via {proxy}), skipping rebalance"
+            )
+            return []
+
+        print(
+            f"   📊 AI Elite Market-Up Shared: Market is up "
+            f"({market_return:+.1f}% over trailing 5d via {proxy}), proceeding with shared-model selection"
+        )
+
+        selected, _ = select_ai_elite_with_training(
+            all_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            ai_elite_models={},
+            force_train=False,
+            run_selection=True,
+        )
+        return selected
+    except ImportError:
+        return []
+    except Exception as e:
+        print(f"  ⚠️ AI Elite Market-Up Shared failed: {e}")
+        return []
 
 
 def _select_inverse_etf_hedge_stocks(all_tickers, ticker_data_grouped, current_date, top_n):

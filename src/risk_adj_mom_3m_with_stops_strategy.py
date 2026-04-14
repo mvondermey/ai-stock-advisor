@@ -19,6 +19,9 @@ def select_risk_adj_mom_3m_with_stops_stocks(
 ) -> List[str]:
     """Select stocks using Risk-Adj Mom 3M scoring (delegates to shared function)."""
     from shared_strategies import select_risk_adj_mom_stocks
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     
     return select_risk_adj_mom_stocks(
         all_tickers=all_tickers,

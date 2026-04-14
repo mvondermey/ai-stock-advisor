@@ -22,6 +22,9 @@ def select_risk_adj_mom_6m_stocks(
     Delegates to shared parallel implementation for performance.
     """
     from shared_strategies import select_risk_adj_mom_stocks
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     
     return select_risk_adj_mom_stocks(
         all_tickers=all_tickers,

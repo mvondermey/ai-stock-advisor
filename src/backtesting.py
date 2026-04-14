@@ -246,6 +246,16 @@ def _run_parallel_strategy_selection_task(
             top_n=top_n,
             price_history_cache=price_history_cache,
         )
+    elif strategy_name == "price_curvature":
+        from price_curvature_strategy import select_price_curvature_stocks
+
+        selected = select_price_curvature_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
     elif strategy_name == "momentum_volatility_hybrid":
         from shared_strategies import select_momentum_volatility_hybrid_stocks
 
@@ -819,6 +829,7 @@ STRATEGY_REGISTRY = {
     'momentum_volatility_hybrid_1y': _strategy_registry_entry('Mom-Vol Hybrid 1Y', 'ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y', 'momentum_volatility_hybrid_1y_portfolio_value', 'momentum_volatility_hybrid_1y_portfolio_history', 'momentum_volatility_hybrid_1y_cash', 'momentum_volatility_hybrid_1y_positions'),
     'momentum_volatility_hybrid_1y3m': _strategy_registry_entry('Mom-Vol Hybrid 1Y/3M', 'ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M', 'momentum_volatility_hybrid_1y3m_portfolio_value', 'momentum_volatility_hybrid_1y3m_portfolio_history', 'momentum_volatility_hybrid_1y3m_cash', 'momentum_volatility_hybrid_1y3m_positions'),
     'price_acceleration': _strategy_registry_entry('Price Acceleration', 'ENABLE_PRICE_ACCELERATION', 'price_acceleration_portfolio_value', 'price_acceleration_portfolio_history', 'price_acceleration_cash', 'current_price_acceleration_stocks'),
+    'price_curvature': _strategy_registry_entry('Price Curvature', 'ENABLE_PRICE_CURVATURE', 'price_curvature_portfolio_value', 'price_curvature_portfolio_history', 'price_curvature_cash', 'current_price_curvature_stocks'),
     'turnaround': _strategy_registry_entry('Turnaround', 'ENABLE_TURNAROUND', 'turnaround_portfolio_value', 'turnaround_portfolio_history', 'turnaround_cash', 'current_turnaround_stocks'),
     'adaptive_ensemble': _strategy_registry_entry('Adaptive Ensemble', 'ENABLE_ADAPTIVE_STRATEGY', 'adaptive_ensemble_portfolio_value', 'adaptive_ensemble_portfolio_history', 'adaptive_ensemble_cash', 'adaptive_ensemble_positions'),
     'volatility_ensemble': _strategy_registry_entry('Volatility Ensemble', 'ENABLE_VOLATILITY_ENSEMBLE', 'volatility_ensemble_portfolio_value', 'volatility_ensemble_portfolio_history', 'volatility_ensemble_cash', 'volatility_ensemble_positions'),
@@ -954,6 +965,7 @@ voting_ensemble_ai_rebalance_transaction_costs = 0
 momentum_volatility_hybrid_transaction_costs = 0
 momentum_volatility_hybrid_6m_transaction_costs = 0
 price_acceleration_transaction_costs = 0
+price_curvature_transaction_costs = 0
 dynamic_bh_1y_vol_filter_transaction_costs = 0
 dynamic_bh_1y_trailing_stop_transaction_costs = 0
 adaptive_ensemble_transaction_costs = 0
@@ -2547,6 +2559,7 @@ def _run_portfolio_backtest_walk_forward(
         "ratio_1y_3m": "1Y/3M Ratio",
         "turnaround": "Turnaround",
         "price_acceleration": "Price Acceleration",
+        "price_curvature": "Price Curvature",
         "momentum_volatility_hybrid": "Mom-Vol Hybrid",
         "momentum_volatility_hybrid_6m": "Mom-Vol Hybrid 6M",
         "momentum_volatility_hybrid_1y": "Mom-Vol Hybrid 1Y",
@@ -3233,6 +3246,14 @@ def _run_portfolio_backtest_walk_forward(
     current_price_acceleration_stocks = []  # Current top stocks held by price acceleration strategy
     price_acceleration_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
+    # PRICE CURVATURE: Initialize portfolio tracking
+    price_curvature_portfolio_value = initial_capital_needed
+    price_curvature_portfolio_history = [price_curvature_portfolio_value]
+    price_curvature_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    price_curvature_cash = initial_capital_needed
+    current_price_curvature_stocks = []
+    price_curvature_last_rebalance_value = initial_capital_needed
+
     # TURNAROUND: Initialize portfolio tracking
     turnaround_portfolio_value = initial_capital_needed
     turnaround_portfolio_history = [turnaround_portfolio_value]
@@ -3752,6 +3773,7 @@ def _run_portfolio_backtest_walk_forward(
     momentum_volatility_hybrid_1y_transaction_costs = 0.0
     momentum_volatility_hybrid_1y3m_transaction_costs = 0.0
     price_acceleration_transaction_costs = 0.0
+    price_curvature_transaction_costs = 0.0
     turnaround_transaction_costs = 0.0
     ai_classification_transaction_costs = 0.0
 
@@ -4216,6 +4238,8 @@ def _run_portfolio_backtest_walk_forward(
         active_close_price_cache = _build_daily_close_price_cache(ticker_data_grouped, current_date)
         parallel_strategy_futures: Dict[str, Any] = {}
         ai_elite_selection_pending = False
+        ai_elite_selection_runtime_context: Optional[Dict[str, Any]] = None
+        queue_progress = None
 
         def _dispatch_parallel_strategy_tasks() -> None:
             has_non_ai_futures = any(
@@ -4263,8 +4287,17 @@ def _run_portfolio_backtest_walk_forward(
 
         def _resolve_parallel_strategy_selection(strategy_name: str, fallback_fn=None):
             future = parallel_strategy_futures.pop(strategy_name, None)
+            def _advance_queue_progress(status_label: str) -> None:
+                if queue_progress is None:
+                    return
+                queue_progress.set_postfix_str(
+                    f"{strategy_name} [{status_label}]",
+                    refresh=False,
+                )
+                queue_progress.update(1)
             def _run_fallback(reason: str):
                 daily_queue_stats["fallbacks"] += 1
+                _advance_queue_progress(f"fallback:{reason}")
                 if fallback_fn is None:
                     print(f"   ⚠️ Strategy queue {reason} for {strategy_name}; returning empty selection")
                     return []
@@ -4289,6 +4322,7 @@ def _run_portfolio_backtest_walk_forward(
                     worker_pid=int(worker_pid) if worker_pid is not None else None,
                 )
                 daily_queue_stats["tasks_completed"] += 1
+                _advance_queue_progress(f"node:{selection_count}")
                 print(f"   🚦 Strategy queue: {strategy_name} returned {selection_count} tickers")
                 if result_kind == "buy_sell_lists":
                     return selected, list(result_meta.get("stocks_to_sell") or [])
@@ -4500,69 +4534,24 @@ def _run_portfolio_backtest_walk_forward(
                 )
                 _record_strategy_timing("AI Elite", ai_elite_prepare_elapsed, phase="selection")
 
-                ai_elite_queue_config = getattr(config, "_PARALLEL_STRATEGY_PILOT_CONFIG", {}).get("ai_elite", {})
-                ai_elite_queue_enabled = (
-                    parallel_strategy_executor is not None
-                    and bool(ai_elite_queue_config)
-                    and bool(getattr(config, str(ai_elite_queue_config.get("enable_flag", "")), False))
-                )
-                if ai_elite_queue_enabled:
-                    parallel_strategy_futures["ai_elite"] = parallel_strategy_executor.submit(
-                        _run_parallel_strategy_selection_task,
-                        "ai_elite",
-                        current_date,
-                        PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                        ai_elite_worker_runtime_context,
-                    )
-                    daily_queue_stats["tasks_dispatched"] += 1
-                    ai_elite_selection_pending = True
-                else:
-                    from ai_elite_strategy import select_ai_elite_stocks
-
-                    ai_elite_inference_started_at = time.perf_counter()
-                    new_ai_elite_stocks = select_ai_elite_stocks(
-                        all_tickers=initial_top_tickers,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                        per_ticker_models=ai_elite_models,
-                        price_history_cache=price_history_cache,
-                        hourly_history_cache=hourly_history_cache,
-                        feature_cache_context=ai_elite_worker_runtime_context.get("ai_elite_feature_cache_context"),
-                        market_context_map=ai_elite_worker_runtime_context.get("ai_elite_market_context_map"),
-                    )
-                    _record_strategy_timing(
-                        "AI Elite",
-                        time.perf_counter() - ai_elite_inference_started_at,
-                        phase="selection",
-                    )
-                    (
-                        ai_elite_positions,
-                        ai_elite_cash,
-                        current_ai_elite_stocks,
-                        ai_elite_transaction_costs,
-                        ai_elite_last_rebalance_value,
-                        rebalanced_flag,
-                    ) = _apply_ai_elite_selection(
-                        day_count=day_count,
-                        ai_elite_positions=ai_elite_positions,
-                        ai_elite_cash=ai_elite_cash,
-                        current_ai_elite_stocks=current_ai_elite_stocks,
-                        ai_elite_transaction_costs=ai_elite_transaction_costs,
-                        ai_elite_portfolio_value=ai_elite_portfolio_value,
-                        ai_elite_last_rebalance_value=ai_elite_last_rebalance_value,
-                        close_price_cache=active_close_price_cache,
-                        new_ai_elite_stocks=new_ai_elite_stocks,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                    )
-                    strategies_rebalanced_today['AI Elite'] = rebalanced_flag
+                # Defer the actual AI Elite selection until the queued non-AI strategies finish.
+                # This keeps AI Elite on the main process while still moving it after the queue.
+                ai_elite_selection_runtime_context = ai_elite_worker_runtime_context
+                ai_elite_selection_pending = True
             except Exception as e:
                 print(f"   ⚠️ AI Elite error: {e}")
 
         # Submit the parallel queue only after AI-heavy prep above has finished.
         # This avoids nested fork pools during cache/training phases like AI Elite.
         _dispatch_parallel_strategy_tasks()
+        if daily_queue_stats["tasks_dispatched"] > 0:
+            queue_progress = tqdm(
+                total=daily_queue_stats["tasks_dispatched"],
+                desc="Strategy queue progress",
+                unit="strategy",
+                ncols=100,
+                leave=False,
+            )
 
         # MULTI-HORIZON INTRADAY: Rebalance using hourly data for medium/short horizons
         if config.ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE:
@@ -6821,6 +6810,49 @@ def _run_portfolio_backtest_walk_forward(
 
             except Exception as e:
                 print(f"   ⚠️ Price Acceleration strategy error: {e}")
+
+        if config.ENABLE_PRICE_CURVATURE:
+            try:
+                print(f"   🌀 Price Curvature Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+
+                def _fallback_price_curvature():
+                    from price_curvature_strategy import select_price_curvature_stocks
+                    return select_price_curvature_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_price_curvature_stocks = _resolve_parallel_strategy_selection(
+                    "price_curvature",
+                    _fallback_price_curvature,
+                )
+
+                if new_price_curvature_stocks:
+                    print(f"   📊 Price Curvature Day {day_count}: {new_price_curvature_stocks}")
+                    price_curvature_positions, price_curvature_cash, current_price_curvature_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Price Curvature",
+                        current_stocks=current_price_curvature_stocks,
+                        new_stocks=new_price_curvature_stocks,
+                        positions=price_curvature_positions,
+                        cash=price_curvature_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_price_curvature_stocks,
+                    )
+                    strategies_rebalanced_today['Price Curvature'] = rebalanced_flag
+                    price_curvature_transaction_costs += rebalance_costs
+                    price_curvature_last_rebalance_value = _mark_to_market_value(
+                        price_curvature_positions, price_curvature_cash, ticker_data_grouped, current_date
+                    )
+                else:
+                    print("   ❌ No Price Curvature stocks selected")
+
+            except Exception as e:
+                print(f"   ⚠️ Price Curvature strategy error: {e}")
 
         # ADAPTIVE ENSEMBLE: Rebalance using meta-ensemble strategy DAILY
         if config.ENABLE_ADAPTIVE_STRATEGY:
@@ -9199,6 +9231,65 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Trend Breakout error: {e}")
 
+        if ai_elite_selection_pending:
+            try:
+                from ai_elite_strategy import select_ai_elite_stocks
+
+                ai_elite_inference_started_at = time.perf_counter()
+                new_ai_elite_stocks = select_ai_elite_stocks(
+                    all_tickers=initial_top_tickers,
+                    ticker_data_grouped=ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    per_ticker_models=ai_elite_models,
+                    price_history_cache=price_history_cache,
+                    hourly_history_cache=hourly_history_cache,
+                    feature_cache_context=(
+                        ai_elite_selection_runtime_context.get("ai_elite_feature_cache_context")
+                        if ai_elite_selection_runtime_context
+                        else None
+                    ),
+                    market_context_map=(
+                        ai_elite_selection_runtime_context.get("ai_elite_market_context_map")
+                        if ai_elite_selection_runtime_context
+                        else None
+                    ),
+                )
+                _record_strategy_timing(
+                    "AI Elite",
+                    time.perf_counter() - ai_elite_inference_started_at,
+                    phase="selection",
+                )
+                (
+                    ai_elite_positions,
+                    ai_elite_cash,
+                    current_ai_elite_stocks,
+                    ai_elite_transaction_costs,
+                    ai_elite_last_rebalance_value,
+                    rebalanced_flag,
+                ) = _apply_ai_elite_selection(
+                    day_count=day_count,
+                    ai_elite_positions=ai_elite_positions,
+                    ai_elite_cash=ai_elite_cash,
+                    current_ai_elite_stocks=current_ai_elite_stocks,
+                    ai_elite_transaction_costs=ai_elite_transaction_costs,
+                    ai_elite_portfolio_value=ai_elite_portfolio_value,
+                    ai_elite_last_rebalance_value=ai_elite_last_rebalance_value,
+                    close_price_cache=active_close_price_cache,
+                    new_ai_elite_stocks=new_ai_elite_stocks,
+                    ticker_data_grouped=ticker_data_grouped,
+                    current_date=current_date,
+                )
+                strategies_rebalanced_today['AI Elite'] = rebalanced_flag
+            except Exception as e:
+                print(f"   ⚠️ AI Elite deferred selection error: {e}")
+                strategies_rebalanced_today['AI Elite'] = False
+            finally:
+                ai_elite_selection_pending = False
+
+        if queue_progress is not None:
+            queue_progress.close()
+
         valuation_progress = tqdm(
             total=11,
             desc="Daily value updates",
@@ -9478,6 +9569,36 @@ def _run_portfolio_backtest_walk_forward(
 
         price_acceleration_portfolio_value = price_acceleration_invested_value + price_acceleration_cash
         price_acceleration_portfolio_history.append(price_acceleration_portfolio_value)
+
+        # Update PRICE CURVATURE portfolio value daily
+        price_curvature_invested_value = 0.0
+        if config.ENABLE_PRICE_CURVATURE:
+            for ticker in list(price_curvature_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None and hasattr(ticker_data_grouped, 'get_group'):
+                        try:
+                            ticker_data = ticker_data_grouped.get_group(ticker)
+                        except KeyError:
+                            ticker_data = None
+
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None:
+                            shares = price_curvature_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            price_curvature_positions[ticker]['value'] = position_value
+                            price_curvature_invested_value += position_value
+                        else:
+                            price_curvature_invested_value += price_curvature_positions[ticker].get('value', 0.0)
+                    else:
+                        price_curvature_invested_value += price_curvature_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating Price Curvature position for {ticker}: {e}")
+                    price_curvature_invested_value += price_curvature_positions[ticker].get('value', 0.0)
+
+        price_curvature_portfolio_value = price_curvature_invested_value + price_curvature_cash
+        price_curvature_portfolio_history.append(price_curvature_portfolio_value)
         _advance_valuation_progress("hybrid + acceleration")
 
         # Update 1Y/3M RATIO portfolio value daily
@@ -11322,6 +11443,7 @@ def _run_portfolio_backtest_walk_forward(
             ("Mom Acceleration",    mom_accel_portfolio_history           if config.ENABLE_MOMENTUM_ACCELERATION else None),
             ("Concentrated 3M",     concentrated_3m_portfolio_history     if config.ENABLE_CONCENTRATED_3M else None),
             ("Price Acceleration",  price_acceleration_portfolio_history  if config.ENABLE_PRICE_ACCELERATION else None),
+            ("Price Curvature",     price_curvature_portfolio_history     if config.ENABLE_PRICE_CURVATURE else None),
             ("Elite Hybrid",        elite_hybrid_portfolio_history        if config.ENABLE_ELITE_HYBRID else None),
             ("Elite Risk",          elite_risk_portfolio_history          if config.ENABLE_ELITE_RISK else None),
             ("Risk-Adj Mom 6M",     risk_adj_mom_6m_portfolio_history     if config.ENABLE_RISK_ADJ_MOM_6M else None),
@@ -11480,6 +11602,7 @@ def _run_portfolio_backtest_walk_forward(
             'momentum_volatility_hybrid_1y': _strat(momentum_volatility_hybrid_1y_portfolio_value, momentum_volatility_hybrid_1y_portfolio_history, momentum_volatility_hybrid_1y_transaction_costs, momentum_volatility_hybrid_1y_cash),
             'momentum_volatility_hybrid_1y3m': _strat(momentum_volatility_hybrid_1y3m_portfolio_value, momentum_volatility_hybrid_1y3m_portfolio_history, momentum_volatility_hybrid_1y3m_transaction_costs, momentum_volatility_hybrid_1y3m_cash),
             'price_acceleration':       _strat(price_acceleration_portfolio_value, price_acceleration_portfolio_history, price_acceleration_transaction_costs, price_acceleration_cash),
+            'price_curvature':         _strat(price_curvature_portfolio_value, price_curvature_portfolio_history, price_curvature_transaction_costs, price_curvature_cash),
             'turnaround':               _strat(turnaround_portfolio_value, turnaround_portfolio_history, turnaround_transaction_costs, turnaround_cash),
             'adaptive_ensemble':        _strat(adaptive_ensemble_portfolio_value, adaptive_ensemble_portfolio_history, adaptive_ensemble_transaction_costs, adaptive_ensemble_cash),
             'volatility_ensemble':      _strat(volatility_ensemble_portfolio_value, volatility_ensemble_portfolio_history, volatility_ensemble_transaction_costs, volatility_ensemble_cash),
@@ -11610,6 +11733,7 @@ def _run_portfolio_backtest_walk_forward(
             'volatility_ensemble': {'tickers': list(current_volatility_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in volatility_ensemble_positions.items()}},
             'turnaround': {'tickers': list(current_turnaround_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in turnaround_positions.items()}},
             'price_acceleration': {'tickers': list(current_price_acceleration_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in price_acceleration_positions.items()}},
+            'price_curvature': {'tickers': list(current_price_curvature_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in price_curvature_positions.items()}},
             'volatility_adj_mom': {'tickers': list(current_volatility_adj_mom_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in volatility_adj_mom_positions.items()}},
             'enhanced_volatility': {'tickers': list(current_enhanced_volatility_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in enhanced_volatility_positions.items()}},
             'ratio_3m_1y': {'tickers': list(current_ratio_3m_1y_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in ratio_3m_1y_positions.items()}},
@@ -11716,6 +11840,7 @@ def _run_portfolio_backtest_walk_forward(
         select_top_performers_vol_filtered,
         select_momentum_volatility_hybrid_stocks
     )
+    from price_curvature_strategy import select_price_curvature_stocks
 
     # Use backtest_end_date as current_date for selections
     live_current_date = backtest_end_date
