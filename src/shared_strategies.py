@@ -1451,7 +1451,7 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
     """
     from config import INVERSE_ETFS
     from parallel_backtest import _window_slice
-    from strategy_cache_adapter import ensure_price_history_cache
+    from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
 
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
