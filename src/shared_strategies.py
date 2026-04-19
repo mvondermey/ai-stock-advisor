@@ -1533,7 +1533,7 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
 
     from config import SECTOR_ROTATION_MOMENTUM_WINDOW, SECTOR_ROTATION_MIN_MOMENTUM
     from performance_filters import filter_tickers_by_performance
-    from strategy_cache_adapter import ensure_price_history_cache
+    from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
 
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
@@ -2412,7 +2412,7 @@ def select_1y_performers_ranked_by_1m3m_ratio(all_tickers, ticker_data_grouped, 
     """
 
     from config import INVERSE_ETFS
-    from strategy_cache_adapter import ensure_price_history_cache
+    from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
 
 
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
