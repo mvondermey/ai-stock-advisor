@@ -77,7 +77,7 @@ except ImportError:
 # 'volatility_adj_mom' = Volatility-Adjusted Momentum
 def get_live_trading_strategy():
     """Get the live trading strategy from config (set dynamically by main.py)."""
-    return getattr(config, 'LIVE_TRADING_STRATEGY', 'risk_adj_mom')
+    return getattr(config, 'LIVE_TRADING_STRATEGY', None)
 
 
 def load_strategy_selections_with_comparison(strategy_name: str) -> Optional[List[str]]:
@@ -747,6 +747,26 @@ def get_turnaround_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str
     return select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
+def get_deep_recovery_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """Deep Recovery Strategy: Contrarian strategy scanning full universe for beaten-down stocks with reversal signals."""
+    from strategy_cache_adapter import ensure_price_history_cache
+    from deep_recovery_strategy import select_deep_recovery_stocks
+
+    if not ticker_data_grouped:
+        print("   [DEBUG] Deep Recovery: No ticker data available")
+        return []
+
+    print(f"   [DEBUG] Deep Recovery: Processing full universe ({len(ticker_data_grouped)} tickers)")
+    current_date = datetime.now(timezone.utc)
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped)
+    return select_deep_recovery_stocks(
+        all_tickers,
+        ticker_data_grouped,
+        current_date=current_date,
+        top_n=PORTFOLIO_SIZE,
+        price_history_cache=price_history_cache,
+    )
+
 
 
 def get_ratio_1y_3m_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -815,17 +835,6 @@ def get_adaptive_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: D
     return select_adaptive_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
-def get_volatility_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
-    """Volatility-Adjusted Ensemble Strategy: Risk-managed position sizing."""
-    from volatility_ensemble import select_volatility_ensemble_stocks
-
-    print(f"   [DEBUG] Volatility Ensemble: Processing {len(all_tickers)} tickers")
-    # ticker_data_grouped already prepared in main.py "Volatility Ensemble")
-
-    current_date = datetime.now(timezone.utc)
-    return select_volatility_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
-
-
 def get_ai_volatility_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """AI-Enhanced Volatility Ensemble Strategy: DISABLED - returns empty."""
     print(f"   [WARN] AI Volatility Ensemble disabled, returning empty")
@@ -841,17 +850,6 @@ def get_correlation_ensemble_tickers(all_tickers: List[str], ticker_data_grouped
 
     current_date = datetime.now(timezone.utc)
     return select_correlation_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
-
-
-def get_dynamic_pool_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
-    """Dynamic Strategy Pool Strategy: Rotates strategies based on performance."""
-    from dynamic_pool import select_dynamic_pool_stocks
-
-    print(f"   [DEBUG] Dynamic Pool: Processing {len(all_tickers)} tickers")
-    # ticker_data_grouped already prepared in main.py "Dynamic Pool")
-
-    current_date = datetime.now(timezone.utc)
-    return select_dynamic_pool_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
 
 
 def get_sentiment_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
@@ -1035,6 +1033,9 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
 
     # Get strategy dynamically from config (set by main.py)
     LIVE_TRADING_STRATEGY = get_live_trading_strategy()
+    if not LIVE_TRADING_STRATEGY:
+        print("❌ No live trading strategy configured. Set `LIVE_TRADING_STRATEGY` or pass `--strategy`.")
+        return
 
     # Continue with the rest of the live trading logic
     print("=" * 80)
@@ -1066,11 +1067,9 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'momentum_volatility_hybrid_1y': 'Mom-Vol Hybrid 1Y (1-Year Controlled Momentum)',
         'momentum_volatility_hybrid_1y3m': 'Mom-Vol Hybrid 1Y/3M (Strong 1Y, Weak 3M)',
         'adaptive_ensemble': 'Adaptive Ensemble (Meta-Strategy)',
-        'volatility_ensemble': 'Volatility Ensemble (Risk-Managed)',
         'ai_volatility_ensemble': 'AI Volatility Ensemble (AI-Enhanced)',
         'correlation_ensemble': 'Correlation Ensemble (Diversified)',
         'ai_elite': 'AI Elite (ML-Powered Momentum + Dip Scoring)',
-        'dynamic_pool': 'Dynamic Pool (Adaptive)',
         'sentiment_ensemble': 'Mom-Vol 6M Sentiment (News-Enhanced)',
         'momentum_breakout': 'Momentum Breakout (52-Week High)',
         'factor_rotation': 'Factor Rotation (Value/Growth/Mom/Quality)',
@@ -1105,6 +1104,13 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'bh_1m_monthly': 'BH 1M Monthly (Monthly Rebalance)',
         'static_bh_1y_vol': 'Static BH 1Y Vol (Volatility Filter)',
         'static_bh_1y_perf': 'Static BH 1Y Perf (Performance Threshold)',
+        'static_bh_6m_perf': 'BH 6M Perf Trig',
+        'static_bh_9m_perf': 'BH 9M Perf Trig',
+        'foresight_mimic': 'Foresight Mimic Accel',
+        'bh_1y_1m_rank': 'BH 1Y / 1M Rank',
+        'bh_1y_6m_rank': 'BH 1Y / 6M Rank',
+        'bh_1y_sma200': 'BH 1Y SMA200',
+        'bh_1y_fcf_rank': 'BH 1Y / FCF Rank',
         'static_bh_1y_mom': 'Static BH 1Y Mom (Momentum Filter)',
         'static_bh_1y_atr': 'Static BH 1Y ATR (ATR-Based)',
         'static_bh_1y_hybrid': 'Static BH 1Y Hybrid (Multi-Filter)',
@@ -1137,12 +1143,12 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
         'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
         'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m',
-        'price_acceleration', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
+        'price_acceleration', 'foresight_mimic', 'bh_1y_1m_rank', 'bh_1y_6m_rank', 'bh_1y_sma200', 'bh_1y_fcf_rank', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
         # Missing strategies from backtesting
         'momentum_ai_hybrid', 'inverse_etf_hedge', 'trend_atr', 'dual_momentum', 'sector_rotation',
         'volatility_adj_mom', 'enhanced_volatility', 'concentrated_3m', 'analyst_rec',
         'bh_1y_monthly', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
-        'static_bh_1y_vol', 'static_bh_1y_perf', 'static_bh_1y_mom', 'static_bh_1y_atr', 'static_bh_1y_hybrid',
+        'static_bh_1y_vol', 'static_bh_1y_perf', 'static_bh_6m_perf', 'static_bh_9m_perf', 'static_bh_1y_mom', 'static_bh_1y_atr', 'static_bh_1y_hybrid',
         'static_bh_1y_volume', 'static_bh_1y_sector', 'static_bh_1y_perf_threshold', 'static_bh_1y_market_regime'
     ] else None
     if LIVE_TRADING_STRATEGY in [
@@ -1152,12 +1158,12 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
         'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
         'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m',
-        'price_acceleration', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
+        'price_acceleration', 'foresight_mimic', 'bh_1y_1m_rank', 'bh_1y_6m_rank', 'bh_1y_sma200', 'bh_1y_fcf_rank', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
         # Missing strategies from backtesting
         'momentum_ai_hybrid', 'inverse_etf_hedge', 'trend_atr', 'dual_momentum', 'sector_rotation',
         'volatility_adj_mom', 'enhanced_volatility', 'concentrated_3m', 'analyst_rec',
         'bh_1y_monthly', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
-        'static_bh_1y_vol', 'static_bh_1y_perf', 'static_bh_1y_mom', 'static_bh_1y_atr', 'static_bh_1y_hybrid',
+        'static_bh_1y_vol', 'static_bh_1y_perf', 'static_bh_6m_perf', 'static_bh_9m_perf', 'static_bh_1y_mom', 'static_bh_1y_atr', 'static_bh_1y_hybrid',
         'static_bh_1y_volume', 'static_bh_1y_sector', 'static_bh_1y_perf_threshold', 'static_bh_1y_market_regime'
     ]:
         print(f"    Data available: {ticker_data_grouped_for_strategy is not None}")

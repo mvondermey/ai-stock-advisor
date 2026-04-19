@@ -59,26 +59,7 @@ This document describes the new ensemble strategies implemented as independent s
 
 ---
 
-## 4. Dynamic Strategy Pool Strategy (`dynamic_pool.py`)
-
-**File**: `src/dynamic_pool.py`
-
-**Key Features**:
-- Tracks performance of 12 available strategies
-- Keeps top 4 performing strategies in active pool
-- Dynamic weight allocation based on recent performance
-- Strategy rotation based on performance thresholds
-
-**Configuration**:
-- `POOL_SIZE = 4` (number of active strategies)
-- `PERFORMANCE_WINDOW_DAYS = 30` (performance evaluation window)
-- 15% performance difference triggers rotation
-
-**Use Case**: Investors who want the system to automatically adapt to the best performing strategies.
-
----
-
-## 5. Sentiment-Enhanced Ensemble Strategy (`sentiment_ensemble.py`)
+## 4. Sentiment-Enhanced Ensemble Strategy (`sentiment_ensemble.py`)
 
 **File**: `src/sentiment_ensemble.py`
 
@@ -110,7 +91,6 @@ All strategies are integrated with:
 # In config.py
 ENABLE_VOLATILITY_ENSEMBLE = True
 ENABLE_CORRELATION_ENSEMBLE = True
-ENABLE_DYNAMIC_POOL = True
 ENABLE_SENTIMENT_ENSEMBLE = True
 ```
 
@@ -119,7 +99,6 @@ ENABLE_SENTIMENT_ENSEMBLE = True
 Set strategy in your live trading configuration:
 - `'volatility_ensemble'`
 - `'correlation_ensemble'`
-- `'dynamic_pool'`
 - `'sentiment_ensemble'`
 
 ## Performance Expectations:
@@ -129,7 +108,6 @@ Set strategy in your live trading configuration:
 | Adaptive Meta-Ensemble | 60-70% of best strategy | Medium | Varying regimes |
 | Volatility-Adjusted | Moderate | Low-Medium | High volatility |
 | Correlation-Filtered | Moderate | Low | All conditions |
-| Dynamic Pool | High (adaptive) | Medium | Strategy rotation |
 | Sentiment-Enhanced | Moderate-High | Medium | News-driven markets |
 
 ## Next Steps:

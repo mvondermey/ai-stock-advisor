@@ -63,12 +63,14 @@ from ai_elite_strategy import _calculate_market_return
 _inverse_etf_hedge_log = []  # List of (date, etf, market_decline) tuples
 _selector_result_memory_cache: Dict[str, List[str]] = {}
 _selector_universe_signature_memory_cache: Dict[Tuple[int, Tuple[str, ...]], str] = {}
+_fundamental_history_memory_cache: Dict[str, pd.DataFrame] = {}
 
 _CACHEABLE_REGISTRY_STRATEGIES = {
     "volatility_adj_mom",
     "ratio_3m_1y",
     "ratio_1y_3m",
     "ratio_1m_3m",
+    "sma50_1y_delta_ratio",
     "turnaround",
     "price_acceleration",
     "momentum_volatility_hybrid",
@@ -78,6 +80,11 @@ _CACHEABLE_REGISTRY_STRATEGIES = {
     "multi_tf_ensemble",
     "multi_tf_intraday_ensemble",
     "confirmed_leaders",
+    "foresight_mimic",
+    "bh_1y_1m_rank",
+    "bh_1y_6m_rank",
+    "bh_1y_sma200",
+    "bh_1y_fcf_rank",
 }
 
 
@@ -110,6 +117,39 @@ def _selector_cache_key(
         "tickers": list(normalized_tickers),
         "universe_signature": universe_signature,
     }
+
+
+def _cached_daily_close_values(
+    price_history_cache,
+    ticker: str,
+    current_date: datetime,
+    min_daily_rows: int = 2,
+) -> Optional[np.ndarray]:
+    date_ns = price_history_cache.date_ns_by_ticker.get(ticker)
+    closes = price_history_cache.close_by_ticker.get(ticker)
+    if date_ns is None or closes is None or date_ns.size == 0 or closes.size == 0:
+        return None
+
+    current_ts = pd.Timestamp(current_date)
+    if current_ts.tzinfo is not None:
+        current_ts = current_ts.tz_convert("UTC").tz_localize(None)
+    end_idx = int(np.searchsorted(date_ns, int(current_ts.value), side="right"))
+    if end_idx < 2:
+        return None
+
+    close_window = np.asarray(closes[:end_idx], dtype=float)
+    valid_mask = ~np.isnan(close_window)
+    if np.count_nonzero(valid_mask) < 2:
+        return None
+
+    daily_series = pd.Series(
+        close_window[valid_mask],
+        index=pd.to_datetime(date_ns[:end_idx][valid_mask], unit="ns", utc=True),
+    ).resample("1D").last().dropna()
+
+    if len(daily_series) < min_daily_rows:
+        return None
+    return daily_series.to_numpy(dtype=float, copy=True)
 
 
 
@@ -902,6 +942,7 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
     """
 
     from config import INVERSE_ETFS
+    from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
 
 
 
@@ -919,7 +960,7 @@ def select_volatility_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped
 
     filtered_tickers = filter_tickers_by_performance(
 
-        tickers_to_use, ticker_data_grouped, current_date, "Vol-Adj Mom", price_history_cache=price_history_cache
+        tickers_to_use, current_date, "Vol-Adj Mom", price_history_cache=price_history_cache
 
     )
 
@@ -1030,22 +1071,18 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
     """
 
     from config import INVERSE_ETFS
-
-
+    from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
 
     # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
-
     tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
-
-
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     # Apply performance filters if enabled
-
     from performance_filters import filter_tickers_by_performance
 
     filtered_tickers = filter_tickers_by_performance(
 
-        tickers_to_use, ticker_data_grouped, current_date, strategy_name
+        tickers_to_use, current_date, strategy_name, price_history_cache=price_history_cache
 
     )
 
@@ -1201,7 +1238,7 @@ def select_risk_adj_mom_stocks(all_tickers: List[str], ticker_data_grouped: Dict
 
 def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame],
 
-                                current_date: datetime = None, top_n: int = 20) -> List[str]:
+                                current_date: datetime = None, top_n: int = 20, price_history_cache=None) -> List[str]:
 
     """
 
@@ -1222,10 +1259,13 @@ def select_mean_reversion_stocks(all_tickers: List[str], ticker_data_grouped: Di
     # Apply performance filters if enabled
 
     from performance_filters import filter_tickers_by_performance
+    from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     filtered_tickers = filter_tickers_by_performance(
 
-        tickers_to_use, ticker_data_grouped, current_date, "Mean Reversion"
+        tickers_to_use, current_date, "Mean Reversion", price_history_cache=price_history_cache
 
     )
 
@@ -1419,7 +1459,7 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
 
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        tickers_to_use, ticker_data_grouped, current_date, "Quality+Mom", price_history_cache=price_history_cache
+        tickers_to_use, current_date, "Quality+Mom", price_history_cache=price_history_cache
     )
 
     quality_momentum_candidates = []
@@ -1481,7 +1521,7 @@ def select_quality_momentum_stocks(all_tickers: List[str], ticker_data_grouped: 
 
 def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame],
 
-                                current_date: datetime, top_n: int = 5, verbose: bool = True) -> List[str]:
+                                current_date: datetime, top_n: int = 5, verbose: bool = True, price_history_cache=None) -> List[str]:
 
     """
 
@@ -1492,6 +1532,10 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
     """
 
     from config import SECTOR_ROTATION_MOMENTUM_WINDOW, SECTOR_ROTATION_MIN_MOMENTUM
+    from performance_filters import filter_tickers_by_performance
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
 
     if verbose:
@@ -1526,6 +1570,17 @@ def select_sector_rotation_etfs(all_tickers: List[str], ticker_data_grouped: Dic
         if verbose:
             print(f"   ❌ No sector ETFs found in ticker list or data! Strategy cannot execute.")
 
+        return []
+
+    available_sector_etfs = filter_tickers_by_performance(
+        available_sector_etfs,
+        current_date,
+        "Sector Rotation",
+        price_history_cache=price_history_cache,
+    )
+    if not available_sector_etfs:
+        if verbose:
+            print("   ❌ Sector Rotation: No ETFs passed the unified prefilter")
         return []
 
 
@@ -1690,14 +1745,11 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
     """
 
     from config import INVERSE_ETFS
-
-
+    from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
 
     # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
-
     all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
-
-
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     # Apply performance filters if enabled
 
@@ -1705,7 +1757,7 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "3M/1Y Ratio", price_history_cache=price_history_cache
+        all_tickers, current_date, "3M/1Y Ratio", price_history_cache=price_history_cache
 
     )
 
@@ -1715,48 +1767,8 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
 
 
 
-    # Use current date or last available date
-
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
     if current_date is None:
-
-        latest_dates = [ticker_data_grouped[t].index.max() for t in all_tickers
-
-                       if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-
-        if latest_dates:
-
-            current_date = max(latest_dates)
-
-        else:
-
-            return []
-
-
-
-    # Ensure current_date is a datetime object
-
-    if isinstance(current_date, str):
-
-        try:
-
-            current_date = pd.to_datetime(current_date)
-
-        except Exception:
-
-            pass
-
-
-
-    # Ensure current_date is timezone-aware for comparison
-
-    if hasattr(current_date, 'tzinfo') and current_date.tzinfo is None:
-
-        current_date = current_date.replace(tzinfo=timezone.utc)
-
-    elif not hasattr(current_date, 'tzinfo'):
-
-        # Fallback if it's not a datetime-like object
-
         return []
 
 
@@ -1787,141 +1799,20 @@ def select_3m_1y_ratio_stocks(all_tickers: List[str], ticker_data_grouped: Dict[
 
 
 
-            if ticker not in ticker_data_grouped:
-
+            daily_close = _cached_daily_close_values(price_history_cache, ticker, current_date, min_daily_rows=253)
+            if daily_close is None or len(daily_close) < 253:
                 data_insufficient += 1
-
                 continue
 
-
-
-            ticker_data = ticker_data_grouped[ticker]
-
-
-
-            # Need at least 1 year of data
-
-            if len(ticker_data) < MIN_DATA_DAYS_1Y:
-
+            latest_price = float(daily_close[-1])
+            three_month_start_price = float(daily_close[-64])
+            one_year_start_price = float(daily_close[-253])
+            if any(price <= 0 or np.isnan(price) for price in (latest_price, three_month_start_price, one_year_start_price)):
                 data_insufficient += 1
-
                 continue
 
-
-
-            # Convert current_date to pandas Timestamp with timezone
-
-            current_date_tz = pd.Timestamp(current_date)
-
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-
-                if current_date_tz.tz is None:
-
-                    current_date_tz = current_date_tz.tz_localize(ticker_data.index.tz)
-
-                else:
-
-                    current_date_tz = current_date_tz.tz_convert(ticker_data.index.tz)
-
-
-
-            # Calculate 3-month performance
-
-            three_month_start = current_date_tz - timedelta(days=90)
-
-            three_month_data = ticker_data[(ticker_data.index >= three_month_start) &
-
-                                         (ticker_data.index <= current_date_tz)]
-
-
-
-            from config import MIN_DATA_DAYS_THREE_MONTH_POINTS
-
-            if len(three_month_data) < MIN_DATA_DAYS_THREE_MONTH_POINTS:  # Need at least 10 data points
-
-                data_insufficient += 1
-
-                continue
-
-
-
-            three_month_valid = three_month_data['Close'].dropna()
-
-            if len(three_month_valid) < 2:
-
-                data_insufficient += 1
-
-                continue
-
-
-
-            three_month_start_price = three_month_valid.iloc[0]
-
-            three_month_end_price = three_month_valid.iloc[-1]
-
-
-
-            if three_month_start_price <= 0 or pd.isna(three_month_start_price) or pd.isna(three_month_end_price):
-
-                data_insufficient += 1
-
-                continue
-
-
-
-            three_month_performance = ((three_month_end_price - three_month_start_price) /
-
-                                     three_month_start_price) * 100
-
-
-
-            # Calculate 1-year performance
-
-            one_year_start = current_date_tz - timedelta(days=365)
-
-            one_year_data = ticker_data[(ticker_data.index >= one_year_start) &
-
-                                      (ticker_data.index <= current_date_tz)]
-
-
-
-            from config import MIN_DATA_DAYS_ONE_YEAR_POINTS
-
-            if len(one_year_data) < MIN_DATA_DAYS_ONE_YEAR_POINTS:  # Need at least 50 data points
-
-                data_insufficient += 1
-
-                continue
-
-
-
-            one_year_valid = one_year_data['Close'].dropna()
-
-            if len(one_year_valid) < 2:
-
-                data_insufficient += 1
-
-                continue
-
-
-
-            one_year_start_price = one_year_valid.iloc[0]
-
-            one_year_end_price = one_year_valid.iloc[-1]
-
-
-
-            if one_year_start_price <= 0 or pd.isna(one_year_start_price) or pd.isna(one_year_end_price):
-
-                data_insufficient += 1
-
-                continue
-
-
-
-            one_year_performance = ((one_year_end_price - one_year_start_price) /
-
-                                  one_year_start_price) * 100
+            three_month_performance = ((latest_price - three_month_start_price) / three_month_start_price) * 100
+            one_year_performance = ((latest_price - one_year_start_price) / one_year_start_price) * 100
 
 
 
@@ -2078,7 +1969,7 @@ def select_turnaround_stocks(all_tickers, ticker_data_grouped, current_date=None
 
     filtered_tickers = filter_tickers_by_performance(
 
-        tickers_to_use, ticker_data_grouped, current_date, "Turnaround", price_history_cache=price_history_cache
+        tickers_to_use, current_date, "Turnaround", price_history_cache=price_history_cache
 
     )
 
@@ -2359,7 +2250,7 @@ def select_1m_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
 
     filtered_tickers = filter_tickers_by_performance(
 
-        tickers_to_use, ticker_data_grouped, current_date, "1M/3M Ratio", price_history_cache=price_history_cache
+        tickers_to_use, current_date, "1M/3M Ratio", price_history_cache=price_history_cache
 
     )
 
@@ -2379,29 +2270,11 @@ def select_1m_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
 
 
 
-    # Use current date or last available date
+    from strategy_cache_adapter import resolve_cache_current_date
 
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
     if current_date is None:
-
-        latest_dates = [ticker_data_grouped[t].index.max() for t in filtered_tickers
-
-                       if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-
-        if latest_dates:
-
-            current_date = max(latest_dates)
-
-        else:
-
-            return []
-
-
-
-    # Ensure current_date is timezone-aware
-
-    if hasattr(current_date, 'tzinfo') and current_date.tzinfo is None:
-
-        current_date = current_date.replace(tzinfo=timezone.utc)
+        return []
 
 
 
@@ -2409,109 +2282,20 @@ def select_1m_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
 
         try:
 
-            if ticker not in ticker_data_grouped:
-
-                continue
-
-
-
-            ticker_data = ticker_data_grouped[ticker]
-
-
-
-            # Convert current_date to pandas Timestamp with timezone
-
-            current_date_tz = pd.Timestamp(current_date)
-
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-
-                if current_date_tz.tz is None:
-
-                    current_date_tz = current_date_tz.tz_localize(ticker_data.index.tz)
-
-                else:
-
-                    current_date_tz = current_date_tz.tz_convert(ticker_data.index.tz)
-
-
-
-            # Calculate 1-month and 3-month start dates
-
-            one_month_start = current_date_tz - timedelta(days=30)
-
-            three_month_start = current_date_tz - timedelta(days=90)
-
-
-
-            # Get 1-month data
-
-            one_month_data = ticker_data[(ticker_data.index >= one_month_start) &
-
-                                        (ticker_data.index <= current_date_tz)]
-
-
-
-            # Get 3-month data
-
-            three_month_data = ticker_data[(ticker_data.index >= three_month_start) &
-
-                                          (ticker_data.index <= current_date_tz)]
-
-
-
-            # Check data sufficiency
-
-            if len(one_month_data) < MIN_DATA_DAYS_1M or len(three_month_data) < MIN_DATA_DAYS_3M:
-
+            daily_close = _cached_daily_close_values(price_history_cache, ticker, current_date, min_daily_rows=64)
+            if daily_close is None or len(daily_close) < 64:
                 data_insufficient += 1
-
                 continue
 
-
-
-            one_month_valid = one_month_data['Close'].dropna()
-
-            three_month_valid = three_month_data['Close'].dropna()
-
-
-
-            if len(one_month_valid) < 2 or len(three_month_valid) < 2:
-
+            latest_price = float(daily_close[-1])
+            one_month_start_price = float(daily_close[-22])
+            three_month_start_price = float(daily_close[-64])
+            if any(price <= 0 or np.isnan(price) for price in (latest_price, one_month_start_price, three_month_start_price)):
                 data_insufficient += 1
-
                 continue
 
-
-
-            # Calculate performances
-
-            one_month_start_price = one_month_valid.iloc[0]
-
-            one_month_end_price = one_month_valid.iloc[-1]
-
-            three_month_start_price = three_month_valid.iloc[0]
-
-            three_month_end_price = three_month_valid.iloc[-1]
-
-
-
-            if any(price <= 0 or pd.isna(price) for price in [one_month_start_price, one_month_end_price,
-
-                                                               three_month_start_price, three_month_end_price]):
-
-                data_insufficient += 1
-
-                continue
-
-
-
-            one_month_performance = ((one_month_end_price - one_month_start_price) /
-
-                                    one_month_start_price) * 100
-
-            three_month_performance = ((three_month_end_price - three_month_start_price) /
-
-                                      three_month_start_price) * 100
+            one_month_performance = ((latest_price - one_month_start_price) / one_month_start_price) * 100
+            three_month_performance = ((latest_price - three_month_start_price) / three_month_start_price) * 100
 
 
 
@@ -2607,7 +2391,7 @@ def select_1m_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
 
 
 
-def select_1y_performers_ranked_by_1m3m_ratio(all_tickers, ticker_data_grouped, current_date=None, top_n=20):
+def select_1y_performers_ranked_by_1m3m_ratio(all_tickers, ticker_data_grouped, current_date=None, top_n=20, price_history_cache=None):
 
     """
 
@@ -2627,31 +2411,34 @@ def select_1y_performers_ranked_by_1m3m_ratio(all_tickers, ticker_data_grouped, 
 
     """
 
-    from parallel_backtest import calculate_parallel_performance
-
     from config import INVERSE_ETFS
+    from strategy_cache_adapter import ensure_price_history_cache
 
 
-
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     # Exclude inverse ETFs
 
     tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
 
 
 
-    # Step 1: Get top 1Y performers (larger pool - 3x the final selection)
+    # Step 1: Get the requested 1Y performer pool.
 
-    pool_size = top_n * 3
+    pool_size = top_n
 
-    performances = calculate_parallel_performance(
-
-        tickers_to_use, ticker_data_grouped, current_date, period_days=365
-
+    top_1y_with_scores = select_top_performers_with_scores(
+        tickers_to_use,
+        ticker_data_grouped,
+        current_date,
+        lookback_days=365,
+        top_n=pool_size,
+        apply_performance_filter=True,
+        filter_label="1Y+1M3M Ratio",
+        price_history_cache=price_history_cache,
     )
 
 
-
-    if not performances:
+    if not top_1y_with_scores:
 
         print(f"   ❌ 1Y+1M3M Ratio: No 1Y performance data available")
 
@@ -2661,9 +2448,8 @@ def select_1y_performers_ranked_by_1m3m_ratio(all_tickers, ticker_data_grouped, 
 
     # Sort by 1Y performance and get top pool
 
-    performances.sort(key=lambda x: x[1], reverse=True)
-
-    top_1y_pool = [ticker for ticker, _ in performances[:pool_size]]
+    one_year_scores = {ticker: perf for ticker, perf in top_1y_with_scores}
+    top_1y_pool = [ticker for ticker, _ in top_1y_with_scores]
 
 
 
@@ -2679,27 +2465,9 @@ def select_1y_performers_ranked_by_1m3m_ratio(all_tickers, ticker_data_grouped, 
 
 
 
-    # Ensure current_date is timezone-aware
-
+    current_date = resolve_cache_current_date(price_history_cache, current_date, top_1y_pool)
     if current_date is None:
-
-        latest_dates = [ticker_data_grouped[t].index.max() for t in top_1y_pool
-
-                       if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-
-        if latest_dates:
-
-            current_date = max(latest_dates)
-
-        else:
-
-            return []
-
-
-
-    if hasattr(current_date, 'tzinfo') and current_date.tzinfo is None:
-
-        current_date = current_date.replace(tzinfo=timezone.utc)
+        return []
 
 
 
@@ -2707,109 +2475,20 @@ def select_1y_performers_ranked_by_1m3m_ratio(all_tickers, ticker_data_grouped, 
 
         try:
 
-            if ticker not in ticker_data_grouped:
-
-                continue
-
-
-
-            ticker_data = ticker_data_grouped[ticker]
-
-
-
-            # Convert current_date to pandas Timestamp with timezone
-
-            current_date_tz = pd.Timestamp(current_date)
-
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-
-                if current_date_tz.tz is None:
-
-                    current_date_tz = current_date_tz.tz_localize(ticker_data.index.tz)
-
-                else:
-
-                    current_date_tz = current_date_tz.tz_convert(ticker_data.index.tz)
-
-
-
-            # Calculate 1-month and 3-month start dates
-
-            one_month_start = current_date_tz - timedelta(days=30)
-
-            three_month_start = current_date_tz - timedelta(days=90)
-
-
-
-            # Get 1-month data
-
-            one_month_data = ticker_data[(ticker_data.index >= one_month_start) &
-
-                                        (ticker_data.index <= current_date_tz)]
-
-
-
-            # Get 3-month data
-
-            three_month_data = ticker_data[(ticker_data.index >= three_month_start) &
-
-                                          (ticker_data.index <= current_date_tz)]
-
-
-
-            # Check data sufficiency
-
-            if len(one_month_data) < MIN_DATA_DAYS_1M or len(three_month_data) < MIN_DATA_DAYS_3M:
-
+            daily_close = _cached_daily_close_values(price_history_cache, ticker, current_date, min_daily_rows=64)
+            if daily_close is None or len(daily_close) < 64:
                 data_insufficient += 1
-
                 continue
 
-
-
-            one_month_valid = one_month_data['Close'].dropna()
-
-            three_month_valid = three_month_data['Close'].dropna()
-
-
-
-            if len(one_month_valid) < 2 or len(three_month_valid) < 2:
-
+            latest_price = float(daily_close[-1])
+            one_month_start_price = float(daily_close[-22])
+            three_month_start_price = float(daily_close[-64])
+            if any(price <= 0 or np.isnan(price) for price in (latest_price, one_month_start_price, three_month_start_price)):
                 data_insufficient += 1
-
                 continue
 
-
-
-            # Calculate performances
-
-            one_month_start_price = one_month_valid.iloc[0]
-
-            one_month_end_price = one_month_valid.iloc[-1]
-
-            three_month_start_price = three_month_valid.iloc[0]
-
-            three_month_end_price = three_month_valid.iloc[-1]
-
-
-
-            if any(price <= 0 or pd.isna(price) for price in [one_month_start_price, one_month_end_price,
-
-                                                               three_month_start_price, three_month_end_price]):
-
-                data_insufficient += 1
-
-                continue
-
-
-
-            one_month_performance = ((one_month_end_price - one_month_start_price) /
-
-                                    one_month_start_price) * 100
-
-            three_month_performance = ((three_month_end_price - three_month_start_price) /
-
-                                      three_month_start_price) * 100
+            one_month_performance = ((latest_price - one_month_start_price) / one_month_start_price) * 100
+            three_month_performance = ((latest_price - three_month_start_price) / three_month_start_price) * 100
 
 
 
@@ -2827,7 +2506,7 @@ def select_1y_performers_ranked_by_1m3m_ratio(all_tickers, ticker_data_grouped, 
 
             # Get 1Y performance for this ticker
 
-            perf_1y = next((p for t, p in performances if t == ticker), 0)
+            perf_1y = one_year_scores.get(ticker, 0.0)
 
 
 
@@ -2871,6 +2550,89 @@ def select_1y_performers_ranked_by_1m3m_ratio(all_tickers, ticker_data_grouped, 
 
 
 
+def select_sma50_1y_delta_ratio_stocks(
+    all_tickers,
+    ticker_data_grouped,
+    current_date=None,
+    top_n=20,
+    price_history_cache=None,
+):
+
+    """
+    Select tickers above their daily SMA50 and rank by:
+
+        (close - SMA50) / (6M_return_today - 6M_return_50d_ago)
+
+    6M returns are based on daily closes using a 126-trading-day lookback.
+    """
+
+    from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    current_date = resolve_cache_current_date(price_history_cache, current_date, all_tickers)
+    if current_date is None:
+        return []
+
+    ratio_candidates = []
+    data_insufficient = 0
+    missing_close_column = 0
+    below_sma50 = 0
+    missing_delta = 0
+
+    print(f"   📊 SMA50 / 6M Delta Ratio analyzing {len(all_tickers)} tickers")
+
+    for ticker in all_tickers:
+        try:
+            daily_close = _cached_daily_close_values(price_history_cache, ticker, current_date, min_daily_rows=177)
+            if daily_close is None or len(daily_close) < 177:
+                data_insufficient += 1
+                continue
+
+            latest_close = float(daily_close[-1])
+            sma50 = float(np.mean(daily_close[-50:]))
+            if not np.isfinite(sma50) or latest_close <= sma50:
+                below_sma50 += 1
+                continue
+
+            six_month_return_today = (latest_close / float(daily_close[-127]) - 1.0) * 100.0
+            close_50d_ago = float(daily_close[-51])
+            six_month_return_50d_ago = (close_50d_ago / float(daily_close[-177]) - 1.0) * 100.0
+
+            delta_6m = six_month_return_today - six_month_return_50d_ago
+            if not np.isfinite(delta_6m) or abs(delta_6m) < 1e-12:
+                missing_delta += 1
+                continue
+
+            price_gap = latest_close - sma50
+            ratio_score = price_gap / delta_6m
+            ratio_candidates.append(
+                (ticker, ratio_score, price_gap, delta_6m, latest_close, sma50, six_month_return_today, six_month_return_50d_ago)
+            )
+        except Exception:
+            data_insufficient += 1
+            continue
+
+    ratio_candidates.sort(key=lambda x: x[1], reverse=True)
+
+    if ratio_candidates:
+        print(f"   📊 SMA50 / 6M Delta Ratio ranked {len(ratio_candidates)} stocks")
+        print(f"   🎯 Top {min(len(ratio_candidates), top_n)} stocks:")
+        for ticker, ratio_score, price_gap, delta_6m, latest_close, sma50, six_month_return_today, six_month_return_50d_ago in ratio_candidates[:top_n]:
+            print(
+                f"      {ticker}: ratio={ratio_score:+.4f}, gap={price_gap:+.2f}, "
+                f"close={latest_close:.2f}, sma50={sma50:.2f}, "
+                f"6M={six_month_return_today:+.1f}%, 6M_50d={six_month_return_50d_ago:+.1f}%, delta={delta_6m:+.1f}pp"
+            )
+
+        return [ticker for ticker, *_ in ratio_candidates[:top_n]]
+
+    print(
+        "   ❌ SMA50 / 6M Delta Ratio: No candidates found "
+        f"({data_insufficient} insufficient, {missing_close_column} missing close column, "
+        f"{below_sma50} below SMA50, {missing_delta} missing delta)"
+    )
+    return []
+
 
 
 def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=20, price_history_cache=None):
@@ -2892,7 +2654,7 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "1Y/3M Ratio", price_history_cache=price_history_cache
+        all_tickers, current_date, "1Y/3M Ratio", price_history_cache=price_history_cache
 
     )
 
@@ -2912,23 +2674,11 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
 
 
 
-    # Use current date or last available date
+    from strategy_cache_adapter import resolve_cache_current_date
 
+    current_date = resolve_cache_current_date(price_history_cache, current_date, filtered_tickers)
     if current_date is None:
-
-        latest_dates = [ticker_data_grouped[t].index.max() for t in filtered_tickers if t in ticker_data_grouped and len(ticker_data_grouped[t]) > 0]
-
-        if latest_dates:
-
-            current_date = max(latest_dates)
-
-
-
-    # Ensure current_date is timezone-aware
-
-    if current_date.tzinfo is None:
-
-        current_date = current_date.replace(tzinfo=timezone.utc)
+        return []
 
 
 
@@ -2936,107 +2686,20 @@ def select_1y_3m_ratio_stocks(all_tickers, ticker_data_grouped, current_date=Non
 
         try:
 
-            if ticker not in ticker_data_grouped:
-
-                continue
-
-
-
-            ticker_data = ticker_data_grouped[ticker]
-
-
-
-            # Convert current_date to pandas Timestamp with timezone
-
-            current_date_tz = pd.Timestamp(current_date)
-
-            if hasattr(ticker_data.index, 'tz') and ticker_data.index.tz is not None:
-
-                if current_date_tz.tz is None:
-
-                    current_date_tz = current_date_tz.tz_localize(ticker_data.index.tz)
-
-                else:
-
-                    current_date_tz = current_date_tz.tz_convert(ticker_data.index.tz)
-
-
-
-            # Calculate 3-month and 1-year start dates
-
-            three_month_start = current_date_tz - timedelta(days=90)
-
-            one_year_start = current_date_tz - timedelta(days=365)
-
-
-
-            # Get 3-month data
-
-            three_month_data = ticker_data[(ticker_data.index >= three_month_start) &
-
-                                         (ticker_data.index <= current_date_tz)]
-
-
-
-            # Get 1-year data
-
-            one_year_data = ticker_data[(ticker_data.index >= one_year_start) &
-
-                                      (ticker_data.index <= current_date_tz)]
-
-
-
-            # Check data sufficiency
-
-            if len(three_month_data) < MIN_DATA_DAYS_3M or len(one_year_data) < MIN_DATA_DAYS_1Y:
-
+            daily_close = _cached_daily_close_values(price_history_cache, ticker, current_date, min_daily_rows=253)
+            if daily_close is None or len(daily_close) < 253:
                 data_insufficient += 1
-
                 continue
 
-
-
-            three_month_valid = three_month_data['Close'].dropna()
-
-            one_year_valid = one_year_data['Close'].dropna()
-
-
-
-            if len(three_month_valid) < 2 or len(one_year_valid) < 2:
-
+            latest_price = float(daily_close[-1])
+            three_month_start_price = float(daily_close[-64])
+            one_year_start_price = float(daily_close[-253])
+            if any(price <= 0 or np.isnan(price) for price in (latest_price, three_month_start_price, one_year_start_price)):
                 data_insufficient += 1
-
                 continue
 
-
-
-            # Calculate performances
-
-            three_month_start_price = three_month_valid.iloc[0]
-
-            three_month_end_price = three_month_valid.iloc[-1]
-
-            one_year_start_price = one_year_valid.iloc[0]
-
-            one_year_end_price = one_year_valid.iloc[-1]
-
-
-
-            if any(price <= 0 or pd.isna(price) for price in [three_month_start_price, three_month_end_price, one_year_start_price, one_year_end_price]):
-
-                data_insufficient += 1
-
-                continue
-
-
-
-            three_month_performance = ((three_month_end_price - three_month_start_price) /
-
-                                      three_month_start_price) * 100
-
-            one_year_performance = ((one_year_end_price - one_year_start_price) /
-
-                                  one_year_start_price) * 100
+            three_month_performance = ((latest_price - three_month_start_price) / three_month_start_price) * 100
+            one_year_performance = ((latest_price - one_year_start_price) / one_year_start_price) * 100
 
 
 
@@ -3154,7 +2817,7 @@ def select_momentum_volatility_hybrid_stocks(all_tickers, ticker_data_grouped, c
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid", price_history_cache=price_history_cache
+        all_tickers, current_date, "Mom-Vol Hybrid", price_history_cache=price_history_cache
 
     )
 
@@ -3398,7 +3061,7 @@ def select_momentum_volatility_hybrid_6m_stocks(all_tickers, ticker_data_grouped
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 6M", price_history_cache=price_history_cache
+        all_tickers, current_date, "Mom-Vol Hybrid 6M", price_history_cache=price_history_cache
 
     )
 
@@ -3644,7 +3307,7 @@ def select_momentum_volatility_hybrid_1y3m_stocks(all_tickers, ticker_data_group
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 1Y/3M", price_history_cache=price_history_cache
+        all_tickers, current_date, "Mom-Vol Hybrid 1Y/3M", price_history_cache=price_history_cache
 
     )
 
@@ -3892,7 +3555,7 @@ def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, "Mom-Vol Hybrid 1Y", price_history_cache=price_history_cache
+        all_tickers, current_date, "Mom-Vol Hybrid 1Y", price_history_cache=price_history_cache
 
     )
 
@@ -4151,11 +3814,27 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
 
     filtered_tickers = filter_tickers_by_performance(
 
-        tickers_to_use, ticker_data_grouped, current_date, "Price Acceleration", price_history_cache=price_history_cache
+        tickers_to_use, current_date, "Price Acceleration", price_history_cache=price_history_cache
 
     )
 
 
+
+    pool_size = top_n
+    top_1y_with_scores = select_top_performers_with_scores(
+        filtered_tickers,
+        ticker_data_grouped,
+        current_date,
+        lookback_days=365,
+        top_n=pool_size,
+        price_history_cache=price_history_cache,
+    )
+    if not top_1y_with_scores:
+        print("   ❌ Price Acceleration: No 1Y performance pool available")
+        return []
+
+    one_year_performance = {ticker: perf for ticker, perf in top_1y_with_scores}
+    ranking_tickers = [ticker for ticker, _ in top_1y_with_scores]
 
     candidates = []
 
@@ -4167,13 +3846,16 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
 
 
 
-    print(f"   🚀 Price Acceleration: Analyzing {len(filtered_tickers)} tickers (filtered from {len(all_tickers)})")
+    print(
+        f"   🚀 Price Acceleration: Analyzing top {len(ranking_tickers)} 1Y performers "
+        f"(filtered from {len(filtered_tickers)}, total {len(all_tickers)})"
+    )
 
-    print(f"   📐 Formula: velocity = price.pct_change(), acceleration = velocity.diff()")
+    print(f"   📐 Formula: select by 1Y performance, rank by velocity = price.pct_change(), acceleration = velocity.diff()")
 
 
 
-    for ticker in filtered_tickers:
+    for ticker in ranking_tickers:
 
         try:
 
@@ -4339,6 +4021,8 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
 
                 'score': final_score,
 
+                'perf_1y': one_year_performance.get(ticker, 0.0),
+
                 'velocity': recent_velocity,
 
                 'acceleration': recent_acceleration,
@@ -4367,7 +4051,7 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
 
     print(f"   📊 Analysis Summary:")
 
-    print(f"      Total analyzed: {len(all_tickers)}")
+    print(f"      1Y pool analyzed: {len(ranking_tickers)}")
 
     print(f"      Data insufficient: {data_insufficient}")
 
@@ -4387,7 +4071,7 @@ def select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_d
 
             print(f"      {i}. {c['ticker']}: score={c['score']:.4f}, "
 
-                  f"velocity={c['velocity']:.4f}, accel={c['acceleration']:.6f}, "
+                  f"1Y={c['perf_1y']:.2%}, velocity={c['velocity']:.4f}, accel={c['acceleration']:.6f}, "
 
                   f"consistency={c['consistency']:.0%}")
 
@@ -4420,10 +4104,13 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
     # Apply performance filters if enabled
 
     from performance_filters import filter_tickers_by_performance
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, None)
 
     filtered_tickers = filter_tickers_by_performance(
 
-        all_tickers, ticker_data_grouped, current_date, f"Dynamic BH {period}"
+        all_tickers, current_date, f"Dynamic BH {period}", price_history_cache=price_history_cache
 
     )
 
@@ -5071,7 +4758,7 @@ def select_voting_ensemble_stocks(all_tickers, ticker_data_grouped, current_date
 
 def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookback_days, top_n=10,
 
-                          apply_performance_filter=False, filter_label="Strategy",
+                          apply_performance_filter=True, filter_label="Strategy",
 
                           exclude_inverse_etfs=True, price_history_cache=None):
 
@@ -5127,23 +4814,21 @@ def select_top_performers(all_tickers, ticker_data_grouped, current_date, lookba
 
         tickers_to_rank = all_tickers
 
+    if price_history_cache is None:
+
+        from strategy_cache_adapter import ensure_price_history_cache
+
+        price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+
     if apply_performance_filter:
 
         from performance_filters import filter_tickers_by_performance
 
         tickers_to_rank = filter_tickers_by_performance(
 
-            tickers_to_rank, ticker_data_grouped, current_date, filter_label
+            tickers_to_rank, current_date, filter_label, price_history_cache=price_history_cache
 
         )
-
-
-
-    if price_history_cache is None:
-
-        from strategy_cache_adapter import ensure_price_history_cache
-
-        price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     if price_history_cache is not None:
 
@@ -5199,13 +4884,19 @@ def select_top_performers_with_scores(all_tickers, ticker_data_grouped, current_
 
     tickers_to_rank = all_tickers
 
+    if price_history_cache is None:
+
+        from strategy_cache_adapter import ensure_price_history_cache
+
+        price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+
     if apply_performance_filter:
 
         from performance_filters import filter_tickers_by_performance
 
         tickers_to_rank = filter_tickers_by_performance(
 
-            all_tickers, ticker_data_grouped, current_date, filter_label
+            all_tickers, current_date, filter_label, price_history_cache=price_history_cache
 
         )
 
@@ -5240,7 +4931,309 @@ def select_top_performers_with_scores(all_tickers, ticker_data_grouped, current_
     return []
 
 
+def select_bh_1y_1m_rank_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=10, price_history_cache=None):
 
+    """
+    Select by 1Y performance, then rerank that pool by 1M performance.
+    """
+
+    from config import INVERSE_ETFS
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    tickers_to_use = [ticker for ticker in all_tickers if ticker not in INVERSE_ETFS]
+    pool_size = top_n
+
+    top_1y_with_scores = select_top_performers_with_scores(
+        tickers_to_use,
+        ticker_data_grouped,
+        current_date,
+        lookback_days=365,
+        top_n=pool_size,
+        apply_performance_filter=True,
+        filter_label="BH 1Y / 1M Rank",
+        price_history_cache=price_history_cache,
+    )
+    if not top_1y_with_scores:
+        print("   ❌ BH 1Y / 1M Rank: No 1Y performance pool available")
+        return []
+
+    one_year_scores = {ticker: perf for ticker, perf in top_1y_with_scores}
+    one_year_pool = [ticker for ticker, _ in top_1y_with_scores]
+
+    ranked_by_1m = select_top_performers_with_scores(
+        one_year_pool,
+        ticker_data_grouped,
+        current_date,
+        lookback_days=30,
+        top_n=len(one_year_pool),
+        price_history_cache=price_history_cache,
+    )
+    if not ranked_by_1m:
+        print("   ❌ BH 1Y / 1M Rank: No 1M ranking available inside 1Y pool")
+        return []
+
+    selected = [ticker for ticker, _ in ranked_by_1m[:top_n]]
+
+    print(
+        f"   📊 BH 1Y / 1M Rank: Selected top {len(selected)} "
+        f"from {len(one_year_pool)} 1Y leaders ranked by 1M"
+    )
+    for ticker, one_month_perf in ranked_by_1m[:min(len(ranked_by_1m), top_n)]:
+        one_year_perf = one_year_scores.get(ticker, 0.0)
+        print(f"      {ticker}: 1M={one_month_perf:+.1f}%, 1Y={one_year_perf:+.1f}%")
+
+    return selected
+
+
+def select_bh_1y_6m_rank_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=10, price_history_cache=None):
+
+    """
+    Select by 1Y performance, then rerank that pool by 6M performance.
+    """
+
+    from config import INVERSE_ETFS
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    tickers_to_use = [ticker for ticker in all_tickers if ticker not in INVERSE_ETFS]
+    pool_size = top_n
+
+    top_1y_with_scores = select_top_performers_with_scores(
+        tickers_to_use,
+        ticker_data_grouped,
+        current_date,
+        lookback_days=365,
+        top_n=pool_size,
+        apply_performance_filter=True,
+        filter_label="BH 1Y / 6M Rank",
+        price_history_cache=price_history_cache,
+    )
+    if not top_1y_with_scores:
+        print("   ❌ BH 1Y / 6M Rank: No 1Y performance pool available")
+        return []
+
+    one_year_scores = {ticker: perf for ticker, perf in top_1y_with_scores}
+    one_year_pool = [ticker for ticker, _ in top_1y_with_scores]
+
+    ranked_by_6m = select_top_performers_with_scores(
+        one_year_pool,
+        ticker_data_grouped,
+        current_date,
+        lookback_days=180,
+        top_n=len(one_year_pool),
+        price_history_cache=price_history_cache,
+    )
+    if not ranked_by_6m:
+        print("   ❌ BH 1Y / 6M Rank: No 6M ranking available inside 1Y pool")
+        return []
+
+    selected = [ticker for ticker, _ in ranked_by_6m[:top_n]]
+
+    print(
+        f"   📊 BH 1Y / 6M Rank: Selected top {len(selected)} "
+        f"from {len(one_year_pool)} 1Y leaders ranked by 6M"
+    )
+    for ticker, six_month_perf in ranked_by_6m[:min(len(ranked_by_6m), top_n)]:
+        one_year_perf = one_year_scores.get(ticker, 0.0)
+        print(f"      {ticker}: 6M={six_month_perf:+.1f}%, 1Y={one_year_perf:+.1f}%")
+
+    return selected
+
+
+def select_bh_1y_sma200_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=10, price_history_cache=None):
+
+    """
+    Select top 1Y performers that are trading above their SMA200.
+    """
+
+    from config import BH_1Y_SMA200_DAYS, INVERSE_ETFS
+    from strategy_cache_adapter import ensure_price_history_cache, get_cached_history_up_to, resolve_cache_current_date
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    tickers_to_use = [ticker for ticker in all_tickers if ticker not in INVERSE_ETFS]
+    current_date = resolve_cache_current_date(price_history_cache, current_date, tickers_to_use)
+    if current_date is None:
+        return []
+
+    eligible_tickers = []
+    data_insufficient = 0
+    sma_filtered = 0
+
+    for ticker in tickers_to_use:
+        close_history = get_cached_history_up_to(
+            price_history_cache,
+            ticker,
+            current_date,
+            field_name="close",
+            min_rows=BH_1Y_SMA200_DAYS,
+        )
+        if close_history is None or len(close_history) < BH_1Y_SMA200_DAYS:
+            data_insufficient += 1
+            continue
+
+        latest = float(close_history[-1])
+        sma_200 = float(np.mean(close_history[-BH_1Y_SMA200_DAYS:]))
+        if latest <= sma_200:
+            sma_filtered += 1
+            continue
+
+        eligible_tickers.append(ticker)
+
+    if not eligible_tickers:
+        print(
+            "   ❌ BH 1Y SMA200: No tickers passed the SMA200 filter "
+            f"(insufficient={data_insufficient}, below_sma={sma_filtered})"
+        )
+        return []
+
+    top_1y_with_scores = select_top_performers_with_scores(
+        eligible_tickers,
+        ticker_data_grouped,
+        current_date,
+        lookback_days=365,
+        top_n=top_n,
+        apply_performance_filter=True,
+        filter_label="BH 1Y SMA200",
+        price_history_cache=price_history_cache,
+    )
+    if not top_1y_with_scores:
+        print("   ❌ BH 1Y SMA200: No 1Y rankings available after SMA200 filter")
+        return []
+
+    selected = [ticker for ticker, _ in top_1y_with_scores]
+
+    print(
+        f"   📊 BH 1Y SMA200: Selected top {len(selected)} from {len(eligible_tickers)} "
+        "tickers above SMA200, ranked by 1Y"
+    )
+    for ticker, one_year_perf in top_1y_with_scores[:min(len(top_1y_with_scores), top_n)]:
+        print(f"      {ticker}: 1Y={one_year_perf:+.1f}%")
+
+    return selected
+
+
+def _load_fundamental_history(ticker: str) -> pd.DataFrame:
+    cached = _fundamental_history_memory_cache.get(ticker)
+    if cached is not None:
+        return cached.copy()
+
+    cache_key_parts = {"ticker": ticker}
+    disk_result = load_json_cache("fundamental_history", cache_key_parts, filename="series.json")
+    if isinstance(disk_result, list) and disk_result:
+        df = pd.DataFrame(disk_result)
+        if "Date" in df.columns:
+            df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
+            df = df.dropna(subset=["Date"]).set_index("Date").sort_index()
+            for col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+            _fundamental_history_memory_cache[ticker] = df
+            return df.copy()
+
+    from data_utils import _fetch_financial_data
+
+    fetched = _fetch_financial_data(ticker)
+    if fetched is None or fetched.empty:
+        empty = pd.DataFrame()
+        _fundamental_history_memory_cache[ticker] = empty
+        return empty.copy()
+
+    serialized_rows = []
+    for idx, row in fetched.sort_index().iterrows():
+        serialized_row = {"Date": pd.Timestamp(idx).isoformat()}
+        for col, value in row.items():
+            serialized_row[col] = None if pd.isna(value) else float(value)
+        serialized_rows.append(serialized_row)
+    save_json_cache("fundamental_history", cache_key_parts, serialized_rows, filename="series.json")
+
+    normalized = fetched.sort_index().copy()
+    for col in normalized.columns:
+        normalized[col] = pd.to_numeric(normalized[col], errors="coerce")
+    _fundamental_history_memory_cache[ticker] = normalized
+    return normalized.copy()
+
+
+def _latest_fundamental_value_before(ticker: str, field_name: str, current_date) -> Optional[float]:
+    history = _load_fundamental_history(ticker)
+    if history.empty or field_name not in history.columns:
+        return None
+
+    current_ts = pd.Timestamp(current_date)
+    if current_ts.tzinfo is None:
+        current_ts = current_ts.tz_localize("UTC")
+    else:
+        current_ts = current_ts.tz_convert("UTC")
+
+    values = history.loc[:current_ts, field_name].dropna()
+    if values.empty:
+        return None
+
+    latest_value = values.iloc[-1]
+    if pd.isna(latest_value):
+        return None
+    return float(latest_value)
+
+
+def select_bh_1y_fcf_rank_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=10, price_history_cache=None):
+
+    """
+    Select by 1Y performance, then rerank that pool by latest reported free cash flow.
+    """
+
+    from config import BH_1Y_FCF_RANK_REQUIRE_POSITIVE, INVERSE_ETFS
+    from strategy_cache_adapter import ensure_price_history_cache
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    tickers_to_use = [ticker for ticker in all_tickers if ticker not in INVERSE_ETFS]
+    pool_size = top_n
+
+    top_1y_with_scores = select_top_performers_with_scores(
+        tickers_to_use,
+        ticker_data_grouped,
+        current_date,
+        lookback_days=365,
+        top_n=pool_size,
+        apply_performance_filter=True,
+        filter_label="BH 1Y / FCF Rank",
+        price_history_cache=price_history_cache,
+    )
+    if not top_1y_with_scores:
+        print("   ❌ BH 1Y / FCF Rank: No 1Y performance pool available")
+        return []
+
+    candidates = []
+    missing_fcf = 0
+    non_positive_fcf = 0
+
+    for ticker, one_year_perf in top_1y_with_scores:
+        latest_fcf = _latest_fundamental_value_before(ticker, "Fin_FreeCashFlow", current_date)
+        if latest_fcf is None:
+            missing_fcf += 1
+            continue
+        if BH_1Y_FCF_RANK_REQUIRE_POSITIVE and latest_fcf <= 0:
+            non_positive_fcf += 1
+            continue
+        candidates.append((ticker, latest_fcf, one_year_perf))
+
+    if not candidates:
+        print(
+            "   ❌ BH 1Y / FCF Rank: No candidates after FCF ranking "
+            f"(missing_fcf={missing_fcf}, non_positive={non_positive_fcf})"
+        )
+        return []
+
+    candidates.sort(key=lambda item: (item[1], item[2]), reverse=True)
+    selected_candidates = candidates[:top_n]
+    selected = [ticker for ticker, _, _ in selected_candidates]
+
+    print(
+        f"   📊 BH 1Y / FCF Rank: Selected top {len(selected)} "
+        f"from {len(top_1y_with_scores)} 1Y leaders ranked by FCF"
+    )
+    for ticker, latest_fcf, one_year_perf in selected_candidates:
+        print(f"      {ticker}: FCF={latest_fcf:,.0f}, 1Y={one_year_perf:+.1f}%")
+
+    return selected
 
 
 def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current_date, lookback_days,
@@ -5277,9 +5270,16 @@ def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current
 
     """
 
-    import pandas as pd
+    from performance_filters import filter_tickers_by_performance
+    from strategy_cache_adapter import ensure_price_history_cache
 
-    from datetime import timedelta
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    filtered_tickers = filter_tickers_by_performance(
+        all_tickers,
+        current_date,
+        "Vol-Filtered Top Performers",
+        price_history_cache=price_history_cache,
+    )
 
     if price_history_cache is not None:
 
@@ -5287,7 +5287,7 @@ def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current
 
         performances = calculate_cached_performance(
 
-            all_tickers, price_history_cache, current_date, period_days=lookback_days
+            filtered_tickers, price_history_cache, current_date, period_days=lookback_days
 
         )
         cached_volatility = calculate_cached_volatility(
@@ -5295,14 +5295,6 @@ def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current
             [ticker for ticker, _ in performances], price_history_cache, current_date, period_days=lookback_days
 
         )
-
-    else:
-
-        print("   ⚠️ Vol-filtered top performers: Missing price_history_cache, returning empty selection")
-
-        return [], 0, 0
-
-
 
     filtered = []
 
@@ -5330,36 +5322,6 @@ def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current
 
                         stocks_passed += 1
 
-            else:
-
-                ticker_data = ticker_data_grouped[ticker]
-
-                perf_start_date = current_date - timedelta(days=lookback_days)
-
-                perf_data = ticker_data.loc[perf_start_date:current_date]
-
-
-
-                if len(perf_data) >= 50:
-
-                    valid_close = perf_data['Close'].dropna()
-
-                    if len(valid_close) >= 2:
-
-                        stocks_evaluated += 1
-
-                        daily_returns = valid_close.pct_change(fill_method=None).dropna()
-
-                        if len(daily_returns) > 10:
-
-                            annualized_volatility = daily_returns.std() * (252 ** 0.5) * 100
-
-                            if annualized_volatility <= max_volatility:
-
-                                filtered.append((ticker, perf_pct, annualized_volatility))
-
-                                stocks_passed += 1
-
         except Exception as e:
 
             print(f"   ⚠️ Error processing {ticker}: {e}")
@@ -5384,7 +5346,7 @@ def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current
 
 
 
-def select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=10):
+def select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=10, price_history_cache=None):
 
     """
 
@@ -5417,12 +5379,21 @@ def select_momentum_ai_hybrid_stocks(all_tickers, ticker_data_grouped, current_d
     import pandas as pd
 
     from config import MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK, INVERSE_ETFS
+    from performance_filters import filter_tickers_by_performance
+    from strategy_cache_adapter import ensure_price_history_cache
 
 
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     # Exclude inverse ETFs - they should only be in the inverse_etf_hedge strategy
 
     tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS]
+    tickers_to_use = filter_tickers_by_performance(
+        tickers_to_use,
+        current_date,
+        "Momentum AI Hybrid",
+        price_history_cache=price_history_cache,
+    )
 
 
 
@@ -6066,6 +6037,8 @@ def select_bh_1y_volsweet_accel_stocks(
 
     top_n: int = 10,
 
+    price_history_cache=None,
+
 ) -> List[str]:
 
     """
@@ -6097,12 +6070,15 @@ def select_bh_1y_volsweet_accel_stocks(
     """
 
     from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+    from strategy_cache_adapter import ensure_price_history_cache
 
 
 
     if current_date is None:
 
         current_date = datetime.now(timezone.utc)
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
 
 
@@ -6116,9 +6092,11 @@ def select_bh_1y_volsweet_accel_stocks(
 
         lookback_days=365,
 
-        top_n=top_n * 2,  # Get more for combination
+        top_n=top_n,
 
-        apply_performance_filter=False
+        apply_performance_filter=True,
+        filter_label="BH 1Y VolSweet Accel",
+        price_history_cache=price_history_cache
 
     )
 
@@ -6132,7 +6110,8 @@ def select_bh_1y_volsweet_accel_stocks(
 
         current_date=current_date,
 
-        top_n=top_n * 2
+        top_n=top_n,
+        price_history_cache=price_history_cache
 
     )
 
@@ -6498,6 +6477,8 @@ def select_bh_1y_dynamic_accel_stocks(
 
     max_days: int = 44,
 
+    price_history_cache=None,
+
 ) -> Tuple[List[str], bool]:
 
     """
@@ -6517,12 +6498,15 @@ def select_bh_1y_dynamic_accel_stocks(
     """
 
     from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
+    from strategy_cache_adapter import ensure_price_history_cache
 
 
 
     if current_date is None:
 
         current_date = datetime.now(timezone.utc)
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
 
 
@@ -6588,9 +6572,11 @@ def select_bh_1y_dynamic_accel_stocks(
 
         lookback_days=365,
 
-        top_n=top_n * 2,
+        top_n=top_n,
 
-        apply_performance_filter=False
+        apply_performance_filter=True,
+        filter_label="BH 1Y Dynamic Accel",
+        price_history_cache=price_history_cache
 
     )
 
@@ -6606,7 +6592,8 @@ def select_bh_1y_dynamic_accel_stocks(
 
         current_date=current_date,
 
-        top_n=top_n * 2
+        top_n=top_n,
+        price_history_cache=price_history_cache
 
     )
 
@@ -6770,10 +6757,6 @@ def _get_strategy_registry():
         from adaptive_ensemble import select_adaptive_ensemble_stocks
         return select_adaptive_ensemble_stocks(t, d, current_date=dt, top_n=n)
 
-    def _select_volatility_ensemble(t, d, dt, n):
-        from volatility_ensemble import select_volatility_ensemble_stocks
-        return select_volatility_ensemble_stocks(t, d, current_date=dt, top_n=n)
-
     def _select_enhanced_volatility(t, d, dt, n):
         from enhanced_volatility_trader import select_enhanced_volatility_stocks
         return select_enhanced_volatility_stocks(t, d, current_date=dt, top_n=n)
@@ -6785,10 +6768,6 @@ def _get_strategy_registry():
     def _select_correlation_ensemble(t, d, dt, n):
         from correlation_ensemble import select_correlation_ensemble_stocks
         return select_correlation_ensemble_stocks(t, d, current_date=dt, top_n=n)
-
-    def _select_dynamic_pool(t, d, dt, n):
-        from dynamic_pool import select_dynamic_pool_stocks
-        return select_dynamic_pool_stocks(t, d, current_date=dt, top_n=n)
 
     def _select_sentiment_ensemble(t, d, dt, n):
         from sentiment_ensemble import select_sentiment_ensemble_stocks
@@ -6846,6 +6825,10 @@ def _get_strategy_registry():
     def _select_confirmed_leaders(t, d, dt, n):
         from new_strategies import select_confirmed_leaders_stocks
         return select_confirmed_leaders_stocks(t, d, current_date=dt, top_n=n)
+
+    def _select_foresight_mimic(t, d, dt, n):
+        from new_strategies import select_foresight_mimic_stocks
+        return select_foresight_mimic_stocks(t, d, current_date=dt, top_n=n)
 
     return {
 
@@ -6941,16 +6924,15 @@ def _get_strategy_registry():
 
         'volatility_adj_mom': lambda t, d, dt, n: select_volatility_adj_mom_stocks(t, d, dt, n),
         'adaptive_ensemble': _select_adaptive_ensemble,
-        'volatility_ensemble': _select_volatility_ensemble,
         'enhanced_volatility': _select_enhanced_volatility,
         'ai_volatility_ensemble': _select_ai_volatility_ensemble,
         'correlation_ensemble': _select_correlation_ensemble,
-        'dynamic_pool': _select_dynamic_pool,
         'sentiment_ensemble': _select_sentiment_ensemble,
         'mom_accel': _select_mom_accel,
         'concentrated_3m': _select_concentrated_3m,
         'dual_momentum': _select_dual_momentum,
         'confirmed_leaders': _select_confirmed_leaders,
+        'foresight_mimic': _select_foresight_mimic,
         'defensive_momentum': _select_defensive_momentum,
         'trend_atr': _select_trend_atr,
         'elite_hybrid': _select_elite_hybrid,
@@ -6976,6 +6958,14 @@ def _get_strategy_registry():
         'ratio_3m_1y': lambda t, d, dt, n: select_3m_1y_ratio_stocks(t, d, dt, n),
 
         '3m_1y_ratio': lambda t, d, dt, n: select_3m_1y_ratio_stocks(t, d, dt, n),
+
+        'sma50_1y_delta_ratio': lambda t, d, dt, n: select_sma50_1y_delta_ratio_stocks(t, d, dt, n),
+
+        'sma50_ratio': lambda t, d, dt, n: select_sma50_1y_delta_ratio_stocks(t, d, dt, n),
+
+        'sma50_6m_delta_ratio': lambda t, d, dt, n: select_sma50_1y_delta_ratio_stocks(t, d, dt, n),
+
+        'sma50_6m_ratio': lambda t, d, dt, n: select_sma50_1y_delta_ratio_stocks(t, d, dt, n),
 
         'ratio_1y_3m': lambda t, d, dt, n: select_1y_3m_ratio_stocks(t, d, dt, n),
 
@@ -7003,6 +6993,11 @@ def _get_strategy_registry():
 
         'turnaround': lambda t, d, dt, n: select_turnaround_stocks(t, d, dt, n),
 
+        'deep_recovery': lambda t, d, dt, n: __import__(
+            'deep_recovery_strategy',
+            fromlist=['select_deep_recovery_stocks']
+        ).select_deep_recovery_stocks(t, d, dt, n),
+
         'price_acceleration': lambda t, d, dt, n: select_price_acceleration_stocks(t, d, dt, n),
 
         'price_curvature': lambda t, d, dt, n: __import__(
@@ -7019,11 +7014,10 @@ def _get_strategy_registry():
         # AI Elite strategies
         'ai_elite': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
         'ai_elite_filtered': lambda t, d, dt, n: select_ai_elite_with_training(t, d, dt, n)[0],
+        'ai_elite_monthly_shared': lambda t, d, dt, n: _select_ai_elite_monthly_shared_stocks(t, d, dt, n),
+        'ai_elite_ensemble': lambda t, d, dt, n: _select_ai_elite_ensemble_stocks(t, d, dt, n),
+        'ai_elite_rank_ensemble': lambda t, d, dt, n: _select_ai_elite_rank_ensemble_stocks(t, d, dt, n),
         'ai_elite_market_up': lambda t, d, dt, n: _select_ai_elite_market_up_stocks(t, d, dt, n),
-
-        'savgol_trend': lambda t, d, dt, n: _select_savgol_trend_stocks(t, d, dt, n),
-
-
 
         # Inverse ETF Hedge
 
@@ -7044,6 +7038,17 @@ def _get_strategy_registry():
 
         'static_bh_1y_performance': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'static_bh_1y_perf': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+
+        'static_bh_6m_performance': lambda t, d, dt, n: select_top_performers(t, d, dt, 180, n),
+        'static_bh_6m_perf': lambda t, d, dt, n: select_top_performers(t, d, dt, 180, n),
+
+        'static_bh_9m_performance': lambda t, d, dt, n: select_top_performers(t, d, dt, 270, n),
+        'static_bh_9m_perf': lambda t, d, dt, n: select_top_performers(t, d, dt, 270, n),
+
+        'bh_1y_1m_rank': lambda t, d, dt, n: select_bh_1y_1m_rank_stocks(t, d, dt, n),
+        'bh_1y_6m_rank': lambda t, d, dt, n: select_bh_1y_6m_rank_stocks(t, d, dt, n),
+        'bh_1y_sma200': lambda t, d, dt, n: select_bh_1y_sma200_stocks(t, d, dt, n),
+        'bh_1y_fcf_rank': lambda t, d, dt, n: select_bh_1y_fcf_rank_stocks(t, d, dt, n),
 
         'static_bh_1y_momentum': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'static_bh_1y_mom': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
@@ -7170,42 +7175,57 @@ def _select_ultimate_stocks(all_tickers, ticker_data_grouped, current_date, top_
 
 
 
-def _select_savgol_trend_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
-    """Wrapper for SavGol Trend strategy."""
+def _select_ai_elite_monthly_shared_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for AI Elite Monthly Shared using the saved shared model when available."""
     try:
-        from savgol_trend_strategy import SavgolTrendStrategy, select_savgol_trend_stocks_with_training
-
-        sample_ticker = next(iter(ticker_data_grouped.keys()), None)
-        if sample_ticker is None:
-            return []
-
-        sample_df = ticker_data_grouped[sample_ticker]
-        business_days = sorted(sample_df.index.tolist())
-        current_day_idx = len([d for d in business_days if d <= current_date]) - 1
-        if current_day_idx < 0:
-            current_day_idx = 0
-
-        model = SavgolTrendStrategy(
-            retrain_days=config.SAVGOL_TREND_RETRAIN_DAYS,
-            min_samples=config.SAVGOL_TREND_MIN_SAMPLES,
-            training_lookback_days=config.SAVGOL_TREND_TRAINING_LOOKBACK_DAYS,
-            forward_days=config.SAVGOL_TREND_FORWARD_DAYS,
-        )
-        model.load_model()
-
-        return select_savgol_trend_stocks_with_training(
+        selected, _ = select_ai_elite_with_training(
             all_tickers,
             ticker_data_grouped,
-            current_date,
-            top_n,
-            model,
-            business_days,
-            current_day_idx,
+            current_date=current_date,
+            top_n=top_n,
+            ai_elite_models={},
+            force_train=False,
+            run_selection=True,
+        )
+        return selected
+    except Exception as e:
+        print(f"  ⚠️ AI Elite Monthly Shared failed: {e}")
+        return []
+
+
+def _select_ai_elite_ensemble_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for AI Elite Ensemble live selection."""
+    try:
+        from ai_elite_strategy import select_ai_elite_ensemble_stocks
+
+        return select_ai_elite_ensemble_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
         )
     except ImportError:
         return []
     except Exception as e:
-        print(f"  ⚠️ SavGol Trend failed: {e}")
+        print(f"  ⚠️ AI Elite Ensemble failed: {e}")
+        return []
+
+
+def _select_ai_elite_rank_ensemble_stocks(all_tickers, ticker_data_grouped, current_date, top_n):
+    """Wrapper for AI Elite Rank Ensemble live selection."""
+    try:
+        from ai_elite_strategy import select_ai_elite_rank_ensemble_stocks
+
+        return select_ai_elite_rank_ensemble_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+        )
+    except ImportError:
+        return []
+    except Exception as e:
+        print(f"  ⚠️ AI Elite Rank Ensemble failed: {e}")
         return []
 
 
@@ -7305,15 +7325,26 @@ def _select_analyst_rec_stocks(all_tickers, ticker_data_grouped, current_date, t
 
     try:
 
-        from analyst_recommendation_strategy import select_analyst_recommendation_stocks
+        from analyst_recommendation_strategy import (
+            fetch_all_analyst_data,
+            select_analyst_recommendation_stocks,
+        )
 
-        # Analyst strategy requires analyst_data which we don't have, so return empty
-
-        # This strategy should be disabled in config
-
-        return []
+        analyst_data = fetch_all_analyst_data(all_tickers, max_workers=10, show_progress=False)
+        return select_analyst_recommendation_stocks(
+            tickers=all_tickers,
+            ticker_data_grouped=ticker_data_grouped,
+            analyst_data=analyst_data,
+            current_date=current_date,
+            top_n=top_n,
+        )
 
     except ImportError:
+
+        return []
+    except Exception as e:
+
+        print(f"  ⚠️ Analyst Recommendation failed: {e}")
 
         return []
 

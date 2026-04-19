@@ -61,7 +61,7 @@ from new_strategies import (
     select_trend_breakout_stocks,
 )
 from parallel_backtest import build_price_history_cache
-from performance_filters import filter_tickers_by_performance
+from performance_filters import filter_tickers_by_performance as _filter_tickers_by_performance
 from shared_strategies import (
     select_1m_3m_ratio_stocks,
     select_1y_3m_ratio_stocks,
@@ -75,9 +75,26 @@ from shared_strategies import (
     select_risk_adj_mom_stocks,
     select_turnaround_stocks,
 )
-from dynamic_pool import select_dynamic_pool_stocks
 from enhanced_static_bh_strategies import select_static_bh_3m_accel
 from enhanced_volatility_trader import select_enhanced_volatility_stocks
+
+
+def filter_tickers_by_performance(all_tickers, *args, **kwargs):
+    """Normalize legacy timing-benchmark calls to the cache-backed filter API."""
+    if args and isinstance(args[0], dict):
+        ticker_data_grouped = args[0]
+        current_date = args[1] if len(args) > 1 else kwargs.get("current_date")
+        strategy_name = args[2] if len(args) > 2 else kwargs.get("strategy_name", "Unknown")
+        price_history_cache = kwargs.get("price_history_cache")
+        if price_history_cache is None:
+            price_history_cache = build_price_history_cache(ticker_data_grouped)
+        return _filter_tickers_by_performance(
+            all_tickers,
+            current_date,
+            strategy_name,
+            price_history_cache=price_history_cache,
+        )
+    return _filter_tickers_by_performance(all_tickers, *args, **kwargs)
 from new_strategies import select_trend_following_atr_stocks
 from risk_adj_mom_1m_vol_sweet_strategy import select_risk_adj_mom_1m_vol_sweet_stocks
 from risk_adj_mom_1m_strategy import select_risk_adj_mom_1m_stocks
@@ -150,9 +167,7 @@ SUPPORTED_STRATEGIES = [
     "bb_rsi_combo",
     "trend_breakout",
     "trend_atr",
-    "volatility_ensemble",
     "correlation_ensemble",
-    "savgol_trend",
     "sector_rotation",
     "vol_adj_mom",
     "vol_sweet_mom",
@@ -177,7 +192,6 @@ SUPPORTED_STRATEGIES = [
     "dynamic_bh_1y_trailing_stop",
     "bh_1y_volsweet_accel",
     "bh_1y_dynamic_accel",
-    "dynamic_pool",
     "static_bh_3m_accel",
     "static_bh_1y_volatility",
     "static_bh_1y_performance",
@@ -1140,55 +1154,6 @@ def _legacy_trend_breakout(all_tickers, ticker_data_grouped, current_date, top_n
     return [ticker for ticker, _ in candidates[:top_n]]
 
 
-def _legacy_volatility_ensemble(all_tickers, ticker_data_grouped, current_date, top_n):
-    filtered_tickers = filter_tickers_by_performance(
-        all_tickers,
-        ticker_data_grouped,
-        current_date,
-        "Volatility Ensemble",
-    )
-
-    candidates = []
-    for ticker in filtered_tickers:
-        try:
-            ticker_data = ticker_data_grouped.get(ticker)
-            if ticker_data is None or len(ticker_data) < 60:
-                continue
-
-            current_ts = _timestamp_for_ticker(ticker_data, current_date)
-            data = ticker_data.loc[:current_ts]
-            closes = data["Close"].dropna()
-
-            if len(closes) < 60:
-                continue
-
-            latest_price = closes.iloc[-1]
-            if latest_price <= 0:
-                continue
-
-            daily_returns = closes.pct_change().dropna()
-            if len(daily_returns) < 30:
-                continue
-
-            volatility = float(np.std(daily_returns, ddof=1) * np.sqrt(252))
-
-            lookback_60d = min(60, len(closes) - 1)
-            price_60d_ago = closes.iloc[-lookback_60d]
-            if price_60d_ago <= 0:
-                continue
-
-            perf_60d = (latest_price - price_60d_ago) / price_60d_ago
-
-            if 0.15 < volatility < 2.0 and perf_60d > 0:
-                vol_adj_score = perf_60d / volatility if volatility > 0 else 0
-                candidates.append((ticker, vol_adj_score))
-        except Exception:
-            continue
-
-    candidates.sort(key=lambda item: item[1], reverse=True)
-    return [ticker for ticker, _ in candidates[:top_n]]
-
-
 def _legacy_dynamic_bh(all_tickers, ticker_data_grouped, current_date, top_n):
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
@@ -1355,63 +1320,6 @@ def _legacy_bh_1y_dynamic_accel(all_tickers, ticker_data_grouped, current_date, 
                 accel_score = perf_3m - perf_1y
                 momentum_score = perf_1y * 0.4 + perf_6m * 0.3 + perf_3m * 0.3
                 candidates.append((ticker, momentum_score))
-        except Exception:
-            continue
-
-    candidates.sort(key=lambda item: item[1], reverse=True)
-    return [ticker for ticker, _ in candidates[:top_n]]
-
-
-def _legacy_dynamic_pool(all_tickers, ticker_data_grouped, current_date, top_n):
-    filtered_tickers = filter_tickers_by_performance(
-        all_tickers,
-        ticker_data_grouped,
-        current_date,
-        "Dynamic Pool",
-    )
-
-    candidates = []
-    for ticker in filtered_tickers:
-        try:
-            ticker_data = ticker_data_grouped.get(ticker)
-            if ticker_data is None or len(ticker_data) < 365:
-                continue
-
-            current_ts = _timestamp_for_ticker(ticker_data, current_date)
-            data = ticker_data.loc[:current_ts]
-            closes = data["Close"].dropna()
-
-            if len(closes) < 365:
-                continue
-
-            latest_price = closes.iloc[-1]
-            if latest_price <= 0:
-                continue
-
-            lookback_1y = min(365, len(closes) - 1)
-            price_1y_ago = closes.iloc[-lookback_1y]
-            if price_1y_ago <= 0:
-                continue
-
-            perf_1y = (latest_price - price_1y_ago) / price_1y_ago
-
-            lookback_3m = min(63, len(closes) - 1)
-            price_3m_ago = closes.iloc[-lookback_3m]
-            if price_3m_ago <= 0:
-                continue
-
-            perf_3m = (latest_price - price_3m_ago) / price_3m_ago
-
-            daily_returns = closes.pct_change().dropna()
-            if len(daily_returns) < 60:
-                continue
-
-            volatility = float(np.std(daily_returns, ddof=1) * np.sqrt(252))
-
-            pool_score = perf_1y * 0.6 + perf_3m * 0.4
-
-            if perf_1y > 0 and volatility < 2.5:
-                candidates.append((ticker, pool_score))
         except Exception:
             continue
 
@@ -1747,50 +1655,6 @@ def _legacy_correlation_ensemble(all_tickers, ticker_data_grouped, current_date,
             if perf_1y > 0 and volatility < 2.0:
                 score = perf_1y / volatility if volatility > 0 else 0
                 candidates.append((ticker, score))
-        except Exception:
-            continue
-
-    candidates.sort(key=lambda item: item[1], reverse=True)
-    return [ticker for ticker, _ in candidates[:top_n]]
-
-
-def _legacy_savgol_trend(all_tickers, ticker_data_grouped, current_date, top_n):
-    filtered_tickers = filter_tickers_by_performance(
-        all_tickers,
-        ticker_data_grouped,
-        current_date,
-        "SavGol Trend",
-    )
-
-    candidates = []
-    for ticker in filtered_tickers:
-        try:
-            ticker_data = ticker_data_grouped.get(ticker)
-            if ticker_data is None or len(ticker_data) < 60:
-                continue
-
-            current_ts = _timestamp_for_ticker(ticker_data, current_date)
-            data = ticker_data.loc[:current_ts]
-            closes = data["Close"].dropna()
-
-            if len(closes) < 60:
-                continue
-
-            latest_price = closes.iloc[-1]
-            if latest_price <= 0:
-                continue
-
-            lookback_60d = min(60, len(closes) - 1)
-            recent_prices = closes.iloc[-lookback_60d:]
-
-            if len(recent_prices) < 60:
-                continue
-
-            sma_60 = float(np.mean(recent_prices))
-            trend_score = (latest_price - sma_60) / sma_60
-
-            if trend_score > 0:
-                candidates.append((ticker, trend_score))
         except Exception:
             continue
 
@@ -2213,17 +2077,6 @@ STRATEGY_REGISTRY = {
             price_history_cache=price_history_cache,
         ),
     },
-    "volatility_ensemble": {
-        "label": "Volatility Ensemble",
-        "legacy": _legacy_volatility_ensemble,
-        "cached": lambda all_tickers, grouped, current_date, top_n, price_history_cache: select_volatility_ensemble_stocks(
-            all_tickers,
-            grouped,
-            current_date=current_date,
-            top_n=top_n,
-            price_history_cache=price_history_cache,
-        ),
-    },
     "dynamic_bh": {
         "label": "Dynamic BH",
         "legacy": _legacy_dynamic_bh,
@@ -2251,17 +2104,6 @@ STRATEGY_REGISTRY = {
         "label": "BH 1Y Dynamic Accel",
         "legacy": _legacy_bh_1y_dynamic_accel,
         "cached": lambda all_tickers, grouped, current_date, top_n, price_history_cache: select_bh_1y_dynamic_accel_stocks(
-            all_tickers,
-            grouped,
-            current_date=current_date,
-            top_n=top_n,
-            price_history_cache=price_history_cache,
-        ),
-    },
-    "dynamic_pool": {
-        "label": "Dynamic Pool",
-        "legacy": _legacy_dynamic_pool,
-        "cached": lambda all_tickers, grouped, current_date, top_n, price_history_cache: select_dynamic_pool_stocks(
             all_tickers,
             grouped,
             current_date=current_date,
@@ -2339,17 +2181,6 @@ STRATEGY_REGISTRY = {
         "label": "Correlation Ensemble",
         "legacy": _legacy_correlation_ensemble,
         "cached": lambda all_tickers, grouped, current_date, top_n, price_history_cache: select_correlation_ensemble_stocks(
-            all_tickers,
-            grouped,
-            current_date=current_date,
-            top_n=top_n,
-            price_history_cache=price_history_cache,
-        ),
-    },
-    "savgol_trend": {
-        "label": "SavGol Trend",
-        "legacy": _legacy_savgol_trend,
-        "cached": lambda all_tickers, grouped, current_date, top_n, price_history_cache: select_savgol_trend_stocks(
             all_tickers,
             grouped,
             current_date=current_date,

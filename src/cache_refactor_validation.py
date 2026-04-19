@@ -113,15 +113,7 @@ def _disable_ai_retraining_for_validation() -> None:
     config.AI_REBALANCE_RETRAIN_DAYS = 10**9
     config.AI_REGIME_RETRAIN_DAYS = 10**9
     config.UNIVERSAL_MODEL_RETRAIN_DAYS = 10**9
-    config.SAVGOL_TREND_RETRAIN_DAYS = 10**9
     os.environ["CACHE_VALIDATION_DISABLE_AI_TRAINING"] = "1"
-
-    try:
-        from savgol_trend_strategy import SavgolTrendStrategy
-
-        SavgolTrendStrategy.should_retrain = lambda self: False
-    except Exception:
-        pass
 
     try:
         import shared_strategies
@@ -338,12 +330,6 @@ def _build_reset_map() -> Dict[str, Callable[[], None]]:
     try:
         from correlation_ensemble import reset_corr_ensemble_state
         reset_map["correlation_ensemble"] = reset_corr_ensemble_state
-    except Exception:
-        pass
-
-    try:
-        from dynamic_pool import reset_dynamic_pool_state
-        reset_map["dynamic_pool"] = reset_dynamic_pool_state
     except Exception:
         pass
 

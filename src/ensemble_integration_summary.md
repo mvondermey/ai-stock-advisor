@@ -6,7 +6,6 @@
 ```python
 ENABLE_VOLATILITY_ENSEMBLE = True   # NEW - Volatility-Adjusted Ensemble Strategy
 ENABLE_CORRELATION_ENSEMBLE = True   # NEW - Correlation-Filtered Ensemble Strategy
-ENABLE_DYNAMIC_POOL = True   # NEW - Dynamic Strategy Pool Strategy
 ENABLE_SENTIMENT_ENSEMBLE = True   # NEW - Sentiment-Enhanced Ensemble Strategy
 ```
 
@@ -39,13 +38,7 @@ ENABLE_SENTIMENT_ENSEMBLE = True   # NEW - Sentiment-Enhanced Ensemble Strategy
 - **Diversification**: Max 40% per sector
 - **Use Case**: Diversification-focused investors
 
-### 3. Dynamic Strategy Pool
-- **File**: `dynamic_pool.py`
-- **Feature**: Rotates top 4 performing strategies
-- **Adaptation**: 30-day performance window
-- **Use Case**: Self-adapting to market conditions
-
-### 4. Sentiment-Enhanced Ensemble
+### 3. Sentiment-Enhanced Ensemble
 - **File**: `sentiment_ensemble.py`
 - **Feature**: News/social media sentiment
 - **Weighting**: 30% sentiment in final score
@@ -58,7 +51,6 @@ ENABLE_SENTIMENT_ENSEMBLE = True   # NEW - Sentiment-Enhanced Ensemble Strategy
 # Enable in config.py
 ENABLE_VOLATILITY_ENSEMBLE = True
 ENABLE_CORRELATION_ENSEMBLE = True
-ENABLE_DYNAMIC_POOL = True
 ENABLE_SENTIMENT_ENSEMBLE = True
 
 # Run backtest
@@ -69,7 +61,6 @@ python backtesting.py
 Set strategy in your live trading configuration:
 - `'volatility_ensemble'` - Volatility-Adjusted Ensemble
 - `'correlation_ensemble'` - Correlation-Filtered Ensemble
-- `'dynamic_pool'` - Dynamic Strategy Pool
 - `'sentiment_ensemble'` - Sentiment-Enhanced Ensemble
 
 ## Performance Expectations
@@ -78,7 +69,6 @@ Set strategy in your live trading configuration:
 |----------|----------------|------------|----------|
 | Volatility Ensemble | Moderate | Low-Medium | Risk management |
 | Correlation Ensemble | Moderate | Low | Diversification |
-| Dynamic Pool | High (adaptive) | Medium | Strategy rotation |
 | Sentiment Ensemble | Moderate-High | Medium | News-driven markets |
 
 ## Testing Status

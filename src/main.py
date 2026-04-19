@@ -22,6 +22,7 @@ warnings.filterwarnings("ignore", message="resource_tracker: There appear to be 
 # Import config FIRST before any other local imports to avoid circular dependencies
 import sys
 import argparse
+import traceback as _traceback
 from pathlib import Path
 
 # --- Add project root and src directory to sys.path ---
@@ -54,7 +55,7 @@ parser.add_argument("--live-trading", action="store_true",
 parser.add_argument("--live-run", action="store_true",
                    help="Run strategies live with current data (like quick_strategy_check.py)")
 parser.add_argument("--strategy", type=str, default=None,
-                   help="Strategy override. In backtests, only the requested strategy/strategies run. In live modes, defaults to volatility_ensemble.")
+                   help="Strategy override. In backtests, only the requested strategy/strategies run. In live modes, an explicit strategy is required.")
 parser.add_argument("--list", action="store_true",
                    help="Print available backtest strategy names for --strategy and exit.")
 parser.add_argument("--retrain", nargs="?", const=True, default=None, type=_parse_cli_bool,
@@ -559,16 +560,15 @@ def main(
 ) -> Tuple[Optional[float], Optional[float], Optional[Dict], Optional[Dict], Optional[Dict], Optional[List], Optional[List], Optional[List], Optional[List], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[Dict]]:
     targeted_backtest = bool(_CLI_BACKTEST_STRATEGIES)
 
-    # Set the start method for multiprocessing to 'spawn'
-    # This is crucial for CUDA compatibility with multiprocessing
+    # Only force 'spawn' when PyTorch is actually using CUDA. On Linux we want to
+    # preserve the normal fork-based path for the rest of the backtest unless GPU
+    # worker safety requires otherwise.
     try:
         if PYTORCH_AVAILABLE:
             import torch
             from config import PYTORCH_USE_GPU
             if not PYTORCH_USE_GPU:
-                print("🖥️  PYTORCH_USE_GPU=False - PyTorch models will run on CPU (allows higher parallelism)")
-                import multiprocessing
-                multiprocessing.set_start_method('spawn', force=True)
+                print("🖥️  PYTORCH_USE_GPU=False - PyTorch models will run on CPU")
             elif torch.cuda.is_available():
                 print("🎮 PYTORCH_USE_GPU=True - PyTorch models will use CUDA")
                 import multiprocessing
@@ -1607,9 +1607,12 @@ if __name__ == "__main__":
         config.PORTFOLIO_SIZE = args.num_stocks
         print(f"📊 Portfolio size: {args.num_stocks} stocks")
 
-    live_strategy_arg = args.strategy or "volatility_ensemble"
+    live_strategy_arg = args.strategy or getattr(config, "LIVE_TRADING_STRATEGY", None)
 
     if args.live_run:
+        if not live_strategy_arg:
+            print("❌ Live run requires an explicit strategy via --strategy (no default live strategy is configured).")
+            sys.exit(1)
         # Live run mode: execute strategies with current data (like quick_strategy_check.py)
         print(f"🚀 Live Strategy Execution Mode")
         print("=" * 80)
@@ -1761,6 +1764,9 @@ if __name__ == "__main__":
         sys.exit(0)
 
     elif args.live_trading:
+        if not live_strategy_arg:
+            print("❌ Live trading requires an explicit strategy via --strategy (no default live strategy is configured).")
+            sys.exit(1)
         # Set strategy in config for live trading
         config.LIVE_TRADING_STRATEGY = live_strategy_arg
 
@@ -1994,8 +2000,21 @@ if __name__ == "__main__":
             print(f"❌ Live trading failed: {e}")
     else:
         _CLI_BACKTEST_STRATEGIES = _apply_backtest_cli_overrides()
-        # Run normal backtesting and get the data
-        all_tickers_data = main()
+        # Run normal backtesting and get the data. Any uncaught exception here
+        # (including SystemExit from a deep library) used to slip out silently
+        # and truncate the log; now we surface it before the interpreter dies.
+        try:
+            all_tickers_data = main()
+        except SystemExit:
+            raise
+        except BaseException as _backtest_err:
+            sys.stderr.write(
+                f"\n🛑 Backtest terminated early: {type(_backtest_err).__name__}: {_backtest_err}\n"
+            )
+            _traceback.print_exc(file=sys.stderr)
+            sys.stderr.flush()
+            sys.stdout.flush()
+            raise
 
     # Add 3M performance table at the end (only for backtesting mode - live trading skips this)
     if not args.live_trading:

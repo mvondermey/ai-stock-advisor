@@ -69,9 +69,6 @@ AI_REGIME_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "static_bh_1y": _source("ENABLE_STATIC_BH", "static_bh_1y_portfolio_value"),
     "static_bh_3m": _source("ENABLE_STATIC_BH", "static_bh_3m_portfolio_value"),
     "adaptive_ensemble": _source("ENABLE_ADAPTIVE_STRATEGY", "adaptive_ensemble_portfolio_value"),
-    "dynamic_pool": _source("ENABLE_DYNAMIC_POOL", "dynamic_pool_portfolio_value"),
-    # Preserve the existing AI Regime input naming for this source.
-    "volatility_ensemble": _source("ENABLE_AI_VOLATILITY_ENSEMBLE", "ai_volatility_ensemble_portfolio_value"),
 }
 
 
@@ -104,6 +101,11 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "concentrated_3m": _source("ENABLE_CONCENTRATED_3M", "concentrated_3m_portfolio_value"),
     "price_acceleration": _source("ENABLE_PRICE_ACCELERATION", "price_acceleration_portfolio_value"),
     "price_curvature": _source("ENABLE_PRICE_CURVATURE", "price_curvature_portfolio_value"),
+    "foresight_mimic": _source("ENABLE_FORESIGHT_MIMIC", "foresight_mimic_portfolio_value"),
+    "bh_1y_1m_rank": _source("ENABLE_BH_1Y_1M_RANK", "bh_1y_1m_rank_portfolio_value"),
+    "bh_1y_6m_rank": _source("ENABLE_BH_1Y_6M_RANK", "bh_1y_6m_rank_portfolio_value"),
+    "bh_1y_sma200": _source("ENABLE_BH_1Y_SMA200", "bh_1y_sma200_portfolio_value"),
+    "bh_1y_fcf_rank": _source("ENABLE_BH_1Y_FCF_RANK", "bh_1y_fcf_rank_portfolio_value"),
     "turnaround": _source("ENABLE_TURNAROUND", "turnaround_portfolio_value"),
     "elite_hybrid": _source("ENABLE_ELITE_HYBRID", "elite_hybrid_portfolio_value"),
     "elite_risk": _source("ENABLE_ELITE_RISK", "elite_risk_portfolio_value"),
@@ -113,10 +115,8 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "momentum_volatility_hybrid_1y3m": _source("ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M", "momentum_volatility_hybrid_1y3m_portfolio_value"),
     "ratio_3m_1y": _source("ENABLE_3M_1Y_RATIO", "ratio_3m_1y_portfolio_value"),
     "adaptive_ensemble": _source("ENABLE_ADAPTIVE_STRATEGY", "adaptive_ensemble_portfolio_value"),
-    "volatility_ensemble": _source("ENABLE_VOLATILITY_ENSEMBLE", "volatility_ensemble_portfolio_value"),
     "ai_volatility_ensemble": _source("ENABLE_AI_VOLATILITY_ENSEMBLE", "ai_volatility_ensemble_portfolio_value"),
     "correlation_ensemble": _source("ENABLE_CORRELATION_ENSEMBLE", "correlation_ensemble_portfolio_value"),
-    "dynamic_pool": _source("ENABLE_DYNAMIC_POOL", "dynamic_pool_portfolio_value"),
     "voting_ensemble": _source("ENABLE_VOTING_ENSEMBLE", "voting_ensemble_portfolio_value"),
     "ai_elite": _source("ENABLE_AI_ELITE", "ai_elite_portfolio_value"),
     "ai_elite_filtered": _source("ENABLE_AI_ELITE_FILTERED", "ai_elite_filtered_portfolio_value"),
@@ -125,6 +125,8 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "analyst_recommendation": _source("ENABLE_ANALYST_RECOMMENDATION", "analyst_rec_portfolio_value"),
     "static_bh_1y_volatility": _source("ENABLE_STATIC_BH_1Y_VOLATILITY", "static_bh_1y_vol_portfolio_value"),
     "static_bh_1y_performance": _source("ENABLE_STATIC_BH_1Y_PERFORMANCE", "static_bh_1y_perf_portfolio_value"),
+    "static_bh_6m_performance": _source("ENABLE_STATIC_BH_6M_PERFORMANCE", "static_bh_6m_perf_portfolio_value"),
+    "static_bh_9m_performance": _source("ENABLE_STATIC_BH_9M_PERFORMANCE", "static_bh_9m_perf_portfolio_value"),
     "static_bh_1y_momentum": _source("ENABLE_STATIC_BH_1Y_MOMENTUM", "static_bh_1y_mom_portfolio_value"),
     "static_bh_1y_atr": _source("ENABLE_STATIC_BH_1Y_ATR", "static_bh_1y_atr_portfolio_value"),
     "static_bh_1y_hybrid": _source("ENABLE_STATIC_BH_1Y_HYBRID", "static_bh_1y_hybrid_portfolio_value"),
@@ -154,16 +156,16 @@ META_MOMENTUM_VOLATILITY_HYBRID_STRATEGIES = {
 META_RATIO_STRATEGIES = {"ratio_3m_1y", "ratio_1y_3m"}
 META_ENSEMBLE_STRATEGIES = {
     "adaptive_ensemble",
-    "volatility_ensemble",
     "ai_volatility_ensemble",
     "correlation_ensemble",
-    "dynamic_pool",
     "voting_ensemble",
 }
 META_AI_STRATEGIES = {"ai_elite", "ai_elite_filtered", "ai_elite_market_up"}
 META_ADAPTIVE_REBALANCING_STRATEGIES = {
     "static_bh_1y_volatility",
     "static_bh_1y_performance",
+    "static_bh_6m_performance",
+    "static_bh_9m_performance",
     "static_bh_1y_momentum",
     "static_bh_1y_atr",
     "static_bh_1y_hybrid",

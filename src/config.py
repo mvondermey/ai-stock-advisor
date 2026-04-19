@@ -248,7 +248,7 @@ ALPACA_STOCKS_LIMIT = 20000  # High limit = train models for ALL tradable stocks
 
 ALPACA_STOCKS_EXCHANGES = []  # NASDAQ only
 
-N_TOP_TICKERS           = 2000     # Reduced from 2000 - balance quality and quantity
+N_TOP_TICKERS           = 20000     # Reduced from 2000 - balance quality and quantity
 
 TOP_TICKER_SELECTION_LOOKBACK = "1Y"     # Try 1-month for more responsive selection
 
@@ -309,14 +309,13 @@ ENABLE_PARALLEL_STRATEGIES = True   # Run strategies in parallel within each day
 
 _PARALLEL_STRATEGY_PILOT_CONFIG: Dict[str, Dict[str, object]] = {
     "adaptive_ensemble": {"enable_flag": "ENABLE_ADAPTIVE_STRATEGY", "use_buffer": True},
-    "volatility_ensemble": {"enable_flag": "ENABLE_VOLATILITY_ENSEMBLE", "use_buffer": True},
-    "dynamic_pool": {"enable_flag": "ENABLE_DYNAMIC_POOL", "use_buffer": True},
     "risk_adj_mom_sentiment": {"enable_flag": "ENABLE_RISK_ADJ_MOM_SENTIMENT", "use_buffer": True},
     "multi_tf_ensemble": {"enable_flag": "ENABLE_MULTI_TIMEFRAME_ENSEMBLE", "use_buffer": True},
     "quality_momentum": {"enable_flag": "ENABLE_QUALITY_MOM", "use_buffer": False},
     "ratio_3m_1y": {"enable_flag": "ENABLE_3M_1Y_RATIO", "use_buffer": True},
     "ratio_1m_3m": {"enable_flag": "ENABLE_1M_3M_RATIO", "use_buffer": True},
     "ratio_1y_3m": {"enable_flag": "ENABLE_3M_1Y_RATIO", "use_buffer": True},
+    "sma50_1y_delta_ratio": {"enable_flag": "ENABLE_SMA50_1Y_DELTA_RATIO", "use_buffer": True},
     "multi_timeframe_intraday": {"enable_flag": "ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE", "use_buffer": True},
     "dynamic_bh_1y": {"enable_flag": "ENABLE_DYNAMIC_BH_1Y", "use_buffer": True},
     "dynamic_bh_6m": {"enable_flag": "ENABLE_DYNAMIC_BH_6M", "use_buffer": True},
@@ -339,7 +338,14 @@ _PARALLEL_STRATEGY_PILOT_CONFIG: Dict[str, Dict[str, object]] = {
     "bh_1y_dynamic_accel": {"enable_flag": "ENABLE_BH_1Y_DYNAMIC_ACCEL", "use_buffer": True},
     "trend_atr": {"enable_flag": "ENABLE_TREND_FOLLOWING_ATR", "use_buffer": True},
     "confirmed_leaders": {"enable_flag": "ENABLE_CONFIRMED_LEADERS", "use_buffer": True},
+    "foresight_mimic": {"enable_flag": "ENABLE_FORESIGHT_MIMIC", "use_buffer": True},
+    "bh_1y_1m_rank": {"enable_flag": "ENABLE_BH_1Y_1M_RANK", "use_buffer": True},
+    "bh_1y_6m_rank": {"enable_flag": "ENABLE_BH_1Y_6M_RANK", "use_buffer": True},
+    "bh_1y_sma200": {"enable_flag": "ENABLE_BH_1Y_SMA200", "use_buffer": True},
+    "bh_1y_fcf_rank": {"enable_flag": "ENABLE_BH_1Y_FCF_RANK", "use_buffer": True},
+    "defensive_momentum": {"enable_flag": "ENABLE_DEFENSIVE_MOMENTUM", "use_buffer": True},
     "turnaround": {"enable_flag": "ENABLE_TURNAROUND", "use_buffer": True},
+    "deep_recovery": {"enable_flag": "ENABLE_DEEP_RECOVERY", "use_buffer": False},
     "price_acceleration": {"enable_flag": "ENABLE_PRICE_ACCELERATION", "use_buffer": True},
     "price_curvature": {"enable_flag": "ENABLE_PRICE_CURVATURE", "use_buffer": True},
     "momentum_volatility_hybrid": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID", "use_buffer": True},
@@ -379,7 +385,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 # --- Backtest windows
 
-BACKTEST_DAYS           =   50 # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   40 # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 BACKTEST_END_DATE       = False  # False = use current last trading day, or set "YYYY-MM-DD" to freeze runs for debugging
 
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
@@ -434,8 +440,6 @@ TOP_N_STOCKS             = 10         # Number of stocks to hold in portfolio (s
 
 # Choose which strategy to use for live trading:
 
-# 'volatility_ensemble'    = 🏆 Vol Ens - Volatility-adjusted position sizing (+106% in backtest)
-
 # 'ai_volatility_ensemble' = 🤖 AI Vol Ens - AI-enhanced volatility ensemble (NEW)
 
 # 'correlation_ensemble'   = 🏆 Corr Ens - Correlation-filtered diversification (+106% in backtest)
@@ -450,11 +454,9 @@ TOP_N_STOCKS             = 10         # Number of stocks to hold in portfolio (s
 
 # 'adaptive_ensemble'      = Adaptive Meta-Ensemble
 
-# 'dynamic_pool'           = Dynamic Strategy Pool
-
 # 'sentiment_ensemble'     = Sentiment-Enhanced Ensemble
 
-LIVE_TRADING_STRATEGY    = 'volatility_ensemble'  # 🏆 Best performer from backtest
+LIVE_TRADING_STRATEGY    = None  # Set explicitly for live trading; no default strategy
 
 
 
@@ -534,6 +536,8 @@ ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 
 ENABLE_1M_3M_RATIO = True   # ENABLED - 1M/3M Ratio Strategy (short-term momentum acceleration)
 
+ENABLE_SMA50_1Y_DELTA_RATIO = True   # NEW - rank tickers by (Close - SMA50) / (6M return now - 6M return 50d ago)
+
 ENABLE_MOMENTUM_VOLATILITY_HYBRID = True   # ENABLED - Momentum-Volatility Hybrid Strategy
 
 ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M = True   # ENABLED - Momentum-Volatility Hybrid 6M Strategy (6-month lookback)
@@ -544,15 +548,13 @@ ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M = True   # ENABLED - Momentum-Volatility 
 
 ENABLE_ADAPTIVE_STRATEGY = True   # ENABLED - Adaptive Meta-Ensemble Strategy
 
-ENABLE_VOLATILITY_ENSEMBLE = True   # ENABLED - Volatility-Adjusted Ensemble Strategy (risk-managed position sizing)
+ENABLE_VOLATILITY_ENSEMBLE = False  # Removed - Volatility Ensemble is treated as a meta strategy
 
 ENABLE_ENHANCED_VOLATILITY = True   # ENABLED - Enhanced Volatility Trader (ATR stops + take profits)
 
 ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble Strategy (diversification-focused)
 
 ENABLE_RISK_ADJ_MOM_SENTIMENT = True   # NEW - Risk-Adjusted Momentum + Sentiment Strategy
-
-ENABLE_DYNAMIC_POOL = True   # ENABLED - Dynamic Strategy Pool Strategy
 
 ENABLE_SENTIMENT_ENSEMBLE = True   # ENABLED - Sentiment-Enhanced Ensemble Strategy
 
@@ -570,6 +572,10 @@ ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE = True   # NEW - Multi-Horizon Ensemble
 # Additional strategy enable flags
 
 ENABLE_TURNAROUND = True   # ENABLED - Turnaround Strategy (buy depressed stocks)
+
+ENABLE_DEEP_RECOVERY = True   # ENABLED - Deep Recovery Strategy (contrarian: beaten-down stocks with reversal signals, uses full universe)
+DEEP_RECOVERY_MIN_DATA_DAYS = 253   # Require roughly 1Y of history before calling it a deep recovery setup
+DEEP_RECOVERY_MIN_YEAR_WINDOW_ROWS = 200   # Require a well-populated trailing year before using the 52W-high drawdown
 
 ENABLE_MOMENTUM_VOLATILITY_HYBRID = True   # ENABLED - Momentum-Volatility Hybrid Strategy
 
@@ -604,6 +610,18 @@ CONFIRMED_LEADERS_MIN_6M_RETURN = 10.0   # Minimum 6M continuation
 CONFIRMED_LEADERS_MIN_3M_RETURN = 5.0   # Minimum 3M continuation
 CONFIRMED_LEADERS_MIN_1M_RETURN = 0.0   # 1M must still be positive
 CONFIRMED_LEADERS_MAX_VOLATILITY = 0.85   # Annualized volatility cap
+
+ENABLE_FORESIGHT_MIMIC = True   # NEW - 1Y leaders re-ranked by short-term acceleration
+FORESIGHT_MIMIC_MIN_1Y_RETURN = 25.0   # Minimum 1Y return to qualify for the accel pool
+FORESIGHT_MIMIC_MIN_ACCELERATION = 5.0   # Require improving 1M momentum versus the prior month
+FORESIGHT_MIMIC_MIN_10D_RETURN = 2.0   # Require some recent thrust, not just a statistical accel uptick
+
+ENABLE_BH_1Y_1M_RANK = True   # NEW - select top 1Y performers and rank that pool by 1M momentum
+ENABLE_BH_1Y_6M_RANK = True   # NEW - select top 1Y performers and rank that pool by 6M performance
+ENABLE_BH_1Y_SMA200 = True   # NEW - select top 1Y performers that are above their SMA200
+BH_1Y_SMA200_DAYS = 200   # Require price above the trailing 200-day simple moving average
+ENABLE_BH_1Y_FCF_RANK = True   # NEW - select top 1Y performers and rank that pool by free cash flow
+BH_1Y_FCF_RANK_REQUIRE_POSITIVE = True   # Ignore tickers whose latest reported FCF is non-positive
 
 ENABLE_DEFENSIVE_MOMENTUM = True   # NEW - Defensive Momentum (cash-first trend filter + momentum ranking)
 DEFENSIVE_MOMENTUM_SMA_DAYS = 200   # Require price above 200-day SMA
@@ -653,7 +671,6 @@ ENABLE_AI_ELITE_FILTERED = True   # NEW - AI Elite Filtered (Risk-Adj Mom 3M pre
 ENABLE_AI_ELITE_MARKET_UP = True   # NEW - AI Elite Market-Up (only rebalances when market is up)
 ENABLE_AI_ELITE_ENSEMBLE = False   # NEW - AI Elite Ensemble (weighted avg of top 3 positive-R² models)
 ENABLE_AI_ELITE_RANK_ENSEMBLE = False   # NEW - AI Elite Rank Ensemble (weighted rank avg of top 3 positive-R² models)
-ENABLE_SAVGOL_TREND = False  # NEW - SavGol Trend (local polynomial trend features + pooled ML)
 
 ENABLE_TOP5_CONSISTENCY_BLEND = True   # NEW - Blend current top strategies using prior-day top-5 consistency weights
 
@@ -698,20 +715,6 @@ UNIVERSAL_MODEL_RETRAIN_DAYS = 1  # Retrain/continue training every day
 AI_CHAMPION_FORWARD_DAYS = 1  # Predict the next trading day's winner
 AI_CHAMPION_CONFIDENCE_THRESHOLD = 0.55  # Require moderate confidence before switching
 AI_CHAMPION_HOLD_MARGIN = 0.08  # Keep current strategy unless the edge is meaningful
-
-# SavGol Trend Parameters
-SAVGOL_TREND_RETRAIN_DAYS = 1  # Retrain every day like AI Elite
-SAVGOL_TREND_TRAINING_LOOKBACK_DAYS = AI_ELITE_TRAINING_LOOKBACK  # Short rolling training window, separate from feature history
-SAVGOL_TREND_FORWARD_DAYS = 5  # Predict 5-day forward returns
-SAVGOL_TREND_MAX_WORKERS = 16  # Allow SavGol data collection to fan out a bit wider
-SAVGOL_TREND_MIN_SAMPLES = 300  # Minimum pooled samples before fitting the model
-SAVGOL_TREND_MIN_MODEL_SPEARMAN = 0.02  # Skip model-driven rotation when validation rank skill is negligible
-SAVGOL_TREND_MIN_PREDICTED_EDGE = 0.0  # Require the top predicted excess score to be positive
-SAVGOL_TREND_MIN_SCORE_SPREAD = 0.10  # Require a visible edge between the top and cutoff names
-SAVGOL_TREND_HOLD_MARGIN = 0.05  # Keep current names unless challengers beat them by a small buffer
-SAVGOL_TREND_FALLBACK_TO_MOMENTUM = True  # On low-confidence initial entry, use a simpler momentum fallback
-
-
 
 # AI Elite Intraday Configuration
 
@@ -859,9 +862,9 @@ ATR_MULT_TRAIL          = 2.0
 
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
 
-PORTFOLIO_SIZE          = 10        # Number of stocks to hold in portfolio
+PORTFOLIO_SIZE          = 10       # Number of stocks to hold in portfolio
 
-PORTFOLIO_BUFFER_SIZE    = 3         # Sell when stock not in top X (buffer for stability)
+PORTFOLIO_BUFFER_SIZE    = 10         # Sell when stock not in top X (buffer for stability)
 
 TOTAL_CAPITAL           = 300000     # Total capital to invest ($300,000)
 
@@ -983,8 +986,6 @@ VOLATILITY_TRADER_STOP_LOSS = 0.0      # -1.1% worse with stop (+18.1% vs +17.0%
 
 CORRELATION_ENSEMBLE_STOP_LOSS = 0.0   # -0.9% worse with stop (+18.9% vs +18.0%)
 
-DYNAMIC_POOL_STOP_LOSS = 0.0           # -0.8% worse with stop (+17.6% vs +16.8%)
-
 ENHANCED_VOLATILITY_STOP_LOSS = 0.0    # -0.7% worse with stop (+18.6% vs +17.9%)
 
 BUY_HOLD_STOP_LOSS = 0.0               # -0.6% worse with stop (+17.1% vs +16.5%)
@@ -1045,8 +1046,6 @@ STRATEGY_STOP_LOSS_PCT = {
 
     'Correlation Ensemble': CORRELATION_ENSEMBLE_STOP_LOSS,
 
-    'Dynamic Pool': DYNAMIC_POOL_STOP_LOSS,
-
     'Enhanced Volatility': ENHANCED_VOLATILITY_STOP_LOSS,
 
     'Buy & Hold': BUY_HOLD_STOP_LOSS,
@@ -1063,13 +1062,15 @@ STRATEGY_STOP_LOSS_PCT = {
 
 # These can be used to filter out underperformers before strategy scoring
 
+MIN_PERFORMANCE_1M = 0.10      # 10% minimum 1-month performance
+
 MIN_PERFORMANCE_1Y = 0.10      # 10% minimum 1-year performance
 
 MIN_PERFORMANCE_6M = 0.05      # 5% minimum 6-month performance
 
 MIN_PERFORMANCE_3M = 0.025     # 2.5% minimum 3-month performance
 
-ENABLE_PERFORMANCE_FILTERS = True   # Set to True to enable these filters
+ENABLE_PERFORMANCE_FILTERS = False  # Set to False to disable the unified performance prefilter
 
 
 
@@ -1239,6 +1240,12 @@ STATIC_BH_1Y_VOLATILITY_THRESHOLD = 0.02  # 2% volatility threshold
 
 ENABLE_STATIC_BH_1Y_PERFORMANCE = True   # Rebalance when position weights deviate > threshold
 STATIC_BH_1Y_PERFORMANCE_THRESHOLD = 0.25  # 25% deviation threshold
+
+ENABLE_STATIC_BH_6M_PERFORMANCE = True   # BH 6M Perf Trig: same trigger, 6M ranking window
+STATIC_BH_6M_PERFORMANCE_THRESHOLD = 0.25  # 25% deviation threshold
+
+ENABLE_STATIC_BH_9M_PERFORMANCE = True   # BH 9M Perf Trig: same trigger, 9M ranking window
+STATIC_BH_9M_PERFORMANCE_THRESHOLD = 0.25  # 25% deviation threshold
 
 ENABLE_STATIC_BH_1Y_MOMENTUM = True   # Rebalance when portfolio momentum turns negative
 STATIC_BH_1Y_MOMENTUM_LOOKBACK = 60   # Days for momentum calculation
