@@ -34,7 +34,7 @@ DATA_INTERVAL           = '1h'       # '1m', '5m', '15m', '30m', '1h', '1d', '1w
 DATA_CACHE_DIR          = Path("data_cache")
 
 # Master switch to enable/disable data downloads
-ENABLE_DATA_DOWNLOAD    = True       # Set to False to use only cached data (no new downloads)
+ENABLE_DATA_DOWNLOAD    = True      # Set to False to use only cached data (no new downloads)
 
 
 
@@ -234,7 +234,13 @@ MARKET_SELECTION = {
 
 }
 
-
+# Explicitly exclude symbols from the candidate universe returned by
+# `ticker_selection.get_all_tickers()`. Examples:
+# - "SPHR"
+# - "BRK.B" (normalized to "BRK-B")
+# - "ENR.DE"
+EXCLUDED_TICKERS = [
+]
 
 # If ALPACA_STOCKS is enabled, Alpaca can return thousands of symbols.
 
@@ -341,13 +347,15 @@ _PARALLEL_STRATEGY_PILOT_CONFIG: Dict[str, Dict[str, object]] = {
     "foresight_mimic": {"enable_flag": "ENABLE_FORESIGHT_MIMIC", "use_buffer": True},
     "bh_1y_1m_rank": {"enable_flag": "ENABLE_BH_1Y_1M_RANK", "use_buffer": True},
     "bh_1y_6m_rank": {"enable_flag": "ENABLE_BH_1Y_6M_RANK", "use_buffer": True},
+    "bh_1y_6m_blend": {"enable_flag": "ENABLE_BH_1Y_6M_BLEND", "use_buffer": True},
+    "early_leader_accel": {"enable_flag": "ENABLE_EARLY_LEADER_ACCEL", "use_buffer": True},
     "bh_1y_sma200": {"enable_flag": "ENABLE_BH_1Y_SMA200", "use_buffer": True},
     "bh_1y_fcf_rank": {"enable_flag": "ENABLE_BH_1Y_FCF_RANK", "use_buffer": True},
     "defensive_momentum": {"enable_flag": "ENABLE_DEFENSIVE_MOMENTUM", "use_buffer": True},
     "turnaround": {"enable_flag": "ENABLE_TURNAROUND", "use_buffer": True},
     "deep_recovery": {"enable_flag": "ENABLE_DEEP_RECOVERY", "use_buffer": False},
-    "price_acceleration": {"enable_flag": "ENABLE_PRICE_ACCELERATION", "use_buffer": True},
     "price_curvature": {"enable_flag": "ENABLE_PRICE_CURVATURE", "use_buffer": True},
+    "price_curvature_1y_slope": {"enable_flag": "ENABLE_PRICE_CURVATURE_1Y_SLOPE", "use_buffer": True},
     "momentum_volatility_hybrid": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID", "use_buffer": True},
     "momentum_volatility_hybrid_6m": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M", "use_buffer": True},
     "momentum_volatility_hybrid_1y": {"enable_flag": "ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y", "use_buffer": True},
@@ -385,7 +393,7 @@ PREDICTION_TIMEOUT = 30  # 30 seconds max per ticker prediction
 
 # --- Backtest windows
 
-BACKTEST_DAYS           =   40 # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
+BACKTEST_DAYS           =   50 # Backtest period in calendar days (~63=3mo, ~180=6mo, ~365=1yr)
 BACKTEST_END_DATE       = False  # False = use current last trading day, or set "YYYY-MM-DD" to freeze runs for debugging
 
 # Note: When RUN_BACKTEST_UNTIL_TODAY=True, actual backtest runs until today - 63 days
@@ -441,8 +449,6 @@ TOP_N_STOCKS             = 10         # Number of stocks to hold in portfolio (s
 # Choose which strategy to use for live trading:
 
 # 'ai_volatility_ensemble' = 🤖 AI Vol Ens - AI-enhanced volatility ensemble (NEW)
-
-# 'correlation_ensemble'   = 🏆 Corr Ens - Correlation-filtered diversification (+106% in backtest)
 
 # 'dynamic_bh_1y'          = Dynamic BH 1Y - Annual rebalancing
 
@@ -552,8 +558,6 @@ ENABLE_VOLATILITY_ENSEMBLE = False  # Removed - Volatility Ensemble is treated a
 
 ENABLE_ENHANCED_VOLATILITY = True   # ENABLED - Enhanced Volatility Trader (ATR stops + take profits)
 
-ENABLE_CORRELATION_ENSEMBLE = True   # ENABLED - Correlation-Filtered Ensemble Strategy (diversification-focused)
-
 ENABLE_RISK_ADJ_MOM_SENTIMENT = True   # NEW - Risk-Adjusted Momentum + Sentiment Strategy
 
 ENABLE_SENTIMENT_ENSEMBLE = True   # ENABLED - Sentiment-Enhanced Ensemble Strategy
@@ -581,9 +585,10 @@ ENABLE_MOMENTUM_VOLATILITY_HYBRID = True   # ENABLED - Momentum-Volatility Hybri
 
 ENABLE_3M_1Y_RATIO = True   # ENABLED - 3M/1Y Ratio Strategy
 
-ENABLE_PRICE_ACCELERATION = True   # ENABLED - Price Acceleration Strategy (physics-based velocity/acceleration)
-
-ENABLE_PRICE_CURVATURE = True   # NEW - Price Curvature Strategy (quadratic curvature of recent log-price)
+ENABLE_PRICE_CURVATURE = True   # SG slope strategy on daily closes with positive 1M filter
+ENABLE_STATIC_PRICE_CURVATURE = True   # Static Price Curvature with periodic rebalancing
+ENABLE_PRICE_CURVATURE_1Y_SLOPE = True   # SG slope strategy on a 1Y performance-prefiltered pool
+ENABLE_STATIC_PRICE_CURVATURE_1Y_SLOPE = True   # Static 1Y-prefiltered SG slope strategy
 
 ENABLE_VOTING_ENSEMBLE = True   # ENABLED - Voting Ensemble Strategy
 
@@ -618,6 +623,8 @@ FORESIGHT_MIMIC_MIN_10D_RETURN = 2.0   # Require some recent thrust, not just a 
 
 ENABLE_BH_1Y_1M_RANK = True   # NEW - select top 1Y performers and rank that pool by 1M momentum
 ENABLE_BH_1Y_6M_RANK = True   # NEW - select top 1Y performers and rank that pool by 6M performance
+ENABLE_BH_1Y_6M_BLEND = True   # NEW - positive 1Y/6M leaders above SMA200 ranked by a 50/50 1Y+6M percentile blend
+ENABLE_EARLY_LEADER_ACCEL = True   # NEW - earlier winners with 3M strength, positive 1M/6M/1Y, above SMA200, excluding extreme 1Y rockets
 ENABLE_BH_1Y_SMA200 = True   # NEW - select top 1Y performers that are above their SMA200
 BH_1Y_SMA200_DAYS = 200   # Require price above the trailing 200-day simple moving average
 ENABLE_BH_1Y_FCF_RANK = True   # NEW - select top 1Y performers and rank that pool by free cash flow
@@ -862,7 +869,7 @@ ATR_MULT_TRAIL          = 2.0
 
 ATR_MULT_TP             = 2.0        # 0 disables hard TP; rely on trailing
 
-PORTFOLIO_SIZE          = 10       # Number of stocks to hold in portfolio
+PORTFOLIO_SIZE          = 5      # Number of stocks to hold in portfolio
 
 PORTFOLIO_BUFFER_SIZE    = 10         # Sell when stock not in top X (buffer for stability)
 
@@ -946,8 +953,6 @@ STATIC_BH_6M_STOP_LOSS = 0.05          # +3.5% improvement (+30.5% vs +27.0%)
 
 TURNAROUND_STOP_LOSS = 0.05            # +2.5% improvement (+20.0% vs +17.5%)
 
-PRICE_ACCELERATION_STOP_LOSS = 0.05    # +2.4% improvement (+2.1% vs -0.3%)
-
 PRICE_CURVATURE_STOP_LOSS = 0.05       # Default stop loss for upward-curvature trend strategy
 
 ADAPTIVE_ENSEMBLE_STOP_LOSS = 0.05     # +2.4% improvement (+18.0% vs +15.6%)
@@ -984,8 +989,6 @@ AI_ELITE_STOP_LOSS = 0.0               # -1.3% worse with stop (+19.3% vs +18.0%
 
 VOLATILITY_TRADER_STOP_LOSS = 0.0      # -1.1% worse with stop (+18.1% vs +17.0%)
 
-CORRELATION_ENSEMBLE_STOP_LOSS = 0.0   # -0.9% worse with stop (+18.9% vs +18.0%)
-
 ENHANCED_VOLATILITY_STOP_LOSS = 0.0    # -0.7% worse with stop (+18.6% vs +17.9%)
 
 BUY_HOLD_STOP_LOSS = 0.0               # -0.6% worse with stop (+17.1% vs +16.5%)
@@ -1008,9 +1011,13 @@ STRATEGY_STOP_LOSS_PCT = {
 
     'Turnaround': TURNAROUND_STOP_LOSS,
 
-    'Price Acceleration': PRICE_ACCELERATION_STOP_LOSS,
+    'Static Price Curvature': PRICE_CURVATURE_STOP_LOSS,
 
     'Price Curvature': PRICE_CURVATURE_STOP_LOSS,
+
+    'Static Price Curvature 1Y Slope': PRICE_CURVATURE_STOP_LOSS,
+
+    'Price Curvature 1Y Slope': PRICE_CURVATURE_STOP_LOSS,
 
     'Adaptive Ensemble': ADAPTIVE_ENSEMBLE_STOP_LOSS,
 
@@ -1044,8 +1051,6 @@ STRATEGY_STOP_LOSS_PCT = {
 
     'Volatility Trader': VOLATILITY_TRADER_STOP_LOSS,
 
-    'Correlation Ensemble': CORRELATION_ENSEMBLE_STOP_LOSS,
-
     'Enhanced Volatility': ENHANCED_VOLATILITY_STOP_LOSS,
 
     'Buy & Hold': BUY_HOLD_STOP_LOSS,
@@ -1062,15 +1067,15 @@ STRATEGY_STOP_LOSS_PCT = {
 
 # These can be used to filter out underperformers before strategy scoring
 
-MIN_PERFORMANCE_1M = 0.10      # 10% minimum 1-month performance
+MIN_PERFORMANCE_1M = 0.0       # Require positive 1-month performance (>= 0%)
 
-MIN_PERFORMANCE_1Y = 0.10      # 10% minimum 1-year performance
+MIN_PERFORMANCE_1Y = -1.0      # Effectively disabled (-100%) while preserving the shared filter path
 
-MIN_PERFORMANCE_6M = 0.05      # 5% minimum 6-month performance
+MIN_PERFORMANCE_6M = -1.0      # Effectively disabled (-100%) while preserving the shared filter path
 
-MIN_PERFORMANCE_3M = 0.025     # 2.5% minimum 3-month performance
+MIN_PERFORMANCE_3M = -1.0      # Effectively disabled (-100%) while preserving the shared filter path
 
-ENABLE_PERFORMANCE_FILTERS = False  # Set to False to disable the unified performance prefilter
+ENABLE_PERFORMANCE_FILTERS = True  # Enable the unified performance prefilter across strategies
 
 
 
@@ -1232,6 +1237,10 @@ STATIC_BH_1M_REBALANCE_DAYS = 27  # Optimal rebalance period for 1M selection
 
 STATIC_BH_6M_REBALANCE_DAYS = 34  # Optimal rebalance period for 6M selection
 
+STATIC_PRICE_CURVATURE_REBALANCE_DAYS = 22  # Static cadence for SG-slope price curvature picks
+
+STATIC_PRICE_CURVATURE_1Y_SLOPE_REBALANCE_DAYS = 22  # Static cadence for 1Y-prefiltered SG slope picks
+
 # --- Adaptive Rebalancing Strategies (based on Static BH 1Y) ---
 # These strategies use adaptive triggers instead of fixed periodic rebalancing
 
@@ -1267,6 +1276,8 @@ ENABLE_STATIC_BH_6M_MONTHLY = True   # Static BH 6M with monthly rebalance
 ENABLE_STATIC_BH_3M_MONTHLY = True   # Static BH 3M with monthly rebalance
 
 ENABLE_STATIC_BH_1M_MONTHLY = True   # Static BH 1M with monthly rebalance
+
+ENABLE_STATIC_BH_1Y_WEEKLY = True   # Static BH 1Y with weekly rebalance on the first trading day of the week
 
 # --- Static BH 3M with Acceleration ---
 ENABLE_STATIC_BH_3M_ACCEL = True   # Static BH 3M with accelerating momentum
@@ -1528,12 +1539,7 @@ MOMENTUM_VOLATILITY_HYBRID_TRAILING_STOP = 0.08  # 8% trailing stop
 
 PRICE_CURVATURE_LOOKBACK_DAYS = 60  # Fit curvature over roughly one quarter of trading days
 
-PRICE_CURVATURE_MIN_FIT_R2 = 0.55  # Ignore tickers whose quadratic fit is mostly noise
-
-PRICE_CURVATURE_MIN_SLOPE = 0.015  # Require the fitted curve to still slope upward at the right edge
-
-PRICE_CURVATURE_MIN_RECENT_RETURN = 0.03  # Require the lookback window to have a positive net move
-
+PRICE_CURVATURE_SG_WINDOW = 15  # SG smoothing window for local trend/acceleration ranking
 
 # --- Volatility-Adjusted Momentum Strategy Parameters ---
 

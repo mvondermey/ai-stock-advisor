@@ -21,6 +21,7 @@ from strategy_cache_adapter import (
     get_cached_history_up_to,
     resolve_cache_current_date,
 )
+from performance_filters import filter_tickers_by_performance
 
 # Import config
 from config import (
@@ -92,6 +93,12 @@ def _score_enhanced_volatility_candidates(
     price_history_cache=None,
 ) -> List[Tuple[str, float, float, float]]:
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    all_tickers = filter_tickers_by_performance(
+        all_tickers,
+        current_date,
+        "Enhanced Volatility",
+        price_history_cache=price_history_cache,
+    )
     current_date = resolve_cache_current_date(price_history_cache, current_date, all_tickers)
     if current_date is None:
         return []
@@ -140,6 +147,12 @@ def _score_ai_volatility_ensemble_candidates(
     price_history_cache=None,
 ) -> List[Tuple[str, float, float, float, float]]:
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    all_tickers = filter_tickers_by_performance(
+        all_tickers,
+        current_date,
+        "AI Volatility Ensemble",
+        price_history_cache=price_history_cache,
+    )
     current_date = resolve_cache_current_date(price_history_cache, current_date, all_tickers)
     if current_date is None:
         return []
@@ -531,7 +544,7 @@ class EnhancedVolatilityTrader:
         selected_stocks = []
         total_portfolio_volatility = 0.0
         
-        for candidate in scored_candidates[:top_n * 2]:  # Check more candidates
+        for candidate in scored_candidates[:top_n]:
             if len(selected_stocks) >= top_n:
                 break
             

@@ -262,7 +262,7 @@ class SentimentEnhancedEnsemble:
             print(f"   🔍 Getting picks from {strategy}...")
             picks = self.get_strategy_picks(
                 strategy, all_tickers, ticker_data_grouped,
-                current_date, train_start_date, top_n=top_n * 2
+                current_date, train_start_date, top_n=top_n
             )
             strategy_picks[strategy] = picks
             print(f"      → {len(picks)} picks")

@@ -62,7 +62,6 @@ def select_elite_hybrid_stocks(
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
-        ticker_data_grouped,
         current_date,
         "Elite Hybrid",
         price_history_cache=price_history_cache,

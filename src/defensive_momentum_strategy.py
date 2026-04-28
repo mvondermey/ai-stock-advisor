@@ -101,7 +101,6 @@ def select_defensive_momentum_stocks(
     tickers_to_use = [ticker for ticker in all_tickers if ticker not in INVERSE_ETFS and ticker not in {"SPY", "QQQ"}]
     filtered_tickers = filter_tickers_by_performance(
         tickers_to_use,
-        ticker_data_grouped,
         current_date,
         "Defensive Momentum",
         price_history_cache=price_history_cache,

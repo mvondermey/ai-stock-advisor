@@ -195,7 +195,7 @@ class AdaptiveMetaEnsemble:
                     ticker_data_grouped,
                     period='1y',
                     current_date=current_date,
-                    top_n=top_n * 2,
+                    top_n=top_n,
                     price_history_cache=price_history_cache,
                 )
                 # Apply volatility filter
@@ -343,7 +343,7 @@ class AdaptiveMetaEnsemble:
             print(f"   🔍 Getting picks from {strategy}...")
             picks = self.get_strategy_picks(
                 strategy, all_tickers, ticker_data_grouped,
-                current_date, top_n=top_n * 2,
+                current_date, top_n=top_n,
                 price_history_cache=price_history_cache,
             )
             strategy_picks[strategy] = picks

@@ -78,6 +78,7 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "static_bh_6m": _source("ENABLE_STATIC_BH_6M", "static_bh_6m_portfolio_value"),
     "static_bh_1m": _source("ENABLE_STATIC_BH", "static_bh_1m_portfolio_value"),
     "bh_1y_monthly": _source("ENABLE_STATIC_BH_1Y_MONTHLY", "static_bh_1y_monthly_portfolio_value"),
+    "bh_1y_weekly": _source("ENABLE_STATIC_BH_1Y_WEEKLY", "static_bh_1y_weekly_portfolio_value"),
     "bh_6m_monthly": _source("ENABLE_STATIC_BH_6M_MONTHLY", "static_bh_6m_monthly_portfolio_value"),
     "bh_3m_monthly": _source("ENABLE_STATIC_BH_3M_MONTHLY", "static_bh_3m_monthly_portfolio_value"),
     "bh_1m_monthly": _source("ENABLE_STATIC_BH_1M_MONTHLY", "static_bh_1m_monthly_portfolio_value"),
@@ -99,11 +100,15 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "defensive_momentum": _source("ENABLE_DEFENSIVE_MOMENTUM", "defensive_momentum_portfolio_value"),
     "momentum_acceleration": _source("ENABLE_MOMENTUM_ACCELERATION", "mom_accel_portfolio_value"),
     "concentrated_3m": _source("ENABLE_CONCENTRATED_3M", "concentrated_3m_portfolio_value"),
-    "price_acceleration": _source("ENABLE_PRICE_ACCELERATION", "price_acceleration_portfolio_value"),
+    "static_price_curvature": _source("ENABLE_STATIC_PRICE_CURVATURE", "static_price_curvature_portfolio_value"),
     "price_curvature": _source("ENABLE_PRICE_CURVATURE", "price_curvature_portfolio_value"),
+    "static_price_curvature_1y_slope": _source("ENABLE_STATIC_PRICE_CURVATURE_1Y_SLOPE", "static_price_curvature_1y_slope_portfolio_value"),
+    "price_curvature_1y_slope": _source("ENABLE_PRICE_CURVATURE_1Y_SLOPE", "price_curvature_1y_slope_portfolio_value"),
     "foresight_mimic": _source("ENABLE_FORESIGHT_MIMIC", "foresight_mimic_portfolio_value"),
     "bh_1y_1m_rank": _source("ENABLE_BH_1Y_1M_RANK", "bh_1y_1m_rank_portfolio_value"),
     "bh_1y_6m_rank": _source("ENABLE_BH_1Y_6M_RANK", "bh_1y_6m_rank_portfolio_value"),
+    "bh_1y_6m_blend": _source("ENABLE_BH_1Y_6M_BLEND", "bh_1y_6m_blend_portfolio_value"),
+    "early_leader_accel": _source("ENABLE_EARLY_LEADER_ACCEL", "early_leader_accel_portfolio_value"),
     "bh_1y_sma200": _source("ENABLE_BH_1Y_SMA200", "bh_1y_sma200_portfolio_value"),
     "bh_1y_fcf_rank": _source("ENABLE_BH_1Y_FCF_RANK", "bh_1y_fcf_rank_portfolio_value"),
     "turnaround": _source("ENABLE_TURNAROUND", "turnaround_portfolio_value"),
@@ -116,7 +121,6 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "ratio_3m_1y": _source("ENABLE_3M_1Y_RATIO", "ratio_3m_1y_portfolio_value"),
     "adaptive_ensemble": _source("ENABLE_ADAPTIVE_STRATEGY", "adaptive_ensemble_portfolio_value"),
     "ai_volatility_ensemble": _source("ENABLE_AI_VOLATILITY_ENSEMBLE", "ai_volatility_ensemble_portfolio_value"),
-    "correlation_ensemble": _source("ENABLE_CORRELATION_ENSEMBLE", "correlation_ensemble_portfolio_value"),
     "voting_ensemble": _source("ENABLE_VOTING_ENSEMBLE", "voting_ensemble_portfolio_value"),
     "ai_elite": _source("ENABLE_AI_ELITE", "ai_elite_portfolio_value"),
     "ai_elite_filtered": _source("ENABLE_AI_ELITE_FILTERED", "ai_elite_filtered_portfolio_value"),
@@ -142,6 +146,7 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
 
 META_STATIC_BH_STRATEGIES = {"static_bh_1y", "static_bh_3m"}
 META_MONTHLY_BH_STRATEGIES = {"bh_1y_monthly", "bh_6m_monthly", "bh_3m_monthly", "bh_1m_monthly"}
+META_WEEKLY_BH_STRATEGIES = {"bh_1y_weekly"}
 META_DYNAMIC_BH_STRATEGIES = {"dynamic_bh_1y", "dynamic_bh_3m"}
 META_RISK_ADJ_MOM_STRATEGIES = {"risk_adj_mom", "risk_adj_mom_3m", "risk_adj_mom_6m", "risk_adj_mom_1m"}
 META_RISK_ADJ_MOM_MONTHLY_STRATEGIES = {"risk_adj_mom_3m_monthly", "risk_adj_mom_6m_monthly", "risk_adj_mom_1m_monthly"}
@@ -157,7 +162,6 @@ META_RATIO_STRATEGIES = {"ratio_3m_1y", "ratio_1y_3m"}
 META_ENSEMBLE_STRATEGIES = {
     "adaptive_ensemble",
     "ai_volatility_ensemble",
-    "correlation_ensemble",
     "voting_ensemble",
 }
 META_AI_STRATEGIES = {"ai_elite", "ai_elite_filtered", "ai_elite_market_up"}

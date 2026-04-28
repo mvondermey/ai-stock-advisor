@@ -311,7 +311,6 @@ class TestRollingWindowsCompliance:
             
             # Ensemble strategies
             'select_enhanced_volatility_stocks',
-            'select_correlation_ensemble_stocks',
             'select_multi_timeframe_stocks',
             'select_adaptive_ensemble_stocks',
             
@@ -353,11 +352,6 @@ class TestRollingWindowsCompliance:
             except ImportError:
                 pass
             
-            try:
-                from correlation_ensemble import select_correlation_ensemble_stocks
-            except ImportError:
-                pass
-                
             try:
                 from multi_timeframe_ensemble import select_multi_timeframe_stocks
             except ImportError:

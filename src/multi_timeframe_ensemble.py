@@ -13,6 +13,7 @@ from typing import List, Dict, Tuple, Optional
 import os
 from tqdm import tqdm
 from strategy_cache_adapter import ensure_price_history_cache, resolve_cache_current_date
+from performance_filters import filter_tickers_by_performance
 from strategy_disk_cache import (
     load_joblib_cache,
     save_joblib_cache,
@@ -555,6 +556,12 @@ def select_multi_timeframe_stocks(
     from config import INVERSE_ETFS
     tickers_to_use = [t for t in initial_tickers if t not in INVERSE_ETFS]
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    tickers_to_use = filter_tickers_by_performance(
+        tickers_to_use,
+        current_date,
+        "Multi-Horizon Ensemble",
+        price_history_cache=price_history_cache,
+    )
     current_date = resolve_cache_current_date(price_history_cache, current_date, tickers_to_use)
     if current_date is None:
         return []

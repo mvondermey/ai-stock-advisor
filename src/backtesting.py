@@ -75,6 +75,7 @@ _STRATEGY_TIMING_NAME_ALIASES = {
     "Static BH 1Y Drawdown": "BH 1Y Drawdown",
     "Static BH 1Y Smart Monthly": "BH 1Y Smart Mth",
     "Static BH 1Y Mth": "BH 1Y Monthly",
+    "Static BH 1Y Wk": "BH 1Y Weekly",
     "Static BH 6M Mth": "BH 6M Monthly",
     "Static BH 3M Mth": "BH 3M Monthly",
     "Static BH 1M Mth": "BH 1M Monthly",
@@ -255,20 +256,20 @@ def _run_parallel_strategy_selection_task(
             top_n=top_n,
             price_history_cache=price_history_cache,
         )
-    elif strategy_name == "price_acceleration":
-        from shared_strategies import select_price_acceleration_stocks
+    elif strategy_name in {"price_curvature", "static_price_curvature"}:
+        from price_curvature_strategy import select_price_curvature_stocks
 
-        selected = select_price_acceleration_stocks(
+        selected = select_price_curvature_stocks(
             initial_top_tickers,
             ticker_data_grouped,
             current_date=current_date,
             top_n=top_n,
             price_history_cache=price_history_cache,
         )
-    elif strategy_name == "price_curvature":
-        from price_curvature_strategy import select_price_curvature_stocks
+    elif strategy_name in {"price_curvature_1y_slope", "static_price_curvature_1y_slope"}:
+        from price_curvature_strategy import select_price_curvature_1y_slope_stocks
 
-        selected = select_price_curvature_stocks(
+        selected = select_price_curvature_1y_slope_stocks(
             initial_top_tickers,
             ticker_data_grouped,
             current_date=current_date,
@@ -319,6 +320,16 @@ def _run_parallel_strategy_selection_task(
         from shared_strategies import select_bh_1y_6m_rank_stocks
 
         selected = select_bh_1y_6m_rank_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "bh_1y_6m_blend":
+        from shared_strategies import select_bh_1y_6m_blend_stocks
+
+        selected = select_bh_1y_6m_blend_stocks(
             initial_top_tickers,
             ticker_data_grouped,
             current_date=current_date,
@@ -808,6 +819,7 @@ from config import (
     MOMENTUM_AI_HYBRID_SELL_THRESHOLD, MOMENTUM_AI_HYBRID_MOMENTUM_LOOKBACK,
     MOMENTUM_AI_HYBRID_STOP_LOSS, MOMENTUM_AI_HYBRID_TRAILING_STOP,
     STATIC_BH_1Y_REBALANCE_DAYS, STATIC_BH_6M_REBALANCE_DAYS, STATIC_BH_3M_REBALANCE_DAYS, STATIC_BH_1M_REBALANCE_DAYS,
+    STATIC_PRICE_CURVATURE_REBALANCE_DAYS, STATIC_PRICE_CURVATURE_1Y_SLOPE_REBALANCE_DAYS,
     DYNAMIC_BH_1Y_VOL_FILTER_MAX_VOLATILITY,
     DYNAMIC_BH_1Y_TRAILING_STOP_PERCENT,
     AI_REBALANCE_FREQUENCY_DAYS, STOP_LOSS_PCT, STRATEGY_STOP_LOSS_PCT, PORTFOLIO_BUFFER_SIZE,
@@ -901,12 +913,16 @@ STRATEGY_REGISTRY = {
     'momentum_volatility_hybrid_6m': _strategy_registry_entry('Mom-Vol Hybrid 6M', 'ENABLE_MOMENTUM_VOLATILITY_HYBRID_6M', 'momentum_volatility_hybrid_6m_portfolio_value', 'momentum_volatility_hybrid_6m_portfolio_history', 'momentum_volatility_hybrid_6m_cash', 'momentum_volatility_hybrid_6m_positions'),
     'momentum_volatility_hybrid_1y': _strategy_registry_entry('Mom-Vol Hybrid 1Y', 'ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y', 'momentum_volatility_hybrid_1y_portfolio_value', 'momentum_volatility_hybrid_1y_portfolio_history', 'momentum_volatility_hybrid_1y_cash', 'momentum_volatility_hybrid_1y_positions'),
     'momentum_volatility_hybrid_1y3m': _strategy_registry_entry('Mom-Vol Hybrid 1Y/3M', 'ENABLE_MOMENTUM_VOLATILITY_HYBRID_1Y3M', 'momentum_volatility_hybrid_1y3m_portfolio_value', 'momentum_volatility_hybrid_1y3m_portfolio_history', 'momentum_volatility_hybrid_1y3m_cash', 'momentum_volatility_hybrid_1y3m_positions'),
-    'price_acceleration': _strategy_registry_entry('Price Acceleration', 'ENABLE_PRICE_ACCELERATION', 'price_acceleration_portfolio_value', 'price_acceleration_portfolio_history', 'price_acceleration_cash', 'current_price_acceleration_stocks'),
+    'static_price_curvature': _strategy_registry_entry('Static Price Curvature', 'ENABLE_STATIC_PRICE_CURVATURE', 'static_price_curvature_portfolio_value', 'static_price_curvature_portfolio_history', 'static_price_curvature_cash', 'current_static_price_curvature_stocks'),
     'price_curvature': _strategy_registry_entry('Price Curvature', 'ENABLE_PRICE_CURVATURE', 'price_curvature_portfolio_value', 'price_curvature_portfolio_history', 'price_curvature_cash', 'current_price_curvature_stocks'),
+    'static_price_curvature_1y_slope': _strategy_registry_entry('Static Price Curvature 1Y Slope', 'ENABLE_STATIC_PRICE_CURVATURE_1Y_SLOPE', 'static_price_curvature_1y_slope_portfolio_value', 'static_price_curvature_1y_slope_portfolio_history', 'static_price_curvature_1y_slope_cash', 'current_static_price_curvature_1y_slope_stocks'),
+    'price_curvature_1y_slope': _strategy_registry_entry('Price Curvature 1Y Slope', 'ENABLE_PRICE_CURVATURE_1Y_SLOPE', 'price_curvature_1y_slope_portfolio_value', 'price_curvature_1y_slope_portfolio_history', 'price_curvature_1y_slope_cash', 'current_price_curvature_1y_slope_stocks'),
     'confirmed_leaders': _strategy_registry_entry('Confirmed Leaders', 'ENABLE_CONFIRMED_LEADERS', 'confirmed_leaders_portfolio_value', 'confirmed_leaders_portfolio_history', 'confirmed_leaders_cash', 'current_confirmed_leaders_stocks'),
     'foresight_mimic': _strategy_registry_entry('Foresight Mimic Accel', 'ENABLE_FORESIGHT_MIMIC', 'foresight_mimic_portfolio_value', 'foresight_mimic_portfolio_history', 'foresight_mimic_cash', 'current_foresight_mimic_stocks'),
     'bh_1y_1m_rank': _strategy_registry_entry('BH 1Y / 1M Rank', 'ENABLE_BH_1Y_1M_RANK', 'bh_1y_1m_rank_portfolio_value', 'bh_1y_1m_rank_portfolio_history', 'bh_1y_1m_rank_cash', 'current_bh_1y_1m_rank_stocks'),
     'bh_1y_6m_rank': _strategy_registry_entry('BH 1Y / 6M Rank', 'ENABLE_BH_1Y_6M_RANK', 'bh_1y_6m_rank_portfolio_value', 'bh_1y_6m_rank_portfolio_history', 'bh_1y_6m_rank_cash', 'current_bh_1y_6m_rank_stocks'),
+    'bh_1y_6m_blend': _strategy_registry_entry('BH 1Y / 6M Blend', 'ENABLE_BH_1Y_6M_BLEND', 'bh_1y_6m_blend_portfolio_value', 'bh_1y_6m_blend_portfolio_history', 'bh_1y_6m_blend_cash', 'current_bh_1y_6m_blend_stocks'),
+    'early_leader_accel': _strategy_registry_entry('Early Leader Accel', 'ENABLE_EARLY_LEADER_ACCEL', 'early_leader_accel_portfolio_value', 'early_leader_accel_portfolio_history', 'early_leader_accel_cash', 'current_early_leader_accel_stocks'),
     'bh_1y_sma200': _strategy_registry_entry('BH 1Y SMA200', 'ENABLE_BH_1Y_SMA200', 'bh_1y_sma200_portfolio_value', 'bh_1y_sma200_portfolio_history', 'bh_1y_sma200_cash', 'current_bh_1y_sma200_stocks'),
     'bh_1y_fcf_rank': _strategy_registry_entry('BH 1Y / FCF Rank', 'ENABLE_BH_1Y_FCF_RANK', 'bh_1y_fcf_rank_portfolio_value', 'bh_1y_fcf_rank_portfolio_history', 'bh_1y_fcf_rank_cash', 'current_bh_1y_fcf_rank_stocks'),
     'defensive_momentum': _strategy_registry_entry('Defensive Momentum', 'ENABLE_DEFENSIVE_MOMENTUM', 'defensive_momentum_portfolio_value', 'defensive_momentum_portfolio_history', 'defensive_momentum_cash', 'current_defensive_momentum_stocks'),
@@ -917,7 +933,6 @@ STRATEGY_REGISTRY = {
     'ai_volatility_ensemble': _strategy_registry_entry('AI Volatility Ensemble', 'ENABLE_AI_VOLATILITY_ENSEMBLE', 'ai_volatility_ensemble_portfolio_value', 'ai_volatility_ensemble_portfolio_history', 'ai_volatility_ensemble_cash', 'ai_volatility_ensemble_positions'),
     'multi_tf_ensemble': _strategy_registry_entry('Multi-Horizon Ensemble', 'ENABLE_MULTI_TIMEFRAME_ENSEMBLE', 'multi_tf_ensemble_portfolio_value', 'multi_tf_ensemble_portfolio_history', 'multi_tf_ensemble_cash', 'multi_tf_ensemble_positions'),
     'multi_tf_intraday_ensemble': _strategy_registry_entry('Multi-Horizon Intraday', 'ENABLE_MULTI_TIMEFRAME_INTRADAY_ENSEMBLE', 'multi_tf_intraday_ensemble_portfolio_value', 'multi_tf_intraday_ensemble_portfolio_history', 'multi_tf_intraday_ensemble_cash', 'multi_tf_intraday_ensemble_positions'),
-    'correlation_ensemble': _strategy_registry_entry('Correlation Ensemble', 'ENABLE_CORRELATION_ENSEMBLE', 'correlation_ensemble_portfolio_value', 'correlation_ensemble_portfolio_history', 'correlation_ensemble_cash', 'correlation_ensemble_positions'),
     'risk_adj_mom_sentiment': _strategy_registry_entry('RiskAdj Sent Base', 'ENABLE_RISK_ADJ_MOM_SENTIMENT', 'risk_adj_mom_sentiment_portfolio_value', 'risk_adj_mom_sentiment_portfolio_history', 'risk_adj_mom_sentiment_cash', 'risk_adj_mom_sentiment_positions'),
     'voting_ensemble': _strategy_registry_entry('Voting Ensemble', 'ENABLE_VOTING_ENSEMBLE', 'voting_ensemble_portfolio_value', 'voting_ensemble_portfolio_history', 'voting_ensemble_cash', 'voting_ensemble_positions'),
     'voting_ensemble_ai_rebalance': _strategy_registry_entry('Voting Ens AI Reb', 'ENABLE_VOTING_ENSEMBLE_AI_REBALANCE', 'voting_ensemble_ai_rebalance_portfolio_value', 'voting_ensemble_ai_rebalance_portfolio_history', 'voting_ensemble_ai_rebalance_cash', 'voting_ensemble_ai_rebalance_positions'),
@@ -950,6 +965,7 @@ STRATEGY_REGISTRY = {
     'inverse_etf_hedge': _strategy_registry_entry('🛡️ Inv ETF Hedge', 'ENABLE_INVERSE_ETF_HEDGE', 'inverse_etf_hedge_portfolio_value', 'inverse_etf_hedge_portfolio_history', 'inverse_etf_hedge_cash', 'inverse_etf_hedge_positions'),
     'analyst_rec': _strategy_registry_entry('Analyst Rec', 'ENABLE_ANALYST_RECOMMENDATION', 'analyst_rec_portfolio_value', 'analyst_rec_portfolio_history', 'analyst_rec_cash', 'analyst_rec_positions'),
     'bh_1y_monthly': _strategy_registry_entry('BH 1Y Monthly', 'ENABLE_STATIC_BH_1Y_MONTHLY', 'static_bh_1y_monthly_portfolio_value', 'static_bh_1y_monthly_portfolio_history', 'static_bh_1y_monthly_cash', 'static_bh_1y_monthly_positions'),
+    'bh_1y_weekly': _strategy_registry_entry('BH 1Y Weekly', 'ENABLE_STATIC_BH_1Y_WEEKLY', 'static_bh_1y_weekly_portfolio_value', 'static_bh_1y_weekly_portfolio_history', 'static_bh_1y_weekly_cash', 'static_bh_1y_weekly_positions'),
     'bh_6m_monthly': _strategy_registry_entry('BH 6M Monthly', 'ENABLE_STATIC_BH_6M_MONTHLY', 'static_bh_6m_monthly_portfolio_value', 'static_bh_6m_monthly_portfolio_history', 'static_bh_6m_monthly_cash', 'static_bh_6m_monthly_positions'),
     'bh_3m_monthly': _strategy_registry_entry('BH 3M Monthly', 'ENABLE_STATIC_BH_3M_MONTHLY', 'static_bh_3m_monthly_portfolio_value', 'static_bh_3m_monthly_portfolio_history', 'static_bh_3m_monthly_cash', 'static_bh_3m_monthly_positions'),
     'bh_1m_monthly': _strategy_registry_entry('BH 1M Monthly', 'ENABLE_STATIC_BH_1M_MONTHLY', 'static_bh_1m_monthly_portfolio_value', 'static_bh_1m_monthly_portfolio_history', 'static_bh_1m_monthly_cash', 'static_bh_1m_monthly_positions'),
@@ -1040,17 +1056,20 @@ adaptive_strategy_transaction_costs = 0
 adaptive_strategy_portfolio_value = 0
 volatility_ensemble_transaction_costs = 0
 enhanced_volatility_transaction_costs = 0
-correlation_ensemble_transaction_costs = 0
 sentiment_ensemble_transaction_costs = 0
 voting_ensemble_transaction_costs = 0
 voting_ensemble_ai_rebalance_transaction_costs = 0
 momentum_volatility_hybrid_transaction_costs = 0
 momentum_volatility_hybrid_6m_transaction_costs = 0
-price_acceleration_transaction_costs = 0
+static_price_curvature_transaction_costs = 0
 price_curvature_transaction_costs = 0
+static_price_curvature_1y_slope_transaction_costs = 0
+price_curvature_1y_slope_transaction_costs = 0
 foresight_mimic_transaction_costs = 0
 bh_1y_1m_rank_transaction_costs = 0
 bh_1y_6m_rank_transaction_costs = 0
+bh_1y_6m_blend_transaction_costs = 0
+early_leader_accel_transaction_costs = 0
 bh_1y_sma200_transaction_costs = 0
 bh_1y_fcf_rank_transaction_costs = 0
 dynamic_bh_1y_vol_filter_transaction_costs = 0
@@ -2644,12 +2663,15 @@ def _run_portfolio_backtest_walk_forward(
         "sma50_1y_delta_ratio": "SMA50 / 6M Delta",
         "ratio_1y_3m": "1Y/3M Ratio",
         "turnaround": "Turnaround",
-        "price_acceleration": "Price Acceleration",
+        "static_price_curvature": "Static Price Curvature",
         "price_curvature": "Price Curvature",
+        "static_price_curvature_1y_slope": "Static Price Curvature 1Y Slope",
+        "price_curvature_1y_slope": "Price Curvature 1Y Slope",
         "confirmed_leaders": "Confirmed Leaders",
         "foresight_mimic": "Foresight Mimic Accel",
         "bh_1y_1m_rank": "BH 1Y / 1M Rank",
         "bh_1y_6m_rank": "BH 1Y / 6M Rank",
+        "bh_1y_6m_blend": "BH 1Y / 6M Blend",
         "bh_1y_sma200": "BH 1Y SMA200",
         "bh_1y_fcf_rank": "BH 1Y / FCF Rank",
         "defensive_momentum": "Defensive Momentum",
@@ -3198,6 +3220,16 @@ def _run_portfolio_backtest_walk_forward(
     static_bh_1y_monthly_transaction_costs = 0.0
     static_bh_1y_monthly_last_month = None  # Track last rebalanced month
 
+    # Static BH 1Y Weekly
+    static_bh_1y_weekly_portfolio_value = initial_capital_needed
+    static_bh_1y_weekly_portfolio_history = [static_bh_1y_weekly_portfolio_value]
+    static_bh_1y_weekly_positions = {}
+    static_bh_1y_weekly_cash = initial_capital_needed
+    current_static_bh_1y_weekly_stocks = []
+    static_bh_1y_weekly_initialized = False
+    static_bh_1y_weekly_transaction_costs = 0.0
+    static_bh_1y_weekly_last_week = None
+
     # Static BH 6M Monthly
     static_bh_6m_monthly_portfolio_value = initial_capital_needed
     static_bh_6m_monthly_portfolio_history = [static_bh_6m_monthly_portfolio_value]
@@ -3357,13 +3389,14 @@ def _run_portfolio_backtest_walk_forward(
     current_momentum_volatility_hybrid_1y3m_stocks = []
     momentum_volatility_hybrid_1y3m_last_rebalance_value = initial_capital_needed
 
-    # PRICE ACCELERATION: Initialize portfolio tracking
-    price_acceleration_portfolio_value = initial_capital_needed
-    price_acceleration_portfolio_history = [price_acceleration_portfolio_value]
-    price_acceleration_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
-    price_acceleration_cash = initial_capital_needed  # Start with same capital as AI
-    current_price_acceleration_stocks = []  # Current top stocks held by price acceleration strategy
-    price_acceleration_last_rebalance_value = initial_capital_needed  # Transaction cost guard
+    # STATIC PRICE CURVATURE: Initialize portfolio tracking
+    static_price_curvature_portfolio_value = initial_capital_needed
+    static_price_curvature_portfolio_history = [static_price_curvature_portfolio_value]
+    static_price_curvature_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
+    static_price_curvature_cash = initial_capital_needed
+    current_static_price_curvature_stocks = []
+    static_price_curvature_days_since_rebalance = 0
+    static_price_curvature_initialized = False
 
     # PRICE CURVATURE: Initialize portfolio tracking
     price_curvature_portfolio_value = initial_capital_needed
@@ -3372,6 +3405,23 @@ def _run_portfolio_backtest_walk_forward(
     price_curvature_cash = initial_capital_needed
     current_price_curvature_stocks = []
     price_curvature_last_rebalance_value = initial_capital_needed
+
+    # STATIC PRICE CURVATURE 1Y SLOPE: Initialize portfolio tracking
+    static_price_curvature_1y_slope_portfolio_value = initial_capital_needed
+    static_price_curvature_1y_slope_portfolio_history = [static_price_curvature_1y_slope_portfolio_value]
+    static_price_curvature_1y_slope_positions = {}
+    static_price_curvature_1y_slope_cash = initial_capital_needed
+    current_static_price_curvature_1y_slope_stocks = []
+    static_price_curvature_1y_slope_days_since_rebalance = 0
+    static_price_curvature_1y_slope_initialized = False
+
+    # PRICE CURVATURE 1Y SLOPE: Initialize portfolio tracking
+    price_curvature_1y_slope_portfolio_value = initial_capital_needed
+    price_curvature_1y_slope_portfolio_history = [price_curvature_1y_slope_portfolio_value]
+    price_curvature_1y_slope_positions = {}
+    price_curvature_1y_slope_cash = initial_capital_needed
+    current_price_curvature_1y_slope_stocks = []
+    price_curvature_1y_slope_last_rebalance_value = initial_capital_needed
 
     # CONFIRMED LEADERS: Initialize portfolio tracking
     confirmed_leaders_portfolio_value = initial_capital_needed
@@ -3420,6 +3470,22 @@ def _run_portfolio_backtest_walk_forward(
     bh_1y_6m_rank_cash = initial_capital_needed
     current_bh_1y_6m_rank_stocks = []
     bh_1y_6m_rank_last_rebalance_value = initial_capital_needed
+
+    # BH 1Y / 6M BLEND: Initialize portfolio tracking
+    bh_1y_6m_blend_portfolio_value = initial_capital_needed
+    bh_1y_6m_blend_portfolio_history = [bh_1y_6m_blend_portfolio_value]
+    bh_1y_6m_blend_positions = {}
+    bh_1y_6m_blend_cash = initial_capital_needed
+    current_bh_1y_6m_blend_stocks = []
+    bh_1y_6m_blend_last_rebalance_value = initial_capital_needed
+
+    # EARLY LEADER ACCEL: Initialize portfolio tracking
+    early_leader_accel_portfolio_value = initial_capital_needed
+    early_leader_accel_portfolio_history = [early_leader_accel_portfolio_value]
+    early_leader_accel_positions = {}
+    early_leader_accel_cash = initial_capital_needed
+    current_early_leader_accel_stocks = []
+    early_leader_accel_last_rebalance_value = initial_capital_needed
 
     # DEFENSIVE MOMENTUM: Initialize portfolio tracking
     defensive_momentum_portfolio_value = initial_capital_needed
@@ -3493,14 +3559,6 @@ def _run_portfolio_backtest_walk_forward(
     multi_tf_intraday_ensemble_cash = initial_capital_needed
     current_multi_tf_intraday_ensemble_stocks = []
     multi_tf_intraday_ensemble_last_rebalance_value = initial_capital_needed
-
-    # CORRELATION ENSEMBLE: Initialize portfolio tracking
-    correlation_ensemble_portfolio_value = initial_capital_needed
-    correlation_ensemble_portfolio_history = [correlation_ensemble_portfolio_value]
-    correlation_ensemble_positions = {}  # ticker -> {'shares': float, 'entry_price': float, 'value': float}
-    correlation_ensemble_cash = initial_capital_needed  # Start with same capital as AI
-    current_correlation_ensemble_stocks = []  # Current top stocks held by correlation ensemble
-    correlation_ensemble_last_rebalance_value = initial_capital_needed  # Transaction cost guard
 
     # SENTIMENT ENSEMBLE: Initialize portfolio tracking
     sentiment_ensemble_portfolio_value = initial_capital_needed
@@ -3714,6 +3772,7 @@ def _run_portfolio_backtest_walk_forward(
     ai_elite_positions = {}
     ai_elite_cash = initial_capital_needed
     current_ai_elite_stocks = []
+    ai_elite_transaction_costs = 0.0
     ai_elite_last_rebalance_value = initial_capital_needed
     ai_elite_models = {}  # Per-ticker models: ticker -> model
     ai_elite_last_train_days = {}  # Per-ticker training tracking: ticker -> last_train_day
@@ -3880,7 +3939,7 @@ def _run_portfolio_backtest_walk_forward(
 
     # Reset global transaction cost tracking variables for this backtest
     global static_bh_transaction_costs, static_bh_3m_transaction_costs, static_bh_6m_transaction_costs, static_bh_1m_transaction_costs, dynamic_bh_1y_transaction_costs, dynamic_bh_transaction_costs
-    global dynamic_bh_3m_transaction_costs, dynamic_bh_6m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs, ratio_3m_1y_transaction_costs, ratio_1y_3m_transaction_costs, ratio_1m_3m_transaction_costs, sma50_1y_delta_ratio_transaction_costs, turnaround_transaction_costs, adaptive_ensemble_transaction_costs, volatility_ensemble_transaction_costs, correlation_ensemble_transaction_costs, sentiment_ensemble_transaction_costs
+    global dynamic_bh_3m_transaction_costs, dynamic_bh_6m_transaction_costs, dynamic_bh_1m_transaction_costs, risk_adj_mom_transaction_costs, mean_reversion_transaction_costs, quality_momentum_transaction_costs, momentum_ai_hybrid_transaction_costs, volatility_adj_mom_transaction_costs, dynamic_bh_1y_vol_filter_transaction_costs, dynamic_bh_1y_trailing_stop_transaction_costs, ratio_3m_1y_transaction_costs, ratio_1y_3m_transaction_costs, ratio_1m_3m_transaction_costs, sma50_1y_delta_ratio_transaction_costs, turnaround_transaction_costs, adaptive_ensemble_transaction_costs, volatility_ensemble_transaction_costs, sentiment_ensemble_transaction_costs
     global sector_rotation_transaction_costs, momentum_volatility_hybrid_transaction_costs, momentum_volatility_hybrid_6m_transaction_costs, momentum_volatility_hybrid_1y_transaction_costs, momentum_volatility_hybrid_1y3m_transaction_costs, enhanced_volatility_transaction_costs, ai_volatility_ensemble_transaction_costs, multi_tf_ensemble_transaction_costs, multi_tf_intraday_ensemble_transaction_costs
     static_bh_transaction_costs = 0.0  # Static BH has no transaction costs (buy once, hold)
     static_bh_3m_transaction_costs = 0.0
@@ -3914,7 +3973,6 @@ def _run_portfolio_backtest_walk_forward(
     ai_volatility_ensemble_transaction_costs = 0.0
     multi_tf_ensemble_transaction_costs = 0.0
     multi_tf_intraday_ensemble_transaction_costs = 0.0
-    correlation_ensemble_transaction_costs = 0.0
     sentiment_ensemble_transaction_costs = 0.0
     voting_ensemble_transaction_costs = 0.0
     mom_accel_transaction_costs = 0.0
@@ -3930,6 +3988,8 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_1m_transaction_costs = 0.0
     risk_adj_mom_1m_monthly_transaction_costs = 0.0
     ai_elite_transaction_costs = 0.0
+    bh_1y_6m_blend_transaction_costs = 0.0
+    early_leader_accel_transaction_costs = 0.0
 
     # Transaction cost tracking for strategies that don't initialize it elsewhere
     ratio_3m_1y_transaction_costs = 0.0
@@ -3940,8 +4000,10 @@ def _run_portfolio_backtest_walk_forward(
     momentum_volatility_hybrid_6m_transaction_costs = 0.0
     momentum_volatility_hybrid_1y_transaction_costs = 0.0
     momentum_volatility_hybrid_1y3m_transaction_costs = 0.0
-    price_acceleration_transaction_costs = 0.0
+    static_price_curvature_transaction_costs = 0.0
     price_curvature_transaction_costs = 0.0
+    static_price_curvature_1y_slope_transaction_costs = 0.0
+    price_curvature_1y_slope_transaction_costs = 0.0
     confirmed_leaders_transaction_costs = 0.0
     foresight_mimic_transaction_costs = 0.0
     bh_1y_1m_rank_transaction_costs = 0.0
@@ -6198,10 +6260,108 @@ def _run_portfolio_backtest_walk_forward(
                     static_bh_1m_initialized = True
                     static_bh_1m_days_since_rebalance = 0
 
+        if config.ENABLE_STATIC_PRICE_CURVATURE:
+            static_price_curvature_days_since_rebalance += 1
+
+            should_init_or_rebalance_static_price_curvature = (
+                (not static_price_curvature_initialized) or
+                (
+                    STATIC_PRICE_CURVATURE_REBALANCE_DAYS > 0
+                    and static_price_curvature_days_since_rebalance >= STATIC_PRICE_CURVATURE_REBALANCE_DAYS
+                )
+            )
+
+            if should_init_or_rebalance_static_price_curvature:
+                from price_curvature_strategy import select_price_curvature_stocks
+
+                new_static_price_curvature_stocks = select_price_curvature_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                )
+
+                if new_static_price_curvature_stocks:
+                    print(f"   📊 Static Price Curvature Day {day_count}: {new_static_price_curvature_stocks}")
+                    if not static_price_curvature_initialized:
+                        print(f"   🎯 Static Price Curvature: Initializing with {new_static_price_curvature_stocks}")
+                    else:
+                        print(f"   🔄 Static Price Curvature: Rebalancing to {new_static_price_curvature_stocks}")
+
+                    static_price_curvature_positions, static_price_curvature_cash, current_static_price_curvature_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Static Price Curvature",
+                        current_stocks=current_static_price_curvature_stocks,
+                        new_stocks=new_static_price_curvature_stocks,
+                        positions=static_price_curvature_positions,
+                        cash=static_price_curvature_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not static_price_curvature_initialized,
+                    )
+                    strategies_rebalanced_today['Static Price Curvature'] = rebalanced_flag
+                    static_price_curvature_transaction_costs += rebalance_costs
+                    static_price_curvature_initialized = True
+                    static_price_curvature_days_since_rebalance = 0
+                else:
+                    print("   ❌ No Static Price Curvature stocks selected")
+
+        if config.ENABLE_STATIC_PRICE_CURVATURE_1Y_SLOPE:
+            static_price_curvature_1y_slope_days_since_rebalance += 1
+
+            should_init_or_rebalance_static_price_curvature_1y_slope = (
+                (not static_price_curvature_1y_slope_initialized) or
+                (
+                    STATIC_PRICE_CURVATURE_1Y_SLOPE_REBALANCE_DAYS > 0
+                    and static_price_curvature_1y_slope_days_since_rebalance >= STATIC_PRICE_CURVATURE_1Y_SLOPE_REBALANCE_DAYS
+                )
+            )
+
+            if should_init_or_rebalance_static_price_curvature_1y_slope:
+                from price_curvature_strategy import select_price_curvature_1y_slope_stocks
+
+                new_static_price_curvature_1y_slope_stocks = select_price_curvature_1y_slope_stocks(
+                    initial_top_tickers,
+                    ticker_data_grouped,
+                    current_date=current_date,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                )
+
+                if new_static_price_curvature_1y_slope_stocks:
+                    print(f"   📊 Static Price Curvature 1Y Slope Day {day_count}: {new_static_price_curvature_1y_slope_stocks}")
+                    if not static_price_curvature_1y_slope_initialized:
+                        print(f"   🎯 Static Price Curvature 1Y Slope: Initializing with {new_static_price_curvature_1y_slope_stocks}")
+                    else:
+                        print(f"   🔄 Static Price Curvature 1Y Slope: Rebalancing to {new_static_price_curvature_1y_slope_stocks}")
+
+                    static_price_curvature_1y_slope_positions, static_price_curvature_1y_slope_cash, current_static_price_curvature_1y_slope_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Static Price Curvature 1Y Slope",
+                        current_stocks=current_static_price_curvature_1y_slope_stocks,
+                        new_stocks=new_static_price_curvature_1y_slope_stocks,
+                        positions=static_price_curvature_1y_slope_positions,
+                        cash=static_price_curvature_1y_slope_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not static_price_curvature_1y_slope_initialized,
+                    )
+                    strategies_rebalanced_today['Static Price Curvature 1Y Slope'] = rebalanced_flag
+                    static_price_curvature_1y_slope_transaction_costs += rebalance_costs
+                    static_price_curvature_1y_slope_initialized = True
+                    static_price_curvature_1y_slope_days_since_rebalance = 0
+                else:
+                    print("   ❌ No Static Price Curvature 1Y Slope stocks selected")
+
         # STATIC BH MONTHLY REBALANCE VARIANTS: Rebalance on first trading day of each month
         is_first_trading_day_of_month = (
             (day_count == 1) or  # First day of backtest
             (day_count > 1 and current_date.month != business_days[day_count - 2].month)  # Month changed from previous trading day
+        )
+        is_first_trading_day_of_week = (
+            (day_count == 1) or  # First day of backtest
+            (day_count > 1 and current_date.isocalendar()[:2] != business_days[day_count - 2].isocalendar()[:2])
         )
 
         # Static BH 1Y Monthly
@@ -6228,6 +6388,31 @@ def _run_portfolio_backtest_walk_forward(
                     static_bh_1y_monthly_transaction_costs += rc
                     static_bh_1y_monthly_initialized = True
                     static_bh_1y_monthly_last_month = current_date.month
+
+        # Static BH 1Y Weekly
+        if config.ENABLE_STATIC_BH_1Y_WEEKLY:
+            should_rebalance_1y_weekly = (not static_bh_1y_weekly_initialized) or is_first_trading_day_of_week
+            if should_rebalance_1y_weekly:
+                new_stocks = select_top_performers(
+                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    timing_strategy_name="BH 1Y Weekly",
+                )
+                if new_stocks:
+                    print(f"   📊 Static BH 1Y Weekly Day {day_count}: {new_stocks}")
+                    if not static_bh_1y_weekly_initialized:
+                        print(f"   🎯 Static BH 1Y Weekly: Initializing with {new_stocks}")
+                    else:
+                        print(f"   🔄 Static BH 1Y Weekly: First-trading-day-of-week rebalance ({current_date.strftime('%Y-%m-%d')})")
+                    static_bh_1y_weekly_positions, static_bh_1y_weekly_cash, current_static_bh_1y_weekly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Static BH 1Y Wk", current_stocks=current_static_bh_1y_weekly_stocks,
+                        new_stocks=new_stocks, positions=static_bh_1y_weekly_positions, cash=static_bh_1y_weekly_cash,
+                        ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_1y_weekly_initialized)
+                    strategies_rebalanced_today['BH 1Y Weekly'] = rebalanced_flag
+                    static_bh_1y_weekly_transaction_costs += rc
+                    static_bh_1y_weekly_initialized = True
+                    static_bh_1y_weekly_last_week = tuple(current_date.isocalendar()[:2])
 
         # Static BH 6M Monthly
         if config.ENABLE_STATIC_BH_6M_MONTHLY:
@@ -7115,51 +7300,6 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ Mom-Vol Hybrid 1Y/3M strategy error: {e}")
 
-        # PRICE ACCELERATION: Rebalance using velocity/acceleration strategy DAILY
-        if config.ENABLE_PRICE_ACCELERATION:
-            try:
-                print(f"   🚀 Price Acceleration Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
-
-                def _fallback_price_acceleration():
-                    from shared_strategies import select_price_acceleration_stocks
-                    return select_price_acceleration_stocks(
-                        initial_top_tickers,
-                        ticker_data_grouped,
-                        current_date=current_date,
-                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    )
-
-                new_price_acceleration_stocks = _resolve_parallel_strategy_selection(
-                    "price_acceleration",
-                    _fallback_price_acceleration,
-                )
-
-                if new_price_acceleration_stocks:
-                    print(f"   📊 Price Accel Day {day_count}: {new_price_acceleration_stocks}")
-                    # Use universal smart rebalancing function
-                    price_acceleration_positions, price_acceleration_cash, current_price_acceleration_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name="Price Acceleration",
-                        current_stocks=current_price_acceleration_stocks,
-                        new_stocks=new_price_acceleration_stocks,
-                        positions=price_acceleration_positions,
-                        cash=price_acceleration_cash,
-                        ticker_data_grouped=ticker_data_grouped,
-                        current_date=current_date,
-                        transaction_cost=TRANSACTION_COST,
-                        portfolio_size=PORTFOLIO_SIZE,
-                        force_rebalance=not current_price_acceleration_stocks  # Force initial allocation
-                    )
-                    strategies_rebalanced_today['Price Acceleration'] = rebalanced_flag
-                    price_acceleration_transaction_costs += rebalance_costs
-                    price_acceleration_last_rebalance_value = _mark_to_market_value(
-                        price_acceleration_positions, price_acceleration_cash, ticker_data_grouped, current_date
-                    )
-                else:
-                    print(f"   ❌ No Price Acceleration stocks selected")
-
-            except Exception as e:
-                print(f"   ⚠️ Price Acceleration strategy error: {e}")
-
         if config.ENABLE_PRICE_CURVATURE:
             try:
                 print(f"   🌀 Price Curvature Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
@@ -7202,6 +7342,49 @@ def _run_portfolio_backtest_walk_forward(
 
             except Exception as e:
                 print(f"   ⚠️ Price Curvature strategy error: {e}")
+
+        if config.ENABLE_PRICE_CURVATURE_1Y_SLOPE:
+            try:
+                print(f"   🌀 Price Curvature 1Y Slope Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+
+                def _fallback_price_curvature_1y_slope():
+                    from price_curvature_strategy import select_price_curvature_1y_slope_stocks
+                    return select_price_curvature_1y_slope_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_price_curvature_1y_slope_stocks = _resolve_parallel_strategy_selection(
+                    "price_curvature_1y_slope",
+                    _fallback_price_curvature_1y_slope,
+                )
+
+                if new_price_curvature_1y_slope_stocks:
+                    print(f"   📊 Price Curvature 1Y Slope Day {day_count}: {new_price_curvature_1y_slope_stocks}")
+                    price_curvature_1y_slope_positions, price_curvature_1y_slope_cash, current_price_curvature_1y_slope_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Price Curvature 1Y Slope",
+                        current_stocks=current_price_curvature_1y_slope_stocks,
+                        new_stocks=new_price_curvature_1y_slope_stocks,
+                        positions=price_curvature_1y_slope_positions,
+                        cash=price_curvature_1y_slope_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_price_curvature_1y_slope_stocks,
+                    )
+                    strategies_rebalanced_today['Price Curvature 1Y Slope'] = rebalanced_flag
+                    price_curvature_1y_slope_transaction_costs += rebalance_costs
+                    price_curvature_1y_slope_last_rebalance_value = _mark_to_market_value(
+                        price_curvature_1y_slope_positions, price_curvature_1y_slope_cash, ticker_data_grouped, current_date
+                    )
+                else:
+                    print("   ❌ No Price Curvature 1Y Slope stocks selected")
+
+            except Exception as e:
+                print(f"   ⚠️ Price Curvature 1Y Slope strategy error: {e}")
 
         if config.ENABLE_CONFIRMED_LEADERS:
             try:
@@ -7461,6 +7644,92 @@ def _run_portfolio_backtest_walk_forward(
             except Exception as e:
                 print(f"   ⚠️ BH 1Y / 6M Rank strategy error: {e}")
 
+        if config.ENABLE_BH_1Y_6M_BLEND:
+            try:
+                print(f"   📈 BH 1Y / 6M Blend Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+
+                def _fallback_bh_1y_6m_blend():
+                    from shared_strategies import select_bh_1y_6m_blend_stocks
+                    return select_bh_1y_6m_blend_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_bh_1y_6m_blend_stocks = _resolve_parallel_strategy_selection(
+                    "bh_1y_6m_blend",
+                    _fallback_bh_1y_6m_blend,
+                )
+
+                if new_bh_1y_6m_blend_stocks:
+                    print(f"   📊 BH 1Y / 6M Blend Day {day_count}: {new_bh_1y_6m_blend_stocks}")
+                    bh_1y_6m_blend_positions, bh_1y_6m_blend_cash, current_bh_1y_6m_blend_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="BH 1Y / 6M Blend",
+                        current_stocks=current_bh_1y_6m_blend_stocks,
+                        new_stocks=new_bh_1y_6m_blend_stocks,
+                        positions=bh_1y_6m_blend_positions,
+                        cash=bh_1y_6m_blend_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_bh_1y_6m_blend_stocks,
+                    )
+                    strategies_rebalanced_today['BH 1Y / 6M Blend'] = rebalanced_flag
+                    bh_1y_6m_blend_transaction_costs += rebalance_costs
+                    bh_1y_6m_blend_last_rebalance_value = _mark_to_market_value(
+                        bh_1y_6m_blend_positions, bh_1y_6m_blend_cash, ticker_data_grouped, current_date
+                    )
+                else:
+                    print("   ❌ No BH 1Y / 6M Blend stocks selected")
+
+            except Exception as e:
+                print(f"   ⚠️ BH 1Y / 6M Blend strategy error: {e}")
+
+        if config.ENABLE_EARLY_LEADER_ACCEL:
+            try:
+                print(f"   🚀 Early Leader Accel Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+
+                def _fallback_early_leader_accel():
+                    from shared_strategies import select_early_leader_accel_stocks
+                    return select_early_leader_accel_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    )
+
+                new_early_leader_accel_stocks = _resolve_parallel_strategy_selection(
+                    "early_leader_accel",
+                    _fallback_early_leader_accel,
+                )
+
+                if new_early_leader_accel_stocks:
+                    print(f"   📊 Early Leader Accel Day {day_count}: {new_early_leader_accel_stocks}")
+                    early_leader_accel_positions, early_leader_accel_cash, current_early_leader_accel_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Early Leader Accel",
+                        current_stocks=current_early_leader_accel_stocks,
+                        new_stocks=new_early_leader_accel_stocks,
+                        positions=early_leader_accel_positions,
+                        cash=early_leader_accel_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE,
+                        force_rebalance=not current_early_leader_accel_stocks,
+                    )
+                    strategies_rebalanced_today['Early Leader Accel'] = rebalanced_flag
+                    early_leader_accel_transaction_costs += rebalance_costs
+                    early_leader_accel_last_rebalance_value = _mark_to_market_value(
+                        early_leader_accel_positions, early_leader_accel_cash, ticker_data_grouped, current_date
+                    )
+                else:
+                    print("   ❌ No Early Leader Accel stocks selected")
+
+            except Exception as e:
+                print(f"   ⚠️ Early Leader Accel strategy error: {e}")
+
         if config.ENABLE_DEFENSIVE_MOMENTUM:
             try:
                 print(f"   🛡️ Defensive Momentum Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
@@ -7598,95 +7867,6 @@ def _run_portfolio_backtest_walk_forward(
 
             except Exception as e:
                 print(f"   ⚠️ Volatility Ensemble strategy error: {e}")
-
-        # CORRELATION ENSEMBLE: Select stocks with low correlation for diversification
-        if config.ENABLE_CORRELATION_ENSEMBLE:
-            try:
-                print(f"   📊 Correlation Ensemble: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
-
-                # Calculate correlation-filtered stocks (select stocks with low correlation to each other)
-                correlation_scores = []
-
-                for ticker in initial_top_tickers:
-                    try:
-                        if ticker not in ticker_data_grouped:
-                            continue
-                        ticker_data = ticker_data_grouped[ticker]
-
-                        # Get 60-day returns for correlation calculation
-                        lookback_start = current_date - timedelta(days=60)
-                        data_slice = ticker_data.loc[lookback_start:current_date]
-
-                        if len(data_slice) >= 30:
-                            returns = data_slice['Close'].pct_change().dropna()
-                            if len(returns) >= 20:
-                                # Calculate momentum (positive returns preferred)
-                                momentum = (data_slice['Close'].iloc[-1] / data_slice['Close'].iloc[0]) - 1
-                                # Calculate volatility
-                                volatility = returns.std() * np.sqrt(252)
-                                # Score: momentum adjusted by volatility
-                                # Only include stocks with positive momentum
-                                if volatility > 0 and momentum > 0:
-                                    score = momentum / volatility
-                                    correlation_scores.append((ticker, score, returns))
-                    except Exception:
-                        continue
-
-                if correlation_scores:
-                    # Sort by score and select top candidates
-                    correlation_scores.sort(key=lambda x: x[1], reverse=True)
-
-                    # Select stocks with low correlation to each other
-                    selected_stocks = []
-                    for ticker, score, returns in correlation_scores:
-                        if len(selected_stocks) >= PORTFOLIO_SIZE:
-                            break
-
-                        # Check correlation with already selected stocks
-                        is_correlated = False
-                        for sel_ticker, _, sel_returns in [s for s in correlation_scores if s[0] in selected_stocks]:
-                            try:
-                                corr = returns.corr(sel_returns)
-                                if abs(corr) > 0.7:  # High correlation threshold
-                                    is_correlated = True
-                                    break
-                            except Exception:
-                                pass
-
-                        if not is_correlated:
-                            selected_stocks.append(ticker)
-
-                    new_correlation_ensemble_stocks = selected_stocks
-
-                    if new_correlation_ensemble_stocks:
-                        print(f"   📊 Correlation Ensemble Day {day_count}: {new_correlation_ensemble_stocks}")
-                        print(f"   🎯 Correlation Ensemble: Selected {len(new_correlation_ensemble_stocks)} low-correlation stocks")
-
-                        # Use universal smart rebalancing function
-                        correlation_ensemble_positions, correlation_ensemble_cash, current_correlation_ensemble_stocks, rebalance_costs, rebalanced_flag = _smart_rebalance_portfolio(
-                            strategy_name="Correlation Ensemble",
-                            current_stocks=current_correlation_ensemble_stocks,
-                            new_stocks=new_correlation_ensemble_stocks,
-                            positions=correlation_ensemble_positions,
-                            cash=correlation_ensemble_cash,
-                            ticker_data_grouped=ticker_data_grouped,
-                            current_date=current_date,
-                            transaction_cost=TRANSACTION_COST,
-                            portfolio_size=PORTFOLIO_SIZE,
-                            force_rebalance=not current_correlation_ensemble_stocks  # Force initial allocation on day 1
-                        )
-                        strategies_rebalanced_today['Correlation Ensemble'] = rebalanced_flag
-                        correlation_ensemble_transaction_costs += rebalance_costs
-                        correlation_ensemble_last_rebalance_value = _mark_to_market_value(
-                            correlation_ensemble_positions, correlation_ensemble_cash, ticker_data_grouped, current_date
-                        )
-                    else:
-                        print(f"   ❌ No low-correlation stocks found")
-                else:
-                    print(f"   ❌ No correlation data available")
-
-            except Exception as e:
-                print(f"   ⚠️ Correlation Ensemble strategy error: {e}")
 
         # RISK-ADJ MOMENTUM SENTIMENT: Rebalance using risk-adjusted momentum + sentiment strategy DAILY
         if config.ENABLE_RISK_ADJ_MOM_SENTIMENT:
@@ -10144,37 +10324,6 @@ def _run_portfolio_backtest_walk_forward(
         momentum_volatility_hybrid_1y3m_portfolio_value = momentum_volatility_hybrid_1y3m_invested_value + momentum_volatility_hybrid_1y3m_cash
         momentum_volatility_hybrid_1y3m_portfolio_history.append(momentum_volatility_hybrid_1y3m_portfolio_value)
 
-        # Update PRICE ACCELERATION portfolio value daily
-        price_acceleration_invested_value = 0.0
-        if config.ENABLE_PRICE_ACCELERATION:
-            for ticker in list(price_acceleration_positions.keys()):
-                try:
-                    # Get ticker data using the same method as other strategies
-                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
-                    if ticker_data is None and hasattr(ticker_data_grouped, 'get_group'):
-                        try:
-                            ticker_data = ticker_data_grouped.get_group(ticker)
-                        except KeyError:
-                            ticker_data = None
-
-                    if ticker_data is not None and not ticker_data.empty:
-                        current_price = _last_valid_close_up_to(ticker_data, current_date)
-                        if current_price is not None:
-                            shares = price_acceleration_positions[ticker]['shares']
-                            position_value = shares * current_price
-                            price_acceleration_positions[ticker]['value'] = position_value
-                            price_acceleration_invested_value += position_value
-                        else:
-                            price_acceleration_invested_value += price_acceleration_positions[ticker].get('value', 0.0)
-                    else:
-                        price_acceleration_invested_value += price_acceleration_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating Price Acceleration position for {ticker}: {e}")
-                    price_acceleration_invested_value += price_acceleration_positions[ticker].get('value', 0.0)
-
-        price_acceleration_portfolio_value = price_acceleration_invested_value + price_acceleration_cash
-        price_acceleration_portfolio_history.append(price_acceleration_portfolio_value)
-
         # Update BH 1Y / 1M RANK portfolio value daily
         bh_1y_1m_rank_invested_value = 0.0
         if config.ENABLE_BH_1Y_1M_RANK:
@@ -10295,6 +10444,66 @@ def _run_portfolio_backtest_walk_forward(
         bh_1y_6m_rank_portfolio_value = bh_1y_6m_rank_invested_value + bh_1y_6m_rank_cash
         bh_1y_6m_rank_portfolio_history.append(bh_1y_6m_rank_portfolio_value)
 
+        # Update BH 1Y / 6M BLEND portfolio value daily
+        bh_1y_6m_blend_invested_value = 0.0
+        if config.ENABLE_BH_1Y_6M_BLEND:
+            for ticker in list(bh_1y_6m_blend_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None and hasattr(ticker_data_grouped, 'get_group'):
+                        try:
+                            ticker_data = ticker_data_grouped.get_group(ticker)
+                        except KeyError:
+                            ticker_data = None
+
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None:
+                            shares = bh_1y_6m_blend_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            bh_1y_6m_blend_positions[ticker]['value'] = position_value
+                            bh_1y_6m_blend_invested_value += position_value
+                        else:
+                            bh_1y_6m_blend_invested_value += bh_1y_6m_blend_positions[ticker].get('value', 0.0)
+                    else:
+                        bh_1y_6m_blend_invested_value += bh_1y_6m_blend_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating BH 1Y / 6M Blend position for {ticker}: {e}")
+                    bh_1y_6m_blend_invested_value += bh_1y_6m_blend_positions[ticker].get('value', 0.0)
+
+        bh_1y_6m_blend_portfolio_value = bh_1y_6m_blend_invested_value + bh_1y_6m_blend_cash
+        bh_1y_6m_blend_portfolio_history.append(bh_1y_6m_blend_portfolio_value)
+
+        # Update EARLY LEADER ACCEL portfolio value daily
+        early_leader_accel_invested_value = 0.0
+        if config.ENABLE_EARLY_LEADER_ACCEL:
+            for ticker in list(early_leader_accel_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None and hasattr(ticker_data_grouped, 'get_group'):
+                        try:
+                            ticker_data = ticker_data_grouped.get_group(ticker)
+                        except KeyError:
+                            ticker_data = None
+
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None:
+                            shares = early_leader_accel_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            early_leader_accel_positions[ticker]['value'] = position_value
+                            early_leader_accel_invested_value += position_value
+                        else:
+                            early_leader_accel_invested_value += early_leader_accel_positions[ticker].get('value', 0.0)
+                    else:
+                        early_leader_accel_invested_value += early_leader_accel_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating Early Leader Accel position for {ticker}: {e}")
+                    early_leader_accel_invested_value += early_leader_accel_positions[ticker].get('value', 0.0)
+
+        early_leader_accel_portfolio_value = early_leader_accel_invested_value + early_leader_accel_cash
+        early_leader_accel_portfolio_history.append(early_leader_accel_portfolio_value)
+
         # Update PRICE CURVATURE portfolio value daily
         price_curvature_invested_value = 0.0
         if config.ENABLE_PRICE_CURVATURE:
@@ -10324,6 +10533,96 @@ def _run_portfolio_backtest_walk_forward(
 
         price_curvature_portfolio_value = price_curvature_invested_value + price_curvature_cash
         price_curvature_portfolio_history.append(price_curvature_portfolio_value)
+
+        # Update STATIC PRICE CURVATURE portfolio value daily
+        static_price_curvature_invested_value = 0.0
+        if config.ENABLE_STATIC_PRICE_CURVATURE:
+            for ticker in list(static_price_curvature_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None and hasattr(ticker_data_grouped, 'get_group'):
+                        try:
+                            ticker_data = ticker_data_grouped.get_group(ticker)
+                        except KeyError:
+                            ticker_data = None
+
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None:
+                            shares = static_price_curvature_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            static_price_curvature_positions[ticker]['value'] = position_value
+                            static_price_curvature_invested_value += position_value
+                        else:
+                            static_price_curvature_invested_value += static_price_curvature_positions[ticker].get('value', 0.0)
+                    else:
+                        static_price_curvature_invested_value += static_price_curvature_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating Static Price Curvature position for {ticker}: {e}")
+                    static_price_curvature_invested_value += static_price_curvature_positions[ticker].get('value', 0.0)
+
+        static_price_curvature_portfolio_value = static_price_curvature_invested_value + static_price_curvature_cash
+        static_price_curvature_portfolio_history.append(static_price_curvature_portfolio_value)
+
+        # Update PRICE CURVATURE 1Y SLOPE portfolio value daily
+        price_curvature_1y_slope_invested_value = 0.0
+        if config.ENABLE_PRICE_CURVATURE_1Y_SLOPE:
+            for ticker in list(price_curvature_1y_slope_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None and hasattr(ticker_data_grouped, 'get_group'):
+                        try:
+                            ticker_data = ticker_data_grouped.get_group(ticker)
+                        except KeyError:
+                            ticker_data = None
+
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None:
+                            shares = price_curvature_1y_slope_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            price_curvature_1y_slope_positions[ticker]['value'] = position_value
+                            price_curvature_1y_slope_invested_value += position_value
+                        else:
+                            price_curvature_1y_slope_invested_value += price_curvature_1y_slope_positions[ticker].get('value', 0.0)
+                    else:
+                        price_curvature_1y_slope_invested_value += price_curvature_1y_slope_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating Price Curvature 1Y Slope position for {ticker}: {e}")
+                    price_curvature_1y_slope_invested_value += price_curvature_1y_slope_positions[ticker].get('value', 0.0)
+
+        price_curvature_1y_slope_portfolio_value = price_curvature_1y_slope_invested_value + price_curvature_1y_slope_cash
+        price_curvature_1y_slope_portfolio_history.append(price_curvature_1y_slope_portfolio_value)
+
+        # Update STATIC PRICE CURVATURE 1Y SLOPE portfolio value daily
+        static_price_curvature_1y_slope_invested_value = 0.0
+        if config.ENABLE_STATIC_PRICE_CURVATURE_1Y_SLOPE:
+            for ticker in list(static_price_curvature_1y_slope_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None and hasattr(ticker_data_grouped, 'get_group'):
+                        try:
+                            ticker_data = ticker_data_grouped.get_group(ticker)
+                        except KeyError:
+                            ticker_data = None
+
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None:
+                            shares = static_price_curvature_1y_slope_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            static_price_curvature_1y_slope_positions[ticker]['value'] = position_value
+                            static_price_curvature_1y_slope_invested_value += position_value
+                        else:
+                            static_price_curvature_1y_slope_invested_value += static_price_curvature_1y_slope_positions[ticker].get('value', 0.0)
+                    else:
+                        static_price_curvature_1y_slope_invested_value += static_price_curvature_1y_slope_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating Static Price Curvature 1Y Slope position for {ticker}: {e}")
+                    static_price_curvature_1y_slope_invested_value += static_price_curvature_1y_slope_positions[ticker].get('value', 0.0)
+
+        static_price_curvature_1y_slope_portfolio_value = static_price_curvature_1y_slope_invested_value + static_price_curvature_1y_slope_cash
+        static_price_curvature_1y_slope_portfolio_history.append(static_price_curvature_1y_slope_portfolio_value)
 
         # Update CONFIRMED LEADERS portfolio value daily
         confirmed_leaders_invested_value = 0.0
@@ -10643,30 +10942,6 @@ def _run_portfolio_backtest_walk_forward(
         else:
             multi_tf_intraday_ensemble_portfolio_value = multi_tf_intraday_ensemble_cash
         multi_tf_intraday_ensemble_portfolio_history.append(multi_tf_intraday_ensemble_portfolio_value)
-
-        # Update CORRELATION ENSEMBLE portfolio value daily (skip if disabled)
-        correlation_ensemble_invested_value = 0.0
-        if config.ENABLE_CORRELATION_ENSEMBLE:
-            for ticker in list(correlation_ensemble_positions.keys()):
-                try:
-                    ticker_df = ticker_data_grouped.get(ticker)
-                    if ticker_df is not None:
-                        current_price = _last_valid_close_up_to(ticker_df, current_date)
-                        if current_price is not None:
-                            shares = correlation_ensemble_positions[ticker]['shares']
-                            position_value = shares * current_price
-                            correlation_ensemble_positions[ticker]['value'] = position_value
-                            correlation_ensemble_invested_value += position_value
-                        else:
-                            correlation_ensemble_invested_value += correlation_ensemble_positions[ticker].get('value', 0.0)
-                    else:
-                        correlation_ensemble_invested_value += correlation_ensemble_positions[ticker].get('value', 0.0)
-                except Exception as e:
-                    print(f"   ⚠️ Error updating correlation ensemble position for {ticker}: {e}")
-                    correlation_ensemble_invested_value += correlation_ensemble_positions[ticker].get('value', 0.0)
-
-        correlation_ensemble_portfolio_value = correlation_ensemble_invested_value + correlation_ensemble_cash
-        correlation_ensemble_portfolio_history.append(correlation_ensemble_portfolio_value)
 
         _advance_valuation_progress("ensemble family")
 
@@ -11669,6 +11944,7 @@ def _run_portfolio_backtest_walk_forward(
         # Update STATIC BH MONTHLY variants portfolio values daily
         for monthly_var in [
             ('1Y', config.ENABLE_STATIC_BH_1Y_MONTHLY, static_bh_1y_monthly_positions, 'static_bh_1y_monthly'),
+            ('1Y Weekly', config.ENABLE_STATIC_BH_1Y_WEEKLY, static_bh_1y_weekly_positions, 'static_bh_1y_weekly'),
             ('6M', config.ENABLE_STATIC_BH_6M_MONTHLY, static_bh_6m_monthly_positions, 'static_bh_6m_monthly'),
             ('3M', config.ENABLE_STATIC_BH_3M_MONTHLY, static_bh_3m_monthly_positions, 'static_bh_3m_monthly'),
             ('1M', config.ENABLE_STATIC_BH_1M_MONTHLY, static_bh_1m_monthly_positions, 'static_bh_1m_monthly'),
@@ -11679,6 +11955,9 @@ def _run_portfolio_backtest_walk_forward(
                 if var_prefix == 'static_bh_1y_monthly':
                     static_bh_1y_monthly_portfolio_value = invested + static_bh_1y_monthly_cash
                     static_bh_1y_monthly_portfolio_history.append(static_bh_1y_monthly_portfolio_value)
+                elif var_prefix == 'static_bh_1y_weekly':
+                    static_bh_1y_weekly_portfolio_value = invested + static_bh_1y_weekly_cash
+                    static_bh_1y_weekly_portfolio_history.append(static_bh_1y_weekly_portfolio_value)
                 elif var_prefix == 'static_bh_6m_monthly':
                     static_bh_6m_monthly_portfolio_value = invested + static_bh_6m_monthly_cash
                     static_bh_6m_monthly_portfolio_history.append(static_bh_6m_monthly_portfolio_value)
@@ -12255,12 +12534,15 @@ def _run_portfolio_backtest_walk_forward(
             ("Dual Momentum",       dual_mom_portfolio_history            if config.ENABLE_DUAL_MOMENTUM else None),
             ("Mom Acceleration",    mom_accel_portfolio_history           if config.ENABLE_MOMENTUM_ACCELERATION else None),
             ("Concentrated 3M",     concentrated_3m_portfolio_history     if config.ENABLE_CONCENTRATED_3M else None),
-            ("Price Acceleration",  price_acceleration_portfolio_history  if config.ENABLE_PRICE_ACCELERATION else None),
+            ("Static Price Curvature", static_price_curvature_portfolio_history if config.ENABLE_STATIC_PRICE_CURVATURE else None),
             ("Price Curvature",     price_curvature_portfolio_history     if config.ENABLE_PRICE_CURVATURE else None),
+            ("Static Price Curvature 1Y Slope", static_price_curvature_1y_slope_portfolio_history if config.ENABLE_STATIC_PRICE_CURVATURE_1Y_SLOPE else None),
+            ("Price Curvature 1Y Slope", price_curvature_1y_slope_portfolio_history if config.ENABLE_PRICE_CURVATURE_1Y_SLOPE else None),
             ("Confirmed Leaders",   confirmed_leaders_portfolio_history   if config.ENABLE_CONFIRMED_LEADERS else None),
             ("Foresight Mimic Accel", foresight_mimic_portfolio_history if config.ENABLE_FORESIGHT_MIMIC else None),
             ("BH 1Y / 1M Rank",     bh_1y_1m_rank_portfolio_history     if config.ENABLE_BH_1Y_1M_RANK else None),
             ("BH 1Y / 6M Rank",     bh_1y_6m_rank_portfolio_history     if config.ENABLE_BH_1Y_6M_RANK else None),
+            ("BH 1Y / 6M Blend",    bh_1y_6m_blend_portfolio_history    if config.ENABLE_BH_1Y_6M_BLEND else None),
             ("BH 1Y SMA200",        bh_1y_sma200_portfolio_history      if config.ENABLE_BH_1Y_SMA200 else None),
             ("BH 1Y / FCF Rank",    bh_1y_fcf_rank_portfolio_history    if config.ENABLE_BH_1Y_FCF_RANK else None),
             ("Defensive Momentum",  defensive_momentum_portfolio_history  if config.ENABLE_DEFENSIVE_MOMENTUM else None),
@@ -12280,6 +12562,7 @@ def _run_portfolio_backtest_walk_forward(
             ("AI Elite",            ai_elite_portfolio_history            if config.ENABLE_AI_ELITE else None),
             ("Top5 Cons Blend",    top5_consistency_blend_portfolio_history if config.ENABLE_TOP5_CONSISTENCY_BLEND else None),
             ("BH 1Y Monthly",       static_bh_1y_monthly_portfolio_history if config.ENABLE_STATIC_BH_1Y_MONTHLY else None),
+            ("BH 1Y Weekly",        static_bh_1y_weekly_portfolio_history if config.ENABLE_STATIC_BH_1Y_WEEKLY else None),
             ("BH 6M Monthly",       static_bh_6m_monthly_portfolio_history if config.ENABLE_STATIC_BH_6M_MONTHLY else None),
             ("BH 3M Monthly",       static_bh_3m_monthly_portfolio_history if config.ENABLE_STATIC_BH_3M_MONTHLY else None),
             ("BH 1M Monthly",       static_bh_1m_monthly_portfolio_history if config.ENABLE_STATIC_BH_1M_MONTHLY else None),
@@ -12422,12 +12705,16 @@ def _run_portfolio_backtest_walk_forward(
             'momentum_volatility_hybrid_6m': _strat(momentum_volatility_hybrid_6m_portfolio_value, momentum_volatility_hybrid_6m_portfolio_history, momentum_volatility_hybrid_6m_transaction_costs, momentum_volatility_hybrid_6m_cash),
             'momentum_volatility_hybrid_1y': _strat(momentum_volatility_hybrid_1y_portfolio_value, momentum_volatility_hybrid_1y_portfolio_history, momentum_volatility_hybrid_1y_transaction_costs, momentum_volatility_hybrid_1y_cash),
             'momentum_volatility_hybrid_1y3m': _strat(momentum_volatility_hybrid_1y3m_portfolio_value, momentum_volatility_hybrid_1y3m_portfolio_history, momentum_volatility_hybrid_1y3m_transaction_costs, momentum_volatility_hybrid_1y3m_cash),
-            'price_acceleration':       _strat(price_acceleration_portfolio_value, price_acceleration_portfolio_history, price_acceleration_transaction_costs, price_acceleration_cash),
+            'static_price_curvature':  _strat(static_price_curvature_portfolio_value, static_price_curvature_portfolio_history, static_price_curvature_transaction_costs, static_price_curvature_cash),
             'price_curvature':         _strat(price_curvature_portfolio_value, price_curvature_portfolio_history, price_curvature_transaction_costs, price_curvature_cash),
+            'static_price_curvature_1y_slope': _strat(static_price_curvature_1y_slope_portfolio_value, static_price_curvature_1y_slope_portfolio_history, static_price_curvature_1y_slope_transaction_costs, static_price_curvature_1y_slope_cash),
+            'price_curvature_1y_slope': _strat(price_curvature_1y_slope_portfolio_value, price_curvature_1y_slope_portfolio_history, price_curvature_1y_slope_transaction_costs, price_curvature_1y_slope_cash),
             'confirmed_leaders':       _strat(confirmed_leaders_portfolio_value, confirmed_leaders_portfolio_history, confirmed_leaders_transaction_costs, confirmed_leaders_cash),
             'foresight_mimic':         _strat(foresight_mimic_portfolio_value, foresight_mimic_portfolio_history, foresight_mimic_transaction_costs, foresight_mimic_cash),
             'bh_1y_1m_rank':          _strat(bh_1y_1m_rank_portfolio_value, bh_1y_1m_rank_portfolio_history, bh_1y_1m_rank_transaction_costs, bh_1y_1m_rank_cash),
             'bh_1y_6m_rank':        _strat(bh_1y_6m_rank_portfolio_value, bh_1y_6m_rank_portfolio_history, bh_1y_6m_rank_transaction_costs, bh_1y_6m_rank_cash),
+            'bh_1y_6m_blend':       _strat(bh_1y_6m_blend_portfolio_value, bh_1y_6m_blend_portfolio_history, bh_1y_6m_blend_transaction_costs, bh_1y_6m_blend_cash),
+            'early_leader_accel':    _strat(early_leader_accel_portfolio_value, early_leader_accel_portfolio_history, early_leader_accel_transaction_costs, early_leader_accel_cash),
             'bh_1y_sma200':          _strat(bh_1y_sma200_portfolio_value, bh_1y_sma200_portfolio_history, bh_1y_sma200_transaction_costs, bh_1y_sma200_cash),
             'bh_1y_fcf_rank':        _strat(bh_1y_fcf_rank_portfolio_value, bh_1y_fcf_rank_portfolio_history, bh_1y_fcf_rank_transaction_costs, bh_1y_fcf_rank_cash),
             'defensive_momentum':      _strat(defensive_momentum_portfolio_value, defensive_momentum_portfolio_history, defensive_momentum_transaction_costs, defensive_momentum_cash),
@@ -12438,7 +12725,6 @@ def _run_portfolio_backtest_walk_forward(
             'ai_volatility_ensemble':   _strat(ai_volatility_ensemble_portfolio_value, ai_volatility_ensemble_portfolio_history, ai_volatility_ensemble_transaction_costs, ai_volatility_ensemble_cash),
             'multi_tf_ensemble':        _strat(multi_tf_ensemble_portfolio_value, multi_tf_ensemble_portfolio_history, multi_tf_ensemble_transaction_costs, multi_tf_ensemble_cash),
             'multi_tf_intraday_ensemble': _strat(multi_tf_intraday_ensemble_portfolio_value, multi_tf_intraday_ensemble_portfolio_history, multi_tf_intraday_ensemble_transaction_costs, multi_tf_intraday_ensemble_cash),
-            'correlation_ensemble':     _strat(correlation_ensemble_portfolio_value, correlation_ensemble_portfolio_history, correlation_ensemble_transaction_costs, correlation_ensemble_cash),
             'sentiment_ensemble':       _strat(sentiment_ensemble_portfolio_value, sentiment_ensemble_portfolio_history, sentiment_ensemble_transaction_costs, sentiment_ensemble_cash),
             'voting_ensemble':          _strat(voting_ensemble_portfolio_value, voting_ensemble_portfolio_history, voting_ensemble_transaction_costs, voting_ensemble_cash),
             'voting_ensemble_ai_rebalance': _strat(voting_ensemble_ai_rebalance_portfolio_value, voting_ensemble_ai_rebalance_portfolio_history, voting_ensemble_ai_rebalance_transaction_costs, voting_ensemble_ai_rebalance_cash) if config.ENABLE_VOTING_ENSEMBLE_AI_REBALANCE else _strat(0, [], 0, 0),
@@ -12471,6 +12757,7 @@ def _run_portfolio_backtest_walk_forward(
             'analyst_rec':              _strat(analyst_rec_portfolio_value, analyst_rec_portfolio_history, analyst_rec_transaction_costs, analyst_rec_cash),
             'risk_adj_mom_sentiment':   _strat(risk_adj_mom_sentiment_portfolio_value, risk_adj_mom_sentiment_portfolio_history, risk_adj_mom_sentiment_transaction_costs, risk_adj_mom_sentiment_cash),
             'bh_1y_monthly':            _strat(static_bh_1y_monthly_portfolio_value, static_bh_1y_monthly_portfolio_history, static_bh_1y_monthly_transaction_costs, static_bh_1y_monthly_cash),
+            'bh_1y_weekly':             _strat(static_bh_1y_weekly_portfolio_value, static_bh_1y_weekly_portfolio_history, static_bh_1y_weekly_transaction_costs, static_bh_1y_weekly_cash),
             'bh_6m_monthly':            _strat(static_bh_6m_monthly_portfolio_value, static_bh_6m_monthly_portfolio_history, static_bh_6m_monthly_transaction_costs, static_bh_6m_monthly_cash),
             'bh_3m_monthly':            _strat(static_bh_3m_monthly_portfolio_value, static_bh_3m_monthly_portfolio_history, static_bh_3m_monthly_transaction_costs, static_bh_3m_monthly_cash),
             'bh_1m_monthly':            _strat(static_bh_1m_monthly_portfolio_value, static_bh_1m_monthly_portfolio_history, static_bh_1m_monthly_transaction_costs, static_bh_1m_monthly_cash),
@@ -12561,12 +12848,16 @@ def _run_portfolio_backtest_walk_forward(
             'mean_reversion': {'tickers': list(current_mean_reversion_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in mean_reversion_positions.items()}},
             'turnaround': {'tickers': list(current_turnaround_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in turnaround_positions.items()}},
             'deep_recovery': {'tickers': list(current_deep_recovery_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in deep_recovery_positions.items()}},
-            'price_acceleration': {'tickers': list(current_price_acceleration_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in price_acceleration_positions.items()}},
+            'static_price_curvature': {'tickers': list(current_static_price_curvature_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_price_curvature_positions.items()}},
             'price_curvature': {'tickers': list(current_price_curvature_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in price_curvature_positions.items()}},
+            'static_price_curvature_1y_slope': {'tickers': list(current_static_price_curvature_1y_slope_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_price_curvature_1y_slope_positions.items()}},
+            'price_curvature_1y_slope': {'tickers': list(current_price_curvature_1y_slope_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in price_curvature_1y_slope_positions.items()}},
             'confirmed_leaders': {'tickers': list(current_confirmed_leaders_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in confirmed_leaders_positions.items()}},
             'foresight_mimic': {'tickers': list(current_foresight_mimic_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in foresight_mimic_positions.items()}},
             'bh_1y_1m_rank': {'tickers': list(current_bh_1y_1m_rank_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_1m_rank_positions.items()}},
             'bh_1y_6m_rank': {'tickers': list(current_bh_1y_6m_rank_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_6m_rank_positions.items()}},
+            'bh_1y_6m_blend': {'tickers': list(current_bh_1y_6m_blend_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_6m_blend_positions.items()}},
+            'early_leader_accel': {'tickers': list(current_early_leader_accel_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in early_leader_accel_positions.items()}},
             'bh_1y_sma200': {'tickers': list(current_bh_1y_sma200_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_sma200_positions.items()}},
             'bh_1y_fcf_rank': {'tickers': list(current_bh_1y_fcf_rank_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_fcf_rank_positions.items()}},
             'defensive_momentum': {'tickers': list(current_defensive_momentum_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in defensive_momentum_positions.items()}},
@@ -12579,6 +12870,7 @@ def _run_portfolio_backtest_walk_forward(
             'concentrated_3m': {'tickers': list(current_concentrated_3m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in concentrated_3m_positions.items()}},
             'analyst_rec': {'tickers': list(current_analyst_rec_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in analyst_rec_positions.items()}},
             'bh_1y_monthly': {'tickers': list(current_static_bh_1y_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_monthly_positions.items()}},
+            'bh_1y_weekly': {'tickers': list(current_static_bh_1y_weekly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_weekly_positions.items()}},
             'bh_6m_monthly': {'tickers': list(current_static_bh_6m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_6m_monthly_positions.items()}},
             'bh_3m_monthly': {'tickers': list(current_static_bh_3m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_3m_monthly_positions.items()}},
             'bh_1m_monthly': {'tickers': list(current_static_bh_1m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1m_monthly_positions.items()}},
@@ -12633,7 +12925,6 @@ def _run_portfolio_backtest_walk_forward(
             'bb_mean_reversion': {'tickers': list(current_bb_mean_reversion_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bb_mean_reversion_positions.items()}},
             'bb_rsi_combo': {'tickers': list(current_bb_rsi_combo_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bb_rsi_combo_positions.items()}},
             'bb_squeeze_breakout': {'tickers': list(current_bb_squeeze_breakout_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bb_squeeze_breakout_positions.items()}},
-            'correlation_ensemble': {'tickers': list(current_correlation_ensemble_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in correlation_ensemble_positions.items()}},
             'dynamic_bh_1y_trailing_stop': {'tickers': list(current_dynamic_bh_1y_trailing_stop_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in dynamic_bh_1y_trailing_stop_positions.items()}},
             'dynamic_bh_1y_vol_filter': {'tickers': list(current_dynamic_bh_1y_vol_filter_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in dynamic_bh_1y_vol_filter_positions.items()}},
             'momentum_volatility_hybrid': {'tickers': list(momentum_volatility_hybrid_positions.keys()), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in momentum_volatility_hybrid_positions.items()}},
@@ -12673,7 +12964,7 @@ def _run_portfolio_backtest_walk_forward(
             select_top_performers, select_risk_adj_mom_stocks,
             select_sector_rotation_etfs, select_quality_momentum_stocks,
             select_mean_reversion_stocks, select_volatility_adj_mom_stocks,
-            select_price_acceleration_stocks, select_turnaround_stocks,
+            select_turnaround_stocks,
             select_3m_1y_ratio_stocks, select_1y_3m_ratio_stocks,
             select_top_performers_vol_filtered,
             select_momentum_volatility_hybrid_stocks

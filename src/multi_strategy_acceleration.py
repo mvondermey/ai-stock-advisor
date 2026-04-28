@@ -22,6 +22,53 @@ def _execute_strategy_live(strategy: str, all_tickers: list, ticker_data_grouped
         from shared_strategies import select_top_performers
         return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=180, top_n=portfolio_size)
 
+    elif strategy == 'static_bh_6m_perf':
+        from shared_strategies import select_top_performers
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=180, top_n=portfolio_size)
+
+    elif strategy == 'static_bh_9m_perf':
+        from shared_strategies import select_top_performers
+        return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=270, top_n=portfolio_size)
+
+    elif strategy == 'bh_1y_1m_rank':
+        from shared_strategies import select_bh_1y_1m_rank_stocks
+        return select_bh_1y_1m_rank_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=portfolio_size)
+
+    elif strategy == 'bh_1y_6m_rank':
+        from shared_strategies import select_bh_1y_6m_rank_stocks
+        return select_bh_1y_6m_rank_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=portfolio_size)
+
+    elif strategy == 'bh_1y_6m_blend':
+        from shared_strategies import select_bh_1y_6m_blend_stocks
+        return select_bh_1y_6m_blend_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=portfolio_size)
+
+    elif strategy == 'bh_1y_weekly':
+        from shared_strategies import select_top_performers
+        return select_top_performers(
+            all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=portfolio_size
+        )
+
+    elif strategy == 'early_leader_accel':
+        from shared_strategies import select_early_leader_accel_stocks
+        return select_early_leader_accel_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=portfolio_size)
+
+    elif strategy == 'bh_1y_sma200':
+        from shared_strategies import select_bh_1y_sma200_stocks
+        return select_bh_1y_sma200_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=portfolio_size)
+
+    elif strategy == 'bh_1y_fcf_rank':
+        from shared_strategies import select_bh_1y_fcf_rank_stocks
+        return select_bh_1y_fcf_rank_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=portfolio_size)
+
+    elif strategy == 'foresight_mimic':
+        from new_strategies import select_foresight_mimic_stocks
+        return select_foresight_mimic_stocks(
+            all_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=portfolio_size,
+        )
+
     elif strategy == 'static_bh_3m':
         from shared_strategies import select_top_performers
         return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=90, top_n=portfolio_size)

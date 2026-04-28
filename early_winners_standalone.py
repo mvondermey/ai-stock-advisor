@@ -14,12 +14,19 @@ class FeatureSet:
     volume: pd.DataFrame
     coverage: pd.Series
     daily_returns: pd.DataFrame
+    log_2d: pd.DataFrame
+    log_5d: pd.DataFrame
+    log_10d: pd.DataFrame
     log_1m: pd.DataFrame
     log_3m: pd.DataFrame
     log_6m: pd.DataFrame
     log_1y: pd.DataFrame
     sma20: pd.DataFrame
+    sma30: pd.DataFrame
     sma50: pd.DataFrame
+    sma75: pd.DataFrame
+    sma100: pd.DataFrame
+    sma150: pd.DataFrame
     sma200: pd.DataFrame
     slope20: pd.DataFrame
     slope50: pd.DataFrame
@@ -179,13 +186,20 @@ def build_features(
     filtered_volume = volume.loc[valid_dates]
     daily_returns = filtered_close.pct_change()
 
+    log_2d = np.log(filtered_close / filtered_close.shift(2))
+    log_5d = np.log(filtered_close / filtered_close.shift(5))
+    log_10d = np.log(filtered_close / filtered_close.shift(10))
     log_1m = np.log(filtered_close / filtered_close.shift(21)) * (252.0 / 21.0)
     log_3m = np.log(filtered_close / filtered_close.shift(63)) * (252.0 / 63.0)
     log_6m = np.log(filtered_close / filtered_close.shift(126)) * (252.0 / 126.0)
     log_1y = np.log(filtered_close / filtered_close.shift(252))
 
     sma20 = filtered_close.rolling(20).mean()
+    sma30 = filtered_close.rolling(30).mean()
     sma50 = filtered_close.rolling(50).mean()
+    sma75 = filtered_close.rolling(75).mean()
+    sma100 = filtered_close.rolling(100).mean()
+    sma150 = filtered_close.rolling(150).mean()
     sma200 = filtered_close.rolling(200).mean()
     slope20 = sma20 / sma20.shift(10) - 1.0
     slope50 = sma50 / sma50.shift(20) - 1.0
@@ -203,12 +217,19 @@ def build_features(
         volume=filtered_volume,
         coverage=coverage.loc[valid_dates],
         daily_returns=daily_returns,
+        log_2d=log_2d,
+        log_5d=log_5d,
+        log_10d=log_10d,
         log_1m=log_1m,
         log_3m=log_3m,
         log_6m=log_6m,
         log_1y=log_1y,
         sma20=sma20,
+        sma30=sma30,
         sma50=sma50,
+        sma75=sma75,
+        sma100=sma100,
+        sma150=sma150,
         sma200=sma200,
         slope20=slope20,
         slope50=slope50,
@@ -246,6 +267,9 @@ def build_snapshot(features: FeatureSet, date: pd.Timestamp) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "close": features.close.loc[date],
+            "log_2d": features.log_2d.loc[date],
+            "log_5d": features.log_5d.loc[date],
+            "log_10d": features.log_10d.loc[date],
             "log_1m": features.log_1m.loc[date],
             "log_3m": features.log_3m.loc[date],
             "log_6m": features.log_6m.loc[date],
@@ -326,6 +350,387 @@ def select_tickers(
         ranked = frame.sort_values("log_1y", ascending=False)
         return ranked.head(top_n).index.tolist()
 
+    if mode == "bh_1y_rank_sell":
+        # Pure 1Y momentum ranking -- exit logic handled in run_backtest.
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_1y", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Rebalancing variants (use same selection as bh_1y_rank_sell)
+    if mode in (
+        "rebal_drawdown_exit",
+        "rebal_position_sizing",
+        "bh_1y_sma50_daily",
+        "bh_1y_sma200_daily",
+        "bh_1y_sma50_persist",
+        "bh_1y_sma50_rank",
+        "bh_1y_atr_stop",
+        "bh_1y_sma50_persist3",
+        "bh_1y_sma50_persist5",
+        "bh_1y_persist_possize",
+        "bh_1y_persist_rankgate",
+        "bh_1y_persist_dd",
+        "bh_1y_sma30_persist",
+        "bh_1y_sma75_persist",
+        "bh_1y_sma100_persist",
+        "bh_1y_sma150_persist",
+        "bh_1y_sma75_persist3",
+        "bh_1y_sma75_persist_dd",
+    ):
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_1y", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Timeframe variants
+    if mode == "sel_6m":
+        frame = frame[
+            (frame["log_6m"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_6m", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    if mode == "sel_3m":
+        frame = frame[
+            (frame["log_3m"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_3m", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    if mode == "sel_9m":
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["log_6m"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        # Approximate 9M as average of 1Y and 6M
+        frame["log_9m_approx"] = (frame["log_1y"] + frame["log_6m"]) / 2
+        ranked = frame.sort_values("log_9m_approx", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Blend variants
+    if mode == "blend_60_40":
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["log_3m"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        rank_1y = percentile_rank(frame["log_1y"])
+        rank_3m = percentile_rank(frame["log_3m"])
+        frame["score"] = 0.6 * rank_1y + 0.4 * rank_3m
+        ranked = frame.sort_values("score", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    if mode == "blend_80_20":
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["log_3m"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        rank_1y = percentile_rank(frame["log_1y"])
+        rank_3m = percentile_rank(frame["log_3m"])
+        frame["score"] = 0.8 * rank_1y + 0.2 * rank_3m
+        ranked = frame.sort_values("score", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    if mode == "blend_40_60":
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["log_3m"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        rank_1y = percentile_rank(frame["log_1y"])
+        rank_3m = percentile_rank(frame["log_3m"])
+        frame["score"] = 0.4 * rank_1y + 0.6 * rank_3m
+        ranked = frame.sort_values("score", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Fresh momentum blends
+    if mode == "blend_6m_3m":
+        frame = frame[
+            (frame["log_6m"] > 0)
+            & (frame["log_3m"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        rank_6m = percentile_rank(frame["log_6m"])
+        rank_3m = percentile_rank(frame["log_3m"])
+        frame["score"] = 0.5 * rank_6m + 0.5 * rank_3m
+        ranked = frame.sort_values("score", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    if mode == "blend_1y_6m":
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["log_6m"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        rank_1y = percentile_rank(frame["log_1y"])
+        rank_6m = percentile_rank(frame["log_6m"])
+        frame["score"] = 0.5 * rank_1y + 0.5 * rank_6m
+        ranked = frame.sort_values("score", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    if mode == "blend_1y_3m_6m":
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["log_6m"] > 0)
+            & (frame["log_3m"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        rank_1y = percentile_rank(frame["log_1y"])
+        rank_3m = percentile_rank(frame["log_3m"])
+        rank_6m = percentile_rank(frame["log_6m"])
+        frame["score"] = (rank_1y + rank_3m + rank_6m) / 3
+        ranked = frame.sort_values("score", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Acceleration-based
+    if mode == "accel_only":
+        frame["accel_3m_6m"] = frame["log_3m"] - frame["log_6m"]
+        frame["accel_6m_1y"] = frame["log_6m"] - frame["log_1y"]
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["log_6m"] > 0)
+            & (frame["log_3m"] > 0)
+            & (frame["accel_3m_6m"] > 0)
+            & (frame["accel_6m_1y"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_1y", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    if mode == "decel_filter":
+        frame["accel_3m_6m"] = frame["log_3m"] - frame["log_6m"]
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["log_3m"] > 0)
+            & (frame["accel_3m_6m"] >= 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_1y", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Trend + Momentum
+    if mode == "trend_1y":
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["close"] > frame["sma200"])
+            & (frame["trend_r2_60"] > 0.5)
+        ].copy()
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_1y", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # ---- Short-term momentum selection (hot recent movers) ----
+
+    # Pure 2-day return ranking
+    if mode == "sel_2d":
+        frame = frame[
+            (frame["log_2d"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_2d", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Pure 5-day return ranking
+    if mode == "sel_5d":
+        frame = frame[
+            (frame["log_5d"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_5d", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Pure 10-day return ranking
+    if mode == "sel_10d":
+        frame = frame[
+            (frame["log_10d"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_10d", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Hybrid: 1Y filter, then rank by 5-day return (recent acceleration within winners)
+    if mode == "bh_1y_top5d":
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["log_5d"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        # Take top 30% by 1Y, then sort by 5-day return
+        frame["rank_1y"] = percentile_rank(frame["log_1y"])
+        frame = frame[frame["rank_1y"] >= 0.70]
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_5d", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Blend: 50/50 1Y rank + 5-day rank
+    if mode == "blend_1y_5d":
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        rank_1y = percentile_rank(frame["log_1y"])
+        rank_5d = percentile_rank(frame["log_5d"])
+        frame["score"] = 0.5 * rank_1y + 0.5 * rank_5d
+        ranked = frame.sort_values("score", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # 1Y selection with 5-day tie-breaker (top 30 by 1Y, sorted by 5-day)
+    if mode in ("bh_1y_5d_tiebreak", "bh_1y_5d_exit"):
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        # Take top 30 by 1Y, then sort by 5-day return
+        top30 = frame.sort_values("log_1y", ascending=False).head(30)
+        ranked = top30.sort_values("log_5d", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Blend: 70/30 1Y + 5-day (1Y dominant, 5d as freshness signal)
+    if mode in ("blend_1y_5d_70_30", "blend_1y_5d_smart", "blend_1y_5d_persist"):
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        rank_1y = percentile_rank(frame["log_1y"])
+        rank_5d = percentile_rank(frame["log_5d"])
+        frame["score"] = 0.7 * rank_1y + 0.3 * rank_5d
+        ranked = frame.sort_values("score", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # ---- New strategies inspired by Perfect-Foresight gap analysis ----
+
+    # Emerging momentum: stocks NOT yet in top 1Y, but with strong 3M + 1M acceleration.
+    # Idea: catch winners earlier, before they're at the top of the 1Y leaderboard.
+    if mode == "emerging_mom":
+        frame = frame[
+            (frame["log_3m"] > 0)
+            & (frame["log_1m"] > 0)
+            & (frame["close"] > frame["sma50"])
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        rank_1y = percentile_rank(frame["log_1y"])  # higher = better
+        # Keep mid-pack on 1Y (not the over-extended top 5%, not laggards)
+        frame["rank_1y_pct"] = rank_1y
+        frame = frame[
+            (frame["rank_1y_pct"] >= 0.50)
+            & (frame["rank_1y_pct"] <= 0.92)
+        ]
+        if frame.empty:
+            return []
+        # Score by recent acceleration: 3M heavy, 1M secondary
+        frame["score"] = 0.6 * percentile_rank(frame["log_3m"]) + 0.4 * percentile_rank(frame["log_1m"])
+        ranked = frame.sort_values("score", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Turnaround: oversold names breaking out.
+    # Down >25% from 200d-equivalent peak (sma200 << close 6M ago) but recent 3M strong.
+    if mode == "turnaround":
+        # Estimate drawdown via 1Y log return being negative or modest, with 3M acceleration positive
+        frame = frame[
+            (frame["log_1y"] < 0.50)  # didn't already run up
+            & (frame["log_3m"] > 0.30)  # strong 3M (annualized)
+            & (frame["log_1m"] > 0)
+            & (frame["close"] > frame["sma50"])
+        ].copy()
+        if frame.empty:
+            return []
+        # Score by 3M momentum, prefer best recent acceleration
+        frame["score"] = percentile_rank(frame["log_3m"]) + 0.5 * percentile_rank(frame["log_1m"])
+        ranked = frame.sort_values("score", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Rank drift: select names whose 3M rank has improved most vs their 1Y rank.
+    # Captures relative-strength inflection (rising stars).
+    if mode == "rank_drift":
+        frame = frame[
+            (frame["log_3m"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        rank_1y = percentile_rank(frame["log_1y"])
+        rank_3m = percentile_rank(frame["log_3m"])
+        # Drift = how much 3M rank exceeds 1Y rank (positive = accelerating relative to peers)
+        frame["drift"] = rank_3m - rank_1y
+        # Combined: prefer high 3M rank AND positive drift
+        frame["score"] = 0.6 * rank_3m + 0.4 * frame["drift"]
+        # Require positive drift (relative strength improving)
+        frame = frame[frame["drift"] > 0]
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("score", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
+    # Mid-cap momentum: avoid the largest dollar-volume names (proxy for mega caps).
+    # Top 1Y momentum but exclude top 10% by dollar volume.
+    if mode == "mid_cap_mom":
+        frame = frame[
+            (frame["log_1y"] > 0)
+            & (frame["close"] > frame["sma200"])
+        ].copy()
+        if frame.empty:
+            return []
+        dv_pct = percentile_rank(frame["dollar_vol20"])
+        # Keep names below 90th percentile of dollar volume (skip mega caps)
+        frame = frame[dv_pct < 0.90]
+        if frame.empty:
+            return []
+        ranked = frame.sort_values("log_1y", ascending=False)
+        return ranked.head(top_n).index.tolist()
+
     if mode != "early_winners":
         raise ValueError(f"Unknown mode: {mode}")
 
@@ -371,34 +776,308 @@ def run_backtest(
     executed_rebalances = 0
     last_nonempty_selection_date: pd.Timestamp | None = None
     last_nonempty_selection: list[str] = []
+    entry_ranks: Dict[str, int] = {}
+    entry_dates: Dict[str, pd.Timestamp] = {}  # For drawdown_exit
+    entry_prices: Dict[str, float] = {}  # For drawdown_exit
+    peak_prices: Dict[str, float] = {}  # For drawdown_exit
+    smart_modes = {
+        "bh_1y_rank_sell",
+        "rebal_drawdown_exit",
+        "rebal_position_sizing",
+        "bh_1y_sma50_daily",
+        "bh_1y_sma200_daily",
+        "bh_1y_sma50_persist",
+        "bh_1y_sma50_rank",
+        "bh_1y_atr_stop",
+        "bh_1y_sma50_persist3",
+        "bh_1y_sma50_persist5",
+        "bh_1y_persist_possize",
+        "bh_1y_persist_rankgate",
+        "bh_1y_persist_dd",
+        "bh_1y_sma30_persist",
+        "bh_1y_sma75_persist",
+        "bh_1y_sma100_persist",
+        "bh_1y_sma150_persist",
+        "bh_1y_sma75_persist3",
+        "bh_1y_sma75_persist_dd",
+        "blend_1y_5d_smart",
+        "blend_1y_5d_persist",
+        "bh_1y_5d_tiebreak",
+        "bh_1y_5d_exit",
+    }
+    sma_breach_streak: Dict[str, int] = {}  # for persist variants
+    neg_5d_streak: Dict[str, int] = {}  # for bh_1y_5d_exit
+
+    def apply_rebalance(date: pd.Timestamp, picks: list[str]) -> None:
+        nonlocal weights, equity, turnover_sum, executed_rebalances
+        nonlocal last_nonempty_selection_date, last_nonempty_selection
+        if not picks:
+            return
+        
+        # Position sizing by rank strength for rebal_position_sizing mode
+        if mode in ("rebal_position_sizing", "bh_1y_persist_possize"):
+            # Weight by rank: top gets more weight, linear decay
+            rank_weights = {}
+            for i, ticker in enumerate(picks):
+                rank_weights[ticker] = (len(picks) - i) / sum(range(1, len(picks) + 1))
+            new_weights = rank_weights
+        else:
+            new_weights = {ticker: 1.0 / len(picks) for ticker in picks}
+        
+        turnover = sum(
+            abs(new_weights.get(ticker, 0.0) - weights.get(ticker, 0.0))
+            for ticker in set(new_weights) | set(weights)
+        )
+        turnover_sum += turnover
+        equity *= 1.0 - turnover * (transaction_cost_bps / 10_000.0)
+        weights = new_weights
+        executed_rebalances += 1
+        last_nonempty_selection_date = date
+        last_nonempty_selection = picks
+        # Track entry metadata for rebalancing variants
+        for ticker in picks:
+            if ticker not in entry_dates:
+                entry_dates[ticker] = date
+                entry_prices[ticker] = float(features.close.loc[date, ticker])
+                peak_prices[ticker] = entry_prices[ticker]
 
     for date in features.close.index:
         if weights:
             daily_move = features.daily_returns.loc[date, list(weights.keys())].dropna()
             if not daily_move.empty:
                 equity *= 1.0 + float((daily_move * pd.Series(weights)).sum())
+            # Update peak prices for drawdown_exit
+            for ticker in weights.keys():
+                if ticker in features.close.columns:
+                    current_price = float(features.close.loc[date, ticker])
+                    if ticker in peak_prices:
+                        peak_prices[ticker] = max(peak_prices[ticker], current_price)
+
+        # ---------- Daily exit checks for SMA / ATR variants ----------
+        daily_exit_modes = {
+            "bh_1y_sma50_daily",
+            "bh_1y_sma200_daily",
+            "bh_1y_sma50_persist",
+            "bh_1y_sma50_rank",
+            "bh_1y_atr_stop",
+            "bh_1y_sma50_persist3",
+            "bh_1y_sma50_persist5",
+            "bh_1y_persist_possize",
+            "bh_1y_persist_rankgate",
+            "bh_1y_persist_dd",
+            "bh_1y_sma30_persist",
+            "bh_1y_sma75_persist",
+            "bh_1y_sma100_persist",
+            "bh_1y_sma150_persist",
+            "bh_1y_sma75_persist3",
+            "bh_1y_sma75_persist_dd",
+            "blend_1y_5d_persist",
+        }
+        # All persist-style variants need 2-day or longer breach streak
+        persist_threshold = {
+            "bh_1y_sma50_persist": 2,
+            "bh_1y_sma50_persist3": 3,
+            "bh_1y_sma50_persist5": 5,
+            "bh_1y_persist_possize": 2,
+            "bh_1y_persist_rankgate": 2,
+            "bh_1y_persist_dd": 2,
+            "bh_1y_sma30_persist": 2,
+            "bh_1y_sma75_persist": 2,
+            "bh_1y_sma100_persist": 2,
+            "bh_1y_sma150_persist": 2,
+            "bh_1y_sma75_persist3": 3,
+            "bh_1y_sma75_persist_dd": 2,
+            "blend_1y_5d_persist": 2,
+        }
+        # Which SMA each persist variant uses
+        persist_sma = {
+            "bh_1y_sma50_persist": "sma50",
+            "bh_1y_sma50_persist3": "sma50",
+            "bh_1y_sma50_persist5": "sma50",
+            "bh_1y_persist_possize": "sma50",
+            "bh_1y_persist_rankgate": "sma50",
+            "bh_1y_persist_dd": "sma50",
+            "bh_1y_sma30_persist": "sma30",
+            "bh_1y_sma75_persist": "sma75",
+            "bh_1y_sma100_persist": "sma100",
+            "bh_1y_sma150_persist": "sma150",
+            "bh_1y_sma75_persist3": "sma75",
+            "bh_1y_sma75_persist_dd": "sma75",
+            "blend_1y_5d_persist": "sma75",
+        }
+        dd_modes = {"bh_1y_persist_dd", "bh_1y_sma75_persist_dd"}
+        # ---------- Daily 5-day return exit (bh_1y_5d_exit) ----------
+        if mode == "bh_1y_5d_exit" and weights:
+            tickers_to_exit_5d: list[str] = []
+            for ticker in list(weights.keys()):
+                try:
+                    log5d = features.log_5d.loc[date, ticker]
+                    if pd.isna(log5d):
+                        continue
+                    if log5d < 0:
+                        neg_5d_streak[ticker] = neg_5d_streak.get(ticker, 0) + 1
+                    else:
+                        neg_5d_streak[ticker] = 0
+                    if neg_5d_streak.get(ticker, 0) >= 2:
+                        tickers_to_exit_5d.append(ticker)
+                except (KeyError, ValueError):
+                    continue
+            if tickers_to_exit_5d:
+                candidates_5d = select_tickers(
+                    features=features, date=date, mode=mode, top_n=top_n * 5,
+                    min_price=min_price, min_dollar_volume=min_dollar_volume,
+                )
+                kept_5d = [t for t in weights.keys() if t not in tickers_to_exit_5d]
+                replacements_5d = [t for t in candidates_5d if t not in kept_5d][: top_n - len(kept_5d)]
+                final_5d = kept_5d + replacements_5d
+                for t in tickers_to_exit_5d:
+                    entry_ranks.pop(t, None)
+                    entry_dates.pop(t, None)
+                    entry_prices.pop(t, None)
+                    peak_prices.pop(t, None)
+                    neg_5d_streak.pop(t, None)
+                for t in replacements_5d:
+                    if t in candidates_5d:
+                        entry_ranks[t] = candidates_5d.index(t) + 1
+                apply_rebalance(date, final_5d)
+
+        if mode in daily_exit_modes and weights:
+            tickers_to_exit: list[str] = []
+            # Pre-compute current rank map for rank-gated variants
+            current_rank_map: Dict[str, int] = {}
+            if mode in ("bh_1y_sma50_rank", "bh_1y_persist_rankgate"):
+                rank_candidates = select_tickers(
+                    features=features, date=date, mode=mode, top_n=top_n * 5,
+                    min_price=min_price, min_dollar_volume=min_dollar_volume,
+                )
+                for i, t in enumerate(rank_candidates):
+                    current_rank_map[t] = i + 1
+            for ticker in list(weights.keys()):
+                try:
+                    close_price = features.close.loc[date, ticker]
+                    if pd.isna(close_price):
+                        continue
+
+                    breach = False
+                    if mode == "bh_1y_sma50_daily":
+                        sma_val = features.sma50.loc[date, ticker]
+                        breach = pd.notna(sma_val) and close_price < sma_val
+                    elif mode == "bh_1y_sma200_daily":
+                        sma_val = features.sma200.loc[date, ticker]
+                        breach = pd.notna(sma_val) and close_price < sma_val
+                    elif mode in persist_threshold:
+                        sma_attr = persist_sma[mode]
+                        sma_val = getattr(features, sma_attr).loc[date, ticker]
+                        is_breach = pd.notna(sma_val) and close_price < sma_val
+                        if is_breach:
+                            sma_breach_streak[ticker] = sma_breach_streak.get(ticker, 0) + 1
+                        else:
+                            sma_breach_streak[ticker] = 0
+                        threshold = persist_threshold[mode]
+                        persist_hit = sma_breach_streak.get(ticker, 0) >= threshold
+                        if mode == "bh_1y_persist_rankgate":
+                            # Only trigger if also rank dropped out of top 15
+                            rank_breach = current_rank_map.get(ticker, 999) > 15
+                            breach = persist_hit and rank_breach
+                        elif mode in dd_modes:
+                            # Trigger on either persist OR 20% drawdown from peak
+                            dd_hit = False
+                            if ticker in peak_prices:
+                                drawdown = (close_price - peak_prices[ticker]) / peak_prices[ticker]
+                                dd_hit = drawdown < -0.20
+                            breach = persist_hit or dd_hit
+                        else:
+                            breach = persist_hit
+                    elif mode == "bh_1y_sma50_rank":
+                        sma_val = features.sma50.loc[date, ticker]
+                        sma_breach = pd.notna(sma_val) and close_price < sma_val
+                        rank_breach = current_rank_map.get(ticker, 999) > 15
+                        breach = sma_breach and rank_breach
+                    elif mode == "bh_1y_atr_stop":
+                        # Use vol20 (annualized stdev) as ATR proxy.
+                        # Stop = entry_price * (1 - 2 * vol20_daily)
+                        # vol20 is annualized; daily ~= vol20 / sqrt(252)
+                        vol_ann = features.vol20.loc[date, ticker]
+                        if pd.notna(vol_ann) and ticker in entry_prices:
+                            daily_vol = float(vol_ann) / np.sqrt(252.0)
+                            # 2x daily-vol drawdown over ~20 days = ~9% threshold
+                            # Use ratio drawdown from peak vs 2 * 20-day vol
+                            peak = peak_prices.get(ticker, entry_prices[ticker])
+                            drawdown = (close_price - peak) / peak
+                            stop_threshold = -2.0 * daily_vol * np.sqrt(20.0)
+                            breach = drawdown < stop_threshold
+
+                    if breach:
+                        tickers_to_exit.append(ticker)
+                except (KeyError, ValueError):
+                    continue
+            if tickers_to_exit:
+                candidates_daily = select_tickers(
+                    features=features, date=date, mode=mode, top_n=top_n * 5,
+                    min_price=min_price, min_dollar_volume=min_dollar_volume,
+                )
+                kept = [t for t in weights.keys() if t not in tickers_to_exit]
+                replacements = [t for t in candidates_daily if t not in kept][: top_n - len(kept)]
+                final = kept + replacements
+                for ticker in tickers_to_exit:
+                    entry_ranks.pop(ticker, None)
+                    entry_dates.pop(ticker, None)
+                    entry_prices.pop(ticker, None)
+                    peak_prices.pop(ticker, None)
+                    sma_breach_streak.pop(ticker, None)
+                for ticker in replacements:
+                    if ticker in candidates_daily:
+                        entry_ranks[ticker] = candidates_daily.index(ticker) + 1
+                apply_rebalance(date, final)
 
         if date in rebalance_set:
-            picks = select_tickers(
-                features=features,
-                date=date,
-                mode=mode,
-                top_n=top_n,
-                min_price=min_price,
-                min_dollar_volume=min_dollar_volume,
+            candidates = select_tickers(
+                features=features, date=date, mode=mode, top_n=top_n * 5 if mode in smart_modes else top_n,
+                min_price=min_price, min_dollar_volume=min_dollar_volume,
             )
-            if picks:
-                new_weights = {ticker: 1.0 / len(picks) for ticker in picks}
-                turnover = sum(
-                    abs(new_weights.get(ticker, 0.0) - weights.get(ticker, 0.0))
-                    for ticker in set(new_weights) | set(weights)
-                )
-                turnover_sum += turnover
-                equity *= 1.0 - turnover * (transaction_cost_bps / 10_000.0)
-                weights = new_weights
-                executed_rebalances += 1
-                last_nonempty_selection_date = date
-                last_nonempty_selection = picks
+            if mode in smart_modes and weights:
+                # Smart rebalance: keep current holdings unless rank drops too far
+                positions_to_sell: list[str] = []
+                for ticker in list(weights.keys()):
+                    try:
+                        current_rank = candidates.index(ticker) + 1
+                    except ValueError:
+                        current_rank = 999
+                    entry_rank = entry_ranks.get(ticker, current_rank)
+                    rank_drop = current_rank - entry_rank
+                    should_sell_rank_based = current_rank > 15 or rank_drop >= 5
+
+                    # Variant-specific logic
+                    if mode == "rebal_drawdown_exit":
+                        # Exit if >20% drawdown from peak OR rank violation
+                        if ticker in peak_prices and ticker in features.close.columns:
+                            current_price = float(features.close.loc[date, ticker])
+                            drawdown = (current_price - peak_prices[ticker]) / peak_prices[ticker]
+                            if should_sell_rank_based or drawdown < -0.20:
+                                positions_to_sell.append(ticker)
+                    else:
+                        # Standard bh_1y_rank_sell and rebal_position_sizing logic
+                        if should_sell_rank_based:
+                            positions_to_sell.append(ticker)
+
+                kept = [t for t in weights.keys() if t not in positions_to_sell]
+                replacements = [t for t in candidates if t not in kept][: top_n - len(kept)]
+                final = kept + replacements
+                for ticker in positions_to_sell:
+                    entry_ranks.pop(ticker, None)
+                    entry_dates.pop(ticker, None)
+                    entry_prices.pop(ticker, None)
+                    peak_prices.pop(ticker, None)
+                for ticker in replacements:
+                    if ticker in candidates:
+                        entry_ranks[ticker] = candidates.index(ticker) + 1
+                apply_rebalance(date, final)
+            else:
+                picks = candidates[:top_n] if mode in smart_modes else candidates
+                if mode in smart_modes:
+                    for i, ticker in enumerate(picks):
+                        entry_ranks[ticker] = i + 1
+                apply_rebalance(date, picks)
 
         equity_points.append((date, equity))
 

@@ -49,7 +49,7 @@ def select_ai_elite_filtered_stocks(
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     
     # Step 1: Get top N candidates using Risk-Adj Mom 3M (proven signal)
-    pre_filter_count = max(pre_filter_n, top_n * 2)  # At least 2x final count
+    pre_filter_count = max(pre_filter_n, top_n)
     
     risk_adj_candidates = select_risk_adj_mom_3m_stocks(
         all_tickers,

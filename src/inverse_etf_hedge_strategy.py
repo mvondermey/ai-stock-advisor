@@ -8,13 +8,16 @@ Always selects top performing inverse ETFs for comparison purposes.
 from typing import List, Dict
 from datetime import datetime, timedelta
 import pandas as pd
+from performance_filters import filter_tickers_by_performance
+from strategy_cache_adapter import ensure_price_history_cache
 
 def select_inverse_etf_hedge_stocks(
     all_tickers: List[str],
     ticker_data_grouped: Dict[str, pd.DataFrame],
     current_date: datetime,
     top_n: int = 4,
-    verbose: bool = True
+    verbose: bool = True,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Select inverse ETFs based on recent performance.
@@ -29,13 +32,25 @@ def select_inverse_etf_hedge_stocks(
         List of selected inverse ETF symbols
     """
     from config import INVERSE_ETF_HEDGE_PREFERENCE
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     if verbose:
         print(f"   🛡️ Inverse ETF Strategy: Selecting top {top_n} inverse ETFs by 3M performance")
 
+    candidate_etfs = filter_tickers_by_performance(
+        [etf for etf in INVERSE_ETF_HEDGE_PREFERENCE if etf in ticker_data_grouped],
+        current_date,
+        "Inverse ETF Hedge",
+        price_history_cache=price_history_cache,
+    )
+    if not candidate_etfs:
+        if verbose:
+            print("   ⚠️ Inverse ETF Hedge: No inverse ETFs passed the unified prefilter")
+        return []
+
     # Score inverse ETFs by recent performance
     inverse_etf_scores = []
-    for etf in INVERSE_ETF_HEDGE_PREFERENCE:
+    for etf in candidate_etfs:
         if etf in ticker_data_grouped:
             try:
                 etf_data = ticker_data_grouped[etf]

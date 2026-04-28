@@ -53,7 +53,6 @@ from config import (
 )
 from data_utils import _get_last_trading_day, load_all_market_data
 from bollinger_bands_strategy import select_bb_squeeze_breakout_stocks
-from correlation_ensemble import select_correlation_ensemble_stocks
 from new_strategies import (
     select_concentrated_3m_stocks,
     select_dual_momentum_stocks,
@@ -167,7 +166,6 @@ SUPPORTED_STRATEGIES = [
     "bb_rsi_combo",
     "trend_breakout",
     "trend_atr",
-    "correlation_ensemble",
     "sector_rotation",
     "vol_adj_mom",
     "vol_sweet_mom",
@@ -1613,55 +1611,6 @@ def _legacy_bb_rsi_combo(all_tickers, ticker_data_grouped, current_date, top_n):
     return [ticker for ticker, _ in candidates[:top_n]]
 
 
-def _legacy_correlation_ensemble(all_tickers, ticker_data_grouped, current_date, top_n):
-    filtered_tickers = filter_tickers_by_performance(
-        all_tickers,
-        ticker_data_grouped,
-        current_date,
-        "Correlation Ensemble",
-    )
-
-    candidates = []
-    for ticker in filtered_tickers:
-        try:
-            ticker_data = ticker_data_grouped.get(ticker)
-            if ticker_data is None or len(ticker_data) < 365:
-                continue
-
-            current_ts = _timestamp_for_ticker(ticker_data, current_date)
-            data = ticker_data.loc[:current_ts]
-            closes = data["Close"].dropna()
-
-            if len(closes) < 365:
-                continue
-
-            latest_price = closes.iloc[-1]
-            if latest_price <= 0:
-                continue
-
-            lookback_1y = min(365, len(closes) - 1)
-            price_1y_ago = closes.iloc[-lookback_1y]
-            if price_1y_ago <= 0:
-                continue
-
-            perf_1y = (latest_price - price_1y_ago) / price_1y_ago
-
-            daily_returns = closes.pct_change().dropna()
-            if len(daily_returns) < 60:
-                continue
-
-            volatility = float(np.std(daily_returns, ddof=1) * np.sqrt(252))
-
-            if perf_1y > 0 and volatility < 2.0:
-                score = perf_1y / volatility if volatility > 0 else 0
-                candidates.append((ticker, score))
-        except Exception:
-            continue
-
-    candidates.sort(key=lambda item: item[1], reverse=True)
-    return [ticker for ticker, _ in candidates[:top_n]]
-
-
 def _legacy_sector_rotation(all_tickers, ticker_data_grouped, current_date, top_n):
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
@@ -2170,17 +2119,6 @@ STRATEGY_REGISTRY = {
         "label": "BB RSI Combo",
         "legacy": _legacy_bb_rsi_combo,
         "cached": lambda all_tickers, grouped, current_date, top_n, price_history_cache: select_bb_rsi_combo_stocks(
-            all_tickers,
-            grouped,
-            current_date=current_date,
-            top_n=top_n,
-            price_history_cache=price_history_cache,
-        ),
-    },
-    "correlation_ensemble": {
-        "label": "Correlation Ensemble",
-        "legacy": _legacy_correlation_ensemble,
-        "cached": lambda all_tickers, grouped, current_date, top_n, price_history_cache: select_correlation_ensemble_stocks(
             all_tickers,
             grouped,
             current_date=current_date,

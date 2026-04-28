@@ -58,7 +58,6 @@ def select_momentum_acceleration_stocks(
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
-        ticker_data_grouped,
         current_date,
         "Momentum Acceleration",
         price_history_cache=price_history_cache,
@@ -173,7 +172,6 @@ def select_concentrated_3m_stocks(
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
-        ticker_data_grouped,
         current_date,
         "Concentrated 3M",
         price_history_cache=price_history_cache,
@@ -261,7 +259,6 @@ def select_dual_momentum_stocks(
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
-        ticker_data_grouped,
         current_date,
         "Dual Momentum",
         price_history_cache=price_history_cache,
@@ -473,7 +470,6 @@ def select_trend_following_atr_stocks(
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
-        ticker_data_grouped,
         current_date,
         "Trend Following ATR",
         price_history_cache=price_history_cache,
@@ -635,7 +631,6 @@ def select_trend_breakout_stocks(
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
-        ticker_data_grouped,
         current_date,
         "Trend Breakout",
         price_history_cache=price_history_cache,
@@ -710,8 +705,9 @@ def select_confirmed_leaders_stocks(
     """
     Confirmed Leaders Strategy:
     - Start from established 1Y leaders
-    - Require 6M/3M/1M continuation and price above SMA200
-    - Prefer improving short-term momentum with a volatility cap
+    - Require price above SMA200
+    - Use 6M/3M/1M continuation, acceleration, and volatility as score modifiers
+      instead of aggressive hard filters
     """
     from config import INVERSE_ETFS
     from performance_filters import filter_tickers_by_performance
@@ -720,7 +716,6 @@ def select_confirmed_leaders_stocks(
     tickers_to_use = [ticker for ticker in all_tickers if ticker not in INVERSE_ETFS and ticker not in {"SPY", "QQQ"}]
     filtered_tickers = filter_tickers_by_performance(
         tickers_to_use,
-        ticker_data_grouped,
         current_date,
         "Confirmed Leaders",
         price_history_cache=price_history_cache,
@@ -732,8 +727,9 @@ def select_confirmed_leaders_stocks(
     candidates = []
     data_insufficient = 0
     sma_filtered = 0
-    momentum_filtered = 0
-    volatility_filtered = 0
+    one_year_filtered = 0
+    continuation_soft_penalty = 0
+    extreme_vol_filtered = 0
 
     for ticker in filtered_tickers:
         try:
@@ -806,13 +802,8 @@ def select_confirmed_leaders_stocks(
             perf_1m = ((float(close_1m[-1]) - float(close_1m[0])) / float(close_1m[0])) * 100
             perf_prev_1m = ((float(close_prev_1m[-1]) - float(close_prev_1m[0])) / float(close_prev_1m[0])) * 100
 
-            if (
-                perf_1y < CONFIRMED_LEADERS_MIN_1Y_RETURN
-                or perf_6m < CONFIRMED_LEADERS_MIN_6M_RETURN
-                or perf_3m < CONFIRMED_LEADERS_MIN_3M_RETURN
-                or perf_1m < CONFIRMED_LEADERS_MIN_1M_RETURN
-            ):
-                momentum_filtered += 1
+            if perf_1y < CONFIRMED_LEADERS_MIN_1Y_RETURN:
+                one_year_filtered += 1
                 continue
 
             returns = np.diff(close_history[-63:]) / close_history[-63:-1]
@@ -821,20 +812,29 @@ def select_confirmed_leaders_stocks(
                 continue
 
             volatility = float(np.std(returns, ddof=1) * np.sqrt(252))
-            if volatility > CONFIRMED_LEADERS_MAX_VOLATILITY:
-                volatility_filtered += 1
+            if volatility > (CONFIRMED_LEADERS_MAX_VOLATILITY * 1.75):
+                extreme_vol_filtered += 1
                 continue
 
             acceleration = perf_1m - perf_prev_1m
             sma_gap_pct = ((latest - sma_200) / sma_200) * 100
+            continuation_penalty = (
+                max(CONFIRMED_LEADERS_MIN_6M_RETURN - perf_6m, 0.0)
+                + max(CONFIRMED_LEADERS_MIN_3M_RETURN - perf_3m, 0.0)
+                + max(CONFIRMED_LEADERS_MIN_1M_RETURN - perf_1m, 0.0)
+            )
+            if continuation_penalty > 0:
+                continuation_soft_penalty += 1
+
             score = (
-                (0.40 * perf_1y)
-                + (0.25 * perf_6m)
-                + (0.15 * perf_3m)
-                + (0.10 * perf_1m)
-                + (0.05 * max(acceleration, 0.0))
-                + (0.05 * sma_gap_pct)
-                - (12.0 * volatility)
+                (0.62 * perf_1y)
+                + (0.18 * perf_6m)
+                + (0.10 * perf_3m)
+                + (0.04 * perf_1m)
+                + (0.03 * acceleration)
+                + (0.03 * sma_gap_pct)
+                - (6.0 * max(volatility - CONFIRMED_LEADERS_MAX_VOLATILITY, 0.0))
+                - (0.30 * continuation_penalty)
             )
             candidates.append((ticker, score, perf_1y, perf_6m, perf_3m, perf_1m, acceleration, volatility))
         except Exception:
@@ -845,7 +845,7 @@ def select_confirmed_leaders_stocks(
         print(
             "   ❌ Confirmed Leaders: No candidates found "
             f"(insufficient={data_insufficient}, sma={sma_filtered}, "
-            f"momentum={momentum_filtered}, vol={volatility_filtered})"
+            f"1y={one_year_filtered}, soft_cont={continuation_soft_penalty}, vol={extreme_vol_filtered})"
         )
         return []
 
@@ -855,12 +855,179 @@ def select_confirmed_leaders_stocks(
     print(f"   ✅ Confirmed Leaders: Selected {len(selected)} stocks")
     print(
         f"      Filter breakdown: insufficient={data_insufficient}, sma={sma_filtered}, "
-        f"momentum={momentum_filtered}, vol={volatility_filtered}"
+        f"1y={one_year_filtered}, soft_cont={continuation_soft_penalty}, vol={extreme_vol_filtered}"
     )
     for ticker, score, perf_1y, perf_6m, perf_3m, perf_1m, acceleration, volatility in candidates[:min(5, len(candidates))]:
         print(
             f"      {ticker}: score={score:.1f}, 1Y={perf_1y:+.1f}%, 6M={perf_6m:+.1f}%, "
             f"3M={perf_3m:+.1f}%, 1M={perf_1m:+.1f}%, accel={acceleration:+.1f}%, vol={volatility*100:.1f}%"
+        )
+
+    return selected
+
+
+# ============================================
+# 6. FORESIGHT MIMIC STRATEGY (Aggressive Accel)
+# ============================================
+
+def select_foresight_mimic_stocks(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime = None,
+    top_n: int = PORTFOLIO_SIZE,
+    price_history_cache=None,
+) -> List[str]:
+    """
+    Aggressive Accel Strategy:
+    - Start from a pool of the strongest 1Y performers
+    - Require positive 1M acceleration and recent 10D thrust
+    - Require price above SMA20 for trend confirmation
+    - Rank by acceleration strength combined with momentum
+    - Honor the caller's requested output size so rebalance buffers still work
+    """
+    from config import (
+        INVERSE_ETFS,
+        FORESIGHT_MIMIC_MIN_1Y_RETURN,
+        FORESIGHT_MIMIC_MIN_ACCELERATION,
+        FORESIGHT_MIMIC_MIN_10D_RETURN,
+    )
+    from performance_filters import filter_tickers_by_performance
+
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    tickers_to_use = [t for t in all_tickers if t not in INVERSE_ETFS and t not in {"SPY", "QQQ"}]
+    tickers_to_use = filter_tickers_by_performance(
+        tickers_to_use,
+        current_date,
+        "Foresight Mimic Accel",
+        price_history_cache=price_history_cache,
+    )
+    current_date = resolve_cache_current_date(price_history_cache, current_date, tickers_to_use)
+    if current_date is None:
+        return []
+
+    # Phase 1: Calculate 1Y performance for all tickers
+    perf_data = []
+    insufficient_history = 0
+    below_1y_floor = 0
+
+    for ticker in tickers_to_use:
+        try:
+            close_history = get_cached_history_up_to(
+                price_history_cache,
+                ticker,
+                current_date,
+                field_name="close",
+                min_rows=253,
+            )
+            if close_history is None or len(close_history) < 253:
+                insufficient_history += 1
+                continue
+
+            closes = np.asarray(close_history, dtype=float)
+            latest = float(closes[-1])
+            if latest <= 0:
+                insufficient_history += 1
+                continue
+
+            ret_1y = (latest / closes[-253] - 1.0) * 100.0
+            if ret_1y < FORESIGHT_MIMIC_MIN_1Y_RETURN:
+                below_1y_floor += 1
+                continue
+            perf_data.append((ticker, ret_1y, closes))
+        except Exception:
+            insufficient_history += 1
+            continue
+
+    if not perf_data:
+        print(
+            "   ❌ Foresight Mimic Accel: No tickers with sufficient 1Y strength "
+            f"(insufficient={insufficient_history}, below_1y_floor={below_1y_floor})"
+        )
+        return []
+
+    # Phase 2: Get the strongest 1Y performers as the candidate pool.
+    perf_data.sort(key=lambda x: x[1], reverse=True)
+    pool_size = top_n
+    candidate_pool = perf_data[:pool_size]
+
+    # Phase 3: Score by acceleration and trend confirmation
+    candidates = []
+    no_accel = 0
+    no_recent_thrust = 0
+    below_sma = 0
+
+    for ticker, ret_1y, closes in candidate_pool:
+        latest = float(closes[-1])
+
+        # Calculate momentum metrics
+        ret_1m = (latest / closes[-22] - 1.0) * 100.0 if len(closes) >= 22 else 0.0
+        prev_1m = (closes[-22] / closes[-43] - 1.0) * 100.0 if len(closes) >= 43 else 0.0
+        ret_3m = (latest / closes[-64] - 1.0) * 100.0 if len(closes) >= 64 else 0.0
+        ret_10d = (latest / closes[-11] - 1.0) * 100.0 if len(closes) >= 11 else 0.0
+
+        acceleration = ret_1m - prev_1m
+
+        # Require both improving momentum and a positive recent move.
+        if acceleration < FORESIGHT_MIMIC_MIN_ACCELERATION:
+            no_accel += 1
+            continue
+        if ret_10d < FORESIGHT_MIMIC_MIN_10D_RETURN:
+            no_recent_thrust += 1
+            continue
+
+        # Trend confirmation: price above SMA20
+        sma20 = float(np.mean(closes[-20:])) if len(closes) >= 20 else latest
+        if latest < sma20:
+            below_sma += 1
+            continue
+
+        # Calculate volatility
+        recent_returns = np.diff(closes[-22:]) / closes[-22:-1] if len(closes) >= 22 else np.array([0.01])
+        volatility = float(np.std(recent_returns, ddof=1) * np.sqrt(252)) if len(recent_returns) > 1 else 0.3
+
+        # Risk-adjusted acceleration score
+        # Higher acceleration + higher 1Y return + lower volatility = better
+        vol_penalty = max(0.5, min(volatility, 1.5))
+        score = (acceleration * 0.5 + ret_1m * 0.3 + ret_1y * 0.01) / vol_penalty
+
+        candidates.append(
+            (
+                ticker,
+                score,
+                ret_1y,
+                ret_3m,
+                ret_1m,
+                ret_10d,
+                acceleration,
+                volatility,
+            )
+        )
+
+    if not candidates:
+        print(
+            f"   ❌ Foresight Mimic Accel: No candidates from top {len(candidate_pool)} 1Y performers "
+            f"(no_accel={no_accel}, no_recent_thrust={no_recent_thrust}, below_sma={below_sma})"
+        )
+        return []
+
+    # Phase 4: Rank by score and return as many names as the caller requested.
+    candidates.sort(key=lambda item: item[1], reverse=True)
+    n_select = min(top_n, len(candidates))
+    selected = [ticker for ticker, *_ in candidates[:n_select]]
+
+    print(
+        f"   ✅ Foresight Mimic Accel: Selected {len(selected)} from top {len(candidate_pool)} 1Y performers"
+    )
+    print(
+        "      Filtered: "
+        f"below_1y_floor={below_1y_floor}, no_accel={no_accel}, "
+        f"no_recent_thrust={no_recent_thrust}, below_sma={below_sma}, "
+        f"insufficient={insufficient_history}"
+    )
+    for ticker, score, ret_1y, ret_3m, ret_1m, ret_10d, acceleration, volatility in candidates[:min(5, len(candidates))]:
+        print(
+            f"      {ticker}: score={score:.1f}, 1Y={ret_1y:+.1f}%, 3M={ret_3m:+.1f}%, "
+            f"1M={ret_1m:+.1f}%, 10D={ret_10d:+.1f}%, accel={acceleration:+.1f}%, vol={volatility*100:.1f}%"
         )
 
     return selected

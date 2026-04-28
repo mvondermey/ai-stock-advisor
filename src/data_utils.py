@@ -26,6 +26,7 @@ import io
 import os
 import sys
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Suppress yfinance warnings globally (thread-safe, no stderr manipulation)
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
@@ -254,6 +255,209 @@ def _fetch_financial_data(ticker: str) -> pd.DataFrame:
         df_financial[col] = pd.to_numeric(df_financial[col], errors='coerce')
 
     return df_financial.sort_index()
+
+
+def _fundamental_cache_artifact_path(ticker: str) -> Path:
+    from strategy_disk_cache import get_cache_dir
+
+    cache_dir = get_cache_dir("fundamental_history", {"ticker": ticker}, create=False)
+    return cache_dir / "series.json"
+
+
+def _serialize_fundamental_history_rows(fundamental_df: pd.DataFrame) -> list[dict]:
+    if fundamental_df is None or fundamental_df.empty:
+        return []
+
+    serialized_rows: list[dict] = []
+    for idx, row in fundamental_df.sort_index().iterrows():
+        serialized_row = {"Date": pd.Timestamp(idx).isoformat()}
+        for col, value in row.items():
+            serialized_row[col] = None if pd.isna(value) else float(value)
+        serialized_rows.append(serialized_row)
+    return serialized_rows
+
+
+def _save_fundamental_history_cache(ticker: str, fundamental_df: pd.DataFrame) -> None:
+    from strategy_disk_cache import save_json_cache
+
+    serialized_rows = _serialize_fundamental_history_rows(fundamental_df)
+    save_json_cache("fundamental_history", {"ticker": ticker}, serialized_rows, filename="series.json")
+
+
+def _load_fundamental_history_cache_from_disk(ticker: str) -> Optional[pd.DataFrame]:
+    from strategy_disk_cache import load_json_cache
+
+    disk_result = load_json_cache("fundamental_history", {"ticker": ticker}, filename="series.json")
+    if disk_result is None:
+        return None
+    if not isinstance(disk_result, list):
+        return None
+    if not disk_result:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(disk_result)
+    if "Date" not in df.columns:
+        return None
+
+    df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
+    df = df.dropna(subset=["Date"]).set_index("Date").sort_index()
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
+def _fundamental_cache_recent_enough(ticker: str, max_age_days: int) -> bool:
+    cache_artifact = _fundamental_cache_artifact_path(ticker)
+    if not cache_artifact.exists():
+        return False
+    cache_age_seconds = time.time() - cache_artifact.stat().st_mtime
+    return cache_age_seconds <= max(0, max_age_days) * 86400
+
+
+def _fundamental_cache_matches_recent_yahoo_history(
+    ticker: str,
+    cached_df: pd.DataFrame,
+) -> tuple[bool, str, pd.DataFrame]:
+    fresh_df = _fetch_financial_data(ticker)
+    if fresh_df is None or fresh_df.empty:
+        return True, "recent Yahoo validation returned empty data", pd.DataFrame()
+
+    recent_fresh_df = fresh_df.sort_index().tail(2)
+    if recent_fresh_df.empty:
+        return True, "no recent Yahoo quarters to compare", fresh_df
+
+    if cached_df is None or cached_df.empty:
+        missing_dates = ", ".join(idx.date().isoformat() for idx in recent_fresh_df.index)
+        return False, f"missing recent Yahoo quarter(s): {missing_dates}", fresh_df
+
+    missing_recent_dates = [idx for idx in recent_fresh_df.index if idx not in cached_df.index]
+    if missing_recent_dates:
+        missing_dates = ", ".join(idx.date().isoformat() for idx in missing_recent_dates)
+        return False, f"missing recent Yahoo quarter(s): {missing_dates}", fresh_df
+
+    compared = 0
+    for idx, fresh_row in recent_fresh_df.iterrows():
+        cached_row = cached_df.loc[idx]
+        if isinstance(cached_row, pd.DataFrame):
+            cached_row = cached_row.iloc[-1]
+
+        comparable_columns = sorted(set(fresh_df.columns).intersection(cached_df.columns))
+        for column_name in comparable_columns:
+            fresh_value = pd.to_numeric(pd.Series([fresh_row.get(column_name)]), errors="coerce").iloc[0]
+            if pd.isna(fresh_value):
+                continue
+
+            cached_value = pd.to_numeric(pd.Series([cached_row.get(column_name)]), errors="coerce").iloc[0]
+            if pd.isna(cached_value):
+                return False, (
+                    f"recent quarter {idx.date().isoformat()} missing cached {column_name}"
+                ), fresh_df
+
+            rel_diff = abs(float(cached_value) - float(fresh_value)) / max(abs(float(fresh_value)), 1e-9)
+            if rel_diff > 0.005:
+                return False, (
+                    f"recent quarter {idx.date().isoformat()} mismatch for {column_name} "
+                    f"(cache={float(cached_value):.6f}, yahoo={float(fresh_value):.6f}, rel_diff={rel_diff:.4%})"
+                ), fresh_df
+            compared += 1
+
+    if compared == 0:
+        return True, "recent quarter dates present; no comparable fields", fresh_df
+    return True, "ok", fresh_df
+
+
+def _refresh_fundamental_history_cache_worker(ticker: str, max_age_days: int) -> Tuple[str, str, int, str]:
+    try:
+        cached_df = _load_fundamental_history_cache_from_disk(ticker)
+        fetched = None
+        refresh_reason = "cache missing or stale"
+
+        if cached_df is not None and _fundamental_cache_recent_enough(ticker, max_age_days):
+            cache_valid, validation_detail, fresh_df = _fundamental_cache_matches_recent_yahoo_history(
+                ticker,
+                cached_df,
+            )
+            if cache_valid:
+                cached_rows = 0 if cached_df.empty else len(cached_df)
+                return ticker, "current", cached_rows, validation_detail
+            fetched = fresh_df
+            refresh_reason = validation_detail
+
+        if fetched is None:
+            fetched = _fetch_financial_data(ticker)
+
+        _save_fundamental_history_cache(ticker, fetched)
+        if fetched is None or fetched.empty:
+            return ticker, "empty", 0, refresh_reason
+        return ticker, "saved", len(fetched), refresh_reason
+    except Exception as e:
+        return ticker, "error", 0, str(e)
+
+
+def _download_and_update_fundamental_cache(all_tickers: list) -> None:
+    from config import CACHE_DAYS
+
+    tickers_to_refresh = [
+        ticker for ticker in all_tickers
+        if (
+            not _fundamental_cache_recent_enough(ticker, CACHE_DAYS)
+            or _load_fundamental_history_cache_from_disk(ticker) is not None
+        )
+    ]
+    if not tickers_to_refresh:
+        print("  ✅ Fundamental cache already current")
+        return
+
+    worker_count = max(1, min(4, NUM_PROCESSES, len(tickers_to_refresh)))
+    print(
+        f"  📚 Updating fundamentals cache for {len(tickers_to_refresh)} tickers "
+        f"({worker_count} Yahoo workers)..."
+    )
+
+    saved_count = 0
+    current_count = 0
+    empty_count = 0
+    error_count = 0
+    processed_count = 0
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_map = {
+            executor.submit(_refresh_fundamental_history_cache_worker, ticker, CACHE_DAYS): ticker
+            for ticker in tickers_to_refresh
+        }
+        for future in as_completed(future_map):
+            processed_count += 1
+            ticker = future_map[future]
+            try:
+                _, status, row_count, detail = future.result()
+            except Exception as e:
+                status = "error"
+                row_count = 0
+                detail = str(e)
+            if status == "current":
+                current_count += 1
+            elif status == "saved":
+                saved_count += 1
+                if detail != "cache missing or stale":
+                    print(f"  [INFO] Refreshed fundamentals for {ticker}: {detail}")
+            elif status == "empty":
+                empty_count += 1
+                if detail != "cache missing or stale":
+                    print(f"  [INFO] Refreshed empty fundamentals for {ticker}: {detail}")
+            else:
+                error_count += 1
+                print(f"  [WARNING] Fundamentals fetch failed for {ticker}: {detail}")
+
+            if processed_count % 100 == 0 or processed_count == len(tickers_to_refresh):
+                print(
+                    f"  [INFO] Fundamentals progress: {processed_count}/{len(tickers_to_refresh)} "
+                    f"(current={current_count}, saved={saved_count}, empty={empty_count}, errors={error_count})"
+                )
+
+    print(
+        "  ✅ Fundamentals cache update complete "
+        f"(current={current_count}, saved={saved_count}, empty={empty_count}, errors={error_count})"
+    )
 
 def _fetch_financial_data_from_alpaca(ticker: str) -> pd.DataFrame:
     """Placeholder for fetching financial metrics from Alpaca."""
@@ -1877,6 +2081,7 @@ def _download_and_update_cache(all_tickers: list, start_date: datetime, end_date
     # Use parallel downloads within _download_batch_robust (already parallelized)
     # This calls load_prices() which checks cache freshness and downloads if needed
     _download_batch_robust(all_tickers, start=start_date, end=end_date)
+    _download_and_update_fundamental_cache(all_tickers)
 
     print(f"  ✅ Cache update complete")
 

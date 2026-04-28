@@ -27,7 +27,7 @@ from config import (
     ENABLE_RISK_ADJ_MOM, ENABLE_MEAN_REVERSION, ENABLE_QUALITY_MOM,
     ENABLE_MOMENTUM_AI_HYBRID, ENABLE_VOLATILITY_ADJ_MOM,
     ENABLE_ENHANCED_VOLATILITY, ENABLE_AI_VOLATILITY_ENSEMBLE,
-    ENABLE_TURNAROUND, ENABLE_CORRELATION_ENSEMBLE, ENABLE_VOLATILITY_ENSEMBLE,
+    ENABLE_TURNAROUND, ENABLE_VOLATILITY_ENSEMBLE,
     ENABLE_DYNAMIC_BH_1Y_VOL_FILTER, ENABLE_DYNAMIC_BH_1Y_TRAILING_STOP
 )
 
@@ -151,7 +151,7 @@ class TestRebalancingFunctions:
                         cash,
                         mock_data['capital_per_stock']
                     )
-                elif 'turnaround' in func_name or 'volatility_ensemble' in func_name or 'correlation_ensemble' in func_name:
+                elif 'turnaround' in func_name or 'volatility_ensemble' in func_name:
                     result = func(
                         new_stocks,
                         mock_data['current_date'],

@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from risk_adj_mom_3m_sentiment_strategy import calculate_sentiment_score
+from strategy_cache_adapter import ensure_price_history_cache
 
 # Constants
 PERF_WINDOW = 90  # days
@@ -53,13 +54,20 @@ def select_vol_sweet_mom_stocks(
     current_date: datetime = None,
     top_n: int = 10,
     verbose: bool = True,
+    price_history_cache=None,
 ) -> List[str]:
     from performance_filters import filter_tickers_by_performance
 
     # Min score for annualized vol (much lower than daily vol threshold)
     MIN_SCORE = 0.5  # With annualized vol ~30-40%, scores are ~1-5 range
 
-    filtered = filter_tickers_by_performance(all_tickers, ticker_data_grouped, current_date, "VolSweetMom")
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    filtered = filter_tickers_by_performance(
+        all_tickers,
+        current_date,
+        "VolSweetMom",
+        price_history_cache=price_history_cache,
+    )
     if verbose:
         print(f"   📊 VSM: analysing {len(filtered)} tickers")
 

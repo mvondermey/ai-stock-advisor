@@ -65,7 +65,6 @@ def select_risk_adj_mom_1m_vol_sweet_stocks(
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered = filter_tickers_by_performance(
         all_tickers,
-        ticker_data_grouped,
         current_date,
         "RiskAdj1MVol",
         price_history_cache=price_history_cache,

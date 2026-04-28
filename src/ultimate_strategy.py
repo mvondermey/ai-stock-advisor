@@ -23,6 +23,8 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 import pandas as pd
 
+from strategy_cache_adapter import ensure_price_history_cache
+
 # Multi-timeframe weights
 WEIGHT_LONG = 0.20   # 1Y momentum (trend confirmation only)
 WEIGHT_MEDIUM = 0.50 # 3M momentum (primary signal)
@@ -346,6 +348,7 @@ def select_ultimate_stocks(
     current_date: datetime = None,
     top_n: int = 10,
     verbose: bool = True,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Select stocks using Ultimate Strategy V5.
@@ -380,9 +383,11 @@ def select_ultimate_stocks(
         print(f"   {regime_emoji} Ultimate V5: Market {regime.upper()} (SPY 1M: {spy_return:+.1f}%)")
         print(f"   📊 Allocation: {n_stocks} stocks + {n_sectors} sector ETFs + {n_hedge} inverse ETFs")
 
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+
     # Pre-filter tickers
     filtered = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "Ultimate"
+        all_tickers, current_date, "Ultimate", price_history_cache=price_history_cache
     )
     if verbose:
         print(f"   📊 Analyzing {len(filtered)} momentum candidates")

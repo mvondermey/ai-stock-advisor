@@ -328,12 +328,6 @@ def _build_reset_map() -> Dict[str, Callable[[], None]]:
         pass
 
     try:
-        from correlation_ensemble import reset_corr_ensemble_state
-        reset_map["correlation_ensemble"] = reset_corr_ensemble_state
-    except Exception:
-        pass
-
-    try:
         from new_strategies import reset_trend_atr_state
         reset_map["trend_atr"] = reset_trend_atr_state
     except Exception:

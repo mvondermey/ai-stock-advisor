@@ -16,6 +16,7 @@ import os
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+from performance_filters import filter_tickers_by_performance
 from strategy_disk_cache import load_joblib_cache, save_joblib_cache, universe_signature_from_frames
 from strategy_cache_adapter import (
     ensure_hourly_history_cache,
@@ -481,6 +482,12 @@ def select_multi_timeframe_intraday_stocks(
     tickers_to_use = [ticker for ticker in initial_tickers if ticker not in INVERSE_ETFS]
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     hourly_history_cache = ensure_hourly_history_cache(hourly_history_cache)
+    tickers_to_use = filter_tickers_by_performance(
+        tickers_to_use,
+        current_date,
+        "Multi-Horizon Intraday",
+        price_history_cache=price_history_cache,
+    )
     current_date = resolve_cache_current_date(price_history_cache, current_date, tickers_to_use)
     if current_date is None:
         return []

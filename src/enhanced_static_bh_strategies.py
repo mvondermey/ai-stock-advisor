@@ -33,7 +33,7 @@ def select_volume_filtered_bh_1y_stocks(
     # Get top performers first
     candidates = select_top_performers(
         tickers, ticker_data_grouped, current_date,
-        lookback_days=365, top_n=top_n * 2,  # Get more to filter
+        lookback_days=365, top_n=top_n,
         price_history_cache=price_history_cache
     )
     
@@ -90,7 +90,7 @@ def select_sector_rotated_bh_1y_stocks(
     # Get top performers
     candidates = select_top_performers(
         tickers, ticker_data_grouped, current_date,
-        lookback_days=365, top_n=top_n * 3,  # Get more to ensure diversity
+        lookback_days=365, top_n=top_n,
         price_history_cache=price_history_cache
     )
     

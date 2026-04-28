@@ -54,7 +54,7 @@ def select_risk_adj_mom_sentiment_stocks(
             all_tickers,
             ticker_data_grouped,
             current_date,
-            top_n=top_n * 2,  # Get more candidates for sentiment filtering
+            top_n=top_n,
             price_history_cache=price_history_cache,
         )
         

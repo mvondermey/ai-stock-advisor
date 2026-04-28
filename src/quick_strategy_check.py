@@ -17,7 +17,7 @@ Available strategies:
   - elite_risk
   - dynamic_bh_1y / dynamic_bh_6m / dynamic_bh_3m / dynamic_bh_1m
   - static_bh_1y / static_bh_6m / static_bh_3m / static_bh_1m
-  - price_acceleration
+  - bh_1y_weekly
   - quality_mom
   - turnaround
   - ratio_3m_1y
@@ -117,12 +117,8 @@ def get_strategy_recommendations(strategy_name: str, top_n: int = 10) -> List[st
         from shared_strategies import select_top_performers
         return select_top_performers(
             list(ticker_data_grouped.keys()), ticker_data_grouped, current_date,
-            lookback_days=365, top_n=top_n, apply_performance_filter=False
+            lookback_days=365, top_n=top_n, apply_performance_filter=True
         )
-
-    elif strategy_name == 'price_acceleration':
-        from new_strategies import select_price_acceleration_stocks
-        return select_price_acceleration_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, top_n)
 
     elif strategy_name == 'quality_mom':
         from quality_momentum_strategy import select_quality_momentum_stocks
@@ -173,15 +169,63 @@ def get_strategy_recommendations(strategy_name: str, top_n: int = 10) -> List[st
     # Static BH variants
     elif strategy_name == 'static_bh_6m':
         from shared_strategies import select_top_performers
-        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=180, top_n=top_n, apply_performance_filter=False)
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=180, top_n=top_n, apply_performance_filter=True)
+
+    elif strategy_name == 'static_bh_6m_perf':
+        from shared_strategies import select_top_performers
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=180, top_n=top_n, apply_performance_filter=True)
+
+    elif strategy_name == 'static_bh_9m_perf':
+        from shared_strategies import select_top_performers
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=270, top_n=top_n, apply_performance_filter=True)
+
+    elif strategy_name == 'bh_1y_1m_rank':
+        from shared_strategies import select_bh_1y_1m_rank_stocks
+        return select_bh_1y_1m_rank_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date=current_date, top_n=top_n)
+
+    elif strategy_name == 'bh_1y_6m_rank':
+        from shared_strategies import select_bh_1y_6m_rank_stocks
+        return select_bh_1y_6m_rank_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date=current_date, top_n=top_n)
+
+    elif strategy_name == 'bh_1y_6m_blend':
+        from shared_strategies import select_bh_1y_6m_blend_stocks
+        return select_bh_1y_6m_blend_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date=current_date, top_n=top_n)
+
+    elif strategy_name == 'bh_1y_weekly':
+        from shared_strategies import select_top_performers
+        return select_top_performers(
+            list(ticker_data_grouped.keys()), ticker_data_grouped, current_date,
+            lookback_days=365, top_n=top_n, apply_performance_filter=True
+        )
+
+    elif strategy_name == 'early_leader_accel':
+        from shared_strategies import select_early_leader_accel_stocks
+        return select_early_leader_accel_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date=current_date, top_n=top_n)
+
+    elif strategy_name == 'bh_1y_sma200':
+        from shared_strategies import select_bh_1y_sma200_stocks
+        return select_bh_1y_sma200_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date=current_date, top_n=top_n)
+
+    elif strategy_name == 'bh_1y_fcf_rank':
+        from shared_strategies import select_bh_1y_fcf_rank_stocks
+        return select_bh_1y_fcf_rank_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date=current_date, top_n=top_n)
+
+    elif strategy_name == 'foresight_mimic':
+        from new_strategies import select_foresight_mimic_stocks
+        return select_foresight_mimic_stocks(
+            list(ticker_data_grouped.keys()),
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+        )
 
     elif strategy_name == 'static_bh_3m':
         from shared_strategies import select_top_performers
-        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=90, top_n=top_n, apply_performance_filter=False)
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=90, top_n=top_n, apply_performance_filter=True)
 
     elif strategy_name == 'static_bh_1m':
         from shared_strategies import select_top_performers
-        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=30, top_n=top_n, apply_performance_filter=False)
+        return select_top_performers(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date, lookback_days=30, top_n=top_n, apply_performance_filter=True)
 
     # Other strategies
     elif strategy_name == 'turnaround':
@@ -216,7 +260,7 @@ def get_strategy_recommendations(strategy_name: str, top_n: int = 10) -> List[st
         print(f"❌ Unknown strategy: {strategy_name}")
         print("Available: risk_adj_mom_3m, risk_adj_mom_1m, 1m_volsweet, risk_adj_mom_6m, mom_vol_hybrid_1y3m, mom_vol_hybrid_6m,")
         print("          trend_atr, trend_breakout, dual_momentum, ai_elite, elite_hybrid, elite_risk,")
-        print("          dynamic_bh_1y/6m/3m/1m, static_bh_1y/6m/3m/1m, price_acceleration, quality_mom,")
+        print("          dynamic_bh_1y/6m/3m/1m, static_bh_1y/6m/3m/1m, bh_1y_weekly, quality_mom,")
         print("          turnaround, ratio_3m_1y, ratio_1y_3m, sector_rotation, mean_reversion, volatility_adj_mom, concentrated_3m")
         return []
 

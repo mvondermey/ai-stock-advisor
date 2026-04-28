@@ -690,11 +690,12 @@ def select_ai_elite_stocks(
     # Filter out inverse ETFs - they should only be in inverse_etf_hedge strategy
     from config import INVERSE_ETFS
     all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     # Apply performance filters if enabled
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "AI Elite"
+        all_tickers, current_date, "AI Elite", price_history_cache=price_history_cache
     )
 
     print(f"   🤖 AI Elite: Analyzing {len(filtered_tickers)} tickers with ML scoring (filtered from {len(all_tickers)})")
@@ -2603,10 +2604,11 @@ def select_ai_elite_ensemble_stocks(
 
     from config import INVERSE_ETFS
     all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "AI Elite Ensemble"
+        all_tickers, current_date, "AI Elite Ensemble", price_history_cache=price_history_cache
     )
 
     print(f"   🤖 AI Elite Ensemble: Analyzing {len(filtered_tickers)} tickers (best-model scoring)")
@@ -2833,10 +2835,11 @@ def select_ai_elite_rank_ensemble_stocks(
 
     from config import INVERSE_ETFS
     all_tickers = [t for t in all_tickers if t not in INVERSE_ETFS]
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     from performance_filters import filter_tickers_by_performance
     filtered_tickers = filter_tickers_by_performance(
-        all_tickers, ticker_data_grouped, current_date, "AI Elite Rank Ensemble"
+        all_tickers, current_date, "AI Elite Rank Ensemble", price_history_cache=price_history_cache
     )
 
     print(f"   🤖 AI Elite Rank Ensemble: Analyzing {len(filtered_tickers)} tickers (best-model rank)")

@@ -7,7 +7,7 @@ import gc
 import threading
 from datetime import datetime, timedelta, timezone
 from multiprocessing import Pool
-from typing import List, Dict, Tuple, Optional
+from typing import Iterable, List, Dict, Tuple, Optional, Set
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -32,7 +32,7 @@ from config import (
     DATA_PROVIDER, N_TOP_TICKERS, BATCH_DOWNLOAD_SIZE, PAUSE_BETWEEN_BATCHES,
     PAUSE_BETWEEN_YF_CALLS, MARKET_SELECTION, USE_PERFORMANCE_BENCHMARK,
     ALPACA_API_KEY, ALPACA_SECRET_KEY, TOP_CACHE_PATH, VALID_TICKERS_CACHE_PATH,
-    ALPACA_STOCKS_LIMIT, ALPACA_STOCKS_EXCHANGES, NUM_PROCESSES
+    ALPACA_STOCKS_LIMIT, ALPACA_STOCKS_EXCHANGES, NUM_PROCESSES, EXCLUDED_TICKERS
 )
 from data_utils import load_prices_robust, _download_batch_robust
 from utils import _ensure_dir, _normalize_symbol, _to_utc
@@ -45,6 +45,21 @@ try:
     ALPACA_AVAILABLE = True
 except ImportError:
     ALPACA_AVAILABLE = False
+
+
+def get_normalized_excluded_tickers(excluded_tickers: Iterable[str] | None = None) -> Set[str]:
+    """Return config exclusions normalized to the ticker universe format."""
+    normalized_exclusions: Set[str] = set()
+    source_tickers = EXCLUDED_TICKERS if excluded_tickers is None else excluded_tickers
+    for ticker in source_tickers:
+        normalized = str(ticker).strip().upper()
+        if not normalized:
+            continue
+        if normalized.endswith(('.DE', '.MI', '.SW', '.PA', '.AS', '.HE', '.LS', '.BR', '.MC')):
+            normalized_exclusions.add(normalized)
+        else:
+            normalized_exclusions.add(normalized.replace('.', '-'))
+    return normalized_exclusions
 
 def get_all_tickers() -> List[str]:
     """
@@ -518,6 +533,17 @@ def get_all_tickers() -> List[str]:
     if DELISTED_TICKERS & set(string_tickers):
         removed = DELISTED_TICKERS & set(string_tickers)
         print(f"   ℹ️ Removed {len(removed)} delisted/problematic tickers")
+
+    configured_exclusions = get_normalized_excluded_tickers()
+    removed_configured_tickers = final_tickers & configured_exclusions
+    final_tickers -= configured_exclusions
+    if removed_configured_tickers:
+        sample_removed = sorted(removed_configured_tickers)[:10]
+        suffix = "..." if len(removed_configured_tickers) > 10 else ""
+        print(
+            f"   ℹ️ Removed {len(removed_configured_tickers)} ticker(s) from EXCLUDED_TICKERS: "
+            f"{sample_removed}{suffix}"
+        )
 
     print(f"Total unique tickers found: {len(final_tickers)}")
     return sorted(list(final_tickers))

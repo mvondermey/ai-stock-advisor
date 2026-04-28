@@ -115,7 +115,6 @@ def select_bb_mean_reversion_stocks(
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
-        ticker_data_grouped,
         current_date,
         "BB Mean Reversion",
         price_history_cache=price_history_cache,
@@ -192,7 +191,6 @@ def select_bb_breakout_stocks(
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
-        ticker_data_grouped,
         current_date,
         "BB Breakout",
         price_history_cache=price_history_cache,
@@ -324,7 +322,6 @@ def select_bb_squeeze_breakout_stocks(
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
-        ticker_data_grouped,
         current_date,
         "BB Squeeze Breakout",
         price_history_cache=price_history_cache,
@@ -415,7 +412,6 @@ def select_bb_rsi_combo_stocks(
     price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
     filtered_tickers = filter_tickers_by_performance(
         all_tickers,
-        ticker_data_grouped,
         current_date,
         "BB RSI Combo",
         price_history_cache=price_history_cache,

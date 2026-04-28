@@ -841,17 +841,6 @@ def get_ai_volatility_ensemble_tickers(all_tickers: List[str], ticker_data_group
     return []
 
 
-def get_correlation_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
-    """Correlation-Filtered Ensemble Strategy: Diversification-focused."""
-    from correlation_ensemble import select_correlation_ensemble_stocks
-
-    print(f"   [DEBUG] Correlation Ensemble: Processing {len(all_tickers)} tickers")
-    # ticker_data_grouped already prepared in main.py "Correlation Ensemble")
-
-    current_date = datetime.now(timezone.utc)
-    return select_correlation_ensemble_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
-
-
 def get_sentiment_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Mom-Vol Hybrid 6M + Sentiment Strategy: Incorporates news sentiment."""
     from sentiment_ensemble import select_sentiment_ensemble_stocks
@@ -962,17 +951,6 @@ def get_ml_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[st
     return []
 
 
-def get_price_acceleration_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
-    """Price Acceleration Strategy: Physics-based velocity (price change) and acceleration (velocity change)."""
-    from shared_strategies import select_price_acceleration_stocks
-
-    print(f"   🚀 Price Acceleration: Processing {len(all_tickers)} tickers")
-    # ticker_data_grouped already prepared in main.py "Price Acceleration")
-
-    current_date = datetime.now(timezone.utc)
-    return select_price_acceleration_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=PORTFOLIO_SIZE)
-
-
 def get_voting_ensemble_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
     """Voting Ensemble Strategy: Consensus picks from multiple strategies."""
     from shared_strategies import select_voting_ensemble_stocks
@@ -1068,7 +1046,6 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'momentum_volatility_hybrid_1y3m': 'Mom-Vol Hybrid 1Y/3M (Strong 1Y, Weak 3M)',
         'adaptive_ensemble': 'Adaptive Ensemble (Meta-Strategy)',
         'ai_volatility_ensemble': 'AI Volatility Ensemble (AI-Enhanced)',
-        'correlation_ensemble': 'Correlation Ensemble (Diversified)',
         'ai_elite': 'AI Elite (ML-Powered Momentum + Dip Scoring)',
         'sentiment_ensemble': 'Mom-Vol 6M Sentiment (News-Enhanced)',
         'momentum_breakout': 'Momentum Breakout (52-Week High)',
@@ -1078,7 +1055,6 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'insider_trading': 'Insider Trading Signal',
         'options_sentiment': 'Options Sentiment (Put/Call)',
         'ml_ensemble': 'ML Ensemble (Multi-Model Voting)',
-        'price_acceleration': 'Price Acceleration (Physics-Based Momentum)',
         'voting_ensemble': 'Voting Ensemble (Consensus from Multiple Strategies)',
         'dual_momentum': 'Dual Momentum (Absolute + Relative)',
         'risk_adj_mom_6m': 'Risk-Adj Mom 6M (6-Month Risk-Adjusted Momentum)',
@@ -1099,6 +1075,7 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'concentrated_3m': 'Concentrated 3M (High Conviction)',
         'analyst_rec': 'Analyst Recommendations (Consensus)',
         'bh_1y_monthly': 'BH 1Y Monthly (Monthly Rebalance)',
+        'bh_1y_weekly': 'BH 1Y Weekly (Weekly Rebalance)',
         'bh_6m_monthly': 'BH 6M Monthly (Monthly Rebalance)',
         'bh_3m_monthly': 'BH 3M Monthly (Monthly Rebalance)',
         'bh_1m_monthly': 'BH 1M Monthly (Monthly Rebalance)',
@@ -1109,6 +1086,8 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'foresight_mimic': 'Foresight Mimic Accel',
         'bh_1y_1m_rank': 'BH 1Y / 1M Rank',
         'bh_1y_6m_rank': 'BH 1Y / 6M Rank',
+        'bh_1y_6m_blend': 'BH 1Y / 6M Blend',
+        'early_leader_accel': 'Early Leader Accel',
         'bh_1y_sma200': 'BH 1Y SMA200',
         'bh_1y_fcf_rank': 'BH 1Y / FCF Rank',
         'static_bh_1y_mom': 'Static BH 1Y Mom (Momentum Filter)',
@@ -1117,7 +1096,11 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'static_bh_1y_volume': 'Static BH 1Y Volume (Volume Filter)',
         'static_bh_1y_sector': 'Static BH 1Y Sector (Sector Rotation)',
         'static_bh_1y_perf_threshold': 'Static BH 1Y Perf Threshold (Performance Filter)',
-        'static_bh_1y_market_regime': 'Static BH 1Y Market Regime (Regime-Aware)'
+        'static_bh_1y_market_regime': 'Static BH 1Y Market Regime (Regime-Aware)',
+        'price_curvature': 'Price Curvature',
+        'static_price_curvature': 'Static Price Curvature',
+        'price_curvature_1y_slope': 'Price Curvature 1Y Slope',
+        'static_price_curvature_1y_slope': 'Static Price Curvature 1Y Slope'
     }
 
     strategy_name = strategy_names.get(LIVE_TRADING_STRATEGY, LIVE_TRADING_STRATEGY)
@@ -1143,13 +1126,14 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
         'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
         'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m',
-        'price_acceleration', 'foresight_mimic', 'bh_1y_1m_rank', 'bh_1y_6m_rank', 'bh_1y_sma200', 'bh_1y_fcf_rank', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
+        'foresight_mimic', 'bh_1y_1m_rank', 'bh_1y_6m_rank', 'bh_1y_6m_blend', 'early_leader_accel', 'bh_1y_sma200', 'bh_1y_fcf_rank', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
         # Missing strategies from backtesting
         'momentum_ai_hybrid', 'inverse_etf_hedge', 'trend_atr', 'dual_momentum', 'sector_rotation',
         'volatility_adj_mom', 'enhanced_volatility', 'concentrated_3m', 'analyst_rec',
-        'bh_1y_monthly', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
+        'bh_1y_monthly', 'bh_1y_weekly', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
         'static_bh_1y_vol', 'static_bh_1y_perf', 'static_bh_6m_perf', 'static_bh_9m_perf', 'static_bh_1y_mom', 'static_bh_1y_atr', 'static_bh_1y_hybrid',
-        'static_bh_1y_volume', 'static_bh_1y_sector', 'static_bh_1y_perf_threshold', 'static_bh_1y_market_regime'
+        'static_bh_1y_volume', 'static_bh_1y_sector', 'static_bh_1y_perf_threshold', 'static_bh_1y_market_regime',
+        'price_curvature', 'static_price_curvature', 'price_curvature_1y_slope', 'static_price_curvature_1y_slope'
     ] else None
     if LIVE_TRADING_STRATEGY in [
         'risk_adj_mom', 'risk_adj_mom_6m', 'risk_adj_mom_3m', 'risk_adj_mom_1m', 'risk_adj_mom_1m_vol_sweet', '1m_volsweet',
@@ -1158,13 +1142,14 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
         'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
         'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m',
-        'price_acceleration', 'foresight_mimic', 'bh_1y_1m_rank', 'bh_1y_6m_rank', 'bh_1y_sma200', 'bh_1y_fcf_rank', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
+        'foresight_mimic', 'bh_1y_1m_rank', 'bh_1y_6m_rank', 'bh_1y_6m_blend', 'early_leader_accel', 'bh_1y_sma200', 'bh_1y_fcf_rank', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
         # Missing strategies from backtesting
         'momentum_ai_hybrid', 'inverse_etf_hedge', 'trend_atr', 'dual_momentum', 'sector_rotation',
         'volatility_adj_mom', 'enhanced_volatility', 'concentrated_3m', 'analyst_rec',
-        'bh_1y_monthly', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
+        'bh_1y_monthly', 'bh_1y_weekly', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
         'static_bh_1y_vol', 'static_bh_1y_perf', 'static_bh_6m_perf', 'static_bh_9m_perf', 'static_bh_1y_mom', 'static_bh_1y_atr', 'static_bh_1y_hybrid',
-        'static_bh_1y_volume', 'static_bh_1y_sector', 'static_bh_1y_perf_threshold', 'static_bh_1y_market_regime'
+        'static_bh_1y_volume', 'static_bh_1y_sector', 'static_bh_1y_perf_threshold', 'static_bh_1y_market_regime',
+        'price_curvature', 'static_price_curvature', 'price_curvature_1y_slope', 'static_price_curvature_1y_slope'
     ]:
         print(f"    Data available: {ticker_data_grouped_for_strategy is not None}")
 
@@ -1356,6 +1341,16 @@ def get_bh_1y_monthly_tickers(all_tickers: List[str], ticker_data_grouped: Dict[
     from shared_strategies import select_top_performers
 
     print(f"   📊 BH 1Y Monthly: Processing {len(all_tickers)} tickers")
+
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_bh_1y_weekly_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """BH 1Y Weekly Strategy: Weekly rebalanced 1-year top performers."""
+    from shared_strategies import select_top_performers
+
+    print(f"   📊 BH 1Y Weekly: Processing {len(all_tickers)} tickers")
 
     current_date = datetime.now(timezone.utc)
     return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)

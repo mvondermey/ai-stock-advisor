@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
 from config import PORTFOLIO_SIZE
+from performance_filters import filter_tickers_by_performance
+from strategy_cache_adapter import ensure_price_history_cache
 
 
 # Scoring weights
@@ -165,7 +167,8 @@ def select_analyst_recommendation_stocks(
     current_date: datetime,
     top_n: int = None,
     lookback_days: int = 60,
-    min_actions: int = 1
+    min_actions: int = 1,
+    price_history_cache=None,
 ) -> List[str]:
     """
     Select top stocks based on analyst recommendation scores.
@@ -184,6 +187,13 @@ def select_analyst_recommendation_stocks(
     """
     if top_n is None:
         top_n = PORTFOLIO_SIZE
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
+    tickers = filter_tickers_by_performance(
+        tickers,
+        current_date,
+        "Analyst Recommendation",
+        price_history_cache=price_history_cache,
+    )
     
     scores = []
     

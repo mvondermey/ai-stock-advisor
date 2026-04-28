@@ -309,7 +309,7 @@ class VolatilityAdjustedEnsemble:
         for strategy in VOL_ENSEMBLE_STRATEGIES:
             picks = self.get_strategy_picks(
                 strategy, all_tickers, ticker_data_grouped,
-                current_date, train_start_date, top_n=top_n * 2,
+                current_date, train_start_date, top_n=top_n,
                 price_history_cache=price_history_cache,
             )
             strategy_picks[strategy] = picks
@@ -333,7 +333,7 @@ class VolatilityAdjustedEnsemble:
         
         # 3. Sort by ensemble score
         sorted_candidates = sorted(ensemble_scores.items(), key=lambda x: x[1], reverse=True)
-        top_candidates = [ticker for ticker, score in sorted_candidates[:top_n * 2]]
+        top_candidates = [ticker for ticker, score in sorted_candidates[:top_n]]
         
         # 4. Calculate inverse volatility weights
         vol_weights = self.calculate_inverse_volatility_weights(

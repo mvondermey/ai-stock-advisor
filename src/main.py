@@ -674,14 +674,16 @@ def main(
     print(f"   📊 Data shape: {all_tickers_data.shape}")
     print(f"   📊 Columns: {list(all_tickers_data.columns[:5])}")
 
-    # Expand all_available_tickers to include any extra tickers found in downloaded data
     if 'ticker' in all_tickers_data.columns:
         tickers_in_data = set(all_tickers_data['ticker'].unique())
         extra_tickers = tickers_in_data - set(all_available_tickers)
         if extra_tickers:
-            print(f"   ℹ️ Found {len(extra_tickers)} extra tickers in data not in original list: {sorted(extra_tickers)[:10]}{'...' if len(extra_tickers) > 10 else ''}")
-            all_available_tickers = sorted(set(all_available_tickers) | extra_tickers)
-            print(f"   ℹ️ Expanded ticker universe to {len(all_available_tickers)} tickers")
+            raise ValueError(
+                "load_all_market_data returned tickers outside the requested universe: "
+                f"{sorted(extra_tickers)[:10]}{'...' if len(extra_tickers) > 10 else ''}"
+            )
+        # Keep the canonical universe and only shrink it to tickers that actually returned data.
+        all_available_tickers = [ticker for ticker in all_available_tickers if ticker in tickers_in_data]
     else:
         print("   ⚠️ No 'ticker' column found in data")
         return (None,) * 15
@@ -700,6 +702,7 @@ def main(
     all_tickers_after = all_tickers_data['ticker'].nunique()
 
     delisted_count = all_tickers_before - all_tickers_after
+    all_available_tickers = [ticker for ticker in all_available_tickers if ticker in active_tickers]
     if delisted_count > 0:
         print(f"   ✅ Filtered out {delisted_count} delisted/stale tickers (no data in last 30 days)")
         print(f"   ✅ Remaining: {all_tickers_after} active tickers")
