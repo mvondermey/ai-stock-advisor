@@ -103,7 +103,7 @@ class AdaptiveStrategy:
             "3m_1y_ratio": lambda all_tickers: select_3m_1y_ratio_stocks(all_tickers, {}, current_date, TOP_N_STOCKS),
             "volatility_adj_mom": lambda all_tickers: select_volatility_adj_mom_stocks(all_tickers, {}, current_date, TOP_N_STOCKS),
             "quality_mom": lambda all_tickers: select_quality_momentum_stocks(all_tickers, {}, current_date, TOP_N_STOCKS),
-            "dynamic_bh_3m": lambda all_tickers: select_dynamic_bh_stocks(all_tickers, {}, current_date, period='3m', top_n=TOP_N_STOCKS),
+            "dynamic_bh_3m": lambda all_tickers: select_dynamic_bh_stocks(all_tickers, {}, period='3m', current_date=current_date, top_n=TOP_N_STOCKS),
             "risk_adj_mom": lambda all_tickers: select_risk_adj_mom_stocks(all_tickers, {}, current_date, TOP_N_STOCKS)
         }
         

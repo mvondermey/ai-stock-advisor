@@ -3771,7 +3771,14 @@ def select_momentum_volatility_hybrid_1y_stocks(all_tickers, ticker_data_grouped
     return [c['ticker'] for c in candidates[:top_n]]
 
 
-def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', current_date=None, top_n=20):
+def select_dynamic_bh_stocks(
+    all_tickers,
+    ticker_data_grouped,
+    period='1y',
+    current_date=None,
+    top_n=20,
+    price_history_cache=None,
+):
 
     """
 
@@ -3784,7 +3791,7 @@ def select_dynamic_bh_stocks(all_tickers, ticker_data_grouped, period='1y', curr
     from performance_filters import filter_tickers_by_performance
     from strategy_cache_adapter import ensure_price_history_cache
 
-    price_history_cache = ensure_price_history_cache(ticker_data_grouped, None)
+    price_history_cache = ensure_price_history_cache(ticker_data_grouped, price_history_cache)
 
     filtered_tickers = filter_tickers_by_performance(
 
