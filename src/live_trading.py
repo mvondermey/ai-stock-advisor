@@ -1075,7 +1075,8 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'concentrated_3m': 'Concentrated 3M (High Conviction)',
         'analyst_rec': 'Analyst Recommendations (Consensus)',
         'bh_1y_monthly': 'BH 1Y Monthly (Monthly Rebalance)',
-        'bh_1y_weekly': 'BH 1Y Weekly (Weekly Rebalance)',
+        'bh_1y_weekly_start': 'BH 1Y Weekly Start (Start-of-Week)',
+        'bh_1y_weekly_end': 'BH 1Y Weekly End (End-of-Week)',
         'bh_6m_monthly': 'BH 6M Monthly (Monthly Rebalance)',
         'bh_3m_monthly': 'BH 3M Monthly (Monthly Rebalance)',
         'bh_1m_monthly': 'BH 1M Monthly (Monthly Rebalance)',
@@ -1087,6 +1088,9 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'bh_1y_1m_rank': 'BH 1Y / 1M Rank',
         'bh_1y_6m_rank': 'BH 1Y / 6M Rank',
         'bh_1y_6m_blend': 'BH 1Y / 6M Blend',
+        'blend_1y_6m_45_55_sma75_persist3_pos3m': 'Blend 1Y/6M 45/55 P3',
+        'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage': 'Blend 45/55 L2 VExit TS',
+        'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop': 'Blend 30/70 M4 CTS',
         'early_leader_accel': 'Early Leader Accel',
         'bh_1y_sma200': 'BH 1Y SMA200',
         'bh_1y_fcf_rank': 'BH 1Y / FCF Rank',
@@ -1126,11 +1130,11 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
         'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
         'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m',
-        'foresight_mimic', 'bh_1y_1m_rank', 'bh_1y_6m_rank', 'bh_1y_6m_blend', 'early_leader_accel', 'bh_1y_sma200', 'bh_1y_fcf_rank', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
+        'foresight_mimic', 'bh_1y_1m_rank', 'bh_1y_6m_rank', 'bh_1y_6m_blend', 'blend_1y_6m_45_55_sma75_persist3_pos3m', 'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage', 'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop', 'early_leader_accel', 'bh_1y_sma200', 'bh_1y_fcf_rank', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
         # Missing strategies from backtesting
         'momentum_ai_hybrid', 'inverse_etf_hedge', 'trend_atr', 'dual_momentum', 'sector_rotation',
         'volatility_adj_mom', 'enhanced_volatility', 'concentrated_3m', 'analyst_rec',
-        'bh_1y_monthly', 'bh_1y_weekly', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
+        'bh_1y_monthly', 'bh_1y_weekly_start', 'bh_1y_weekly_end', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
         'static_bh_1y_vol', 'static_bh_1y_perf', 'static_bh_6m_perf', 'static_bh_9m_perf', 'static_bh_1y_mom', 'static_bh_1y_atr', 'static_bh_1y_hybrid',
         'static_bh_1y_volume', 'static_bh_1y_sector', 'static_bh_1y_perf_threshold', 'static_bh_1y_market_regime',
         'price_curvature', 'static_price_curvature', 'price_curvature_1y_slope', 'static_price_curvature_1y_slope'
@@ -1142,11 +1146,11 @@ def run_live_trading_with_filtered_tickers(filtered_tickers: List[str], ticker_d
         'static_bh_6m', 'static_bh_3m', 'static_bh_1m',
         'ratio_1y_3m', 'ratio_3m_1y', 'turnaround',
         'momentum_volatility_hybrid', 'momentum_volatility_hybrid_6m', 'momentum_volatility_hybrid_1y', 'momentum_volatility_hybrid_1y3m',
-        'foresight_mimic', 'bh_1y_1m_rank', 'bh_1y_6m_rank', 'bh_1y_6m_blend', 'early_leader_accel', 'bh_1y_sma200', 'bh_1y_fcf_rank', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
+        'foresight_mimic', 'bh_1y_1m_rank', 'bh_1y_6m_rank', 'bh_1y_6m_blend', 'blend_1y_6m_45_55_sma75_persist3_pos3m', 'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage', 'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop', 'early_leader_accel', 'bh_1y_sma200', 'bh_1y_fcf_rank', 'voting_ensemble', 'ai_elite', 'elite_hybrid', 'elite_risk',
         # Missing strategies from backtesting
         'momentum_ai_hybrid', 'inverse_etf_hedge', 'trend_atr', 'dual_momentum', 'sector_rotation',
         'volatility_adj_mom', 'enhanced_volatility', 'concentrated_3m', 'analyst_rec',
-        'bh_1y_monthly', 'bh_1y_weekly', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
+        'bh_1y_monthly', 'bh_1y_weekly_start', 'bh_1y_weekly_end', 'bh_6m_monthly', 'bh_3m_monthly', 'bh_1m_monthly',
         'static_bh_1y_vol', 'static_bh_1y_perf', 'static_bh_6m_perf', 'static_bh_9m_perf', 'static_bh_1y_mom', 'static_bh_1y_atr', 'static_bh_1y_hybrid',
         'static_bh_1y_volume', 'static_bh_1y_sector', 'static_bh_1y_perf_threshold', 'static_bh_1y_market_regime',
         'price_curvature', 'static_price_curvature', 'price_curvature_1y_slope', 'static_price_curvature_1y_slope'
@@ -1346,14 +1350,78 @@ def get_bh_1y_monthly_tickers(all_tickers: List[str], ticker_data_grouped: Dict[
     return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
 
 
-def get_bh_1y_weekly_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
-    """BH 1Y Weekly Strategy: Weekly rebalanced 1-year top performers."""
+def get_bh_1y_weekly_start_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """BH 1Y Weekly Start Strategy: Weekly rebalanced 1-year top performers."""
     from shared_strategies import select_top_performers
 
-    print(f"   📊 BH 1Y Weekly: Processing {len(all_tickers)} tickers")
+    print(f"   📊 BH 1Y Weekly Start: Processing {len(all_tickers)} tickers")
 
     current_date = datetime.now(timezone.utc)
     return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_bh_1y_weekly_end_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:
+    """BH 1Y Weekly End Strategy: Weekly rebalanced 1-year top performers."""
+    from shared_strategies import select_top_performers
+
+    print(f"   📊 BH 1Y Weekly End: Processing {len(all_tickers)} tickers")
+
+    current_date = datetime.now(timezone.utc)
+    return select_top_performers(all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=PORTFOLIO_SIZE)
+
+
+def get_blend_1y_6m_45_55_sma75_persist3_pos3m_tickers(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame] = None,
+) -> List[str]:
+    """Weekly 45/55 1Y/6M blend with positive 3M confirmation."""
+    from shared_strategies import select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks
+
+    print(f"   📊 Blend 1Y/6M 45/55 P3: Processing {len(all_tickers)} tickers")
+
+    current_date = datetime.now(timezone.utc)
+    return select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks(
+        all_tickers,
+        ticker_data_grouped,
+        current_date=current_date,
+        top_n=PORTFOLIO_SIZE,
+    )
+
+
+def get_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_tickers(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame] = None,
+) -> List[str]:
+    """Weekly Tuesday 45/55 blend base selector for the weighted vol-exit variant."""
+    from shared_strategies import select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks
+
+    print(f"   📊 Blend 45/55 L2 VExit TS: Processing {len(all_tickers)} tickers")
+
+    current_date = datetime.now(timezone.utc)
+    return select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks(
+        all_tickers,
+        ticker_data_grouped,
+        current_date=current_date,
+        top_n=PORTFOLIO_SIZE,
+    )
+
+
+def get_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_tickers(
+    all_tickers: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame] = None,
+) -> List[str]:
+    """Weekly Monday 30/70 blend base selector for the momweight4 chandelier time-stop variant."""
+    from shared_strategies import select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks
+
+    print(f"   📊 Blend 30/70 M4 CTS: Processing {len(all_tickers)} tickers")
+
+    current_date = datetime.now(timezone.utc)
+    return select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks(
+        all_tickers,
+        ticker_data_grouped,
+        current_date=current_date,
+        top_n=PORTFOLIO_SIZE,
+    )
 
 
 def get_bh_6m_monthly_tickers(all_tickers: List[str], ticker_data_grouped: Dict[str, pd.DataFrame] = None) -> List[str]:

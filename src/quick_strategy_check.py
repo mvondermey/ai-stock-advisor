@@ -17,7 +17,11 @@ Available strategies:
   - elite_risk
   - dynamic_bh_1y / dynamic_bh_6m / dynamic_bh_3m / dynamic_bh_1m
   - static_bh_1y / static_bh_6m / static_bh_3m / static_bh_1m
-  - bh_1y_weekly
+  - bh_1y_weekly_start
+  - bh_1y_weekly_end
+  - blend_1y_6m_45_55_sma75_persist3_pos3m
+  - blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage
+  - blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop
   - quality_mom
   - turnaround
   - ratio_3m_1y
@@ -191,7 +195,26 @@ def get_strategy_recommendations(strategy_name: str, top_n: int = 10) -> List[st
         from shared_strategies import select_bh_1y_6m_blend_stocks
         return select_bh_1y_6m_blend_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date=current_date, top_n=top_n)
 
-    elif strategy_name == 'bh_1y_weekly':
+    elif strategy_name == 'blend_1y_6m_45_55_sma75_persist3_pos3m':
+        from shared_strategies import select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks
+        return select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date=current_date, top_n=top_n)
+
+    elif strategy_name == 'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage':
+        from shared_strategies import select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks
+        return select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date=current_date, top_n=top_n)
+
+    elif strategy_name == 'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop':
+        from shared_strategies import select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks
+        return select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks(list(ticker_data_grouped.keys()), ticker_data_grouped, current_date=current_date, top_n=top_n)
+
+    elif strategy_name == 'bh_1y_weekly_start':
+        from shared_strategies import select_top_performers
+        return select_top_performers(
+            list(ticker_data_grouped.keys()), ticker_data_grouped, current_date,
+            lookback_days=365, top_n=top_n, apply_performance_filter=True
+        )
+
+    elif strategy_name == 'bh_1y_weekly_end':
         from shared_strategies import select_top_performers
         return select_top_performers(
             list(ticker_data_grouped.keys()), ticker_data_grouped, current_date,
@@ -260,7 +283,7 @@ def get_strategy_recommendations(strategy_name: str, top_n: int = 10) -> List[st
         print(f"❌ Unknown strategy: {strategy_name}")
         print("Available: risk_adj_mom_3m, risk_adj_mom_1m, 1m_volsweet, risk_adj_mom_6m, mom_vol_hybrid_1y3m, mom_vol_hybrid_6m,")
         print("          trend_atr, trend_breakout, dual_momentum, ai_elite, elite_hybrid, elite_risk,")
-        print("          dynamic_bh_1y/6m/3m/1m, static_bh_1y/6m/3m/1m, bh_1y_weekly, quality_mom,")
+        print("          dynamic_bh_1y/6m/3m/1m, static_bh_1y/6m/3m/1m, bh_1y_weekly_start, bh_1y_weekly_end, quality_mom,")
         print("          turnaround, ratio_3m_1y, ratio_1y_3m, sector_rotation, mean_reversion, volatility_adj_mom, concentrated_3m")
         return []
 

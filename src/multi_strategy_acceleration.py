@@ -42,7 +42,25 @@ def _execute_strategy_live(strategy: str, all_tickers: list, ticker_data_grouped
         from shared_strategies import select_bh_1y_6m_blend_stocks
         return select_bh_1y_6m_blend_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=portfolio_size)
 
-    elif strategy == 'bh_1y_weekly':
+    elif strategy == 'blend_1y_6m_45_55_sma75_persist3_pos3m':
+        from shared_strategies import select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks
+        return select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=portfolio_size)
+
+    elif strategy == 'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage':
+        from shared_strategies import select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks
+        return select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=portfolio_size)
+
+    elif strategy == 'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop':
+        from shared_strategies import select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks
+        return select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks(all_tickers, ticker_data_grouped, current_date=current_date, top_n=portfolio_size)
+
+    elif strategy == 'bh_1y_weekly_start':
+        from shared_strategies import select_top_performers
+        return select_top_performers(
+            all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=portfolio_size
+        )
+
+    elif strategy == 'bh_1y_weekly_end':
         from shared_strategies import select_top_performers
         return select_top_performers(
             all_tickers, ticker_data_grouped, current_date=current_date, lookback_days=365, top_n=portfolio_size

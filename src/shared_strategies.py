@@ -4470,13 +4470,18 @@ def _rank_top_performers(
 
         return []
 
-    from parallel_backtest import calculate_cached_performance
+    from parallel_backtest import get_cached_performance_map
 
-    performances = calculate_cached_performance(
-
-        tickers_to_rank, price_history_cache, current_date, period_days=lookback_days
-
+    performance_map = get_cached_performance_map(
+        price_history_cache,
+        current_date,
+        period_days=lookback_days,
     )
+    performances = [
+        (ticker, performance_map[ticker])
+        for ticker in tickers_to_rank
+        if ticker in performance_map
+    ]
 
     if not performances:
 
@@ -4687,11 +4692,22 @@ def select_bh_1y_6m_rank_stocks(all_tickers, ticker_data_grouped, current_date=N
     return selected
 
 
-def select_bh_1y_6m_blend_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=10, price_history_cache=None):
+def _select_ranked_bh_1y_6m_blend_stocks(
+    all_tickers,
+    ticker_data_grouped,
+    current_date=None,
+    top_n=10,
+    price_history_cache=None,
+    *,
+    weight_1y=0.5,
+    weight_6m=0.5,
+    require_positive_3m=False,
+    strategy_label="BH 1Y / 6M Blend",
+):
 
     """
-    Select stocks with positive 1Y and 6M returns above SMA200,
-    then rank by an equal-weight percentile blend of 1Y and 6M returns.
+    Select stocks above SMA200 with positive 1Y and 6M returns, then rank them by
+    a weighted percentile blend of 1Y and 6M performance. Optionally require positive 3M.
     """
 
     from config import BH_1Y_SMA200_DAYS, INVERSE_ETFS
@@ -4708,6 +4724,7 @@ def select_bh_1y_6m_blend_stocks(all_tickers, ticker_data_grouped, current_date=
     sma_filtered = 0
     one_year_filtered = 0
     six_month_filtered = 0
+    three_month_filtered = 0
 
     for ticker in tickers_to_use:
         close_history = get_cached_history_up_to(
@@ -4733,11 +4750,22 @@ def select_bh_1y_6m_blend_stocks(all_tickers, ticker_data_grouped, current_date=
             field_name="close",
             min_rows=90,
         )
+        close_3m = None
+        if require_positive_3m:
+            close_3m = get_cached_window(
+                price_history_cache,
+                ticker,
+                current_date,
+                90,
+                field_name="close",
+                min_rows=45,
+            )
 
         if (
             close_history is None or len(close_history) < BH_1Y_SMA200_DAYS
             or close_1y is None or len(close_1y) < 2
             or close_6m is None or len(close_6m) < 2
+            or (require_positive_3m and (close_3m is None or len(close_3m) < 2))
         ):
             data_insufficient += 1
             continue
@@ -4750,6 +4778,9 @@ def select_bh_1y_6m_blend_stocks(all_tickers, ticker_data_grouped, current_date=
 
         perf_1y = ((float(close_1y[-1]) - float(close_1y[0])) / float(close_1y[0])) * 100.0
         perf_6m = ((float(close_6m[-1]) - float(close_6m[0])) / float(close_6m[0])) * 100.0
+        perf_3m = None
+        if require_positive_3m:
+            perf_3m = ((float(close_3m[-1]) - float(close_3m[0])) / float(close_3m[0])) * 100.0
 
         if perf_1y <= 0:
             one_year_filtered += 1
@@ -4757,46 +4788,167 @@ def select_bh_1y_6m_blend_stocks(all_tickers, ticker_data_grouped, current_date=
         if perf_6m <= 0:
             six_month_filtered += 1
             continue
+        if require_positive_3m and perf_3m <= 0:
+            three_month_filtered += 1
+            continue
 
-        candidates.append(
-            {
-                "ticker": ticker,
-                "perf_1y": perf_1y,
-                "perf_6m": perf_6m,
-            }
-        )
+        candidate = {
+            "ticker": ticker,
+            "perf_1y": perf_1y,
+            "perf_6m": perf_6m,
+        }
+        if perf_3m is not None:
+            candidate["perf_3m"] = perf_3m
+        candidates.append(candidate)
 
     if not candidates:
-        print(
-            "   ❌ BH 1Y / 6M Blend: No candidates found "
-            f"(insufficient={data_insufficient}, sma={sma_filtered}, "
-            f"1y={one_year_filtered}, 6m={six_month_filtered})"
-        )
+        filter_bits = [
+            f"insufficient={data_insufficient}",
+            f"sma={sma_filtered}",
+            f"1y={one_year_filtered}",
+            f"6m={six_month_filtered}",
+        ]
+        if require_positive_3m:
+            filter_bits.append(f"3m={three_month_filtered}")
+        print(f"   ❌ {strategy_label}: No candidates found ({', '.join(filter_bits)})")
         return []
 
     candidate_frame = pd.DataFrame(candidates).set_index("ticker")
     candidate_frame["rank_1y"] = candidate_frame["perf_1y"].rank(pct=True, ascending=True)
     candidate_frame["rank_6m"] = candidate_frame["perf_6m"].rank(pct=True, ascending=True)
-    candidate_frame["score"] = 0.5 * candidate_frame["rank_1y"] + 0.5 * candidate_frame["rank_6m"]
-    ranked = candidate_frame.sort_values(["score", "perf_1y", "perf_6m"], ascending=[False, False, False])
+    candidate_frame["score"] = (
+        weight_1y * candidate_frame["rank_1y"]
+        + weight_6m * candidate_frame["rank_6m"]
+    )
+    ranked = candidate_frame.sort_values(["score", "perf_6m", "perf_1y"], ascending=[False, False, False])
 
     selected = ranked.head(top_n).index.tolist()
 
+    summary = "tickers with positive 1Y/6M above SMA200"
+    if require_positive_3m:
+        summary = "tickers with positive 1Y/6M/3M above SMA200"
+
+    filter_bits = [
+        f"insufficient={data_insufficient}",
+        f"sma={sma_filtered}",
+        f"1y={one_year_filtered}",
+        f"6m={six_month_filtered}",
+    ]
+    if require_positive_3m:
+        filter_bits.append(f"3m={three_month_filtered}")
+
     print(
-        f"   📊 BH 1Y / 6M Blend: Selected top {len(selected)} from {len(candidate_frame)} "
-        "tickers with positive 1Y/6M above SMA200"
+        f"   📊 {strategy_label}: Selected top {len(selected)} from {len(candidate_frame)} {summary}"
     )
-    print(
-        f"      Filter breakdown: insufficient={data_insufficient}, sma={sma_filtered}, "
-        f"1y={one_year_filtered}, 6m={six_month_filtered}"
-    )
+    print(f"      Filter breakdown: {', '.join(filter_bits)}")
     for ticker, row in ranked.head(min(len(ranked), top_n)).iterrows():
+        extra = f", 3M={row['perf_3m']:+.1f}%" if "perf_3m" in row else ""
         print(
             f"      {ticker}: score={row['score']:.3f}, rank_1y={row['rank_1y']:.3f}, "
-            f"rank_6m={row['rank_6m']:.3f}, 1Y={row['perf_1y']:+.1f}%, 6M={row['perf_6m']:+.1f}%"
+            f"rank_6m={row['rank_6m']:.3f}, 1Y={row['perf_1y']:+.1f}%, 6M={row['perf_6m']:+.1f}%{extra}"
         )
 
     return selected
+
+
+def select_bh_1y_6m_blend_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=10, price_history_cache=None):
+
+    """
+    Select stocks with positive 1Y and 6M returns above SMA200,
+    then rank by an equal-weight percentile blend of 1Y and 6M returns.
+    """
+
+    return _select_ranked_bh_1y_6m_blend_stocks(
+        all_tickers,
+        ticker_data_grouped,
+        current_date=current_date,
+        top_n=top_n,
+        price_history_cache=price_history_cache,
+        weight_1y=0.5,
+        weight_6m=0.5,
+        require_positive_3m=False,
+        strategy_label="BH 1Y / 6M Blend",
+    )
+
+
+def select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks(
+    all_tickers,
+    ticker_data_grouped,
+    current_date=None,
+    top_n=10,
+    price_history_cache=None,
+):
+
+    """
+    Select stocks with positive 1Y, 6M, and 3M returns above SMA200, then rank by
+    a 45/55 percentile blend of 1Y and 6M returns.
+    """
+
+    return _select_ranked_bh_1y_6m_blend_stocks(
+        all_tickers,
+        ticker_data_grouped,
+        current_date=current_date,
+        top_n=top_n,
+        price_history_cache=price_history_cache,
+        weight_1y=0.45,
+        weight_6m=0.55,
+        require_positive_3m=True,
+        strategy_label="Blend 1Y / 6M 45/55 SMA75 Persist3 Pos3M",
+    )
+
+
+def select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks(
+    all_tickers,
+    ticker_data_grouped,
+    current_date=None,
+    top_n=10,
+    price_history_cache=None,
+):
+
+    """
+    Standalone-mode selector base for the liqweight2/volexit/twostage variant.
+    The selection universe is the same 45/55 1Y+6M blend with positive 3M above SMA200;
+    weighting and exit behavior are handled in backtesting.
+    """
+
+    return _select_ranked_bh_1y_6m_blend_stocks(
+        all_tickers,
+        ticker_data_grouped,
+        current_date=current_date,
+        top_n=top_n,
+        price_history_cache=price_history_cache,
+        weight_1y=0.45,
+        weight_6m=0.55,
+        require_positive_3m=True,
+        strategy_label="Blend 1Y / 6M 45/55 LiqWeight2 VolExit TwoStage",
+    )
+
+
+def select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks(
+    all_tickers,
+    ticker_data_grouped,
+    current_date=None,
+    top_n=10,
+    price_history_cache=None,
+):
+
+    """
+    Standalone-mode selector base for the 30/70 momweight4 volexit twostage
+    chandelier+time-stop variant. Weighting and exit behavior are handled in
+    backtesting.
+    """
+
+    return _select_ranked_bh_1y_6m_blend_stocks(
+        all_tickers,
+        ticker_data_grouped,
+        current_date=current_date,
+        top_n=top_n,
+        price_history_cache=price_history_cache,
+        weight_1y=0.30,
+        weight_6m=0.70,
+        require_positive_3m=True,
+        strategy_label="Blend 1Y / 6M 30/70 MomWeight4 ChandTStop",
+    )
 
 
 def select_early_leader_accel_stocks(all_tickers, ticker_data_grouped, current_date=None, top_n=10, price_history_cache=None):
@@ -5217,13 +5369,18 @@ def select_top_performers_vol_filtered(all_tickers, ticker_data_grouped, current
 
     if price_history_cache is not None:
 
-        from parallel_backtest import calculate_cached_performance, calculate_cached_volatility
+        from parallel_backtest import calculate_cached_volatility, get_cached_performance_map
 
-        performances = calculate_cached_performance(
-
-            filtered_tickers, price_history_cache, current_date, period_days=lookback_days
-
+        performance_map = get_cached_performance_map(
+            price_history_cache,
+            current_date,
+            period_days=lookback_days,
         )
+        performances = [
+            (ticker, performance_map[ticker])
+            for ticker in filtered_tickers
+            if ticker in performance_map
+        ]
         cached_volatility = calculate_cached_volatility(
 
             [ticker for ticker, _ in performances], price_history_cache, current_date, period_days=lookback_days
@@ -6779,7 +6936,8 @@ def _get_strategy_registry():
         'static_bh_1y_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'bh_1y_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
         'static_bh_1y_weekly': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
-        'bh_1y_weekly': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_weekly_start': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
+        'bh_1y_weekly_end': lambda t, d, dt, n: select_top_performers(t, d, dt, 365, n),
 
         'static_bh_6m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 180, n),
         'bh_6m_monthly': lambda t, d, dt, n: select_top_performers(t, d, dt, 180, n),
@@ -6992,6 +7150,9 @@ def _get_strategy_registry():
         'bh_1y_1m_rank': lambda t, d, dt, n: select_bh_1y_1m_rank_stocks(t, d, dt, n),
         'bh_1y_6m_rank': lambda t, d, dt, n: select_bh_1y_6m_rank_stocks(t, d, dt, n),
         'bh_1y_6m_blend': lambda t, d, dt, n: select_bh_1y_6m_blend_stocks(t, d, dt, n),
+        'blend_1y_6m_45_55_sma75_persist3_pos3m': lambda t, d, dt, n: select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks(t, d, dt, n),
+        'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage': lambda t, d, dt, n: select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks(t, d, dt, n),
+        'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop': lambda t, d, dt, n: select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks(t, d, dt, n),
         'early_leader_accel': lambda t, d, dt, n: select_early_leader_accel_stocks(t, d, dt, n),
         'bh_1y_sma200': lambda t, d, dt, n: select_bh_1y_sma200_stocks(t, d, dt, n),
         'bh_1y_fcf_rank': lambda t, d, dt, n: select_bh_1y_fcf_rank_stocks(t, d, dt, n),

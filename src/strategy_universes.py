@@ -78,7 +78,8 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "static_bh_6m": _source("ENABLE_STATIC_BH_6M", "static_bh_6m_portfolio_value"),
     "static_bh_1m": _source("ENABLE_STATIC_BH", "static_bh_1m_portfolio_value"),
     "bh_1y_monthly": _source("ENABLE_STATIC_BH_1Y_MONTHLY", "static_bh_1y_monthly_portfolio_value"),
-    "bh_1y_weekly": _source("ENABLE_STATIC_BH_1Y_WEEKLY", "static_bh_1y_weekly_portfolio_value"),
+    "bh_1y_weekly_start": _source("ENABLE_STATIC_BH_1Y_WEEKLY_START", "static_bh_1y_weekly_start_portfolio_value"),
+    "bh_1y_weekly_end": _source("ENABLE_STATIC_BH_1Y_WEEKLY_END", "static_bh_1y_weekly_end_portfolio_value"),
     "bh_6m_monthly": _source("ENABLE_STATIC_BH_6M_MONTHLY", "static_bh_6m_monthly_portfolio_value"),
     "bh_3m_monthly": _source("ENABLE_STATIC_BH_3M_MONTHLY", "static_bh_3m_monthly_portfolio_value"),
     "bh_1m_monthly": _source("ENABLE_STATIC_BH_1M_MONTHLY", "static_bh_1m_monthly_portfolio_value"),
@@ -108,6 +109,9 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
     "bh_1y_1m_rank": _source("ENABLE_BH_1Y_1M_RANK", "bh_1y_1m_rank_portfolio_value"),
     "bh_1y_6m_rank": _source("ENABLE_BH_1Y_6M_RANK", "bh_1y_6m_rank_portfolio_value"),
     "bh_1y_6m_blend": _source("ENABLE_BH_1Y_6M_BLEND", "bh_1y_6m_blend_portfolio_value"),
+    "blend_1y_6m_45_55_sma75_persist3_pos3m": _source("ENABLE_BLEND_1Y_6M_45_55_SMA75_PERSIST3_POS3M", "blend_1y_6m_45_55_sma75_persist3_pos3m_portfolio_value"),
+    "blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage": _source("ENABLE_BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE", "blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_portfolio_value"),
+    "blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop": _source("ENABLE_BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP", "blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_portfolio_value"),
     "early_leader_accel": _source("ENABLE_EARLY_LEADER_ACCEL", "early_leader_accel_portfolio_value"),
     "bh_1y_sma200": _source("ENABLE_BH_1Y_SMA200", "bh_1y_sma200_portfolio_value"),
     "bh_1y_fcf_rank": _source("ENABLE_BH_1Y_FCF_RANK", "bh_1y_fcf_rank_portfolio_value"),
@@ -146,7 +150,7 @@ META_STRATEGY_SOURCES: Dict[str, StrategySourceEntry] = {
 
 META_STATIC_BH_STRATEGIES = {"static_bh_1y", "static_bh_3m"}
 META_MONTHLY_BH_STRATEGIES = {"bh_1y_monthly", "bh_6m_monthly", "bh_3m_monthly", "bh_1m_monthly"}
-META_WEEKLY_BH_STRATEGIES = {"bh_1y_weekly"}
+META_WEEKLY_BH_STRATEGIES = {"bh_1y_weekly_start", "bh_1y_weekly_end"}
 META_DYNAMIC_BH_STRATEGIES = {"dynamic_bh_1y", "dynamic_bh_3m"}
 META_RISK_ADJ_MOM_STRATEGIES = {"risk_adj_mom", "risk_adj_mom_3m", "risk_adj_mom_6m", "risk_adj_mom_1m"}
 META_RISK_ADJ_MOM_MONTHLY_STRATEGIES = {"risk_adj_mom_3m_monthly", "risk_adj_mom_6m_monthly", "risk_adj_mom_1m_monthly"}

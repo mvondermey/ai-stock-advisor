@@ -35,6 +35,9 @@ class PriceHistoryCache:
     volatility_cache: Dict[Tuple[int, int], Dict[str, float]] = field(default_factory=dict)
 
 
+COMMON_PERFORMANCE_WINDOWS: Tuple[int, ...] = (30, 90, 180, 365)
+
+
 @dataclass
 class HourlyHistoryCache:
     """Lazy-loaded hourly OHLCV arrays backed by per-ticker disk artifacts."""
@@ -377,6 +380,20 @@ def calculate_cached_performance(
     period_days: int = 365,
 ) -> List[Tuple[str, float]]:
     """Return cached lookback performance using precomputed close arrays."""
+    performance_map = get_cached_performance_map(
+        price_history_cache,
+        current_date,
+        period_days,
+    )
+    return [(ticker, performance_map[ticker]) for ticker in tickers if ticker in performance_map]
+
+
+def get_cached_performance_map(
+    price_history_cache: PriceHistoryCache,
+    current_date: datetime,
+    period_days: int = 365,
+) -> Dict[str, float]:
+    """Return the cached full-universe performance map for one date/window."""
     cache_key = (_timestamp_ns(current_date), int(period_days))
     if cache_key not in price_history_cache.performance_cache:
         start_time = time.time()
@@ -394,8 +411,43 @@ def calculate_cached_performance(
         print(f"   ⏱️ Cached performance: {len(price_history_cache.close_by_ticker)} tickers in {elapsed:.2f}s (window={period_days}d)")
         price_history_cache.performance_cache[cache_key] = performance_map
 
-    performance_map = price_history_cache.performance_cache[cache_key]
-    return [(ticker, performance_map[ticker]) for ticker in tickers if ticker in performance_map]
+    return price_history_cache.performance_cache[cache_key]
+
+
+def build_shared_common_window_performance_bundle(
+    price_history_cache: PriceHistoryCache,
+    current_date: datetime,
+    period_days_list: Tuple[int, ...] = COMMON_PERFORMANCE_WINDOWS,
+) -> Dict[int, Dict[str, float]]:
+    """Build a pickle-safe bundle of full-universe performance maps for common windows."""
+    shared_bundle: Dict[int, Dict[str, float]] = {}
+    for period_days in period_days_list:
+        shared_bundle[int(period_days)] = dict(
+            get_cached_performance_map(
+                price_history_cache,
+                current_date,
+                period_days=int(period_days),
+            )
+        )
+    return shared_bundle
+
+
+def install_shared_performance_bundle(
+    price_history_cache: Optional[PriceHistoryCache],
+    current_date: datetime,
+    shared_performance_by_period: Optional[Dict[int, Dict[str, float]]],
+) -> None:
+    """Seed a worker-local PriceHistoryCache from a precomputed shared bundle."""
+    if price_history_cache is None or not shared_performance_by_period:
+        return
+
+    current_date_ns = _timestamp_ns(current_date)
+    for period_days, performance_map in shared_performance_by_period.items():
+        if not isinstance(performance_map, dict):
+            continue
+        cache_key = (current_date_ns, int(period_days))
+        if cache_key not in price_history_cache.performance_cache:
+            price_history_cache.performance_cache[cache_key] = dict(performance_map)
 
 
 def calculate_cached_volatility(

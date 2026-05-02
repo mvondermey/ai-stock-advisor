@@ -75,7 +75,8 @@ _STRATEGY_TIMING_NAME_ALIASES = {
     "Static BH 1Y Drawdown": "BH 1Y Drawdown",
     "Static BH 1Y Smart Monthly": "BH 1Y Smart Mth",
     "Static BH 1Y Mth": "BH 1Y Monthly",
-    "Static BH 1Y Wk": "BH 1Y Weekly",
+    "Static BH 1Y Wk": "BH 1Y Weekly Start",
+    "Static BH 1Y Wk End": "BH 1Y Weekly End",
     "Static BH 6M Mth": "BH 6M Monthly",
     "Static BH 3M Mth": "BH 3M Monthly",
     "Static BH 1M Mth": "BH 1M Monthly",
@@ -88,6 +89,7 @@ _STRATEGY_TIMING_NAME_ALIASES = {
     "BH 1Y Volume Confirm": "BH 1Y Vol Conf",
     "BH 1Y Sector Aware": "BH 1Y Sect Aware",
     "BH 1Y Accel Buy": "BH 1Y Accel",
+    "Blend 1Y/6M 45/55 P3": "Blend 1Y/6M 45/55 P3",
 }
 
 
@@ -116,6 +118,7 @@ def _run_parallel_strategy_selection_task(
 ) -> Dict[str, Any]:
     import os
     import time as _time
+    from parallel_backtest import install_shared_performance_bundle
 
     started_at = _time.time()
     runtime_context = runtime_context or {}
@@ -123,6 +126,11 @@ def _run_parallel_strategy_selection_task(
     initial_top_tickers = _PARALLEL_STRATEGY_WORKER_CONTEXT["initial_top_tickers"]
     price_history_cache = _PARALLEL_STRATEGY_WORKER_CONTEXT.get("price_history_cache")
     hourly_history_cache = _PARALLEL_STRATEGY_WORKER_CONTEXT.get("hourly_history_cache")
+    install_shared_performance_bundle(
+        price_history_cache,
+        current_date,
+        runtime_context.get("shared_performance_by_period"),
+    )
     result_kind = "selected_list"
     result_meta: Dict[str, Any] = {}
 
@@ -330,6 +338,36 @@ def _run_parallel_strategy_selection_task(
         from shared_strategies import select_bh_1y_6m_blend_stocks
 
         selected = select_bh_1y_6m_blend_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "blend_1y_6m_45_55_sma75_persist3_pos3m":
+        from shared_strategies import select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks
+
+        selected = select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage":
+        from shared_strategies import select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks
+
+        selected = select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks(
+            initial_top_tickers,
+            ticker_data_grouped,
+            current_date=current_date,
+            top_n=top_n,
+            price_history_cache=price_history_cache,
+        )
+    elif strategy_name == "blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop":
+        from shared_strategies import select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks
+
+        selected = select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks(
             initial_top_tickers,
             ticker_data_grouped,
             current_date=current_date,
@@ -922,6 +960,9 @@ STRATEGY_REGISTRY = {
     'bh_1y_1m_rank': _strategy_registry_entry('BH 1Y / 1M Rank', 'ENABLE_BH_1Y_1M_RANK', 'bh_1y_1m_rank_portfolio_value', 'bh_1y_1m_rank_portfolio_history', 'bh_1y_1m_rank_cash', 'current_bh_1y_1m_rank_stocks'),
     'bh_1y_6m_rank': _strategy_registry_entry('BH 1Y / 6M Rank', 'ENABLE_BH_1Y_6M_RANK', 'bh_1y_6m_rank_portfolio_value', 'bh_1y_6m_rank_portfolio_history', 'bh_1y_6m_rank_cash', 'current_bh_1y_6m_rank_stocks'),
     'bh_1y_6m_blend': _strategy_registry_entry('BH 1Y / 6M Blend', 'ENABLE_BH_1Y_6M_BLEND', 'bh_1y_6m_blend_portfolio_value', 'bh_1y_6m_blend_portfolio_history', 'bh_1y_6m_blend_cash', 'current_bh_1y_6m_blend_stocks'),
+    'blend_1y_6m_45_55_sma75_persist3_pos3m': _strategy_registry_entry('Blend 1Y/6M 45/55 P3', 'ENABLE_BLEND_1Y_6M_45_55_SMA75_PERSIST3_POS3M', 'blend_1y_6m_45_55_sma75_persist3_pos3m_portfolio_value', 'blend_1y_6m_45_55_sma75_persist3_pos3m_portfolio_history', 'blend_1y_6m_45_55_sma75_persist3_pos3m_cash', 'current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks'),
+    'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage': _strategy_registry_entry('Blend 45/55 L2 VExit TS', 'ENABLE_BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE', 'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_portfolio_value', 'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_portfolio_history', 'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash', 'current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks'),
+    'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop': _strategy_registry_entry('Blend 30/70 M4 CTS', 'ENABLE_BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP', 'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_portfolio_value', 'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_portfolio_history', 'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash', 'current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks'),
     'early_leader_accel': _strategy_registry_entry('Early Leader Accel', 'ENABLE_EARLY_LEADER_ACCEL', 'early_leader_accel_portfolio_value', 'early_leader_accel_portfolio_history', 'early_leader_accel_cash', 'current_early_leader_accel_stocks'),
     'bh_1y_sma200': _strategy_registry_entry('BH 1Y SMA200', 'ENABLE_BH_1Y_SMA200', 'bh_1y_sma200_portfolio_value', 'bh_1y_sma200_portfolio_history', 'bh_1y_sma200_cash', 'current_bh_1y_sma200_stocks'),
     'bh_1y_fcf_rank': _strategy_registry_entry('BH 1Y / FCF Rank', 'ENABLE_BH_1Y_FCF_RANK', 'bh_1y_fcf_rank_portfolio_value', 'bh_1y_fcf_rank_portfolio_history', 'bh_1y_fcf_rank_cash', 'current_bh_1y_fcf_rank_stocks'),
@@ -965,7 +1006,8 @@ STRATEGY_REGISTRY = {
     'inverse_etf_hedge': _strategy_registry_entry('🛡️ Inv ETF Hedge', 'ENABLE_INVERSE_ETF_HEDGE', 'inverse_etf_hedge_portfolio_value', 'inverse_etf_hedge_portfolio_history', 'inverse_etf_hedge_cash', 'inverse_etf_hedge_positions'),
     'analyst_rec': _strategy_registry_entry('Analyst Rec', 'ENABLE_ANALYST_RECOMMENDATION', 'analyst_rec_portfolio_value', 'analyst_rec_portfolio_history', 'analyst_rec_cash', 'analyst_rec_positions'),
     'bh_1y_monthly': _strategy_registry_entry('BH 1Y Monthly', 'ENABLE_STATIC_BH_1Y_MONTHLY', 'static_bh_1y_monthly_portfolio_value', 'static_bh_1y_monthly_portfolio_history', 'static_bh_1y_monthly_cash', 'static_bh_1y_monthly_positions'),
-    'bh_1y_weekly': _strategy_registry_entry('BH 1Y Weekly', 'ENABLE_STATIC_BH_1Y_WEEKLY', 'static_bh_1y_weekly_portfolio_value', 'static_bh_1y_weekly_portfolio_history', 'static_bh_1y_weekly_cash', 'static_bh_1y_weekly_positions'),
+    'bh_1y_weekly_start': _strategy_registry_entry('BH 1Y Weekly Start', 'ENABLE_STATIC_BH_1Y_WEEKLY_START', 'static_bh_1y_weekly_start_portfolio_value', 'static_bh_1y_weekly_start_portfolio_history', 'static_bh_1y_weekly_start_cash', 'static_bh_1y_weekly_start_positions'),
+    'bh_1y_weekly_end': _strategy_registry_entry('BH 1Y Weekly End', 'ENABLE_STATIC_BH_1Y_WEEKLY_END', 'static_bh_1y_weekly_end_portfolio_value', 'static_bh_1y_weekly_end_portfolio_history', 'static_bh_1y_weekly_end_cash', 'static_bh_1y_weekly_end_positions'),
     'bh_6m_monthly': _strategy_registry_entry('BH 6M Monthly', 'ENABLE_STATIC_BH_6M_MONTHLY', 'static_bh_6m_monthly_portfolio_value', 'static_bh_6m_monthly_portfolio_history', 'static_bh_6m_monthly_cash', 'static_bh_6m_monthly_positions'),
     'bh_3m_monthly': _strategy_registry_entry('BH 3M Monthly', 'ENABLE_STATIC_BH_3M_MONTHLY', 'static_bh_3m_monthly_portfolio_value', 'static_bh_3m_monthly_portfolio_history', 'static_bh_3m_monthly_cash', 'static_bh_3m_monthly_positions'),
     'bh_1m_monthly': _strategy_registry_entry('BH 1M Monthly', 'ENABLE_STATIC_BH_1M_MONTHLY', 'static_bh_1m_monthly_portfolio_value', 'static_bh_1m_monthly_portfolio_history', 'static_bh_1m_monthly_cash', 'static_bh_1m_monthly_positions'),
@@ -1677,6 +1719,317 @@ def _smart_rebalance_portfolio(
 
     return updated_positions, updated_cash, final_stocks, total_transaction_costs, positions_changed
 
+
+def _liquidate_positions_for_strategy(
+    strategy_name: str,
+    current_stocks: List[str],
+    positions: Dict[str, Dict],
+    cash: float,
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    transaction_cost: float,
+    close_price_cache: Optional[Dict[str, float]] = None,
+) -> Tuple[Dict[str, Dict], float, List[str], float, bool]:
+    """Sell all currently held positions, preserving names without a valid sell price."""
+    if not current_stocks or not positions:
+        return positions.copy(), cash, list(current_stocks), 0.0, False
+
+    if close_price_cache is None:
+        close_price_cache = _build_daily_close_price_cache(ticker_data_grouped, current_date)
+
+    total_transaction_costs = 0.0
+    updated_positions = positions.copy()
+    updated_cash = cash
+    positions_changed = False
+
+    for ticker in list(current_stocks):
+        if ticker not in updated_positions:
+            continue
+        current_price = close_price_cache.get(ticker)
+        if current_price is None:
+            print(f"   ⚠️ {strategy_name} Cannot liquidate {ticker}: no price data, keeping position")
+            continue
+
+        shares = updated_positions[ticker]["shares"]
+        gross_sale = shares * current_price
+        sell_cost = gross_sale * transaction_cost
+        print(f"   💰 {strategy_name} Liquidating {ticker}: forced exit with no valid replacement")
+        total_transaction_costs += sell_cost
+        updated_cash += gross_sale - sell_cost
+        del updated_positions[ticker]
+        positions_changed = True
+
+    final_stocks = [ticker for ticker in current_stocks if ticker in updated_positions]
+    return updated_positions, updated_cash, final_stocks, total_transaction_costs, positions_changed
+
+
+def _build_weekly_rebalance_dates(eligible_dates: List[datetime], weekday: int) -> set:
+    """Match standalone weekly_<day> scheduling: first weekday match, else last day of week."""
+    schedule_dates = set()
+    grouped_dates: Dict[Tuple[int, int], List[datetime]] = {}
+    for date in eligible_dates:
+        iso = date.isocalendar()
+        grouped_dates.setdefault((int(iso.year), int(iso.week)), []).append(date)
+
+    for week_dates in grouped_dates.values():
+        matched = next((date for date in week_dates if date.weekday() == weekday), None)
+        schedule_dates.add(matched if matched is not None else week_dates[-1])
+    return schedule_dates
+
+
+def _rebalance_portfolio_to_target_weights(
+    strategy_name: str,
+    target_stocks: List[str],
+    target_weights: Dict[str, float],
+    positions: Dict[str, Dict],
+    cash: float,
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+    transaction_cost: float,
+    close_price_cache: Dict[str, float],
+) -> Tuple[Dict[str, Dict], float, List[str], float, bool]:
+    """Rebalance to explicit target weights. Weights may sum to <= 1 to leave cash."""
+    updated_positions = positions.copy()
+    updated_cash = cash
+    total_transaction_costs = 0.0
+    positions_changed = False
+
+    filtered_target_stocks = []
+    filtered_weights: Dict[str, float] = {}
+    for ticker in target_stocks:
+        weight = float(target_weights.get(ticker, 0.0))
+        if weight > 0:
+            filtered_target_stocks.append(ticker)
+            filtered_weights[ticker] = weight
+
+    portfolio_value = updated_cash
+    for ticker, position in updated_positions.items():
+        current_price = close_price_cache.get(ticker)
+        if current_price is not None:
+            portfolio_value += position["shares"] * current_price
+        else:
+            portfolio_value += position.get("value", 0.0)
+
+    target_values = {
+        ticker: portfolio_value * filtered_weights.get(ticker, 0.0)
+        for ticker in filtered_target_stocks
+    }
+    target_shares: Dict[str, int] = {}
+    for ticker in filtered_target_stocks:
+        current_price = close_price_cache.get(ticker)
+        if current_price is None or current_price <= 0:
+            target_shares[ticker] = 0
+        else:
+            target_shares[ticker] = int(target_values[ticker] / current_price)
+
+    for ticker in list(updated_positions.keys()):
+        current_price = close_price_cache.get(ticker)
+        if current_price is None or current_price <= 0:
+            print(f"   ⚠️ {strategy_name} Cannot price {ticker} for weighted rebalance, keeping position")
+            continue
+        current_shares = int(updated_positions[ticker]["shares"])
+        desired_shares = target_shares.get(ticker, 0)
+        shares_to_sell = current_shares - desired_shares
+        if shares_to_sell <= 0:
+            continue
+
+        gross_sale = shares_to_sell * current_price
+        sell_cost = gross_sale * transaction_cost
+        updated_cash += gross_sale - sell_cost
+        total_transaction_costs += sell_cost
+        remaining_shares = current_shares - shares_to_sell
+        if remaining_shares > 0:
+            updated_positions[ticker]["shares"] = remaining_shares
+            updated_positions[ticker]["value"] = remaining_shares * current_price
+            print(f"   💰 {strategy_name} Trimming {ticker}: sold {shares_to_sell} share(s)")
+        else:
+            del updated_positions[ticker]
+            print(f"   💰 {strategy_name} Exiting {ticker}: sold {shares_to_sell} share(s)")
+        positions_changed = True
+
+    for ticker in filtered_target_stocks:
+        current_price = close_price_cache.get(ticker)
+        if current_price is None or current_price <= 0:
+            print(f"   ⚠️ {strategy_name} Cannot buy {ticker}: no price data")
+            continue
+
+        current_shares = int(updated_positions.get(ticker, {}).get("shares", 0))
+        desired_shares = target_shares.get(ticker, 0)
+        shares_to_buy = desired_shares - current_shares
+        if shares_to_buy <= 0:
+            continue
+
+        affordable_shares = int(updated_cash / (current_price * (1 + transaction_cost)))
+        shares_to_buy = min(shares_to_buy, affordable_shares)
+        if shares_to_buy <= 0:
+            continue
+
+        buy_value = shares_to_buy * current_price
+        buy_cost = buy_value * transaction_cost
+        total_cost = buy_value + buy_cost
+        if total_cost > updated_cash:
+            continue
+
+        previous_shares = int(updated_positions.get(ticker, {}).get("shares", 0))
+        previous_entry = float(updated_positions.get(ticker, {}).get("entry_price", current_price))
+        new_total_shares = previous_shares + shares_to_buy
+        new_entry_price = (
+            ((previous_entry * previous_shares) + buy_value) / new_total_shares
+            if new_total_shares > 0 else current_price
+        )
+
+        updated_cash -= total_cost
+        total_transaction_costs += buy_cost
+        updated_positions[ticker] = {
+            "shares": new_total_shares,
+            "entry_price": new_entry_price,
+            "value": new_total_shares * current_price,
+        }
+        positions_changed = True
+        print(f"   🛒 {strategy_name} Buying {ticker}: +{shares_to_buy} share(s) @ ${current_price:.2f}")
+
+    final_stocks = [ticker for ticker in filtered_target_stocks if ticker in updated_positions]
+    final_stocks.extend(ticker for ticker in updated_positions if ticker not in final_stocks)
+    return updated_positions, updated_cash, final_stocks, total_transaction_costs, positions_changed
+
+
+def _compute_blend_liqweight2_weights(
+    picks: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+) -> Dict[str, float]:
+    """Compute standalone-style momentum * liquidity^2 target weights."""
+    rows = []
+    for ticker in picks:
+        ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+        if ticker_data is None or ticker_data.empty:
+            continue
+
+        window = ticker_data.loc[:current_date]
+        close_series = window["Close"].dropna()
+        if len(close_series) < 252 or "Volume" not in window.columns:
+            continue
+        volume_series = window["Volume"].dropna()
+        dollar_volume = (window["Close"] * window["Volume"]).dropna()
+        if len(volume_series) < 20 or len(dollar_volume) < 20:
+            continue
+
+        close_now = float(close_series.iloc[-1])
+        close_1y_start = float(close_series.iloc[-252])
+        close_6m_start = float(close_series.iloc[-126]) if len(close_series) >= 126 else float(close_series.iloc[0])
+        if close_1y_start <= 0 or close_6m_start <= 0:
+            continue
+
+        rows.append(
+            {
+                "ticker": ticker,
+                "perf_1y": ((close_now - close_1y_start) / close_1y_start) * 100.0,
+                "perf_6m": ((close_now - close_6m_start) / close_6m_start) * 100.0,
+                "dollar_vol20": float(dollar_volume.tail(20).mean()),
+            }
+        )
+
+    if not rows:
+        equal_weight = 1.0 / len(picks) if picks else 0.0
+        return {ticker: equal_weight for ticker in picks}
+
+    frame = pd.DataFrame(rows).set_index("ticker")
+    frame["rank_1y"] = frame["perf_1y"].rank(pct=True, ascending=True)
+    frame["rank_6m"] = frame["perf_6m"].rank(pct=True, ascending=True)
+    frame["mom_score"] = 0.45 * frame["rank_1y"] + 0.55 * frame["rank_6m"]
+    frame["liq_score"] = frame["dollar_vol20"].rank(pct=True, ascending=True).pow(2)
+    raw = (frame["mom_score"] * frame["liq_score"]).clip(lower=1e-6)
+    raw_sum = float(raw.sum())
+    if raw_sum <= 0:
+        equal_weight = 1.0 / len(picks) if picks else 0.0
+        return {ticker: equal_weight for ticker in picks}
+
+    weights = {ticker: float(raw.loc[ticker] / raw_sum) for ticker in frame.index}
+    for ticker in picks:
+        weights.setdefault(ticker, 0.0)
+    return weights
+
+
+def _compute_blend_momweight4_weights(
+    picks: List[str],
+    ticker_data_grouped: Dict[str, pd.DataFrame],
+    current_date: datetime,
+) -> Dict[str, float]:
+    """Compute standalone-style 30/70 momweight4 * liquidity target weights."""
+    rows = []
+    for ticker in picks:
+        ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+        if ticker_data is None or ticker_data.empty:
+            continue
+
+        window = ticker_data.loc[:current_date]
+        close_series = window["Close"].dropna()
+        if len(close_series) < 252 or "Volume" not in window.columns:
+            continue
+        dollar_volume = (window["Close"] * window["Volume"]).dropna()
+        if len(dollar_volume) < 20:
+            continue
+
+        close_now = float(close_series.iloc[-1])
+        close_1y_start = float(close_series.iloc[-252])
+        close_6m_start = float(close_series.iloc[-126]) if len(close_series) >= 126 else float(close_series.iloc[0])
+        close_3m_start = float(close_series.iloc[-63]) if len(close_series) >= 63 else float(close_series.iloc[0])
+        if close_1y_start <= 0 or close_6m_start <= 0 or close_3m_start <= 0:
+            continue
+
+        rows.append(
+            {
+                "ticker": ticker,
+                "perf_1y": ((close_now - close_1y_start) / close_1y_start) * 100.0,
+                "perf_6m": ((close_now - close_6m_start) / close_6m_start) * 100.0,
+                "perf_3m": ((close_now - close_3m_start) / close_3m_start) * 100.0,
+                "dollar_vol20": float(dollar_volume.tail(20).mean()),
+            }
+        )
+
+    if not rows:
+        equal_weight = 1.0 / len(picks) if picks else 0.0
+        return {ticker: equal_weight for ticker in picks}
+
+    frame = pd.DataFrame(rows).set_index("ticker")
+    frame["rank_1y"] = frame["perf_1y"].rank(pct=True, ascending=True)
+    frame["rank_6m"] = frame["perf_6m"].rank(pct=True, ascending=True)
+    frame["rank_3m"] = frame["perf_3m"].rank(pct=True, ascending=True)
+    mom_base = 0.10 * frame["rank_1y"] + 0.55 * frame["rank_6m"] + 0.35 * frame["rank_3m"]
+    exponent = 4.0 if len(frame) >= 5 else 3.0
+    frame["mom_score"] = mom_base.pow(exponent)
+    frame["liq_score"] = frame["dollar_vol20"].rank(pct=True, ascending=True)
+    raw = (frame["mom_score"] * frame["liq_score"]).clip(lower=1e-6)
+    raw_sum = float(raw.sum())
+    if raw_sum <= 0:
+        equal_weight = 1.0 / len(picks) if picks else 0.0
+        return {ticker: equal_weight for ticker in picks}
+
+    weights = {ticker: float(raw.loc[ticker] / raw_sum) for ticker in frame.index}
+    for ticker in picks:
+        weights.setdefault(ticker, 0.0)
+    return weights
+
+
+def _compute_annualized_volatility_up_to(
+    ticker_data: pd.DataFrame,
+    current_date: datetime,
+    lookback_days: int = 20,
+) -> Optional[float]:
+    """Compute trailing annualized close-to-close volatility."""
+    try:
+        close_series = ticker_data.loc[:current_date, "Close"].dropna()
+        if len(close_series) < lookback_days + 1:
+            return None
+        returns = close_series.pct_change().dropna()
+        if len(returns) < lookback_days:
+            return None
+        vol = returns.tail(lookback_days).std(ddof=0) * np.sqrt(252.0)
+        if pd.isna(vol):
+            return None
+        return float(vol)
+    except Exception:
+        return None
 
 def _prepare_ai_elite_step(
     initial_top_tickers: List[str],
@@ -2672,6 +3025,9 @@ def _run_portfolio_backtest_walk_forward(
         "bh_1y_1m_rank": "BH 1Y / 1M Rank",
         "bh_1y_6m_rank": "BH 1Y / 6M Rank",
         "bh_1y_6m_blend": "BH 1Y / 6M Blend",
+        "blend_1y_6m_45_55_sma75_persist3_pos3m": "Blend 1Y/6M 45/55 P3",
+        "blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage": "Blend 45/55 L2 VExit TS",
+        "blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop": "Blend 30/70 M4 CTS",
         "bh_1y_sma200": "BH 1Y SMA200",
         "bh_1y_fcf_rank": "BH 1Y / FCF Rank",
         "defensive_momentum": "Defensive Momentum",
@@ -3220,15 +3576,25 @@ def _run_portfolio_backtest_walk_forward(
     static_bh_1y_monthly_transaction_costs = 0.0
     static_bh_1y_monthly_last_month = None  # Track last rebalanced month
 
-    # Static BH 1Y Weekly
-    static_bh_1y_weekly_portfolio_value = initial_capital_needed
-    static_bh_1y_weekly_portfolio_history = [static_bh_1y_weekly_portfolio_value]
-    static_bh_1y_weekly_positions = {}
-    static_bh_1y_weekly_cash = initial_capital_needed
-    current_static_bh_1y_weekly_stocks = []
-    static_bh_1y_weekly_initialized = False
-    static_bh_1y_weekly_transaction_costs = 0.0
-    static_bh_1y_weekly_last_week = None
+    # Static BH 1Y Weekly Start
+    static_bh_1y_weekly_start_portfolio_value = initial_capital_needed
+    static_bh_1y_weekly_start_portfolio_history = [static_bh_1y_weekly_start_portfolio_value]
+    static_bh_1y_weekly_start_positions = {}
+    static_bh_1y_weekly_start_cash = initial_capital_needed
+    current_static_bh_1y_weekly_start_stocks = []
+    static_bh_1y_weekly_start_initialized = False
+    static_bh_1y_weekly_start_transaction_costs = 0.0
+    static_bh_1y_weekly_start_last_week = None
+
+    # Static BH 1Y Weekly End
+    static_bh_1y_weekly_end_portfolio_value = initial_capital_needed
+    static_bh_1y_weekly_end_portfolio_history = [static_bh_1y_weekly_end_portfolio_value]
+    static_bh_1y_weekly_end_positions = {}
+    static_bh_1y_weekly_end_cash = initial_capital_needed
+    current_static_bh_1y_weekly_end_stocks = []
+    static_bh_1y_weekly_end_initialized = False
+    static_bh_1y_weekly_end_transaction_costs = 0.0
+    static_bh_1y_weekly_end_last_week = None
 
     # Static BH 6M Monthly
     static_bh_6m_monthly_portfolio_value = initial_capital_needed
@@ -3478,6 +3844,40 @@ def _run_portfolio_backtest_walk_forward(
     bh_1y_6m_blend_cash = initial_capital_needed
     current_bh_1y_6m_blend_stocks = []
     bh_1y_6m_blend_last_rebalance_value = initial_capital_needed
+
+    # BLEND 1Y / 6M 45/55 SMA75 PERSIST3 POS3M: Initialize portfolio tracking
+    blend_1y_6m_45_55_sma75_persist3_pos3m_portfolio_value = initial_capital_needed
+    blend_1y_6m_45_55_sma75_persist3_pos3m_portfolio_history = [blend_1y_6m_45_55_sma75_persist3_pos3m_portfolio_value]
+    blend_1y_6m_45_55_sma75_persist3_pos3m_positions = {}
+    blend_1y_6m_45_55_sma75_persist3_pos3m_cash = initial_capital_needed
+    current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks = []
+    blend_1y_6m_45_55_sma75_persist3_pos3m_last_rebalance_value = initial_capital_needed
+    blend_1y_6m_45_55_sma75_persist3_pos3m_sma75_breach_streaks: Dict[str, int] = {}
+    blend_1y_6m_45_55_sma75_persist3_pos3m_entry_ranks: Dict[str, int] = {}
+
+    # BLEND 45/55 LIQWEIGHT2 VOLEXIT TWOSTAGE: Initialize portfolio tracking
+    blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_portfolio_value = initial_capital_needed
+    blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_portfolio_history = [blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_portfolio_value]
+    blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions = {}
+    blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash = initial_capital_needed
+    current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks = []
+    blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_last_rebalance_value = initial_capital_needed
+    blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_sma_breach_streaks: Dict[str, int] = {}
+    blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_entry_ranks: Dict[str, int] = {}
+    blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_target_weights: Dict[str, float] = {}
+
+    # BLEND 30/70 MOMWEIGHT4 VOLEXIT TWOSTAGE CHAND_TSTOP: Initialize portfolio tracking
+    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_portfolio_value = initial_capital_needed
+    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_portfolio_history = [blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_portfolio_value]
+    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions = {}
+    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash = initial_capital_needed
+    current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks = []
+    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_last_rebalance_value = initial_capital_needed
+    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_sma_breach_streaks: Dict[str, int] = {}
+    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_entry_ranks: Dict[str, int] = {}
+    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_target_weights: Dict[str, float] = {}
+    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_peak_prices: Dict[str, float] = {}
+    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_time_stop_counters: Dict[str, int] = {}
 
     # EARLY LEADER ACCEL: Initialize portfolio tracking
     early_leader_accel_portfolio_value = initial_capital_needed
@@ -3989,6 +4389,9 @@ def _run_portfolio_backtest_walk_forward(
     risk_adj_mom_1m_monthly_transaction_costs = 0.0
     ai_elite_transaction_costs = 0.0
     bh_1y_6m_blend_transaction_costs = 0.0
+    blend_1y_6m_45_55_sma75_persist3_pos3m_transaction_costs = 0.0
+    blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_transaction_costs = 0.0
+    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_transaction_costs = 0.0
     early_leader_accel_transaction_costs = 0.0
 
     # Transaction cost tracking for strategies that don't initialize it elsewhere
@@ -4461,6 +4864,14 @@ def _run_portfolio_backtest_walk_forward(
 
     # ✅ NEW: Track daily predictions vs actuals
     daily_prediction_log = []
+    blend_liqweight2_volexit_twostage_rebalance_dates = _build_weekly_rebalance_dates(
+        business_days,
+        config.BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE_TUESDAY_WEEKDAY,
+    )
+    blend_momweight4_chand_tstop_rebalance_dates = _build_weekly_rebalance_dates(
+        business_days,
+        config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_WEEKDAY,
+    )
 
     for current_date in business_days:
         day_count += 1
@@ -4479,6 +4890,15 @@ def _run_portfolio_backtest_walk_forward(
         ai_elite_selection_pending = False
         ai_elite_selection_runtime_context: Optional[Dict[str, Any]] = None
         queue_progress = None
+        shared_parallel_performance_by_period: Optional[Dict[int, Dict[str, float]]] = None
+
+        if parallel_strategy_executor is not None:
+            from parallel_backtest import build_shared_common_window_performance_bundle
+
+            shared_parallel_performance_by_period = build_shared_common_window_performance_bundle(
+                price_history_cache,
+                current_date,
+            )
 
         def _dispatch_parallel_strategy_tasks() -> None:
             has_non_ai_futures = any(
@@ -4515,6 +4935,10 @@ def _run_portfolio_backtest_walk_forward(
                         "min_days": 5,
                         "max_days": 44,
                     }
+                if shared_parallel_performance_by_period:
+                    if task_runtime_context is None:
+                        task_runtime_context = {}
+                    task_runtime_context["shared_performance_by_period"] = shared_parallel_performance_by_period
                 parallel_strategy_futures[strategy_name] = parallel_strategy_executor.submit(
                     _run_parallel_strategy_selection_task,
                     strategy_name,
@@ -6363,6 +6787,13 @@ def _run_portfolio_backtest_walk_forward(
             (day_count == 1) or  # First day of backtest
             (day_count > 1 and current_date.isocalendar()[:2] != business_days[day_count - 2].isocalendar()[:2])
         )
+        is_last_trading_day_of_week = (
+            (day_count == len(business_days)) or
+            (
+                day_count < len(business_days)
+                and current_date.isocalendar()[:2] != business_days[day_count].isocalendar()[:2]
+            )
+        )
 
         # Static BH 1Y Monthly
         if config.ENABLE_STATIC_BH_1Y_MONTHLY:
@@ -6389,30 +6820,55 @@ def _run_portfolio_backtest_walk_forward(
                     static_bh_1y_monthly_initialized = True
                     static_bh_1y_monthly_last_month = current_date.month
 
-        # Static BH 1Y Weekly
-        if config.ENABLE_STATIC_BH_1Y_WEEKLY:
-            should_rebalance_1y_weekly = (not static_bh_1y_weekly_initialized) or is_first_trading_day_of_week
-            if should_rebalance_1y_weekly:
+        # Static BH 1Y Weekly Start
+        if config.ENABLE_STATIC_BH_1Y_WEEKLY_START:
+            should_rebalance_1y_weekly_start = (not static_bh_1y_weekly_start_initialized) or is_first_trading_day_of_week
+            if should_rebalance_1y_weekly_start:
                 new_stocks = select_top_performers(
                     initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365,
                     top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
-                    timing_strategy_name="BH 1Y Weekly",
+                    timing_strategy_name="BH 1Y Weekly Start",
                 )
                 if new_stocks:
-                    print(f"   📊 Static BH 1Y Weekly Day {day_count}: {new_stocks}")
-                    if not static_bh_1y_weekly_initialized:
-                        print(f"   🎯 Static BH 1Y Weekly: Initializing with {new_stocks}")
+                    print(f"   📊 Static BH 1Y Weekly Start Day {day_count}: {new_stocks}")
+                    if not static_bh_1y_weekly_start_initialized:
+                        print(f"   🎯 Static BH 1Y Weekly Start: Initializing with {new_stocks}")
                     else:
-                        print(f"   🔄 Static BH 1Y Weekly: First-trading-day-of-week rebalance ({current_date.strftime('%Y-%m-%d')})")
-                    static_bh_1y_weekly_positions, static_bh_1y_weekly_cash, current_static_bh_1y_weekly_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
-                        strategy_name="Static BH 1Y Wk", current_stocks=current_static_bh_1y_weekly_stocks,
-                        new_stocks=new_stocks, positions=static_bh_1y_weekly_positions, cash=static_bh_1y_weekly_cash,
+                        print(f"   🔄 Static BH 1Y Weekly Start: First-trading-day-of-week rebalance ({current_date.strftime('%Y-%m-%d')})")
+                    static_bh_1y_weekly_start_positions, static_bh_1y_weekly_start_cash, current_static_bh_1y_weekly_start_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Static BH 1Y Wk Start", current_stocks=current_static_bh_1y_weekly_start_stocks,
+                        new_stocks=new_stocks, positions=static_bh_1y_weekly_start_positions, cash=static_bh_1y_weekly_start_cash,
                         ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
-                        portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_1y_weekly_initialized)
-                    strategies_rebalanced_today['BH 1Y Weekly'] = rebalanced_flag
-                    static_bh_1y_weekly_transaction_costs += rc
-                    static_bh_1y_weekly_initialized = True
-                    static_bh_1y_weekly_last_week = tuple(current_date.isocalendar()[:2])
+                        portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_1y_weekly_start_initialized)
+                    strategies_rebalanced_today['BH 1Y Weekly Start'] = rebalanced_flag
+                    static_bh_1y_weekly_start_transaction_costs += rc
+                    static_bh_1y_weekly_start_initialized = True
+                    static_bh_1y_weekly_start_last_week = tuple(current_date.isocalendar()[:2])
+
+        # Static BH 1Y Weekly End
+        if config.ENABLE_STATIC_BH_1Y_WEEKLY_END:
+            should_rebalance_1y_weekly_end = (not static_bh_1y_weekly_end_initialized) or is_last_trading_day_of_week
+            if should_rebalance_1y_weekly_end:
+                new_stocks = select_top_performers(
+                    initial_top_tickers, ticker_data_grouped, current_date, lookback_days=365,
+                    top_n=PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    timing_strategy_name="BH 1Y Weekly End",
+                )
+                if new_stocks:
+                    print(f"   📊 Static BH 1Y Weekly End Day {day_count}: {new_stocks}")
+                    if not static_bh_1y_weekly_end_initialized:
+                        print(f"   🎯 Static BH 1Y Weekly End: Initializing with {new_stocks}")
+                    else:
+                        print(f"   🔄 Static BH 1Y Weekly End: Last-trading-day-of-week rebalance ({current_date.strftime('%Y-%m-%d')})")
+                    static_bh_1y_weekly_end_positions, static_bh_1y_weekly_end_cash, current_static_bh_1y_weekly_end_stocks, rc, rebalanced_flag = _smart_rebalance_portfolio(
+                        strategy_name="Static BH 1Y Wk End", current_stocks=current_static_bh_1y_weekly_end_stocks,
+                        new_stocks=new_stocks, positions=static_bh_1y_weekly_end_positions, cash=static_bh_1y_weekly_end_cash,
+                        ticker_data_grouped=ticker_data_grouped, current_date=current_date, transaction_cost=TRANSACTION_COST,
+                        portfolio_size=PORTFOLIO_SIZE, force_rebalance=not static_bh_1y_weekly_end_initialized)
+                    strategies_rebalanced_today['BH 1Y Weekly End'] = rebalanced_flag
+                    static_bh_1y_weekly_end_transaction_costs += rc
+                    static_bh_1y_weekly_end_initialized = True
+                    static_bh_1y_weekly_end_last_week = tuple(current_date.isocalendar()[:2])
 
         # Static BH 6M Monthly
         if config.ENABLE_STATIC_BH_6M_MONTHLY:
@@ -7686,6 +8142,695 @@ def _run_portfolio_backtest_walk_forward(
 
             except Exception as e:
                 print(f"   ⚠️ BH 1Y / 6M Blend strategy error: {e}")
+
+        if config.ENABLE_BLEND_1Y_6M_45_55_SMA75_PERSIST3_POS3M:
+            try:
+                strategy_label = "Blend 1Y/6M 45/55 P3"
+                print(f"   📈 {strategy_label} Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+
+                candidate_pool_size = max(
+                    PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    PORTFOLIO_SIZE * config.BLEND_1Y_6M_45_55_SMA75_PERSIST3_CANDIDATE_MULTIPLIER,
+                )
+
+                def _fallback_blend_1y_6m_45_55_sma75_persist3_pos3m():
+                    from shared_strategies import select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks
+                    return select_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=candidate_pool_size,
+                    )
+
+                ranked_blend_1y_6m_45_55_sma75_persist3_pos3m = _resolve_parallel_strategy_selection(
+                    "blend_1y_6m_45_55_sma75_persist3_pos3m",
+                    _fallback_blend_1y_6m_45_55_sma75_persist3_pos3m,
+                ) or []
+
+                forced_exit_tickers = []
+                forced_exit_set = set()
+                exit_sma_days = config.BLEND_1Y_6M_45_55_SMA75_PERSIST3_EXIT_SMA_DAYS
+                exit_streak_days = config.BLEND_1Y_6M_45_55_SMA75_PERSIST3_STREAK_DAYS
+
+                for ticker in list(current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks):
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None and hasattr(ticker_data_grouped, 'get_group'):
+                        try:
+                            ticker_data = ticker_data_grouped.get_group(ticker)
+                        except Exception:
+                            ticker_data = None
+                    if ticker_data is None or ticker_data.empty:
+                        continue
+
+                    close_series = ticker_data.loc[:current_date, "Close"].dropna()
+                    if len(close_series) < exit_sma_days:
+                        continue
+
+                    current_close = float(close_series.iloc[-1])
+                    sma_75 = float(close_series.tail(exit_sma_days).mean())
+                    if current_close < sma_75:
+                        blend_1y_6m_45_55_sma75_persist3_pos3m_sma75_breach_streaks[ticker] = (
+                            blend_1y_6m_45_55_sma75_persist3_pos3m_sma75_breach_streaks.get(ticker, 0) + 1
+                        )
+                    else:
+                        blend_1y_6m_45_55_sma75_persist3_pos3m_sma75_breach_streaks[ticker] = 0
+
+                    streak = blend_1y_6m_45_55_sma75_persist3_pos3m_sma75_breach_streaks[ticker]
+                    if streak >= exit_streak_days:
+                        forced_exit_tickers.append(ticker)
+                        forced_exit_set.add(ticker)
+                        print(
+                            f"   🛑 {strategy_label}: {ticker} below SMA{exit_sma_days} for {streak} straight day(s) "
+                            f"(${current_close:.2f} < ${sma_75:.2f})"
+                        )
+
+                for ticker in list(blend_1y_6m_45_55_sma75_persist3_pos3m_sma75_breach_streaks.keys()):
+                    if ticker not in current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks:
+                        del blend_1y_6m_45_55_sma75_persist3_pos3m_sma75_breach_streaks[ticker]
+
+                should_rebalance_blend_1y_6m_45_55_sma75_persist3_pos3m = (
+                    not current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks
+                ) or is_last_trading_day_of_week
+
+                if ranked_blend_1y_6m_45_55_sma75_persist3_pos3m:
+                    print(
+                        f"   📊 {strategy_label} Day {day_count}: "
+                        f"{ranked_blend_1y_6m_45_55_sma75_persist3_pos3m[:PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE]}"
+                    )
+                elif should_rebalance_blend_1y_6m_45_55_sma75_persist3_pos3m or forced_exit_tickers:
+                    print(f"   ❌ {strategy_label}: No ranked candidates available")
+
+                if should_rebalance_blend_1y_6m_45_55_sma75_persist3_pos3m or forced_exit_tickers:
+                    positions_to_sell = set(forced_exit_set)
+                    ranked_position_map = {
+                        ticker: idx + 1
+                        for idx, ticker in enumerate(ranked_blend_1y_6m_45_55_sma75_persist3_pos3m)
+                    }
+
+                    if should_rebalance_blend_1y_6m_45_55_sma75_persist3_pos3m:
+                        max_rank = config.BLEND_1Y_6M_45_55_SMA75_PERSIST3_MAX_RANK
+                        rank_drop_threshold = config.BLEND_1Y_6M_45_55_SMA75_PERSIST3_RANK_DROP_THRESHOLD
+                        for ticker in current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks:
+                            if ticker in positions_to_sell:
+                                continue
+                            current_rank = ranked_position_map.get(ticker, 999)
+                            entry_rank = blend_1y_6m_45_55_sma75_persist3_pos3m_entry_ranks.get(ticker, current_rank)
+                            rank_drop = current_rank - entry_rank
+                            if current_rank > max_rank or rank_drop >= rank_drop_threshold:
+                                positions_to_sell.add(ticker)
+                                print(
+                                    f"   🔻 {strategy_label}: weekly rank exit for {ticker} "
+                                    f"(rank={current_rank}, entry_rank={entry_rank}, drop={rank_drop})"
+                                )
+
+                    kept_stocks = [
+                        ticker
+                        for ticker in current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks
+                        if ticker not in positions_to_sell
+                    ]
+                    replacements_needed = max(0, PORTFOLIO_SIZE - len(kept_stocks))
+                    replacements = [
+                        ticker
+                        for ticker in ranked_blend_1y_6m_45_55_sma75_persist3_pos3m
+                        if ticker not in positions_to_sell and ticker not in kept_stocks
+                    ][:replacements_needed]
+                    final_target_stocks = kept_stocks + replacements
+
+                    if positions_to_sell and not final_target_stocks:
+                        (
+                            blend_1y_6m_45_55_sma75_persist3_pos3m_positions,
+                            blend_1y_6m_45_55_sma75_persist3_pos3m_cash,
+                            current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks,
+                            rebalance_costs,
+                            rebalanced_flag,
+                        ) = _liquidate_positions_for_strategy(
+                            strategy_name=strategy_label,
+                            current_stocks=current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks,
+                            positions=blend_1y_6m_45_55_sma75_persist3_pos3m_positions,
+                            cash=blend_1y_6m_45_55_sma75_persist3_pos3m_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            close_price_cache=active_close_price_cache,
+                        )
+                    elif final_target_stocks:
+                        if should_rebalance_blend_1y_6m_45_55_sma75_persist3_pos3m:
+                            rebalance_candidates = [
+                                ticker
+                                for ticker in ranked_blend_1y_6m_45_55_sma75_persist3_pos3m
+                                if ticker not in positions_to_sell
+                            ]
+                            if final_target_stocks:
+                                rebalance_candidates = final_target_stocks + [
+                                    ticker for ticker in rebalance_candidates if ticker not in final_target_stocks
+                                ]
+                        else:
+                            rebalance_candidates = final_target_stocks
+
+                        (
+                            blend_1y_6m_45_55_sma75_persist3_pos3m_positions,
+                            blend_1y_6m_45_55_sma75_persist3_pos3m_cash,
+                            current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks,
+                            rebalance_costs,
+                            rebalanced_flag,
+                        ) = _smart_rebalance_portfolio(
+                            strategy_name=strategy_label,
+                            current_stocks=current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks,
+                            new_stocks=rebalance_candidates,
+                            positions=blend_1y_6m_45_55_sma75_persist3_pos3m_positions,
+                            cash=blend_1y_6m_45_55_sma75_persist3_pos3m_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            portfolio_size=PORTFOLIO_SIZE,
+                            force_rebalance=(
+                                not current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks
+                                or should_rebalance_blend_1y_6m_45_55_sma75_persist3_pos3m
+                                or bool(positions_to_sell)
+                            ),
+                        )
+                    else:
+                        rebalance_costs = 0.0
+                        rebalanced_flag = False
+
+                    if rebalanced_flag:
+                        strategies_rebalanced_today[strategy_label] = True
+                        blend_1y_6m_45_55_sma75_persist3_pos3m_transaction_costs += rebalance_costs
+                        blend_1y_6m_45_55_sma75_persist3_pos3m_last_rebalance_value = _mark_to_market_value(
+                            blend_1y_6m_45_55_sma75_persist3_pos3m_positions,
+                            blend_1y_6m_45_55_sma75_persist3_pos3m_cash,
+                            ticker_data_grouped,
+                            current_date,
+                        )
+
+                current_blend_set = set(current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks)
+                ranked_position_map = {
+                    ticker: idx + 1
+                    for idx, ticker in enumerate(ranked_blend_1y_6m_45_55_sma75_persist3_pos3m)
+                }
+                for ticker in list(blend_1y_6m_45_55_sma75_persist3_pos3m_entry_ranks.keys()):
+                    if ticker not in current_blend_set:
+                        del blend_1y_6m_45_55_sma75_persist3_pos3m_entry_ranks[ticker]
+                for ticker in current_blend_set:
+                    if ticker not in blend_1y_6m_45_55_sma75_persist3_pos3m_entry_ranks:
+                        blend_1y_6m_45_55_sma75_persist3_pos3m_entry_ranks[ticker] = ranked_position_map.get(ticker, 999)
+                for ticker in list(blend_1y_6m_45_55_sma75_persist3_pos3m_sma75_breach_streaks.keys()):
+                    if ticker not in current_blend_set:
+                        del blend_1y_6m_45_55_sma75_persist3_pos3m_sma75_breach_streaks[ticker]
+
+            except Exception as e:
+                print(f"   ⚠️ Blend 1Y/6M 45/55 P3 strategy error: {e}")
+
+        if config.ENABLE_BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE:
+            try:
+                strategy_label = "Blend 45/55 L2 VExit TS"
+                print(f"   📈 {strategy_label} Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+
+                candidate_pool_size = max(
+                    PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    PORTFOLIO_SIZE * config.BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE_CANDIDATE_MULTIPLIER,
+                )
+
+                def _fallback_blend_liqweight2_volexit_twostage():
+                    from shared_strategies import select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks
+                    return select_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=candidate_pool_size,
+                    )
+
+                ranked_blend_liqweight2_volexit_twostage = _resolve_parallel_strategy_selection(
+                    "blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage",
+                    _fallback_blend_liqweight2_volexit_twostage,
+                ) or []
+
+                if ranked_blend_liqweight2_volexit_twostage:
+                    print(
+                        f"   📊 {strategy_label} Day {day_count}: "
+                        f"{ranked_blend_liqweight2_volexit_twostage[:PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE]}"
+                    )
+
+                # Daily volatility-aware SMA persistence handling: reduce target weights by 50% on breach events.
+                reduced_weight_targets = dict(blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_target_weights)
+                reduction_applied = False
+                low_sma_days = config.BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE_LOW_SMA_DAYS
+                high_sma_days = config.BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE_HIGH_SMA_DAYS
+                persist_days = config.BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE_PERSIST_DAYS
+                vol_switch = config.BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE_VOL_SWITCH
+                reduction_factor = config.BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE_REDUCTION_FACTOR
+
+                for ticker in list(current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks):
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None or ticker_data.empty:
+                        continue
+
+                    close_series = ticker_data.loc[:current_date, "Close"].dropna()
+                    vol20 = _compute_annualized_volatility_up_to(ticker_data, current_date)
+                    sma_days = high_sma_days if (vol20 is not None and vol20 > vol_switch) else low_sma_days
+                    if len(close_series) < sma_days:
+                        continue
+
+                    current_close = float(close_series.iloc[-1])
+                    sma_value = float(close_series.tail(sma_days).mean())
+                    if current_close < sma_value:
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_sma_breach_streaks[ticker] = (
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_sma_breach_streaks.get(ticker, 0) + 1
+                        )
+                    else:
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_sma_breach_streaks[ticker] = 0
+
+                    streak = blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_sma_breach_streaks[ticker]
+                    if streak >= persist_days and ticker in reduced_weight_targets:
+                        reduced_weight_targets[ticker] = reduced_weight_targets[ticker] * reduction_factor
+                        reduction_applied = True
+                        print(
+                            f"   🪫 {strategy_label}: reducing {ticker} after {streak} day(s) below "
+                            f"SMA{sma_days} (${current_close:.2f} < ${sma_value:.2f}, vol20={vol20 if vol20 is not None else float('nan'):.2f})"
+                        )
+
+                if reduction_applied and current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks:
+                    (
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions,
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash,
+                        current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks,
+                        rebalance_costs,
+                        rebalanced_flag,
+                    ) = _rebalance_portfolio_to_target_weights(
+                        strategy_name=strategy_label,
+                        target_stocks=current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks,
+                        target_weights=reduced_weight_targets,
+                        positions=blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions,
+                        cash=blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        close_price_cache=active_close_price_cache,
+                    )
+                    if rebalanced_flag:
+                        strategies_rebalanced_today[strategy_label] = True
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_transaction_costs += rebalance_costs
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_last_rebalance_value = _mark_to_market_value(
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions,
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash,
+                            ticker_data_grouped,
+                            current_date,
+                        )
+                    blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_target_weights = {
+                        ticker: weight
+                        for ticker, weight in reduced_weight_targets.items()
+                        if ticker in current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks and weight > 0
+                    }
+
+                should_rebalance_blend_liqweight2_volexit_twostage = (
+                    current_date in blend_liqweight2_volexit_twostage_rebalance_dates
+                )
+
+                if should_rebalance_blend_liqweight2_volexit_twostage:
+                    ranked_position_map = {
+                        ticker: idx + 1
+                        for idx, ticker in enumerate(ranked_blend_liqweight2_volexit_twostage)
+                    }
+                    positions_to_sell = set()
+                    max_rank = config.BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE_MAX_RANK
+                    rank_drop_threshold = config.BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE_RANK_DROP_THRESHOLD
+
+                    for ticker in current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks:
+                        current_rank = ranked_position_map.get(ticker, 999)
+                        entry_rank = blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_entry_ranks.get(ticker, current_rank)
+                        rank_drop = current_rank - entry_rank
+                        if current_rank > max_rank or rank_drop >= rank_drop_threshold:
+                            positions_to_sell.add(ticker)
+                            print(
+                                f"   🔻 {strategy_label}: weekly rank exit for {ticker} "
+                                f"(rank={current_rank}, entry_rank={entry_rank}, drop={rank_drop})"
+                            )
+
+                    kept_stocks = [
+                        ticker for ticker in current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks
+                        if ticker not in positions_to_sell
+                    ]
+                    replacements_needed = max(0, PORTFOLIO_SIZE - len(kept_stocks))
+                    replacements = [
+                        ticker for ticker in ranked_blend_liqweight2_volexit_twostage
+                        if ticker not in positions_to_sell and ticker not in kept_stocks
+                    ][:replacements_needed]
+                    final_target_stocks = kept_stocks + replacements
+
+                    if final_target_stocks:
+                        target_weights = _compute_blend_liqweight2_weights(
+                            final_target_stocks,
+                            ticker_data_grouped,
+                            current_date,
+                        )
+                        (
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions,
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash,
+                            current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks,
+                            rebalance_costs,
+                            rebalanced_flag,
+                        ) = _rebalance_portfolio_to_target_weights(
+                            strategy_name=strategy_label,
+                            target_stocks=final_target_stocks,
+                            target_weights=target_weights,
+                            positions=blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions,
+                            cash=blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            close_price_cache=active_close_price_cache,
+                        )
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_target_weights = {
+                            ticker: weight
+                            for ticker, weight in target_weights.items()
+                            if ticker in current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks and weight > 0
+                        }
+                    elif positions_to_sell:
+                        (
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions,
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash,
+                            current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks,
+                            rebalance_costs,
+                            rebalanced_flag,
+                        ) = _liquidate_positions_for_strategy(
+                            strategy_name=strategy_label,
+                            current_stocks=current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks,
+                            positions=blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions,
+                            cash=blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            close_price_cache=active_close_price_cache,
+                        )
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_target_weights = {}
+                    else:
+                        rebalanced_flag = False
+                        rebalance_costs = 0.0
+
+                    if rebalanced_flag:
+                        strategies_rebalanced_today[strategy_label] = True
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_transaction_costs += rebalance_costs
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_last_rebalance_value = _mark_to_market_value(
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions,
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash,
+                            ticker_data_grouped,
+                            current_date,
+                        )
+
+                    for ticker in positions_to_sell:
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_entry_ranks.pop(ticker, None)
+
+                    ranked_position_map = {
+                        ticker: idx + 1
+                        for idx, ticker in enumerate(ranked_blend_liqweight2_volexit_twostage)
+                    }
+                    current_variant_set = set(current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks)
+                    for ticker in current_variant_set:
+                        if ticker not in blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_entry_ranks:
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_entry_ranks[ticker] = ranked_position_map.get(ticker, 999)
+
+                current_variant_set = set(current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks)
+                for ticker in list(blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_sma_breach_streaks.keys()):
+                    if ticker not in current_variant_set:
+                        del blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_sma_breach_streaks[ticker]
+                for ticker in list(blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_entry_ranks.keys()):
+                    if ticker not in current_variant_set:
+                        del blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_entry_ranks[ticker]
+                for ticker in list(blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_target_weights.keys()):
+                    if ticker not in current_variant_set:
+                        del blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_target_weights[ticker]
+
+            except Exception as e:
+                print(f"   ⚠️ Blend 45/55 L2 VExit TS strategy error: {e}")
+
+        if config.ENABLE_BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP:
+            try:
+                strategy_label = "Blend 30/70 M4 CTS"
+                print(f"   📈 {strategy_label} Strategy: Analyzing {len(initial_top_tickers)} tickers on {current_date.strftime('%Y-%m-%d')}")
+
+                candidate_pool_size = max(
+                    PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE,
+                    PORTFOLIO_SIZE * config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_CANDIDATE_MULTIPLIER,
+                )
+
+                def _fallback_blend_momweight4_chand_tstop():
+                    from shared_strategies import select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks
+                    return select_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks(
+                        initial_top_tickers,
+                        ticker_data_grouped,
+                        current_date=current_date,
+                        top_n=candidate_pool_size,
+                    )
+
+                ranked_blend_momweight4_chand_tstop = _resolve_parallel_strategy_selection(
+                    "blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop",
+                    _fallback_blend_momweight4_chand_tstop,
+                ) or []
+
+                if ranked_blend_momweight4_chand_tstop:
+                    print(
+                        f"   📊 {strategy_label} Day {day_count}: "
+                        f"{ranked_blend_momweight4_chand_tstop[:PORTFOLIO_SIZE + PORTFOLIO_BUFFER_SIZE]}"
+                    )
+
+                reduced_weight_targets = dict(
+                    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_target_weights
+                )
+                reduction_applied = False
+                low_sma_days = config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_LOW_SMA_DAYS
+                high_sma_days = config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_HIGH_SMA_DAYS
+                persist_days = config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_PERSIST_DAYS
+                vol_switch = config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_VOL_SWITCH
+                reduction_factor = config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_REDUCTION_FACTOR
+                time_stop_days = config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_TIME_STOP_DAYS
+                peak_reset_buffer = config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_PEAK_RESET_BUFFER
+                chandelier_sigma = config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_CHANDELIER_SIGMA
+
+                for ticker in list(current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks):
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None or ticker_data.empty:
+                        continue
+
+                    close_series = ticker_data.loc[:current_date, "Close"].dropna()
+                    if close_series.empty:
+                        continue
+
+                    current_close = float(close_series.iloc[-1])
+                    current_peak = max(
+                        current_close,
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_peak_prices.get(ticker, current_close),
+                    )
+                    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_peak_prices[ticker] = current_peak
+
+                    if current_close >= current_peak * peak_reset_buffer:
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_time_stop_counters[ticker] = 0
+                    else:
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_time_stop_counters[ticker] = (
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_time_stop_counters.get(ticker, 0) + 1
+                        )
+
+                    vol20 = _compute_annualized_volatility_up_to(ticker_data, current_date)
+                    sma_days = high_sma_days if (vol20 is not None and vol20 > vol_switch) else low_sma_days
+
+                    breach_reasons = []
+                    if len(close_series) >= sma_days:
+                        sma_value = float(close_series.tail(sma_days).mean())
+                        if current_close < sma_value:
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_sma_breach_streaks[ticker] = (
+                                blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_sma_breach_streaks.get(ticker, 0) + 1
+                            )
+                        else:
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_sma_breach_streaks[ticker] = 0
+
+                        streak = blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_sma_breach_streaks[ticker]
+                        if streak >= persist_days:
+                            breach_reasons.append(f"below SMA{sma_days} for {streak} day(s)")
+
+                    if vol20 is not None and current_peak > 0:
+                        daily_vol = vol20 / np.sqrt(252.0)
+                        drawdown = (current_close - current_peak) / current_peak
+                        chand_threshold = -chandelier_sigma * daily_vol * np.sqrt(20.0)
+                        if drawdown < chand_threshold:
+                            breach_reasons.append(f"chandelier drawdown {drawdown:.3f} < {chand_threshold:.3f}")
+
+                    if (
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_time_stop_counters.get(ticker, 0)
+                        >= time_stop_days
+                    ):
+                        breach_reasons.append(f"time-stop {time_stop_days}d")
+
+                    if breach_reasons and ticker in reduced_weight_targets:
+                        reduced_weight_targets[ticker] = reduced_weight_targets[ticker] * reduction_factor
+                        reduction_applied = True
+                        print(
+                            f"   🪫 {strategy_label}: reducing {ticker} due to {', '.join(breach_reasons)} "
+                            f"(${current_close:.2f}, vol20={vol20 if vol20 is not None else float('nan'):.2f})"
+                        )
+
+                if reduction_applied and current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks:
+                    (
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions,
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash,
+                        current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks,
+                        rebalance_costs,
+                        rebalanced_flag,
+                    ) = _rebalance_portfolio_to_target_weights(
+                        strategy_name=strategy_label,
+                        target_stocks=current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks,
+                        target_weights=reduced_weight_targets,
+                        positions=blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions,
+                        cash=blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash,
+                        ticker_data_grouped=ticker_data_grouped,
+                        current_date=current_date,
+                        transaction_cost=TRANSACTION_COST,
+                        close_price_cache=active_close_price_cache,
+                    )
+                    if rebalanced_flag:
+                        strategies_rebalanced_today[strategy_label] = True
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_transaction_costs += rebalance_costs
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_last_rebalance_value = _mark_to_market_value(
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions,
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash,
+                            ticker_data_grouped,
+                            current_date,
+                        )
+                    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_target_weights = {
+                        ticker: weight
+                        for ticker, weight in reduced_weight_targets.items()
+                        if ticker in current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks and weight > 0
+                    }
+
+                should_rebalance_blend_momweight4_chand_tstop = (
+                    current_date in blend_momweight4_chand_tstop_rebalance_dates
+                )
+
+                if should_rebalance_blend_momweight4_chand_tstop:
+                    ranked_position_map = {
+                        ticker: idx + 1
+                        for idx, ticker in enumerate(ranked_blend_momweight4_chand_tstop)
+                    }
+                    positions_to_sell = set()
+                    max_rank = config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_MAX_RANK
+                    rank_drop_threshold = config.BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP_RANK_DROP_THRESHOLD
+
+                    for ticker in current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks:
+                        current_rank = ranked_position_map.get(ticker, 999)
+                        entry_rank = blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_entry_ranks.get(ticker, current_rank)
+                        rank_drop = current_rank - entry_rank
+                        if current_rank > max_rank or rank_drop >= rank_drop_threshold:
+                            positions_to_sell.add(ticker)
+                            print(
+                                f"   🔻 {strategy_label}: weekly rank exit for {ticker} "
+                                f"(rank={current_rank}, entry_rank={entry_rank}, drop={rank_drop})"
+                            )
+
+                    kept_stocks = [
+                        ticker for ticker in current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks
+                        if ticker not in positions_to_sell
+                    ]
+                    replacements_needed = max(0, PORTFOLIO_SIZE - len(kept_stocks))
+                    replacements = [
+                        ticker for ticker in ranked_blend_momweight4_chand_tstop
+                        if ticker not in positions_to_sell and ticker not in kept_stocks
+                    ][:replacements_needed]
+                    final_target_stocks = kept_stocks + replacements
+
+                    if final_target_stocks:
+                        target_weights = _compute_blend_momweight4_weights(
+                            final_target_stocks,
+                            ticker_data_grouped,
+                            current_date,
+                        )
+                        (
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions,
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash,
+                            current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks,
+                            rebalance_costs,
+                            rebalanced_flag,
+                        ) = _rebalance_portfolio_to_target_weights(
+                            strategy_name=strategy_label,
+                            target_stocks=final_target_stocks,
+                            target_weights=target_weights,
+                            positions=blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions,
+                            cash=blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            close_price_cache=active_close_price_cache,
+                        )
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_target_weights = {
+                            ticker: weight
+                            for ticker, weight in target_weights.items()
+                            if ticker in current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks and weight > 0
+                        }
+                    elif positions_to_sell:
+                        (
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions,
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash,
+                            current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks,
+                            rebalance_costs,
+                            rebalanced_flag,
+                        ) = _liquidate_positions_for_strategy(
+                            strategy_name=strategy_label,
+                            current_stocks=current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks,
+                            positions=blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions,
+                            cash=blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash,
+                            ticker_data_grouped=ticker_data_grouped,
+                            current_date=current_date,
+                            transaction_cost=TRANSACTION_COST,
+                            close_price_cache=active_close_price_cache,
+                        )
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_target_weights = {}
+                    else:
+                        rebalanced_flag = False
+                        rebalance_costs = 0.0
+
+                    if rebalanced_flag:
+                        strategies_rebalanced_today[strategy_label] = True
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_transaction_costs += rebalance_costs
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_last_rebalance_value = _mark_to_market_value(
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions,
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash,
+                            ticker_data_grouped,
+                            current_date,
+                        )
+
+                    for ticker in positions_to_sell:
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_entry_ranks.pop(ticker, None)
+
+                    ranked_position_map = {
+                        ticker: idx + 1
+                        for idx, ticker in enumerate(ranked_blend_momweight4_chand_tstop)
+                    }
+                    current_variant_set = set(current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks)
+                    for ticker in current_variant_set:
+                        if ticker not in blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_entry_ranks:
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_entry_ranks[ticker] = ranked_position_map.get(ticker, 999)
+                        if ticker not in blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_peak_prices:
+                            current_price = active_close_price_cache.get(ticker)
+                            if current_price is not None:
+                                blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_peak_prices[ticker] = current_price
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_time_stop_counters.setdefault(ticker, 0)
+
+                current_variant_set = set(current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks)
+                for ticker in list(blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_sma_breach_streaks.keys()):
+                    if ticker not in current_variant_set:
+                        del blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_sma_breach_streaks[ticker]
+                for ticker in list(blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_entry_ranks.keys()):
+                    if ticker not in current_variant_set:
+                        del blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_entry_ranks[ticker]
+                for ticker in list(blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_target_weights.keys()):
+                    if ticker not in current_variant_set:
+                        del blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_target_weights[ticker]
+                for ticker in list(blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_peak_prices.keys()):
+                    if ticker not in current_variant_set:
+                        del blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_peak_prices[ticker]
+                for ticker in list(blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_time_stop_counters.keys()):
+                    if ticker not in current_variant_set:
+                        del blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_time_stop_counters[ticker]
+
+            except Exception as e:
+                print(f"   ⚠️ Blend 30/70 M4 CTS strategy error: {e}")
 
         if config.ENABLE_EARLY_LEADER_ACCEL:
             try:
@@ -10474,6 +11619,95 @@ def _run_portfolio_backtest_walk_forward(
         bh_1y_6m_blend_portfolio_value = bh_1y_6m_blend_invested_value + bh_1y_6m_blend_cash
         bh_1y_6m_blend_portfolio_history.append(bh_1y_6m_blend_portfolio_value)
 
+        # Update BLEND 1Y / 6M 45/55 SMA75 PERSIST3 POS3M portfolio value daily
+        blend_1y_6m_45_55_sma75_persist3_pos3m_invested_value = 0.0
+        if config.ENABLE_BLEND_1Y_6M_45_55_SMA75_PERSIST3_POS3M:
+            for ticker in list(blend_1y_6m_45_55_sma75_persist3_pos3m_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is None and hasattr(ticker_data_grouped, 'get_group'):
+                        ticker_data = ticker_data_grouped.get_group(ticker)
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None:
+                            shares = blend_1y_6m_45_55_sma75_persist3_pos3m_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            blend_1y_6m_45_55_sma75_persist3_pos3m_positions[ticker]['value'] = position_value
+                            blend_1y_6m_45_55_sma75_persist3_pos3m_invested_value += position_value
+                        else:
+                            blend_1y_6m_45_55_sma75_persist3_pos3m_invested_value += blend_1y_6m_45_55_sma75_persist3_pos3m_positions[ticker].get('value', 0.0)
+                    else:
+                        blend_1y_6m_45_55_sma75_persist3_pos3m_invested_value += blend_1y_6m_45_55_sma75_persist3_pos3m_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating Blend 1Y/6M 45/55 P3 position for {ticker}: {e}")
+                    blend_1y_6m_45_55_sma75_persist3_pos3m_invested_value += blend_1y_6m_45_55_sma75_persist3_pos3m_positions[ticker].get('value', 0.0)
+
+        blend_1y_6m_45_55_sma75_persist3_pos3m_portfolio_value = (
+            blend_1y_6m_45_55_sma75_persist3_pos3m_invested_value
+            + blend_1y_6m_45_55_sma75_persist3_pos3m_cash
+        )
+        blend_1y_6m_45_55_sma75_persist3_pos3m_portfolio_history.append(
+            blend_1y_6m_45_55_sma75_persist3_pos3m_portfolio_value
+        )
+
+        # Update BLEND 45/55 LIQWEIGHT2 VOLEXIT TWOSTAGE portfolio value daily
+        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_invested_value = 0.0
+        if config.ENABLE_BLEND_1Y_6M_45_55_SMA75_PERSIST_POS3M_LIQWEIGHT2_VOLEXIT_TWOSTAGE:
+            for ticker in list(blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None:
+                            shares = blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions[ticker]['value'] = position_value
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_invested_value += position_value
+                        else:
+                            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_invested_value += blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions[ticker].get('value', 0.0)
+                    else:
+                        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_invested_value += blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating Blend 45/55 L2 VExit TS position for {ticker}: {e}")
+                    blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_invested_value += blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions[ticker].get('value', 0.0)
+
+        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_portfolio_value = (
+            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_invested_value
+            + blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash
+        )
+        blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_portfolio_history.append(
+            blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_portfolio_value
+        )
+
+        # Update BLEND 30/70 MOMWEIGHT4 VOLEXIT TWOSTAGE CHAND_TSTOP portfolio value daily
+        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_invested_value = 0.0
+        if config.ENABLE_BLEND_1Y_6M_30_70_SMA75_PERSIST_POS3M_MOMWEIGHT4_VOLEXIT_TWOSTAGE_CHAND_TSTOP:
+            for ticker in list(blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions.keys()):
+                try:
+                    ticker_data = ticker_data_grouped.get(ticker) if isinstance(ticker_data_grouped, dict) else None
+                    if ticker_data is not None and not ticker_data.empty:
+                        current_price = _last_valid_close_up_to(ticker_data, current_date)
+                        if current_price is not None:
+                            shares = blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions[ticker]['shares']
+                            position_value = shares * current_price
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions[ticker]['value'] = position_value
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_invested_value += position_value
+                        else:
+                            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_invested_value += blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions[ticker].get('value', 0.0)
+                    else:
+                        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_invested_value += blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions[ticker].get('value', 0.0)
+                except Exception as e:
+                    print(f"   ⚠️ Error updating Blend 30/70 M4 CTS position for {ticker}: {e}")
+                    blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_invested_value += blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions[ticker].get('value', 0.0)
+
+        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_portfolio_value = (
+            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_invested_value
+            + blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash
+        )
+        blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_portfolio_history.append(
+            blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_portfolio_value
+        )
+
         # Update EARLY LEADER ACCEL portfolio value daily
         early_leader_accel_invested_value = 0.0
         if config.ENABLE_EARLY_LEADER_ACCEL:
@@ -11944,7 +13178,8 @@ def _run_portfolio_backtest_walk_forward(
         # Update STATIC BH MONTHLY variants portfolio values daily
         for monthly_var in [
             ('1Y', config.ENABLE_STATIC_BH_1Y_MONTHLY, static_bh_1y_monthly_positions, 'static_bh_1y_monthly'),
-            ('1Y Weekly', config.ENABLE_STATIC_BH_1Y_WEEKLY, static_bh_1y_weekly_positions, 'static_bh_1y_weekly'),
+            ('1Y Weekly Start', config.ENABLE_STATIC_BH_1Y_WEEKLY_START, static_bh_1y_weekly_start_positions, 'static_bh_1y_weekly_start'),
+            ('1Y Weekly End', config.ENABLE_STATIC_BH_1Y_WEEKLY_END, static_bh_1y_weekly_end_positions, 'static_bh_1y_weekly_end'),
             ('6M', config.ENABLE_STATIC_BH_6M_MONTHLY, static_bh_6m_monthly_positions, 'static_bh_6m_monthly'),
             ('3M', config.ENABLE_STATIC_BH_3M_MONTHLY, static_bh_3m_monthly_positions, 'static_bh_3m_monthly'),
             ('1M', config.ENABLE_STATIC_BH_1M_MONTHLY, static_bh_1m_monthly_positions, 'static_bh_1m_monthly'),
@@ -11955,9 +13190,12 @@ def _run_portfolio_backtest_walk_forward(
                 if var_prefix == 'static_bh_1y_monthly':
                     static_bh_1y_monthly_portfolio_value = invested + static_bh_1y_monthly_cash
                     static_bh_1y_monthly_portfolio_history.append(static_bh_1y_monthly_portfolio_value)
-                elif var_prefix == 'static_bh_1y_weekly':
-                    static_bh_1y_weekly_portfolio_value = invested + static_bh_1y_weekly_cash
-                    static_bh_1y_weekly_portfolio_history.append(static_bh_1y_weekly_portfolio_value)
+                elif var_prefix == 'static_bh_1y_weekly_start':
+                    static_bh_1y_weekly_start_portfolio_value = invested + static_bh_1y_weekly_start_cash
+                    static_bh_1y_weekly_start_portfolio_history.append(static_bh_1y_weekly_start_portfolio_value)
+                elif var_prefix == 'static_bh_1y_weekly_end':
+                    static_bh_1y_weekly_end_portfolio_value = invested + static_bh_1y_weekly_end_cash
+                    static_bh_1y_weekly_end_portfolio_history.append(static_bh_1y_weekly_end_portfolio_value)
                 elif var_prefix == 'static_bh_6m_monthly':
                     static_bh_6m_monthly_portfolio_value = invested + static_bh_6m_monthly_cash
                     static_bh_6m_monthly_portfolio_history.append(static_bh_6m_monthly_portfolio_value)
@@ -12562,7 +13800,8 @@ def _run_portfolio_backtest_walk_forward(
             ("AI Elite",            ai_elite_portfolio_history            if config.ENABLE_AI_ELITE else None),
             ("Top5 Cons Blend",    top5_consistency_blend_portfolio_history if config.ENABLE_TOP5_CONSISTENCY_BLEND else None),
             ("BH 1Y Monthly",       static_bh_1y_monthly_portfolio_history if config.ENABLE_STATIC_BH_1Y_MONTHLY else None),
-            ("BH 1Y Weekly",        static_bh_1y_weekly_portfolio_history if config.ENABLE_STATIC_BH_1Y_WEEKLY else None),
+            ("BH 1Y Weekly Start",  static_bh_1y_weekly_start_portfolio_history if config.ENABLE_STATIC_BH_1Y_WEEKLY_START else None),
+            ("BH 1Y Weekly End",    static_bh_1y_weekly_end_portfolio_history if config.ENABLE_STATIC_BH_1Y_WEEKLY_END else None),
             ("BH 6M Monthly",       static_bh_6m_monthly_portfolio_history if config.ENABLE_STATIC_BH_6M_MONTHLY else None),
             ("BH 3M Monthly",       static_bh_3m_monthly_portfolio_history if config.ENABLE_STATIC_BH_3M_MONTHLY else None),
             ("BH 1M Monthly",       static_bh_1m_monthly_portfolio_history if config.ENABLE_STATIC_BH_1M_MONTHLY else None),
@@ -12714,6 +13953,24 @@ def _run_portfolio_backtest_walk_forward(
             'bh_1y_1m_rank':          _strat(bh_1y_1m_rank_portfolio_value, bh_1y_1m_rank_portfolio_history, bh_1y_1m_rank_transaction_costs, bh_1y_1m_rank_cash),
             'bh_1y_6m_rank':        _strat(bh_1y_6m_rank_portfolio_value, bh_1y_6m_rank_portfolio_history, bh_1y_6m_rank_transaction_costs, bh_1y_6m_rank_cash),
             'bh_1y_6m_blend':       _strat(bh_1y_6m_blend_portfolio_value, bh_1y_6m_blend_portfolio_history, bh_1y_6m_blend_transaction_costs, bh_1y_6m_blend_cash),
+            'blend_1y_6m_45_55_sma75_persist3_pos3m': _strat(
+                blend_1y_6m_45_55_sma75_persist3_pos3m_portfolio_value,
+                blend_1y_6m_45_55_sma75_persist3_pos3m_portfolio_history,
+                blend_1y_6m_45_55_sma75_persist3_pos3m_transaction_costs,
+                blend_1y_6m_45_55_sma75_persist3_pos3m_cash,
+            ),
+            'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage': _strat(
+                blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_portfolio_value,
+                blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_portfolio_history,
+                blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_transaction_costs,
+                blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_cash,
+            ),
+            'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop': _strat(
+                blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_portfolio_value,
+                blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_portfolio_history,
+                blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_transaction_costs,
+                blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_cash,
+            ),
             'early_leader_accel':    _strat(early_leader_accel_portfolio_value, early_leader_accel_portfolio_history, early_leader_accel_transaction_costs, early_leader_accel_cash),
             'bh_1y_sma200':          _strat(bh_1y_sma200_portfolio_value, bh_1y_sma200_portfolio_history, bh_1y_sma200_transaction_costs, bh_1y_sma200_cash),
             'bh_1y_fcf_rank':        _strat(bh_1y_fcf_rank_portfolio_value, bh_1y_fcf_rank_portfolio_history, bh_1y_fcf_rank_transaction_costs, bh_1y_fcf_rank_cash),
@@ -12757,7 +14014,8 @@ def _run_portfolio_backtest_walk_forward(
             'analyst_rec':              _strat(analyst_rec_portfolio_value, analyst_rec_portfolio_history, analyst_rec_transaction_costs, analyst_rec_cash),
             'risk_adj_mom_sentiment':   _strat(risk_adj_mom_sentiment_portfolio_value, risk_adj_mom_sentiment_portfolio_history, risk_adj_mom_sentiment_transaction_costs, risk_adj_mom_sentiment_cash),
             'bh_1y_monthly':            _strat(static_bh_1y_monthly_portfolio_value, static_bh_1y_monthly_portfolio_history, static_bh_1y_monthly_transaction_costs, static_bh_1y_monthly_cash),
-            'bh_1y_weekly':             _strat(static_bh_1y_weekly_portfolio_value, static_bh_1y_weekly_portfolio_history, static_bh_1y_weekly_transaction_costs, static_bh_1y_weekly_cash),
+            'bh_1y_weekly_start':       _strat(static_bh_1y_weekly_start_portfolio_value, static_bh_1y_weekly_start_portfolio_history, static_bh_1y_weekly_start_transaction_costs, static_bh_1y_weekly_start_cash),
+            'bh_1y_weekly_end':         _strat(static_bh_1y_weekly_end_portfolio_value, static_bh_1y_weekly_end_portfolio_history, static_bh_1y_weekly_end_transaction_costs, static_bh_1y_weekly_end_cash),
             'bh_6m_monthly':            _strat(static_bh_6m_monthly_portfolio_value, static_bh_6m_monthly_portfolio_history, static_bh_6m_monthly_transaction_costs, static_bh_6m_monthly_cash),
             'bh_3m_monthly':            _strat(static_bh_3m_monthly_portfolio_value, static_bh_3m_monthly_portfolio_history, static_bh_3m_monthly_transaction_costs, static_bh_3m_monthly_cash),
             'bh_1m_monthly':            _strat(static_bh_1m_monthly_portfolio_value, static_bh_1m_monthly_portfolio_history, static_bh_1m_monthly_transaction_costs, static_bh_1m_monthly_cash),
@@ -12857,6 +14115,27 @@ def _run_portfolio_backtest_walk_forward(
             'bh_1y_1m_rank': {'tickers': list(current_bh_1y_1m_rank_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_1m_rank_positions.items()}},
             'bh_1y_6m_rank': {'tickers': list(current_bh_1y_6m_rank_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_6m_rank_positions.items()}},
             'bh_1y_6m_blend': {'tickers': list(current_bh_1y_6m_blend_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_6m_blend_positions.items()}},
+            'blend_1y_6m_45_55_sma75_persist3_pos3m': {
+                'tickers': list(current_blend_1y_6m_45_55_sma75_persist3_pos3m_stocks),
+                'positions': {
+                    t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))}
+                    for t, p in blend_1y_6m_45_55_sma75_persist3_pos3m_positions.items()
+                }
+            },
+            'blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage': {
+                'tickers': list(current_blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_stocks),
+                'positions': {
+                    t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))}
+                    for t, p in blend_1y_6m_45_55_sma75_persist_pos3m_liqweight2_volexit_twostage_positions.items()
+                }
+            },
+            'blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop': {
+                'tickers': list(current_blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_stocks),
+                'positions': {
+                    t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))}
+                    for t, p in blend_1y_6m_30_70_sma75_persist_pos3m_momweight4_volexit_twostage_chand_tstop_positions.items()
+                }
+            },
             'early_leader_accel': {'tickers': list(current_early_leader_accel_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in early_leader_accel_positions.items()}},
             'bh_1y_sma200': {'tickers': list(current_bh_1y_sma200_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_sma200_positions.items()}},
             'bh_1y_fcf_rank': {'tickers': list(current_bh_1y_fcf_rank_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in bh_1y_fcf_rank_positions.items()}},
@@ -12870,7 +14149,8 @@ def _run_portfolio_backtest_walk_forward(
             'concentrated_3m': {'tickers': list(current_concentrated_3m_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in concentrated_3m_positions.items()}},
             'analyst_rec': {'tickers': list(current_analyst_rec_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in analyst_rec_positions.items()}},
             'bh_1y_monthly': {'tickers': list(current_static_bh_1y_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_monthly_positions.items()}},
-            'bh_1y_weekly': {'tickers': list(current_static_bh_1y_weekly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_weekly_positions.items()}},
+            'bh_1y_weekly_start': {'tickers': list(current_static_bh_1y_weekly_start_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_weekly_start_positions.items()}},
+            'bh_1y_weekly_end': {'tickers': list(current_static_bh_1y_weekly_end_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1y_weekly_end_positions.items()}},
             'bh_6m_monthly': {'tickers': list(current_static_bh_6m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_6m_monthly_positions.items()}},
             'bh_3m_monthly': {'tickers': list(current_static_bh_3m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_3m_monthly_positions.items()}},
             'bh_1m_monthly': {'tickers': list(current_static_bh_1m_monthly_stocks), 'positions': {t: {'shares': p['shares'], 'avg_price': p.get('entry_price', p.get('avg_price', 0))} for t, p in static_bh_1m_monthly_positions.items()}},

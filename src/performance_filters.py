@@ -67,14 +67,14 @@ def filter_tickers_by_performance(
     
     print(f"\n   [DEBUG] {strategy_name}: Performance filter analysis (first {max_debug} failures shown)")
 
-    from parallel_backtest import calculate_cached_performance
+    from parallel_backtest import get_cached_performance_map
     import time as _time
     _filter_start = _time.time()
 
-    perf_1y_map = dict(calculate_cached_performance(all_tickers, price_history_cache, current_date, 365))
-    perf_6m_map = dict(calculate_cached_performance(all_tickers, price_history_cache, current_date, 180))
-    perf_3m_map = dict(calculate_cached_performance(all_tickers, price_history_cache, current_date, 90))
-    perf_1m_map = dict(calculate_cached_performance(all_tickers, price_history_cache, current_date, 30))
+    perf_1y_map = get_cached_performance_map(price_history_cache, current_date, 365)
+    perf_6m_map = get_cached_performance_map(price_history_cache, current_date, 180)
+    perf_3m_map = get_cached_performance_map(price_history_cache, current_date, 90)
+    perf_1m_map = get_cached_performance_map(price_history_cache, current_date, 30)
 
     for ticker in all_tickers:
         perf_1y_pct = perf_1y_map.get(ticker)
